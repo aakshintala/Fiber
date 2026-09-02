@@ -15,7 +15,6 @@ pub const ParsedCommand = union(enum) {
     help,
     login,
     logout: []const u8,
-    setup,
     status,
     image: []const u8,
     images: []const u8,
@@ -28,12 +27,10 @@ pub const ParsedCommand = union(enum) {
     mcp: []const u8,
     skills: []const u8,
     copy,
-    feedback,
     trace,
     compact,
     settings: []const u8,
     alias: []const u8,
-    credits,
     paste,
     fast,
     statusline: []const u8,
@@ -54,7 +51,6 @@ pub const CommandHandlers = struct {
     show_help: *const fn (ctx: *anyopaque) anyerror!void,
     login: *const fn (ctx: *anyopaque) anyerror!void,
     logout: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
-    setup: *const fn (ctx: *anyopaque) anyerror!void,
     show_status: *const fn (ctx: *anyopaque) anyerror!void,
     attach_image: *const fn (ctx: *anyopaque, path: []const u8) anyerror!void,
     manage_images: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
@@ -67,12 +63,10 @@ pub const CommandHandlers = struct {
     handle_mcp: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_skills: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     copy_last: *const fn (ctx: *anyopaque) anyerror!void,
-    submit_feedback: *const fn (ctx: *anyopaque) anyerror!void,
     create_trace: *const fn (ctx: *anyopaque) anyerror!void,
     compact_history: *const fn (ctx: *anyopaque) anyerror!void,
     handle_settings: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_alias: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
-    show_credits: *const fn (ctx: *anyopaque) anyerror!void,
     paste_clipboard: *const fn (ctx: *anyopaque) anyerror!void,
     toggle_fast: *const fn (ctx: *anyopaque) anyerror!void,
     handle_statusline: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
@@ -99,7 +93,6 @@ fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
         .help => .help,
         .login => .login,
         .logout => .{ .logout = payload },
-        .setup => .setup,
         .status => .status,
         .images => .{ .images = payload },
         .image => .{ .image = payload },
@@ -112,12 +105,10 @@ fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
         .mcp => .{ .mcp = payload },
         .skills => .{ .skills = payload },
         .copy => .copy,
-        .feedback => .feedback,
         .trace => .trace,
         .compact => .compact,
         .settings => .{ .settings = payload },
         .alias => .{ .alias = payload },
-        .credits => .credits,
         .paste => .paste,
         .fast => .fast,
         .statusline => .{ .statusline = payload },
@@ -152,7 +143,6 @@ pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []c
         .help => try handlers.show_help(handlers.ctx),
         .login => try handlers.login(handlers.ctx),
         .logout => |rest| try handlers.logout(handlers.ctx, rest),
-        .setup => try handlers.setup(handlers.ctx),
         .status => try handlers.show_status(handlers.ctx),
         .image => |path| try handlers.attach_image(handlers.ctx, path),
         .images => |rest| try handlers.manage_images(handlers.ctx, rest),
@@ -165,12 +155,10 @@ pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []c
         .mcp => |rest| try handlers.handle_mcp(handlers.ctx, rest),
         .skills => |rest| try handlers.handle_skills(handlers.ctx, rest),
         .copy => try handlers.copy_last(handlers.ctx),
-        .feedback => try handlers.submit_feedback(handlers.ctx),
         .trace => try handlers.create_trace(handlers.ctx),
         .compact => try handlers.compact_history(handlers.ctx),
         .settings => |rest| try handlers.handle_settings(handlers.ctx, rest),
         .alias => |rest| try handlers.handle_alias(handlers.ctx, rest),
-        .credits => try handlers.show_credits(handlers.ctx),
         .paste => try handlers.paste_clipboard(handlers.ctx),
         .fast => try handlers.toggle_fast(handlers.ctx),
         .statusline => |rest| try handlers.handle_statusline(handlers.ctx, rest),
@@ -205,7 +193,7 @@ test "parse rejects removed plural model command" {
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/models"));
 }
 
-test "parse leaves provider selection to setup" {
+test "parse rejects the removed provider command" {
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/provider codex"));
 }
 
@@ -279,13 +267,17 @@ test "parse extracts mcp command payload" {
     }
 }
 
+test "parse rejects removed upstream-service slash commands" {
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/feedback"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/credits"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/balance"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/setup"));
+}
+
 test "parse recognizes exact no-payload commands" {
     try std.testing.expectEqual(ParsedCommand.copy, parse(testSlashRegistry(), "/copy"));
-    try std.testing.expectEqual(ParsedCommand.feedback, parse(testSlashRegistry(), "/feedback"));
     try std.testing.expectEqual(ParsedCommand.trace, parse(testSlashRegistry(), "/trace"));
     try std.testing.expectEqual(ParsedCommand.compact, parse(testSlashRegistry(), "/compact"));
-    try std.testing.expectEqual(ParsedCommand.credits, parse(testSlashRegistry(), "/credits"));
-    try std.testing.expectEqual(ParsedCommand.credits, parse(testSlashRegistry(), "/balance"));
     try std.testing.expectEqual(ParsedCommand.paste, parse(testSlashRegistry(), "/paste"));
     try std.testing.expectEqual(ParsedCommand.fast, parse(testSlashRegistry(), "/fast"));
     try std.testing.expectEqual(ParsedCommand.version, parse(testSlashRegistry(), "/version"));
@@ -468,7 +460,6 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
         .show_help = unexpectedNoPayload,
         .login = unexpectedNoPayload,
         .logout = unexpectedPayload,
-        .setup = unexpectedNoPayload,
         .show_status = unexpectedNoPayload,
         .attach_image = unexpectedPayload,
         .manage_images = unexpectedPayload,
@@ -481,12 +472,10 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
         .handle_mcp = unexpectedPayload,
         .handle_skills = unexpectedPayload,
         .copy_last = unexpectedNoPayload,
-        .submit_feedback = unexpectedNoPayload,
         .create_trace = unexpectedNoPayload,
         .compact_history = unexpectedNoPayload,
         .handle_settings = unexpectedPayload,
         .handle_alias = unexpectedPayload,
-        .show_credits = unexpectedNoPayload,
         .paste_clipboard = unexpectedNoPayload,
         .toggle_fast = unexpectedNoPayload,
         .handle_statusline = unexpectedPayload,

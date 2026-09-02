@@ -244,7 +244,7 @@ pub const FakeGateway = struct {
     }
 
     pub fn provider(self: *FakeGateway) agent_stream_provider.Provider {
-        var result = builtin_gateway.agent_stream_provider;
+        var result = agent_stream_provider.unavailable_provider;
         result.context = self;
         result.stream_fn = fakeGatewayStream;
         return result;
@@ -1725,7 +1725,7 @@ pub const PromptFixture = struct {
             .images = self.images[0..],
             .model = @constCast("anthropic/claude-opus-4.6"),
             .api_key = @constCast("key"),
-            .credential_source = .ai_gateway_api_key,
+            .credential_source = .chatgpt_subscription,
             .permission_mode = .ask,
             .history = self.history[0..],
             .grants = self.grants[0..],

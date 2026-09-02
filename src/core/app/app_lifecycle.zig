@@ -117,8 +117,7 @@ pub const StartupState = struct {
     workspace_access: workspace_access.WorkspaceAccess = .{},
     credential: ?credentials.Credential = null,
     credential_onboarding_skipped: bool = false,
-    stored_key_status: credentials.StoredKeyReadStatus = .not_attempted,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     selected_model: []u8 = &.{},
     configured_model: []u8 = &.{},
     model_source: config_runtime.ModelSource = .compiled_default,
@@ -213,7 +212,7 @@ pub const StartupState = struct {
 
 pub const StartupStatus = struct {
     workspace_root: []u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     selected_model: []const u8,
     owned_selected_model: ?[]u8 = null,
     auth: auth_runtime.StatusSnapshot = .{},
@@ -225,7 +224,6 @@ pub const StartupStatus = struct {
     pub fn deinit(self: *StartupStatus, alloc: Allocator) void {
         alloc.free(self.workspace_root);
         if (self.owned_selected_model) |model| alloc.free(model);
-        self.auth.deinit(alloc);
         if (self.config_diagnostics.len > 0) {
             for (self.config_diagnostics) |*diagnostic| diagnostic.deinit(alloc);
             alloc.free(self.config_diagnostics);
@@ -337,7 +335,6 @@ pub fn loadStartupStatus(
         .update_channel = settings.update_channel orelse .stable,
         .config_diagnostics = detailed.diagnostics,
     };
-    auth_status.owned_team = null;
     detailed.diagnostics = &.{};
     return result;
 }
@@ -413,7 +410,6 @@ fn loadStartupStateFromOwnedWorkspace(
             settings.credential_source,
         );
         state.credential = resolution.credential;
-        state.stored_key_status = resolution.stored_key_status;
     }
     state.permission_mode = loadPermissionMode(settings.permission_mode);
     state.yolo_acknowledged = settings.yolo_acknowledged orelse false;
@@ -423,7 +419,6 @@ fn loadStartupStateFromOwnedWorkspace(
     state.context_limits = config_runtime.resolveContextLimits(settings, &.{});
     state.context_enabled = settings.context orelse true;
     const fast_mode = resolveStartupFastMode(
-        state.provider,
         state.model_source,
         settings.fast_mode,
         detailed.sources.fast_mode,
@@ -459,7 +454,6 @@ const StartupFastMode = struct {
 };
 
 fn resolveStartupFastMode(
-    provider: model_provider.ProviderId,
     model_source: config_runtime.ModelSource,
     configured_fast_mode: ?bool,
     fast_mode_source: config_runtime.ConfigSource,
@@ -475,7 +469,7 @@ fn resolveStartupFastMode(
                 fast_mode_source == binding_source,
         };
     }
-    const enabled = provider == .gateway and model_source == .compiled_default;
+    const enabled = model_source == .compiled_default;
     return .{ .enabled = enabled, .model_bound = enabled };
 }
 
@@ -1052,12 +1046,8 @@ fn configuredProviderSelection(
     default_model: []const u8,
     settings: *const config_runtime.Settings,
 ) !model_provider.ProviderSelection {
-    const provider = settings.provider orelse .gateway;
-    const model = settings.models.get(provider) orelse switch (provider) {
-        .gateway => default_model,
-        .codex => return error.CodexModelNotSelected,
-        .grok => return error.GrokModelNotSelected,
-    };
+    const provider: model_provider.ProviderId = .codex;
+    const model = settings.models.get(provider) orelse default_model;
     return .{ .provider = provider, .model = model };
 }
 
@@ -1068,15 +1058,15 @@ fn initialModelId(default_model: []const u8, configured: ?[]const u8) []const u8
 }
 
 test "startup provider chooses only its provider-scoped model" {
-    var gateway_settings = config_runtime.Settings{ .provider = .gateway };
-    gateway_settings.models.values[@intFromEnum(model_provider.ProviderId.gateway)] = @constCast("gateway/model");
+    var gateway_settings = config_runtime.Settings{ .provider = .codex };
+    gateway_settings.models.values[@intFromEnum(model_provider.ProviderId.codex)] = @constCast("gateway/model");
     gateway_settings.models.values[@intFromEnum(model_provider.ProviderId.codex)] = @constCast("gpt-model");
     const gateway = try configuredProviderSelection("default/model", &gateway_settings);
-    try std.testing.expectEqual(model_provider.ProviderId.gateway, gateway.provider);
+    try std.testing.expectEqual(model_provider.ProviderId.codex, gateway.provider);
     try std.testing.expectEqualStrings("gateway/model", gateway.model);
 
     var codex_settings = config_runtime.Settings{ .provider = .codex };
-    codex_settings.models.values[@intFromEnum(model_provider.ProviderId.gateway)] = @constCast("gateway/model");
+    codex_settings.models.values[@intFromEnum(model_provider.ProviderId.codex)] = @constCast("gateway/model");
     codex_settings.models.values[@intFromEnum(model_provider.ProviderId.codex)] = @constCast("gpt-model");
     const codex = try configuredProviderSelection("default/model", &codex_settings);
     try std.testing.expectEqual(model_provider.ProviderId.codex, codex.provider);
@@ -1087,12 +1077,6 @@ test "startup provider chooses only its provider-scoped model" {
         error.CodexModelNotSelected,
         configuredProviderSelection("default/model", &missing_codex),
     );
-
-    var grok_settings = config_runtime.Settings{ .provider = .grok };
-    grok_settings.models.values[@intFromEnum(model_provider.ProviderId.grok)] = @constCast("grok-model");
-    const grok = try configuredProviderSelection("default/model", &grok_settings);
-    try std.testing.expectEqual(model_provider.ProviderId.grok, grok.provider);
-    try std.testing.expectEqualStrings("grok-model", grok.model);
 }
 
 fn loadInitialModel(alloc: Allocator, default_model: []const u8, configured: ?[]const u8) ![]u8 {
@@ -1874,7 +1858,7 @@ test "loadStartupState applies core env overrides" {
     try std.testing.expectEqual(config_runtime.ModelSource.process_override, state.model_source);
     try std.testing.expect(!state.fast_mode);
     try std.testing.expectEqualStrings("gateway-key", state.apiKey().?);
-    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, state.credential.?.source);
+    try std.testing.expectEqual(credentials.Source.chatgpt_subscription, state.credential.?.source);
     try std.testing.expectEqual(PermissionMode.auto, state.permission_mode);
     try std.testing.expectEqual(@as(usize, 37), state.agent_step_limit);
 }

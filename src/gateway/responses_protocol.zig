@@ -566,7 +566,7 @@ pub fn buildSubscriptionBilling(
     created_at_ms: i64,
     usage: types.Usage,
 ) !?types.ProviderBilling {
-    if (provider == .gateway or created_at_ms < 0) return null;
+    if (created_at_ms < 0) return null;
     const input_tokens = usage.input_tokens orelse return null;
     const output_tokens = usage.output_tokens orelse return null;
     const qualified_model = try std.fmt.allocPrint(
@@ -761,7 +761,7 @@ test "Responses protocol owns one subscription billing projection" {
 
     const bounded = (try buildSubscriptionBilling(
         alloc,
-        .grok,
+        .codex,
         "grok-test",
         43,
         .{
