@@ -366,7 +366,7 @@ const default_context_registry = context_contract.Registry{ .default_provider = 
 const selected_host_profile = host_runtime_profile.native;
 const app_api_key_validator = builtin_gateway.api_key_validator;
 const app_oauth_transport = builtin_gateway.oauth_transport_provider;
-const app_secret_store = native_host.secret_store;
+const app_secret_store = host.unavailable_secret_store;
 fn currentBuild() update_target.CurrentBuild {
     return .{
         .channel = compiled_update_channel,
@@ -3507,7 +3507,7 @@ fn fullEntryConfig() app_entry_runtime.Config {
         .provider_set = builtin_providers.native,
         .process_provider = shell_process_provider.provider,
         .url_opener = url_opener.native_opener,
-        .secret_store = native_host.secret_store,
+        .secret_store = host.unavailable_secret_store,
         .prompt_policy = builtin_context.prompt_policy,
         .skill_root_policy = builtin_skills.root_policy,
         .ignored_list_entries = &ignored_list_entries,
@@ -3545,7 +3545,7 @@ fn localEntryConfig() app_entry_runtime.Config {
         .provider_set = builtin_providers.native,
         .process_provider = shell_process_provider.provider,
         .url_opener = url_opener.native_opener,
-        .secret_store = native_host.secret_store,
+        .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "" },
         .skill_root_policy = builtin_skills.root_policy,
         .ignored_list_entries = &.{},
@@ -3583,7 +3583,7 @@ fn emptyEntryConfig() app_entry_runtime.Config {
         .provider_set = builtin_providers.native,
         .process_provider = shell_process_provider.provider,
         .url_opener = url_opener.native_opener,
-        .secret_store = native_host.secret_store,
+        .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "" },
         .skill_root_policy = builtin_skills.root_policy,
         .ignored_list_entries = &.{},

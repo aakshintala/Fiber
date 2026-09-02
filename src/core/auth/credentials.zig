@@ -115,10 +115,6 @@ pub fn catalogAccessForCredential(
     };
 }
 
-/// Current native product copy. Store mechanics and availability come from the
-/// injected host port; Core retains the stable user-facing source name.
-pub const stored_key_backend_label = if (builtin.os.tag == .macos) "macOS Keychain" else "profile file";
-
 pub const missing_credential_message = missing_chatgpt_credential_message;
 pub const missing_interactive_credential_message = missing_chatgpt_interactive_credential_message;
 pub const missing_chatgpt_credential_message = "fx needs a Codex subscription login for this model. Run fx login codex.";
