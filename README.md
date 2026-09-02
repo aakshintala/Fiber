@@ -154,6 +154,11 @@ Run the test suite with `zig build test`. See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 [Apache-2.0](LICENSE)
 
+Fiber is a fork of [fx](https://github.com/vercel-labs/fx), Copyright 2025
+Vercel, Inc., taken at commit `993688a5` and tagged here as `fork-point`.
+Fiber is an independent product, not affiliated with or endorsed by Vercel.
+Attribution details are in [NOTICE](NOTICE).
+
 Third-party licenses and attributions are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
