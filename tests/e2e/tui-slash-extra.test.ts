@@ -458,7 +458,10 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         const toolPreview = await session.waitForText("untrusted metadata", 10_000);
         expect(toolPreview).toContain("mcp_fixture_echo");
         await session.sendKeys("Escape");
-        await session.waitForText("mcp_fixture_echo", 5_000);
+        await session.waitForPane(
+          (pane) => pane.includes("[Tools]") && !pane.includes("untrusted metadata"),
+          5_000,
+        );
 
         await session.sendKeys("Right");
         const resources = await session.waitForText("[Resources]", 10_000);
