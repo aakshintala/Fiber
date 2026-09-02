@@ -4246,7 +4246,7 @@ test "core.app_render_runtime active setup hub stays on the inline transcript su
     };
     defer app.deinit();
     try app.selected_model.appendSlice(alloc, "test-model");
-    app.auth.openPicker(alloc);
+    app.auth.openPicker();
     try app.shell.initBacking(alloc);
     try app.shell.enableShadowVt(alloc);
     try app.shell.writeTranscript(alloc, &app.metrics, "setup transcript stays behind\n", true);
@@ -4262,7 +4262,7 @@ test "core.app_render_runtime active setup hub stays on the inline transcript su
     try std.testing.expect(!(try coordinatorGridContains(app.shell.shadow_vt.?.*, "test-model")));
     try std.testing.expect(try coordinatorGridContains(app.shell.shadow_vt.?.*, "setup transcript stays behind"));
 
-    app.auth.closePicker(alloc);
+    app.auth.closePicker();
     app.shell.render_requests.request(.footer);
     try Runtime(CoordinatorTestApp).flushRequestedFrame(&app);
 

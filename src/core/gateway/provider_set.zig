@@ -13,9 +13,7 @@ const Allocator = std.mem.Allocator;
 
 pub const Bundle = struct {
     pub const AuthStrategy = enum {
-        vercel,
         chatgpt,
-        grok,
     };
     pub const Capabilities = struct {
         fx_search: bool = false,
@@ -48,39 +46,22 @@ fn emptyModelCapabilities(_: []const u8) model_capabilities.Capabilities {
 }
 
 pub const Set = struct {
-    gateway: Bundle,
     codex: Bundle,
-    grok: Bundle,
 
     pub fn select(self: Set, provider: model_provider.ProviderId) Bundle {
-        return switch (provider) {
-            .gateway => self.gateway,
-            .codex => self.codex,
-            .grok => self.grok,
-        };
+        _ = provider;
+        return self.codex;
     }
 
     pub fn deferredUsageProviders(self: Set) generation_usage_provider.Set {
         return .{
-            .gateway = self.gateway.deferred_usage,
             .codex = self.codex.deferred_usage,
-            .grok = self.grok.deferred_usage,
         };
     }
 };
 
-pub fn gateway_only(gateway: Bundle) Set {
-    return .{
-        .gateway = gateway,
-        .codex = .{},
-        .grok = .{},
-    };
-}
-
-test "provider set selects each provider's complete route" {
-    var gateway_tag: u8 = 0;
+test "provider set selects the codex route" {
     var codex_tag: u8 = 0;
-    var grok_tag: u8 = 0;
 
     const Fake = struct {
         fn cli_catalog(
@@ -113,19 +94,6 @@ test "provider set selects each provider's complete route" {
         }
     };
 
-    const gateway = Bundle{
-        .capabilities = .{ .fx_search = true, .vision_fallback = true },
-        .presentation = provider_catalog.find(.gateway),
-        .auth_strategy = .vercel,
-        .agent_stream = stream_provider.Provider{
-            .context = &gateway_tag,
-            .stream_fn = stream_provider.unavailable_provider.stream_fn,
-        },
-        .cli_model_catalog = .{ .context = &gateway_tag, .fetch_fn = Fake.cli_catalog },
-        .model_catalog = .{ .context = &gateway_tag, .fetch_fn = Fake.model_catalog_fetch },
-        .permission_reviewer = .{ .context = &gateway_tag, .review_fn = Fake.review },
-        .deferred_usage = generation_usage_provider.unavailable_provider,
-    };
     const codex = Bundle{
         .agent_stream = stream_provider.Provider{
             .context = &codex_tag,
@@ -135,31 +103,14 @@ test "provider set selects each provider's complete route" {
         .model_catalog = .{ .context = &codex_tag, .fetch_fn = Fake.model_catalog_fetch },
         .permission_reviewer = .{ .context = &codex_tag, .review_fn = Fake.review },
     };
-    const grok = Bundle{
-        .agent_stream = stream_provider.Provider{
-            .context = &grok_tag,
-            .stream_fn = stream_provider.unavailable_provider.stream_fn,
-        },
-        .cli_model_catalog = .{ .context = &grok_tag, .fetch_fn = Fake.cli_catalog },
-        .model_catalog = .{ .context = &grok_tag, .fetch_fn = Fake.model_catalog_fetch },
-        .permission_reviewer = .{ .context = &grok_tag, .review_fn = Fake.review },
-    };
-    var providers = Set{ .gateway = gateway, .codex = codex, .grok = grok };
+    var providers = Set{ .codex = codex };
 
-    try std.testing.expect(providers.select(.gateway).agent_stream.?.context.? == @as(*anyopaque, @ptrCast(&gateway_tag)));
-    try std.testing.expect(providers.select(.gateway).capabilities.fx_search);
-    try std.testing.expect(providers.select(.gateway).capabilities.vision_fallback);
-    try std.testing.expect(providers.select(.gateway).deferred_usage != null);
-    try std.testing.expectEqualStrings("vercel", providers.select(.gateway).presentation.?.slug);
-    try std.testing.expectEqual(Bundle.AuthStrategy.vercel, providers.select(.gateway).auth_strategy.?);
+    try std.testing.expect(providers.select(.codex).agent_stream.?.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
     try std.testing.expect(!providers.select(.codex).capabilities.fx_search);
     try std.testing.expect(providers.select(.codex).deferred_usage == null);
-    try std.testing.expect(providers.select(.gateway).cli_model_catalog.?.context.? == @as(*anyopaque, @ptrCast(&gateway_tag)));
     try std.testing.expect(providers.select(.codex).model_catalog.?.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
-    try std.testing.expect(providers.select(.grok).permission_reviewer.?.context.? == @as(*anyopaque, @ptrCast(&grok_tag)));
     try std.testing.expect(providers.select(.codex).agent_stream_or_unavailable().context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
 
     providers.codex.model_catalog = null;
     try std.testing.expect(providers.select(.codex).model_catalog == null);
-    try std.testing.expect(providers.select(.gateway).model_catalog != null);
 }

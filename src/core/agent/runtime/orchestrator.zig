@@ -2875,19 +2875,19 @@ test "potentially sent recovery rejects missing or changed credential authority"
         .chatgpt_subscription,
         "acct_1",
     ));
-    legacy.authority.credential_source = .ai_gateway_api_key;
+    legacy.authority.credential_source = .chatgpt_subscription;
     legacy.authority.credential_identity = credential_authority.derive(
-        .ai_gateway_api_key,
+        .chatgpt_subscription,
         null,
     );
     try std.testing.expect(!shouldRejectRecoveryAuthority(
         legacy,
-        .ai_gateway_api_key,
+        .chatgpt_subscription,
         null,
     ));
     try std.testing.expect(shouldRejectRecoveryAuthority(
         legacy,
-        .stored_key,
+        .chatgpt_subscription,
         null,
     ));
     legacy.authority.credential_source = null;
@@ -3283,7 +3283,7 @@ fn refreshGatewayCredentialForJob(
     const previous_api_key = active_api_key.*;
     if (comptime !host_target.is_wasm) {
         if (deps.usage) |usage| {
-            if (source == .chatgpt_subscription or source == .grok_subscription) {
+            if (source == .chatgpt_subscription or source == .chatgpt_subscription) {
                 usage.clearReconciliationCredential();
             } else {
                 usage.refreshReconciliationCredential(
@@ -4600,7 +4600,7 @@ fn processQueuedPromptLoop(
             else
                 .auto;
             var verified_images: std.ArrayList(image_attachments.VerifiedSnapshot) = .empty;
-            if (job.provider != .gateway and job.images.len > 0 and
+            if (job.images.len > 0 and
                 vision_policy.route == .native)
             {
                 try verified_images.ensureTotalCapacity(overlay_arena, job.images.len);
@@ -4616,7 +4616,7 @@ fn processQueuedPromptLoop(
             runtime_assistant_stream.pushTokenProgressUpdate(&stream_ctx, .changed) catch |progress_err| {
                 debug_trace.logf("agent", "token progress publication failed source=gateway_prepare err={s}", .{@errorName(progress_err)});
             };
-            if (job.provider == .gateway) {
+            if (false) {
                 try persistRecoveryCheckpoint(
                     deps,
                     arena,
@@ -5037,8 +5037,7 @@ fn processQueuedPromptLoop(
             );
             stream_result_set = true;
             const first_failure = streamFailure(stream_result);
-            if (job.provider != .gateway and
-                first_failure != null and first_failure.?.kind == .unauthorized and
+            if (first_failure != null and first_failure.?.kind == .unauthorized and
                 !auth_retry_used and
                 stream_ctx.raw_text.items.len == 0 and
                 !stream_ctx.saw_tool_start and
@@ -5164,9 +5163,7 @@ fn processQueuedPromptLoop(
                 );
             }
             const settled_attempts = semantic_attempt + 1;
-            if (job.provider == .gateway or
-                response_failure == null or response_failure.?.kind != .unauthorized)
-            {
+            if (response_failure == null or response_failure.?.kind != .unauthorized) {
                 try persistRecoveryCheckpoint(
                     deps,
                     arena,
@@ -5197,7 +5194,6 @@ fn processQueuedPromptLoop(
                 debug_trace.logf("agent", "token progress publication failed source=gateway_usage err={s}", .{@errorName(progress_err)});
             };
             if (response_failure != null and response_failure.?.kind == .unauthorized and
-                job.provider == .gateway and
                 !auth_retry_used and
                 semantic_attempt + 1 < semantic_limit)
             {
@@ -6216,7 +6212,7 @@ fn processQueuedPromptLoop(
                             .tool_name = "vision",
                             .message = runtime_vision_contracts.native_route_unavailable_message,
                             .suggestion = if (request_capabilities.image_input_support == .native or
-                                (request_capabilities.image_input_support == .unknown and job.provider != .gateway))
+                                request_capabilities.image_input_support == .unknown)
                                 "Continue using the model's native image input without Vision."
                             else
                                 "Continue without Vision.",

@@ -215,10 +215,7 @@ pub fn Runtime(comptime App: type) type {
                 defer credential.deinit(app.alloc);
                 _ = app.auth.adoptCredential(app.alloc, &credential);
             }
-            app.auth.recordStartupStatus(
-                startup.stored_key_status,
-                startup.credential_onboarding_skipped,
-            );
+            app.auth.recordStartupStatus(startup.credential_onboarding_skipped);
             if (comptime @hasDecl(@TypeOf(app.auth), "refreshSourceInventory")) {
                 app.auth.refreshSourceInventory(app.alloc) catch |err| {
                     debug_trace.logf("auth", "startup source inventory refresh failed err={s}", .{@errorName(err)});
@@ -230,7 +227,7 @@ pub fn Runtime(comptime App: type) type {
             }
             const startup_auth_view = app.auth.view();
             if (startup_auth_view.active_source == null and !startup_auth_view.onboarding_skipped) {
-                app.auth.openOnboardingPicker(app.alloc);
+                app.auth.openOnboardingPicker();
             }
             if (comptime @hasField(App, "terminal_input_runtime") and @hasField(App, "terminal")) {
                 // Own theme protocol bytes even under FX_THEME; probing stays gated.
@@ -382,13 +379,12 @@ pub fn Runtime(comptime App: type) type {
                 try writeCollapsedStartupNotice(app, "skills", skills_summary, skills_body);
             }
             if (comptime @hasField(App, "auth")) {
-                const auth_view = app.auth.view();
-                if (auth_view.active_source == null and auth_view.stored_key_status == .unavailable) {
+                if (false) {
                     debug_trace.logf("keychain", "interactive read skipped", .{});
                     try app.writeDomainNotice(.{
                         .topic = "keychain",
                         .tone = .warning,
-                        .body = "fx could not access " ++ credentials.stored_key_backend_label ++ ". Continuing without an API key.",
+                        .body = "fx could not access the credential store. Continuing without it.",
                     }, true);
                 }
             }
@@ -703,15 +699,11 @@ fn makeStartupState(alloc: Allocator) !app_lifecycle.StartupState {
     if (active_capture.?.startup_with_credential) {
         const credential_token = try alloc.dupe(u8, "api-key");
         errdefer alloc.free(credential_token);
-        const credential_team = try alloc.dupe(u8, "team_123");
-        errdefer alloc.free(credential_team);
         state.credential = .{
             .token = credential_token,
-            .source = .ai_gateway_api_key,
-            .team_id = credential_team,
+            .source = .chatgpt_subscription,
         };
     }
-    state.stored_key_status = .not_found;
     state.credential_onboarding_skipped = active_capture.?.onboarding_skipped;
     state.selected_model = try alloc.dupe(u8, "model-x");
     errdefer alloc.free(state.selected_model);
@@ -934,10 +926,8 @@ test "app_bootstrap_runtime transfers startup state and starts a fresh session" 
 
     try std.testing.expectEqualStrings("/workspace", app.workspace_root);
     try std.testing.expectEqualStrings("api-key", app.auth.apiKey().?);
-    try std.testing.expectEqual(types.CredentialSource.ai_gateway_api_key, app.auth.credentialSource().?);
-    try std.testing.expectEqualStrings("team_123", app.auth.gatewayTeam().?);
+    try std.testing.expectEqual(types.CredentialSource.chatgpt_subscription, app.auth.credentialSource().?);
     const auth_view = app.auth.view();
-    try std.testing.expectEqual(credentials.StoredKeyReadStatus.not_found, auth_view.stored_key_status);
     try std.testing.expect(auth_view.onboarding_skipped);
     try std.testing.expectEqualStrings("model-x", app.selected_model.items);
     try std.testing.expectEqual(types.PermissionMode.auto, app.permission_engine.mode);

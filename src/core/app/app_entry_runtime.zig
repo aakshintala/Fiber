@@ -537,7 +537,7 @@ fn testConfig() Config {
         .gateway_retry_count = 2,
         .gateway_chat_url = "https://gateway/chat",
         .gateway_provider = test_builtin_gateway.provider,
-        .provider_set = provider_set.gateway_only(test_builtin_gateway.provider_bundle),
+        .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
         .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "system" },
@@ -834,9 +834,8 @@ test "app entry returns after handled CLI success without initializing app" {
     try std.testing.expectEqualStrings("entry_test_tool", capture.seen_config.?.tool_set.order[0]);
     try std.testing.expectEqualStrings("skills", capture.seen_config.?.skill_root_policy.workspace_roots[0].path);
     try std.testing.expect(capture.seen_config.?.gateway_provider.chat_url.resolve_fn == test_builtin_gateway.chat_url_provider.resolve_fn);
-    try std.testing.expect(capture.seen_config.?.provider_set.gateway.cli_model_catalog.?.fetch_fn == test_builtin_gateway.cli_model_catalog_provider.fetch_fn);
-    try std.testing.expect(capture.seen_config.?.provider_set.gateway.fx_search.?.execute_fn == test_builtin_gateway.default_web_search_provider.execute_fn);
-    try std.testing.expect(capture.seen_config.?.provider_set.gateway.model_catalog.?.fetch_fn == test_builtin_gateway.model_catalog_provider.fetch_fn);
+    try std.testing.expect(capture.seen_config.?.provider_set.codex.cli_model_catalog.?.fetch_fn == test_builtin_gateway.provider_bundle.cli_model_catalog.?.fetch_fn);
+    try std.testing.expect(capture.seen_config.?.provider_set.codex.model_catalog.?.fetch_fn == test_builtin_gateway.provider_bundle.model_catalog.?.fetch_fn);
     try std.testing.expect(capture.seen_config.?.url_opener.context == cfg.url_opener.context);
     try std.testing.expect(capture.seen_config.?.url_opener.open_fn == cfg.url_opener.open_fn);
     try std.testing.expect(capture.seen_config.?.secret_store.context == cfg.secret_store.context);

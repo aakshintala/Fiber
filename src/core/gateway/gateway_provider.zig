@@ -290,13 +290,11 @@ const FakeCatalog = struct {
         if (self.outcome == .authenticated_rejected_then_ready) {
             if (self.calls == 1) {
                 self.saw_authenticated_access =
-                    std.mem.eql(u8, input.access.authorizationCredential() orelse "", "test-key") and
-                    std.mem.eql(u8, input.access.teamContext() orelse "", "team_123");
+                    std.mem.eql(u8, input.access.authorizationCredential() orelse "", "test-key");
                 return .{ .failure = .{ .category = .authentication, .http_status = .unauthorized } };
             }
             self.saw_public_retry =
                 input.access.authorizationCredential() == null and
-                input.access.teamContext() == null and
                 input.access.publicOnlyReason() == .authenticated_credential_rejected;
             self.outcome = .ready;
         }
@@ -427,7 +425,7 @@ test "capability resolver uses provider catalog metadata" {
         std.testing.allocator,
         fake.provider(),
         .{
-            .access = credentials.catalogAccessForCredential(.ai_gateway_api_key, "test-key", "team_123"),
+            .access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key", "team_123"),
             .endpoint = "/v1/models",
             .cancel_flag = &cancel_flag,
         },
@@ -465,7 +463,7 @@ test "capability resolver retries rejected authenticated catalog access anonymou
         std.testing.allocator,
         fake.provider(),
         .{
-            .access = credentials.catalogAccessForCredential(.ai_gateway_api_key, "test-key", "team_123"),
+            .access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key", "team_123"),
             .endpoint = "/v1/models",
         },
         "provider/model",

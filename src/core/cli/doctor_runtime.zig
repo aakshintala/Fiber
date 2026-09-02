@@ -34,7 +34,7 @@ pub const Check = struct {
 pub const Snapshot = struct {
     workspace_root: []u8,
     model: []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     owned_model: ?[]u8 = null,
     auth: auth_runtime.StatusSnapshot = .{},
     permission_mode: types.PermissionMode,
@@ -44,7 +44,6 @@ pub const Snapshot = struct {
     pub fn deinit(self: *Snapshot, alloc: Allocator) void {
         alloc.free(self.workspace_root);
         if (self.owned_model) |model| alloc.free(model);
-        self.auth.deinit(alloc);
         for (self.checks) |*entry| entry.deinit(alloc);
         alloc.free(self.checks);
         self.* = undefined;
@@ -82,7 +81,6 @@ pub fn collect(
     errdefer {
         alloc.free(snapshot.workspace_root);
         if (snapshot.owned_model) |model| alloc.free(model);
-        snapshot.auth.deinit(alloc);
     }
 
     const workspace_detail = try std.fmt.allocPrint(alloc, "using workspace {s}", .{snapshot.workspace_root});
@@ -109,7 +107,7 @@ pub fn collect(
         return snapshot;
     };
     defer detailed.deinit(alloc);
-    snapshot.provider = detailed.settings.provider orelse .gateway;
+    snapshot.provider = .codex;
 
     snapshot.auth = try auth_runtime.loadStatusSnapshotForProvider(
         alloc,

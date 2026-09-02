@@ -130,7 +130,7 @@ pub const Context = struct {
     gateway_team: ?[]const u8 = null,
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     provider_capabilities: provider_set.Bundle.Capabilities = .{
         .fx_search = true,
         .vision_fallback = true,
@@ -2115,7 +2115,7 @@ const TestRuntime = struct {
     max_command_output_bytes: usize = 64 * 1024,
     max_tool_result_bytes: usize = 64 * 1024,
     api_key: []const u8 = "",
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     provider_capabilities: provider_set.Bundle.Capabilities = .{
         .fx_search = true,
         .vision_fallback = true,
@@ -6626,7 +6626,7 @@ const VisionGatewayFixture = struct {
     }
 
     fn provider(self: *VisionGatewayFixture) agent_stream_provider.Provider {
-        var result = test_builtin_gateway.agent_stream_provider;
+        var result = agent_stream_provider.unavailable_provider;
         result.context = self;
         result.stream_fn = stream;
         return result;
@@ -6664,13 +6664,13 @@ const VisionGatewayFixture = struct {
                 .usage = response.usage,
             },
             .usage = .{ .deferred = .{
-                .provider = .gateway,
+                .provider = .codex,
                 .generation_id = response.generation_id orelse "gen_test",
                 .scope = "https://ai-gateway.vercel.sh",
                 .tenant = request.credential.tenant,
-                .credential_source = request.credential.source orelse .ai_gateway_api_key,
+                .credential_source = request.credential.source orelse .chatgpt_subscription,
                 .credential_identity = credential_authority.derive(
-                    request.credential.source orelse .ai_gateway_api_key,
+                    request.credential.source orelse .chatgpt_subscription,
                     request.credential.account_id,
                 ),
             } },

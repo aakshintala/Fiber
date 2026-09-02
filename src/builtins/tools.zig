@@ -408,24 +408,6 @@ pub const web_fetch = ToolSpec{
     .irreversible_fn = web_fetch_impl.isIrreversible,
 };
 
-fn writeWebSearchGatewayAdvertisement(
-    alloc: Allocator,
-    writer: *std.Io.Writer,
-) tool_dispatch.ProviderAdvertisementError!void {
-    const policy = builtin_gateway.default_web_search_policy;
-    const provider_tools = try builtin_gateway.providerToolsJson(alloc, .{
-        .backend = try builtin_gateway.selectedWebSearchBackend(),
-        .max_results = policy.max_results,
-        .max_output_tokens = policy.max_output_tokens,
-        .max_output_chars = policy.max_output_chars,
-    });
-    defer alloc.free(provider_tools);
-    if (provider_tools.len < 2 or provider_tools[0] != '[' or provider_tools[provider_tools.len - 1] != ']') {
-        return error.InvalidGatewayAdvertisement;
-    }
-    try writer.writeAll(provider_tools[1 .. provider_tools.len - 1]);
-}
-
 pub const web_search = ToolSpec{
     .name = "web_search",
     .description = web_search_description,
@@ -442,8 +424,6 @@ pub const web_search = ToolSpec{
             .additional_properties = false,
         },
     },
-    .write_provider_advertisement_fn = writeWebSearchGatewayAdvertisement,
-    .provider_executed = true,
     .executor_kind = .web_search,
     .activity_kind = .read,
     .requires_approval = false,

@@ -91,20 +91,14 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .login,
         .token = "login",
-        .usage = "login [vercel|codex|grok]",
-        .summary = "Sign in to Vercel or a selected provider",
+        .usage = "login [codex]",
+        .summary = "Sign in to Codex",
     },
     .{
         .kind = .logout,
         .token = "logout",
-        .usage = "logout [vercel|codex|grok]",
-        .summary = "Sign out of Vercel or a selected provider session",
-    },
-    .{
-        .kind = .setup,
-        .token = "setup",
-        .usage = "setup",
-        .summary = "Configure an AI Gateway API key",
+        .usage = "logout [codex]",
+        .summary = "Sign out of the Codex session",
     },
     .{
         .kind = .status,
@@ -158,23 +152,11 @@ pub const top_level_specs = [_]TopLevelSpec{
         .options = &.{json_option},
     },
     .{
-        .kind = .provider,
-        .token = "provider",
-        .usage = "provider <gateway|codex|grok>",
-        .summary = "Choose the model provider used by fx",
-    },
-    .{
         .kind = .doctor,
         .token = "doctor",
         .usage = "doctor [--json]",
         .summary = "Run local health and preflight checks",
         .options = &.{json_option},
-    },
-    .{
-        .kind = .teams,
-        .token = "teams",
-        .usage = "teams",
-        .summary = "Choose the Vercel team used by AI Gateway",
     },
     .{
         .kind = .session,
@@ -216,14 +198,6 @@ pub const top_level_specs = [_]TopLevelSpec{
             .{ .flag = "<id>", .description = "Resume a session by id" },
             .{ .flag = "--id <id>", .description = "Resume a session by exact id" },
         },
-    },
-    .{
-        .kind = .credits,
-        .token = "credits",
-        .aliases = &.{"balance"},
-        .usage = "credits [--json]",
-        .summary = "Show the AI Gateway credit balance",
-        .options = &.{json_option},
     },
     .{
         .kind = .usage,
@@ -299,15 +273,9 @@ pub const top_level_help_groups = [_]TopLevelHelpGroup{
         .{ .usage = "session recover <id>", .summary = "Copy a recoverable corrupt session" },
     } },
     .{ .entries = &.{
-        .{ .kind = .login, .usage = "login [vercel|codex|grok]", .summary = "Sign in to a model provider" },
-        .{ .kind = .logout, .usage = "logout [vercel|codex|grok]", .summary = "Sign out of a model provider" },
-        .{ .kind = .provider, .usage = "provider <gateway|codex|grok>", .summary = "Choose the active model provider" },
+        .{ .kind = .login, .usage = "login [codex]", .summary = "Sign in to Codex" },
+        .{ .kind = .logout, .usage = "logout [codex]", .summary = "Sign out of the Codex session" },
         .{ .kind = .models, .usage = "models" },
-    } },
-    .{ .entries = &.{
-        .{ .kind = .setup, .usage = "setup", .summary = "Configure a Vercel AI Gateway API key" },
-        .{ .kind = .teams, .usage = "teams", .summary = "Choose a Vercel AI Gateway team" },
-        .{ .kind = .credits, .usage = "credits|balance", .summary = "Show Vercel AI Gateway credits" },
     } },
     .{ .entries = &.{
         .{ .kind = .usage, .usage = "usage [--period <24h|7d|30d>]", .summary = "Show locally recorded token usage and spend" },
@@ -381,7 +349,6 @@ pub const top_level_notes = [_][]const u8{
 
 pub const top_level_resources = [_]TopLevelResource{
     .{ .label = "Learn more about fx:", .value = "https://fx.sh/docs", .link = true },
-    .{ .label = "Report a problem:", .value = "run `/feedback` inside fx" },
 };
 
 pub const top_level_registry = TopLevelRegistry{
@@ -427,9 +394,8 @@ pub const slash_specs = [_]SlashSpec{
     .{ .kind = .resume_session, .command = "/resume", .help_entry = "/resume", .completion_description = "resume a saved session", .presentation_category = .session },
     .{ .kind = .continue_recovery, .command = "/continue", .help_entry = "/continue", .completion_description = "continue a paused model response", .presentation_category = .session, .requires_prompt_credential = true },
     .{ .kind = .rename_session, .command = "/rename", .help_entry = "/rename <title>", .completion_description = "rename the current session", .presentation_category = .session, .has_args = true, .accepts_payload = true },
-    .{ .kind = .login, .command = "/login", .help_entry = "/login", .completion_description = "choose Vercel or Codex sign-in", .presentation_category = .account },
-    .{ .kind = .logout, .command = "/logout", .help_entry = "/logout [vercel|codex|grok]", .completion_description = "sign out of a provider session", .presentation_category = .account, .has_args = true, .accepts_payload = true },
-    .{ .kind = .setup, .command = "/setup", .help_entry = "/setup", .completion_description = "manage accounts and AI Gateway access", .presentation_category = .account },
+    .{ .kind = .login, .command = "/login", .help_entry = "/login", .completion_description = "sign in to Codex", .presentation_category = .account },
+    .{ .kind = .logout, .command = "/logout", .help_entry = "/logout [codex]", .completion_description = "sign out of the Codex session", .presentation_category = .account, .has_args = true, .accepts_payload = true },
     .{ .kind = .stats, .command = "/stats", .help_entry = "/stats", .completion_description = "show token and turn statistics", .presentation_category = .account },
     .{ .kind = .usage, .command = "/usage", .aliases = &.{"/cost"}, .help_entry = "/usage (/cost)", .completion_description = "show local fx tokens, models, and spend", .presentation_category = .account },
     .{ .kind = .status, .command = "/status", .help_entry = "/status", .completion_description = "show runtime configuration", .presentation_category = .general, .show_in_welcome = true },
@@ -442,12 +408,10 @@ pub const slash_specs = [_]SlashSpec{
     .{ .kind = .mcp, .command = "/mcp", .help_entry = "/mcp [list|resource|prompt|add|remove|path|reload|auth|logout|trust]", .completion_description = "manage local and remote MCP servers, resources, prompts, and project trust", .presentation_category = .extensions, .has_args = true, .accepts_payload = true },
     .{ .kind = .skills, .command = "/skills", .help_entry = "/skills [list|add|install|show|create|remove|path] [name|url|path] ($ opens skill search)", .completion_description = "browse and manage skills", .presentation_category = .extensions, .has_args = true, .accepts_payload = true },
     .{ .kind = .copy, .command = "/copy", .help_entry = "/copy", .completion_description = "copy the last assistant response", .presentation_category = .session },
-    .{ .kind = .feedback, .command = "/feedback", .help_entry = "/feedback", .completion_description = "open the fx feedback form", .presentation_category = .product, .show_in_welcome = true },
     .{ .kind = .trace, .command = "/trace", .help_entry = "/trace", .completion_description = "copy a private diagnostic trace", .presentation_category = .product },
     .{ .kind = .compact, .command = "/compact", .help_entry = "/compact", .completion_description = "compact older conversation turns", .presentation_category = .session },
     .{ .kind = .settings, .command = "/settings", .help_entry = "/settings [startup-scrollback [on|off]]", .completion_description = "browse and update settings", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
     .{ .kind = .alias, .command = "/alias", .aliases = &.{}, .help_entry = "/alias [name] [command]", .completion_description = "show alias availability", .presentation_category = .extensions, .has_args = true, .accepts_payload = true },
-    .{ .kind = .credits, .command = "/credits", .aliases = &.{"/balance"}, .help_entry = "/credits (/balance)", .completion_description = "show gateway credits balance", .presentation_category = .account, .requires_prompt_credential = true },
     .{ .kind = .paste, .command = "/paste", .help_entry = "/paste", .completion_description = "attach an image from the clipboard when supported", .presentation_category = .media },
     .{ .kind = .fast, .command = "/fast", .help_entry = "/fast", .completion_description = "toggle Fast mode when supported", .presentation_category = .model },
     .{ .kind = .statusline, .command = "/statusline", .help_entry = "/statusline [context|session|workspace]", .completion_description = "toggle status line segments", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
@@ -525,7 +489,6 @@ test "built-in slash commands register exact active order" {
         "/rename",
         "/login",
         "/logout",
-        "/setup",
         "/stats",
         "/usage",
         "/status",
@@ -538,12 +501,10 @@ test "built-in slash commands register exact active order" {
         "/mcp",
         "/skills",
         "/copy",
-        "/feedback",
         "/trace",
         "/compact",
         "/settings",
         "/alias",
-        "/credits",
         "/paste",
         "/fast",
         "/statusline",
@@ -573,8 +534,8 @@ test "built-in slash registry resolves primary commands and aliases" {
     const model = command_specs.matchedSlashPrefix(slash_registry, "/model\tmodel-id", .model) orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("/model", model);
 
-    const credits = slash_registry.lookup("/credits") orelse return error.TestExpectedEqual;
-    try std.testing.expect(credits.requires_prompt_credential);
+    try std.testing.expect(slash_registry.lookup("/credits") == null);
+    try std.testing.expect(slash_registry.lookup("/balance") == null);
 
     const model_command = slash_registry.lookup("/model") orelse return error.TestExpectedEqual;
     try std.testing.expect(!model_command.requires_prompt_credential);

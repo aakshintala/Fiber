@@ -632,8 +632,7 @@ const FallbackProbe = struct {
         const index = self.calls;
         self.calls += 1;
         if (index == 1) {
-            self.anonymous_retry = input.access.authorizationCredential() == null and
-                input.access.teamContext() == null;
+            self.anonymous_retry = input.access.authorizationCredential() == null;
         }
         if (self.failures[index]) |failure| return .{ .failure = failure };
         return .{ .catalog = .empty };
@@ -672,7 +671,7 @@ test "catalog authentication fallback is anonymous and bounded" {
     defer debug_trace.resetForTest();
     try debug_trace.configureForTestWithScopes(alloc, trace_path, "catalog");
 
-    const access = credentials.catalogAccessForCredential(.ai_gateway_api_key, "test-key", "team_123");
+    const access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key", "team_123");
     const rejection = Failure{ .category = .authentication, .http_status = .unauthorized };
     var accepted = FallbackProbe{ .failures = .{ rejection, null } };
     var loaded = fetchWithPublicFallback(accepted.provider(), std.testing.allocator, .{
@@ -681,7 +680,7 @@ test "catalog authentication fallback is anonymous and bounded" {
     });
     defer freeModelCatalog(std.testing.allocator, &loaded.loaded.catalog);
     try std.testing.expectEqual(AccessLevel.public_only, loaded.loaded.provenance.access.level);
-    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, loaded.loaded.provenance.access.source.?);
+    try std.testing.expectEqual(credentials.Source.chatgpt_subscription, loaded.loaded.provenance.access.source.?);
     try std.testing.expectEqual(credentials.CatalogPublicOnlyReason.authenticated_credential_rejected, loaded.loaded.provenance.access.public_only_reason.?);
     try std.testing.expect(loaded.loaded.provenance.access.private_models_may_be_hidden);
     try std.testing.expect(loaded.loaded.provenance.anonymous_fallback_used);
@@ -740,7 +739,7 @@ test "catalog authentication fallback is anonymous and bounded" {
 
 test "catalog fallback classification stays bounded across repeated cycles" {
     const access = credentials.catalogAccessForCredential(
-        .ai_gateway_api_key,
+        .chatgpt_subscription,
         "repeated-test-key",
         "repeated-team",
     );

@@ -338,7 +338,6 @@ fn completeSignIn(
 fn saveSignIn(_: ?*anyopaque, alloc: Allocator, completion: login_flow.SignInCompletion) !void {
     const session = switch (completion) {
         .chatgpt => |session| session,
-        .vercel, .grok => return error.InvalidSignInCompletion,
     };
     try chatgpt_session.saveNewSession(alloc, session);
 }
