@@ -234,7 +234,6 @@ pub const ServerState = struct {
     api_key: []u8 = &.{},
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]u8 = null,
-    gateway_team: ?[]u8 = null,
     selected_model: []u8 = &.{},
     provider: model_provider.ProviderId = .codex,
     configured_model: []u8 = &.{},
@@ -285,7 +284,6 @@ pub const ServerState = struct {
         self.workspace_access.deinit(self.alloc);
         if (self.workspace_root.len > 0) self.alloc.free(self.workspace_root);
         if (self.api_key.len > 0) secret.zeroAndFree(self.alloc, self.api_key);
-        if (self.gateway_team) |team| self.alloc.free(team);
         if (self.account_id) |account_id| self.alloc.free(account_id);
         if (self.selected_model.len > 0) self.alloc.free(self.selected_model);
         if (self.configured_model.len > 0) self.alloc.free(self.configured_model);

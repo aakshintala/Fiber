@@ -314,7 +314,6 @@ const AcpContext = struct {
             self.state.web_search_runtime.configure(.{
                 .api_key = session.api_key,
                 .credential_source = session.credential_source,
-                .gateway_team = self.state.gateway_team,
                 .worker_model = session.model,
                 .gateway_retry_count = self.state.cfg.gateway_retry_count,
                 .gateway_chat_url = self.state.cfg.gateway_chat_url,
@@ -340,7 +339,6 @@ const AcpContext = struct {
             .provider_capabilities = provider_capabilities,
             .oauth_transport = self.state.cfg.gateway_provider.oauth_transport,
             .secret_store = self.state.cfg.secret_store,
-            .gateway_team = self.state.gateway_team,
             .model = session.model,
             .gateway_retry_count = self.state.cfg.gateway_retry_count,
             .gateway_chat_url = self.state.cfg.gateway_chat_url,
@@ -694,7 +692,6 @@ pub fn handlePrompt(
         .credential_source = session.credential_source,
         .account_id = if (session.account_id) |account_id| @constCast(account_id) else null,
         .provider = session.provider,
-        .gateway_team = state.gateway_team,
         .permission_mode = captured_permission_mode,
         .history = context_history,
         .root_user_intent_context = root_user_intent_context,
@@ -4663,7 +4660,6 @@ test "ACP prompt agent config carries request options from active session" {
 
     var state = try initTestAcpState(alloc, workspace, .auto);
     defer state.deinit();
-    state.gateway_team = try alloc.dupe(u8, "team_123");
     state.context_limits.project_instruction_file_bytes = .{
         .value = .{ .bytes = 17 },
         .source = .command_line,

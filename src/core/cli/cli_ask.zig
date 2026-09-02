@@ -518,7 +518,6 @@ const AskContext = struct {
     workspace_root: []const u8,
     workspace_access: workspace_access.WorkspaceAccess = .{},
     api_key: []const u8 = "",
-    gateway_team: ?[]const u8 = null,
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
     provider: model_provider.ProviderId = .codex,
@@ -945,7 +944,6 @@ const AskContext = struct {
             self.web_search_runtime.configure(.{
                 .api_key = self.api_key,
                 .credential_source = self.credential_source,
-                .gateway_team = self.gateway_team,
                 .worker_model = self.model,
                 .gateway_retry_count = self.cfg.gateway_retry_count,
                 .gateway_chat_url = self.cfg.gateway_chat_url,
@@ -965,7 +963,6 @@ const AskContext = struct {
             .max_tool_result_bytes = self.max_tool_result_bytes,
             .api_key = self.api_key,
             .agent_stream_provider = self.agentStreamProvider(),
-            .gateway_team = self.gateway_team,
             .credential_source = self.credential_source,
             .account_id = self.account_id,
             .provider = self.provider,
@@ -1060,7 +1057,7 @@ const AskContext = struct {
         return permission_auto_classifier.Classifier.withProvider(provider, .{
             .credential = self.api_key,
             .account_id = self.account_id,
-            .tenant = self.gateway_team,
+            .tenant = null,
             .endpoint = self.cfg.gateway_chat_url,
             .cancel_flag = self.cancelFlag(),
             .usage = &self.session.usage,

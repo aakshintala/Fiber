@@ -198,7 +198,6 @@ const e2e_gateway_chat_url_env = "FX_E2E_GATEWAY_CHAT_URL";
 const e2e_gateway_models_url_env = "FX_E2E_GATEWAY_MODELS_URL";
 const e2e_gateway_credits_url_env = "FX_E2E_GATEWAY_CREDITS_URL";
 const default_gateway_base_url = "https://ai-gateway.vercel.sh";
-pub const vercel_ai_gateway_team_header = "x-vercel-ai-gateway-team";
 /// Identifies fx on every AI Gateway request; the zig std.http default
 /// (`zig/<version> (std.http)`) is never sent to the gateway.
 pub const user_agent = "fx/" ++ build_options.app_version;
@@ -242,10 +241,9 @@ pub const ProviderAttemptOwner = enum {
 pub fn fetchGatewayJson(
     alloc: std.mem.Allocator,
     api_key: ?[]const u8,
-    gateway_team: ?[]const u8,
     url: []const u8,
 ) !GatewayJsonResult {
-    var result = try fetchGatewayGetAtUrl(alloc, api_key, gateway_team, url, e2e_gateway_models_url_env);
+    var result = try fetchGatewayGetAtUrl(alloc, api_key, url, e2e_gateway_models_url_env);
     if (failedGatewayJsonStatus(result.status)) |status| {
         result.deinit(alloc);
         return .{ .http_status = status };
@@ -255,17 +253,17 @@ pub fn fetchGatewayJson(
 }
 
 pub fn fetchGatewayGetResult(alloc: std.mem.Allocator, api_key: ?[]const u8, path: []const u8) !GetResult {
-    return fetchGatewayGet(alloc, api_key, null, path, e2e_gateway_credits_url_env);
+    return fetchGatewayGet(alloc, api_key, path, e2e_gateway_credits_url_env);
 }
 
-fn fetchGatewayGet(alloc: std.mem.Allocator, api_key: ?[]const u8, gateway_team: ?[]const u8, path: []const u8, e2e_url_env: []const u8) !GetResult {
+fn fetchGatewayGet(alloc: std.mem.Allocator, api_key: ?[]const u8, path: []const u8, e2e_url_env: []const u8) !GetResult {
     const default_url = try std.fmt.allocPrint(alloc, "{s}{s}", .{ gatewayBaseUrl(), path });
     defer alloc.free(default_url);
 
-    return fetchGatewayGetAtUrl(alloc, api_key, gateway_team, default_url, e2e_url_env);
+    return fetchGatewayGetAtUrl(alloc, api_key, default_url, e2e_url_env);
 }
 
-fn fetchGatewayGetAtUrl(alloc: std.mem.Allocator, api_key: ?[]const u8, gateway_team: ?[]const u8, default_url: []const u8, e2e_url_env: []const u8) !GetResult {
+fn fetchGatewayGetAtUrl(alloc: std.mem.Allocator, api_key: ?[]const u8, default_url: []const u8, e2e_url_env: []const u8) !GetResult {
     var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
     defer client.deinit();
 
@@ -280,8 +278,6 @@ fn fetchGatewayGetAtUrl(alloc: std.mem.Allocator, api_key: ?[]const u8, gateway_
         auth_header = try std.fmt.allocPrint(alloc, "Bearer {s}", .{key});
         headers.authorization = .{ .override = auth_header.? };
     }
-    var extra_headers_buf: [1]std.http.Header = undefined;
-    const extra_headers = gatewayModelCatalogExtraHeaders(&extra_headers_buf, gateway_team);
 
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
@@ -290,7 +286,6 @@ fn fetchGatewayGetAtUrl(alloc: std.mem.Allocator, api_key: ?[]const u8, gateway_
         .location = .{ .url = url },
         .method = .GET,
         .headers = headers,
-        .extra_headers = extra_headers,
         .response_writer = &out.writer,
         .redirect_behavior = .unhandled,
     });
@@ -304,27 +299,24 @@ fn fetchGatewayGetAtUrl(alloc: std.mem.Allocator, api_key: ?[]const u8, gateway_
 pub fn fetchGatewayJsonCancellable(
     alloc: std.mem.Allocator,
     api_key: ?[]const u8,
-    gateway_team: ?[]const u8,
     url: []const u8,
     cancel_flag: *std.atomic.Value(bool),
 ) !GatewayJsonResult {
     if (cancel_flag.load(.seq_cst)) return error.Cancelled;
 
     const request_url = try resolveE2eGatewayUrl(e2e_gateway_models_url_env, url);
-    return fetchGatewayJsonAtUrlCancellable(alloc, api_key, gateway_team, request_url, cancel_flag);
+    return fetchGatewayJsonAtUrlCancellable(alloc, api_key, request_url, cancel_flag);
 }
 
 fn fetchGatewayJsonAtUrlCancellable(
     alloc: std.mem.Allocator,
     api_key: ?[]const u8,
-    gateway_team: ?[]const u8,
     url: []const u8,
     cancel_flag: *std.atomic.Value(bool),
 ) !GatewayJsonResult {
     var operation = GatewayJsonFetchOperation{
         .alloc = alloc,
         .api_key = api_key,
-        .gateway_team = gateway_team,
         .url = url,
         .cancel_flag = cancel_flag,
     };
@@ -334,7 +326,6 @@ fn fetchGatewayJsonAtUrlCancellable(
 const GatewayJsonFetchOperation = struct {
     alloc: std.mem.Allocator,
     api_key: ?[]const u8,
-    gateway_team: ?[]const u8,
     url: []const u8,
     cancel_flag: *std.atomic.Value(bool),
 
@@ -342,7 +333,6 @@ const GatewayJsonFetchOperation = struct {
         return fetchGatewayJsonAtUrlCore(
             self.alloc,
             self.api_key,
-            self.gateway_team,
             self.url,
             self.cancel_flag,
         );
@@ -413,7 +403,6 @@ fn runCancellableGatewayJsonFetch(
 fn fetchGatewayJsonAtUrlCore(
     alloc: std.mem.Allocator,
     api_key: ?[]const u8,
-    gateway_team: ?[]const u8,
     url: []const u8,
     cancel_flag: *std.atomic.Value(bool),
 ) !GatewayJsonResult {
@@ -434,12 +423,9 @@ fn fetchGatewayJsonAtUrlCore(
         auth_header = try std.fmt.allocPrint(alloc, "Bearer {s}", .{key});
         headers.authorization = .{ .override = auth_header.? };
     }
-    var extra_headers_buf: [1]std.http.Header = undefined;
-    const extra_headers = gatewayModelCatalogExtraHeaders(&extra_headers_buf, gateway_team);
 
     var req = client.request(.GET, uri, .{
         .headers = headers,
-        .extra_headers = extra_headers,
         .redirect_behavior = .unhandled,
     }) catch |err| {
         if (cancel_flag.load(.seq_cst)) return error.Cancelled;
@@ -1244,11 +1230,10 @@ fn streamGatewayCompletionCoreWithOptions(
     const auth_header = try std.fmt.allocPrint(alloc, "Bearer {s}", .{request.api_key});
     defer alloc.free(auth_header);
 
-    var extra_headers_buf: [9]std.http.Header = undefined;
+    var extra_headers_buf: [8]std.http.Header = undefined;
     const extra_headers = gatewayExtraHeaders(
         &extra_headers_buf,
         model,
-        request.team,
         request.session_id,
     );
 
@@ -1550,10 +1535,9 @@ fn streamGatewayCompletionCoreWithOptions(
 fn gatewayExtraHeaders(
     buf: []std.http.Header,
     model: []const u8,
-    team: ?[]const u8,
     session_id: ?[]const u8,
 ) []const std.http.Header {
-    std.debug.assert(buf.len >= 9);
+    std.debug.assert(buf.len >= 8);
     var len: usize = 0;
     buf[len] = .{ .name = "HTTP-Referer", .value = "https://github.com/vercel-labs/fx" };
     len += 1;
@@ -1567,12 +1551,6 @@ fn gatewayExtraHeaders(
     len += 1;
     buf[len] = .{ .name = "ai-language-model-streaming", .value = "true" };
     len += 1;
-    if (team) |gateway_team| {
-        if (gateway_team.len > 0) {
-            buf[len] = .{ .name = vercel_ai_gateway_team_header, .value = gateway_team };
-            len += 1;
-        }
-    }
     if (session_id) |id| {
         if (id.len > 0) {
             buf[len] = .{ .name = "x-session-id", .value = id };
@@ -1584,30 +1562,8 @@ fn gatewayExtraHeaders(
     return buf[0..len];
 }
 
-fn gatewayModelCatalogExtraHeaders(buf: []std.http.Header, team: ?[]const u8) []const std.http.Header {
-    std.debug.assert(buf.len >= 1);
-    var len: usize = 0;
-    if (team) |gateway_team| {
-        if (gateway_team.len > 0) {
-            buf[len] = .{ .name = vercel_ai_gateway_team_header, .value = gateway_team };
-            len += 1;
-        }
-    }
-    return buf[0..len];
-}
-
-test "gateway extra headers include selected team" {
-    var buf: [9]std.http.Header = undefined;
-    const headers = gatewayExtraHeaders(&buf, "test/model", "team_123", null);
-    try std.testing.expectEqualStrings("team_123", headerValue(headers, vercel_ai_gateway_team_header).?);
-    try std.testing.expectEqualStrings("test/model", headerValue(headers, "ai-language-model-id").?);
-
-    const headers_without_team = gatewayExtraHeaders(&buf, "test/model", "", null);
-    try std.testing.expect(headerValue(headers_without_team, vercel_ai_gateway_team_header) == null);
-}
-
 test "gateway extra headers derive session identity and affinity together" {
-    var buf: [9]std.http.Header = undefined;
+    var buf: [8]std.http.Header = undefined;
     const cases = [_]struct {
         session_id: ?[]const u8,
         expected: ?[]const u8,
@@ -1621,13 +1577,9 @@ test "gateway extra headers derive session identity and affinity together" {
         const headers = gatewayExtraHeaders(
             &buf,
             "test/model",
-            "team_123",
             case.session_id,
         );
-        try std.testing.expectEqualStrings(
-            "team_123",
-            headerValue(headers, vercel_ai_gateway_team_header).?,
-        );
+        try std.testing.expectEqualStrings("test/model", headerValue(headers, "ai-language-model-id").?);
         if (case.expected) |expected| {
             try std.testing.expectEqualStrings(expected, headerValue(headers, "x-session-id").?);
             try std.testing.expectEqualStrings(expected, headerValue(headers, "x-session-affinity").?);
@@ -6738,9 +6690,9 @@ fn expectCancellableGatewayJsonCancellation(
 
     const started = std.Io.Clock.Timestamp.now(zio, .awake);
     const result = if (use_tls)
-        fetchGatewayJsonAtUrlCancellable(std.testing.allocator, api_key, null, models_url, &cancel_flag)
+        fetchGatewayJsonAtUrlCancellable(std.testing.allocator, api_key, models_url, &cancel_flag)
     else
-        fetchGatewayJsonCancellable(std.testing.allocator, api_key, null, "https://ai-gateway.vercel.sh/v1/models", &cancel_flag);
+        fetchGatewayJsonCancellable(std.testing.allocator, api_key, "https://ai-gateway.vercel.sh/v1/models", &cancel_flag);
     const elapsed_ms = started.durationTo(std.Io.Clock.Timestamp.now(zio, .awake)).raw.toMilliseconds();
 
     try std.testing.expectError(error.Cancelled, result);

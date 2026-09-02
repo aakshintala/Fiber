@@ -201,10 +201,6 @@ pub fn run(
         .model = arena.dupe(u8, admission.model) catch return error.OutOfMemory,
         .provider = admission.provider,
         .api_key = arena.dupe(u8, routed_config.tool_context.api_key) catch return error.OutOfMemory,
-        .gateway_team = if (routed_config.tool_context.gateway_team) |team|
-            arena.dupe(u8, team) catch return error.OutOfMemory
-        else
-            null,
         .credential_source = routed_config.tool_context.credential_source,
         .account_id = if (routed_config.tool_context.account_id) |account_id|
             arena.dupe(u8, account_id) catch return error.OutOfMemory
