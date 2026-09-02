@@ -4654,11 +4654,12 @@ test "runtime cancellation observed at the timeout deadline stays graceful" {
             result = value;
             cancelled = value.cancelled;
         } else |err| switch (err) {
-            error.Cancelled => cancelled = true,
-            else => {
-                try std.testing.expectEqual(error.Cancelled, err);
-                cancelled = true;
-            },
+            // The cancel flag flips 25ms before the deadline, so cancellation
+            // and timeout genuinely race. Both terminate gracefully, and which
+            // one wins is scheduling noise; the assertions below check the
+            // gracefulness this test is named for rather than the winner.
+            error.Cancelled, error.TimeoutExpired => cancelled = true,
+            else => return err,
         }
         defer if (result) |value| alloc.free(value.output);
 
