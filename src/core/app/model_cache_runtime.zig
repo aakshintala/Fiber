@@ -14,10 +14,6 @@ const test_builtin_gateway = if (@import("builtin").is_test)
     @import("../../builtins/gateway.zig")
 else
     struct {};
-const test_gateway_client = if (@import("builtin").is_test)
-    @import("../../gateway/client.zig")
-else
-    struct {};
 
 const Allocator = std.mem.Allocator;
 const e2e_gateway_models_url_env = "FX_E2E_GATEWAY_MODELS_URL";
