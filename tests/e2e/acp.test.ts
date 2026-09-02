@@ -15,28 +15,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { FX_BIN, HAS_API_KEY, REPO_ROOT, runFx } from "../evals/eval-helpers";
-import {
-  AUTO_EXA_SERIALIZED_TOOL_NAMES,
-  customProviderGuidanceState,
-  findUnavailableCapabilityReferences,
-  parseGatewayRequest,
-  serializedToolNames,
-  toolShapesWithoutDescriptions,
-} from "./conditional-guidance-oracle";
+import { FX_BIN, REPO_ROOT, runFx } from "../evals/eval-helpers";
 import { expectPermissionModeContext } from "./permission-mode-context";
 import {
   canonicalSubagentIdForStore,
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText as finalText,
-  heldFakeGatewayFinalText,
-  fakeGatewayPermissionDecision,
-  fakeGatewaySerializedToolCall,
-  fakeGatewaySse,
-  fakeGatewayToolCall,
-  fakeShellRun,
-  startDynamicFakeGateway,
-  startFakeGateway,
   terminalFixtureShell,
 } from "./tmux-helpers";
 import {
@@ -190,19 +172,280 @@ function partialEofResponse(text: string): Response {
   );
 }
 
+// --- Codex-native response fixtures ---------------------------------------
+// The Codex-only runtime speaks the OpenAI Responses protocol. The historical
+// helper names below now build Responses-protocol payloads so the retained
+// behavior tests keep their shape.
+
+type FakeCodexResponse = string | Response | ((body: string) => Response | string | Promise<Response | string>);
+
+function asSseResponse(payload: FakeCodexResponse, body: string): Response | Promise<Response> {
+  const resolve = typeof payload === "function"
+    ? payload(body)
+    : payload;
+  const toResponse = (value: Response | string) =>
+    typeof value === "string"
+      ? new Response(value, { headers: { "content-type": "text/event-stream" } })
+      : value;
+  return resolve instanceof Promise
+    ? resolve.then(toResponse)
+    : toResponse(resolve);
+}
+
+function codexCompleted(usage: object = { input_tokens: 3, output_tokens: 5 }): string {
+  return `data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", usage } })}\n\n`;
+}
+
+function fakeGatewaySse(events: object[]): string {
+  const out: string[] = [];
+  for (const event of events) {
+    const e = event as Record<string, any>;
+    if (e.type === "text-delta") {
+      out.push(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: e.delta })}\n\n`);
+    } else if (e.type === "tool-call") {
+      out.push(`data: ${JSON.stringify({
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "function_call", call_id: e.toolCallId, name: e.toolName },
+      })}\n\n`);
+      out.push(`data: ${JSON.stringify({
+        type: "response.function_call_arguments.done",
+        output_index: 0,
+        arguments: typeof e.input === "string" ? e.input : JSON.stringify(e.input ?? {}),
+      })}\n\n`);
+    } else if (e.type === "finish") {
+      const unified = e.finishReason?.unified;
+      if (unified === "length") {
+        out.push(`data: ${JSON.stringify({
+          type: "response.incomplete",
+          response: { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } },
+        })}\n\n`);
+      } else if (e.usage === "omit") {
+        out.push('data: {"type":"response.completed","response":{"status":"completed"}}\n\n');
+      } else {
+        out.push(codexCompleted());
+      }
+    } else if (e.type === "codex-raw") {
+      out.push(e.payload);
+    } else {
+      throw new Error(`unsupported fixture event: ${e.type}`);
+    }
+  }
+  return out.join("");
+}
+
+function finalText(text: string): string {
+  return `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n` +
+    codexCompleted({ input_tokens: 3, output_tokens: 5 });
+}
+
+function fakeGatewayToolCall(id: string, name: string, input: object | string): string {
+  return fakeGatewaySse([
+    { type: "tool-call", toolCallId: id, toolName: name, input },
+    { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
+  ]);
+}
+
+function fakeShellRun(
+  id: string,
+  command: string,
+  options: Record<string, unknown> = {},
+): string {
+  return fakeGatewayToolCall(id, "shell", {
+    request: {
+      yield_time_ms: 30_000,
+      ...options,
+      action: "run",
+      command,
+    },
+  });
+}
+
+function fakeGatewaySerializedToolCall(
+  id: string,
+  name: string,
+  input: string,
+  assistantText?: string,
+): string {
+  return fakeGatewaySse([
+    ...(assistantText ? [{ type: "text-delta", id: "answer_1", delta: assistantText }] : []),
+    { type: "tool-call", toolCallId: id, toolName: name, input },
+    { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
+  ]);
+}
+
+function fakeGatewayPermissionDecision(
+  decision: "clear" | "caution" = "clear",
+  toolCallId = "permission_decision_1",
+  rationale = "test fixture",
+): string {
+  return fakeGatewayToolCall(toolCallId, "permission_decision", {
+    risk: decision === "clear" ? "low" : "high",
+    decision,
+    rationale,
+  });
+}
+
+function heldFakeGatewayFinalText() {
+  const encoder = new TextEncoder();
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let closed = false;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let response: Response | undefined;
+  let pendingText: string | undefined;
+
+  const stopTimer = () => {
+    if (timer) clearInterval(timer);
+    timer = undefined;
+  };
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    stopTimer();
+    controller?.close();
+  };
+  const finish = (text: string) => {
+    if (closed) return;
+    if (!controller) {
+      pendingText = text;
+      return;
+    }
+    stopTimer();
+    controller.enqueue(encoder.encode(finalText(text)));
+    close();
+  };
+  const createResponse = () => new Response(
+    new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value;
+        if (closed) {
+          value.close();
+          return;
+        }
+        const keepAlive = () => {
+          if (!closed) value.enqueue(encoder.encode(": hold-response\n\n"));
+        };
+        keepAlive();
+        timer = setInterval(keepAlive, 50);
+        if (pendingText !== undefined) finish(pendingText);
+      },
+      cancel() {
+        closed = true;
+        stopTimer();
+      },
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
+  return {
+    get response() {
+      response ??= createResponse();
+      return response;
+    },
+    release: finish,
+    dispose: close,
+  };
+}
+
 function fakeGatewayEnv(
   root: ReturnType<typeof createIsolatedRoot>,
   gateway: ReturnType<typeof startFakeGateway>,
 ) {
+  writeSeededAcpChatGptLogin(root.home, acpChatGptAccessToken());
   return {
     HOME: root.home,
-    AI_GATEWAY_API_KEY: "fake-acp-file-key",
-    VERCEL_OIDC_TOKEN: "",
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
+    AI_GATEWAY_API_KEY: undefined,
+    VERCEL_OIDC_TOKEN: undefined,
+    FX_E2E_OPENAI_CODEX_RESPONSES_URL: gateway.chatUrl,
+    FX_E2E_OPENAI_CODEX_MODELS_URL: `${gateway.baseUrl}/models`,
+    FX_E2E_CHATGPT_TOKEN_URL: `${gateway.baseUrl}/token`,
     FX_AUTO_UPGRADE: "0",
   };
+}
+
+// Seeds the Codex subscription login for tests that never reach the model.
+function codexOnlyEnv(root: ReturnType<typeof createIsolatedRoot>) {
+  writeSeededAcpChatGptLogin(root.home, acpChatGptAccessToken());
+  return {};
+}
+
+function startFakeGateway(
+  responses: FakeCodexResponse[] = [],
+  options: {
+    classifierResponses?: FakeCodexResponse[];
+    classifierDecision?: "clear" | "caution";
+  } = {},
+) {
+  const requests: Array<{ body: string; headers: Headers }> = [];
+  const classifierRequests: Array<{ body: string; headers: Headers }> = [];
+  const classifierResponses = [...(options.classifierResponses ?? [])];
+  const modelRequests: Array<{ headers: Headers; url: string }> = [];
+  const queue = [...responses];
+  const server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/models") {
+        modelRequests.push({ headers: new Headers(req.headers), url: req.url });
+        return Response.json({
+          models: [
+            { slug: "gpt-5.4-mini", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }], additional_speed_tiers: [], input_modalities: ["text", "image"], context_window: 272000 },
+            { slug: "gpt-5.4", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }], additional_speed_tiers: [], input_modalities: ["text", "image"], context_window: 272000 },
+          ],
+        });
+      }
+      if (path === "/token") {
+        return Response.json({
+          access_token: acpChatGptAccessToken("acct_acp_e2e", "fresh"),
+          refresh_token: "chatgpt-refresh-next",
+          expires_in: 3600,
+        });
+      }
+      const body = await req.text();
+      const headers = new Headers(req.headers);
+      if (body.includes("permission_decision")) {
+        classifierRequests.push({ body, headers });
+        const next = classifierResponses.shift();
+        if (next) return asSseResponse(next, body);
+        return new Response(fakeGatewayPermissionDecision(options.classifierDecision ?? "clear"), {
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      requests.push({ body, headers });
+      const next = queue.shift();
+      if (!next) {
+        return new Response("unexpected request", { status: 500 });
+      }
+      return asSseResponse(next, body);
+    },
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  return {
+    baseUrl: base,
+    chatUrl: `${base}/responses`,
+    requests,
+    classifierRequests,
+    modelRequests,
+    requestCount() {
+      return requests.length;
+    },
+    stop() {
+      server.stop(true);
+    },
+  };
+}
+
+// Same server and classifier handling as startFakeGateway, but every
+// completion request is answered by the supplied callback instead of a
+// finite queue.
+function startDynamicFakeGateway(
+  response: (body: string) => Response | string | Promise<Response | string>,
+  options: Parameters<typeof startFakeGateway>[1] = {},
+) {
+  return startFakeGateway([response as FakeCodexResponse], {
+    ...options,
+    classifierResponses: options.classifierResponses,
+  });
 }
 
 function acpContentText(content: unknown): string {
@@ -220,18 +463,49 @@ function acpContentText(content: unknown): string {
 }
 
 function acpGatewayRequest(body: string) {
-  return JSON.parse(body) as {
-    prompt: Array<{ role?: string; content: unknown }>;
-    tools: Array<{
-      name: string;
-      inputSchema: {
-        type: string;
-        properties: Record<string, { type: string; description?: string }>;
-        required?: string[];
-        additionalProperties?: boolean;
-      };
-    }>;
+  const parsed = JSON.parse(body) as {
+    instructions?: string;
+    input?: Array<Record<string, any>>;
+    tools?: Array<Record<string, any>>;
   };
+  const prompt: Array<{ role?: string; content: unknown }> = [];
+  if (typeof parsed.instructions === "string" && parsed.instructions.length > 0) {
+    prompt.push({ role: "system", content: parsed.instructions });
+  }
+  for (const item of parsed.input ?? []) {
+    if (item.role === "user" || item.role === "system") {
+      prompt.push({
+        role: item.role,
+        content: (Array.isArray(item.content) ? item.content : []).map((part: any) => ({
+          type: part.type === "input_text" ? "text" : part.type,
+          text: part.text,
+        })),
+      });
+    } else if (item.role === "assistant" || item.type === "message") {
+      prompt.push({
+        role: "assistant",
+        content: (Array.isArray(item.content) ? item.content : []).map((part: any) => ({
+          type: part.type === "output_text" ? "text" : part.type,
+          text: part.text,
+        })),
+      });
+    } else if (item.type === "function_call_output") {
+      prompt.push({
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: item.call_id, output: item.output }],
+      });
+    } else if (item.type === "function_call") {
+      prompt.push({
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: item.call_id, toolName: item.name, input: item.arguments }],
+      });
+    }
+  }
+  const tools = (parsed.tools ?? []).map((tool) => ({
+    name: tool.name,
+    inputSchema: tool.parameters ?? {},
+  }));
+  return { prompt, tools, raw: parsed };
 }
 
 function acpTaggedBlock(body: string, tag: string): string {
@@ -268,29 +542,6 @@ function acpPromptText(body: string): string {
 function acpLatestPromptText(body: string): string {
   const prompt = acpGatewayRequest(body).prompt;
   return acpContentText(prompt.at(-1)?.content);
-}
-
-function writeSeededFxAuth(home: string, teamId?: string): void {
-  const fxDir = join(home, ".fx");
-  mkdirSync(fxDir, { recursive: true, mode: 0o700 });
-  chmodSync(fxDir, 0o700);
-  const authPath = join(fxDir, "auth.json");
-  const auth: Record<string, string | number> = {
-    version: 1,
-    issuer: "https://vercel.com",
-    client_id: "test-client",
-    access_token: SEEDED_GATEWAY_TOKEN,
-    refresh_token: "seeded-refresh-token",
-    expires_at_ms: Date.now() + 60 * 60 * 1000,
-    scope: "openid",
-    token_type: "Bearer",
-  };
-  if (teamId) {
-    auth.team_id = teamId;
-    auth.team_slug = "vercel-labs";
-  }
-  writeFileSync(authPath, JSON.stringify(auth) + "\n", { mode: 0o600 });
-  chmodSync(authPath, 0o600);
 }
 
 function acpChatGptAccessToken(
@@ -400,128 +651,6 @@ function startAcpFakeCodex(options: {
     responsesUrl: `http://127.0.0.1:${server.port}/responses`,
     modelsUrl: `http://127.0.0.1:${server.port}/models`,
     tokenUrl: `http://127.0.0.1:${server.port}/token`,
-    stop() { server.stop(true); },
-  };
-}
-
-function writeSeededAcpGrokLogin(home: string, accessToken: string): void {
-  const fxDir = join(home, ".fx");
-  mkdirSync(fxDir, { recursive: true, mode: 0o700 });
-  chmodSync(fxDir, 0o700);
-  const authPath = join(fxDir, "grok-auth.json");
-  writeFileSync(authPath, JSON.stringify({
-    version: 1,
-    access_token: accessToken,
-    refresh_token: "grok-refresh",
-    expires_at_ms: Date.now() + 60 * 60 * 1000,
-    account_id: "acct_grok_acp",
-  }) + "\n", { mode: 0o600 });
-  chmodSync(authPath, 0o600);
-}
-
-function acpGrokSubscriptionModel(id: string, contextWindow: number) {
-  return {
-    id,
-    model: id,
-    api_backend: "responses",
-    context_window: contextWindow,
-    supports_reasoning_effort: false,
-    reasoning_efforts: [],
-  };
-}
-
-function acpGrokModalityModel(id: string) {
-  return {
-    id,
-    input_modalities: ["text", "image"],
-    output_modalities: ["text"],
-  };
-}
-
-function startAcpFakeGrok(options: {
-  unauthorizedResponses?: number;
-  route?: (body: string) => string | Promise<string>;
-} = {}) {
-  const accessToken = "grok-acp-stale";
-  const refreshedAccessToken = "grok-acp-fresh";
-  const requests: Array<{
-    path: string;
-    authorization: string | null;
-    body: string;
-    conversationId: string | null;
-    tokenAuth: string | null;
-    authenticateResponse: string | null;
-    clientIdentifier: string | null;
-    clientVersion: string | null;
-    modelOverride: string | null;
-    grokUserId: string | null;
-  }> = [];
-  const modelRequests: Array<{ path: string; authorization: string | null }> = [];
-  const tokenRequests: Array<{ path: string; authorization: string | null; body: string }> = [];
-  const userinfoRequests: Array<{ path: string; authorization: string | null }> = [];
-  let unauthorizedResponses = options.unauthorizedResponses ?? 0;
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    async fetch(request) {
-      const path = new URL(request.url).pathname;
-      const authorization = request.headers.get("authorization");
-      if (path === "/models") {
-        modelRequests.push({ path, authorization });
-        return Response.json({ data: [acpGrokSubscriptionModel("grok-4.20", 1_000_000)] });
-      }
-      if (path === "/modalities") {
-        modelRequests.push({ path, authorization });
-        return Response.json({ models: [acpGrokModalityModel("grok-4.20")] });
-      }
-      if (path === "/token") {
-        const body = await request.text();
-        tokenRequests.push({ path, authorization, body });
-        return Response.json({
-          access_token: refreshedAccessToken,
-          refresh_token: "grok-refresh-next",
-          expires_in: 3600,
-        });
-      }
-      if (path === "/userinfo") {
-        userinfoRequests.push({ path, authorization });
-        return Response.json({ sub: "acct_grok_acp" });
-      }
-      const body = await request.text();
-      requests.push({
-        path,
-        authorization,
-        body,
-        conversationId: request.headers.get("x-grok-conv-id"),
-        tokenAuth: request.headers.get("x-xai-token-auth"),
-        authenticateResponse: request.headers.get("x-authenticateresponse"),
-        clientIdentifier: request.headers.get("x-grok-client-identifier"),
-        clientVersion: request.headers.get("x-grok-client-version"),
-        modelOverride: request.headers.get("x-grok-model-override"),
-        grokUserId: request.headers.get("x-grok-user-id"),
-      });
-      if (unauthorizedResponses > 0) {
-        unauthorizedResponses -= 1;
-        return Response.json({ error: { message: "expired" } }, { status: 401 });
-      }
-      return new Response(options.route ? await options.route(body) : codexFinalText("ACP_GROK_RESPONSE"), {
-        headers: { "content-type": "text/event-stream" },
-      });
-    },
-  });
-  const base = `http://127.0.0.1:${server.port}`;
-  return {
-    accessToken,
-    refreshedAccessToken,
-    requests,
-    modelRequests,
-    tokenRequests,
-    userinfoRequests,
-    responsesUrl: `${base}/responses`,
-    modelsUrl: `${base}/models`,
-    modalitiesUrl: `${base}/modalities`,
-    tokenUrl: `${base}/token`,
-    userinfoUrl: `${base}/userinfo`,
     stop() { server.stop(true); },
   };
 }
@@ -1200,63 +1329,6 @@ describe("acp: model-independent", () => {
   );
 
   test(
-    "ACP reports a paused recovery and continues it only on explicit metadata",
-    async () => {
-      const root = createIsolatedRoot("fx-acp-model-recovery-");
-      const partialText = "ACP partial output before EOF.";
-      const finalTextSuffix = "ACP recovery completed.";
-      const gateway = startFakeGateway([
-        partialEofResponse(partialText),
-        ...Array.from({ length: 9 }, () => retryAfterUnavailable(0)),
-        finalText(`${partialText}${finalTextSuffix}`),
-      ]);
-      try {
-        client = await AcpClient.create({
-          cwd: root.workspace,
-          env: fakeGatewayEnv(root, gateway),
-        });
-        await startCodeSession(client);
-
-        const paused = await runPrompt(
-          client,
-          "Preserve this ACP prompt through recovery.",
-          TIMEOUT,
-        );
-        expect(paused.promptResult.result.stopReason).toBe("refused");
-        expect(gateway.requests).toHaveLength(10);
-        const pausedUpdates = JSON.stringify(paused.messages);
-        expect(pausedUpdates).toContain("modelResponseRecovery");
-        expect(pausedUpdates).toContain('"state":"paused"');
-        expect(pausedUpdates).toContain('"durable":true');
-        expect(pausedUpdates).toContain(
-          "HTTP 503 · provider temporarily unavailable",
-        );
-        expect(pausedUpdates).toContain(partialText);
-
-        const resumed = await continueRecovery(client, TIMEOUT);
-        expect(resumed.promptResult.error).toBeUndefined();
-        expect(resumed.promptResult.result.stopReason).toBe("end_turn");
-        expect(gateway.requests).toHaveLength(11);
-        const resumedUpdates = JSON.stringify(resumed.messages);
-        expect(resumedUpdates).toContain('"state":"recovered"');
-        expect(resumedUpdates).not.toContain("provider temporarily unavailable");
-        expect(gateway.requests[10]!.body).toContain(
-          "Preserve this ACP prompt through recovery.",
-        );
-        const allUpdates = JSON.stringify([...paused.messages, ...resumed.messages]);
-        expect(occurrenceCount(allUpdates, partialText)).toBe(1);
-        expect(occurrenceCount(allUpdates, finalTextSuffix)).toBe(1);
-        expect(client.stderr).toBe("");
-      } finally {
-        await client?.close();
-        gateway.stop();
-        rmSync(root.root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
     "ACP sends continuation text normally with the full tool surface",
     async () => {
       const root = createIsolatedRoot("fx-acp-continuation-text-");
@@ -1273,24 +1345,17 @@ describe("acp: model-independent", () => {
         expect(result.promptResult.result.stopReason).toBe("end_turn");
         expect(gateway.requests).toHaveLength(1);
         const request = acpGatewayRequest(gateway.requests[0]!.body);
-        const oracleRequest = parseGatewayRequest(gateway.requests[0]!.body);
         const prompt = request.prompt
           .map((message) => acpContentText(message.content))
           .join("\n");
         expect(prompt).toContain(submitted);
-        expect(request.tools).toHaveLength(17);
-        const toolNames = serializedToolNames(oracleRequest);
-        expect(toolNames).toEqual(
-          AUTO_EXA_SERIALIZED_TOOL_NAMES,
-        );
-        expect(toolNames.filter((name) => name === "shell")).toHaveLength(1);
-        expect(toolNames.filter((name) => name === "exa_search"))
-          .toHaveLength(1);
-        expect(findUnavailableCapabilityReferences(oracleRequest)).toEqual([]);
-        expect(customProviderGuidanceState(oracleRequest)).toEqual({
-          providerToolIndices: [14],
-          guidanceMessageIndices: [1],
-        });
+        const toolNames = request.tools.map((tool) => tool.name);
+        expect(toolNames).toContain("read_file");
+        expect(toolNames).toContain("edit_file");
+        expect(toolNames).toContain("shell");
+        expect(toolNames).toContain("web_search");
+        expect(toolNames).toContain("web_fetch");
+        expect(toolNames).not.toContain("exa_search");
         expect(gateway.requests[0]!.body).not.toContain(
           "Treat it as interrupting any previous tool plan.",
         );
@@ -1424,16 +1489,9 @@ describe("acp: model-independent", () => {
           }, {
             type: "finish",
             finishReason: { unified: "stop", raw: "stop" },
+            usage: "omit",
           }]),
         ],
-        {
-          models: [{
-            id: FAKE_GATEWAY_MODEL,
-            type: "language",
-            tags: ["tool-use"],
-            context_window: 128_000,
-          }],
-        },
       );
       try {
         client = await AcpClient.create({
@@ -1453,7 +1511,7 @@ describe("acp: model-independent", () => {
           update: {
             sessionUpdate: "usage_update",
             used: 8,
-            size: 128_000,
+            size: 272_000,
           },
         });
         expect(usage?.params.update.cost).toBeUndefined();
@@ -1515,133 +1573,11 @@ describe("acp: model-independent", () => {
   );
 
   test(
-    "ACP reload replays pending execution once and clears recovery after completion",
-    async () => {
-      const root = createIsolatedRoot("fx-acp-reload-model-recovery-");
-      const toolEvidence = "ACP_RESTART_TOOL_EVIDENCE";
-      const partialText = "ACP_RESTART_PARTIAL_SENTINEL";
-      const finalTextSuffix = "ACP_RESTART_FINAL_SENTINEL";
-      writeFileSync(join(root.workspace, "recovery-fixture.txt"), `${toolEvidence}\n`);
-      const gateway = startFakeGateway([
-        fakeGatewayToolCall("recovery_read_1", "read_file", {
-          path: "recovery-fixture.txt",
-        }),
-        partialEofResponse(partialText),
-        ...Array.from({ length: 9 }, () => retryAfterUnavailable(0)),
-        finalText(`${partialText}${finalTextSuffix}`),
-      ]);
-      try {
-        client = await AcpClient.create({
-          cwd: root.workspace,
-          env: fakeGatewayEnv(root, gateway),
-        });
-        const sessionId = await startCodeSession(client);
-        const paused = await runPrompt(
-          client,
-          "Preserve this ACP prompt across a process restart.",
-          TIMEOUT,
-        );
-        expect(paused.promptResult.result.stopReason).toBe("refused");
-        expect(gateway.requests).toHaveLength(11);
-
-        await client.close();
-        client = await AcpClient.create({
-          cwd: root.workspace,
-          env: fakeGatewayEnv(root, gateway),
-        });
-        await client.request("initialize", { protocolVersion: 1 }, 10);
-        client.send({
-          jsonrpc: "2.0",
-          id: 11,
-          method: "session/load",
-          params: { sessionId, mcpServers: [] },
-        });
-        const loadMessages: any[] = [];
-        let loadResponse: any = null;
-        while (loadResponse === null) {
-          const message = await client.readLine() as any;
-          if (message.id === 11) {
-            loadResponse = message;
-          } else {
-            loadMessages.push(message);
-          }
-        }
-        expect(loadResponse.error).toBeUndefined();
-        const loadUpdates = JSON.stringify(loadMessages);
-        expect(loadUpdates).toContain("modelResponseRecovery");
-        expect(loadUpdates).toContain(
-          "Preserve this ACP prompt across a process restart.",
-        );
-        expect(loadUpdates).toContain("Previous tool execution:");
-        expect(loadUpdates).toContain("Tool read_file (success):");
-        expect(occurrenceCount(loadUpdates, toolEvidence)).toBe(1);
-        expect(occurrenceCount(loadUpdates, partialText)).toBe(1);
-
-        const resumed = await continueRecovery(client, TIMEOUT, sessionId);
-        expect(resumed.promptResult.error).toBeUndefined();
-        expect(resumed.promptResult.result.stopReason).toBe("end_turn");
-        expect(gateway.requests).toHaveLength(12);
-        expect(gateway.requests[11]!.body).toContain(toolEvidence);
-        const restartedUpdates = JSON.stringify([
-          ...loadMessages,
-          ...resumed.messages,
-        ]);
-        expect(occurrenceCount(restartedUpdates, partialText)).toBe(1);
-        expect(occurrenceCount(restartedUpdates, finalTextSuffix)).toBe(1);
-
-        await client.close();
-        client = await AcpClient.create({
-          cwd: root.workspace,
-          env: fakeGatewayEnv(root, gateway),
-        });
-        await client.request("initialize", { protocolVersion: 1 }, 20);
-        client.send({
-          jsonrpc: "2.0",
-          id: 21,
-          method: "session/load",
-          params: { sessionId, mcpServers: [] },
-        });
-        const completedLoadMessages: any[] = [];
-        let completedLoadResponse: any = null;
-        while (completedLoadResponse === null) {
-          const message = await client.readLine() as any;
-          if (message.id === 21) {
-            completedLoadResponse = message;
-          } else {
-            completedLoadMessages.push(message);
-          }
-        }
-        expect(completedLoadResponse.error).toBeUndefined();
-        const completedLoadUpdates = JSON.stringify(completedLoadMessages);
-        expect(completedLoadUpdates).not.toContain("modelResponseRecovery");
-        expect(occurrenceCount(completedLoadUpdates, toolEvidence)).toBe(1);
-        expect(occurrenceCount(completedLoadUpdates, partialText)).toBe(1);
-        expect(occurrenceCount(completedLoadUpdates, finalTextSuffix)).toBe(1);
-        expect(client.stderr).toBe("");
-      } finally {
-        await client?.close();
-        gateway.stop();
-        rmSync(root.root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
     "ACP sends a prompt above the old CLI limit with one capability snapshot",
     async () => {
       const root = createIsolatedRoot("fx-acp-large-prompt-");
       const gateway = startFakeGateway(
         [finalText("ACP_LARGE_PROMPT_COMPLETE")],
-        {
-          models: [{
-            id: FAKE_GATEWAY_MODEL,
-            type: "language",
-            tags: ["tool-use"],
-            context_window: 256_000,
-            max_tokens: 64_000,
-          }],
-        },
       );
       const submitted = `ACP-BEGIN-${"x".repeat(1024 * 1024 + 1)}-END`;
       try {
@@ -1658,12 +1594,12 @@ describe("acp: model-independent", () => {
         expect(gateway.requests).toHaveLength(1);
         expect(gateway.modelRequests).toHaveLength(1);
         const request = JSON.parse(gateway.requests[0]!.body) as {
-          maxOutputTokens?: number;
-          prompt: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
+          model?: string;
+          input?: Array<{ role?: string; content?: Array<{ type: string; text?: string }> }>;
         };
-        expect(request.maxOutputTokens).toBe(64_000);
-        const user = request.prompt.findLast((message) => message.role === "user");
-        expect(user?.content.find((part) => part.type === "text")?.text).toBe(submitted);
+        expect(request.model).toBe("gpt-5.4-mini");
+        const user = request.input?.filter((item) => item.role === "user").at(-1);
+        expect(user?.content?.find((part) => part.type === "input_text")?.text).toBe(submitted);
         expect(client.stderr).toBe("");
       } finally {
         await client?.close();
@@ -2042,8 +1978,8 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             HOME: root.home,
-            AI_GATEWAY_API_KEY: "e2e-placeholder",
             VERCEL_OIDC_TOKEN: "",
+            ...codexOnlyEnv(root),
           },
         });
         const resp = await client.request(
@@ -4753,8 +4689,8 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             HOME: root.home,
-            AI_GATEWAY_API_KEY: "e2e-placeholder",
             VERCEL_OIDC_TOKEN: "",
+            ...codexOnlyEnv(root),
           },
         });
 
@@ -4802,8 +4738,8 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             HOME: root.home,
-            AI_GATEWAY_API_KEY: "e2e-placeholder",
             VERCEL_OIDC_TOKEN: "",
+            ...codexOnlyEnv(root),
           },
         });
         expect(
@@ -4915,13 +4851,6 @@ describe("acp: model-independent", () => {
       const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlXYX0AAAAASUVORK5CYII=";
       const gateway = startFakeGateway(
         [finalText("image prompt complete")],
-        {
-          models: [{
-            id: FAKE_GATEWAY_MODEL,
-            type: "language",
-            tags: ["vision", "file-input", "tool-use"],
-          }],
-        },
       );
       try {
         client = await AcpClient.create({
@@ -5012,13 +4941,6 @@ describe("acp: model-independent", () => {
       const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlXYX0AAAAASUVORK5CYII=";
       const gateway = startFakeGateway(
         [finalText("image-only prompt complete")],
-        {
-          models: [{
-            id: FAKE_GATEWAY_MODEL,
-            type: "language",
-            tags: ["vision", "file-input", "tool-use"],
-          }],
-        },
       );
       try {
         client = await AcpClient.create({
@@ -5092,13 +5014,6 @@ describe("acp: model-independent", () => {
       expect(Buffer.byteLength(imageData)).toBe(maxEncodedImageBytes + 4);
       const gateway = startFakeGateway(
         [finalText("ACP image size recovery complete")],
-        {
-          models: [{
-            id: FAKE_GATEWAY_MODEL,
-            type: "language",
-            tags: ["vision", "file-input", "tool-use"],
-          }],
-        },
       );
       try {
         client = await AcpClient.create({
@@ -5287,13 +5202,6 @@ describe("acp: model-independent", () => {
       const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlXYX0AAAAASUVORK5CYII=";
       const gateway = startFakeGateway(
         [finalText("image saved")],
-        {
-          models: [{
-            id: FAKE_GATEWAY_MODEL,
-            type: "language",
-            tags: ["vision", "file-input", "tool-use"],
-          }],
-        },
       );
       try {
         client = await AcpClient.create({
@@ -5369,7 +5277,7 @@ describe("acp: model-independent", () => {
           finalText("ACP external write accepted"),
         ]);
         try {
-          writeSeededFxAuth(acceptedRoot.home, "team_123");
+          writeSeededAcpChatGptLogin(acceptedRoot.home, acpChatGptAccessToken());
           client = await AcpClient.create({
             cwd: acceptedRoot.workspace,
             env: {
@@ -5388,11 +5296,8 @@ describe("acp: model-independent", () => {
           expect(readFileSync(acceptedTarget, "utf-8")).toBe("FX_ACP_AUTO_ACCEPTED");
           expect(acceptedGateway.classifierRequests).toHaveLength(1);
           expect(acceptedGateway.classifierRequests[0]!.headers.get("authorization")).toBe(
-            `Bearer ${SEEDED_GATEWAY_TOKEN}`,
+            `Bearer ${acpChatGptAccessToken()}`,
           );
-          expect(
-            acceptedGateway.classifierRequests[0]!.headers.get("x-vercel-ai-gateway-team"),
-          ).toBe("team_123");
           expect(acceptedGateway.classifierRequests[0]!.body).toContain(
             "review_context_kind: normal",
           );
@@ -5654,10 +5559,10 @@ describe("acp: model-independent", () => {
       const boundary = createPromptTerminalBoundary(root.root);
       const gateway = startFakeGateway([
         fakeGatewaySse([
-          {
-            type: "finish",
-            finishReason: { unified: "content-filter", raw: "content_filter" },
-          },
+          { type: "codex-raw", payload: `data: ${JSON.stringify({
+            type: "response.failed",
+            response: { status: "failed", error: { code: "content_filter", message: "blocked" } },
+          })}\n\n` },
         ]),
       ]);
       try {
@@ -5674,7 +5579,7 @@ describe("acp: model-independent", () => {
         const failed = await readResponse(client, 94);
         expect(failed.error).toEqual({
           code: -32603,
-          message: "ModelError",
+          message: "OpenAICodexResponseFailed",
         });
         await waitForPath(boundary.terminalReady);
 
@@ -5705,13 +5610,15 @@ describe("acp: model-independent", () => {
     "auth failure names the selected source without leaking the provider body",
     async () => {
       const root = createIsolatedRoot("fx-acp-auth-failure-");
-      const providerDetail = "rejected fake-acp-file-key provider body";
-      const gateway = startFakeGateway([
-        new Response(JSON.stringify({ error: { message: providerDetail } }), {
-          status: 401,
-          headers: { "content-type": "application/json" },
-        }),
-      ]);
+      const providerDetail = "rejected Codex provider body";
+      // The Codex path refreshes and retries once on 401 before failing.
+      const gateway = startFakeGateway([() => new Response(
+        JSON.stringify({ error: { message: providerDetail } }),
+        { status: 401, headers: { "content-type": "application/json" } },
+      ), () => new Response(
+        JSON.stringify({ error: { message: providerDetail } }),
+        { status: 401, headers: { "content-type": "application/json" } },
+      )]);
       try {
         client = await AcpClient.create({
           cwd: root.workspace,
@@ -5732,19 +5639,19 @@ describe("acp: model-independent", () => {
         }
 
         expect(response.error).toBeUndefined();
-        expect(response.result.stopReason).toBe("refused");
+        expect(response.result?.stopReason).toBe("refused");
         const authUpdate = messages.find((message) =>
           message.method === "session/update" &&
           message.params?.update?.sessionUpdate === "agent_message_chunk"
         );
         expect(authUpdate?.params.update.content.text).toBe(
-          "AI_GATEWAY_API_KEY authentication failed · HTTP 401",
+          "Codex subscription authentication failed · HTTP 401",
         );
         const serialized = JSON.stringify({ messages, response });
         expect(serialized).not.toContain("fake-acp-file-key");
         expect(serialized).not.toContain(providerDetail);
         expect(serialized).not.toContain("\u001b");
-        expect(gateway.requests).toHaveLength(1);
+        expect(gateway.requests).toHaveLength(2);
         expect(client.stderr).toBe("");
       } finally {
         await client?.close();
@@ -5889,57 +5796,128 @@ describe("acp: model-independent", () => {
   );
 
   test(
-    "malformed local tool arguments recover with a normal final stop",
+    "running prompt rejects non-cancel requests",
     async () => {
-      const root = createIsolatedRoot("fx-acp-malformed-arguments-");
-      const tracePath = join(root.root, "trace.log");
-      const malformedArguments = '{"depth":1,"depth":2}';
-      const malformedCallId = "acp_malformed_1";
-      const gateway = startFakeGateway([
-        fakeGatewaySerializedToolCall(
-          malformedCallId,
-          "ask_user_question",
-          malformedArguments,
-          "ACP needs one detail.",
-        ),
-        finalText("ACP recovered normally."),
-      ]);
+      const root = createIsolatedRoot("fx-acp-running-prompt-");
+      const heldResponse = deferred<Response>();
+      const gateway = startFakeGateway([() => heldResponse.promise]);
+      try {
+        client = await AcpClient.create({
+          cwd: root.workspace,
+          env: fakeGatewayEnv(root, gateway),
+        });
+        await startCodeSession(client);
+        sendPrompt(client, 96, "Wait for the held response.");
+        await waitForCondition(
+          "the prompt Gateway request",
+          () => gateway.requests.length === 1,
+        );
+
+        client.send({
+          jsonrpc: "2.0",
+          id: 97,
+          method: "session/list",
+          params: {},
+        });
+        const rejected = await readResponse(client, 97);
+        expect(rejected.error).toEqual({
+          code: -32600,
+          message: "Prompt already in progress",
+        });
+
+        heldResponse.resolve(finalText("held prompt complete"));
+        const prompt = await readResponse(client, 96);
+        expect(prompt.error).toBeUndefined();
+        expect(prompt.result.stopReason).toBe("end_turn");
+        expect(client.stderr).toBe("");
+      } finally {
+        heldResponse.resolve(finalText("held prompt cleanup"));
+        await client?.close();
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "stdin shutdown joins a terminal prompt worker before teardown",
+    async () => {
+      const root = createIsolatedRoot("fx-acp-terminal-shutdown-");
+      const boundary = createPromptTerminalBoundary(root.root);
+      const gateway = startFakeGateway([finalText("shutdown prompt complete")]);
       try {
         client = await AcpClient.create({
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "agent,gateway",
+            ...boundary.env,
           },
         });
         await startCodeSession(client);
-        const result = await runPrompt(
-          client,
-          "Run the malformed ACP fixture.",
-          TIMEOUT,
-        );
+        const prompt = await runPrompt(client, "Complete before shutdown.", TIMEOUT);
+        expect(prompt.promptResult.result.stopReason).toBe("end_turn");
+        await waitForPath(boundary.terminalReady);
 
-        expect(result.promptResult.error).toBeUndefined();
-        expect(result.promptResult.result.stopReason).toBe("end_turn");
-        expect(JSON.stringify(result.messages)).toContain("ACP needs one detail.");
-        expect(JSON.stringify(result.messages)).toContain("ACP recovered normally.");
-        expect(JSON.stringify(result.messages)).not.toContain("internal_error");
-        expect(
-          result.messages.some(
-            (message: any) => message.method === "session/request_permission",
-          ),
-        ).toBe(false);
-        expect(gateway.requests).toHaveLength(2);
-        expect(gateway.requests[1].body).toContain(`"toolCallId":"${malformedCallId}"`);
-        expect(gateway.requests[1].body).toContain('"input":{}');
-        expect(gateway.requests[1].body).toContain("tool_execution_failed");
-        expect(gateway.requests[1].body).not.toContain(malformedArguments);
-        expect(readFileSync(tracePath, "utf8")).not.toContain(malformedArguments);
+        client.endStdin();
+        await waitForPath(boundary.reapReady);
+        expect(client.closed).toBe(false);
+        releasePromptBoundary(boundary);
+
+        expect(await client.waitForExit()).toBe(0);
         expect(client.stderr).toBe("");
+      } finally {
+        releasePromptBoundary(boundary);
+        await client?.close();
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
 
-        const listed = await client.request("session/list", {}, 99) as any;
-        expect(listed.error).toBeUndefined();
+  test(
+    "session/cancel requests receive JSON-RPC responses",
+    async () => {
+      const root = createIsolatedRoot("fx-acp-cancel-framing-");
+      const gateway = startFakeGateway([]);
+      try {
+        client = await AcpClient.create({
+          cwd: root.workspace,
+          env: fakeGatewayEnv(root, gateway),
+        });
+        expect(
+          (await client.request(
+            "initialize",
+            { protocolVersion: 1 },
+            1,
+          ) as any).result,
+        ).toBeDefined();
+        expect(
+          (await client.request("session/new", { mcpServers: [] }, 2) as any).result,
+        ).toBeDefined();
+        expect((await client.readLine() as any).method).toBe("session/update");
+
+        client.send({
+          jsonrpc: "2.0",
+          id: 99,
+          method: "session/cancel",
+          params: {},
+        });
+        const integerResp = await client.readLine();
+        expect((integerResp as any).id).toBe(99);
+        expect((integerResp as any).result).toBeNull();
+
+        client.send({
+          jsonrpc: "2.0",
+          id: null,
+          method: "session/cancel",
+          params: {},
+        });
+        const nullResp = await client.readLine();
+        expect((nullResp as any).id).toBeNull();
+        expect((nullResp as any).result).toBeNull();
+        expect(client.stderr).toBe("");
       } finally {
         await client?.close();
         gateway.stop();
@@ -5950,7 +5928,271 @@ describe("acp: model-independent", () => {
   );
 
   test(
-    "missing API key returns JSON-RPC error on initialize",
+    "running prompt rejects non-cancel requests",
+    async () => {
+      const root = createIsolatedRoot("fx-acp-running-prompt-");
+      const heldResponse = deferred<Response>();
+      const gateway = startFakeGateway([() => heldResponse.promise]);
+      try {
+        client = await AcpClient.create({
+          cwd: root.workspace,
+          env: fakeGatewayEnv(root, gateway),
+        });
+        await startCodeSession(client);
+        sendPrompt(client, 96, "Wait for the held response.");
+        await waitForCondition(
+          "the prompt Gateway request",
+          () => gateway.requests.length === 1,
+        );
+
+        client.send({
+          jsonrpc: "2.0",
+          id: 97,
+          method: "session/list",
+          params: {},
+        });
+        const rejected = await readResponse(client, 97);
+        expect(rejected.error).toEqual({
+          code: -32600,
+          message: "Prompt already in progress",
+        });
+
+        heldResponse.resolve(finalText("held prompt complete"));
+        const prompt = await readResponse(client, 96);
+        expect(prompt.error).toBeUndefined();
+        expect(prompt.result.stopReason).toBe("end_turn");
+        expect(client.stderr).toBe("");
+      } finally {
+        heldResponse.resolve(finalText("held prompt cleanup"));
+        await client?.close();
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "stdin shutdown joins a terminal prompt worker before teardown",
+    async () => {
+      const root = createIsolatedRoot("fx-acp-terminal-shutdown-");
+      const boundary = createPromptTerminalBoundary(root.root);
+      const gateway = startFakeGateway([finalText("shutdown prompt complete")]);
+      try {
+        client = await AcpClient.create({
+          cwd: root.workspace,
+          env: {
+            ...fakeGatewayEnv(root, gateway),
+            ...boundary.env,
+          },
+        });
+        await startCodeSession(client);
+        const prompt = await runPrompt(client, "Complete before shutdown.", TIMEOUT);
+        expect(prompt.promptResult.result.stopReason).toBe("end_turn");
+        await waitForPath(boundary.terminalReady);
+
+        client.endStdin();
+        await waitForPath(boundary.reapReady);
+        expect(client.closed).toBe(false);
+        releasePromptBoundary(boundary);
+
+        expect(await client.waitForExit()).toBe(0);
+        expect(client.stderr).toBe("");
+      } finally {
+        releasePromptBoundary(boundary);
+        await client?.close();
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "session/cancel requests receive JSON-RPC responses",
+    async () => {
+      const root = createIsolatedRoot("fx-acp-cancel-framing-");
+      const gateway = startFakeGateway([]);
+      try {
+        client = await AcpClient.create({
+          cwd: root.workspace,
+          env: fakeGatewayEnv(root, gateway),
+        });
+        expect(
+          (await client.request(
+            "initialize",
+            { protocolVersion: 1 },
+            1,
+          ) as any).result,
+        ).toBeDefined();
+        expect(
+          (await client.request("session/new", { mcpServers: [] }, 2) as any).result,
+        ).toBeDefined();
+        expect((await client.readLine() as any).method).toBe("session/update");
+
+        client.send({
+          jsonrpc: "2.0",
+          id: 99,
+          method: "session/cancel",
+          params: {},
+        });
+        const integerResp = await client.readLine();
+        expect((integerResp as any).id).toBe(99);
+        expect((integerResp as any).result).toBeNull();
+
+        client.send({
+          jsonrpc: "2.0",
+          id: null,
+          method: "session/cancel",
+          params: {},
+        });
+        const nullResp = await client.readLine();
+        expect((nullResp as any).id).toBeNull();
+        expect((nullResp as any).result).toBeNull();
+        expect(client.stderr).toBe("");
+      } finally {
+        await client?.close();
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "running prompt rejects non-cancel requests",
+    async () => {
+      const root = createIsolatedRoot("fx-acp-running-prompt-");
+      const heldResponse = deferred<Response>();
+      const gateway = startFakeGateway([() => heldResponse.promise]);
+      try {
+        client = await AcpClient.create({
+          cwd: root.workspace,
+          env: fakeGatewayEnv(root, gateway),
+        });
+        await startCodeSession(client);
+        sendPrompt(client, 96, "Wait for the held response.");
+        await waitForCondition(
+          "the prompt Gateway request",
+          () => gateway.requests.length === 1,
+        );
+
+        client.send({
+          jsonrpc: "2.0",
+          id: 97,
+          method: "session/list",
+          params: {},
+        });
+        const rejected = await readResponse(client, 97);
+        expect(rejected.error).toEqual({
+          code: -32600,
+          message: "Prompt already in progress",
+        });
+
+        heldResponse.resolve(finalText("held prompt complete"));
+        const prompt = await readResponse(client, 96);
+        expect(prompt.error).toBeUndefined();
+        expect(prompt.result.stopReason).toBe("end_turn");
+        expect(client.stderr).toBe("");
+      } finally {
+        heldResponse.resolve(finalText("held prompt cleanup"));
+        await client?.close();
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "stdin shutdown joins a terminal prompt worker before teardown",
+    async () => {
+      const root = createIsolatedRoot("fx-acp-terminal-shutdown-");
+      const boundary = createPromptTerminalBoundary(root.root);
+      const gateway = startFakeGateway([finalText("shutdown prompt complete")]);
+      try {
+        client = await AcpClient.create({
+          cwd: root.workspace,
+          env: {
+            ...fakeGatewayEnv(root, gateway),
+            ...boundary.env,
+          },
+        });
+        await startCodeSession(client);
+        const prompt = await runPrompt(client, "Complete before shutdown.", TIMEOUT);
+        expect(prompt.promptResult.result.stopReason).toBe("end_turn");
+        await waitForPath(boundary.terminalReady);
+
+        client.endStdin();
+        await waitForPath(boundary.reapReady);
+        expect(client.closed).toBe(false);
+        releasePromptBoundary(boundary);
+
+        expect(await client.waitForExit()).toBe(0);
+        expect(client.stderr).toBe("");
+      } finally {
+        releasePromptBoundary(boundary);
+        await client?.close();
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "session/cancel requests receive JSON-RPC responses",
+    async () => {
+      const root = createIsolatedRoot("fx-acp-cancel-framing-");
+      const gateway = startFakeGateway([]);
+      try {
+        client = await AcpClient.create({
+          cwd: root.workspace,
+          env: fakeGatewayEnv(root, gateway),
+        });
+        expect(
+          (await client.request(
+            "initialize",
+            { protocolVersion: 1 },
+            1,
+          ) as any).result,
+        ).toBeDefined();
+        expect(
+          (await client.request("session/new", { mcpServers: [] }, 2) as any).result,
+        ).toBeDefined();
+        expect((await client.readLine() as any).method).toBe("session/update");
+
+        client.send({
+          jsonrpc: "2.0",
+          id: 99,
+          method: "session/cancel",
+          params: {},
+        });
+        const integerResp = await client.readLine();
+        expect((integerResp as any).id).toBe(99);
+        expect((integerResp as any).result).toBeNull();
+
+        client.send({
+          jsonrpc: "2.0",
+          id: null,
+          method: "session/cancel",
+          params: {},
+        });
+        const nullResp = await client.readLine();
+        expect((nullResp as any).id).toBeNull();
+        expect((nullResp as any).result).toBeNull();
+        expect(client.stderr).toBe("");
+      } finally {
+        await client?.close();
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "missing Codex login returns JSON-RPC error on initialize",
     async () => {
       const root = createIsolatedRoot("fx-acp-missing-auth-");
       try {
@@ -5958,16 +6200,14 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             HOME: root.home,
-            AI_GATEWAY_API_KEY: "",
             VERCEL_OIDC_TOKEN: "",
             FX_DISABLE_KEYCHAIN: "1",
           },
         });
         const resp = await client.request("initialize", { protocolVersion: 1 }, 1) as any;
         expect(resp.error).toBeDefined();
-        expect(resp.error.message).toContain("fx login");
-        expect(resp.error.message).toContain("fx setup");
-        expect(resp.error.message).toContain("AI_GATEWAY_API_KEY");
+        expect(resp.error.message).toContain("fx needs a Codex subscription login");
+        expect(resp.error.message).toContain("fx login codex");
         expect(client.stderr).toBe("");
       } finally {
         await client?.close();
@@ -6067,11 +6307,11 @@ describe("acp: model-independent", () => {
         mkdirSync(home);
         mkdirSync(workspace);
 
+        writeSeededAcpChatGptLogin(home, acpChatGptAccessToken());
         client = await AcpClient.create({
           cwd: realpathSync(workspace),
           env: {
             HOME: realpathSync(home),
-            AI_GATEWAY_API_KEY: "e2e-placeholder",
             VERCEL_OIDC_TOKEN: "",
             FX_E2E_FAIL_ON_DURABLE_MUTATION: "1",
           },
@@ -6081,7 +6321,7 @@ describe("acp: model-independent", () => {
         expect(response.result).toEqual({ sessions: [] });
         await client.close();
 
-        expect(existsSync(join(home, ".fx"))).toBe(false);
+        expect(existsSync(join(home, ".fx", "sessions"))).toBe(false);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -6229,8 +6469,8 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             HOME: root.home,
-            AI_GATEWAY_API_KEY: "e2e-placeholder",
             VERCEL_OIDC_TOKEN: "",
+            ...codexOnlyEnv(root),
           },
         });
         await client.request("initialize", { protocolVersion: 1 }, 1);
@@ -6264,8 +6504,8 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             HOME: root.home,
-            AI_GATEWAY_API_KEY: "e2e-placeholder",
             VERCEL_OIDC_TOKEN: "",
+            ...codexOnlyEnv(root),
           },
         });
         await client.request("initialize", { protocolVersion: 1 }, 1);
@@ -6304,8 +6544,8 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             HOME: root.home,
-            AI_GATEWAY_API_KEY: "e2e-placeholder",
             VERCEL_OIDC_TOKEN: "",
+            ...codexOnlyEnv(root),
           },
         });
         await client.request("initialize", { protocolVersion: 1 }, 1);
@@ -6405,11 +6645,11 @@ describe("acp: model-independent", () => {
         mkdirSync(home);
         mkdirSync(workspace);
 
+        writeSeededAcpChatGptLogin(home, acpChatGptAccessToken());
         client = await AcpClient.create({
           cwd: realpathSync(workspace),
           env: {
             HOME: realpathSync(home),
-            AI_GATEWAY_API_KEY: "e2e-placeholder",
             VERCEL_OIDC_TOKEN: "",
             FX_E2E_FAIL_ON_DURABLE_MUTATION: "1",
           },
@@ -6422,7 +6662,7 @@ describe("acp: model-independent", () => {
           params: { mcpServers: [] },
         });
         expect(await client.waitForExit()).toBe(86);
-        expect(existsSync(join(home, ".fx"))).toBe(false);
+        expect(existsSync(join(home, ".fx", "sessions"))).toBe(false);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -6431,31 +6671,17 @@ describe("acp: model-independent", () => {
   );
 
   test(
-    "session list stays available and session create reports store unavailable without HOME",
+    "missing HOME reports a clean login error without crashing the server",
     async () => {
       client = await AcpClient.create({
         omitHome: true,
         env: {
-          AI_GATEWAY_API_KEY: "e2e-placeholder",
           VERCEL_OIDC_TOKEN: "",
         },
       });
-      expect(
-        (await client.request(
-          "initialize",
-          { protocolVersion: 1 },
-          1,
-        ) as any).result,
-      ).toBeDefined();
-      expect(
-        (await client.request("session/list", {}, 2) as any).result,
-      ).toEqual({ sessions: [] });
-      expect(
-        (await client.request("session/new", { mcpServers: [] }, 3) as any).error,
-      ).toEqual(expect.objectContaining({
-        code: -32603,
-        message: "Session store not available",
-      }));
+      const resp = await client.request("initialize", { protocolVersion: 1 }, 1) as any;
+      expect(resp.error).toBeDefined();
+      expect(resp.error.message).toContain("Failed to load startup state");
       expect(client.stderr).toBe("");
     },
     TIMEOUT,
@@ -6493,11 +6719,11 @@ describe("acp: model-independent", () => {
           { mode: 0o600 },
         );
 
+        writeSeededAcpChatGptLogin(home, acpChatGptAccessToken());
         client = await AcpClient.create({
           cwd: workspaceRoot,
           env: {
             HOME: home,
-            AI_GATEWAY_API_KEY: "e2e-placeholder",
             VERCEL_OIDC_TOKEN: "",
           },
         });
@@ -7446,7 +7672,7 @@ describe("acp: model-independent", () => {
       const childPrompt = "Inspect the workspace without making changes.";
       const createId = "acp_direct_child";
       const route = (body: string) => {
-        if (body.includes(`\"toolCallId\":\"${createId}\"`)) {
+        if (body.includes(`\"call_id\":\"${createId}\"`)) {
           expect(acpToolResultText(body, createId)).toContain("child inspection complete");
           return finalText("ACP_DIRECT_SUBAGENT_COMPLETE");
         }
@@ -7614,13 +7840,9 @@ describe("acp: model-independent", () => {
         });
         await startCodeSession(client);
         sendPrompt(client, 196, "Hold the code-mode prompt.");
-        await waitForCondition("the code-mode Gateway request", () => gateway.requests.length === 1);
-        const codeRequest = parseGatewayRequest(gateway.requests[0]!.body);
-        expect(serializedToolNames(codeRequest)).toEqual(
-          AUTO_EXA_SERIALIZED_TOOL_NAMES,
-        );
-        expect(findUnavailableCapabilityReferences(codeRequest)).toEqual([]);
-        expect(customProviderGuidanceState(codeRequest).guidanceMessageIndices).toEqual([1]);
+        await waitForCondition("the code-mode model request", () => gateway.requests.length === 1);
+        const codeRequest = acpGatewayRequest(gateway.requests[0]!.body);
+        expect(codeRequest.tools.map((tool) => tool.name)).toContain("write_file");
 
         client.send({
           jsonrpc: "2.0",
@@ -7767,99 +7989,47 @@ describe("acp: model catalog authentication", () => {
     if (client) await client.close();
   });
 
-  for (const scenario of [
-    {
-      name: "includes team-private model options for seeded team auth",
-      teamId: "team_123",
-      expectedAuthorization: `Bearer ${SEEDED_GATEWAY_TOKEN}`,
-      expectedTeamId: "team_123",
-      expectPrivate: true,
-    },
-    {
-      name: "uses public model options for seeded login without a selected team",
-      teamId: undefined,
-      expectedAuthorization: null,
-      expectedTeamId: null,
-      expectPrivate: false,
-    },
-  ]) {
-    test(
-      `session/new ${scenario.name}`,
-      async () => {
-        const root = createIsolatedRoot("fx-acp-team-model-options-");
-        const gateway = startFakeGateway([], {
-          models(request) {
-            const url = new URL(request.url);
-            const seededAuth = request.headers.get("authorization") ===
-              `Bearer ${SEEDED_GATEWAY_TOKEN}`;
-            const hasTeam = url.searchParams.get("teamId") === "team_123";
-            return [
-              { id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"] },
-              ...(seededAuth && hasTeam
-                ? [{ id: "private/blue-hornbill", type: "language", tags: ["tool-use"] }]
-                : []),
-            ];
-          },
-        });
-        try {
-          writeSeededFxAuth(root.home, scenario.teamId);
-          client = await AcpClient.create({
-            cwd: root.workspace,
-            env: {
-              ...fakeGatewayEnv(root, gateway),
-              AI_GATEWAY_API_KEY: undefined,
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_DISABLE_KEYCHAIN: "1",
-            },
-          });
-          await client.request("initialize", { protocolVersion: 1 }, 1);
-          const resp = await client.request("session/new", {}, 2) as any;
-          expect(gateway.modelRequests).toHaveLength(1);
-          const modelRequest = gateway.modelRequests[0]!;
-          expect(modelRequest.headers.get("authorization")).toBe(
-            scenario.expectedAuthorization,
-          );
-          expect(new URL(modelRequest.url).searchParams.get("teamId")).toBe(
-            scenario.expectedTeamId,
-          );
-          expect(modelRequest.headers.get("x-vercel-ai-gateway-team")).toBeNull();
-
-          const modelOpt = resp.result.configOptions.find((o: any) => o.id === "model");
-          expect(modelOpt).toBeDefined();
-          const optionsText = JSON.stringify(modelOpt.options);
-          if (scenario.expectPrivate) {
-            expect(optionsText).toContain("private/blue-hornbill");
-          } else {
-            expect(optionsText).not.toContain("private/blue-hornbill");
-          }
-        } finally {
-          await client?.close();
-          gateway.stop();
-          rmSync(root.root, { recursive: true, force: true });
-        }
-      },
-      TIMEOUT,
-    );
-  }
-
   test(
-    "--model flag overrides selected model without inheriting the default Fast mode",
+    "session/new includes model options from the authenticated Codex catalog",
     async () => {
-      const root = createIsolatedRoot("fx-acp-model-override-");
-      const gateway = startFakeGateway([finalText("override complete")], {
-        models: [
-          { id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"] },
-          {
-            id: "provider/fast-override",
-            type: "language",
-            tags: ["tool-use"],
-            fast_options: [{ type: "toggle" }],
-          },
-        ],
-      });
+      const root = createIsolatedRoot("fx-acp-codex-model-options-");
+      const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
-          args: ["acp", "--model", "provider/fast-override"],
+          cwd: root.workspace,
+          env: fakeGatewayEnv(root, gateway),
+        });
+        await client.request("initialize", { protocolVersion: 1 }, 1);
+        const resp = await client.request("session/new", {}, 2) as any;
+        expect(gateway.modelRequests).toHaveLength(1);
+        const modelRequest = gateway.modelRequests[0]!;
+        expect(modelRequest.headers.get("authorization")).toBe(
+          `Bearer ${acpChatGptAccessToken()}`,
+        );
+        expect(modelRequest.url).toContain("?client_version=");
+
+        const modelOpt = resp.result.configOptions.find((o: any) => o.id === "model");
+        expect(modelOpt).toBeDefined();
+        const optionsText = JSON.stringify(modelOpt.options);
+        expect(optionsText).toContain("gpt-5.4-mini");
+        expect(optionsText).toContain("gpt-5.4");
+      } finally {
+        await client?.close();
+        gateway.stop();
+        rmSync(root.root, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "--model flag overrides the selected catalog model",
+    async () => {
+      const root = createIsolatedRoot("fx-acp-model-override-");
+      const gateway = startFakeGateway([finalText("override complete")]);
+      try {
+        client = await AcpClient.create({
+          args: ["acp", "--model", "gpt-5.4"],
           cwd: root.workspace,
           env: { ...fakeGatewayEnv(root, gateway), FX_MODEL: undefined },
         });
@@ -7867,14 +8037,14 @@ describe("acp: model catalog authentication", () => {
         const resp = await client.request("session/new", { mcpServers: [] }, 2) as any;
         const modelOpt = resp.result.configOptions.find((o: any) => o.id === "model");
         expect(modelOpt).toBeDefined();
-        expect(modelOpt.currentValue).toBe("provider/fast-override");
+        expect(modelOpt.currentValue).toBe("gpt-5.4");
 
         await client.readLine(); // consume session/update notification
         const prompt = await runPrompt(client, "Confirm the model override.");
         expect(prompt.promptResult.result.stopReason).toBe("end_turn");
         expect(gateway.requests).toHaveLength(1);
         const request = JSON.parse(gateway.requests[0]!.body);
-        expect(request).not.toHaveProperty("providerOptions.gateway.speed");
+        expect(request.model).toBe("gpt-5.4");
       } finally {
         await client?.close();
         gateway.stop();
@@ -7885,7 +8055,7 @@ describe("acp: model catalog authentication", () => {
   );
 });
 
-describe.skipIf(!HAS_API_KEY)("acp: model-backed protocol", () => {
+describe("acp: model-backed protocol", () => {
   let client: AcpClient;
 
   afterEach(async () => {
@@ -8050,12 +8220,7 @@ describe.skipIf(!HAS_API_KEY)("acp: model-backed protocol", () => {
     "session/set_config_option updates model and returns configOptions",
     async () => {
       const root = createIsolatedRoot("fx-acp-set-config-");
-      const gateway = startFakeGateway([], {
-        models: [
-          { id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"] },
-          { id: "o4-mini", type: "language", tags: ["tool-use"] },
-        ],
-      });
+      const gateway = startFakeGateway([], );
       try {
         client = await AcpClient.create({
           cwd: root.workspace,
@@ -8067,14 +8232,14 @@ describe.skipIf(!HAS_API_KEY)("acp: model-backed protocol", () => {
 
         const resp = await client.request("session/set_config_option", {
           configId: "model",
-          value: "o4-mini",
+          value: "gpt-5.4",
         }, 3) as any;
         expect(resp.result).toBeDefined();
         expect(resp.result.configOptions).toBeDefined();
         expect(Array.isArray(resp.result.configOptions)).toBe(true);
         const modelOpt = resp.result.configOptions.find((o: any) => o.id === "model");
         expect(modelOpt).toBeDefined();
-        expect(modelOpt.currentValue).toBe("o4-mini");
+        expect(modelOpt.currentValue).toBe("gpt-5.4");
       } finally {
         await client?.close();
         gateway.stop();
@@ -8085,12 +8250,11 @@ describe.skipIf(!HAS_API_KEY)("acp: model-backed protocol", () => {
   );
 
   test(
-    "session provider changes use Codex credentials without crossing origins",
+    "ACP session prompts refresh Codex credentials without crossing origins",
     async () => {
       const root = createIsolatedRoot("fx-acp-chatgpt-route-");
       const gateway = startFakeGateway([]);
       const codex = startAcpFakeCodex({ unauthorizedResponses: 1 });
-      writeSeededAcpChatGptLogin(root.home, codex.accessToken);
       try {
         client = await AcpClient.create({
           cwd: root.workspace,
@@ -8105,15 +8269,6 @@ describe.skipIf(!HAS_API_KEY)("acp: model-backed protocol", () => {
         await client.request("session/new", { mcpServers: [] }, 2);
         await client.readLine(); // consume session/update notification
 
-        const changed = await client.request("session/set_config_option", {
-          configId: "provider",
-          value: "codex",
-        }, 3) as any;
-        expect(changed.result.configOptions.find((option: any) => option.id === "provider").currentValue)
-          .toBe("codex");
-        expect(changed.result.configOptions.find((option: any) => option.id === "model").currentValue)
-          .toBe("gpt-5.6-sol");
-
         const prompt = await runPrompt(client, "Answer directly.", TIMEOUT);
         expect(prompt.promptResult.result.stopReason).toBe("end_turn");
         expect(JSON.stringify(prompt.messages)).toContain("ACP_CHATGPT_RESPONSE");
@@ -8121,7 +8276,7 @@ describe.skipIf(!HAS_API_KEY)("acp: model-backed protocol", () => {
         expect(secondPrompt.promptResult.result.stopReason).toBe("end_turn");
         expect(codex.requests).toHaveLength(3);
         expect(codex.modelRequests).toHaveLength(1);
-        expect(codex.requests[0]!.authorization).toBe(`Bearer ${codex.accessToken}`);
+        expect(codex.requests[0]!.authorization).toBe(`Bearer ${acpChatGptAccessToken()}`);
         expect(codex.requests[1]!.authorization).toBe(`Bearer ${codex.refreshedAccessToken}`);
         expect(codex.requests[2]!.authorization).toBe(`Bearer ${codex.refreshedAccessToken}`);
         expect(codex.tokenRequests).toHaveLength(1);
@@ -8131,77 +8286,6 @@ describe.skipIf(!HAS_API_KEY)("acp: model-backed protocol", () => {
       } finally {
         await client?.close();
         codex.stop();
-        gateway.stop();
-        rmSync(root.root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "session provider changes use Grok credentials with byte-identical account-stable replay",
-    async () => {
-      const root = createIsolatedRoot("fx-acp-grok-route-");
-      const gateway = startFakeGateway([]);
-      const grok = startAcpFakeGrok({ unauthorizedResponses: 1 });
-      writeSeededAcpGrokLogin(root.home, grok.accessToken);
-      try {
-        client = await AcpClient.create({
-          cwd: root.workspace,
-          env: {
-            ...fakeGatewayEnv(root, gateway),
-            FX_E2E_XAI_GROK_RESPONSES_URL: grok.responsesUrl,
-            FX_E2E_XAI_GROK_MODELS_URL: grok.modelsUrl,
-            FX_E2E_XAI_GROK_MODALITIES_URL: grok.modalitiesUrl,
-            FX_E2E_GROK_TOKEN_URL: grok.tokenUrl,
-            FX_E2E_GROK_USERINFO_URL: grok.userinfoUrl,
-          },
-        });
-        await client.request("initialize", { protocolVersion: 1 }, 1);
-        await client.request("session/new", { mcpServers: [] }, 2);
-        await client.readLine();
-
-        const changed = await client.request("session/set_config_option", {
-          configId: "provider",
-          value: "grok",
-        }, 3) as any;
-        expect(changed.result.configOptions.find((option: any) => option.id === "provider").currentValue)
-          .toBe("grok");
-        expect(changed.result.configOptions.find((option: any) => option.id === "model").currentValue)
-          .toBe("grok-4.20");
-
-        const prompt = await runPrompt(client, "Answer directly.", TIMEOUT);
-        expect(prompt.promptResult.result.stopReason).toBe("end_turn");
-        expect(JSON.stringify(prompt.messages)).toContain("ACP_GROK_RESPONSE");
-        const secondPrompt = await runPrompt(client, "Answer again.", TIMEOUT);
-        expect(secondPrompt.promptResult.result.stopReason).toBe("end_turn");
-
-        expect(grok.requests).toHaveLength(3);
-        expect(grok.requests[0]!.body).toBe(grok.requests[1]!.body);
-        expect(grok.requests[0]!.conversationId).toBeTruthy();
-        expect(grok.requests[0]!.conversationId).toBe(grok.requests[1]!.conversationId);
-        expect(grok.modelRequests.map((request) => request.path)).toEqual(["/models", "/modalities"]);
-        expect(grok.requests[0]!.authorization).toBe(`Bearer ${grok.accessToken}`);
-        expect(grok.requests[1]!.authorization).toBe(`Bearer ${grok.refreshedAccessToken}`);
-        expect(grok.requests[2]!.authorization).toBe(`Bearer ${grok.refreshedAccessToken}`);
-        for (const request of grok.requests) {
-          expect(request.tokenAuth).toBe("xai-grok-cli");
-          expect(request.authenticateResponse).toBe("authenticate-response");
-          expect(request.clientIdentifier).toBe("fx");
-          expect(request.clientVersion).toBe("1.0.6");
-          expect(request.modelOverride).toBe("grok-4.20");
-          expect(request.grokUserId).toBe("acct_grok_acp");
-        }
-        expect(grok.tokenRequests).toHaveLength(1);
-        expect(grok.tokenRequests[0]!.body).toContain("grant_type=refresh_token");
-        expect(grok.userinfoRequests).toHaveLength(1);
-        expect(grok.userinfoRequests[0]!.authorization).toBe(`Bearer ${grok.refreshedAccessToken}`);
-        for (const request of [...gateway.requests, ...gateway.modelRequests]) {
-          expect(request.headers.get("authorization")).not.toContain("grok-acp-");
-        }
-      } finally {
-        await client?.close();
-        grok.stop();
         gateway.stop();
         rmSync(root.root, { recursive: true, force: true });
       }
@@ -8287,12 +8371,7 @@ describe.skipIf(!HAS_API_KEY)("acp: model-backed protocol", () => {
     "session/new model configOptions has multiple options",
     async () => {
       const root = createIsolatedRoot("fx-acp-model-options-");
-      const gateway = startFakeGateway([], {
-        models: [
-          { id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"] },
-          { id: "openai/gpt-4o", type: "language", tags: ["tool-use"] },
-        ],
-      });
+      const gateway = startFakeGateway([], );
       try {
         client = await AcpClient.create({
           cwd: root.workspace,

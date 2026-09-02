@@ -29,7 +29,7 @@ TRAINING_E2E_TESTS = (
     "file-tool-permissions.test.ts",
     "gateway-stream-lifecycle.test.ts",
     "web-fetch-fake-network.test.ts",
-    "web-search-fake-gateway.test.ts",
+    "web-search-fake-codex.test.ts",
     "vision-route-fake-gateway.test.ts",
     "acp.test.ts",
     "mcp-http.test.ts",
