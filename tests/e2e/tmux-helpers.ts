@@ -18,12 +18,7 @@ export const FAKE_GATEWAY_MODEL = "openai/gpt-5";
 const TMUX_CAPTURE_MAX_BUFFER = 32 * 1024 * 1024;
 const TMUX_HEX_CHUNK_BYTES = 256;
 const COMPOSER_LINE = /^[ \t]*(?:┃|❯|>)(?:[ \t]|$)/;
-const AUTH_ENV_KEYS = [
-  "AI_GATEWAY_API_KEY",
-  "VERCEL_OIDC_TOKEN",
-] as const;
 const DEFAULT_UNSET_ENV_KEYS = [
-  ...AUTH_ENV_KEYS,
   "FX_E2E_GATEWAY_CHAT_URL",
   "FX_E2E_GATEWAY_MODELS_URL",
   "FX_E2E_GATEWAY_CREDITS_URL",
@@ -485,7 +480,6 @@ export class TmuxSession {
     const exitStatusPath = join(tmpdir(), `${name}.exit-status`);
     rmSync(exitStatusPath, { force: true });
 
-    const authEnvKeys = new Set<string>(AUTH_ENV_KEYS);
     const unsetArgs = Object.entries(env).flatMap(([key, value]) =>
       value === undefined ? ["-u", shellQuote(key)] : []
     );
@@ -493,10 +487,7 @@ export class TmuxSession {
       Object.prototype.hasOwnProperty.call(env, key) ? [] : ["-u", shellQuote(key)]
     );
     const assignmentArgs = Object.entries(env).flatMap(([key, value]) =>
-      value === undefined || authEnvKeys.has(key) ? [] : [shellQuote(`${key}=${value}`)]
-    );
-    const sessionEnvArgs = Object.entries(env).flatMap(([key, value]) =>
-      value === undefined || !authEnvKeys.has(key) ? [] : ["-e", `${key}=${value}`]
+      value === undefined ? [] : [shellQuote(`${key}=${value}`)]
     );
     const mirroredEnv = MIRRORED_ENV_KEYS.flatMap((key) =>
       Object.prototype.hasOwnProperty.call(env, key)
@@ -632,7 +623,6 @@ export class TmuxSession {
           String(width),
           "-y",
           String(height),
-          ...sessionEnvArgs,
           tmuxCommand,
           ...launchSuffix,
         ],
@@ -672,17 +662,6 @@ export class TmuxSession {
     }
     const session = new TmuxSession(name, exitStatusPath, resolvedSocketName);
     try {
-      for (const key of AUTH_ENV_KEYS) {
-        try {
-          execFileSync(
-            "tmux",
-            [...tmuxPrefix, "set-environment", "-u", "-t", name, key],
-            { env: processEnv, stdio: "pipe" },
-          );
-        } catch (err) {
-          if (session.isAlive()) throw err;
-        }
-      }
       if (remainOnExit) {
         execFileSync(
           "tmux",
@@ -1483,8 +1462,6 @@ export function fakeCodexEnv(
 ): Record<string, string | undefined> {
   return {
     HOME: home,
-    AI_GATEWAY_API_KEY: undefined,
-    VERCEL_OIDC_TOKEN: undefined,
     FX_E2E_OPENAI_CODEX_RESPONSES_URL: codex.responsesUrl,
     FX_E2E_OPENAI_CODEX_MODELS_URL: codex.modelsUrl,
     FX_E2E_CHATGPT_TOKEN_URL: codex.tokenUrl,

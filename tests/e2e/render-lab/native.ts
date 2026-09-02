@@ -737,10 +737,6 @@ function startShellCommand(
         `SHELL_B_BEFORE_THIRD=${shQuote(manifest.markers.shell[2]!)}`,
       ];
   const env = [
-    "-u",
-    "AI_GATEWAY_API_KEY",
-    "-u",
-    "VERCEL_OIDC_TOKEN",
     `HOME=${shQuote(fixture.home)}`,
     `ZDOTDIR=${shQuote(fixture.zdotdir)}`,
     `HISTFILE=${shQuote(fixture.histfile)}`,

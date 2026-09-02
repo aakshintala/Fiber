@@ -146,8 +146,6 @@ jobs:
         run: bun test auto-mode-reliability.test.ts
         working-directory: tests/e2e
         env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
           FX_REQUIRE_TMUX: "1"
 
       - name: Run Vision route and headless SIGINT regressions
@@ -155,9 +153,6 @@ jobs:
           bun test vision-route-fake-gateway.test.ts
           bun test ./tui-command-permissions.test.ts --test-name-pattern "fx ask SIGINT during classifier wait terminates before decision or execution"
         working-directory: tests/e2e
-        env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
 
       - name: Run TUI input line deletion regression
         run: |
@@ -165,8 +160,6 @@ jobs:
           bun test tui-input-line-delete.test.ts
         working-directory: tests/e2e
         env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
           FX_REQUIRE_TMUX: "1"
 
       - name: Run multiline input navigation TUI tests
@@ -175,8 +168,6 @@ jobs:
           bun test tui-input-navigation.test.ts
         working-directory: tests/e2e
         env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
           FX_REQUIRE_TMUX: "1"
 
       - name: Run valid question recovery TUI regression
@@ -185,8 +176,6 @@ jobs:
           bun test ./tui-decision-prompts.test.ts --test-name-pattern "valid serialized ask control with matching identity opens the question and continues"
         working-directory: tests/e2e
         env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
           FX_REQUIRE_TMUX: "1"
 
       - name: Run streamed lifecycle, direct-write, and command scrollback regressions
@@ -196,8 +185,6 @@ jobs:
           bun test ./tui-command-permissions.test.ts --test-name-pattern "TUI preserves completed transcript when a later auto-approved command starts|TUI isolates approved foreground commands from terminal ownership"
         working-directory: tests/e2e
         env:
-          AI_GATEWAY_API_KEY: ""
-          VERCEL_OIDC_TOKEN: ""
           FX_REQUIRE_TMUX: "1"
 
   e2e:
@@ -292,8 +279,6 @@ jobs:
       - name: Run full ACP tests
         run: bun test acp.test.ts
         working-directory: tests/e2e
-        env:
-          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
 
   e2e-acp-full:
     name: E2E ACP (full)
