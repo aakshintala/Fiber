@@ -192,8 +192,6 @@ const gateway_connection_setup_timeout_ms: i64 = 30_000;
 const gateway_retry_after_max_ns: u64 = 5 * std.time.ns_per_s;
 const gateway_transfer_buffer_bytes: usize = 256 * 1024;
 const provider_failure_detail_max_bytes: usize = 600;
-const generation_response_max_bytes: usize = 128 * 1024;
-const generation_lookup_timeout_ms: i64 = 30_000;
 // Covers a 4 MiB string at worst-case JSON escaping plus SSE framing.
 const max_sse_event_line_bytes: usize = 32 * 1024 * 1024;
 const e2e_gateway_chat_url_env = "FX_E2E_GATEWAY_CHAT_URL";
@@ -259,99 +257,6 @@ pub fn fetchGatewayJson(
 pub fn fetchGatewayGetResult(alloc: std.mem.Allocator, api_key: ?[]const u8, path: []const u8) !GetResult {
     return fetchGatewayGet(alloc, api_key, null, path, e2e_gateway_credits_url_env);
 }
-
-pub fn fetchGatewayGenerationResult(
-    alloc: std.mem.Allocator,
-    api_key: []const u8,
-    gateway_team: ?[]const u8,
-    gateway_origin: []const u8,
-    generation_id: []const u8,
-    cancel_flag: *std.atomic.Value(bool),
-) !GetResult {
-    if (!types.validGatewayGenerationId(generation_id)) return error.InvalidGenerationId;
-    var operation = GenerationLookupOperation{
-        .alloc = alloc,
-        .api_key = api_key,
-        .gateway_team = gateway_team,
-        .gateway_origin = gateway_origin,
-        .generation_id = generation_id,
-    };
-    return runBoundedHttpOperation(
-        GetResult,
-        alloc,
-        cancel_flag,
-        std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
-            .clock = .awake,
-            .raw = .fromMilliseconds(generation_lookup_timeout_ms),
-        }),
-        &operation,
-    );
-}
-
-const GenerationLookupOperation = struct {
-    alloc: std.mem.Allocator,
-    api_key: []const u8,
-    gateway_team: ?[]const u8,
-    gateway_origin: []const u8,
-    generation_id: []const u8,
-
-    fn run(self: *@This()) !GetResult {
-        const path = try std.fmt.allocPrint(
-            self.alloc,
-            "/v1/generation?id={s}",
-            .{self.generation_id},
-        );
-        defer self.alloc.free(path);
-        const url = try std.fmt.allocPrint(
-            self.alloc,
-            "{s}{s}",
-            .{ self.gateway_origin, path },
-        );
-        defer self.alloc.free(url);
-        const uri = try std.Uri.parse(url);
-
-        var client: std.http.Client = .{
-            .allocator = self.alloc,
-            .io = io_mod.getIo(),
-        };
-        defer client.deinit();
-        const auth_header = try std.fmt.allocPrint(
-            self.alloc,
-            "Bearer {s}",
-            .{self.api_key},
-        );
-        defer secret.zeroAndFree(self.alloc, auth_header);
-        var extra_headers_buf: [1]std.http.Header = undefined;
-        const extra_headers = gatewayModelCatalogExtraHeaders(
-            &extra_headers_buf,
-            self.gateway_team,
-        );
-        var req = try client.request(.GET, uri, .{
-            .headers = .{
-                .authorization = .{ .override = auth_header },
-                .accept_encoding = .omit,
-                .user_agent = .{ .override = user_agent },
-            },
-            .extra_headers = extra_headers,
-            .redirect_behavior = .unhandled,
-        });
-        defer req.deinit();
-        try req.sendBodiless();
-        if (req.connection) |conn| try conn.flush();
-
-        var response = try req.receiveHead(&.{});
-        var transfer_buffer: [16 * 1024]u8 = undefined;
-        const reader = response.reader(&transfer_buffer);
-        const body = reader.allocRemaining(
-            self.alloc,
-            .limited(generation_response_max_bytes),
-        ) catch |err| switch (err) {
-            error.StreamTooLong => return error.GatewayGenerationResponseTooLarge,
-            else => return err,
-        };
-        return .{ .status = response.head.status, .body = body };
-    }
-};
 
 fn fetchGatewayGet(alloc: std.mem.Allocator, api_key: ?[]const u8, gateway_team: ?[]const u8, path: []const u8, e2e_url_env: []const u8) !GetResult {
     const default_url = try std.fmt.allocPrint(alloc, "{s}{s}", .{ gatewayBaseUrl(), path });
@@ -606,15 +511,6 @@ fn gatewayBaseUrl() []const u8 {
         return default_gateway_base_url;
     }
     return override;
-}
-
-pub fn generationBaseUrl() []const u8 {
-    return std.mem.trimEnd(u8, gatewayBaseUrl(), "/");
-}
-
-pub fn isTrustedGenerationOrigin(origin: []const u8) bool {
-    return std.mem.eql(u8, origin, default_gateway_base_url) or
-        isLoopbackHttpUrl(origin);
 }
 
 pub fn postGatewayCompletion(
@@ -7363,56 +7259,6 @@ test "server error response preserves billing ambiguity" {
 
 test "bounded gateway retry sleep uses the original absolute deadline" {
     try expectBoundedLoopbackTimeout(.retry_once, "{}", 2, 250, 0, 1500);
-}
-
-test "generation lookup cancellation interrupts TLS setup" {
-    var fixture = try LoopbackGatewayFixture.init(.tls_handshake_stall, 1500);
-    defer fixture.deinit();
-    try fixture.start();
-    try std.testing.expect(fixture.waitForAcceptStart(5000));
-    const origin = try std.fmt.allocPrint(
-        std.testing.allocator,
-        "https://127.0.0.1:{d}",
-        .{fixture.port()},
-    );
-    defer std.testing.allocator.free(origin);
-
-    var cancel_flag = std.atomic.Value(bool).init(false);
-    var request_done = std.atomic.Value(bool).init(false);
-    const Cancel = struct {
-        fn run(
-            server_fixture: *LoopbackGatewayFixture,
-            flag: *std.atomic.Value(bool),
-            done: *std.atomic.Value(bool),
-        ) void {
-            if (!server_fixture.waitForStageOrDone(done)) return;
-            LoopbackGatewayFixture.sleepBlocking(20);
-            if (!done.load(.seq_cst)) flag.store(true, .seq_cst);
-        }
-    };
-    const cancel_thread = try std.Thread.spawn(
-        .{},
-        Cancel.run,
-        .{ &fixture, &cancel_flag, &request_done },
-    );
-    const started = std.Io.Clock.Timestamp.now(io_mod.getIo(), .awake);
-    const result = fetchGatewayGenerationResult(
-        std.testing.allocator,
-        "test-key",
-        null,
-        origin,
-        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        &cancel_flag,
-    );
-    const elapsed_ms = started.durationTo(
-        std.Io.Clock.Timestamp.now(io_mod.getIo(), .awake),
-    ).raw.toMilliseconds();
-    request_done.store(true, .seq_cst);
-    cancel_thread.join();
-    fixture.deinit();
-
-    try std.testing.expectError(error.Cancelled, result);
-    try std.testing.expect(elapsed_ms < 1000);
 }
 
 test "gateway retry sleep rejects cancellation before waiting" {

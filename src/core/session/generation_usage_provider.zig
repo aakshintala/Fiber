@@ -77,6 +77,8 @@ fn lookupUnavailable(
     return error.Unavailable;
 }
 
+// ponytail: seam has no implementation after the gateway generation-usage
+// deletion; collapse into session_usage directly in ticket 11b.
 pub const unavailable_provider = Provider{
     .lookup_fn = lookupUnavailable,
 };
