@@ -1024,7 +1024,6 @@ pub const StreamRequest = struct {
     retry_count: usize,
     chat_url: []const u8,
     payload: []const u8,
-    team: ?[]const u8 = null,
     /// Borrowed until `streamGatewayCompletion` returns.
     session_id: ?[]const u8 = null,
     trace_ctx: debug_trace.TraceContext = .{},
