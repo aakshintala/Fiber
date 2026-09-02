@@ -443,37 +443,6 @@ pub fn executeToolCallAuthorized(
     return result;
 }
 
-pub fn executeHostToolCallAuthorized(
-    ctx: Context,
-    request: tool_contracts.ToolExecutionRequest,
-) !ToolExecutionResult {
-    const spec = ctx.tool_registry.lookup(request.call.name) orelse
-        return error.InvalidToolArguments;
-    if (spec.executor_kind != .host) return error.InvalidToolArguments;
-
-    var execution_ctx = ctx;
-    if (request.permission_mode) |permission_mode| {
-        execution_ctx.permission_mode = permission_mode;
-    }
-    execution_ctx.max_tool_result_bytes = request.max_tool_result_bytes;
-    var dispatch_ctx = typedDispatchContextForCall(
-        execution_ctx,
-        request.result_allocator,
-        request.call,
-    );
-    dispatch_ctx.execution_authority = request.authority;
-    var status_detail: ?[]u8 = null;
-    const dispatched = try tool_dispatch.dispatchAuthorizedToolCall(
-        dispatch_ctx,
-        execution_ctx.tool_registry,
-        request.call,
-        &status_detail,
-    );
-    var result = toolExecutionResultFromDispatch(dispatched, .{});
-    result.status_detail = status_detail;
-    return result;
-}
-
 fn rebindMcpAuthorityGeneration(
     access: tool_mcp_runtime.Access,
     authority_generation: u64,

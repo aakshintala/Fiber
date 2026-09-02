@@ -2,7 +2,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const debug_trace = @import("../shared/debug_trace.zig");
 const host_contract = @import("../hosts/host.zig");
-const host_target = @import("../hosts/target.zig");
 const native_keychain = @import("../hosts/native_keychain.zig");
 const io_mod = @import("../shared/io.zig");
 const profile_paths = @import("../shared/profile_paths.zig");

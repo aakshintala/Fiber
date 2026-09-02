@@ -1,5 +1,4 @@
 const std = @import("std");
-const host_target = @import("../hosts/target.zig");
 const builtin = @import("builtin");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
@@ -1868,7 +1867,6 @@ fn validateJsonContentType(content_type: ?[]const u8) !void {
 }
 
 fn setSocketTimeouts(socket: std.posix.socket_t, seconds: i64) void {
-    if (comptime host_target.is_wasm) return;
     const timeout = std.posix.timeval{ .sec = seconds, .usec = 0 };
     const bytes = std.mem.asBytes(&timeout);
     std.posix.setsockopt(

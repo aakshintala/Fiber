@@ -2,8 +2,6 @@ const std = @import("std");
 const config_runtime = @import("../config/config_runtime.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const host = @import("../hosts/host.zig");
-const runtime_profile = @import("../hosts/runtime_profile.zig");
-const host_target = @import("../hosts/target.zig");
 const io_mod = @import("../shared/io.zig");
 const credentials = @import("../auth/credentials.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
@@ -16,10 +14,6 @@ const model_provider = @import("../config/model_provider.zig");
 const model_catalog = @import("../gateway/model_catalog.zig");
 const provider_runtime = @import("provider_runtime.zig");
 const types = @import("../shared/types.zig");
-
-fn oauthAuthEnabled(comptime App: type) bool {
-    return runtime_profile.allows(App, .native_auth);
-}
 
 const ProviderSwitchDecision = auth_transition.ProviderSwitchDecision;
 const ProviderSwitchIntent = auth_transition.ProviderSwitchIntent;
@@ -99,18 +93,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn runLoginCommand(app: *App) !void {
-            if (comptime !oauthAuthEnabled(App)) {
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .warning,
-                    .body = "Set FX_API_KEY through createFxTerminal() to authenticate this WASM session.",
-                }, true);
-                return;
-            }
-            if (comptime host_target.is_wasm) {
-                try beginSignIn(app, false);
-                return;
-            }
             switch (app.auth.beginSourceInventoryRefresh(app.alloc, .{
                 .provider = provider_runtime.provider(app),
             })) {
@@ -129,14 +111,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn runLogoutCommand(app: *App, target: []const u8) !void {
-            if (comptime !oauthAuthEnabled(App)) {
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .warning,
-                    .body = "Authentication is owned by the embedding SDK for this WASM session.",
-                }, true);
-                return;
-            }
             const requested_provider = if (std.mem.trim(u8, target, " \t\r\n").len == 0)
                 null
             else
@@ -226,14 +200,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn openSetupHub(app: *App) !void {
-            if (comptime !runtime_profile.allows(App, .native_auth)) {
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .warning,
-                    .body = "API key setup is unavailable in this WASM session.",
-                }, true);
-                return;
-            }
             switch (app.auth.beginSourceInventoryRefresh(app.alloc, .{
                 .provider = provider_runtime.provider(app),
             })) {
@@ -304,14 +270,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn applyPickerChoice(app: *App, choice: auth_runtime.Choice) !void {
-            if (comptime !oauthAuthEnabled(App)) {
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .warning,
-                    .body = "Browser authentication is supplied by the embedding SDK.",
-                }, true);
-                return;
-            }
             switch (choice) {
                 .provider => |provider| try switchProvider(app, provider, true, .manual),
                 .source => |source| try applySourceChoice(app, source),
@@ -321,14 +279,6 @@ pub fn Runtime(comptime App: type) type {
                     .chatgpt_login => try beginChatGptSignIn(app),
                     .grok_login => try beginGrokSignIn(app),
                     .setup => {
-                        if (comptime !runtime_profile.allows(App, .native_auth)) {
-                            try app.writeDomainNotice(.{
-                                .topic = "auth",
-                                .tone = .warning,
-                                .body = "API key setup is unavailable in this WASM session.",
-                            }, true);
-                            return;
-                        }
                         prepareApiKeyInputBoundary(app);
                         app.auth.openApiKeyPickerFromRoot(app.alloc);
                     },
@@ -399,12 +349,11 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn collectSignInFacts(app: *App) !void {
-            if (comptime !oauthAuthEnabled(App)) return;
             const sign_in_source: credentials.Source = if (comptime @hasDecl(@TypeOf(app.auth), "pickerView"))
                 app.auth.pickerView().sign_in_source
             else
                 .fx_login;
-            app.auth.pulseSignIn(app.alloc);
+
             switch (app.auth.pollSignInTransition(app.alloc)) {
                 .none => {},
                 .cancelled => app.shell.render_requests.request(.footer),
@@ -759,14 +708,6 @@ pub fn Runtime(comptime App: type) type {
                     .topic = "provider",
                     .tone = .warning,
                     .body = "Provider switching is unavailable in this host.",
-                }, true);
-                return;
-            }
-            if (comptime host_target.is_wasm) {
-                try app.writeDomainNotice(.{
-                    .topic = "provider",
-                    .tone = .warning,
-                    .body = "Subscription provider switching is unavailable in this WASM session.",
                 }, true);
                 return;
             }
@@ -1128,15 +1069,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn admitPromptCredential(app: *App) !bool {
-            if (comptime !oauthAuthEnabled(App)) {
-                if (app.auth.apiKey() != null) return true;
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .warning,
-                    .body = "Missing FX_API_KEY. Supply it through createFxTerminal().",
-                }, true);
-                return false;
-            }
             if (!try ensurePromptCredential(app)) return false;
             return preparePromptCredential(app);
         }
@@ -1197,7 +1129,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         fn reconcileGatewayCredential(app: *App) void {
-            if (comptime !runtime_profile.allows(App, .generation_usage)) return;
             if (comptime @hasField(App, "session") and
                 @hasField(@TypeOf(app.session), "usage"))
             {
@@ -1383,8 +1314,6 @@ const BusySignInAuth = struct {
 };
 
 const BusySignInApp = struct {
-    pub const host_profile = runtime_profile.native;
-
     alloc: std.mem.Allocator = std.testing.allocator,
     selected_provider: model_provider.ProviderId = .gateway,
     selected_model: std.ArrayList(u8) = .empty,
@@ -1524,8 +1453,6 @@ const TestAuth = struct {
         self.sign_in_transition = .none;
         return transition;
     }
-
-    fn pulseSignIn(_: *TestAuth, _: std.mem.Allocator) void {}
 
     fn popPickerStage(self: *TestAuth, _: std.mem.Allocator) bool {
         self.picker_pop_count += 1;

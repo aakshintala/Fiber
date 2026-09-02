@@ -1,5 +1,4 @@
 const std = @import("std");
-const host_target = @import("../hosts/target.zig");
 const builtin = @import("builtin");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
@@ -264,7 +263,6 @@ pub const StdioDispatcher = struct {
         generation: u64,
         initial_max_frame_bytes: usize,
     ) !*StdioDispatcher {
-        if (comptime host_target.is_wasm) return error.McpTransportUnavailable;
         var child = child_value;
         const child_id = child.id orelse return error.McpProcessNotStarted;
         const stdin = child.stdin orelse {

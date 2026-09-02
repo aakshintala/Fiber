@@ -14,7 +14,6 @@ const mem_utils = @import("../../shared/mem_utils.zig");
 const text_utils = @import("../../shared/text_utils.zig");
 const file_mutation_contract = @import("../../tooling/file_mutation_contract.zig");
 const io_mod = @import("../../shared/io.zig");
-const host_target = @import("../../hosts/target.zig");
 const secret = @import("../../auth/secret.zig");
 const credentials = @import("../../auth/credentials.zig");
 const credential_authority = @import("../../auth/credential_authority.zig");
@@ -3281,17 +3280,15 @@ fn refreshGatewayCredentialForJob(
         return false;
     } orelse return false;
     const previous_api_key = active_api_key.*;
-    if (comptime !host_target.is_wasm) {
-        if (deps.usage) |usage| {
-            if (source == .chatgpt_subscription or source == .grok_subscription) {
-                usage.clearReconciliationCredential();
-            } else {
-                usage.refreshReconciliationCredential(
-                    deps.usage_allocator,
-                    previous_api_key,
-                    refreshed,
-                );
-            }
+    if (deps.usage) |usage| {
+        if (source == .chatgpt_subscription or source == .grok_subscription) {
+            usage.clearReconciliationCredential();
+        } else {
+            usage.refreshReconciliationCredential(
+                deps.usage_allocator,
+                previous_api_key,
+                refreshed,
+            );
         }
     }
     if (owned_api_key.*) |old| secret.zeroAndFree(alloc, old);
@@ -4686,7 +4683,6 @@ fn processQueuedPromptLoop(
                     null,
                 .trace_ctx = step_ctx,
                 .content_capture_limit = null,
-                .cooperative_pulse = deps.cooperative_transport_pulse,
                 .delivery = &gateway_delivery,
                 .attempt_evidence = &gateway_attempt_evidence,
                 .events = .{ .context = &provider_events, .emit_fn = onProviderEvent },
@@ -6883,23 +6879,13 @@ fn processQueuedPromptLoop(
                         .max_tool_result_bytes = config.max_tool_result_bytes,
                         .classification_complete = executable_classification_complete.items,
                     };
-                    if (comptime host_target.is_wasm) {
-                        parallel_run = try runtime_parallel_execution.runSequentialCalls(arena, executable_calls.items, .{
-                            .exec_ctx = &parallel_exec_ctx,
-                            .execute = runtime_parallel_execution.parallelHookExecute,
-                            .format_ctx = &parallel_exec_ctx,
-                            .format_error = runtime_parallel_execution.parallelHookFormatError,
-                            .cancel_flag = config.cancel_flag,
-                        });
-                    } else {
-                        parallel_run = try runtime_parallel_execution.runParallelCalls(arena, executable_calls.items, .{
-                            .exec_ctx = &parallel_exec_ctx,
-                            .execute = runtime_parallel_execution.parallelHookExecute,
-                            .format_ctx = &parallel_exec_ctx,
-                            .format_error = runtime_parallel_execution.parallelHookFormatError,
-                            .cancel_flag = config.cancel_flag,
-                        });
-                    }
+                    parallel_run = try runtime_parallel_execution.runParallelCalls(arena, executable_calls.items, .{
+                        .exec_ctx = &parallel_exec_ctx,
+                        .execute = runtime_parallel_execution.parallelHookExecute,
+                        .format_ctx = &parallel_exec_ctx,
+                        .format_error = runtime_parallel_execution.parallelHookFormatError,
+                        .cancel_flag = config.cancel_flag,
+                    });
                 }
                 defer if (parallel_run) |*run| run.deinit(arena);
 

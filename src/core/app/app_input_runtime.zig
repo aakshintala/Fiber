@@ -11,7 +11,6 @@ const app_worker_runtime = @import("app_worker_runtime.zig");
 const app_render_runtime = @import("app_render_runtime.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
 const host = @import("../hosts/host.zig");
-const runtime_profile = @import("../hosts/runtime_profile.zig");
 const composer_insertion = @import("../input/composer_insertion.zig");
 const gesture_state = @import("../input/gesture_state.zig");
 const horizontal_navigation = @import("../input/horizontal_navigation.zig");
@@ -598,8 +597,7 @@ pub fn Runtime(comptime App: type) type {
             }
 
             const file_picker_was_active = app.input_runtime.picker.activeFilePickerQuery(&app.input_runtime.edit_state) != null;
-            defer if (comptime runtime_profile.allows(App, .file_index))
-                updateFilePickerEpisode(app, file_picker_was_active);
+            defer updateFilePickerEpisode(app, file_picker_was_active);
 
             const paste_was_active = terminalPasteActive(app);
             defer {
@@ -817,10 +815,7 @@ pub fn Runtime(comptime App: type) type {
                 modelMenuActive(app) or
                 sessionMenuActive(app) or
                 helpMenuActive(app);
-            var authentication_active = false;
-            if (comptime runtime_profile.allows(App, .native_auth)) {
-                authentication_active = app.auth.apiKeyEntryActive();
-            }
+            const authentication_active = app.auth.apiKeyEntryActive();
             return projectMcpPromptMayOwnInput(.{
                 .active = app.projectMcpPromptActive(),
                 .question_active = app.question_prompt.isActive(),
@@ -916,9 +911,7 @@ pub fn Runtime(comptime App: type) type {
                 return;
             }
 
-            if (comptime runtime_profile.allows(App, .native_auth)) {
-                if (try app_auth_runtime.Runtime(App).routeAuthPickerByte(app, byte)) return;
-            }
+            if (try app_auth_runtime.Runtime(App).routeAuthPickerByte(app, byte)) return;
             if (try full_transcript_rt.routeByte(app, byte)) return;
             if (try routeProjectMcpPromptByte(app, byte)) return;
             if (try routeActiveModalInput(app, raw, input_limits.decision_bytes)) return;
@@ -993,9 +986,7 @@ pub fn Runtime(comptime App: type) type {
             if (try full_transcript_rt.routeAction(app, resolved)) return .done;
 
             if (resolved == .paste_start) {
-                if (comptime runtime_profile.allows(App, .native_auth) and
-                    @hasDecl(@TypeOf(app.auth), "signInCodeEntryActive"))
-                {
+                if (comptime @hasDecl(@TypeOf(app.auth), "signInCodeEntryActive")) {
                     if (app.auth.signInCodeEntryActive()) {
                         paste_rt.beginPaste(app, max_input_len);
                         return .done;
@@ -1135,9 +1126,7 @@ pub fn Runtime(comptime App: type) type {
                     }
                 },
                 .open_all_sessions => {
-                    if (comptime @hasField(App, "session_persistence") and
-                        runtime_profile.allows(App, .durable_sessions))
-                    {
+                    if (comptime @hasField(App, "session_persistence")) {
                         if (settingsMenuActive(app) or helpMenuActive(app) or skillsMenuActive(app) or modelMenuActive(app)) return .done;
                         if (try refuseSessionActionWithDraft(app, "submit or clear the draft before switching sessions")) return .done;
                         dismissActiveMenusThenRedraw(app);
@@ -1306,12 +1295,10 @@ pub fn Runtime(comptime App: type) type {
                     },
                     '\r' => try submitCompactCommandMenuSelection(app, menu, max_input_len),
                     'r', 'R' => if (menu == .usage) {
-                        if (comptime runtime_profile.allows(App, .profile_usage)) {
-                            try reloadUsageMenu(
-                                app,
-                                app.input_runtime.usage_menu.navigationScope(),
-                            );
-                        }
+                        try reloadUsageMenu(
+                            app,
+                            app.input_runtime.usage_menu.navigationScope(),
+                        );
                     },
                     10 => {
                         _ = moveCompactCommandMenu(app, menu, 1);
@@ -1501,9 +1488,7 @@ pub fn Runtime(comptime App: type) type {
                     if (try submitModelMenuSelection(app)) return;
                     if (try submitSkillsMenuSelection(app, max_input_len)) return;
                     if (try submitSlashPickerSelection(app)) return;
-                    if (comptime runtime_profile.allows(App, .durable_sessions)) {
-                        if (try submitSessionPickerSelection(app)) return;
-                    }
+                    if (try submitSessionPickerSelection(app)) return;
                     if (try completion_rt.submitFilePickerOnEnter(app, max_input_len)) |result| {
                         if (result == .limit_exceeded) {
                             try input_limit_feedback.report(App, app, .composer, 1);
@@ -2238,7 +2223,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         fn toggleSessionPickerScopeIfActive(app: *App) !bool {
-            if (comptime !runtime_profile.allows(App, .durable_sessions)) return false;
             if (comptime !@hasField(App, "session_persistence")) return false;
             if (!app.session_persistence.session_picker.active) return false;
             return try app_session_runtime.Runtime(App).toggleSessionPickerScope(app);
@@ -2511,7 +2495,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         fn refreshUsageMenu(app: *App, scope: usage_report.Scope) !void {
-            if (comptime !runtime_profile.allows(App, .profile_usage)) return;
             if (comptime @hasDecl(App, "refreshUsageMenu")) {
                 try app.refreshUsageMenu(scope);
             } else {
@@ -2520,7 +2503,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         fn reloadUsageMenu(app: *App, scope: usage_report.Scope) !void {
-            if (comptime !runtime_profile.allows(App, .profile_usage)) return;
             if (comptime @hasDecl(App, "reloadUsageMenu")) {
                 try app.reloadUsageMenu(scope);
             } else if (comptime @hasDecl(App, "refreshUsageMenu")) {

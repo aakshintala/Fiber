@@ -8,9 +8,7 @@ const assistant_presentation = @import("../agent/assistant_presentation.zig");
 const tool_admission = @import("../agent/runtime/tool_admission.zig");
 const tool_presentation = @import("../agent/runtime/tool_presentation.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
-const runtime_profile = @import("../hosts/runtime_profile.zig");
 const host_capability = @import("../hosts/host.zig");
-const host_target = @import("../hosts/target.zig");
 const diff = @import("../output/diff.zig");
 const diagnostics = @import("../workspace/diagnostics.zig");
 const app_lifecycle = @import("app_lifecycle.zig");
@@ -1298,7 +1296,6 @@ pub fn Runtime(comptime App: type) type {
             app: *App,
             required: bool,
         ) !void {
-            if (comptime !runtime_profile.allows(App, .durable_sessions)) return;
             var store = session_store.Store.init(
                 app.alloc,
                 app.workspace_root,
@@ -1312,7 +1309,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn enableSessionStores(app: *App) void {
-            if (comptime !runtime_profile.allows(App, .durable_sessions)) return;
             const loaded = if (app.session_persistence.writable) |*value| value else return;
             const capability = loaded.childCapability() catch |err| {
                 debug_trace.logf(
@@ -1356,7 +1352,6 @@ pub fn Runtime(comptime App: type) type {
 
         pub fn beginFreshPersistedSession(app: *App) !void {
             closeWritableSession(app, .{});
-            if (comptime !runtime_profile.allows(App, .durable_sessions)) return;
             const store = app.session_persistence.store orelse return;
             const preferences = app.session_persistence.workspace_preferences orelse
                 return error.SessionPreferencesUnavailable;
@@ -1399,7 +1394,7 @@ pub fn Runtime(comptime App: type) type {
         ) !void {
             const previous_policy = app.session_persistence.pending_live_session_policy;
             const decision = decideLiveSessionTransition(
-                runtime_profile.allows(App, .cooperative_agent),
+                false,
                 app.worker.isProcessing(),
                 previous_policy,
                 .{ .request = background_policy },
@@ -1426,7 +1421,7 @@ pub fn Runtime(comptime App: type) type {
 
         pub fn settlePendingLiveSessionTransition(app: *App) !void {
             const decision = decideLiveSessionTransition(
-                runtime_profile.allows(App, .cooperative_agent),
+                false,
                 app.worker.isProcessing(),
                 app.session_persistence.pending_live_session_policy,
                 .settle,
