@@ -363,7 +363,6 @@ test "skill submit snapshot keeps display spans exact while agent bindings dedup
 var resize_interlock = shell_runtime.ResizeApprovalInterlock{};
 const default_context_registry = context_contract.Registry{ .default_provider = builtin_context.provider };
 const selected_host_profile = host_runtime_profile.native;
-const app_api_key_validator = builtin_gateway.api_key_validator;
 const app_oauth_transport = builtin_gateway.oauth_transport_provider;
 const app_secret_store = host.unavailable_secret_store;
 fn currentBuild() update_target.CurrentBuild {
