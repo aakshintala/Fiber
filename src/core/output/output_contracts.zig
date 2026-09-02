@@ -362,36 +362,16 @@ fn writeTerminalSafe(writer: *std.Io.Writer, alloc: Allocator, raw: []const u8) 
     try writer.writeAll(encoded.bytes);
 }
 
-fn gatewayProviderConnected(auth: auth_runtime.StatusSnapshot) bool {
-    const source = auth.active_source orelse return auth.gateway_connected;
-    return auth.gateway_connected or (source != .chatgpt_subscription and source != .grok_subscription);
-}
-
 fn chatGptProviderConnected(auth: auth_runtime.StatusSnapshot) bool {
     return auth.chatgpt_connected or auth.active_source == .chatgpt_subscription;
 }
 
-fn grokProviderConnected(auth: auth_runtime.StatusSnapshot) bool {
-    return auth.grok_connected or auth.active_source == .grok_subscription;
-}
-
 fn writeConnectedProvidersText(writer: *std.Io.Writer, auth: auth_runtime.StatusSnapshot) !void {
-    var wrote_provider = false;
-    if (gatewayProviderConnected(auth)) {
-        try writer.writeAll("Vercel AI Gateway");
-        wrote_provider = true;
-    }
     if (chatGptProviderConnected(auth)) {
-        if (wrote_provider) try writer.writeAll(", Codex");
-        if (!wrote_provider) try writer.writeAll("Codex");
-        wrote_provider = true;
+        try writer.writeAll("Codex");
+    } else {
+        try writer.writeAll("none");
     }
-    if (grokProviderConnected(auth)) {
-        if (wrote_provider) try writer.writeAll(", Grok");
-        if (!wrote_provider) try writer.writeAll("Grok");
-        wrote_provider = true;
-    }
-    if (!wrote_provider) try writer.writeAll("none");
 }
 
 pub const McpLocalSnapshot = struct {
@@ -460,7 +440,7 @@ pub const McpLocalSnapshot = struct {
 
 pub const StatusSnapshot = struct {
     model: []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     update_channel: []const u8 = "stable",
     build_channel: []const u8 = "stable",
     build_revision: []const u8 = "",
@@ -487,9 +467,7 @@ pub const StatusSnapshot = struct {
         defer out.deinit();
 
         try out.writer.print("[status] model={s}\n", .{self.model});
-        if (self.provider != .gateway) {
-            try out.writer.print("[status] model_source={s}\n", .{provider_catalog.label(self.provider)});
-        }
+
         try out.writer.print("[status] update_channel={s}\n", .{self.update_channel});
         try out.writer.print("[status] build_channel={s}\n", .{self.build_channel});
         if (self.build_revision.len > 0) {
@@ -513,18 +491,13 @@ pub const StatusSnapshot = struct {
             );
         }
         try out.writer.print("[status] auth={s}\n", .{self.auth.activeSourceLabel()});
-        if (self.provider != .gateway) {
-            try out.writer.writeAll("[status] connected_providers=");
-            try writeConnectedProvidersText(&out.writer, self.auth);
-            try out.writer.writeByte('\n');
-        }
+        try out.writer.writeAll("[status] connected_providers=");
+        try writeConnectedProvidersText(&out.writer, self.auth);
+        try out.writer.writeByte('\n');
         try out.writer.print("[status] auth_refreshable={}\n", .{self.auth.refreshable()});
         if (self.auth.expired) try out.writer.writeAll("[status] auth_expired=true\n");
         if (self.auth_help) |help| {
             try out.writer.print("[status] auth_help={s}\n", .{help});
-        }
-        if (self.auth.team) |team| {
-            try out.writer.print("[status] team={s}\n", .{team});
         }
         try out.writer.print("[status] permission_mode={s}\n", .{permissionModeLabel(self.permission_mode)});
         try out.writer.print("[status] workspace={s}\n", .{self.workspace_root});
@@ -540,24 +513,19 @@ pub const StatusSnapshot = struct {
         defer out.deinit();
 
         try out.writer.print("model={s}\n", .{self.model});
-        if (self.provider != .gateway) {
-            try out.writer.print("model_source={s}\n", .{provider_catalog.label(self.provider)});
-        }
+
         try out.writer.print("update_channel={s}\n", .{self.update_channel});
         try out.writer.print("build_channel={s}\n", .{self.build_channel});
         if (self.build_revision.len > 0) {
             try out.writer.print("build_revision={s}\n", .{self.build_revision});
         }
         try out.writer.print("auth={s}\n", .{self.auth.activeSourceLabel()});
-        if (self.provider != .gateway) {
-            try out.writer.writeAll("connected_providers=");
-            try writeConnectedProvidersText(&out.writer, self.auth);
-            try out.writer.writeByte('\n');
-        }
+        try out.writer.writeAll("connected_providers=");
+        try writeConnectedProvidersText(&out.writer, self.auth);
+        try out.writer.writeByte('\n');
         try out.writer.print("auth_refreshable={}\n", .{self.auth.refreshable()});
         if (self.auth.expired) try out.writer.writeAll("auth_expired=true\n");
         if (self.auth_help) |help| try out.writer.print("auth_help={s}\n", .{help});
-        if (self.auth.team) |team| try out.writer.print("team={s}\n", .{team});
         try out.writer.print("permission_mode={s}\n", .{permissionModeLabel(self.permission_mode)});
         try out.writer.print("workspace={s}\n", .{self.workspace_root});
         try out.writer.print("history_turns={d}\n", .{self.history_turns});
@@ -577,10 +545,7 @@ pub const StatusSnapshot = struct {
     pub fn writeJson(self: StatusSnapshot, writer: *std.Io.Writer) !void {
         try writer.writeAll("{\"kind\":\"status\",\"model\":");
         try std.json.Stringify.value(self.model, .{}, writer);
-        if (self.provider != .gateway) {
-            try writer.writeAll(",\"model_source\":");
-            try std.json.Stringify.value(provider_catalog.label(self.provider), .{}, writer);
-        }
+
         try writer.writeAll(",\"update_channel\":");
         try std.json.Stringify.value(self.update_channel, .{}, writer);
         try writer.writeAll(",\"build_channel\":");
@@ -607,33 +572,16 @@ pub const StatusSnapshot = struct {
         }
         try writer.writeAll(",\"auth\":");
         try std.json.Stringify.value(self.auth.activeSourceLabel(), .{}, writer);
-        if (self.provider != .gateway) {
-            try writer.writeAll(",\"connected_providers\":[");
-            var wrote_provider = false;
-            if (gatewayProviderConnected(self.auth)) {
-                try std.json.Stringify.value("vercel-ai-gateway", .{}, writer);
-                wrote_provider = true;
-            }
-            if (chatGptProviderConnected(self.auth)) {
-                if (wrote_provider) try writer.writeByte(',');
-                try std.json.Stringify.value("codex", .{}, writer);
-                wrote_provider = true;
-            }
-            if (grokProviderConnected(self.auth)) {
-                if (wrote_provider) try writer.writeByte(',');
-                try std.json.Stringify.value("grok", .{}, writer);
-            }
-            try writer.writeByte(']');
+        try writer.writeAll(",\"connected_providers\":[");
+        if (chatGptProviderConnected(self.auth)) {
+            try std.json.Stringify.value("codex", .{}, writer);
         }
+        try writer.writeByte(']');
         try writer.print(",\"auth_refreshable\":{}", .{self.auth.refreshable()});
         if (self.auth.expired) try writer.writeAll(",\"auth_expired\":true");
         if (self.auth_help) |help| {
             try writer.writeAll(",\"auth_help\":");
             try std.json.Stringify.value(help, .{}, writer);
-        }
-        if (self.auth.team) |team| {
-            try writer.writeAll(",\"team\":");
-            try std.json.Stringify.value(team, .{}, writer);
         }
         try writer.writeAll(",\"permission_mode\":");
         try std.json.Stringify.value(permissionModeLabel(self.permission_mode), .{}, writer);
@@ -747,7 +695,7 @@ pub const PermissionsSnapshot = struct {
 
 pub const ModelListSnapshot = struct {
     ids: []const []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     limit: ?usize = null,
     private_models_hidden: bool = false,
     public_only_reason: ?credentials.CatalogPublicOnlyReason = null,
@@ -775,11 +723,7 @@ pub const ModelListSnapshot = struct {
 
         const shown = self.shownCount();
         for (self.ids[0..shown]) |id| {
-            if (self.provider != .gateway) {
-                try out.writer.print(" - {s} · {s}\n", .{ id, provider_catalog.label(self.provider) });
-            } else {
-                try out.writer.print(" - {s}\n", .{id});
-            }
+            try out.writer.print(" - {s}\n", .{id});
         }
         if (self.ids.len > shown) {
             try out.writer.print(" ... and {d} more\n", .{self.ids.len - shown});
@@ -803,11 +747,7 @@ pub const ModelListSnapshot = struct {
         try out.writer.print("{d} available", .{self.ids.len});
         const shown = self.shownCount();
         for (self.ids[0..shown]) |id| {
-            if (self.provider != .gateway) {
-                try out.writer.print("\n - {s} · {s}", .{ id, provider_catalog.label(self.provider) });
-            } else {
-                try out.writer.print("\n - {s}", .{id});
-            }
+            try out.writer.print("\n - {s}", .{id});
         }
         if (self.ids.len > shown) try out.writer.print("\n ... and {d} more", .{self.ids.len - shown});
         if (self.catalogExplanation()) |explanation| try out.writer.print("\n{s}", .{explanation});
@@ -827,17 +767,6 @@ pub const ModelListSnapshot = struct {
             if (i > 0) try out.writer.writeByte(',');
             try std.json.Stringify.value(id, .{}, &out.writer);
         }
-        if (self.provider != .gateway) {
-            try out.writer.writeAll("],\"models\":[");
-            for (self.ids[0..shown], 0..) |id, i| {
-                if (i > 0) try out.writer.writeByte(',');
-                try out.writer.writeAll("{\"id\":");
-                try std.json.Stringify.value(id, .{}, &out.writer);
-                try out.writer.writeAll(",\"source\":");
-                try std.json.Stringify.value(provider_catalog.label(self.provider), .{}, &out.writer);
-                try out.writer.writeByte('}');
-            }
-        }
         try out.writer.writeAll("]}");
         return try out.toOwnedSlice();
     }
@@ -847,24 +776,18 @@ pub const ModelListSnapshot = struct {
     }
 
     fn emptyCatalogProviderName(self: ModelListSnapshot) []const u8 {
-        return switch (self.provider) {
-            .gateway => "gateway",
-            .codex => provider_catalog.label(.codex),
-            .grok => provider_catalog.label(.grok),
-        };
+        _ = self;
+        return provider_catalog.label(.codex);
     }
 
     fn catalogExplanation(self: ModelListSnapshot) ?[]const u8 {
         if (!self.private_models_hidden) return null;
         const reason = self.public_only_reason orelse return "Using the public model catalog.";
         return switch (reason) {
-            .no_credential => "Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.",
-            .fx_login_team_required => "Choose a Vercel team to load its private models.",
-            .fx_login_refresh_required => "Vercel sign-in must refresh before team-private models can load.",
-            .credential_refresh_failed => "Vercel sign-in refresh failed; using the public model catalog.",
-            .authenticated_credential_rejected => "Your Gateway credential was rejected; using the public model catalog.",
+            .no_credential => "Using the public model catalog; sign in with Codex for the authenticated catalog.",
+            .credential_refresh_failed => "Codex sign-in refresh failed; using the public model catalog.",
+            .authenticated_credential_rejected => "Your Codex credential was rejected; using the public model catalog.",
             .chatgpt_subscription => "Codex models require an authenticated Codex catalog.",
-            .grok_subscription => "Grok models require an authenticated Grok catalog.",
         };
     }
 };
@@ -1304,7 +1227,7 @@ pub const SessionRecoverySnapshot = struct {
 pub const DoctorSnapshot = struct {
     workspace_root: []const u8,
     model: []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     auth: auth_runtime.StatusSnapshot = .{},
     permission_mode: types.PermissionMode,
     agent_step_limit: usize,
@@ -1329,15 +1252,9 @@ pub const DoctorSnapshot = struct {
         );
         try out.writer.print("[doctor] workspace={s}\n", .{self.workspace_root});
         try out.writer.print("[doctor] model={s}\n", .{self.model});
-        if (self.provider != .gateway) {
-            try out.writer.print("[doctor] model_source={s}\n", .{provider_catalog.label(self.provider)});
-        }
         try out.writer.print("[doctor] auth={s}\n", .{self.auth.activeSourceLabel()});
         try out.writer.print("[doctor] auth_refreshable={}\n", .{self.auth.refreshable()});
         if (self.auth.expired) try out.writer.writeAll("[doctor] auth_expired=true\n");
-        if (self.auth.team) |team| {
-            try out.writer.print("[doctor] team={s}\n", .{team});
-        }
         try out.writer.print("[doctor] permission_mode={s}\n", .{permissionModeLabel(self.permission_mode)});
         try out.writer.print("[doctor] agent_step_limit={d}\n", .{self.agent_step_limit});
         if (self.mcp) |mcp| try mcp.writeText(&out.writer, alloc, "doctor");
@@ -1371,18 +1288,12 @@ pub const DoctorSnapshot = struct {
         try std.json.Stringify.value(self.workspace_root, .{}, writer);
         try writer.writeAll(",\"model\":");
         try std.json.Stringify.value(self.model, .{}, writer);
-        if (self.provider != .gateway) {
-            try writer.writeAll(",\"model_source\":");
-            try std.json.Stringify.value(provider_catalog.label(self.provider), .{}, writer);
-        }
+
         try writer.writeAll(",\"auth\":");
         try std.json.Stringify.value(self.auth.activeSourceLabel(), .{}, writer);
         try writer.print(",\"auth_refreshable\":{}", .{self.auth.refreshable()});
         if (self.auth.expired) try writer.writeAll(",\"auth_expired\":true");
-        if (self.auth.team) |team| {
-            try writer.writeAll(",\"team\":");
-            try std.json.Stringify.value(team, .{}, writer);
-        }
+
         try writer.writeAll(",\"permission_mode\":");
         try std.json.Stringify.value(permissionModeLabel(self.permission_mode), .{}, writer);
         try writer.print(",\"agent_step_limit\":{d},\"checks\":[", .{self.agent_step_limit});
@@ -1885,7 +1796,7 @@ test "command failure snapshot renders stable escaped json" {
 test "core status snapshot text and json stay stable" {
     const snapshot = StatusSnapshot{
         .model = "alpha",
-        .auth_help = "fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.",
+        .auth_help = "fx needs a Codex subscription login for this model. Run fx login codex.",
         .permission_mode = .ask,
         .workspace_root = "/tmp/fx",
         .history_turns = 3,
@@ -1896,22 +1807,22 @@ test "core status snapshot text and json stay stable" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=missing\n[status] auth_refreshable=false\n[status] auth_help=fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\n[status] permission_mode=ask\n[status] workspace=/tmp/fx\n[status] history_turns=3\n[status] session_permission_grants=1\n[status] agent_step_limit=24\n",
+        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=missing\n[status] connected_providers=none\n[status] auth_refreshable=false\n[status] auth_help=fx needs a Codex subscription login for this model. Run fx login codex.\n[status] permission_mode=ask\n[status] workspace=/tmp/fx\n[status] history_turns=3\n[status] session_permission_grants=1\n[status] agent_step_limit=24\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}",
+        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fx needs a Codex subscription login for this model. Run fx login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}",
         json,
     );
 }
 
-test "core status snapshot includes selected team when present" {
+test "core status snapshot renders codex auth without team state" {
     const snapshot = StatusSnapshot{
         .model = "alpha",
-        .auth = .{ .active_source = .fx_login, .team = "example-team" },
+        .auth = .{ .active_source = .chatgpt_subscription },
         .permission_mode = .ask,
         .workspace_root = "/tmp/fx",
         .history_turns = 0,
@@ -1922,14 +1833,14 @@ test "core status snapshot includes selected team when present" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=fx login\n[status] auth_refreshable=true\n[status] team=example-team\n[status] permission_mode=ask\n[status] workspace=/tmp/fx\n[status] history_turns=0\n[status] session_permission_grants=0\n[status] agent_step_limit=24\n",
+        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=Codex subscription\n[status] connected_providers=Codex\n[status] auth_refreshable=true\n[status] permission_mode=ask\n[status] workspace=/tmp/fx\n[status] history_turns=0\n[status] session_permission_grants=0\n[status] agent_step_limit=24\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"fx login\",\"auth_refreshable\":true,\"team\":\"example-team\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}",
+        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"Codex subscription\",\"connected_providers\":[\"codex\"],\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}",
         json,
     );
 }
@@ -1940,7 +1851,6 @@ test "status distinguishes the selected model route from connected providers" {
         .provider = .codex,
         .auth = .{
             .active_source = .chatgpt_subscription,
-            .gateway_connected = true,
             .chatgpt_connected = true,
         },
         .permission_mode = .auto,
@@ -1951,13 +1861,13 @@ test "status distinguishes the selected model route from connected providers" {
     };
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
-    try std.testing.expect(std.mem.find(u8, text, "model_source=Codex subscription") != null);
-    try std.testing.expect(std.mem.find(u8, text, "connected_providers=Vercel AI Gateway, Codex") != null);
+    try std.testing.expect(std.mem.find(u8, text, "[status] model=gpt-5.4\n") != null);
+    try std.testing.expect(std.mem.find(u8, text, "connected_providers=Codex") != null);
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
-    try std.testing.expect(std.mem.find(u8, json, "\"model_source\":\"Codex subscription\"") != null);
-    try std.testing.expect(std.mem.find(u8, json, "\"connected_providers\":[\"vercel-ai-gateway\",\"codex\"]") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"model\":\"gpt-5.4\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"connected_providers\":[\"codex\"]") != null);
 }
 
 test "MCP config diagnostic renders in status text and JSON but not interactive body" {
@@ -2122,23 +2032,23 @@ test "model list explains public-only and rejected-credential catalogs" {
     }{
         .{
             .snapshot = .{ .ids = &ids, .private_models_hidden = true, .public_only_reason = .no_credential },
-            .text = "[models] 1 available\n - alpha\n[models] Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.\n",
-            .body = "1 available\n - alpha\nUsing the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.",
+            .text = "[models] 1 available\n - alpha\n[models] Using the public model catalog; sign in with Codex for the authenticated catalog.\n",
+            .body = "1 available\n - alpha\nUsing the public model catalog; sign in with Codex for the authenticated catalog.",
         },
         .{
             .snapshot = rejected,
-            .text = "[models] 1 available\n - alpha\n[models] Your Gateway credential was rejected; using the public model catalog.\n",
-            .body = "1 available\n - alpha\nYour Gateway credential was rejected; using the public model catalog.",
+            .text = "[models] 1 available\n - alpha\n[models] Your Codex credential was rejected; using the public model catalog.\n",
+            .body = "1 available\n - alpha\nYour Codex credential was rejected; using the public model catalog.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .private_models_hidden = true, .public_only_reason = .no_credential },
-            .text = "[models] no models returned by gateway\n[models] Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.\n",
-            .body = "no models returned by gateway\nUsing the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.",
+            .text = "[models] no models returned by Codex subscription\n[models] Using the public model catalog; sign in with Codex for the authenticated catalog.\n",
+            .body = "no models returned by Codex subscription\nUsing the public model catalog; sign in with Codex for the authenticated catalog.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .private_models_hidden = true, .public_only_reason = .authenticated_credential_rejected },
-            .text = "[models] no models returned by gateway\n[models] Your Gateway credential was rejected; using the public model catalog.\n",
-            .body = "no models returned by gateway\nYour Gateway credential was rejected; using the public model catalog.",
+            .text = "[models] no models returned by Codex subscription\n[models] Your Codex credential was rejected; using the public model catalog.\n",
+            .body = "no models returned by Codex subscription\nYour Codex credential was rejected; using the public model catalog.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .provider = .codex },
@@ -2199,7 +2109,7 @@ test "core model list snapshot handles limits and empty lists" {
 
     const empty_text = try (ModelListSnapshot{ .ids = &.{} }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(empty_text);
-    try std.testing.expectEqualStrings("[models] no models returned by gateway\n", empty_text);
+    try std.testing.expectEqualStrings("[models] no models returned by Codex subscription\n", empty_text);
 
     const empty_json = try (ModelListSnapshot{ .ids = &.{} }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(empty_json);
@@ -2708,7 +2618,7 @@ test "core doctor snapshot text and json stay stable" {
     const snapshot = DoctorSnapshot{
         .workspace_root = "/tmp/fx",
         .model = "alpha",
-        .auth = .{ .active_source = .ai_gateway_api_key },
+        .auth = .{ .active_source = .chatgpt_subscription },
         .permission_mode = .ask,
         .agent_step_limit = 24,
         .checks = &checks,
@@ -2717,14 +2627,14 @@ test "core doctor snapshot text and json stay stable" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[doctor] ok=1 warn=1 fail=0\n[doctor] workspace=/tmp/fx\n[doctor] model=alpha\n[doctor] auth=AI_GATEWAY_API_KEY\n[doctor] auth_refreshable=false\n[doctor] permission_mode=ask\n[doctor] agent_step_limit=24\n[ok] auth: AI_GATEWAY_API_KEY is configured\n[warn] gh: GitHub CLI not found in PATH\n",
+        "[doctor] ok=1 warn=1 fail=0\n[doctor] workspace=/tmp/fx\n[doctor] model=alpha\n[doctor] auth=Codex subscription\n[doctor] auth_refreshable=true\n[doctor] permission_mode=ask\n[doctor] agent_step_limit=24\n[ok] auth: AI_GATEWAY_API_KEY is configured\n[warn] gh: GitHub CLI not found in PATH\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"alpha\",\"auth\":\"AI_GATEWAY_API_KEY\",\"auth_refreshable\":false,\"permission_mode\":\"ask\",\"agent_step_limit\":24,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}",
+        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"alpha\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"agent_step_limit\":24,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}",
         json,
     );
 }

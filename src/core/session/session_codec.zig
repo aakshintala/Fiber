@@ -11,7 +11,7 @@ const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
 pub const DurableSessionPreferences = struct {
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     model: []u8,
     effort: types.ReasoningEffort,
     fast_mode: bool,
@@ -839,7 +839,7 @@ fn decodeStateImpl(alloc: Allocator, source: *std.Io.Reader, limits: DecodeLimit
         return error.InvalidDurableField;
     try expectKey(&json_reader, alloc, "fast_mode");
     const fast_mode = try readBool(&json_reader);
-    var provider: model_provider.ProviderId = .gateway;
+    var provider: model_provider.ProviderId = .codex;
     if (try json_reader.peekNextTokenType() != .object_end) {
         try expectKey(&json_reader, alloc, "provider");
         const provider_raw = try readStringOwned(&json_reader, alloc, 16);
@@ -1015,7 +1015,7 @@ pub fn parseRecoveryCheckpoint(alloc: Allocator, value: std.json.Value) !Recover
             .provider = if (object.get("route_provider")) |provider_value| blk: {
                 if (provider_value != .string) return error.InvalidDurableField;
                 break :blk model_provider.parse(provider_value.string) orelse return error.InvalidDurableField;
-            } else .gateway,
+            } else .codex,
             .model = model,
         };
     } else try parseTurnAuthority(alloc, object.get("authority") orelse return error.InvalidSessionFormat);
@@ -3690,7 +3690,7 @@ test "recovery checkpoint round trips while legacy state stays absent" {
     var legacy_source = std.Io.Reader.fixed(legacy);
     var legacy_state = try decodeState(alloc, &legacy_source, .{});
     defer legacy_state.deinit(alloc);
-    try std.testing.expectEqual(model_provider.ProviderId.gateway, legacy_state.preferences.provider);
+    try std.testing.expectEqual(model_provider.ProviderId.codex, legacy_state.preferences.provider);
     try std.testing.expectEqual(@as(?RecoveryCheckpoint, null), legacy_state.recovery_checkpoint);
 }
 
@@ -3774,7 +3774,7 @@ test "recovery checkpoint rejects an outstanding attempt beyond its budget" {
             .assistant_source = @constCast(""),
             .cause = .network_interrupted,
             .action = .retrying_request,
-            .authority = .{ .provider = .gateway, .model = @constCast("openai/gpt-test") },
+            .authority = .{ .provider = .codex, .model = @constCast("openai/gpt-test") },
             .requested_fast_mode = false,
             .fast_mode = false,
             .max_provider_attempts = 1,

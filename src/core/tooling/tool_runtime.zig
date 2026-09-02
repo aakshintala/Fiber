@@ -122,14 +122,10 @@ pub const Context = struct {
     max_tool_result_bytes: usize = tool_result_limits.default_max_tool_result_bytes,
     api_key: []const u8,
     agent_stream_provider: agent_stream_provider.Provider = agent_stream_provider.unavailable_provider,
-    gateway_team: ?[]const u8 = null,
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
-    provider: model_provider.ProviderId = .gateway,
-    provider_capabilities: provider_set.Bundle.Capabilities = .{
-        .fx_search = true,
-        .vision_fallback = true,
-    },
+    provider: model_provider.ProviderId = .codex,
+    provider_capabilities: provider_set.Bundle.Capabilities = .{ .vision_fallback = true },
     oauth_transport: oauth_transport.Provider = oauth_transport.unavailable_provider,
     secret_store: host_mod.SecretStore = host_mod.unavailable_secret_store,
     model: []const u8,
@@ -269,7 +265,9 @@ pub const Context = struct {
         return permission_auto_classifier.Classifier.withProvider(provider, .{
             .credential = self.api_key,
             .account_id = self.account_id,
-            .tenant = self.gateway_team,
+            // ponytail: tenant is now always null here; collapse the remaining
+            // tenant plumbing in ticket 11b.
+            .tenant = null,
             .endpoint = self.gateway_chat_url,
             .cancel_flag = self.cancel_flag,
             .usage = &self.session.usage,
@@ -1093,7 +1091,6 @@ fn executeVisionRequest(
         .stream_provider = state.runtime.agent_stream_provider,
         .api_key = state.runtime.api_key,
         .credential_source = state.runtime.credential_source,
-        .gateway_team = state.runtime.gateway_team,
         .session_id = state.runtime.lifecycle_scope.session_id,
         .retry_count = state.runtime.gateway_retry_count,
         .cancel_flag = state.runtime.cancel_flag,
@@ -2020,12 +2017,8 @@ const TestRuntime = struct {
     max_command_output_bytes: usize = 64 * 1024,
     max_tool_result_bytes: usize = 64 * 1024,
     api_key: []const u8 = "",
-    provider: model_provider.ProviderId = .gateway,
-    provider_capabilities: provider_set.Bundle.Capabilities = .{
-        .fx_search = true,
-        .vision_fallback = true,
-    },
-    gateway_team: ?[]const u8 = null,
+    provider: model_provider.ProviderId = .codex,
+    provider_capabilities: provider_set.Bundle.Capabilities = .{ .vision_fallback = true },
     gateway_retry_count: usize = 0,
     gateway_chat_url: []const u8 = "",
     context_limits: context_limits.Values = .{},
@@ -2072,7 +2065,6 @@ const TestRuntime = struct {
             .max_tool_result_bytes = self.max_tool_result_bytes,
             .api_key = self.api_key,
             .agent_stream_provider = self.agent_stream_provider,
-            .gateway_team = self.gateway_team,
             .provider = self.provider,
             .provider_capabilities = self.provider_capabilities,
             .model = self.model,
@@ -6376,7 +6368,7 @@ const VisionGatewayFixture = struct {
     }
 
     fn provider(self: *VisionGatewayFixture) agent_stream_provider.Provider {
-        var result = test_builtin_gateway.agent_stream_provider;
+        var result = agent_stream_provider.unavailable_provider;
         result.context = self;
         result.stream_fn = stream;
         return result;
@@ -6414,13 +6406,13 @@ const VisionGatewayFixture = struct {
                 .usage = response.usage,
             },
             .usage = .{ .deferred = .{
-                .provider = .gateway,
+                .provider = .codex,
                 .generation_id = response.generation_id orelse "gen_test",
                 .scope = "https://ai-gateway.vercel.sh",
                 .tenant = request.credential.tenant,
-                .credential_source = request.credential.source orelse .ai_gateway_api_key,
+                .credential_source = request.credential.source orelse .chatgpt_subscription,
                 .credential_identity = credential_authority.derive(
-                    request.credential.source orelse .ai_gateway_api_key,
+                    request.credential.source orelse .chatgpt_subscription,
                     request.credential.account_id,
                 ),
             } },
@@ -6954,7 +6946,6 @@ test "vision runtime resolves historical authorized images and batches twenty as
         .agent_stream_provider = fixture.provider(),
         .tool_registry = .{ .tools = vision_test_registry_tools[0..] },
         .api_key = "gateway-key",
-        .gateway_team = "team_vision",
         .gateway_retry_count = 2,
         .gateway_chat_url = "https://gateway.invalid/chat",
         .session_allocator = alloc,
@@ -6977,7 +6968,7 @@ test "vision runtime resolves historical authorized images and batches twenty as
     try std.testing.expectEqual(@as(usize, 4), std.mem.count(u8, fixture.payloads.items[2], "\"type\":\"file\""));
     try std.testing.expectEqualStrings("google/gemini-2.5-flash", fixture.last_model);
     try std.testing.expectEqualStrings("gateway-key", fixture.last_api_key);
-    try std.testing.expectEqualStrings("team_vision", fixture.last_team.?);
+    try std.testing.expect(fixture.last_team == null);
     try std.testing.expectEqual(@as(usize, 2), fixture.last_retry_count);
     try expectContains(fixture.payloads.items[0], "Read the build state");
     try expectContains(fixture.payloads.items[0], "\"mediaType\":\"image/png\"");

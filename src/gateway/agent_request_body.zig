@@ -1,3 +1,6 @@
+// Provider-neutral agent request body shaping for fx's internal transport
+// fixtures. This retains the historical message-JSON shape that the agent-loop
+// tests assert on; it carries no endpoint, auth, or header behavior.
 const std = @import("std");
 const image_attachments = @import("../core/images/image_attachments.zig");
 const io_mod = @import("../core/shared/io.zig");

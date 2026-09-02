@@ -22,8 +22,6 @@ import {
 
 const tmuxTest = test.skipIf(!tmuxAvailable());
 const ISOLATED_KEYS = [
-  "AI_GATEWAY_API_KEY",
-  "VERCEL_OIDC_TOKEN",
   "FX_E2E_GATEWAY_CHAT_URL",
   "FX_E2E_GATEWAY_MODELS_URL",
   "FX_E2E_GATEWAY_CREDITS_URL",
@@ -120,7 +118,7 @@ test("observed command keeps wrapper signal diagnostics out of captured stderr",
   }
 });
 
-tmuxTest("tmux launch scrubs stale overrides without storing explicit credentials", async () => {
+tmuxTest("tmux launch scrubs stale overrides and honors explicit env", async () => {
   const socketName = `fx-env-isolation-${process.pid}-${Date.now()}`;
   const root = mkdtempSync(join(tmpdir(), "fx-tmux-env-isolation-"));
   const probePath = join(root, "probe.mjs");
@@ -146,13 +144,14 @@ tmuxTest("tmux launch scrubs stale overrides without storing explicit credential
 
     for (const key of ISOLATED_KEYS) delete process.env[key];
 
-    const explicitCredential = "explicit-auth-sentinel";
+    const explicitPermissionMode = "yolo";
     writeFileSync(
       probePath,
       `await Bun.write(${JSON.stringify(resultPath)}, JSON.stringify({\n` +
         ISOLATED_KEYS.map((key) =>
           `  ${JSON.stringify(key)}: process.env[${JSON.stringify(key)}] ?? null,\n`
         ).join("") +
+        "  FX_PERMISSION_MODE: process.env.FX_PERMISSION_MODE ?? null,\n" +
         "}));\nawait Bun.sleep(5_000);\n",
     );
     session = await TmuxSession.create({
@@ -160,7 +159,7 @@ tmuxTest("tmux launch scrubs stale overrides without storing explicit credential
       startupWaitMs: 200,
       socketName,
       env: {
-        AI_GATEWAY_API_KEY: explicitCredential,
+        FX_PERMISSION_MODE: explicitPermissionMode,
       },
     });
 
@@ -170,8 +169,7 @@ tmuxTest("tmux launch scrubs stale overrides without storing explicit credential
     }
     expect(existsSync(resultPath)).toBe(true);
     const observed = JSON.parse(readFileSync(resultPath, "utf8"));
-    expect(observed.AI_GATEWAY_API_KEY).toBe(explicitCredential);
-    expect(observed.VERCEL_OIDC_TOKEN).toBeNull();
+    expect(observed.FX_PERMISSION_MODE).toBe(explicitPermissionMode);
     expect(observed.FX_E2E_GATEWAY_CHAT_URL).toBeNull();
     expect(observed.FX_E2E_GATEWAY_MODELS_URL).toBeNull();
     expect(observed.FX_E2E_GATEWAY_CREDITS_URL).toBeNull();
@@ -189,17 +187,10 @@ tmuxTest("tmux launch scrubs stale overrides without storing explicit credential
       ],
       { encoding: "utf8" },
     );
-    expect(startCommand).not.toContain(explicitCredential);
+    expect(startCommand).not.toContain("stale-");
     for (const value of Object.values(staleValues)) {
       expect(startCommand).not.toContain(value);
     }
-    const sessionEnvironment = execFileSync(
-      "tmux",
-      ["-L", socketName, "show-environment", "-t", session.name],
-      { encoding: "utf8" },
-    );
-    expect(sessionEnvironment).not.toContain("AI_GATEWAY_API_KEY=");
-    expect(sessionEnvironment).not.toContain(explicitCredential);
   } finally {
     await session?.kill();
     try {

@@ -351,7 +351,7 @@ pub const SessionPreferencePatch = struct {
             .fast_mode = self.fast_mode,
         };
         if (self.model) |model| patch.model_preference = .{
-            .provider = self.provider orelse .gateway,
+            .provider = .codex,
             .model = model,
         };
         return patch;
@@ -5200,7 +5200,7 @@ fn testPaths(alloc: Allocator, tmp: *std.testing.TmpDir) !struct { home: []u8, w
 fn configureTestPreferences(app: *TestApp) !void {
     try Runtime(TestApp).configureStartupPreferences(
         app,
-        .gateway,
+        .codex,
         "configured/model",
         .user_workspace,
         "configured/model",
@@ -6829,7 +6829,7 @@ test "upgrade resume restores active session with the installed version notice" 
     try configureTestPreferences(&app);
     try Runtime(TestApp).configureStartupPreferences(
         &app,
-        .gateway,
+        .codex,
         "configured/model",
         .process_override,
         "env/model",
@@ -6988,7 +6988,7 @@ test "resumed recovery checkpoint replays its unfinished turn once" {
             .assistant_source = @constCast("Partial output before EOF."),
             .cause = .response_interrupted,
             .action = .continuing_response,
-            .authority = .{ .provider = .gateway, .model = @constCast("saved/model") },
+            .authority = .{ .provider = .codex, .model = @constCast("saved/model") },
             .requested_fast_mode = false,
             .fast_mode = false,
             .max_provider_attempts = 10,
@@ -8274,7 +8274,7 @@ test "fresh interactive session retains one writable schema-v3 handle" {
 
     try Runtime(TestApp).configureStartupPreferences(
         &app,
-        .gateway,
+        .codex,
         "configured/model",
         .user_workspace,
         "configured/model",
@@ -8384,10 +8384,10 @@ test "combined preference patch writes user defaults cleans legacy fields and ap
 
     var detailed = try config_runtime.loadMergedSettingsDetailed(alloc, paths.workspace);
     defer detailed.deinit(alloc);
-    try std.testing.expectEqualStrings("user/model", detailed.settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("user/model", detailed.settings.models.get(.codex).?);
     try std.testing.expectEqual(types.ReasoningEffort.literal("high"), detailed.settings.effort.?);
     try std.testing.expectEqual(false, detailed.settings.fast_mode.?);
-    try std.testing.expectEqual(config_runtime.ConfigSource.user_global, detailed.sources.models.get(.gateway));
+    try std.testing.expectEqual(config_runtime.ConfigSource.user_global, detailed.sources.models.get(.codex));
     try std.testing.expectEqual(config_runtime.ConfigSource.user_global, detailed.sources.effort);
     try std.testing.expectEqual(config_runtime.ConfigSource.user_global, detailed.sources.fast_mode);
 }
@@ -9278,12 +9278,12 @@ test "resumed sessions install provider-scoped usage reconciliation authority" {
     try std.testing.expectEqual(types.CredentialSource.chatgpt_subscription, chatgpt.session.usage.replaced_source.?);
 
     var gateway = ReconciliationOriginApp{
-        .auth = .{ .source = .ai_gateway_api_key },
-        .selected_provider = .gateway,
+        .auth = .{ .source = .chatgpt_subscription },
+        .selected_provider = .codex,
     };
     Runtime(ReconciliationOriginApp).startResumedSessionReconciliation(&gateway);
-    try std.testing.expectEqual(model_provider.ProviderId.gateway, gateway.session.usage.replaced_provider.?);
-    try std.testing.expectEqual(types.CredentialSource.ai_gateway_api_key, gateway.session.usage.replaced_source.?);
+    try std.testing.expectEqual(model_provider.ProviderId.codex, gateway.session.usage.replaced_provider.?);
+    try std.testing.expectEqual(types.CredentialSource.chatgpt_subscription, gateway.session.usage.replaced_source.?);
 }
 
 test "ensureCachedSessionTitle derives from the first prompt and then freezes" {

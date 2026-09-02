@@ -503,14 +503,14 @@ fn loadMergedSettingsDetailedWithOptionalHome(
 
     if (io_mod.getenv("FX_MODEL")) |model_override| {
         if (std.mem.trim(u8, model_override, " \t\r\n").len > 0) {
-            sources.models.set(settings.provider orelse .gateway, .process_override);
+            sources.models.set(.codex, .process_override);
         }
     }
 
     return .{
         .settings = settings,
         .diagnostics = try diagnostics.toOwnedSlice(alloc),
-        .model_source = sources.models.get(settings.provider orelse .gateway),
+        .model_source = sources.models.get(.codex),
         .sources = sources,
         .permission_sources = permission_sources,
         .prompt_history_store_allowed = prompt_history_store_allowed,
@@ -1081,7 +1081,7 @@ fn readOptionalUserSettingsFile(alloc: Allocator, paths: Paths) !?[]u8 {
 
 fn startupStatusSettingsFromSettings(alloc: Allocator, settings: Settings) !StartupStatusSettings {
     return .{
-        .model = if (settings.models.get(.gateway)) |model| try alloc.dupe(u8, model) else null,
+        .model = if (settings.models.get(.codex)) |model| try alloc.dupe(u8, model) else null,
         .permission_mode = settings.permission_mode,
         .max_agent_steps = settings.max_agent_steps,
     };
@@ -1353,25 +1353,13 @@ fn parseProfileOnlyFields(
         const value = model_value;
         if (value != .string) return error.InvalidModelType;
         settings_store.validateModel(value.string) catch return error.InvalidModelValue;
-        try settings.models.putCopy(alloc, .gateway, value.string);
-    }
-
-    if (root.object.get("provider")) |provider_value| {
-        if (provider_value != .string) return error.InvalidProviderType;
-        settings.provider = model_provider.parse(provider_value.string) orelse
-            return error.InvalidProviderValue;
+        try settings.models.putCopy(alloc, .codex, value.string);
     }
 
     if (root.object.get("codex_model")) |model_value| {
         if (model_value != .string) return error.InvalidCodexModelType;
         settings_store.validateModel(model_value.string) catch return error.InvalidCodexModelValue;
         try settings.models.putCopy(alloc, .codex, model_value.string);
-    }
-
-    if (root.object.get("grok_model")) |model_value| {
-        if (model_value != .string) return error.InvalidGrokModelType;
-        settings_store.validateModel(model_value.string) catch return error.InvalidGrokModelValue;
-        try settings.models.putCopy(alloc, .grok, model_value.string);
     }
 
     if (root.object.get("models")) |models_value| {
@@ -1945,7 +1933,7 @@ test "loadMergedSettings merges project defaults before profile layers" {
     var settings = try loadMergedSettingsFromHome(std.testing.allocator, home_root, workspace_root);
     defer settings.deinit(std.testing.allocator);
 
-    try std.testing.expectEqualStrings("override-model", settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("override-model", settings.models.get(.codex).?);
     try std.testing.expectEqual(types.PermissionMode.auto, settings.permission_mode.?);
     try std.testing.expectEqual(@as(usize, 8), settings.max_agent_steps.?);
 }
@@ -2079,19 +2067,14 @@ test "provider settings keep independent provider models" {
         "{\"provider\":\"grok\",\"model\":\"gateway/model\",\"codex_model\":\"gpt-5.4-mini\",\"grok_model\":\"grok-4.20-0309-non-reasoning\"}",
     );
     defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqual(model_provider.ProviderId.grok, settings.provider.?);
-    try std.testing.expectEqualStrings("gateway/model", settings.models.get(.gateway).?);
     try std.testing.expectEqualStrings("gpt-5.4-mini", settings.models.get(.codex).?);
-    try std.testing.expectEqualStrings("grok-4.20-0309-non-reasoning", settings.models.get(.grok).?);
 
     var current = try parseSettingsJson(
         std.testing.allocator,
         "{\"model\":\"legacy/gateway\",\"codex_model\":\"legacy-codex\",\"models\":{\"gateway\":\"current/gateway\",\"codex\":\"current-codex\",\"grok\":\"current-grok\"}}",
     );
     defer current.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("current/gateway", current.models.get(.gateway).?);
     try std.testing.expectEqualStrings("current-codex", current.models.get(.codex).?);
-    try std.testing.expectEqualStrings("current-grok", current.models.get(.grok).?);
 }
 
 test "max_agent_steps explicit zero survives serialization round trip" {
@@ -2149,7 +2132,7 @@ test "retired presentation settings are ignored regardless of type" {
         "{\"model\":\"openai/gpt-5.4\",\"input_appearance\":false,\"maxxing_mode\":7}",
     );
     defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("openai/gpt-5.4", settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("openai/gpt-5.4", settings.models.get(.codex).?);
 }
 
 test "startup_scrollback parses merges rejects invalid type and round trips" {
@@ -2247,7 +2230,7 @@ test "first_call_tool_choice ignores unknown strings and rejects invalid types" 
 test "obsolete web_fetch worker model setting is ignored" {
     var parsed = try parseSettingsJson(std.testing.allocator, "{\"web_fetch_worker_model\":false,\"model\":\"provider/model\"}");
     defer parsed.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("provider/model", parsed.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("provider/model", parsed.models.get(.codex).?);
 }
 
 test "workspace override can change effort from high to auto" {
@@ -2714,7 +2697,7 @@ test "addPermissionRule preserves unrelated workspace override keys" {
 
     var settings = try loadMergedSettings(std.testing.allocator, workspace_root);
     defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("my-model", settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("my-model", settings.models.get(.codex).?);
     try std.testing.expectEqual(types.PermissionMode.auto, settings.permission_mode.?);
     try std.testing.expectEqual(@as(usize, 1), settings.permission_rules.rules.len);
 }
@@ -2875,7 +2858,7 @@ test "user effort preference preserves unrelated workspace override keys" {
 
     var settings = try loadMergedSettings(std.testing.allocator, workspace_root);
     defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("my-model", settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("my-model", settings.models.get(.codex).?);
     try std.testing.expectEqual(types.PermissionMode.auto, settings.permission_mode.?);
     try std.testing.expect(settings.effort.?.eql(types.ReasoningEffort.literal("future-tier")));
 
@@ -2917,7 +2900,7 @@ test "user fast mode preference writes bool and preserves unrelated keys" {
 
     var settings = try loadMergedSettings(std.testing.allocator, workspace_root);
     defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("my-model", settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("my-model", settings.models.get(.codex).?);
     try std.testing.expectEqual(types.PermissionMode.auto, settings.permission_mode.?);
     try std.testing.expectEqual(true, settings.fast_mode.?);
 
@@ -2959,7 +2942,7 @@ test "user startup scrollback preference writes bool and preserves unrelated key
 
     var settings = try loadMergedSettings(std.testing.allocator, workspace_root);
     defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("my-model", settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("my-model", settings.models.get(.codex).?);
     try std.testing.expectEqual(types.PermissionMode.auto, settings.permission_mode.?);
     try std.testing.expectEqual(false, settings.startup_scrollback.?);
 
@@ -2995,7 +2978,7 @@ test "project profile-only settings are ignored and diagnosed by key" {
     var result = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
     defer result.deinit(std.testing.allocator);
 
-    try std.testing.expectEqualStrings("profile/model", result.settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("profile/model", result.settings.models.get(.codex).?);
     try std.testing.expectEqual(types.PermissionMode.auto, result.settings.permission_mode.?);
     try std.testing.expectEqual(@as(usize, 17), result.settings.max_agent_steps.?);
     try std.testing.expectEqual(true, result.settings.prompt_history_enabled.?);
@@ -3053,7 +3036,7 @@ test "malformed project profile-only settings are ignored before value parsing" 
 
     var result = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
     defer result.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("profile/model", result.settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("profile/model", result.settings.models.get(.codex).?);
     try std.testing.expectEqual(types.PermissionMode.ask, result.settings.permission_mode.?);
     try std.testing.expectEqual(false, result.settings.fast_mode.?);
     try std.testing.expectEqual(@as(usize, 12), result.settings.max_agent_steps.?);
@@ -3310,7 +3293,7 @@ test "detailed settings diagnose legacy workspace preferences" {
     );
     defer result.deinit(std.testing.allocator);
 
-    try std.testing.expectEqualStrings("legacy/model", result.settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("legacy/model", result.settings.models.get(.codex).?);
     try std.testing.expectEqual(true, result.settings.statusline_session.?);
     try std.testing.expectEqual(ConfigSource.user_workspace, result.sources.statusline_session);
     try std.testing.expectEqual(
@@ -3339,7 +3322,7 @@ test "detailed settings preserve model precedence and source" {
 
     var result = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
     defer result.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("workspace/model", result.settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("workspace/model", result.settings.models.get(.codex).?);
     try std.testing.expectEqual(ModelSource.user_workspace, result.model_source.?);
 }
 
@@ -3374,7 +3357,7 @@ test "detailed settings expose target sources and permission views" {
     var result = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
     defer result.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(ConfigSource.user_workspace, result.sources.models.get(.gateway));
+    try std.testing.expectEqual(ConfigSource.user_workspace, result.sources.models.get(.codex));
     try std.testing.expectEqual(ConfigSource.user_workspace, result.sources.permission_mode);
     try std.testing.expectEqual(ConfigSource.compiled_default, result.sources.effort);
     try std.testing.expectEqual(ConfigSource.user_global, result.sources.fast_mode);
@@ -3416,9 +3399,9 @@ test "detailed settings report non-empty process model override as winning sourc
     var result = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
     defer result.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(ConfigSource.process_override, result.sources.models.get(.gateway));
+    try std.testing.expectEqual(ConfigSource.process_override, result.sources.models.get(.codex));
     try std.testing.expectEqual(ModelSource.process_override, result.model_source.?);
-    try std.testing.expectEqualStrings("user/model", result.settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("user/model", result.settings.models.get(.codex).?);
 }
 
 test "invalid user model emits typed diagnostic and project model is ignored" {
@@ -3435,7 +3418,7 @@ test "invalid user model emits typed diagnostic and project model is ignored" {
 
     var result = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
     defer result.deinit(std.testing.allocator);
-    try std.testing.expect(result.settings.models.get(.gateway) == null);
+    try std.testing.expect(result.settings.models.get(.codex) == null);
     try std.testing.expectEqual(ModelSource.compiled_default, result.model_source.?);
     try expectIgnoredProjectKey(result.diagnostics, "model");
     try std.testing.expectEqual(ConfigDiagnosticCause.invalid_model_id, result.diagnostics[1].cause);
@@ -3514,7 +3497,7 @@ test "invalid user settings report newest valid manual recovery backup" {
         result.diagnostics[1].recovery_path.?,
         "settings.json.backup.100-0000000000000001-00000000000000000000000000000000",
     ));
-    try std.testing.expect(result.settings.models.get(.gateway) == null);
+    try std.testing.expect(result.settings.models.get(.codex) == null);
 }
 
 test "update channel resolves only from the global user profile" {
@@ -3672,7 +3655,7 @@ test "malformed or duplicate additional directories do not discard sibling setti
         var detailed = try loadMergedSettingsDetailedFromHome(alloc, home_root, workspace_root);
         defer detailed.deinit(alloc);
 
-        try std.testing.expectEqualStrings("workspace/model", detailed.settings.models.get(.gateway).?);
+        try std.testing.expectEqualStrings("workspace/model", detailed.settings.models.get(.codex).?);
         try std.testing.expect(detailed.additional_directories == null);
         var found_diagnostic = false;
         for (detailed.diagnostics) |diagnostic| {

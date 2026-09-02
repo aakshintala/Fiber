@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const app_lifecycle = @import("../app/app_lifecycle.zig");
 const chatgpt_oauth = @import("../auth/chatgpt_oauth.zig");
-const grok_oauth = @import("../auth/grok_oauth.zig");
 const acp_runner = @import("acp_runner.zig");
 const cli_ask = @import("cli_ask.zig");
 const cli_replay = @import("cli_replay.zig");
@@ -21,7 +20,6 @@ const execution_process_provider = @import("../execution/process_provider.zig");
 const github_publish = @import("../github/github_publish.zig");
 const github_workflows = @import("../github/github_workflows.zig");
 const host = @import("../hosts/host.zig");
-const login_flow = @import("../auth/login_flow.zig");
 const oauth_transport = @import("../auth/oauth_transport.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
 const secret = @import("../auth/secret.zig");
@@ -64,18 +62,14 @@ pub const Command = union(enum) {
     issue: []const [:0]const u8,
     login: []const [:0]const u8,
     logout: []const [:0]const u8,
-    setup: []const [:0]const u8,
     status: []const [:0]const u8,
     permissions: []const [:0]const u8,
     mcp: []const [:0]const u8,
     models: []const [:0]const u8,
-    provider: []const [:0]const u8,
     doctor: []const [:0]const u8,
-    teams: []const [:0]const u8,
     session: []const [:0]const u8,
     sessions: []const [:0]const u8,
     resume_session: ResumeInvocation,
-    credits: []const [:0]const u8,
     usage: []const [:0]const u8,
     upgrade: []const [:0]const u8,
     replay: []const [:0]const u8,
@@ -297,14 +291,11 @@ const LoadStartupStatusFn = *const fn (Allocator, host.SecretStore, []const u8, 
 const GetenvFn = *const fn (?*anyopaque, []const u8) ?[]const u8;
 const EnvironMapFn = *const fn (?*anyopaque) ?*const std.process.Environ.Map;
 const SelfExePathFn = *const fn (?*anyopaque, Allocator) anyerror![]u8;
-const ReadMaskedKeyFn = *const fn (?*anyopaque, Allocator, WriteFn, ?*anyopaque) anyerror![]u8;
-const SetupTerminalAvailableFn = *const fn (?*anyopaque) bool;
 const RunDeps = struct {
     stdout_ctx: ?*anyopaque = null,
     stderr_ctx: ?*anyopaque = null,
     env_ctx: ?*anyopaque = null,
     self_exe_ctx: ?*anyopaque = null,
-    setup_ctx: ?*anyopaque = null,
     write_stdout: WriteFn = writeRealStdout,
     write_stderr: WriteFn = writeRealStderr,
     load_startup_state: LoadStartupStateFn = app_lifecycle.loadStartupState,
@@ -314,8 +305,6 @@ const RunDeps = struct {
     getenv: GetenvFn = getenvDefault,
     environ_map: EnvironMapFn = environMapDefault,
     self_exe_path: SelfExePathFn = selfExePathDefault,
-    read_masked_key: ReadMaskedKeyFn = readMaskedKeyDefault,
-    setup_terminal_available: SetupTerminalAvailableFn = setupTerminalAvailableDefault,
 };
 
 const GlobalLaunchArgs = struct {
@@ -434,10 +423,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
             if (command_specs.matchesTopLevel(command_catalog, command, .ask)) return .{ .ask = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .acp)) return .{ .acp = args[1..] };
         },
-        'b' => if (command_specs.matchesTopLevel(command_catalog, command, .credits)) return .{ .credits = args[1..] },
-        'c' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .credits)) return .{ .credits = args[1..] };
-        },
         'd' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .doctor)) return .{ .doctor = args[1..] };
         },
@@ -455,14 +440,12 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
         'p' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .pr)) return .{ .pr = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .permissions)) return .{ .permissions = args[1..] };
-            if (command_specs.matchesTopLevel(command_catalog, command, .provider)) return .{ .provider = args[1..] };
         },
         'r' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .@"resume")) return .{ .resume_session = .{ .args = args[1..] } };
             if (command_specs.matchesTopLevel(command_catalog, command, .replay)) return .{ .replay = args[1..] };
         },
         's' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .setup)) return .{ .setup = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .status)) return .{ .status = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .sessions)) return .{ .sessions = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .session)) {
@@ -471,9 +454,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
                 }
                 return .{ .session = args[1..] };
             }
-        },
-        't' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .teams)) return .{ .teams = args[1..] };
         },
         'u' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .usage)) return .{ .usage = args[1..] };
@@ -621,88 +601,24 @@ fn activateProviderSelection(
     target: model_provider.ProviderId,
     caller: ProviderActivationCaller,
 ) !bool {
-    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-    defer alloc.free(workspace_root);
-    var settings = config_runtime.loadMergedSettings(alloc, workspace_root) catch |err| {
-        try writeProviderActivationError(alloc, deps, caller, "could not load settings");
-        debug_trace.logf("config", "provider selection settings load failed err={s}", .{@errorName(err)});
-        return false;
-    };
-    defer settings.deinit(alloc);
-
+    _ = caller;
+    _ = target;
     var resolution = try credentials.resolveForProvider(
         alloc,
         cfg.gateway_provider.oauth_transport,
         cfg.secret_store,
         .refresh_if_needed,
-        target,
-        settings.credential_source,
+        .codex,
+        null,
     );
     defer if (resolution.credential) |*credential| credential.deinit(alloc);
 
-    const already_selected = (settings.provider orelse .gateway) == target;
-    if (caller == .provider_command and already_selected and resolution.credential != null) {
-        try writeStdout(deps, switch (target) {
-            .gateway => "Gateway is already selected.\n",
-            .codex => "Codex is already selected.\n",
-            .grok => "Grok is already selected.\n",
-        });
-        return true;
-    }
-
-    var performed_login: ?model_provider.ProviderId = null;
-    if (resolution.credential == null and target == .codex and caller == .provider_command) {
-        chatgpt_oauth.runLogin(alloc, cfg.gateway_provider.oauth_transport, cfg.url_opener) catch |err| {
-            debug_trace.logf("auth", "provider selection Codex login failed err={s}", .{@errorName(err)});
-            try writeProviderActivationError(alloc, deps, caller, "Codex login failed");
-            return false;
-        };
-        performed_login = .codex;
-        resolution = try credentials.resolveForProvider(
-            alloc,
-            cfg.gateway_provider.oauth_transport,
-            cfg.secret_store,
-            .refresh_if_needed,
-            target,
-            settings.credential_source,
-        );
-    }
-    if (resolution.credential == null and target == .grok and caller == .provider_command) {
-        grok_oauth.runLogin(alloc, cfg.gateway_provider.oauth_transport, cfg.url_opener) catch |err| {
-            debug_trace.logf("auth", "provider selection Grok login failed err={s}", .{@errorName(err)});
-            try writeProviderActivationError(alloc, deps, caller, "Grok login failed");
-            return false;
-        };
-        performed_login = .grok;
-        resolution = try credentials.resolveForProvider(
-            alloc,
-            cfg.gateway_provider.oauth_transport,
-            cfg.secret_store,
-            .refresh_if_needed,
-            target,
-            settings.credential_source,
-        );
-    }
-
     const credential = if (resolution.credential) |*value| value else {
-        try writeProviderActivationError(
-            alloc,
-            deps,
-            caller,
-            switch (target) {
-                .codex => "Codex credential is unavailable",
-                .grok => "Grok credential is unavailable",
-                .gateway => "configure a Gateway credential first",
-            },
-        );
+        try writeProviderActivationError(alloc, deps, .provider_login, "Codex credential is unavailable");
         return false;
     };
-    const catalog_provider = cfg.provider_set.select(target).model_catalog orelse {
-        try writeProviderActivationError(alloc, deps, caller, switch (target) {
-            .codex => "Codex model catalog is unavailable",
-            .grok => "Grok model catalog is unavailable",
-            .gateway => "Gateway model catalog is unavailable",
-        });
+    const catalog_provider = cfg.provider_set.select(.codex).model_catalog orelse {
+        try writeProviderActivationError(alloc, deps, .provider_login, "Codex model catalog is unavailable");
         return false;
     };
     const fetch_result = model_catalog.fetchWithPublicFallback(catalog_provider, alloc, .{
@@ -713,47 +629,34 @@ fn activateProviderSelection(
     var loaded = switch (fetch_result) {
         .loaded => |loaded| loaded,
         .failed => |failure| {
-            debug_trace.logf("catalog", "provider selection catalog failed provider={s} category={s}", .{ @tagName(target), @tagName(failure.failure.category) });
+            debug_trace.logf("catalog", "provider selection catalog failed provider=codex category={s}", .{@tagName(failure.failure.category)});
             const detail = try std.fmt.allocPrint(
                 alloc,
                 "could not load the target model catalog ({s})",
                 .{@tagName(failure.failure.category)},
             );
             defer alloc.free(detail);
-            try writeProviderActivationError(alloc, deps, caller, detail);
+            try writeProviderActivationError(alloc, deps, .provider_login, detail);
             return false;
         },
     };
     defer model_catalog.freeModelCatalog(alloc, &loaded.catalog);
-    const saved_model = settings.models.get(target);
+    const saved_model: ?[]const u8 = null;
     const selected_model = selectCatalogModel(loaded.catalog.items, saved_model) orelse {
-        try writeProviderActivationError(alloc, deps, caller, "target model catalog is empty");
+        try writeProviderActivationError(alloc, deps, .provider_login, "target model catalog is empty");
         return false;
     };
     var attempt = config_runtime.attemptUserPreferences(alloc, .{
-        .provider = target,
-        .model_preference = .{ .provider = target, .model = selected_model },
+        .model_preference = .{ .provider = .codex, .model = selected_model },
     });
     defer attempt.deinit(alloc);
     switch (attempt) {
         .failure => |failure| {
             debug_trace.logf("config", "provider selection persistence failed err={s}", .{@errorName(failure.err)});
-            try writeProviderActivationError(alloc, deps, caller, "failed to save provider selection");
+            try writeProviderActivationError(alloc, deps, .provider_login, "failed to save the Codex model selection");
             return false;
         },
         .outcome => {},
-    }
-    if (performed_login) |provider| switch (provider) {
-        .codex => try writeStdout(deps, "Signed in with Codex.\n"),
-        .grok => try writeStdout(deps, "Signed in with Grok.\n"),
-        .gateway => unreachable,
-    };
-    if (caller == .provider_command) {
-        try writeStdout(deps, switch (target) {
-            .gateway => "Provider set to Gateway.\n",
-            .codex => "Provider set to Codex.\n",
-            .grok => "Provider set to Grok.\n",
-        });
     }
     return true;
 }
@@ -871,173 +774,55 @@ fn runNonInteractiveWithDeps(
         .issue => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .issue),
         .login => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx login [vercel|codex|grok]\n");
+                try writeStderr(deps, "usage: fx login [codex]\n");
                 return .handled_failure;
             };
-            // Preserve the original `fx login` behavior for scripts and users.
-            const login_provider = maybe_login_provider orelse .gateway;
-            switch (login_provider) {
-                .gateway => login_flow.runLogin(
-                    alloc,
-                    cfg.gateway_provider.oauth_transport,
-                    cfg.url_opener,
-                ) catch |err| {
-                    const message = switch (err) {
-                        error.ClientIdMissing => "fx login: missing FX_OAUTH_CLIENT_ID; configure the fx Vercel App client id first\n",
-                        error.AccessDenied => "fx login: authorization denied\n",
-                        error.ExpiredToken, error.LoginTimedOut => "fx login: authorization expired; run fx login again\n",
-                        else => "fx login: failed to sign in\n",
-                    };
-                    try writeStderr(deps, message);
-                    return .handled_failure;
-                },
-                .codex => {
-                    chatgpt_oauth.runLogin(
-                        alloc,
-                        cfg.gateway_provider.oauth_transport,
-                        cfg.url_opener,
-                    ) catch |err| {
-                        const message = switch (err) {
-                            error.ChatGptLoginTimedOut => "fx login: Codex authorization expired; run fx login codex again\n",
-                            error.ChatGptAuthorizationFailed => "fx login: Codex authorization denied\n",
-                            else => "fx login: failed to sign in with Codex\n",
-                        };
-                        try writeStderr(deps, message);
-                        return .handled_failure;
-                    };
-                    if (!try activateProviderSelection(alloc, cfg, deps, .codex, .provider_login)) {
-                        return .handled_failure;
-                    }
-                    try writeStdout(deps, "Signed in with Codex.\n");
-                },
-                .grok => {
-                    grok_oauth.runLogin(
-                        alloc,
-                        cfg.gateway_provider.oauth_transport,
-                        cfg.url_opener,
-                    ) catch |err| {
-                        debug_trace.logf("auth", "Grok login failed err={s}", .{@errorName(err)});
-                        try writeStderr(deps, "fx login: failed to sign in with Grok\n");
-                        return .handled_failure;
-                    };
-                    if (!try activateProviderSelection(alloc, cfg, deps, .grok, .provider_login)) {
-                        return .handled_failure;
-                    }
-                    try writeStdout(deps, "Signed in with Grok.\n");
-                },
-            }
-            return .handled_success;
-        },
-        .logout => |rest| {
-            const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx logout [vercel|codex|grok]\n");
-                return .handled_failure;
-            };
-            // Preserve the original `fx logout` behavior for scripts and users.
-            const login_provider = maybe_login_provider orelse .gateway;
-            if (login_provider == .codex) {
-                const outcome = chatgpt_oauth.logout() catch {
-                    try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
-                    return .handled_failure;
-                };
-                return switch (outcome) {
-                    .deleted => result: {
-                        try writeStdout(deps, "Signed out of Codex.\n");
-                        break :result .handled_success;
-                    },
-                    .missing => result: {
-                        try writeStdout(deps, "No Codex login session found.\n");
-                        break :result .handled_success;
-                    },
-                    .deleted_not_durable => result: {
-                        try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
-                        break :result .handled_failure;
-                    },
-                };
-            }
-            if (login_provider == .grok) {
-                const outcome = grok_oauth.logout(alloc, cfg.gateway_provider.oauth_transport) catch {
-                    try writeStderr(deps, "fx logout: failed to durably remove saved Grok login\n");
-                    return .handled_failure;
-                };
-                if (outcome.revocation_failed) {
-                    try writeStderr(deps, "fx logout: local Grok session removed, but remote revocation could not be confirmed\n");
-                }
-                return switch (outcome.deletion) {
-                    .deleted => result: {
-                        try writeStdout(deps, "Signed out of Grok.\n");
-                        break :result .handled_success;
-                    },
-                    .missing => result: {
-                        try writeStdout(deps, "No Grok login session found.\n");
-                        break :result .handled_success;
-                    },
-                    .deleted_not_durable => result: {
-                        try writeStderr(deps, "fx logout: failed to durably remove saved Grok login\n");
-                        break :result .handled_failure;
-                    },
-                };
-            }
-            const result = login_flow.logout(alloc, cfg.gateway_provider.oauth_transport) catch |err| switch (err) {
-                error.SessionDeleteFailed => {
-                    try writeStderr(deps, "fx logout: failed to durably remove saved fx login\n");
-                    return .handled_failure;
-                },
-            };
-            if (result.local_durability_failed) {
-                try writeStderr(deps, "fx logout: failed to durably remove saved fx login\n");
-            } else {
-                try writeStdout(
-                    deps,
-                    if (result.session_deleted) "Signed out of fx.\n" else "No fx login session found.\n",
-                );
-            }
-            if (result.remote_revocation_failed) {
-                try writeStderr(deps, login_flow.remote_revocation_warning);
-                try writeStderr(deps, "\n");
-            }
-            return if (result.local_durability_failed) .handled_failure else .handled_success;
-        },
-        .teams => |rest| {
-            if (rest.len != 0) {
-                try writeStderr(deps, "usage: fx teams\n");
-                return .handled_failure;
-            }
-            login_flow.runTeams(alloc, cfg.gateway_provider.oauth_transport) catch |err| {
+            _ = maybe_login_provider;
+            chatgpt_oauth.runLogin(
+                alloc,
+                cfg.gateway_provider.oauth_transport,
+                cfg.url_opener,
+            ) catch |err| {
                 const message = switch (err) {
-                    error.NoSession => "fx teams: run fx login first\n",
-                    error.SessionChanged => "fx teams: authentication changed; try again\n",
-                    error.TeamRequestFailed => "fx teams: failed to list Vercel teams\n",
-                    error.InvalidTeamSelection => "fx teams: no team selected\n",
-                    error.AccessDenied => "fx teams: authorization denied\n",
-                    else => "fx teams: failed to switch team\n",
+                    error.ChatGptLoginTimedOut => "fx login: Codex authorization expired; run fx login codex again\n",
+                    error.ChatGptAuthorizationFailed => "fx login: Codex authorization denied\n",
+                    else => "fx login: failed to sign in with Codex\n",
                 };
                 try writeStderr(deps, message);
                 return .handled_failure;
             };
+            if (!try activateProviderSelection(alloc, cfg, deps, .codex, .provider_login)) {
+                return .handled_failure;
+            }
+            try writeStdout(deps, "Signed in with Codex.\n");
             return .handled_success;
         },
-        .provider => |rest| {
-            if (rest.len != 1) {
-                try writeStderr(deps, "usage: fx provider <gateway|codex|grok>\n");
-                return .handled_failure;
-            }
-            const target = model_provider.parse(rest[0]) orelse {
-                try writeStderr(deps, "fx provider: expected gateway, codex, or grok\n");
+        .logout => |rest| {
+            const maybe_login_provider = parseLoginProvider(rest) catch {
+                try writeStderr(deps, "usage: fx logout [codex]\n");
                 return .handled_failure;
             };
-            return if (try activateProviderSelection(alloc, cfg, deps, target, .provider_command))
-                .handled_success
-            else
-                .handled_failure;
-        },
-        .setup => |rest| {
-            if (rest.len != 0) {
-                try writeTopLevelUsage(cfg.command_catalog, deps, .setup);
+            _ = maybe_login_provider;
+            const outcome = chatgpt_oauth.logout() catch {
+                try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
                 return .handled_failure;
-            }
-            return if (try runPasteSetup(alloc, cfg.secret_store, deps)) .handled_success else .handled_failure;
+            };
+            return switch (outcome) {
+                .deleted => result: {
+                    try writeStdout(deps, "Signed out of Codex.\n");
+                    break :result .handled_success;
+                },
+                .missing => result: {
+                    try writeStdout(deps, "No Codex login session found.\n");
+                    break :result .handled_success;
+                },
+                .deleted_not_durable => result: {
+                    try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
+                    break :result .handled_failure;
+                },
+            };
         },
+
         .status => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .status, "status", err, rest);
@@ -1115,11 +900,7 @@ fn runNonInteractiveWithDeps(
 
             const catalog_access = startup.modelCatalogAccess();
             const catalog_provider = cfg.provider_set.select(startup.provider).cli_model_catalog orelse {
-                try writeStderr(deps, switch (startup.provider) {
-                    .gateway => "fx models: Gateway model catalog is unavailable\n",
-                    .codex => "fx models: Codex model catalog is unavailable\n",
-                    .grok => "fx models: Grok model catalog is unavailable\n",
-                });
+                try writeStderr(deps, "fx models: Codex model catalog is unavailable\n");
                 return .handled_failure;
             };
             const loaded = switch (catalog_provider.fetch(alloc, .{
@@ -1456,42 +1237,6 @@ fn runNonInteractiveWithDeps(
                 },
             }
         },
-        .credits => |rest| {
-            const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .credits, "credits", err, rest);
-                return .handled_failure;
-            };
-            var startup = try deps.load_startup_state(
-                alloc,
-                cfg.gateway_provider.oauth_transport,
-                cfg.secret_store,
-                cfg.default_model,
-                cfg.default_agent_step_limit,
-            );
-            defer startup.deinit(alloc);
-            try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
-
-            const credits = cfg.provider_set.select(startup.provider).credits orelse
-                gateway_provider.unavailable_credits_provider;
-            var snapshot = credits.fetch(alloc, .{
-                .credential = startup.apiKey(),
-                .credential_source = if (startup.credential) |credential| credential.source else null,
-                .tenant = startup.gatewayTeam(),
-            });
-            defer snapshot.deinit(alloc);
-            const text = try snapshot.render(alloc, opts.format);
-            defer alloc.free(text);
-            if (snapshot.err_message != null) {
-                if (opts.format == .json) {
-                    try writeFormattedOutput(deps, text, opts.format);
-                } else {
-                    try writeStderr(deps, text);
-                }
-                return .handled_failure;
-            }
-            try writeFormattedOutput(deps, text, opts.format);
-            return .handled_success;
-        },
         .usage => |rest| {
             const opts = parseUsageArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .usage, "usage", err, rest);
@@ -1683,150 +1428,6 @@ fn writeStdout(deps: RunDeps, text: []const u8) !void {
 fn writeStderr(deps: RunDeps, text: []const u8) !void {
     try deps.write_stderr(deps.stderr_ctx, text);
 }
-
-fn runPasteSetup(
-    alloc: Allocator,
-    secret_store: host.SecretStore,
-    deps: RunDeps,
-) !bool {
-    if (secret_store.isDisabled()) {
-        try writeStderr(deps, "fx setup: stored API keys are disabled by FX_DISABLE_KEYCHAIN\n");
-        return false;
-    }
-    if (!deps.setup_terminal_available(deps.setup_ctx)) {
-        try writeStderr(deps, "fx setup: an interactive terminal is required to paste an API key\n");
-        return false;
-    }
-
-    try writeStderr(deps, "Paste AI Gateway API key (input hidden): ");
-    const stored_interactively = secret_store.storeInteractive() catch {
-        try writeStderr(deps, "\nfx setup: API key was not saved\n");
-        return false;
-    };
-    if (!stored_interactively) {
-        const key = deps.read_masked_key(
-            deps.setup_ctx,
-            alloc,
-            deps.write_stderr,
-            deps.stderr_ctx,
-        ) catch {
-            try writeStderr(deps, "\nfx setup: API key was not saved\n");
-            return false;
-        };
-        defer secret.zeroAndFree(alloc, key);
-        try writeStderr(deps, "\n");
-        secret_store.store(alloc, key) catch {
-            try writeStderr(deps, "fx setup: API key was not saved\n");
-            return false;
-        };
-    }
-
-    const message = try std.fmt.allocPrint(
-        alloc,
-        "Saved API key to {s}.\n",
-        .{secret_store.backend_label},
-    );
-    defer alloc.free(message);
-    try writeStdout(deps, message);
-    return true;
-}
-
-fn setupTerminalAvailableDefault(_: ?*anyopaque) bool {
-    return std.c.isatty(std.posix.STDIN_FILENO) != 0 and
-        std.c.isatty(std.posix.STDERR_FILENO) != 0;
-}
-
-fn readMaskedKeyDefault(
-    _: ?*anyopaque,
-    alloc: Allocator,
-    write_mask: WriteFn,
-    write_ctx: ?*anyopaque,
-) ![]u8 {
-    var raw = try MaskedKeyRawMode.enable();
-    defer raw.disable();
-
-    var input: std.ArrayList(u8) = .empty;
-    errdefer {
-        if (input.capacity > 0) secret.zeroAndFree(alloc, input.allocatedSlice());
-    }
-
-    while (input.items.len < 8 * 1024) {
-        var byte: [1]u8 = undefined;
-        if (try std.posix.read(std.posix.STDIN_FILENO, &byte) == 0) return error.SetupCancelled;
-        switch (byte[0]) {
-            '\r', '\n' => {
-                if (input.items.len == 0) continue;
-                // toOwnedSlice shrinks through realloc, which may move the buffer
-                // and free the original without zeroing it. Copy out and wipe the
-                // source so no unzeroed key is left behind in freed memory.
-                const owned = try alloc.dupe(u8, input.items);
-                secret.zeroAndFree(alloc, input.allocatedSlice());
-                input = .empty;
-                return owned;
-            },
-            3, 4, 0x1b => return error.SetupCancelled,
-            8, 127 => if (input.items.len > 0) {
-                _ = input.pop();
-                try write_mask(write_ctx, "\x08 \x08");
-            },
-            0x20...0x7e => {
-                try input.append(alloc, byte[0]);
-                try write_mask(write_ctx, "•");
-            },
-            else => {},
-        }
-    }
-    return error.SetupKeyTooLong;
-}
-
-const MaskedKeyRawMode = struct {
-    original: std.posix.termios = undefined,
-    active: bool = false,
-
-    fn enable() !MaskedKeyRawMode {
-        if (std.c.isatty(std.posix.STDIN_FILENO) == 0 or
-            std.c.isatty(std.posix.STDERR_FILENO) == 0)
-        {
-            return error.NotATerminal;
-        }
-
-        var self: MaskedKeyRawMode = .{};
-        self.original = try std.posix.tcgetattr(std.posix.STDIN_FILENO);
-        var raw = self.original;
-        raw.iflag.BRKINT = false;
-        raw.iflag.ICRNL = false;
-        raw.iflag.INPCK = false;
-        raw.iflag.ISTRIP = false;
-        raw.iflag.IXON = false;
-        raw.iflag.IXOFF = false;
-        raw.cflag.CSIZE = .CS8;
-        raw.lflag.ECHO = false;
-        raw.lflag.ICANON = false;
-        raw.lflag.IEXTEN = false;
-        raw.lflag.ISIG = false;
-        const vmin_idx = switch (builtin.os.tag) {
-            .linux => 6,
-            else => 16,
-        };
-        const vtime_idx = switch (builtin.os.tag) {
-            .linux => 5,
-            else => 17,
-        };
-        if (vmin_idx < raw.cc.len and vtime_idx < raw.cc.len) {
-            raw.cc[vmin_idx] = 1;
-            raw.cc[vtime_idx] = 0;
-        }
-        try std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, raw);
-        self.active = true;
-        return self;
-    }
-
-    fn disable(self: *MaskedKeyRawMode) void {
-        if (!self.active) return;
-        std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, self.original) catch {};
-        self.active = false;
-    }
-};
 
 fn writeConfigDiagnostics(
     alloc: Allocator,
@@ -3446,10 +3047,6 @@ test "parse recognizes every top-level command and preserves unknown commands" {
         .issue => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
         else => return error.TestExpectedEqual,
     }
-    switch (parse(command_catalog, &.{@constCast("setup")})) {
-        .setup => |rest| try std.testing.expectEqual(@as(usize, 0), rest.len),
-        else => return error.TestExpectedEqual,
-    }
     switch (parse(command_catalog, &.{ @constCast("status"), @constCast("--json") })) {
         .status => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
         else => return error.TestExpectedEqual,
@@ -3488,10 +3085,6 @@ test "parse recognizes every top-level command and preserves unknown commands" {
     }
     switch (parse(command_catalog, &.{ @constCast("resume"), @constCast("last") })) {
         .resume_session => |invocation| try std.testing.expectEqual(@as(usize, 1), invocation.args.len),
-        else => return error.TestExpectedEqual,
-    }
-    switch (parse(command_catalog, &.{ @constCast("credits"), @constCast("--json") })) {
-        .credits => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{ @constCast("usage"), @constCast("--period"), @constCast("24h") })) {
@@ -3674,7 +3267,7 @@ test "ACP command routes parsed options and launch config through the injected r
                     expected.context_registry.defaultProvider().id,
                 ) and
                 std.mem.eql(u8, cfg.mode_registry.default_mode_id, expected.mode_registry.default_mode_id) and
-                cfg.provider_set.gateway.permission_reviewer.?.review_fn == expected.provider_set.gateway.permission_reviewer.?.review_fn;
+                cfg.provider_set.codex.permission_reviewer.?.review_fn == expected.provider_set.codex.permission_reviewer.?.review_fn;
 
             const limit_matches = cfg.context_limit_overrides.len == 1 and
                 cfg.context_limit_overrides[0].name == .project_instructions_total_bytes and
@@ -3693,7 +3286,7 @@ test "ACP command routes parsed options and launch config through the injected r
     };
 
     var cfg = testConfig();
-    cfg.provider_set.gateway.permission_reviewer = test_builtin_gateway.permission_reviewer.provider;
+    cfg.provider_set.codex.permission_reviewer = test_builtin_gateway.provider_bundle.permission_reviewer;
     var capture = Capture{ .expected = cfg };
     cfg.acp_runner = .{ .context = &capture, .run_fn = Capture.run };
     const result = try runIfRequestedWithDeps(
@@ -4331,71 +3924,6 @@ test "runIfRequested version flags reject extra args" {
     }
 }
 
-test "setup is a paste-only stored-key adapter" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    var cfg = testConfig();
-    cfg.secret_store = capture.secretStore();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
-    );
-
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_store_calls);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_read_calls);
-    try std.testing.expect(capture.setup_value_matched);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Paste AI Gateway API key") != null);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Vercel CLI") == null);
-    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), cfg.secret_store.backend_label) != null);
-}
-
-test "setup delegates secure input to an interactive host store" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    capture.setup_interactive_store = true;
-    var cfg = testConfig();
-    cfg.secret_store = capture.secretStore();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
-    );
-
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_store_calls);
-    try std.testing.expectEqual(@as(usize, 0), capture.setup_read_calls);
-    try std.testing.expect(!capture.setup_value_matched);
-}
-
-test "setup preserves the disabled secret-store failure" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    capture.setup_store_disabled = true;
-    var cfg = testConfig();
-    cfg.secret_store = capture.secretStore();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
-    );
-
-    try std.testing.expectEqual(RunResult.handled_failure, result);
-    try std.testing.expectEqual(@as(usize, 0), capture.setup_store_calls);
-    try std.testing.expectEqual(@as(usize, 0), capture.setup_read_calls);
-    try std.testing.expectEqualStrings(
-        "fx setup: stored API keys are disabled by FX_DISABLE_KEYCHAIN\n",
-        capture.stderr.written(),
-    );
-}
-
 test "workspace indeterminate errors report the reconciled durable state" {
     const cases = [_]struct {
         reconciliation: workspace_commands.Reconciliation,
@@ -4511,16 +4039,9 @@ test "CLI surface uses the supplied command catalog for parsing usage and help" 
             .usage = "guide",
             .summary = "Show injected help",
         },
-        .{
-            .kind = .setup,
-            .token = "start",
-            .usage = "start",
-            .summary = "Run injected setup",
-        },
     };
     const help_groups = [_]command_specs.TopLevelHelpGroup{
         .{ .entries = &.{
-            .{ .kind = .setup, .usage = "start" },
             .{ .kind = .help, .usage = "guide" },
         } },
     };
@@ -4532,8 +4053,8 @@ test "CLI surface uses the supplied command catalog for parsing usage and help" 
     };
 
     try std.testing.expectEqual(Command.help, parse(command_catalog, &.{@constCast("-?")}));
-    switch (parse(command_catalog, &.{@constCast("start")})) {
-        .setup => {},
+    switch (parse(command_catalog, &.{@constCast("bogus")})) {
+        .unknown => {},
         else => return error.TestExpectedEqual,
     }
 
@@ -4552,14 +4073,14 @@ test "CLI surface uses the supplied command catalog for parsing usage and help" 
     defer usage_capture.deinit();
     var cfg = testConfig();
     cfg.command_catalog = command_catalog;
-    const result = try runIfRequestedWithDeps(
+    try std.testing.expectError(error.UnknownCliCommand, runIfRequestedWithDeps(
         std.testing.allocator,
-        &.{ @constCast("start"), @constCast("unexpected") },
+        &.{ @constCast("bogus"), @constCast("unexpected") },
         cfg,
         usage_capture.deps(),
-    );
-    try std.testing.expectEqual(RunResult.handled_failure, result);
-    try std.testing.expectEqualStrings("usage: fx start\n", usage_capture.stderr.written());
+    ));
+    try std.testing.expect(std.mem.find(u8, usage_capture.stderr.written(), "fx: unknown subcommand: bogus") != null);
+    try std.testing.expect(std.mem.find(u8, usage_capture.stderr.written(), "Injected command catalog.") != null);
 }
 
 test "workflow config does not carry placeholder gateway tools" {
@@ -4803,7 +4324,7 @@ test "runIfRequested model fetch failure is handled" {
     defer capture.deinit();
     var probe = ModelFetchProbe{ .outcome = .failure };
     var cfg = testConfig();
-    cfg.provider_set.gateway.cli_model_catalog = probe.provider();
+    cfg.provider_set.codex.cli_model_catalog = probe.provider();
 
     var deps = capture.deps();
     deps.load_startup_state = failingStartupState;
@@ -4822,7 +4343,7 @@ test "runIfRequested model fetch failure preserves json output" {
     defer capture.deinit();
     var probe = ModelFetchProbe{ .outcome = .failure };
     var cfg = testConfig();
-    cfg.provider_set.gateway.cli_model_catalog = probe.provider();
+    cfg.provider_set.codex.cli_model_catalog = probe.provider();
 
     var deps = capture.deps();
     deps.load_catalog_startup_state = stubLoadCatalogStartupState;
@@ -4846,7 +4367,7 @@ test "runIfRequested model provider cancellation is handled" {
     defer capture.deinit();
     var probe = ModelFetchProbe{ .outcome = .cancelled };
     var cfg = testConfig();
-    cfg.provider_set.gateway.cli_model_catalog = probe.provider();
+    cfg.provider_set.codex.cli_model_catalog = probe.provider();
 
     var deps = capture.deps();
     deps.load_catalog_startup_state = stubLoadCatalogStartupState;
@@ -4864,7 +4385,7 @@ test "runIfRequested models passes startup team to fetch seam" {
     defer capture.deinit();
     var probe = ModelFetchProbe{};
     var cfg = testConfig();
-    cfg.provider_set.gateway.cli_model_catalog = probe.provider();
+    cfg.provider_set.codex.cli_model_catalog = probe.provider();
 
     var deps = capture.deps();
     deps.load_catalog_startup_state = stubLoadCatalogStartupState;
@@ -4878,70 +4399,6 @@ test "runIfRequested models passes startup team to fetch seam" {
     );
 }
 
-test "runIfRequested credits renders through the configured provider" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    var probe = CreditsProviderProbe{ .outcome = .success };
-    var cfg = testConfig();
-    cfg.provider_set.gateway.credits = probe.provider();
-
-    var deps = capture.deps();
-    deps.load_startup_state = stubLoadStartupState;
-
-    const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("credits"), @constCast("--json") }, cfg, deps);
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), probe.calls);
-    try std.testing.expect(probe.saw_expected_input);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"balance\":\"10\",\"used\":\"2\",\"plan\":\"pro\"}\n",
-        capture.stdout.written(),
-    );
-}
-
-test "runIfRequested credits failures use nonzero text and json contracts" {
-    var text_capture = CaptureOutput.init(std.testing.allocator);
-    defer text_capture.deinit();
-    var text_probe = CreditsProviderProbe{ .outcome = .failure };
-    var text_cfg = testConfig();
-    text_cfg.provider_set.gateway.credits = text_probe.provider();
-    var text_deps = text_capture.deps();
-    text_deps.load_startup_state = stubLoadStartupState;
-
-    const text_result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("credits")},
-        text_cfg,
-        text_deps,
-    );
-    try std.testing.expectEqual(RunResult.handled_failure, text_result);
-    try std.testing.expectEqualStrings("", text_capture.stdout.written());
-    try std.testing.expectEqualStrings(
-        "[credits] error: gateway unavailable\n",
-        text_capture.stderr.written(),
-    );
-
-    var json_capture = CaptureOutput.init(std.testing.allocator);
-    defer json_capture.deinit();
-    var json_probe = CreditsProviderProbe{ .outcome = .failure };
-    var json_cfg = testConfig();
-    json_cfg.provider_set.gateway.credits = json_probe.provider();
-    var json_deps = json_capture.deps();
-    json_deps.load_startup_state = stubLoadStartupState;
-
-    const json_result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{ @constCast("credits"), @constCast("--json") },
-        json_cfg,
-        json_deps,
-    );
-    try std.testing.expectEqual(RunResult.handled_failure, json_result);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"error\":\"gateway unavailable\"}\n",
-        json_capture.stdout.written(),
-    );
-    try std.testing.expectEqualStrings("", json_capture.stderr.written());
-}
-
 test "runIfRequested local json success appends exactly one newline" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
@@ -4952,7 +4409,7 @@ test "runIfRequested local json success appends exactly one newline" {
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--json") }, testConfig(), deps);
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"auto\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42,\"mcp\":{\"connection_check\":\"not_checked\",\"servers\":[],\"configuration_issues\":[],\"inspection_error\":null}}\n",
+        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fx needs a Codex subscription login for this model. Run fx login codex.\",\"permission_mode\":\"auto\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42,\"mcp\":{\"connection_check\":\"not_checked\",\"servers\":[],\"configuration_issues\":[],\"inspection_error\":null}}\n",
         capture.stdout.written(),
     );
     try std.testing.expect(!std.mem.endsWith(u8, capture.stdout.written(), "\n\n"));
@@ -5041,7 +4498,7 @@ test "writeRenderedJsonLine falls back to heap and appends exactly one newline" 
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
+        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fx needs a Codex subscription login for this model. Run fx login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
         capture.stdout.written(),
     );
 }
@@ -5057,7 +4514,7 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
     const snapshot = doctor_runtime.Snapshot{
         .workspace_root = @constCast("/tmp/fx"),
         .model = "test-model",
-        .auth = .{ .active_source = .ai_gateway_api_key },
+        .auth = .{ .active_source = .chatgpt_subscription },
         .permission_mode = .auto,
         .agent_step_limit = 42,
         .checks = checks[0..],
@@ -5072,7 +4529,7 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"test-model\",\"auth\":\"AI_GATEWAY_API_KEY\",\"auth_refreshable\":false,\"permission_mode\":\"auto\",\"agent_step_limit\":42,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}\n",
+        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"test-model\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"auto\",\"agent_step_limit\":42,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}\n",
         capture.stdout.written(),
     );
 }
@@ -5080,11 +4537,6 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
 const CaptureOutput = struct {
     stdout: std.Io.Writer.Allocating,
     stderr: std.Io.Writer.Allocating,
-    setup_store_calls: usize = 0,
-    setup_read_calls: usize = 0,
-    setup_value_matched: bool = false,
-    setup_interactive_store: bool = false,
-    setup_store_disabled: bool = false,
 
     fn init(alloc: Allocator) CaptureOutput {
         return .{
@@ -5102,22 +4554,8 @@ const CaptureOutput = struct {
         return .{
             .stdout_ctx = self,
             .stderr_ctx = self,
-            .setup_ctx = self,
             .write_stdout = captureStdout,
             .write_stderr = captureStderr,
-            .read_masked_key = captureReadMaskedKey,
-            .setup_terminal_available = captureSetupTerminalAvailable,
-        };
-    }
-
-    fn secretStore(self: *@This()) host.SecretStore {
-        return .{
-            .context = self,
-            .backend_label = "test credential store",
-            .is_disabled_fn = captureSecretStoreIsDisabled,
-            .load_fn = captureSecretStoreLoad,
-            .store_fn = captureSecretStoreWrite,
-            .store_interactive_fn = captureSecretStoreInteractiveWrite,
         };
     }
 };
@@ -5130,52 +4568,6 @@ fn captureStdout(ctx: ?*anyopaque, text: []const u8) !void {
 fn captureStderr(ctx: ?*anyopaque, text: []const u8) !void {
     const capture: *CaptureOutput = @ptrCast(@alignCast(ctx.?));
     try capture.stderr.writer.writeAll(text);
-}
-
-fn captureSetupTerminalAvailable(_: ?*anyopaque) bool {
-    return true;
-}
-
-fn captureReadMaskedKey(
-    ctx: ?*anyopaque,
-    alloc: Allocator,
-    _: WriteFn,
-    _: ?*anyopaque,
-) ![]u8 {
-    const capture: *CaptureOutput = @ptrCast(@alignCast(ctx.?));
-    capture.setup_read_calls += 1;
-    return alloc.dupe(u8, "paste-only-test-key");
-}
-
-fn captureSecretStoreIsDisabled(ctx: ?*anyopaque) bool {
-    const capture: *CaptureOutput = @ptrCast(@alignCast(ctx.?));
-    return capture.setup_store_disabled;
-}
-
-fn captureSecretStoreLoad(
-    _: ?*anyopaque,
-    _: Allocator,
-) host.SecretStoreLoadError!?[]u8 {
-    return null;
-}
-
-fn captureSecretStoreWrite(
-    ctx: ?*anyopaque,
-    _: Allocator,
-    value: []const u8,
-) host.SecretStoreWriteError!void {
-    const capture: *CaptureOutput = @ptrCast(@alignCast(ctx.?));
-    capture.setup_store_calls += 1;
-    capture.setup_value_matched = std.mem.eql(u8, value, "paste-only-test-key");
-}
-
-fn captureSecretStoreInteractiveWrite(
-    ctx: ?*anyopaque,
-) host.SecretStoreWriteError!bool {
-    const capture: *CaptureOutput = @ptrCast(@alignCast(ctx.?));
-    if (!capture.setup_interactive_store) return false;
-    capture.setup_store_calls += 1;
-    return true;
 }
 
 fn gatherNoopContextForTest(_: Allocator, _: context_contract.InitialContextInput) context_contract.ProviderError!context_contract.ProviderContext {
@@ -5295,7 +4687,7 @@ fn testConfig() Config {
         .gateway_retry_count = 1,
         .gateway_chat_url = "https://example.test/chat",
         .gateway_provider = test_builtin_gateway.provider,
-        .provider_set = provider_set.gateway_only(test_builtin_gateway.provider_bundle),
+        .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
         .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "system" },
@@ -5334,9 +4726,8 @@ fn stubLoadStartupState(
     state.selected_model = try alloc.dupe(u8, default_model);
     state.credential = .{
         .token = try alloc.dupe(u8, "test-key"),
-        .source = .ai_gateway_api_key,
+        .source = .chatgpt_subscription,
     };
-    state.credential.?.team_id = try alloc.dupe(u8, "team_123");
     return state;
 }
 
@@ -5435,8 +4826,7 @@ const ModelFetchProbe = struct {
         const self: *ModelFetchProbe = @ptrCast(@alignCast(raw.?));
         self.called = true;
         if (!std.mem.eql(u8, input.access.authorizationCredential() orelse "", "test-key") or
-            !std.mem.eql(u8, input.access.teamContext() orelse "", "team_123") or
-            input.access.credentialSource() != .ai_gateway_api_key or
+            input.access.credentialSource() != .chatgpt_subscription or
             !std.mem.eql(u8, input.endpoint, "/v1/models") or
             input.cancel_flag != null)
         {

@@ -7,7 +7,7 @@
  * Requires: tmux installed and available in PATH.
  */
 import { execFileSync, execSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FX_BIN, REPO_ROOT } from "../evals/eval-helpers";
@@ -18,12 +18,7 @@ export const FAKE_GATEWAY_MODEL = "openai/gpt-5";
 const TMUX_CAPTURE_MAX_BUFFER = 32 * 1024 * 1024;
 const TMUX_HEX_CHUNK_BYTES = 256;
 const COMPOSER_LINE = /^[ \t]*(?:┃|❯|>)(?:[ \t]|$)/;
-const AUTH_ENV_KEYS = [
-  "AI_GATEWAY_API_KEY",
-  "VERCEL_OIDC_TOKEN",
-] as const;
 const DEFAULT_UNSET_ENV_KEYS = [
-  ...AUTH_ENV_KEYS,
   "FX_E2E_GATEWAY_CHAT_URL",
   "FX_E2E_GATEWAY_MODELS_URL",
   "FX_E2E_GATEWAY_CREDITS_URL",
@@ -485,7 +480,6 @@ export class TmuxSession {
     const exitStatusPath = join(tmpdir(), `${name}.exit-status`);
     rmSync(exitStatusPath, { force: true });
 
-    const authEnvKeys = new Set<string>(AUTH_ENV_KEYS);
     const unsetArgs = Object.entries(env).flatMap(([key, value]) =>
       value === undefined ? ["-u", shellQuote(key)] : []
     );
@@ -493,10 +487,7 @@ export class TmuxSession {
       Object.prototype.hasOwnProperty.call(env, key) ? [] : ["-u", shellQuote(key)]
     );
     const assignmentArgs = Object.entries(env).flatMap(([key, value]) =>
-      value === undefined || authEnvKeys.has(key) ? [] : [shellQuote(`${key}=${value}`)]
-    );
-    const sessionEnvArgs = Object.entries(env).flatMap(([key, value]) =>
-      value === undefined || !authEnvKeys.has(key) ? [] : ["-e", `${key}=${value}`]
+      value === undefined ? [] : [shellQuote(`${key}=${value}`)]
     );
     const mirroredEnv = MIRRORED_ENV_KEYS.flatMap((key) =>
       Object.prototype.hasOwnProperty.call(env, key)
@@ -632,7 +623,6 @@ export class TmuxSession {
           String(width),
           "-y",
           String(height),
-          ...sessionEnvArgs,
           tmuxCommand,
           ...launchSuffix,
         ],
@@ -672,17 +662,6 @@ export class TmuxSession {
     }
     const session = new TmuxSession(name, exitStatusPath, resolvedSocketName);
     try {
-      for (const key of AUTH_ENV_KEYS) {
-        try {
-          execFileSync(
-            "tmux",
-            [...tmuxPrefix, "set-environment", "-u", "-t", name, key],
-            { env: processEnv, stdio: "pipe" },
-          );
-        } catch (err) {
-          if (session.isAlive()) throw err;
-        }
-      }
       if (remainOnExit) {
         execFileSync(
           "tmux",
@@ -1306,4 +1285,186 @@ export function tmuxAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Fake Codex (ChatGPT subscription) provider fixtures.
+//
+// The Codex-only runtime speaks the OpenAI Responses protocol:
+// POST /responses with an SSE reply, GET /models?client_version=...,
+// and POST /token for the ChatGPT OAuth refresh grant.
+// ---------------------------------------------------------------------------
+
+export const FAKE_CODEX_DEFAULT_MODEL = "gpt-5.4-mini";
+
+export function chatGptAccessToken(
+  accountId = "acct_e2e",
+  signature = "signature",
+): string {
+  const payload = Buffer.from(JSON.stringify({
+    "https://api.openai.com/auth": { chatgpt_account_id: accountId },
+  })).toString("base64url");
+  return `header.${payload}.${signature}`;
+}
+
+export function writeSeededChatGptLogin(
+  home: string,
+  accessToken: string,
+  options: { accountId?: string; refreshToken?: string; expiresAtMs?: number } = {},
+): void {
+  const fxDir = join(home, ".fx");
+  mkdirSync(fxDir, { recursive: true, mode: 0o700 });
+  chmodSync(fxDir, 0o700);
+  const authPath = join(fxDir, "chatgpt-auth.json");
+  writeFileSync(authPath, JSON.stringify({
+    version: 1,
+    access_token: accessToken,
+    refresh_token: options.refreshToken ?? "chatgpt-refresh",
+    expires_at_ms: options.expiresAtMs ?? Date.now() + 60 * 60 * 1000,
+    account_id: options.accountId ?? "acct_e2e",
+  }) + "\n", { mode: 0o600 });
+  chmodSync(authPath, 0o600);
+}
+
+export function fakeCodexModelsPayload(extra: string[] = []): object {
+  const models = [
+    ...new Set([FAKE_CODEX_DEFAULT_MODEL, "gpt-5.4", ...extra]),
+  ].map((slug) => ({
+    slug,
+    visibility: "list",
+    supported_in_api: true,
+    supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }],
+    additional_speed_tiers: [],
+    input_modalities: ["text"],
+    context_window: 272000,
+  }));
+  return { models };
+}
+
+export function codexFinalText(text: string): string {
+  return `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n` +
+    'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":4,"output_tokens":2}}}\n\n';
+}
+
+export function codexToolCall(callId: string, name: string, args: object): string {
+  return `data: ${JSON.stringify({
+    type: "response.output_item.added",
+    output_index: 0,
+    item: { type: "function_call", call_id: callId, name },
+  })}\n\n` +
+    `data: ${JSON.stringify({
+      type: "response.function_call_arguments.done",
+      output_index: 0,
+      arguments: JSON.stringify(args),
+    })}\n\n` +
+    'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":4,"output_tokens":2}}}\n\n';
+}
+
+export function codexSerializedToolCall(
+  id: string,
+  name: string,
+  input: string,
+  assistantText?: string,
+): string {
+  return (assistantText
+    ? `data: ${JSON.stringify({ type: "response.output_text.delta", delta: assistantText })}\n\n`
+    : "") +
+    `data: ${JSON.stringify({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { type: "function_call", call_id: id, name },
+    })}\n\n` +
+    `data: ${JSON.stringify({
+      type: "response.function_call_arguments.done",
+      output_index: 0,
+      arguments: input,
+    })}\n\n` +
+    'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":4,"output_tokens":2}}}\n\n';
+}
+
+export function codexInputItems(body: string): Array<Record<string, unknown>> {
+  return (JSON.parse(body).input ?? []) as Array<Record<string, unknown>>;
+}
+
+export function codexLatestToolResult(body: string): { callId: string; output: string } | null {
+  const items = codexInputItems(body);
+  const result = items.at(-1);
+  if (result?.type !== "function_call_output" || typeof result.call_id !== "string" || typeof result.output !== "string") {
+    return null;
+  }
+  return { callId: result.call_id, output: result.output };
+}
+
+export type FakeCodexOptions = {
+  accountId?: string;
+  extraModels?: string[];
+  unauthorizedResponses?: number;
+  route?: (body: string) => string | Promise<string>;
+};
+
+export function startFakeCodex(options: FakeCodexOptions = {}) {
+  const accountId = options.accountId ?? "acct_e2e";
+  const accessToken = chatGptAccessToken(accountId, "stale");
+  const refreshedAccessToken = chatGptAccessToken(accountId, "fresh");
+  const requests: Array<{ path: string; authorization: string | null; body: string }> = [];
+  const modelRequests: Array<{ path: string; authorization: string | null; url: string }> = [];
+  const tokenRequests: Array<{ path: string; authorization: string | null; body: string }> = [];
+  let unauthorizedResponses = options.unauthorizedResponses ?? 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      const recorded = { path, authorization: req.headers.get("authorization") };
+      if (path === "/models") {
+        modelRequests.push({ ...recorded, url: req.url });
+        return Response.json(fakeCodexModelsPayload(options.extraModels));
+      }
+      if (path === "/token") {
+        tokenRequests.push({ ...recorded, body: await req.text() });
+        return Response.json({
+          access_token: refreshedAccessToken,
+          refresh_token: "chatgpt-refresh-next",
+          expires_in: 3600,
+        });
+      }
+      const body = await req.text();
+      requests.push({ ...recorded, body });
+      if (unauthorizedResponses > 0) {
+        unauthorizedResponses -= 1;
+        return Response.json({ error: { message: "expired" } }, { status: 401 });
+      }
+      return new Response(
+        options.route ? await options.route(body) : codexFinalText("FAKE_CODEX_RESPONSE"),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  return {
+    accessToken,
+    refreshedAccessToken,
+    accountId,
+    requests,
+    modelRequests,
+    tokenRequests,
+    responsesUrl: `${base}/responses`,
+    modelsUrl: `${base}/models`,
+    tokenUrl: `${base}/token`,
+    stop() { server.stop(true); },
+  };
+}
+
+export function fakeCodexEnv(
+  home: string,
+  codex: ReturnType<typeof startFakeCodex>,
+  extra: Record<string, string | undefined> = {},
+): Record<string, string | undefined> {
+  return {
+    HOME: home,
+    FX_E2E_OPENAI_CODEX_RESPONSES_URL: codex.responsesUrl,
+    FX_E2E_OPENAI_CODEX_MODELS_URL: codex.modelsUrl,
+    FX_E2E_CHATGPT_TOKEN_URL: codex.tokenUrl,
+    ...extra,
+  };
 }

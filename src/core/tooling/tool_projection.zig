@@ -13,6 +13,9 @@ pub const Options = struct {
     permission_rules: types.PermissionRuleSet = .{},
     mcp_runtime: ?*mcp_runtime.McpRuntime = null,
     subagent_available: bool = false,
+    /// Whether a configured search backend exists. When false the built-in
+    /// web_search tool is omitted instead of advertised as a silent fallback.
+    web_search_available: bool = true,
 };
 
 const BuildKind = enum { full, read_only };
@@ -668,6 +671,7 @@ fn appendBuiltinTool(
     if (!tool.model_visible) return;
     if (!includeBuiltinForKind(tool.name, kind, tool_set)) return;
     if (std.mem.eql(u8, tool.name, "subagent") and !options.subagent_available) return;
+    if (std.mem.eql(u8, tool.name, "web_search") and !options.web_search_available) return;
     if (std.mem.eql(u8, tool.name, "vision")) return;
     if (options.permission_mode != .yolo) {
         if (tool.provider_executed and !providerExecutionIsAllowed(tool.name, options.permission_rules)) return;

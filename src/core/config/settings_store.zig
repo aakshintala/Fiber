@@ -968,7 +968,7 @@ test "model and fast patch binds the fast preference atomically" {
         .{},
     );
     _ = try applyUserPatchToRoot(arena.allocator(), &root, .{
-        .model_preference = .{ .provider = .gateway, .model = "provider/fast-toggle" },
+        .model_preference = .{ .provider = .codex, .model = "provider/fast-toggle" },
         .fast_mode = true,
     });
     const binding = root.object.get("fast_mode_model_bound");
@@ -976,7 +976,7 @@ test "model and fast patch binds the fast preference atomically" {
     try std.testing.expect(binding.?.bool);
 
     _ = try applyUserPatchToRoot(arena.allocator(), &root, .{
-        .model_preference = .{ .provider = .gateway, .model = "provider/default" },
+        .model_preference = .{ .provider = .codex, .model = "provider/default" },
     });
     try std.testing.expect(!root.object.contains("fast_mode_model_bound"));
 }
@@ -1122,7 +1122,7 @@ fn cleanupLegacyWorkspacePreferences(
             &entry.value_ptr.object,
             "model",
             .model,
-            patch.model_preference != null and patch.model_preference.?.provider == .gateway,
+            patch.model_preference != null and patch.model_preference.?.provider == .codex,
             application,
         );
         removeLegacyLeaf(
@@ -1586,9 +1586,7 @@ fn putModelPreference(
     };
     changed = try putString(arena, models, @tagName(preference.provider), preference.model) or changed;
     const legacy_key = switch (preference.provider) {
-        .gateway => "model",
         .codex => "codex_model",
-        .grok => "grok_model",
     };
     if (root.contains(legacy_key)) {
         _ = root.orderedRemove(legacy_key);
@@ -2088,7 +2086,7 @@ test "user patch writes user preferences at top level" {
     defer store.deinit(alloc);
 
     var outcome = try store.applyUserPatch(alloc, .{
-        .model_preference = .{ .provider = .gateway, .model = "openai/gpt-5.4" },
+        .model_preference = .{ .provider = .codex, .model = "openai/gpt-5.4" },
         .permission_mode = .yolo,
         .yolo_acknowledged = true,
         .effort = types.ReasoningEffort.literal("high"),
@@ -2109,7 +2107,7 @@ test "user patch writes user preferences at top level" {
 
     const bytes = try store.readPrimaryForTest(alloc);
     defer alloc.free(bytes);
-    try std.testing.expect(std.mem.find(u8, bytes, "\"models\":{\"gateway\":\"openai/gpt-5.4\"}") != null);
+    try std.testing.expect(std.mem.find(u8, bytes, "\"models\":{\"codex\":\"openai/gpt-5.4\"}") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"permission_mode\":\"yolo\"") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"yolo_acknowledged\":true") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"effort\":\"high\"") != null);
@@ -2140,7 +2138,7 @@ test "user patch retires presentation settings without rejecting their values" {
     var store = try Store.initFromHome(alloc, home, .writable);
     defer store.deinit(alloc);
 
-    var outcome = try store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .gateway, .model = "openai/gpt-5.4" } });
+    var outcome = try store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .codex, .model = "openai/gpt-5.4" } });
     defer outcome.deinit(alloc);
     try std.testing.expect(outcome == .committed);
 
@@ -2275,7 +2273,7 @@ test "user patch snapshots and removes legacy workspace copies" {
     defer store.deinit(alloc);
 
     var outcome = try store.applyUserPatch(alloc, .{
-        .model_preference = .{ .provider = .gateway, .model = "openai/gpt-5.4" },
+        .model_preference = .{ .provider = .codex, .model = "openai/gpt-5.4" },
         .permission_mode = .auto,
     });
     defer outcome.deinit(alloc);
@@ -2287,7 +2285,7 @@ test "user patch snapshots and removes legacy workspace copies" {
 
     const bytes = try store.readPrimaryForTest(alloc);
     defer alloc.free(bytes);
-    try std.testing.expect(std.mem.find(u8, bytes, "\"models\":{\"gateway\":\"openai/gpt-5.4\"}") != null);
+    try std.testing.expect(std.mem.find(u8, bytes, "\"models\":{\"codex\":\"openai/gpt-5.4\"}") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"permission_mode\":\"auto\"") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "input_appearance") == null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"model\":\"workspace/a\"") == null);
@@ -2390,7 +2388,7 @@ test "later migration refreshes the bounded field recovery snapshot" {
     var store = try Store.initFromHome(alloc, home, .writable);
     defer store.deinit(alloc);
 
-    var first = try store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .gateway, .model = "user/one" } });
+    var first = try store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .codex, .model = "user/one" } });
     defer first.deinit(alloc);
     const first_path = try alloc.dupe(
         u8,
@@ -2401,7 +2399,7 @@ test "later migration refreshes the bounded field recovery snapshot" {
     const second_original =
         "{\"model\":\"user/one\",\"workspaces\":{\"/workspace/b\":{\"model\":\"legacy/two\"}}}\n";
     try writeStoreFixture(tmp.dir, "home/.fx/settings.json", second_original);
-    var second = try store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .gateway, .model = "user/two" } });
+    var second = try store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .codex, .model = "user/two" } });
     defer second.deinit(alloc);
 
     try std.testing.expect(std.mem.eql(
@@ -2492,7 +2490,7 @@ test "migration snapshot failure leaves primary byte identical" {
 
     try std.testing.expectError(
         error.SettingsMigrationSnapshotFailed,
-        store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .gateway, .model = "openai/gpt-5.4" } }),
+        store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .codex, .model = "openai/gpt-5.4" } }),
     );
 
     const bytes = try store.readPrimaryForTest(alloc);
@@ -2595,7 +2593,7 @@ test "oversized migration candidate fails before creating recovery snapshot" {
 
     try std.testing.expectError(
         error.SettingsTooLarge,
-        store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .gateway, .model = model } }),
+        store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .codex, .model = model } }),
     );
     const bytes = try store.readPrimaryForTest(alloc);
     defer alloc.free(bytes);
@@ -2817,7 +2815,7 @@ test "user patch traces metadata without settings content" {
     var store = try Store.initFromHome(alloc, home, .writable);
     defer store.deinit(alloc);
     var outcome = try store.applyUserPatch(alloc, .{
-        .model_preference = .{ .provider = .gateway, .model = "FX_MODEL_SECRET" },
+        .model_preference = .{ .provider = .codex, .model = "FX_MODEL_SECRET" },
         .fast_mode = true,
     });
     defer outcome.deinit(alloc);
@@ -2885,7 +2883,7 @@ test "multi-value user patch commits model effort and fast mode once" {
     defer store.deinit(alloc);
 
     var outcome = try store.applyUserPatch(alloc, .{
-        .model_preference = .{ .provider = .gateway, .model = "openai/gpt-5.4" },
+        .model_preference = .{ .provider = .codex, .model = "openai/gpt-5.4" },
         .effort = types.ReasoningEffort.literal("high"),
         .fast_mode = false,
     });
@@ -2970,7 +2968,7 @@ test "oversized candidate leaves prior primary unchanged" {
     @memset(oversized_model, 'm');
     try std.testing.expectError(
         error.InvalidDurableField,
-        store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .gateway, .model = oversized_model } }),
+        store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .codex, .model = oversized_model } }),
     );
     const primary = try store.readPrimaryForTest(alloc);
     defer alloc.free(primary);
@@ -3326,7 +3324,7 @@ test "indeterminate migration retains recovery metadata for the caller" {
 
     try std.testing.expectError(
         error.SettingsCommitIndeterminate,
-        store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .gateway, .model = "user/model" } }),
+        store.applyUserPatch(alloc, .{ .model_preference = .{ .provider = .codex, .model = "user/model" } }),
     );
     var cleanup = store.takeFailureCleanup();
     defer cleanup.deinit(alloc);

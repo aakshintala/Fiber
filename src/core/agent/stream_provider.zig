@@ -351,7 +351,7 @@ test "stream provider accepts one typed request and emits ordered neutral events
             request.events.emit(.{ .reasoning_delta = "second" });
             return .{ .completed = .{
                 .completion = .{ .content = "done" },
-                .usage = .{ .exact = .gateway },
+                .usage = .{ .exact = .codex },
             } };
         }
     };

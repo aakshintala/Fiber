@@ -1808,7 +1808,7 @@ pub const Store = struct {
         return .{
             .model = try alloc.dupe(
                 u8,
-                detailed.settings.models.get(.gateway) orelse "anthropic/claude-opus-4.7",
+                detailed.settings.models.get(.codex) orelse "anthropic/claude-opus-4.7",
             ),
             .effort = detailed.settings.effort orelse .auto,
             .fast_mode = detailed.settings.fast_mode orelse false,
@@ -6556,7 +6556,7 @@ test "pristine discard retains active recovery and permits cleared recovery" {
         .assistant_source = @constCast(""),
         .cause = .network_interrupted,
         .action = .retrying_request,
-        .authority = .{ .provider = .gateway, .model = @constCast("test/model") },
+        .authority = .{ .provider = .codex, .model = @constCast("test/model") },
         .requested_fast_mode = false,
         .fast_mode = false,
         .max_provider_attempts = 10,

@@ -314,7 +314,6 @@ const AcpContext = struct {
             self.state.web_search_runtime.configure(.{
                 .api_key = session.api_key,
                 .credential_source = session.credential_source,
-                .gateway_team = self.state.gateway_team,
                 .worker_model = session.model,
                 .gateway_retry_count = self.state.cfg.gateway_retry_count,
                 .gateway_chat_url = self.state.cfg.gateway_chat_url,
@@ -340,7 +339,6 @@ const AcpContext = struct {
             .provider_capabilities = provider_capabilities,
             .oauth_transport = self.state.cfg.gateway_provider.oauth_transport,
             .secret_store = self.state.cfg.secret_store,
-            .gateway_team = self.state.gateway_team,
             .model = session.model,
             .gateway_retry_count = self.state.cfg.gateway_retry_count,
             .gateway_chat_url = self.state.cfg.gateway_chat_url,
@@ -546,12 +544,7 @@ pub fn handlePrompt(
     if (!try server.selectCredentialForProvider(state, session.provider)) {
         return .{ .rpc_error = .{
             .code = ErrorCode.invalid_request,
-            .message = if (session.provider == .codex)
-                credentials.missing_chatgpt_credential_message
-            else if (session.provider == .grok)
-                credentials.missing_grok_credential_message
-            else
-                credentials.missing_credential_message,
+            .message = credentials.missing_chatgpt_credential_message,
         } };
     }
 
@@ -699,7 +692,6 @@ pub fn handlePrompt(
         .credential_source = session.credential_source,
         .account_id = if (session.account_id) |account_id| @constCast(account_id) else null,
         .provider = session.provider,
-        .gateway_team = state.gateway_team,
         .permission_mode = captured_permission_mode,
         .history = context_history,
         .root_user_intent_context = root_user_intent_context,
@@ -1348,11 +1340,10 @@ fn resolveModelCapabilities(
         ctx.state.alloc,
         bundle.model_catalog orelse return bundle.fallbackModelCapabilities(model),
         .{
-            .access = credentials.catalogAccessForCredentialAndAccount(
+            .access = credentials.catalogAccessForCredential(
                 session.credential_source,
                 session.api_key,
-                ctx.state.gateway_team,
-                session.account_id,
+                null,
             ),
             .endpoint = ctx.state.cfg.gateway_models_path,
             .cancel_flag = &session.cancel_flag,
@@ -3530,14 +3521,14 @@ test "ACP auth failure emits a valid detail-free JSON-RPC notification" {
     var state = try initTestAcpState(alloc, "/tmp/workspace", .ask);
     defer state.deinit();
     state.writer = .{ .stdout = capture };
-    state.active_session.?.credential_source = .vercel_oidc_token;
+    state.active_session.?.credential_source = .chatgpt_subscription;
     var ctx = AcpContext{
         .alloc = alloc,
         .state = &state,
         .session_id = "session_1",
     };
     try std.testing.expectEqual(
-        types.CredentialSource.vercel_oidc_token,
+        types.CredentialSource.chatgpt_subscription,
         ctx.toolContext().credential_source.?,
     );
 
@@ -3562,7 +3553,7 @@ test "ACP auth failure emits a valid detail-free JSON-RPC notification" {
     const update = parsed.value.object.get("params").?.object.get("update").?.object;
     const content = update.get("content").?.object;
     try std.testing.expectEqualStrings(
-        "VERCEL_OIDC_TOKEN authentication failed · HTTP 401",
+        "Codex subscription authentication failed · HTTP 401",
         content.get("text").?.string,
     );
     try std.testing.expect(std.mem.find(u8, captured, "access-token-secret") == null);
@@ -3695,7 +3686,7 @@ fn testServerConfig() server.Config {
         .gateway_chat_url = "http://127.0.0.1",
         .gateway_models_path = "/models",
         .gateway_provider = test_builtin_gateway.provider,
-        .provider_set = provider_set.gateway_only(test_builtin_gateway.provider_bundle),
+        .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{
             .system_prompt = "test",
@@ -3731,17 +3722,15 @@ fn initTestAcpState(alloc: Allocator, workspace_root: []const u8, mode: Permissi
         .writer = jsonrpc.Writer.init(),
         .workspace_root = owned_workspace,
         .api_key = api_key,
-        .credential_source = .ai_gateway_api_key,
-        .web_search_runtime = @import("../core/tooling/web_search_runtime.zig").Runtime.init(.{
-            .provider = cfg.provider_set.gateway.fx_search.?,
-        }),
+        .credential_source = .chatgpt_subscription,
+        .web_search_runtime = @import("../core/tooling/web_search_runtime.zig").Runtime.init(.{}),
         .active_session = .{
             .session_id = session_id,
             .model = model,
             .mode = "normal",
             .workspace_root = owned_workspace,
             .api_key = api_key,
-            .credential_source = .ai_gateway_api_key,
+            .credential_source = .chatgpt_subscription,
             .agent_step_limit = 4,
             .max_tool_result_bytes = 1024 * 1024,
             .fast_mode = false,
@@ -4241,6 +4230,9 @@ test "ACP prompt projection configures web search then blocks native execution" 
         calls: usize = 0,
     };
     const FailingWebSearchProvider = struct {
+        fn preferredBackends(_: ?*anyopaque) !?[]const web_search_contract.SearchBackendId {
+            return null;
+        }
         fn execute(
             raw_ctx: ?*anyopaque,
             _: Allocator,
@@ -4266,11 +4258,13 @@ test "ACP prompt projection configures web search then blocks native execution" 
     state.writer = .{ .stdout = capture };
     var ctx = AcpContext{ .alloc = arena, .state = &state, .session_id = "session_1" };
     var provider_state = ProviderState{};
-    var provider = state.web_search_runtime.provider orelse return error.TestExpectedEqual;
-    provider.context = @ptrCast(&provider_state);
-    provider.execute_fn = FailingWebSearchProvider.execute;
     state.web_search_runtime = web_search_runtime.Runtime.init(.{
-        .provider = provider,
+        .provider = .{
+            .context = @ptrCast(&provider_state),
+            .policy = .{},
+            .preferred_backends_fn = FailingWebSearchProvider.preferredBackends,
+            .execute_fn = FailingWebSearchProvider.execute,
+        },
     });
 
     state.web_search_runtime.configure(.{
@@ -4297,10 +4291,6 @@ test "ACP prompt projection configures web search then blocks native execution" 
     });
     const session = state.active_session orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("web_search field \"query\" must contain at least two characters", validation.failure);
-    try std.testing.expectEqualStrings(session.api_key, state.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(session.model, state.web_search_runtime.worker_model);
-    try std.testing.expectEqual(state.cfg.gateway_retry_count, state.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(state.cfg.gateway_chat_url, state.web_search_runtime.gateway_chat_url);
 
     const execute = deps.execute_tool_call;
     const execution = try execute(deps.ctx, .{
@@ -4316,15 +4306,11 @@ test "ACP prompt projection configures web search then blocks native execution" 
         .advertised_dynamic_tool_names = &.{},
         .max_tool_result_bytes = session.max_tool_result_bytes,
     });
-    try std.testing.expectEqualStrings(session.api_key, state.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(session.model, state.web_search_runtime.worker_model);
-    try std.testing.expectEqual(state.cfg.gateway_retry_count, state.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(state.cfg.gateway_chat_url, state.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqual(.failure, execution.status);
     try std.testing.expectEqual(@as(usize, 0), provider_state.calls);
 }
 
-test "ACP ChatGPT route removes Gateway-backed auxiliary capabilities" {
+test "ACP ChatGPT route keeps Codex-owned review and drops web search backend" {
     const alloc = std.testing.allocator;
     var state = try initTestAcpState(alloc, "/tmp/workspace", .auto);
     defer state.deinit();
@@ -4335,8 +4321,7 @@ test "ACP ChatGPT route removes Gateway-backed auxiliary capabilities" {
 
     const tool_ctx = ctx.toolContext();
     try std.testing.expect(tool_ctx.web_search_backend == null);
-    try std.testing.expect(tool_ctx.permission_reviewer_provider == null);
-    try std.testing.expect(!tool_ctx.auto_classifier.enabled());
+    try std.testing.expect(tool_ctx.permission_reviewer_provider != null);
 }
 
 test "ACP default user commands require configured authority or review" {
@@ -4662,7 +4647,7 @@ test "ACP full advertisement includes direct provider search with explicit permi
     });
     defer projection.deinit(std.testing.allocator);
     try std.testing.expect(tool_projection_mod.containsName(projection.advertised_names, "web_search"));
-    try std.testing.expectEqualStrings(builtin_tools.web_search.description, projection.custom_guidance);
+    try std.testing.expectEqualStrings("", projection.custom_guidance);
 }
 
 test "ACP prompt agent config carries request options from active session" {
@@ -4675,7 +4660,6 @@ test "ACP prompt agent config carries request options from active session" {
 
     var state = try initTestAcpState(alloc, workspace, .auto);
     defer state.deinit();
-    state.gateway_team = try alloc.dupe(u8, "team_123");
     state.context_limits.project_instruction_file_bytes = .{
         .value = .{ .bytes = 17 },
         .source = .command_line,
@@ -4702,14 +4686,8 @@ test "ACP prompt agent config carries request options from active session" {
     var ctx = AcpContext{ .alloc = alloc, .state = &state, .session_id = "session_1" };
     const tool_ctx = ctx.toolContext();
     try std.testing.expect(!tool_ctx.web_search_runtime_ready);
-    try std.testing.expect(tool_ctx.web_search_backend != null);
-    try std.testing.expect(state.web_search_runtime.provider.?.execute_fn == state.cfg.provider_set.gateway.fx_search.?.execute_fn);
-    try std.testing.expect(state.web_search_runtime.provider.?.preferred_backends_fn == state.cfg.provider_set.gateway.fx_search.?.preferred_backends_fn);
+    try std.testing.expect(tool_ctx.web_search_backend == null);
+    try std.testing.expect(state.web_search_runtime.provider == null);
     try std.testing.expect(tool_ctx.web_fetch_runtime.? == &state.web_fetch_runtime);
-    try std.testing.expectEqualStrings("team_123", tool_ctx.gateway_team.?);
-    try std.testing.expectEqualStrings("team_123", state.web_search_runtime.gateway_team.?);
-    try std.testing.expectEqualStrings(session.model, state.web_search_runtime.worker_model);
-    try std.testing.expectEqual(state.cfg.gateway_retry_count, state.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(state.cfg.gateway_chat_url, state.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqualStrings("/models", tool_ctx.gateway_models_path);
 }

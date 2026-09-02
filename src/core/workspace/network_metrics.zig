@@ -14,13 +14,12 @@ pub const max_gateway_request_shape_len: usize = 512;
 pub const ring_capacity: usize = 32;
 
 pub const NetworkCallKind = enum {
-    gateway,
     web_search,
     web_fetch_target,
 };
 
 pub const NetworkCall = struct {
-    kind: NetworkCallKind = .gateway,
+    kind: NetworkCallKind = .web_search,
     started_at_ms: i64 = 0,
     duration_ms: u32 = 0,
     status: u16 = 0,

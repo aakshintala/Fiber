@@ -932,7 +932,7 @@ pub fn Commands(comptime App: type) type {
             const startup_scrollback_label = if (settings.startup_scrollback orelse true) "on" else "off";
             const msg = try std.fmt.allocPrint(app.alloc, "model: {s}\nmodel_config_source: {s}\npermission_mode: {s}\nworkspace: {s}\nstep_limit: {d}\nstartup_scrollback: {s}", .{
                 provider_runtime.model(app),
-                @tagName(detailed.sources.models.get(.gateway)),
+                @tagName(detailed.sources.models.get(.codex)),
                 permissions.permissionModeLabel(app.permission_engine.mode),
                 app.workspace_root,
                 app.agent_step_limit,
@@ -1645,7 +1645,7 @@ const FakeApp = struct {
     workspace_root: []u8,
     tool_registry: tool_dispatch.Registry = .{},
     selected_model: std.ArrayList(u8) = .empty,
-    selected_provider: model_provider.ProviderId = .gateway,
+    selected_provider: model_provider.ProviderId = .codex,
     auth: auth_runtime.Runtime = .{},
     permission_engine: permissions.PermissionEngine = .{},
     permission_state: app_permission_runtime.State = .{},
@@ -2946,7 +2946,7 @@ test "session_commands durable user save survives post-commit resolver failure" 
         workspace_root,
     );
     defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("user/new", settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("user/new", settings.models.get(.codex).?);
 }
 
 test "session_commands durable user save survives post-commit resolver diagnostic" {

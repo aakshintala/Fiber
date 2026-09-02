@@ -166,10 +166,6 @@ fn writeNewSessionResponse(
     try out.writer.writeAll("{\"sessionId\":");
     try writeJsonStr(session_id, &out.writer);
     try out.writer.writeAll(",\"configOptions\":[");
-    if (comptime !host_target.is_wasm) {
-        try writeProviderConfigOption(&out.writer, state.active_session.?.provider);
-        try out.writer.writeAll(",");
-    }
     try writeModelConfigOption(
         &out.writer,
         state.active_session.?.model,
@@ -363,12 +359,7 @@ fn handleRestoreSession(
     if (!try server.selectCredentialForProvider(state, effective_provider)) {
         return state.writer.writeError(alloc, msg.id, .{
             .code = ErrorCode.invalid_request,
-            .message = if (effective_provider == .codex)
-                credentials.missing_chatgpt_credential_message
-            else if (effective_provider == .grok)
-                credentials.missing_grok_credential_message
-            else
-                credentials.missing_credential_message,
+            .message = credentials.missing_chatgpt_credential_message,
         });
     }
     const model_copy = try alloc.dupe(u8, effective_model);
@@ -581,10 +572,6 @@ fn writeLoadSessionResponse(
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.writeAll("{\"configOptions\":[");
-    if (comptime !host_target.is_wasm) {
-        try writeProviderConfigOption(&out.writer, state.active_session.?.provider);
-        try out.writer.writeAll(",");
-    }
     try writeModelConfigOption(
         &out.writer,
         model,
@@ -1154,19 +1141,6 @@ pub fn writeModelConfigOption(
     try w.writeAll("]}");
 }
 
-pub fn writeProviderConfigOption(
-    w: *std.Io.Writer,
-    current: model_provider.ProviderId,
-) !void {
-    try w.writeAll("{\"id\":\"provider\",\"name\":\"Provider\",\"category\":\"model\",\"type\":\"select\",\"currentValue\":");
-    try writeJsonStr(@tagName(current), w);
-    try w.writeAll(",\"options\":[{\"value\":\"gateway\",\"name\":\"Vercel AI Gateway\"},{\"value\":\"codex\",\"name\":\"Codex subscription\"}");
-    if (comptime !host_target.is_wasm) {
-        try w.writeAll(",{\"value\":\"grok\",\"name\":\"Grok subscription\"}");
-    }
-    try w.writeAll("]}");
-}
-
 pub fn writeModeConfigOption(
     w: *std.Io.Writer,
     registry: mode_registry.Registry,
@@ -1467,7 +1441,7 @@ fn acpSessionTestConfig() server.Config {
         .gateway_chat_url = "http://127.0.0.1/unused",
         .gateway_models_path = "/v1/models",
         .gateway_provider = test_builtin_gateway.provider,
-        .provider_set = provider_set.gateway_only(test_builtin_gateway.provider_bundle),
+        .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "test" },
         .ignored_list_entries = &.{},
@@ -1503,7 +1477,7 @@ fn initAcpSessionTestState(
         .writer = .{ .stdout = capture },
         .workspace_root = workspace,
         .api_key = api_key,
-        .credential_source = .ai_gateway_api_key,
+        .credential_source = .chatgpt_subscription,
         .selected_model = selected_model,
         .configured_model = configured_model,
         .agent_step_limit = 8,
@@ -1736,10 +1710,6 @@ test "ACP new and loaded sessions provide a writable subagent host" {
         );
         try std.testing.expectEqualStrings("review", new_active.mode);
         try std.testing.expect(new_writable.state.usage != null);
-        try std.testing.expect(
-            new_active.session_rt.usage.generation_usage_providers.select(.gateway).?.lookup_fn ==
-                state.cfg.provider_set.deferredUsageProviders().select(.gateway).?.lookup_fn,
-        );
         io_mod.sleep(10 * std.time.ns_per_ms);
         var live_usage = try new_active.session_rt.usage.snapshot(alloc);
         defer live_usage.deinit(alloc);
@@ -1775,10 +1745,6 @@ test "ACP new and loaded sessions provide a writable subagent host" {
         try std.testing.expect(loaded_writable.state.usage != null);
         try std.testing.expect(state.subagent_store != null);
         try std.testing.expect(state.subagent_host != null);
-        try std.testing.expect(
-            loaded_active.session_rt.usage.generation_usage_providers.select(.gateway).?.lookup_fn ==
-                state.cfg.provider_set.deferredUsageProviders().select(.gateway).?.lookup_fn,
-        );
 
         try capture.sync(io_mod.getIo());
     }

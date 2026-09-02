@@ -77,25 +77,18 @@ fn lookupUnavailable(
     return error.Unavailable;
 }
 
+// ponytail: seam has no implementation after the gateway generation-usage
+// deletion; collapse into session_usage directly in ticket 11b.
 pub const unavailable_provider = Provider{
     .lookup_fn = lookupUnavailable,
 };
 
 pub const Set = struct {
-    gateway: ?Provider = null,
     codex: ?Provider = null,
-    grok: ?Provider = null,
-
-    pub fn gatewayOnly(provider: Provider) Set {
-        return .{ .gateway = provider };
-    }
 
     pub fn select(self: Set, provider: model_provider.ProviderId) ?Provider {
-        return switch (provider) {
-            .gateway => self.gateway,
-            .codex => self.codex,
-            .grok => self.grok,
-        };
+        _ = provider;
+        return self.codex;
     }
 };
 
@@ -151,8 +144,6 @@ test "generation usage lookup dispatches through the injected provider" {
 }
 
 test "generation usage providers are selected by provider identity" {
-    const routes = Set.gatewayOnly(unavailable_provider);
-    try std.testing.expect(routes.select(.gateway) != null);
-    try std.testing.expect(routes.select(.codex) == null);
-    try std.testing.expect(routes.select(.grok) == null);
+    const routes = Set{ .codex = unavailable_provider };
+    try std.testing.expect(routes.select(.codex) != null);
 }

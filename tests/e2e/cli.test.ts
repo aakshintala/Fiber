@@ -21,14 +21,18 @@ import {
   cleanupIsolatedTestHome,
   createIsolatedTestHome,
   FX_BIN,
-  HAS_API_KEY,
   REPO_ROOT,
   runFx,
 } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
+  chatGptAccessToken,
+  codexFinalText,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexEnv,
   fakeGatewayFinalText,
+  startFakeCodex,
   startFakeGateway,
+  writeSeededChatGptLogin,
 } from "./tmux-helpers";
 
 const TIMEOUT = 15_000;
@@ -37,14 +41,12 @@ const NO_GATEWAY_AUTH = {
   VERCEL_OIDC_TOKEN: undefined,
 };
 const MISSING_AUTH_MESSAGE =
-  "fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.";
+  "fx needs a Codex subscription login for this model. Run fx login codex.";
 const MODERN_MCP_FIXTURE = join(
   import.meta.dirname,
   "fixtures",
   "mcp-modern-stdio.mjs",
 );
-
-const KEYCHAIN_SERVICE = "FX_AI_GATEWAY_API_KEY";
 
 function maxLineWidth(text: string): number {
   return Math.max(...text.split(/\r?\n/).map((line) => Bun.stringWidth(line)));
@@ -67,141 +69,17 @@ function doctorSessionDiagnosticsLimit(): number {
   return Number(match[1]);
 }
 
-const SEEDED_GATEWAY_TOKEN = "seeded-access-token";
-
-function writeSeededFxAuth(
-  home: string,
-  teamId?: string,
-  issuer = "https://vercel.com",
-  expiresAtMs = Date.now() + 60 * 60 * 1000,
-): void {
-  const fxDir = join(home, ".fx");
-  mkdirSync(fxDir, { recursive: true, mode: 0o700 });
-  chmodSync(fxDir, 0o700);
-  const authPath = join(fxDir, "auth.json");
-  const auth: Record<string, string | number> = {
-    version: 1,
-    issuer,
-    client_id: "test-client",
-    access_token: SEEDED_GATEWAY_TOKEN,
-    refresh_token: "seeded-refresh-token",
-    expires_at_ms: expiresAtMs,
-    scope: "openid",
-    token_type: "Bearer",
-  };
-  if (teamId) {
-    auth.team_id = teamId;
-    auth.team_slug = "vercel-labs";
-  }
-  writeFileSync(authPath, JSON.stringify(auth) + "\n", { mode: 0o600 });
-  chmodSync(authPath, 0o600);
-}
-
-function startRequestCatcher() {
-  const requests: Array<{ method: string; path: string }> = [];
-  const server = Bun.serve({
-    hostname: "0.0.0.0",
-    port: 0,
-    fetch(request) {
-      const url = new URL(request.url);
-      requests.push({ method: request.method, path: url.pathname });
-      return Response.json({ revoked: true });
-    },
-  });
-  return {
-    issuerUrl: `http://127.0.0.1:${server.port}`,
-    endpoint: `http://localhost.:${server.port}/oauth/revoke`,
-    requests,
-    stop() {
-      server.stop(true);
-    },
-  };
-}
-
-function startLogoutIssuer(
-  revokeStatuses: number[],
-  authPath?: string,
-  revocationEndpoint?: string | null,
-) {
-  const providerDetail = `provider rejected ${SEEDED_GATEWAY_TOKEN} and seeded-refresh-token`;
-  const requests: Array<{
-    method: string;
-    path: string;
-    tokenTypeHint?: string;
-    validForm?: boolean;
-    localSessionPresent?: boolean;
-  }> = [];
-  let revokeAttempt = 0;
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    async fetch(request) {
-      const url = new URL(request.url);
-      const issuerUrl = `http://127.0.0.1:${server.port}`;
-      if (url.pathname === "/.well-known/openid-configuration") {
-        requests.push({ method: request.method, path: url.pathname });
-        return Response.json({
-          issuer: issuerUrl,
-          device_authorization_endpoint: `${issuerUrl}/oauth/device`,
-          token_endpoint: `${issuerUrl}/oauth/token`,
-          ...(revocationEndpoint === null
-            ? {}
-            : {
-                revocation_endpoint:
-                  revocationEndpoint ?? `${issuerUrl}/oauth/revoke`,
-              }),
-        });
-      }
-      if (url.pathname === "/oauth/revoke") {
-        const form = await request.formData();
-        const tokenTypeHint = form.get("token_type_hint");
-        const expectedToken =
-          tokenTypeHint === "refresh_token"
-            ? "seeded-refresh-token"
-            : tokenTypeHint === "access_token"
-              ? SEEDED_GATEWAY_TOKEN
-              : null;
-        const validForm =
-          form.get("client_id") === "test-client" &&
-          expectedToken !== null &&
-          form.get("token") === expectedToken;
-        requests.push({
-          method: request.method,
-          path: url.pathname,
-          tokenTypeHint:
-            typeof tokenTypeHint === "string" ? tokenTypeHint : "missing",
-          validForm,
-          ...(authPath
-            ? { localSessionPresent: existsSync(authPath) }
-            : {}),
-        });
-        const configuredStatus = revokeStatuses[revokeAttempt] ?? 200;
-        revokeAttempt += 1;
-        const revokeStatus = validForm ? configuredStatus : 400;
-        return Response.json(
-          revokeStatus >= 400 ? { error: providerDetail } : { revoked: true },
-          { status: revokeStatus },
-        );
-      }
-      return new Response("not found", { status: 404 });
-    },
-  });
-  return {
-    issuerUrl: `http://127.0.0.1:${server.port}`,
-    providerDetail,
-    requests,
-    stop() {
-      server.stop(true);
-    },
-  };
-}
-
 function snapshotTree(root: string): string[] {
   const entries: string[] = [];
   const visit = (path: string, relative: string): void => {
+    // Advisory lock files appear and disappear with credential loads; they are
+    // not durable state, so they are excluded from the snapshot.
+    if (relative.endsWith(".lock")) return;
     const info = lstatSync(path);
     entries.push(
-      `${relative}|${info.isDirectory() ? "dir" : "file"}|${info.mode & 0o777}|${info.size}`,
+      // Directory sizes change when lock files are created and removed; only
+      // their mode matters for the durable-state comparison.
+      `${relative}|${info.isDirectory() ? "dir" : "file"}|${info.mode & 0o777}|${info.isDirectory() ? 0 : info.size}`,
     );
     if (!info.isDirectory()) return;
     for (const name of readdirSync(path).sort()) {
@@ -270,14 +148,19 @@ describe("cli: help", () => {
       expect(stdout).toContain("fx starts an interactive session by default.");
       expect(stdout).toContain("Commands:\n");
       expect(stdout).toContain("Run one noninteractive request");
-      expect(stdout).toContain("Sign in to a model provider");
-      expect(stdout).toContain("Sign out of a model provider");
-      expect(stdout).toContain("Choose the active model provider");
-      expect(stdout).toContain("Configure a Vercel AI Gateway API key");
-      expect(stdout).toContain("Choose a Vercel AI Gateway team");
-      expect(stdout).toContain("Show Vercel AI Gateway credits");
+      expect(stdout).toContain("Sign in to Codex");
+      expect(stdout).toContain("Sign out of the Codex session");
+      expect(stdout).toContain("List available models");
       expect(stdout).not.toContain("Sign in to Vercel or a selected provider");
-      expect(stdout).toContain("credits|balance");
+      expect(stdout).not.toContain("Choose the active model provider");
+      expect(stdout).not.toContain("Configure a Vercel AI Gateway API key");
+      expect(stdout).not.toContain("Choose a Vercel AI Gateway team");
+      expect(stdout).not.toContain("Show Vercel AI Gateway credits");
+      expect(stdout).not.toContain("credits|balance");
+      expect(stdout).not.toContain("setup");
+      expect(stdout).not.toContain("teams");
+      expect(stdout).not.toContain("credits");
+      expect(stdout).not.toContain("/feedback");
       expect(stdout).toContain("Flags:\n");
       expect(stdout).toContain("--context-limit <spec>");
       expect(stdout).toContain("Set name=bytes|off; repeatable");
@@ -294,7 +177,6 @@ describe("cli: help", () => {
       expect(stdout).not.toContain("Must appear before the command");
       expect(stdout).toContain("Examples:\n");
       expect(stdout).toContain("https://fx.sh/docs");
-      expect(stdout).toContain("run `/feedback` inside fx");
       expect(stdout).toContain(
         "Run `fx <command> --help` for command-specific usage and options.",
       );
@@ -425,7 +307,6 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
         expect(r.stderr).toBe("");
         expect(r.stdout).toContain("Commands:");
         expect(r.stdout).toContain("ask");
-        expect(r.stdout).toContain("setup");
         expect(r.stdout).toContain("status");
         expect(r.stdout).toContain("doctor");
         expect(maxLineWidth(r.stdout)).toBeLessThanOrEqual(60);
@@ -485,18 +366,16 @@ describe("cli: status", () => {
       const fxDir = join(home, ".fx");
       mkdirSync(fxDir, { recursive: true, mode: 0o700 });
       mkdirSync(workspace);
+      writeSeededChatGptLogin(home, chatGptAccessToken());
       writeFileSync(join(fxDir, "mcp.json"), "{invalid json", { mode: 0o600 });
-      const gateway = startFakeGateway([]);
 
       try {
-        const env = {
+        const env: Record<string, string | undefined> = {
           HOME: realpathSync(home),
-          AI_GATEWAY_API_KEY: "mcp-config-diagnostic-key",
+          AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
           FX_DISABLE_KEYCHAIN: "1",
           FX_AUTO_UPGRADE: "0",
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
         };
         const cwd = realpathSync(workspace);
         const before = snapshotTree(home);
@@ -543,7 +422,6 @@ describe("cli: status", () => {
           exit_code: 1,
           error: "McpConfigInvalidJson",
         });
-        expect(gateway.requestCount()).toBe(0);
         expect(snapshotTree(home)).toEqual(before);
 
         writeFileSync(
@@ -580,10 +458,8 @@ describe("cli: status", () => {
             (check: { name: string }) => check.name === "mcp_config",
           ),
         ).toBe(false);
-        expect(gateway.requestCount()).toBe(0);
         expect(snapshotTree(home)).toEqual(validBefore);
       } finally {
-        gateway.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -630,7 +506,7 @@ describe("cli: status", () => {
   );
 
   test(
-    "status and doctor share fx login source, team, and refreshability",
+    "status and doctor share the Codex login snapshot",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-status-auth-"));
       try {
@@ -638,7 +514,7 @@ describe("cli: status", () => {
         const workspace = join(root, "workspace");
         mkdirSync(home);
         mkdirSync(workspace);
-        writeSeededFxAuth(home, "team_123");
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
@@ -655,26 +531,34 @@ describe("cli: status", () => {
         expect(statusJsonResult.code).toBe(0);
         expect(doctorText.code).toBe(0);
         expect(doctorJsonResult.code).toBe(0);
+        const statusJson = JSON.parse(statusJsonResult.stdout.trim());
+        const doctorJson = JSON.parse(doctorJsonResult.stdout.trim());
         const expectedAuth = {
-          auth: "fx login",
+          auth: "Codex subscription",
           auth_refreshable: true,
-          team: "vercel-labs",
         };
-        expect(JSON.parse(statusJsonResult.stdout.trim())).toMatchObject(expectedAuth);
-        expect(JSON.parse(doctorJsonResult.stdout.trim())).toMatchObject(expectedAuth);
+        expect(statusJson).toMatchObject({
+          ...expectedAuth,
+          connected_providers: ["codex"],
+        });
+        expect(doctorJson).toMatchObject(expectedAuth);
         for (const output of [statusText.stdout, doctorText.stdout]) {
-          expect(output).toContain("auth=fx login");
+          expect(output).toContain("auth=Codex subscription");
           expect(output).toContain("auth_refreshable=true");
-          expect(output).toContain("team=vercel-labs");
         }
+        expect(statusText.stdout).toContain("connected_providers=Codex");
+        expect(doctorJson.checks.find(
+          (check: { name: string }) => check.name === "auth",
+        ).detail).toContain("refreshable=true");
         for (const output of [
           statusText.stdout,
           statusJsonResult.stdout,
           doctorText.stdout,
           doctorJsonResult.stdout,
         ]) {
-          expect(output).not.toContain(SEEDED_GATEWAY_TOKEN);
-          expect(output).not.toContain("seeded-refresh-token");
+          expect(output).not.toContain("header.");
+          expect(output).not.toContain("chatgpt-refresh");
+          expect(output).not.toContain("team=");
         }
       } finally {
         rmSync(root, { recursive: true, force: true });
@@ -687,25 +571,22 @@ describe("cli: status", () => {
     "status and doctor inspect an expired login without refreshing it",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-status-expired-auth-"));
-      const requestCatcher = startRequestCatcher();
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         mkdirSync(home);
         mkdirSync(workspace);
-        writeSeededFxAuth(
-          home,
-          "team_123",
-          requestCatcher.issuerUrl,
-          Date.now() - 60_000,
-        );
+        writeSeededChatGptLogin(home, chatGptAccessToken(), {
+          expiresAtMs: Date.now() - 60_000,
+        });
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
           FX_DISABLE_KEYCHAIN: "1",
-          FX_E2E_OAUTH_ISSUER_URL: requestCatcher.issuerUrl,
         };
         const cwd = realpathSync(workspace);
+        const authPath = join(home, ".fx", "chatgpt-auth.json");
+        const seededAuthFile = readFileSync(authPath, "utf8");
 
         const status = await runFx(["status", "--json"], { cwd, env });
         const doctor = await runFx(["doctor", "--json"], { cwd, env });
@@ -713,15 +594,14 @@ describe("cli: status", () => {
         expect(status.code).toBe(0);
         expect(doctor.code).toBe(0);
         const expectedAuth = {
-          auth: "fx login",
+          auth: "Codex subscription",
           auth_refreshable: true,
-          team: "vercel-labs",
+          auth_expired: true,
         };
         expect(JSON.parse(status.stdout.trim())).toMatchObject(expectedAuth);
         expect(JSON.parse(doctor.stdout.trim())).toMatchObject(expectedAuth);
-        expect(requestCatcher.requests).toEqual([]);
+        expect(readFileSync(authPath, "utf8")).toBe(seededAuthFile);
       } finally {
-        requestCatcher.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -729,11 +609,11 @@ describe("cli: status", () => {
   );
 
   test(
-    "a new status process keeps normal credential precedence",
+    "a new status process ignores removed credential sources and reads the Codex login",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-status-precedence-"));
       try {
-        writeSeededFxAuth(root, "team_123");
+        writeSeededChatGptLogin(root, chatGptAccessToken());
         const envToken = "preferred-environment-token";
         const env = {
           HOME: realpathSync(root),
@@ -746,8 +626,8 @@ describe("cli: status", () => {
         const doctor = await runFx(["doctor", "--json"], { env });
 
         const expectedAuth = {
-          auth: "AI_GATEWAY_API_KEY",
-          auth_refreshable: false,
+          auth: "Codex subscription",
+          auth_refreshable: true,
         };
         expect(JSON.parse(status.stdout.trim())).toMatchObject(expectedAuth);
         expect(JSON.parse(doctor.stdout.trim())).toMatchObject(expectedAuth);
@@ -1530,13 +1410,12 @@ describe("cli: doctor", () => {
 
 describe("cli: logout", () => {
   test(
-    "fx logout revokes refresh and access tokens after local deletion",
+    "fx logout deletes the saved Codex login",
     async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-revocation-"));
-      const authPath = join(home, ".fx", "auth.json");
-      const issuer = startLogoutIssuer([200, 200], authPath);
+      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-codex-"));
+      const authPath = join(home, ".fx", "chatgpt-auth.json");
       try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
+        writeSeededChatGptLogin(home, chatGptAccessToken());
 
         const logout = await runFx(["logout"], {
           env: {
@@ -1547,107 +1426,26 @@ describe("cli: logout", () => {
         });
 
         expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("Signed out of fx.\n");
+        expect(logout.stdout).toBe("Signed out of Codex.\n");
         expect(logout.stderr).toBe("");
         expect(existsSync(authPath)).toBe(false);
-        expect(issuer.requests).toEqual([
-          { method: "GET", path: "/.well-known/openid-configuration" },
-          {
-            method: "POST",
-            path: "/oauth/revoke",
-            tokenTypeHint: "refresh_token",
-            validForm: true,
-            localSessionPresent: false,
+
+        const status = await runFx(["status", "--json"], {
+          env: {
+            ...NO_GATEWAY_AUTH,
+            HOME: realpathSync(home),
+            FX_DISABLE_KEYCHAIN: "1",
           },
-          {
-            method: "POST",
-            path: "/oauth/revoke",
-            tokenTypeHint: "access_token",
-            validForm: true,
-            localSessionPresent: false,
-          },
-        ]);
-        for (const secret of [
-          SEEDED_GATEWAY_TOKEN,
-          "seeded-refresh-token",
-          issuer.providerDetail,
-        ]) {
+        });
+        expect(JSON.parse(status.stdout)).toMatchObject({
+          auth: "missing",
+          auth_refreshable: false,
+        });
+        for (const secret of ["header.", "chatgpt-refresh"]) {
           expect(logout.stdout).not.toContain(secret);
           expect(logout.stderr).not.toContain(secret);
         }
       } finally {
-        issuer.stop();
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx logout warns once and sends no tokens without a revocation endpoint",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-no-revocation-"));
-      const authPath = join(home, ".fx", "auth.json");
-      const issuer = startLogoutIssuer([], authPath, null);
-      try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-
-        const logout = await runFx(["logout"], {
-          env: {
-            ...NO_GATEWAY_AUTH,
-            HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
-          },
-        });
-
-        expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("Signed out of fx.\n");
-        expect(logout.stderr).toBe(
-          "Warning: signed out locally, but the remote session could not be revoked.\n",
-        );
-        expect(existsSync(authPath)).toBe(false);
-        expect(issuer.requests).toEqual([
-          { method: "GET", path: "/.well-known/openid-configuration" },
-        ]);
-      } finally {
-        issuer.stop();
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx logout warns once and sends no tokens to an invalid revocation endpoint",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-invalid-revocation-"));
-      const authPath = join(home, ".fx", "auth.json");
-      const catcher = startRequestCatcher();
-      const issuer = startLogoutIssuer([], authPath, catcher.endpoint);
-      try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-
-        const logout = await runFx(["logout"], {
-          env: {
-            ...NO_GATEWAY_AUTH,
-            HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
-          },
-        });
-
-        expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("Signed out of fx.\n");
-        expect(catcher.requests).toEqual([]);
-        expect(logout.stderr).toBe(
-          "Warning: signed out locally, but the remote session could not be revoked.\n",
-        );
-        expect(existsSync(authPath)).toBe(false);
-        expect(issuer.requests).toEqual([
-          { method: "GET", path: "/.well-known/openid-configuration" },
-        ]);
-      } finally {
-        issuer.stop();
-        catcher.stop();
         rmSync(home, { recursive: true, force: true });
       }
     },
@@ -1658,10 +1456,9 @@ describe("cli: logout", () => {
     "fx logout removes a saved login rejected for unsafe permissions",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-rejected-login-"));
-      const issuer = startLogoutIssuer([200, 200]);
-      const authPath = join(home, ".fx", "auth.json");
+      const authPath = join(home, ".fx", "chatgpt-auth.json");
       try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         chmodSync(authPath, 0o644);
 
         const logout = await runFx(["logout"], {
@@ -1673,20 +1470,10 @@ describe("cli: logout", () => {
         });
 
         expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("Signed out of fx.\n");
+        expect(logout.stdout).toBe("Signed out of Codex.\n");
         expect(logout.stderr).toBe("");
         expect(existsSync(authPath)).toBe(false);
-        expect(issuer.requests).toEqual([]);
-        for (const secret of [
-          SEEDED_GATEWAY_TOKEN,
-          "seeded-refresh-token",
-          issuer.providerDetail,
-        ]) {
-          expect(logout.stdout).not.toContain(secret);
-          expect(logout.stderr).not.toContain(secret);
-        }
       } finally {
-        issuer.stop();
         rmSync(home, { recursive: true, force: true });
       }
     },
@@ -1697,11 +1484,10 @@ describe("cli: logout", () => {
     "fx logout fails when the saved login cannot be deleted",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-delete-failure-"));
-      const issuer = startLogoutIssuer([200, 200]);
       const fxDir = join(home, ".fx");
-      const authPath = join(fxDir, "auth.json");
+      const authPath = join(fxDir, "chatgpt-auth.json");
       try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         chmodSync(fxDir, 0o500);
 
         const env = {
@@ -1715,14 +1501,12 @@ describe("cli: logout", () => {
         expect(logout.code).toBe(1);
         expect(logout.stdout).toBe("");
         expect(logout.stderr).toBe(
-          "fx logout: failed to durably remove saved fx login\n",
+          "fx logout: failed to durably remove saved Codex login\n",
         );
         expect(existsSync(authPath)).toBe(true);
-        expect(JSON.parse(status.stdout).auth).toBe("fx login");
-        expect(issuer.requests).toEqual([]);
+        expect(JSON.parse(status.stdout).auth).toBe("Codex subscription");
       } finally {
         chmodSync(fxDir, 0o700);
-        issuer.stop();
         rmSync(home, { recursive: true, force: true });
       }
     },
@@ -1730,227 +1514,30 @@ describe("cli: logout", () => {
   );
 
   test(
-    "fx logout deletes only the saved login and keeps environment credentials available",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-env-"));
-      const authPath = join(home, ".fx", "auth.json");
-      const issuer = startLogoutIssuer([500, 200], authPath);
-      const oidcToken = "logout-oidc-token";
-      const apiToken = "logout-api-key-token";
-      try {
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-        const env = {
-          HOME: realpathSync(home),
-          VERCEL_OIDC_TOKEN: oidcToken,
-          AI_GATEWAY_API_KEY: apiToken,
-          FX_DISABLE_KEYCHAIN: "1",
-        };
-
-        const logout = await runFx(["logout"], { env });
-        expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("Signed out of fx.\n");
-        expect(logout.stderr).toBe(
-          "Warning: signed out locally, but the remote session could not be revoked.\n",
-        );
-        expect(existsSync(join(home, ".fx", "auth.json"))).toBe(false);
-        expect(issuer.requests).toEqual([
-          { method: "GET", path: "/.well-known/openid-configuration" },
-          {
-            method: "POST",
-            path: "/oauth/revoke",
-            tokenTypeHint: "refresh_token",
-            validForm: true,
-            localSessionPresent: false,
-          },
-          {
-            method: "POST",
-            path: "/oauth/revoke",
-            tokenTypeHint: "access_token",
-            validForm: true,
-            localSessionPresent: false,
-          },
-        ]);
-
-        const oidcStatus = await runFx(["status", "--json"], { env });
-        const apiEnv = { ...env, VERCEL_OIDC_TOKEN: undefined };
-        const apiStatus = await runFx(["status", "--json"], { env: apiEnv });
-        const doctor = await runFx(["doctor", "--json"], { env: apiEnv });
-        expect(JSON.parse(oidcStatus.stdout)).toMatchObject({
-          auth: "VERCEL_OIDC_TOKEN",
-          auth_refreshable: false,
-        });
-        expect(JSON.parse(apiStatus.stdout)).toMatchObject({
-          auth: "AI_GATEWAY_API_KEY",
-          auth_refreshable: false,
-        });
-        expect(JSON.parse(doctor.stdout)).toMatchObject({
-          auth: "AI_GATEWAY_API_KEY",
-          auth_refreshable: false,
-        });
-
-        for (const output of [
-          logout.stdout,
-          logout.stderr,
-          oidcStatus.stdout,
-          apiStatus.stdout,
-          doctor.stdout,
-        ]) {
-          for (const secret of [
-            SEEDED_GATEWAY_TOKEN,
-            "seeded-refresh-token",
-            oidcToken,
-            apiToken,
-            issuer.providerDetail,
-          ]) {
-            expect(output).not.toContain(secret);
-          }
-        }
-      } finally {
-        issuer.stop();
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx logout leaves an active API key unchanged when no login exists",
+    "fx logout with no saved Codex login reports absence and keeps missing auth",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-no-login-"));
-      const apiToken = "logout-existing-api-key";
       try {
         const env = {
           HOME: realpathSync(home),
+          AI_GATEWAY_API_KEY: "logout-existing-api-key",
           VERCEL_OIDC_TOKEN: undefined,
-          AI_GATEWAY_API_KEY: apiToken,
           FX_DISABLE_KEYCHAIN: "1",
         };
         const logout = await runFx(["logout"], { env });
         const status = await runFx(["status", "--json"], { env });
 
         expect(logout.code).toBe(0);
-        expect(logout.stdout).toBe("No fx login session found.\n");
+        expect(logout.stdout).toBe("No Codex login session found.\n");
         expect(logout.stderr).toBe("");
         expect(JSON.parse(status.stdout)).toMatchObject({
-          auth: "AI_GATEWAY_API_KEY",
+          auth: "missing",
           auth_refreshable: false,
         });
-        expect(logout.stdout).not.toContain(apiToken);
-        expect(status.stdout).not.toContain(apiToken);
+        expect(logout.stdout).not.toContain("logout-existing-api-key");
+        expect(status.stdout).not.toContain("logout-existing-api-key");
       } finally {
         rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test.skipIf(platform() !== "darwin")(
-    "fx logout leaves the macOS Keychain API key untouched",
-    async () => {
-      const runId = `${process.pid}-${Date.now()}`;
-      const account = `fx-e2e-logout-${runId}`;
-      const keychainToken = `vca_fake_logout_key_${runId}`;
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-logout-keychain-"));
-      const home = join(root, "home");
-      mkdirSync(join(home, "Library"), { recursive: true });
-      symlinkSync(
-        join(homedir(), "Library", "Keychains"),
-        join(home, "Library", "Keychains"),
-        "dir",
-      );
-      const issuer = startLogoutIssuer([200, 200]);
-
-      try {
-        const store = spawnSync(
-          "/usr/bin/security",
-          ["add-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE, "-U", "-w", keychainToken],
-          { encoding: "utf8" },
-        );
-        expect(store.status, store.stderr).toBe(0);
-        writeSeededFxAuth(home, undefined, issuer.issuerUrl);
-
-        const env = {
-          ...NO_GATEWAY_AUTH,
-          HOME: realpathSync(home),
-          USER: account,
-        };
-        const logout = await runFx(["logout"], { env });
-        const status = await runFx(["status", "--json"], { env });
-        const stored = spawnSync(
-          "/usr/bin/security",
-          ["find-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE, "-w"],
-          { encoding: "utf8", env: { ...process.env, ...env } },
-        );
-
-        expect(logout.code).toBe(0);
-        expect(logout.stderr).toBe("");
-        expect(existsSync(join(home, ".fx", "auth.json"))).toBe(false);
-        expect(stored.status).toBe(0);
-        expect(stored.stdout.trim()).toBe(keychainToken);
-        expect(JSON.parse(status.stdout).auth).not.toBe("fx login");
-        expect(logout.stdout).not.toContain(keychainToken);
-        expect(status.stdout).not.toContain(keychainToken);
-      } finally {
-        issuer.stop();
-        spawnSync(
-          "/usr/bin/security",
-          ["delete-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE],
-          { encoding: "utf8" },
-        );
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-});
-
-describe("cli: setup", () => {
-  test(
-    "fx setup is a top-level command and fails cleanly when Keychain is disabled",
-    async () => {
-      const r = await runFx(["setup"], {
-        env: { ...NO_GATEWAY_AUTH, FX_DISABLE_KEYCHAIN: "1" },
-      });
-      expect(r.code).toBe(1);
-      expect(r.stdout).toBe("");
-      expect(r.stderr).toContain("stored API keys are disabled");
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx setup never invokes the configured Vercel CLI",
-    async () => {
-      const runId = `${process.pid}-${Date.now()}`;
-      const fakeDir = mkdtempSync(join(tmpdir(), "fx-e2e-vercel-cli-"));
-      const fakeCli = join(fakeDir, "vc");
-      const invocationLog = join(fakeDir, "invoked");
-
-      writeFileSync(
-        fakeCli,
-        `#!/bin/sh
-set -eu
-printf '%s\\n' invoked > '${invocationLog}'
-exit 99
-`,
-        { mode: 0o700 },
-      );
-
-      try {
-        const r = await runFx(["setup"], {
-          env: {
-            ...NO_GATEWAY_AUTH,
-            USER: `fx-e2e-setup-${runId}`,
-            FX_VERCEL_CLI_PATH: fakeCli,
-          },
-          timeoutMs: TIMEOUT,
-        });
-        expect(r.code).toBe(1);
-        expect(r.stdout).toBe("");
-        expect(r.stderr).toContain("interactive terminal is required");
-        expect(existsSync(invocationLog)).toBe(false);
-      } finally {
-        rmSync(fakeDir, { recursive: true, force: true });
       }
     },
     TIMEOUT,
@@ -1995,121 +1582,6 @@ describe("cli: stored key file backend", () => {
         expect(absentJson.auth_help).toBe(MISSING_AUTH_MESSAGE);
       } finally {
         rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-});
-
-describe("cli: Keychain authentication", () => {
-  test.skipIf(platform() !== "darwin")(
-    "fx ask reads an existing Keychain credential without onboarding",
-    async () => {
-      const runId = `${process.pid}-${Date.now()}`;
-      const account = `fx-e2e-ask-${runId}`;
-      const fakeKey = `vca_fake_ask_key_${runId}`;
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-keychain-"));
-      const home = join(root, "home");
-      const workspace = join(root, "workspace");
-      mkdirSync(join(home, "Library"), { recursive: true });
-      symlinkSync(
-        join(homedir(), "Library", "Keychains"),
-        join(home, "Library", "Keychains"),
-        "dir",
-      );
-      mkdirSync(workspace);
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("Keychain ask complete"),
-      ]);
-
-      try {
-        const store = spawnSync(
-          "/usr/bin/security",
-          [
-            "add-generic-password",
-            "-a",
-            account,
-            "-s",
-            KEYCHAIN_SERVICE,
-            "-U",
-            "-w",
-            fakeKey,
-          ],
-          { encoding: "utf8" },
-        );
-        expect(store.status, store.stderr).toBe(0);
-
-        const lookup = spawnSync(
-          "/usr/bin/security",
-          [
-            "find-generic-password",
-            "-a",
-            account,
-            "-s",
-            KEYCHAIN_SERVICE,
-            "-w",
-          ],
-          {
-            encoding: "utf8",
-            env: {
-              ...process.env,
-              HOME: realpathSync(home),
-              USER: account,
-            },
-          },
-        );
-        expect(lookup.status, lookup.stderr).toBe(0);
-        expect(lookup.stdout.trim()).toBe(fakeKey);
-
-        const result = await runFx(
-          [
-            "ask",
-            "--json",
-            "--auto",
-            "--no-save",
-            "Say exactly: Keychain ask complete",
-          ],
-          {
-            cwd: realpathSync(workspace),
-            env: {
-              ...NO_GATEWAY_AUTH,
-              HOME: realpathSync(home),
-              USER: account,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-              FX_AUTO_UPGRADE: "0",
-            },
-            timeoutMs: TIMEOUT,
-          },
-        );
-
-        expect(result.code).toBe(0);
-        expect(result.stderr).toBe("");
-        expect(JSON.parse(result.stdout).output.trim()).toBe(
-          "Keychain ask complete",
-        );
-        expect(result.stdout).not.toContain(fakeKey);
-        expect(existsSync(join(home, ".fx"))).toBe(false);
-        expect(gateway.requests).toHaveLength(1);
-        expect(gateway.requests[0]!.headers.get("authorization")).toBe(
-          `Bearer ${fakeKey}`,
-        );
-      } finally {
-        gateway.stop();
-        spawnSync(
-          "/usr/bin/security",
-          [
-            "delete-generic-password",
-            "-a",
-            account,
-            "-s",
-            KEYCHAIN_SERVICE,
-          ],
-          { encoding: "utf8" },
-        );
-        rmSync(root, { recursive: true, force: true });
       }
     },
     TIMEOUT,
@@ -2175,22 +1647,20 @@ describe("cli: missing durable home", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-missing-home-path-"));
       const home = join(root, "missing-home");
       const workspace = join(root, "workspace");
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("missing home persisted"),
-      ]);
+      const codex = startFakeCodex();
       try {
         mkdirSync(workspace);
         const cwd = realpathSync(workspace);
         const baseEnv = {
           HOME: home,
-          VERCEL_OIDC_TOKEN: undefined,
+          ...NO_GATEWAY_AUTH,
           FX_AUTO_UPGRADE: "0",
           FX_DISABLE_KEYCHAIN: "1",
         };
 
         const status = await runFx(["status", "--json"], {
           cwd,
-          env: { ...baseEnv, AI_GATEWAY_API_KEY: undefined },
+          env: baseEnv,
           timeoutMs: TIMEOUT,
         });
         expect(status.code).toBe(0);
@@ -2200,7 +1670,7 @@ describe("cli: missing durable home", () => {
 
         const listed = await runFx(["sessions", "--json"], {
           cwd,
-          env: { ...baseEnv, AI_GATEWAY_API_KEY: undefined },
+          env: baseEnv,
           timeoutMs: TIMEOUT,
         });
         expect(listed.code).toBe(0);
@@ -2211,28 +1681,25 @@ describe("cli: missing durable home", () => {
         });
         expect(existsSync(home)).toBe(false);
 
+        // The ask credential lives in the profile directory, so the durable
+        // home is bootstrapped with the login file before the saved session.
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         const asked = await runFx(
           ["ask", "--json", "--auto", "Persist under the new home."],
           {
             cwd,
-            env: {
-              ...baseEnv,
-              AI_GATEWAY_API_KEY: "missing-home-key",
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-            },
+            env: fakeCodexEnv(home, codex),
             timeoutMs: TIMEOUT,
           },
         );
         expect(asked.code).toBe(0);
         expect(JSON.parse(asked.stdout).output.trim()).toBe(
-          "missing home persisted",
+          "FAKE_CODEX_RESPONSE",
         );
         expect(existsSync(join(home, ".fx", "sessions"))).toBe(true);
-        expect(gateway.requests).toHaveLength(1);
+        expect(codex.requests).toHaveLength(1);
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -2966,271 +2433,100 @@ describe("cli: removed task and background commands", () => {
   );
 });
 
-function modelsGatewayEnv(home: string, modelsUrl: string) {
+function codexModelsEnv(home: string, modelsUrl: string) {
   return {
-    AI_GATEWAY_API_KEY: SEEDED_GATEWAY_TOKEN,
+    AI_GATEWAY_API_KEY: undefined,
     VERCEL_OIDC_TOKEN: undefined,
     HOME: home,
     FX_DISABLE_KEYCHAIN: "1",
     FX_AUTO_UPGRADE: "0",
-    FX_E2E_GATEWAY_MODELS_URL: modelsUrl,
+    FX_E2E_OPENAI_CODEX_MODELS_URL: modelsUrl,
   };
 }
 
-function catalogTraceEvents(trace: string): string[] {
-  return trace.split("\n").filter((line) =>
-    line.includes("[catalog] event=model_catalog_load ")
-  );
+function startCodexModelsServer(response: () => Response) {
+  const modelRequests: Array<{ url: string; headers: Headers }> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      if (new URL(req.url).pathname === "/models") {
+        modelRequests.push({ url: req.url, headers: new Headers(req.headers) });
+        return response();
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  return {
+    modelRequests,
+    modelsUrl: `http://127.0.0.1:${server.port}/models`,
+    stop() {
+      server.stop(true);
+    },
+  };
 }
 
 describe("cli: models", () => {
-  for (const scenario of [
-    {
-      name: "an ordinary public empty catalog",
-      authenticated: false,
-      expected:
-        "[models] no models returned by gateway\n[models] Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.\n",
-    },
-    {
-      name: "a rejected credential empty fallback catalog",
-      authenticated: true,
-      expected:
-        "[models] no models returned by gateway\n[models] Your Gateway credential was rejected; using the public model catalog.\n",
-    },
-  ]) {
-    test(
-      `fx models renders exact text for ${scenario.name}`,
-      async () => {
-        const home = createIsolatedTestHome();
-        const gateway = startFakeGateway([], {
-          models(request) {
-            if (scenario.authenticated && request.headers.get("authorization")) {
-              return new Response("rejected", { status: 401 });
-            }
-            return [];
-          },
-        });
-
-        try {
-          const result = await runFx(["models"], {
-            env: {
-              ...modelsGatewayEnv(home, `${gateway.baseUrl}/coding-agent/v1/models`),
-              ...(scenario.authenticated ? {} : NO_GATEWAY_AUTH),
-            },
-          });
-
-          expect(result.code).toBe(0);
-          expect(result.stderr).toBe("");
-          expect(result.stdout).toBe(scenario.expected);
-          expect(gateway.modelRequests).toHaveLength(scenario.authenticated ? 2 : 1);
-          if (scenario.authenticated) {
-            expect(gateway.modelRequests[0]!.headers.get("authorization")).toBe(`Bearer ${SEEDED_GATEWAY_TOKEN}`);
-          }
-          const publicRequest = gateway.modelRequests.at(-1)!;
-          expect(publicRequest.headers.get("authorization")).toBeNull();
-          expect(publicRequest.headers.get("x-vercel-ai-gateway-team")).toBeNull();
-        } finally {
-          gateway.stop();
-          cleanupIsolatedTestHome(home);
-        }
-      },
-      TIMEOUT,
-    );
-  }
-
   test(
-    "fx models retries a rejected API key exactly once without authentication",
+    "fx models renders the authenticated Codex catalog and sends subscription identity",
     async () => {
-      for (const rejectedStatus of [401, 403]) {
-        const home = createIsolatedTestHome();
-        const tracePath = join(home, "catalog-trace.log");
-        const gateway = startFakeGateway([], {
-          models(request) {
-            if (request.headers.get("authorization")) {
-              return Response.json({ error: "rejected" }, { status: rejectedStatus });
-            }
-            return [{ id: "public/fallback", type: "language", tags: ["tool-use"] }];
+      const home = createIsolatedTestHome();
+      writeSeededChatGptLogin(home, chatGptAccessToken());
+      const catalog = {
+        models: [
+          {
+            slug: "gpt-5.4",
+            visibility: "list",
+            supported_in_api: true,
+            supported_reasoning_levels: [{ effort: "low" }],
+            additional_speed_tiers: ["fast"],
+            input_modalities: ["text", "image"],
+            context_window: 272000,
           },
+          {
+            slug: "gpt-5.4-mini",
+            visibility: "list",
+            supported_in_api: true,
+            supported_reasoning_levels: [{ effort: "low" }],
+            additional_speed_tiers: [],
+            input_modalities: ["text"],
+            context_window: 128000,
+          },
+        ],
+      };
+      const server = startCodexModelsServer(() => Response.json(catalog));
+      try {
+        const result = await runFx(["models"], {
+          env: codexModelsEnv(home, server.modelsUrl),
+        });
+        expect(result.code).toBe(0);
+        expect(result.stderr).toBe("");
+        expect(result.stdout).toBe("[models] 2 available\n - gpt-5.4\n - gpt-5.4-mini\n");
+
+        const json = await runFx(["models", "--json"], {
+          env: codexModelsEnv(home, server.modelsUrl),
+        });
+        expect(json.code).toBe(0);
+        expect(JSON.parse(json.stdout.trim())).toEqual({
+          kind: "models",
+          count: 2,
+          shown_count: 2,
+          more_count: 0,
+          private_models_hidden: false,
+          ids: ["gpt-5.4", "gpt-5.4-mini"],
         });
 
-        try {
-          const result = await runFx(["models", "--json"], {
-            env: {
-              ...modelsGatewayEnv(home, `${gateway.baseUrl}/coding-agent/v1/models`),
-              FX_TRACE_LOG: tracePath,
-              FX_TRACE_SCOPES: "catalog",
-            },
-          });
-
-          expect(result.code).toBe(0);
-          expect(result.stderr).toBe("");
-          expect(JSON.parse(result.stdout.trim())).toEqual({
-            kind: "models",
-            count: 1,
-            shown_count: 1,
-            more_count: 0,
-            private_models_hidden: true,
-            ids: ["public/fallback"],
-          });
-
-          expect(gateway.modelRequests).toHaveLength(2);
-          expect(gateway.modelRequests[0]!.headers.get("authorization")).toBe(`Bearer ${SEEDED_GATEWAY_TOKEN}`);
-          expect(gateway.modelRequests[1]!.headers.get("authorization")).toBeNull();
-          expect(gateway.modelRequests[1]!.headers.get("x-vercel-ai-gateway-team")).toBeNull();
-
-          const trace = readFileSync(tracePath, "utf8");
-          const events = catalogTraceEvents(trace);
-          expect(events).toHaveLength(1);
-          expect(events[0]).toContain(
-            `requested_access=authenticated credential_source=ai_gateway_api_key effective_access=public_only public_only_reason=authenticated_credential_rejected anonymous_fallback=true outcome=loaded failure_category=authentication http_status=${rejectedStatus} retryable=false`,
+        expect(server.modelRequests).toHaveLength(2);
+        for (const request of server.modelRequests) {
+          expect(request.url).toContain("?client_version=");
+          expect(request.headers.get("authorization")).toBe(
+            `Bearer ${chatGptAccessToken()}`,
           );
-          for (const secret of [SEEDED_GATEWAY_TOKEN, "team_123", "vercel-labs"]) {
-            expect(trace).not.toContain(secret);
-          }
-        } finally {
-          gateway.stop();
-          cleanupIsolatedTestHome(home);
+          expect(request.headers.get("chatgpt-account-id")).toBe("acct_e2e");
+          expect(request.headers.get("originator")).toBe("fx");
         }
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx models preserves network and 5xx failures without anonymous retry",
-    async () => {
-      const unavailableHome = createIsolatedTestHome();
-      const gateway = startFakeGateway([], {
-        models: () => Response.json({ error: "unavailable" }, { status: 500 }),
-      });
-      try {
-        const result = await runFx(["models", "--json"], {
-          env: modelsGatewayEnv(unavailableHome, `${gateway.baseUrl}/coding-agent/v1/models`),
-        });
-        expect(result.code).not.toBe(0);
-        expect(result.stderr).toBe("");
-        expect(JSON.parse(result.stdout.trim()).code).toBe("GatewayUnavailable");
-        expect(gateway.modelRequests).toHaveLength(1);
       } finally {
-        gateway.stop();
-        cleanupIsolatedTestHome(unavailableHome);
-      }
-
-      const home = createIsolatedTestHome();
-      let connections = 0;
-      const server = createServer((socket) => {
-        connections += 1;
-        socket.destroy();
-      });
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      try {
-        const address = server.address();
-        if (address === null || typeof address === "string") throw new Error("missing server address");
-        const result = await runFx(["models", "--json"], {
-          env: modelsGatewayEnv(home, `http://127.0.0.1:${address.port}/v1/models`),
-        });
-        expect(result.code).not.toBe(0);
-        expect(result.stderr).toBe("");
-        expect(JSON.parse(result.stdout.trim()).code).toBe("TransportFailure");
-        expect(connections).toBe(1);
-      } finally {
-        await new Promise<void>((resolve) => server.close(() => resolve()));
-        cleanupIsolatedTestHome(home);
-      }
-    },
-    TIMEOUT,
-  );
-
-  for (const scenario of [
-    {
-      name: "rate limiting",
-      response: () => Response.json({ error: "slow down" }, { status: 429 }),
-      code: "RateLimited",
-    },
-    {
-      name: "malformed JSON",
-      response: () => new Response("{not-json", {
-        headers: { "content-type": "application/json" },
-      }),
-      code: "MalformedResponse",
-    },
-    {
-      name: "a malformed top-level catalog array",
-      response: () => Response.json([]),
-      code: "MalformedResponse",
-    },
-    {
-      name: "a catalog without data",
-      response: () => Response.json({}),
-      code: "MalformedResponse",
-    },
-    {
-      name: "a catalog with non-array data",
-      response: () => Response.json({ data: {} }),
-      code: "MalformedResponse",
-    },
-  ]) {
-    test(
-      `fx models preserves ${scenario.name} without anonymous retry`,
-      async () => {
-        const home = createIsolatedTestHome();
-        const gateway = startFakeGateway([], { models: scenario.response });
-        try {
-          const result = await runFx(["models", "--json"], {
-            env: modelsGatewayEnv(home, `${gateway.baseUrl}/coding-agent/v1/models`),
-          });
-
-          expect(result.code).not.toBe(0);
-          expect(result.stderr).toBe("");
-          expect(JSON.parse(result.stdout.trim()).code).toBe(scenario.code);
-          expect(gateway.modelRequests).toHaveLength(1);
-          expect(gateway.modelRequests[0]!.headers.get("authorization")).toBe(`Bearer ${SEEDED_GATEWAY_TOKEN}`);
-        } finally {
-          gateway.stop();
-          cleanupIsolatedTestHome(home);
-        }
-      },
-      TIMEOUT,
-    );
-  }
-
-  test(
-    "cancelling fx models does not retry anonymously",
-    async () => {
-      const home = createIsolatedTestHome();
-      const gateway = startFakeGateway([], {
-        models: () => new Promise<Response>(() => {}),
-      });
-      const proc = Bun.spawn([FX_BIN, "models", "--json"], {
-        cwd: REPO_ROOT,
-        env: {
-          ...process.env,
-          ...modelsGatewayEnv(home, `${gateway.baseUrl}/coding-agent/v1/models`),
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      try {
-        const started = Date.now();
-        while (gateway.modelRequests.length === 0) {
-          if (Date.now() - started >= TIMEOUT) {
-            throw new Error("timed out waiting for the cancellable model request");
-          }
-          await Bun.sleep(25);
-        }
-        expect(gateway.modelRequests).toHaveLength(1);
-        expect(gateway.modelRequests[0]!.headers.get("authorization")).toBe(`Bearer ${SEEDED_GATEWAY_TOKEN}`);
-
-        proc.kill("SIGTERM");
-        await proc.exited;
-        expect(gateway.modelRequests).toHaveLength(1);
-      } finally {
-        proc.kill("SIGKILL");
-        gateway.stop();
+        server.stop();
         cleanupIsolatedTestHome(home);
       }
     },
@@ -3238,18 +2534,17 @@ describe("cli: models", () => {
   );
 
   test(
-    "fx models rejects E2E gateway redirects without contacting the target",
+    "fx models rejects redirects without contacting the target",
     async () => {
       const home = createIsolatedTestHome();
+      writeSeededChatGptLogin(home, chatGptAccessToken());
       const captureRequests: string[] = [];
       const captureServer = Bun.serve({
         hostname: "127.0.0.1",
         port: 0,
         fetch(request) {
-          captureRequests.push(
-            `${request.method} ${new URL(request.url).pathname} authorization=${request.headers.get("authorization") ?? ""}`,
-          );
-          return Response.json({ data: [] });
+          captureRequests.push(`${request.method} ${new URL(request.url).pathname}`);
+          return Response.json({ models: [] });
         },
       });
       const redirectServer = Bun.serve({
@@ -3262,13 +2557,7 @@ describe("cli: models", () => {
 
       try {
         const r = await runFx(["models", "--json"], {
-          env: {
-            HOME: home,
-            FX_DISABLE_KEYCHAIN: "1",
-            AI_GATEWAY_API_KEY: "redirect-proof-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_E2E_GATEWAY_MODELS_URL: `http://127.0.0.1:${redirectServer.port}/v1/models`,
-          },
+          env: codexModelsEnv(home, `http://127.0.0.1:${redirectServer.port}/models`),
         });
 
         expect(captureRequests).toEqual([]);
@@ -3288,250 +2577,149 @@ describe("cli: models", () => {
     TIMEOUT,
   );
 
-  // Mirror the gateway's credential handling for private model catalogs.
-  for (const scenario of [
-    {
-      name: "uses the anonymous public catalog without a credential",
-      seedFxLogin: false,
-      expiredFxLogin: false,
-      authEnv: {},
-      expectAuthHeader: false,
-      expectPrivate: false,
-      expectedTrace:
-        "requested_access=public_only credential_source=none effective_access=public_only public_only_reason=no_credential anonymous_fallback=false outcome=loaded failure_category=none http_status=none retryable=none",
-    },
-    {
-      name: "uses the selected fx login team catalog",
-      seedFxLogin: true,
-      expiredFxLogin: false,
-      authEnv: {},
-      expectAuthHeader: true,
-      expectPrivate: true,
-      expectedTeamQuery: "team_123",
-      expectedTrace:
-        "requested_access=authenticated credential_source=fx_login effective_access=authenticated public_only_reason=none anonymous_fallback=false outcome=loaded failure_category=none http_status=none retryable=none",
-    },
-    {
-      name: "uses public access for an expired fx login without refreshing it",
-      seedFxLogin: true,
-      expiredFxLogin: true,
-      authEnv: {},
-      expectAuthHeader: false,
-      expectPrivate: false,
-      expectedTrace:
-        "requested_access=public_only credential_source=fx_login effective_access=public_only public_only_reason=fx_login_refresh_required anonymous_fallback=false outcome=loaded failure_category=none http_status=none retryable=none",
-    },
-    {
-      name: "sends an API key so the catalog includes team-private models",
-      seedFxLogin: false,
-      expiredFxLogin: false,
-      authEnv: { AI_GATEWAY_API_KEY: SEEDED_GATEWAY_TOKEN },
-      expectAuthHeader: true,
-      expectPrivate: true,
-      expectedTrace:
-        "requested_access=authenticated credential_source=ai_gateway_api_key effective_access=authenticated public_only_reason=none anonymous_fallback=false outcome=loaded failure_category=none http_status=none retryable=none",
-    },
-    {
-      name: "sends deployment OIDC so the catalog includes team-private models",
-      seedFxLogin: false,
-      expiredFxLogin: false,
-      authEnv: { VERCEL_OIDC_TOKEN: SEEDED_GATEWAY_TOKEN },
-      expectAuthHeader: true,
-      expectPrivate: true,
-      expectedTrace:
-        "requested_access=authenticated credential_source=vercel_oidc_token effective_access=authenticated public_only_reason=none anonymous_fallback=false outcome=loaded failure_category=none http_status=none retryable=none",
-    },
-  ]) {
-    test(
-      `fx models --json ${scenario.name}`,
-      async () => {
-        const root = mkdtempSync(join(tmpdir(), "fx-e2e-team-models-"));
-        const requests: Array<{ headers: Headers; teamId: string | null }> = [];
-        const server = Bun.serve({
-          hostname: "127.0.0.1",
-          port: 0,
-          fetch(request) {
-            const headers = new Headers(request.headers);
-            const url = new URL(request.url);
-            requests.push({ headers, teamId: url.searchParams.get("teamId") });
-            const seededAuth =
-              headers.get("authorization") === `Bearer ${SEEDED_GATEWAY_TOKEN}` &&
-              (!scenario.seedFxLogin || url.searchParams.get("teamId") === "team_123");
-            return Response.json({
-              data: [
-                { id: "public/sentinel", type: "language", tags: ["tool-use"] },
-                ...(seededAuth
-                  ? [{ id: "private/blue-hornbill", type: "language", tags: ["tool-use"] }]
-                  : []),
-              ],
-            });
-          },
-        });
-
+  test(
+    "fx models preserves transport and server failures without anonymous retry",
+    async () => {
+      for (const scenario of [
+        {
+          name: "unauthorized",
+          response: () => Response.json({ error: "rejected" }, { status: 401 }),
+          code: "AuthenticationRejected",
+        },
+        {
+          name: "forbidden",
+          response: () => Response.json({ error: "rejected" }, { status: 403 }),
+          code: "AuthenticationRejected",
+        },
+        {
+          name: "rate limiting",
+          response: () => Response.json({ error: "slow down" }, { status: 429 }),
+          code: "RateLimited",
+        },
+        {
+          name: "server errors",
+          response: () => Response.json({ error: "unavailable" }, { status: 500 }),
+          code: "GatewayUnavailable",
+        },
+        {
+          name: "malformed JSON",
+          response: () => new Response("{not-json", {
+            headers: { "content-type": "application/json" },
+          }),
+          code: "MalformedResponse",
+        },
+        {
+          name: "a malformed top-level catalog array",
+          response: () => Response.json([]),
+          code: "MalformedResponse",
+        },
+        {
+          name: "a catalog without models",
+          response: () => Response.json({}),
+          code: "MalformedResponse",
+        },
+        {
+          name: "a catalog with non-array models",
+          response: () => Response.json({ models: {} }),
+          code: "MalformedResponse",
+        },
+        {
+          name: "a catalog missing the reviewer model",
+          response: () => Response.json({
+            models: [{ slug: "gpt-5.4", visibility: "list", supported_in_api: true }],
+          }),
+          code: "MalformedResponse",
+        },
+      ]) {
+        const home = createIsolatedTestHome();
+        writeSeededChatGptLogin(home, chatGptAccessToken());
+        const server = startCodexModelsServer(scenario.response);
         try {
-          const home = join(root, "home");
-          const workspace = join(root, "workspace");
-          const tracePath = join(root, "catalog-trace.log");
-          mkdirSync(home);
-          mkdirSync(workspace);
-          if (scenario.seedFxLogin) {
-            writeSeededFxAuth(
-              home,
-              "team_123",
-              `http://127.0.0.1:${server.port}`,
-              scenario.expiredFxLogin
-                ? Date.now() - 60_000
-                : Date.now() + 60 * 60 * 1000,
-            );
-          }
-
-          const r = await runFx(["models", "--json"], {
-            cwd: realpathSync(workspace),
-            env: {
-              ...NO_GATEWAY_AUTH,
-              ...scenario.authEnv,
-              HOME: realpathSync(home),
-              FX_DISABLE_KEYCHAIN: "1",
-              FX_AUTO_UPGRADE: "0",
-              FX_GATEWAY_BASE_URL: `http://127.0.0.1:${server.port}`,
-              FX_E2E_GATEWAY_MODELS_URL: undefined,
-              FX_TRACE_LOG: tracePath,
-              FX_TRACE_SCOPES: "catalog",
-            },
-            timeoutMs: TIMEOUT,
+          const result = await runFx(["models", "--json"], {
+            env: codexModelsEnv(home, server.modelsUrl),
           });
 
-          expect(r.code).toBe(0);
-          expect(r.stderr).toBe("");
-          const json = JSON.parse(r.stdout.trim());
-          expect(json.kind).toBe("models");
-          expect(json.ids).toContain("public/sentinel");
-          if (scenario.expectPrivate) {
-            expect(json.ids).toContain("private/blue-hornbill");
-          } else {
-            expect(json.ids).not.toContain("private/blue-hornbill");
-          }
-          expect(json.private_models_hidden).toBe(!scenario.expectPrivate);
-          expect(requests).toHaveLength(1);
-          if (scenario.expectAuthHeader) {
-            expect(requests[0]!.headers.get("authorization")).toBe(`Bearer ${SEEDED_GATEWAY_TOKEN}`);
-          } else {
-            expect(requests[0]!.headers.get("authorization")).toBeNull();
-            expect(requests[0]!.headers.get("x-vercel-ai-gateway-team")).toBeNull();
-          }
-          expect(requests[0]!.teamId).toBe(scenario.expectedTeamQuery ?? null);
-          if (scenario.seedFxLogin && !scenario.expiredFxLogin) {
-            expect(requests[0]!.headers.get("x-vercel-ai-gateway-team")).toBeNull();
-          }
-
-          const trace = readFileSync(tracePath, "utf8");
-          const events = catalogTraceEvents(trace);
-          expect(events).toHaveLength(1);
-          expect(events[0]).toContain(scenario.expectedTrace);
-          for (const secret of [
-            SEEDED_GATEWAY_TOKEN,
-            "seeded-refresh-token",
-            "team_123",
-            "vercel-labs",
-          ]) {
-            expect(trace).not.toContain(secret);
-          }
+          expect(result.code).not.toBe(0);
+          expect(result.stderr).toBe("");
+          expect(JSON.parse(result.stdout.trim()).code).toBe(scenario.code);
+          expect(server.modelRequests).toHaveLength(1);
         } finally {
-          server.stop(true);
-          rmSync(root, { recursive: true, force: true });
+          server.stop();
+          cleanupIsolatedTestHome(home);
         }
-      },
-      TIMEOUT,
-    );
-  }
-
-  test.skipIf(!HAS_API_KEY)(
-    "fx models --json returns valid models JSON",
-    async () => {
-      const r = await runFx(["models", "--json"], { timeoutMs: 30_000 });
-      expect(r.code).toBe(0);
-      const json = JSON.parse(r.stdout.trim());
-      expect(json.kind).toBe("models");
-      expect(json).toHaveProperty("count");
-      expect(Array.isArray(json.ids)).toBe(true);
-      expect(json.ids.length).toBeGreaterThan(0);
+      }
     },
-    30_000,
+    TIMEOUT,
   );
-});
 
-describe("cli: credits", () => {
   test(
-    "fx credits --json preserves Gateway HTTP denial details",
+    "fx models preserves connection failures without anonymous retry",
     async () => {
       const home = createIsolatedTestHome();
-      const requests: Array<{
-        method: string;
-        path: string;
-        authorizationMatchesExpected: boolean;
-      }> = [];
-      const server = Bun.serve({
-        hostname: "127.0.0.1",
-        port: 0,
-        fetch(request) {
-          requests.push({
-            method: request.method,
-            path: new URL(request.url).pathname,
-            authorizationMatchesExpected:
-              request.headers.get("authorization") ===
-              "Bearer credits-fake-key",
-          });
-          return Response.json(
-            { error: { code: "credit_card_required", message: "Buy credits to use AI Gateway." } },
-            { status: 403 },
-          );
-        },
+      writeSeededChatGptLogin(home, chatGptAccessToken());
+      let connections = 0;
+      const server = createServer((socket) => {
+        connections += 1;
+        socket.destroy();
       });
-
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
       try {
-        const r = await runFx(["credits", "--json"], {
-          env: {
-            AI_GATEWAY_API_KEY: "credits-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
-            FX_E2E_GATEWAY_CREDITS_URL: `http://127.0.0.1:${server.port}/v1/credits`,
-            HOME: home,
-          },
+        const address = server.address();
+        if (address === null || typeof address === "string") throw new Error("missing server address");
+        const result = await runFx(["models", "--json"], {
+          env: codexModelsEnv(home, `http://127.0.0.1:${address.port}/models`),
         });
-
-        expect(requests).toEqual([{
-          method: "GET",
-          path: "/v1/credits",
-          authorizationMatchesExpected: true,
-        }]);
-        expect(r.code).not.toBe(0);
-        expect(r.stderr).toBe("");
-        const json = JSON.parse(r.stdout.trim());
-        expect(json.kind).toBe("credits");
-        expect(json.error).toContain("API access denied");
-        expect(json.error).toContain("HTTP 403");
-        expect(json.error).toContain("Buy credits to use AI Gateway.");
+        expect(result.code).not.toBe(0);
+        expect(result.stderr).toBe("");
+        expect(JSON.parse(result.stdout.trim()).code).toBe("TransportFailure");
+        expect(connections).toBe(1);
       } finally {
-        server.stop(true);
+        await new Promise<void>((resolve) => server.close(() => resolve()));
         cleanupIsolatedTestHome(home);
       }
     },
     TIMEOUT,
   );
 
-  test.skipIf(!HAS_API_KEY)(
-    "fx credits --json returns credits JSON or exits non-zero",
+  test(
+    "cancelling fx models does not retry",
     async () => {
-      const r = await runFx(["credits", "--json"], { timeoutMs: 30_000 });
-      if (r.code === 0 && r.stdout.trim()) {
-        const json = JSON.parse(r.stdout.trim());
-        expect(json.kind).toBe("credits");
-      } else {
-        expect(r.code).not.toBe(0);
+      const home = createIsolatedTestHome();
+      writeSeededChatGptLogin(home, chatGptAccessToken());
+      const server = startCodexModelsServer(() => new Promise<Response>(() => {}));
+      const proc = Bun.spawn([FX_BIN, "models", "--json"], {
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          ...codexModelsEnv(home, server.modelsUrl),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      try {
+        const started = Date.now();
+        while (server.modelRequests.length === 0) {
+          if (Date.now() - started >= TIMEOUT) {
+            throw new Error("timed out waiting for the cancellable model request");
+          }
+          await Bun.sleep(25);
+        }
+        expect(server.modelRequests).toHaveLength(1);
+
+        proc.kill("SIGTERM");
+        await proc.exited;
+        expect(server.modelRequests).toHaveLength(1);
+      } finally {
+        proc.kill("SIGKILL");
+        server.stop();
+        cleanupIsolatedTestHome(home);
       }
     },
-    30_000,
+    TIMEOUT,
   );
 });
 
@@ -3724,7 +2912,7 @@ describe("cli: interactive startup", () => {
 
 describe("cli: pr", () => {
   test(
-    "fx pr without gateway auth exits non-zero",
+    "fx pr without a Codex login exits non-zero",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-noauth-"));
       try {
@@ -3743,7 +2931,7 @@ describe("cli: pr", () => {
 
 describe("cli: issue", () => {
   test(
-    "fx issue without gateway auth exits non-zero",
+    "fx issue without a Codex login exits non-zero",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-noauth-"));
       try {
@@ -3769,12 +2957,11 @@ describe("cli: ask success", () => {
       const workspace = join(root, "workspace");
       const skillDirectory = join(home, ".fx", "skills", "cli-explicit");
       const skillBody = "CLI_EXPLICIT_SKILL_BODY";
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("explicit skill ask complete"),
-      ]);
+      const codex = startFakeCodex();
       try {
         mkdirSync(skillDirectory, { recursive: true });
         mkdirSync(workspace);
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         writeFileSync(
           join(skillDirectory, "SKILL.md"),
           `---\nname: cli-explicit\ndescription: explicit CLI fixture\n---\n\n${skillBody}\n`,
@@ -3790,15 +2977,7 @@ describe("cli: ask success", () => {
           ],
           {
             cwd: realpathSync(workspace),
-            env: {
-              HOME: realpathSync(home),
-              AI_GATEWAY_API_KEY: "fake-explicit-skill-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-              FX_AUTO_UPGRADE: "0",
-            },
+            env: fakeCodexEnv(home, codex, { FX_AUTO_UPGRADE: "0" }),
             timeoutMs: TIMEOUT,
           },
         );
@@ -3806,19 +2985,18 @@ describe("cli: ask success", () => {
         expect(result.code).toBe(0);
         expect(result.stderr).toBe("");
         expect(JSON.parse(result.stdout).output.trim()).toBe(
-          "explicit skill ask complete",
+          "FAKE_CODEX_RESPONSE",
         );
-        expect(gateway.requests).toHaveLength(1);
-        expect(gateway.modelRequests).toHaveLength(1);
-        expect(gateway.requests[0]!.body).toContain(
+        expect(codex.requests).toHaveLength(1);
+        expect(codex.requests[0]!.body).toContain(
           "Explicitly invoked skill content for this query:",
         );
-        expect(gateway.requests[0]!.body).toContain(
+        expect(codex.requests[0]!.body).toContain(
           '<skill_content name=\\"cli-explicit\\" resource=\\"SKILL.md\\"',
         );
-        expect(gateway.requests[0]!.body).toContain(skillBody);
+        expect(codex.requests[0]!.body).toContain(skillBody);
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -3826,19 +3004,16 @@ describe("cli: ask success", () => {
   );
 
   test(
-    "fx ask stdin prompts above the old 1 MiB limit reach Gateway byte-for-byte",
+    "fx ask stdin prompts above the old 1 MiB limit reach Codex byte-for-byte",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-large-stdin-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const sizes = [1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1, 3 * 1024 * 1024];
-      const gateway = startFakeGateway(
-        sizes.map((_, index) => fakeGatewayFinalText(`large stdin ${index}`)),
-      );
+      const codex = startFakeCodex();
       try {
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
-        writeFileSync(join(home, ".fx", "settings.json"), "{}\n");
 
         for (const [index, size] of sizes.entries()) {
           const prompt = `B${"x".repeat(size - 2)}E`;
@@ -3846,33 +3021,24 @@ describe("cli: ask success", () => {
             ["ask", "--json", "--auto", "--no-save"],
             {
               cwd: realpathSync(workspace),
-              env: {
-                HOME: home,
-                AI_GATEWAY_API_KEY: "fake-large-stdin-key",
-                VERCEL_OIDC_TOKEN: undefined,
-                FX_GATEWAY_BASE_URL: gateway.baseUrl,
-                FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-                FX_MODEL: FAKE_GATEWAY_MODEL,
-                FX_AUTO_UPGRADE: "0",
-              },
+              env: fakeCodexEnv(home, codex),
               stdin: prompt,
               timeoutMs: 60_000,
             },
           );
 
           expect(result.code).toBe(0);
-          expect(JSON.parse(result.stdout).output.trim()).toBe(`large stdin ${index}`);
-          const request = JSON.parse(gateway.requests[index]!.body) as {
-            prompt: Array<{ role: string; content: Array<{ type: string; text?: string }> }>;
+          expect(JSON.parse(result.stdout).output.trim()).toBe(`FAKE_CODEX_RESPONSE`);
+          const request = JSON.parse(codex.requests[index]!.body) as {
+            input: Array<{ role?: string; content?: Array<{ type: string; text?: string }> }>;
           };
-          const user = request.prompt.findLast((message) => message.role === "user");
-          expect(user?.content.find((part) => part.type === "text")?.text).toBe(prompt);
+          const user = request.input.filter((item) => item.role === "user").at(-1);
+          expect(user?.content?.find((part) => part.type === "input_text")?.text).toBe(prompt);
         }
 
-        expect(gateway.requests).toHaveLength(sizes.length);
-        expect(gateway.modelRequests).toHaveLength(sizes.length);
+        expect(codex.requests).toHaveLength(sizes.length);
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -3915,143 +3081,64 @@ describe("cli: ask success", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-portable-reasoning-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
-      const model = "provider/new-reasoning-model";
-      const gateway = startFakeGateway(
-        [fakeGatewayFinalText("portable ask complete")],
-        {
-          models: [{
-            id: model,
-            type: "language",
-            tags: ["reasoning", "tool-use"],
-            context_window: 750_000,
-            max_tokens: 64_000,
-            reasoning_options: [{ type: "effort", values: ["high"] }],
-          }],
-        },
-      );
+      const codex = startFakeCodex();
       try {
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         writeFileSync(
           join(home, ".fx", "settings.json"),
-          `${JSON.stringify({ model, effort: "high" })}\n`,
+          `${JSON.stringify({ model: FAKE_CODEX_DEFAULT_MODEL, effort: "high" })}\n`,
         );
 
         const result = await runFx(
           ["ask", "--json", "--auto", "--no-save", "Use portable reasoning."],
           {
             cwd: realpathSync(workspace),
-            env: {
-              HOME: home,
-              AI_GATEWAY_API_KEY: "fake-portable-ask-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-            },
+            env: fakeCodexEnv(home, codex),
             timeoutMs: 60_000,
           },
         );
 
         expect(result.code).toBe(0);
-        expect(
-          result.stderr
-            .replace(
-              /fx ask: warning: skipped \d+ invalid or unreadable skill candidates?; relaunch with FX_TRACE=1 to write a trace log\n/g,
-              "",
-            )
-            .replace(
-              /\[notice\] skill discovery warning: [^\n]*; relaunch with FX_TRACE=1 to write a trace log\n/g,
-              "",
-            ),
-        ).toBe("");
-        expect(JSON.parse(result.stdout).output.trim()).toBe("portable ask complete");
-        expect(gateway.requests).toHaveLength(1);
-        const request = JSON.parse(gateway.requests[0]!.body);
-        expect(request).toMatchObject({
-          reasoning: "high",
-          maxOutputTokens: 64_000,
-        });
-        expect(gateway.modelRequests).toHaveLength(1);
-        expect(request).not.toHaveProperty("providerOptions");
-        expect(
-          gateway.requests[0]!.headers.get(
-            "ai-language-model-specification-version",
-          ),
-        ).toBe("4");
+        expect(JSON.parse(result.stdout).output.trim()).toBe("FAKE_CODEX_RESPONSE");
+        expect(codex.requests).toHaveLength(1);
+        const request = JSON.parse(codex.requests[0].body);
+        expect(request.model).toBe(FAKE_CODEX_DEFAULT_MODEL);
+        expect(request.reasoning).toEqual({ effort: "high", summary: "auto" });
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
     60_000,
   );
 
-  test.skipIf(!HAS_API_KEY)(
-    "live Gateway accepts catalog-backed portable reasoning",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-live-portable-reasoning-"));
-      const home = join(root, "home");
-      const workspace = join(root, "workspace");
-      const tracePath = join(root, "trace.log");
-      try {
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        mkdirSync(workspace);
-        writeFileSync(
-          join(home, ".fx", "settings.json"),
-          `${JSON.stringify({
-            model: "openai/gpt-5.6-sol",
-            effort: "high",
-          })}\n`,
-        );
-
-        const result = await runFx(
-          [
-            "ask",
-            "--json",
-            "--auto",
-            "--no-save",
-            "Reply with exactly: FX_PORTABLE_REASONING_LIVE_OK",
-          ],
-          {
-            cwd: realpathSync(workspace),
-            env: {
-              HOME: home,
-              FX_MODEL: undefined,
-              FX_TRACE: "1",
-              FX_TRACE_LOG: tracePath,
-              FX_GATEWAY_BASE_URL: undefined,
-              FX_GATEWAY_CHAT_URL: undefined,
-              FX_E2E_GATEWAY_MODELS_URL: undefined,
-              VERCEL_OIDC_TOKEN: undefined,
-            },
-            timeoutMs: 120_000,
-          },
-        );
-
-        expect(result.code).toBe(0);
-        expect(JSON.parse(result.stdout).output).toContain(
-          "FX_PORTABLE_REASONING_LIVE_OK",
-        );
-        expect(readFileSync(tracePath, "utf8")).toContain(
-          "reasoning=selected",
-        );
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    120_000,
-  );
-
   test(
     "saved ask resumes the exact session while no-save creates no durable state",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-persistence-"));
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("orange triangle"),
-        fakeGatewayFinalText("blue circle"),
-        fakeGatewayFinalText("green square"),
-      ]);
+      const replies = ["orange triangle", "blue circle", "green square"];
+      const codex = startFakeCodex({
+        route: () => codexFinalText(replies[askCount] ?? "unexpected"),
+      });
+      let askCount = 0;
+      const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch(req) {
+          const path = new URL(req.url).pathname;
+          if (path === "/models") {
+            return Response.json({ models: [
+              { slug: "gpt-5.4-mini", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
+            ] });
+          }
+          const body = await req.text();
+          codex.requests.push({ path, authorization: req.headers.get("authorization"), body });
+          const reply = codexFinalText(replies[askCount] ?? "unexpected");
+          askCount += 1;
+          return new Response(reply, { headers: { "content-type": "text/event-stream" } });
+        },
+      });
       try {
         const savedHome = join(root, "saved-home");
         const noSaveHome = join(root, "no-save-home");
@@ -4060,21 +3147,18 @@ describe("cli: ask success", () => {
         mkdirSync(noSaveHome);
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
+        writeSeededChatGptLogin(savedHome, chatGptAccessToken());
+        const env = fakeCodexEnv(savedHome, {
+          responsesUrl: `http://127.0.0.1:${server.port}/responses`,
+          modelsUrl: `http://127.0.0.1:${server.port}/models`,
+          tokenUrl: codex.tokenUrl,
+        } as ReturnType<typeof startFakeCodex>);
 
         const first = await runFx(
           ["ask", "--json", "--auto", "Reply with exactly: orange triangle"],
           {
             cwd: workspaceRoot,
-            env: {
-              HOME: realpathSync(savedHome),
-              AI_GATEWAY_API_KEY: "fake-ask-persistence-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-              FX_AUTO_UPGRADE: "0",
-            },
+            env,
             timeoutMs: 60_000,
           },
         );
@@ -4083,12 +3167,6 @@ describe("cli: ask success", () => {
         const firstJson = JSON.parse(first.stdout.trim());
         expect(typeof firstJson.session_id).toBe("string");
         expect(firstJson.session_id.length).toBeGreaterThan(0);
-        expect(gateway.requests[0]?.headers.get("x-session-id")).toBe(
-          firstJson.session_id,
-        );
-        expect(gateway.requests[0]?.headers.get("x-session-affinity")).toBe(
-          firstJson.session_id,
-        );
         expect(
           existsSync(
             join(savedHome, ".fx", "sessions", firstJson.session_id),
@@ -4106,16 +3184,7 @@ describe("cli: ask success", () => {
           ],
           {
             cwd: workspaceRoot,
-            env: {
-              HOME: realpathSync(savedHome),
-              AI_GATEWAY_API_KEY: "fake-ask-persistence-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-              FX_AUTO_UPGRADE: "0",
-            },
+            env,
             timeoutMs: 60_000,
           },
         );
@@ -4124,12 +3193,11 @@ describe("cli: ask success", () => {
         expect(JSON.parse(resumed.stdout.trim()).session_id).toBe(
           firstJson.session_id,
         );
-        expect(gateway.requests[1]?.headers.get("x-session-id")).toBe(
-          firstJson.session_id,
-        );
-        expect(gateway.requests[1]?.headers.get("x-session-affinity")).toBe(
-          firstJson.session_id,
-        );
+        // The resumed turn replays the saved conversation to the model.
+        const resumedBody = JSON.parse(codex.requests[1]!.body);
+        const resumedInput = JSON.stringify(resumedBody.input ?? []);
+        expect(resumedInput).toContain("Reply with exactly: orange triangle");
+        expect(resumedInput).toContain("orange triangle");
         const detail = await runFx(
           ["session", "--id", firstJson.session_id, "--json"],
           {
@@ -4141,19 +3209,14 @@ describe("cli: ask success", () => {
         expect(detail.code).toBe(0);
         expect(JSON.parse(detail.stdout).history_len).toBe(2);
 
+        writeSeededChatGptLogin(noSaveHome, chatGptAccessToken());
         const noSave = await runFx(
           ["ask", "--json", "--auto", "--no-save", "Reply with exactly: green square"],
           {
             cwd: workspaceRoot,
             env: {
+              ...env,
               HOME: realpathSync(noSaveHome),
-              AI_GATEWAY_API_KEY: "fake-ask-persistence-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-              FX_AUTO_UPGRADE: "0",
             },
             timeoutMs: 60_000,
           },
@@ -4161,12 +3224,11 @@ describe("cli: ask success", () => {
         expect(noSave.code).toBe(0);
         expect(noSave.stderr).toBe("");
         expect(JSON.parse(noSave.stdout.trim()).session_id).toBe("");
-        expect(gateway.requests[2]?.headers.get("x-session-id")).toBeNull();
-        expect(gateway.requests[2]?.headers.get("x-session-affinity")).toBeNull();
-        expect(existsSync(join(noSaveHome, ".fx"))).toBe(false);
-        expect(gateway.requests).toHaveLength(3);
+        expect(existsSync(join(noSaveHome, ".fx", "sessions"))).toBe(false);
+        expect(codex.requests).toHaveLength(3);
       } finally {
-        gateway.stop();
+        server.stop(true);
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -4181,28 +3243,43 @@ describe("cli: ask success", () => {
       const workspace = join(root, "workspace");
       const lockReady = join(root, "latest-lock-ready");
       const unrelatedReply = `unrelated saved turn ${"x".repeat(64 * 1024)}`;
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText(unrelatedReply),
-        fakeGatewayFinalText("first saved turn"),
-        fakeGatewayFinalText("contended exact turn"),
-        fakeGatewayFinalText("contended latest turn"),
-        fakeGatewayFinalText("repairing turn"),
-      ]);
+      const replies = [
+        unrelatedReply,
+        "first saved turn",
+        "contended exact turn",
+        "contended latest turn",
+        "repairing turn",
+      ];
+      let askCount = 0;
+      const codex = startFakeCodex();
+      const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch(req) {
+          const path = new URL(req.url).pathname;
+          if (path === "/models") {
+            return Response.json({ models: [
+              { slug: "gpt-5.4-mini", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
+            ] });
+          }
+          const body = await req.text();
+          codex.requests.push({ path, authorization: req.headers.get("authorization"), body });
+          const reply = codexFinalText(replies[askCount] ?? "unexpected");
+          askCount += 1;
+          return new Response(reply, { headers: { "content-type": "text/event-stream" } });
+        },
+      });
       let lockHolder: ReturnType<typeof Bun.spawn> | null = null;
       try {
         mkdirSync(home);
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
-        const env = {
-          HOME: realpathSync(home),
-          AI_GATEWAY_API_KEY: "fake-session-cache-contention-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-        };
+        writeSeededChatGptLogin(home, chatGptAccessToken());
+        const env = fakeCodexEnv(home, {
+          responsesUrl: `http://127.0.0.1:${server.port}/responses`,
+          modelsUrl: `http://127.0.0.1:${server.port}/models`,
+          tokenUrl: codex.tokenUrl,
+        } as ReturnType<typeof startFakeCodex>);
 
         const unrelated = await runFx(
           ["ask", "--json", "--auto", "Save an unrelated long turn."],
@@ -4334,37 +3411,18 @@ describe("cli: ask success", () => {
         expect(unrelatedDetail.code).toBe(0);
         expect(unrelatedDetail.stderr).toBe("");
         expect(JSON.parse(unrelatedDetail.stdout).history_len).toBe(1);
-        expect(gateway.requests).toHaveLength(5);
+        expect(codex.requests).toHaveLength(5);
       } finally {
         if (lockHolder) {
           lockHolder.kill();
           await lockHolder.exited;
         }
-        gateway.stop();
+        server.stop(true);
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
     300_000,
-  );
-
-  test.skipIf(!HAS_API_KEY)(
-    "fx ask --json --no-save --auto returns valid JSON with output",
-    async () => {
-      const r = await runFx(
-        ["ask", "--json", "--no-save", "--auto", "Say exactly: hello world"],
-        { timeoutMs: 60_000 },
-      );
-      expect(r.code).toBe(0);
-      const json = JSON.parse(r.stdout.trim());
-      expect(typeof json.output).toBe("string");
-      expect(json.output.length).toBeGreaterThan(0);
-      expect(typeof json.final_output).toBe("string");
-      expect(json.final_output.length).toBeGreaterThan(0);
-      expect(typeof json.model).toBe("string");
-      expect(Array.isArray(json.tool_calls)).toBe(true);
-      expect(typeof json.steps).toBe("number");
-    },
-    60_000,
   );
 });
 
@@ -4375,21 +3433,12 @@ describe("cli: error handling", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-options-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("literal option prompt complete"),
-      ]);
+      const codex = startFakeCodex();
       try {
         mkdirSync(home);
         mkdirSync(workspace);
-        const env = {
-          HOME: realpathSync(home),
-          AI_GATEWAY_API_KEY: "ask-options-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-        };
+        writeSeededChatGptLogin(home, chatGptAccessToken());
+        const env = fakeCodexEnv(realpathSync(home), codex);
 
         const rejected = await runFx(["ask", "--definitely-unknown"], {
           cwd: realpathSync(workspace),
@@ -4398,7 +3447,7 @@ describe("cli: error handling", () => {
         });
         expect(rejected.code).toBe(1);
         expect(rejected.stderr).toContain("usage: fx ask");
-        expect(gateway.requests).toHaveLength(0);
+        expect(codex.requests).toHaveLength(0);
 
         const literal = await runFx(
           [
@@ -4418,13 +3467,13 @@ describe("cli: error handling", () => {
         expect(literal.code).toBe(0);
         const literalJson = JSON.parse(literal.stdout);
         expect(literalJson.output.trim()).toBe(
-          "literal option prompt complete",
+          "FAKE_CODEX_RESPONSE",
         );
-        expect(literalJson.final_output).toBe("literal option prompt complete");
-        expect(gateway.requests).toHaveLength(1);
-        expect(gateway.requests[0]!.body).toContain("--definitely-prompt-text");
+        expect(literalJson.final_output).toBe("FAKE_CODEX_RESPONSE");
+        expect(codex.requests).toHaveLength(1);
+        expect(codex.requests[0]!.body).toContain("--definitely-prompt-text");
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -4462,12 +3511,8 @@ describe("cli: error handling", () => {
         mkdirSync(workspace);
         const env = {
           HOME: realpathSync(home),
-          AI_GATEWAY_API_KEY: "ask-conflict-key",
+          AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
         };
 
         for (const args of [

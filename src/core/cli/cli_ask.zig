@@ -518,10 +518,9 @@ const AskContext = struct {
     workspace_root: []const u8,
     workspace_access: workspace_access.WorkspaceAccess = .{},
     api_key: []const u8 = "",
-    gateway_team: ?[]const u8 = null,
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     model_catalog_access: credentials.CatalogAccess = .{ .public_only = .no_credential },
     model: []const u8 = "",
     agent_step_limit: usize = 0,
@@ -600,9 +599,7 @@ const AskContext = struct {
                 cfg.max_history_turns,
                 cfg.provider_set.deferredUsageProviders(),
             ),
-            .web_search_runtime = web_search_runtime.Runtime.init(.{
-                .provider = cfg.provider_set.gateway.fx_search.?,
-            }),
+            .web_search_runtime = web_search_runtime.Runtime.init(.{}),
             .terminal_client = terminal_client_runtime.Runtime.init(
                 cfg.process_provider,
             ),
@@ -947,7 +944,6 @@ const AskContext = struct {
             self.web_search_runtime.configure(.{
                 .api_key = self.api_key,
                 .credential_source = self.credential_source,
-                .gateway_team = self.gateway_team,
                 .worker_model = self.model,
                 .gateway_retry_count = self.cfg.gateway_retry_count,
                 .gateway_chat_url = self.cfg.gateway_chat_url,
@@ -967,7 +963,6 @@ const AskContext = struct {
             .max_tool_result_bytes = self.max_tool_result_bytes,
             .api_key = self.api_key,
             .agent_stream_provider = self.agentStreamProvider(),
-            .gateway_team = self.gateway_team,
             .credential_source = self.credential_source,
             .account_id = self.account_id,
             .provider = self.provider,
@@ -1062,7 +1057,7 @@ const AskContext = struct {
         return permission_auto_classifier.Classifier.withProvider(provider, .{
             .credential = self.api_key,
             .account_id = self.account_id,
-            .tenant = self.gateway_team,
+            .tenant = null,
             .endpoint = self.cfg.gateway_chat_url,
             .cancel_flag = self.cancelFlag(),
             .usage = &self.session.usage,
@@ -1391,12 +1386,8 @@ fn missingCredentialResult(
     options: RunOptions,
     provider: model_provider.ProviderId,
 ) !PromptRunResult {
-    const message = if (provider == .codex)
-        credentials.missing_chatgpt_credential_message
-    else if (provider == .grok)
-        credentials.missing_grok_credential_message
-    else
-        credentials.missing_credential_message;
+    _ = provider;
+    const message = credentials.missing_chatgpt_credential_message;
     try options.deps.write_stderr(options.deps.stderr_ctx, "fx ask: ");
     try options.deps.write_stderr(options.deps.stderr_ctx, message);
     try options.deps.write_stderr(options.deps.stderr_ctx, "\n");
@@ -1556,14 +1547,12 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     };
     const api_key = credential.token;
     ctx.api_key = api_key;
-    ctx.gateway_team = credential.gatewayTeam();
     ctx.credential_source = credential.source;
     ctx.account_id = credential.accountId();
-    ctx.model_catalog_access = credentials.catalogAccessForCredentialAndAccount(
+    ctx.model_catalog_access = credentials.catalogAccessForCredential(
         credential.source,
         api_key,
-        credential.gatewayTeam(),
-        credential.accountId(),
+        null,
     );
     if (comptime @import("builtin").os.tag != .wasi) {
         if (ctx.cfg.provider_set.select(ctx.provider).deferred_usage != null) {
@@ -1731,7 +1720,6 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
         .authorized_image_catalog = authorized_image_catalog,
         .model = @constCast(ctx.model),
         .api_key = api_key,
-        .gateway_team = if (credential.gatewayTeam()) |team| @constCast(team) else null,
         .credential_source = credential.source,
         .account_id = if (credential.accountId()) |account_id| @constCast(account_id) else null,
         .provider = ctx.provider,
@@ -3847,7 +3835,7 @@ fn testConfig() Config {
         .gateway_chat_url = "https://example.invalid/chat",
         .gateway_models_path = "/models",
         .gateway_provider = test_builtin_gateway.provider,
-        .provider_set = provider_set.gateway_only(test_builtin_gateway.provider_bundle),
+        .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{
             .system_prompt = "system",
@@ -3882,7 +3870,7 @@ fn testPresentKeyStartup(alloc: Allocator, _: oauth_transport.Provider, _: host.
     state.workspace_root = try alloc.dupe(u8, "/tmp/fx-test");
     state.credential = .{
         .token = try alloc.dupe(u8, "key"),
-        .source = .ai_gateway_api_key,
+        .source = .chatgpt_subscription,
     };
     state.selected_model = try alloc.dupe(u8, default_model);
     state.context_enabled = true;
@@ -3984,14 +3972,11 @@ fn testProcessQueuedPromptChecksTimeout(_: *agent_runtime.Agent, deps: *const ag
     const tool_ctx = ctx.toolContext();
     try std.testing.expectEqual(@as(?usize, std.time.ms_per_s), tool_ctx.command_timeout_ms);
     try std.testing.expect(!tool_ctx.web_search_runtime_ready);
-    try std.testing.expect(tool_ctx.web_search_backend != null);
+    try std.testing.expect(tool_ctx.web_search_backend == null);
     try std.testing.expect(tool_ctx.web_fetch_runtime.? == &ctx.web_fetch_runtime);
     try std.testing.expect(tool_ctx.web_fetch_progress_ctx != null);
     try std.testing.expect(tool_ctx.on_web_fetch_progress != null);
-    try std.testing.expectEqualStrings(ctx.model, ctx.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.cfg.gateway_retry_count, ctx.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.cfg.gateway_chat_url, ctx.web_search_runtime.gateway_chat_url);
-    try std.testing.expect(ctx.web_search_runtime.provider.?.execute_fn == ctx.cfg.provider_set.gateway.fx_search.?.execute_fn);
+    try std.testing.expect(ctx.web_search_runtime.provider == null);
     try std.testing.expectEqualStrings("/models", tool_ctx.gateway_models_path);
     try testPushAssistantText(deps, "assistant text");
 }
@@ -4015,7 +4000,7 @@ fn testProcessQueuedPromptChecksExecOnlyTerminal(_: *agent_runtime.Agent, deps: 
         "request",
     ));
     try std.testing.expect(std.mem.find(u8, advertised_shell.description, "shell.interact") != null);
-    try std.testing.expectEqualStrings(builtin_tools.web_search.description, cfg.custom_tool_guidance);
+    try std.testing.expectEqualStrings("", cfg.custom_tool_guidance);
     try std.testing.expectEqualStrings("test model overlay", cfg.model_prompt_overlay.?);
     const runtime_shell = deps.tool_registry.lookup("shell") orelse
         return error.TestExpectedEqual;
@@ -4665,6 +4650,9 @@ test "CLI prompt projection configures web search then blocks native execution" 
         calls: usize = 0,
     };
     const FailingWebSearchProvider = struct {
+        fn preferredBackends(_: ?*anyopaque) !?[]const web_search_contract.SearchBackendId {
+            return null;
+        }
         fn execute(
             raw_ctx: ?*anyopaque,
             _: Allocator,
@@ -4685,11 +4673,13 @@ test "CLI prompt projection configures web search then blocks native execution" 
     var ctx = AskContext.init(alloc, testConfig(), testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup), "/tmp/workspace");
     defer ctx.deinit();
     var provider_state = ProviderState{};
-    var provider = ctx.web_search_runtime.provider orelse return error.TestExpectedEqual;
-    provider.context = @ptrCast(&provider_state);
-    provider.execute_fn = FailingWebSearchProvider.execute;
     ctx.web_search_runtime = web_search_runtime.Runtime.init(.{
-        .provider = provider,
+        .provider = .{
+            .context = @ptrCast(&provider_state),
+            .policy = .{},
+            .preferred_backends_fn = FailingWebSearchProvider.preferredBackends,
+            .execute_fn = FailingWebSearchProvider.execute,
+        },
     });
 
     ctx.web_search_runtime.configure(.{
@@ -4718,10 +4708,6 @@ test "CLI prompt projection configures web search then blocks native execution" 
         .arguments_json = "{\"query\":\"x\"}",
     });
     try std.testing.expectEqualStrings("web_search field \"query\" must contain at least two characters", validation.failure);
-    try std.testing.expectEqualStrings(ctx.api_key, ctx.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(ctx.model, ctx.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.cfg.gateway_retry_count, ctx.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.cfg.gateway_chat_url, ctx.web_search_runtime.gateway_chat_url);
 
     const execute = deps.execute_tool_call;
     const execution = try execute(deps.ctx, .{
@@ -4737,15 +4723,11 @@ test "CLI prompt projection configures web search then blocks native execution" 
         .advertised_dynamic_tool_names = &.{},
         .max_tool_result_bytes = ctx.max_tool_result_bytes,
     });
-    try std.testing.expectEqualStrings(ctx.api_key, ctx.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(ctx.model, ctx.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.cfg.gateway_retry_count, ctx.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.cfg.gateway_chat_url, ctx.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqual(.failure, execution.status);
     try std.testing.expectEqual(@as(usize, 0), provider_state.calls);
 }
 
-test "fx ask ChatGPT route disables Gateway-backed auxiliary providers" {
+test "fx ask ChatGPT route keeps Codex review and drops web search backend" {
     const alloc = std.testing.allocator;
     var stdout_capture = TestCapture{};
     defer stdout_capture.deinit(alloc);
@@ -4765,7 +4747,7 @@ test "fx ask ChatGPT route disables Gateway-backed auxiliary providers" {
 
     const tool_ctx = ctx.toolContext();
     try std.testing.expect(tool_ctx.web_search_backend == null);
-    try std.testing.expect(!tool_ctx.auto_classifier.enabled());
+    try std.testing.expect(tool_ctx.auto_classifier.enabled());
     try std.testing.expect(tool_ctx.permission_reviewer_provider == null);
 }
 
@@ -5426,7 +5408,7 @@ test "fx ask automatic review observes worker cancellation" {
     var stderr_capture: TestCapture = .{};
     defer stderr_capture.deinit(alloc);
     var cfg = testConfig();
-    cfg.provider_set.gateway.permission_reviewer = .{ .review_fn = Provider.review };
+    cfg.provider_set.codex.permission_reviewer = .{ .review_fn = Provider.review };
     var ctx = AskContext.init(
         alloc,
         cfg,
@@ -7646,18 +7628,18 @@ test "fx ask text and JSON share the selected auth failure facts" {
 
     try std.testing.expectEqual(@as(u8, 1), exit_code);
     try std.testing.expectEqualStrings(
-        "fx ask: AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "fx ask: Codex subscription authentication failed · HTTP 401\n",
         stderr_capture.bytes.items,
     );
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, stdout_capture.bytes.items, .{});
     defer parsed.deinit();
     try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
     try std.testing.expectEqualStrings(
-        "AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "Codex subscription authentication failed · HTTP 401\n",
         parsed.value.object.get("output").?.string,
     );
     const auth_failure = parsed.value.object.get("auth_failure").?.object;
-    try std.testing.expectEqualStrings("AI_GATEWAY_API_KEY", auth_failure.get("source").?.string);
+    try std.testing.expectEqualStrings("Codex subscription", auth_failure.get("source").?.string);
     try std.testing.expectEqualStrings("http_unauthorized", auth_failure.get("reason").?.string);
     try std.testing.expectEqual(@as(i64, 401), auth_failure.get("http_status").?.integer);
     try std.testing.expect(std.mem.find(u8, stdout_capture.bytes.items, "secret-key") == null);
@@ -7907,7 +7889,7 @@ test "indeterminate saved auth cleanup keeps the primary result and session id" 
     try std.testing.expectEqual(@as(usize, 1), probe.calls);
     try std.testing.expect(probe.borrowers_detached);
     try std.testing.expectEqualStrings(
-        "fx ask: AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "fx ask: Codex subscription authentication failed · HTTP 401\n",
         stderr_capture.bytes.items,
     );
     var parsed = try std.json.parseFromSlice(
@@ -7920,7 +7902,7 @@ test "indeterminate saved auth cleanup keeps the primary result and session id" 
     try std.testing.expect(parsed.value.object.get("error") == null);
     try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
     try std.testing.expectEqualStrings(
-        "AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "Codex subscription authentication failed · HTTP 401\n",
         parsed.value.object.get("output").?.string,
     );
     const session_id = parsed.value.object.get("session_id").?.string;

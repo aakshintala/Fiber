@@ -166,7 +166,7 @@ pub const ActiveSessionState = struct {
     writable: ?session_store.LoadedWritableSession = null,
     session_write_mutex: std.Io.Mutex = .init,
     model: []u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     mode: []const u8,
     workspace_root: []const u8,
     api_key: []const u8,
@@ -234,9 +234,8 @@ pub const ServerState = struct {
     api_key: []u8 = &.{},
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]u8 = null,
-    gateway_team: ?[]u8 = null,
     selected_model: []u8 = &.{},
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     configured_model: []u8 = &.{},
     process_model_override: bool = false,
     permission_mode: types.PermissionMode = .ask,
@@ -285,7 +284,6 @@ pub const ServerState = struct {
         self.workspace_access.deinit(self.alloc);
         if (self.workspace_root.len > 0) self.alloc.free(self.workspace_root);
         if (self.api_key.len > 0) secret.zeroAndFree(self.alloc, self.api_key);
-        if (self.gateway_team) |team| self.alloc.free(team);
         if (self.account_id) |account_id| self.alloc.free(account_id);
         if (self.selected_model.len > 0) self.alloc.free(self.selected_model);
         if (self.configured_model.len > 0) self.alloc.free(self.configured_model);
@@ -317,7 +315,6 @@ fn credentialMatchesProvider(
 fn adoptServerCredential(state: *ServerState, credential: *credentials.Credential) void {
     if (state.active_session) |*active| active.api_key = &.{};
     if (state.api_key.len > 0) secret.zeroAndFree(state.alloc, state.api_key);
-    if (state.gateway_team) |team| state.alloc.free(team);
     if (state.account_id) |account_id| state.alloc.free(account_id);
 
     state.api_key = credential.token;
@@ -325,20 +322,12 @@ fn adoptServerCredential(state: *ServerState, credential: *credentials.Credentia
     state.credential_source = credential.source;
     state.account_id = credential.account_id;
     credential.account_id = null;
-    state.gateway_team = if (credential.team_id) |team| team else credential.team_slug;
-    if (credential.team_id != null) {
-        credential.team_id = null;
-        if (credential.team_slug) |slug| state.alloc.free(slug);
-        credential.team_slug = null;
-    } else {
-        credential.team_slug = null;
-    }
     if (state.active_session) |*active| {
         active.api_key = state.api_key;
         active.credential_source = state.credential_source;
         active.account_id = state.account_id;
         if (comptime !host_target.is_wasm) {
-            if (state.credential_source == .chatgpt_subscription or state.credential_source == .grok_subscription) {
+            if (state.credential_source == .chatgpt_subscription) {
                 active.session_rt.usage.clearReconciliationCredential();
             }
         }
@@ -356,12 +345,7 @@ pub fn selectCredentialForProvider(
     }
     if (credentialMatchesProvider(state.credential_source, provider) and state.api_key.len > 0) return true;
 
-    var credential = if (provider == .gateway and state.cfg.credential_override != null)
-        credentials.Credential{
-            .token = try state.alloc.dupe(u8, state.cfg.credential_override.?),
-            .source = .ai_gateway_api_key,
-        }
-    else blk: {
+    var credential = blk: {
         const resolution = try credentials.resolveForProvider(
             state.alloc,
             state.cfg.gateway_provider.oauth_transport,
@@ -407,7 +391,7 @@ pub fn refreshModelCredential(
         expected_account_id,
     ) orelse return null;
     errdefer secret.zeroAndFree(alloc, refreshed);
-    if (source == .chatgpt_subscription or source == .grok_subscription) {
+    if (source == .chatgpt_subscription or source == .chatgpt_subscription) {
         try publishRefreshedSubscriptionToken(state, refreshed, source, expected_account_id);
     }
     return refreshed;
@@ -665,9 +649,7 @@ pub fn runWithTransport(
         .alloc = alloc,
         .cfg = cfg,
         .writer = writer_value,
-        .web_search_runtime = web_search_runtime.Runtime.init(.{
-            .provider = cfg.provider_set.gateway.fx_search.?,
-        }),
+        .web_search_runtime = web_search_runtime.Runtime.init(.{}),
         .terminal_client = terminal_client_runtime.Runtime.init(
             cfg.process_provider,
         ),
@@ -1504,13 +1486,7 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
         credentialMatchesProvider(credential.source, state.provider)
     else
         false;
-    const credential: *credentials.Credential = if (state.provider == .gateway and state.cfg.credential_override != null) override: {
-        routed_credential = .{
-            .token = try alloc.dupe(u8, state.cfg.credential_override.?),
-            .source = .ai_gateway_api_key,
-        };
-        break :override &routed_credential.?;
-    } else if (startup_matches_model)
+    const credential: *credentials.Credential = if (startup_matches_model)
         &startup_credential.?
     else routed: {
         const preferred = if (startup_credential) |value| value.source else null;
@@ -1526,12 +1502,7 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
         if (routed_credential == null) {
             return state.writer.writeError(alloc, msg.id, .{
                 .code = ErrorCode.invalid_request,
-                .message = if (state.provider == .codex)
-                    credentials.missing_chatgpt_credential_message
-                else if (state.provider == .grok)
-                    credentials.missing_grok_credential_message
-                else
-                    credentials.missing_credential_message,
+                .message = credentials.missing_chatgpt_credential_message,
             });
         }
         break :routed &routed_credential.?;
@@ -1539,12 +1510,7 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
     if (credential.token.len == 0) {
         return state.writer.writeError(alloc, msg.id, .{
             .code = ErrorCode.invalid_request,
-            .message = if (state.provider == .codex)
-                credentials.missing_chatgpt_credential_message
-            else if (state.provider == .grok)
-                credentials.missing_grok_credential_message
-            else
-                credentials.missing_credential_message,
+            .message = credentials.missing_chatgpt_credential_message,
         });
     }
     adoptServerCredential(state, credential);
@@ -1577,11 +1543,10 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
         state.alloc,
         startup_catalog,
         .{
-            .access = credentials.catalogAccessForCredentialAndAccount(
+            .access = credentials.catalogAccessForCredential(
                 state.credential_source,
                 state.api_key,
-                state.gateway_team,
-                state.account_id,
+                null,
             ),
             .endpoint = state.cfg.gateway_models_path,
             .cancel_flag = &catalog_cancel_flag,
@@ -1704,7 +1669,7 @@ fn handleSetConfigOption(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Me
                 .message = "Invalid session model",
             });
         if (comptime !host_target.is_wasm) {
-            if (session.provider != .gateway) {
+            {
                 var model_available = false;
                 if (state.capability_resolver.catalogEntries()) |entries| {
                     for (entries) |entry| {
@@ -1723,10 +1688,7 @@ fn handleSetConfigOption(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Me
                 if (!try selectCredentialForProvider(state, session.provider)) {
                     return state.writer.writeError(alloc, msg.id, .{
                         .code = ErrorCode.invalid_request,
-                        .message = if (session.provider == .codex)
-                            credentials.missing_chatgpt_credential_message
-                        else
-                            credentials.missing_grok_credential_message,
+                        .message = credentials.missing_chatgpt_credential_message,
                     });
                 }
             }
@@ -1756,113 +1718,6 @@ fn handleSetConfigOption(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Me
                     "Failed to persist session model",
             });
         };
-    } else if (std.mem.eql(u8, config_id, "provider")) {
-        const target = model_provider.parse(value) orelse
-            return state.writer.writeError(alloc, msg.id, .{
-                .code = ErrorCode.invalid_params,
-                .message = "Invalid provider",
-            });
-        const session = if (state.active_session) |*active| active else return state.writer.writeError(alloc, msg.id, .{
-            .code = ErrorCode.invalid_request,
-            .message = "No active session",
-        });
-        if (target != session.provider) {
-            var staged_credential = if (target == .gateway and state.cfg.credential_override != null)
-                credentials.Credential{
-                    .token = try alloc.dupe(u8, state.cfg.credential_override.?),
-                    .source = .ai_gateway_api_key,
-                }
-            else credential: {
-                const resolution = try credentials.resolveForProvider(
-                    alloc,
-                    state.cfg.gateway_provider.oauth_transport,
-                    state.cfg.secret_store,
-                    .refresh_if_needed,
-                    target,
-                    null,
-                );
-                break :credential resolution.credential orelse
-                    return state.writer.writeError(alloc, msg.id, .{
-                        .code = ErrorCode.invalid_request,
-                        .message = if (target == .codex)
-                            credentials.missing_chatgpt_credential_message
-                        else if (target == .grok)
-                            credentials.missing_grok_credential_message
-                        else
-                            credentials.missing_credential_message,
-                    });
-            };
-            defer staged_credential.deinit(alloc);
-            if (!model_provider.authorizesCredential(target, staged_credential.source)) {
-                return state.writer.writeError(alloc, msg.id, .{
-                    .code = ErrorCode.invalid_request,
-                    .message = "Credential cannot authorize the selected provider",
-                });
-            }
-            const catalog_provider = catalogProviderFor(state, target) orelse
-                return state.writer.writeError(alloc, msg.id, .{
-                    .code = ErrorCode.invalid_request,
-                    .message = "Selected provider is unavailable in this host",
-                });
-            const access = credentials.catalogAccessForCredentialAndAccount(
-                staged_credential.source,
-                staged_credential.token,
-                staged_credential.gatewayTeam(),
-                staged_credential.accountId(),
-            );
-            const fetched = try catalog_provider.fetch(alloc, .{
-                .access = access,
-                .endpoint = state.cfg.gateway_models_path,
-                .cancel_flag = &session.cancel_flag,
-                .view = .picker,
-            });
-            var catalog = switch (fetched) {
-                .catalog => |catalog| catalog,
-                .failure => return state.writer.writeError(alloc, msg.id, .{
-                    .code = ErrorCode.invalid_request,
-                    .message = "Failed to load provider model catalog",
-                }),
-            };
-            defer model_catalog.freeModelCatalog(alloc, &catalog);
-            if (catalog.items.len == 0) {
-                return state.writer.writeError(alloc, msg.id, .{
-                    .code = ErrorCode.invalid_request,
-                    .message = "Provider returned no supported models",
-                });
-            }
-            var settings = if (state.cfg.home_override) |home|
-                try config_runtime.loadMergedSettingsFromHome(alloc, home, state.workspace_root)
-            else
-                try config_runtime.loadMergedSettings(alloc, state.workspace_root);
-            defer settings.deinit(alloc);
-            const saved_model = settings.models.get(target);
-            var selected_model = catalog.items[0].id;
-            if (saved_model) |saved| {
-                for (catalog.items) |entry| {
-                    if (std.mem.eql(u8, entry.id, saved)) {
-                        selected_model = entry.id;
-                        break;
-                    }
-                }
-            }
-            commitActiveSessionProvider(
-                alloc,
-                session,
-                target,
-                selected_model,
-                session_test_controls.logOptions(),
-            ) catch |err| {
-                if (modelCommitFailureTerminatesConnection(err)) {
-                    state.terminate_connection = true;
-                }
-                return state.writer.writeError(alloc, msg.id, .{
-                    .code = ErrorCode.internal_error,
-                    .message = "Failed to persist session provider",
-                });
-            };
-            state.capability_resolver.adoptOwnedCatalog(alloc, &catalog);
-            adoptServerCredential(state, &staged_credential);
-        }
     } else if (std.mem.eql(u8, config_id, "mode")) {
         if (state.active_session) |*session| {
             state.subagent_authority_mutex.lockUncancelable(io_mod.getIo());
@@ -1877,13 +1732,6 @@ fn handleSetConfigOption(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Me
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.writeAll("{\"configOptions\":[");
-    if (comptime !host_target.is_wasm) {
-        try sessions.writeProviderConfigOption(
-            &out.writer,
-            if (state.active_session) |session| session.provider else state.provider,
-        );
-        try out.writer.writeAll(",");
-    }
     try sessions.writeModelConfigOption(
         &out.writer,
         current_model,
@@ -1893,36 +1741,6 @@ fn handleSetConfigOption(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Me
     try sessions.writeModeConfigOption(&out.writer, state.cfg.mode_registry, current_mode);
     try out.writer.writeAll("]}");
     try state.writer.writeResponse(alloc, msg.id, out.writer.buffered());
-}
-
-fn commitActiveSessionProvider(
-    alloc: Allocator,
-    session: *ActiveSessionState,
-    provider: model_provider.ProviderId,
-    model: []const u8,
-    options: session_log.Options,
-) !void {
-    session.session_write_mutex.lockUncancelable(io_mod.getIo());
-    defer session.session_write_mutex.unlock(io_mod.getIo());
-    const writable = if (session.writable) |*active|
-        active
-    else
-        return error.SessionPersistenceUnavailable;
-    const staged_model = try alloc.dupe(u8, model);
-    errdefer alloc.free(staged_model);
-    _ = try writable.appendEvent(
-        alloc,
-        .{ .preferences_changed = .{
-            .provider = provider,
-            .model = @constCast(model),
-        } },
-        io_mod.milliTimestamp(),
-        .rollback_before_adapter_continue,
-        options,
-    );
-    alloc.free(session.model);
-    session.model = staged_model;
-    session.provider = provider;
 }
 
 fn commitActiveSessionModel(

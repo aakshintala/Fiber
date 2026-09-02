@@ -15,7 +15,6 @@ const model_capabilities = @import("../config/model_capabilities.zig");
 const editor_state = @import("../input/editor_state.zig");
 const settings_catalog = @import("../config/settings_catalog.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
-const feedback_runtime = @import("../feedback/runtime.zig");
 const output_contracts = @import("../output/output_contracts.zig");
 const diagnostics = @import("../workspace/diagnostics.zig");
 const workspace_commands = @import("../workspace/workspace_commands.zig");
@@ -353,7 +352,6 @@ pub fn Handlers(comptime App: type) type {
                 .show_help = commandShowHelp,
                 .login = commandLogin,
                 .logout = commandLogout,
-                .setup = commandSetup,
                 .show_status = commandShowStatus,
                 .attach_image = commandAttachImage,
                 .manage_images = commandManageImages,
@@ -366,12 +364,10 @@ pub fn Handlers(comptime App: type) type {
                 .handle_mcp = commandHandleMcp,
                 .handle_skills = commandHandleSkills,
                 .copy_last = commandCopyLast,
-                .submit_feedback = commandSubmitFeedback,
                 .create_trace = commandCreateTrace,
                 .compact_history = commandCompactHistory,
                 .handle_settings = commandHandleSettings,
                 .handle_alias = commandHandleAlias,
-                .show_credits = commandShowCredits,
                 .paste_clipboard = commandPasteClipboard,
                 .toggle_fast = commandToggleFast,
                 .handle_statusline = commandHandleStatusline,
@@ -559,27 +555,6 @@ pub fn Handlers(comptime App: type) type {
             }
         }
 
-        fn handleFeedback(app: *App) !void {
-            try app.flushBeforeBlockingExternalWork();
-            const opened = if (comptime @hasDecl(App, "urlOpener"))
-                app.urlOpener().open(app.alloc, feedback_runtime.url) catch false
-            else
-                false;
-            if (opened) {
-                try app.writeDomainNotice(.{
-                    .topic = "",
-                    .tone = .neutral,
-                    .body = "Opened https://fx.sh/feedback.",
-                }, true);
-                return;
-            }
-            try app.writeDomainNotice(.{
-                .topic = "",
-                .tone = .@"error",
-                .body = "Could not open https://fx.sh/feedback. Open it manually.",
-            }, true);
-        }
-
         fn handleTraceReport(app: *App) !void {
             const progress_entry_id = try app.appendReplaceableDomainNotice(.{
                 .topic = "",
@@ -707,19 +682,6 @@ pub fn Handlers(comptime App: type) type {
                     .topic = "auth",
                     .tone = .@"error",
                     .body = "logout is not available in this runtime",
-                }, true);
-            }
-        }
-
-        fn commandSetup(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            if (comptime @hasDecl(App, "openSetupHub")) {
-                try app.openSetupHub();
-            } else {
-                try app.writeDomainNotice(.{
-                    .topic = "setup",
-                    .tone = .@"error",
-                    .body = "setup is not available in this runtime",
                 }, true);
             }
         }
@@ -1935,11 +1897,6 @@ pub fn Handlers(comptime App: type) type {
             }, true);
         }
 
-        fn commandSubmitFeedback(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try handleFeedback(app);
-        }
-
         fn commandCreateTrace(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try handleTraceReport(app);
@@ -1982,33 +1939,6 @@ pub fn Handlers(comptime App: type) type {
                 .topic = "aliases",
                 .tone = .neutral,
                 .body = "Aliases are not yet configurable.",
-            }, true);
-        }
-
-        fn commandShowCredits(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            var snapshot = app.creditsProvider().fetch(app.alloc, .{
-                .credential = app.auth.apiKey(),
-                .credential_source = if (comptime @hasDecl(@TypeOf(app.auth), "credentialSource"))
-                    app.auth.credentialSource()
-                else
-                    null,
-                .tenant = app.auth.gatewayTeam(),
-            });
-            defer snapshot.deinit(app.alloc);
-            const text = snapshot.renderInteractiveBody(app.alloc) catch {
-                try app.writeDomainNotice(.{
-                    .topic = "credits",
-                    .tone = .@"error",
-                    .body = "Failed to render credits.",
-                }, true);
-                return;
-            };
-            defer app.alloc.free(text);
-            try app.writeDomainNotice(.{
-                .topic = "credits",
-                .tone = if (snapshot.err_message == null) .neutral else .@"error",
-                .body = text,
             }, true);
         }
 
@@ -2450,11 +2380,10 @@ fn writeAuthStateSummary(writer: *std.Io.Writer, app: anytype) !void {
 
     const auth_view = app.auth.view();
     try writer.print(
-        "auth: source={s} refreshable={s} gateway_team={s}\n",
+        "auth: source={s} refreshable={s}\n",
         .{
             auth_view.activeSourceLabel(),
             boolLabel(auth_view.refreshable),
-            auth_view.gatewayTeamStatus().label(),
         },
     );
 }
@@ -2659,7 +2588,7 @@ fn networkCallIsError(call: diagnostics.NetworkCall) bool {
 fn writeNetworkCallCompact(writer: *std.Io.Writer, call: diagnostics.NetworkCall) !void {
     try writeTraceTimestampUtc(writer, call.started_at_ms);
     try writer.print(" model={s}", .{call.model()});
-    if (call.kind != .gateway) try writer.print(" kind={s}", .{@tagName(call.kind)});
+    if (call.kind != .web_search) try writer.print(" kind={s}", .{@tagName(call.kind)});
     if (call.subagent_id != 0) try writer.print(" source=subagent#{d}", .{call.subagent_id}) else try writer.writeAll(" source=parent");
     if (call.errorName().len > 0) {
         try writer.print(" err={s}", .{call.errorName()});
@@ -3749,61 +3678,6 @@ fn parseOnOff(value: []const u8) ?bool {
 }
 
 const SurfaceOnlyApp = struct {};
-
-const CreditsCommandFakeApp = struct {
-    const FakeAuth = struct {
-        fn apiKey(_: *const FakeAuth) ?[]const u8 {
-            return "credential";
-        }
-
-        fn gatewayTeam(_: *const FakeAuth) ?[]const u8 {
-            return "tenant";
-        }
-    };
-
-    alloc: std.mem.Allocator,
-    auth: FakeAuth = .{},
-    calls: usize = 0,
-    saw_expected_input: bool = false,
-    notice_body: std.ArrayList(u8) = .empty,
-    notice_topic: ?[]const u8 = null,
-    notice_tone: ?types.NoticeTone = null,
-
-    fn deinit(self: *CreditsCommandFakeApp) void {
-        self.notice_body.deinit(self.alloc);
-    }
-
-    fn creditsProvider(self: *CreditsCommandFakeApp) gateway_provider.CreditsProvider {
-        return .{
-            .context = self,
-            .fetch_fn = fetchCredits,
-        };
-    }
-
-    fn fetchCredits(
-        raw: ?*anyopaque,
-        alloc: std.mem.Allocator,
-        input: gateway_provider.CreditsLookupInput,
-    ) output_contracts.CreditsSnapshot {
-        const self: *CreditsCommandFakeApp = @ptrCast(@alignCast(raw.?));
-        self.calls += 1;
-        self.saw_expected_input =
-            std.mem.eql(u8, input.credential orelse "", "credential") and
-            std.mem.eql(u8, input.tenant orelse "", "tenant");
-        return .{ .balance = alloc.dupe(u8, "10") catch null };
-    }
-
-    noinline fn writeDomainNotice(
-        self: *CreditsCommandFakeApp,
-        notice: types.SemanticNotice,
-        _: bool,
-    ) !void {
-        self.notice_topic = notice.topic;
-        self.notice_tone = notice.tone;
-        try self.notice_body.appendSlice(self.alloc, notice.body);
-    }
-};
-
 const McpCommandFakeApp = struct {
     const ReloadBehavior = enum {
         published_empty,
@@ -4200,13 +4074,13 @@ test "trace auth summary preserves missing and loaded status text" {
     defer missing.deinit();
     try writeAuthStateSummary(&missing.writer, &app);
     try std.testing.expectEqualStrings(
-        "auth: source=missing refreshable=false gateway_team=unknown\n",
+        "auth: source=missing refreshable=false\n",
         missing.written(),
     );
 
     var credential = credentials.Credential{
         .token = try alloc.dupe(u8, "token"),
-        .source = .fx_login,
+        .source = .chatgpt_subscription,
     };
     defer credential.deinit(alloc);
     _ = app.auth.adoptCredential(alloc, &credential);
@@ -4214,7 +4088,7 @@ test "trace auth summary preserves missing and loaded status text" {
     defer loaded.deinit();
     try writeAuthStateSummary(&loaded.writer, &app);
     try std.testing.expectEqualStrings(
-        "auth: source=fx login refreshable=true gateway_team=unset\n",
+        "auth: source=Codex subscription refreshable=true\n",
         loaded.written(),
     );
 }
@@ -4506,19 +4380,6 @@ test "app_commands exposes active handler API surface" {
     try std.testing.expectEqual(@as(usize, 1), handlers_info.params.len);
     try std.testing.expect(handlers_info.params[0].type.? == *SurfaceOnlyApp);
     try std.testing.expect(handlers_info.return_type.? == command_router.CommandHandlers);
-}
-
-test "credits command renders through the composed provider" {
-    var app = CreditsCommandFakeApp{ .alloc = std.testing.allocator };
-    defer app.deinit();
-
-    try Handlers(CreditsCommandFakeApp).commandShowCredits(@ptrCast(&app));
-
-    try std.testing.expectEqual(@as(usize, 1), app.calls);
-    try std.testing.expect(app.saw_expected_input);
-    try std.testing.expectEqualStrings("credits", app.notice_topic.?);
-    try std.testing.expectEqual(types.NoticeTone.neutral, app.notice_tone.?);
-    try std.testing.expectEqualStrings("balance=10", app.notice_body.items);
 }
 
 test "app_commands routes clear through carry-forward session reset" {

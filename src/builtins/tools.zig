@@ -408,24 +408,6 @@ pub const web_fetch = ToolSpec{
     .irreversible_fn = web_fetch_impl.isIrreversible,
 };
 
-fn writeWebSearchGatewayAdvertisement(
-    alloc: Allocator,
-    writer: *std.Io.Writer,
-) tool_dispatch.ProviderAdvertisementError!void {
-    const policy = builtin_gateway.default_web_search_policy;
-    const provider_tools = try builtin_gateway.providerToolsJson(alloc, .{
-        .backend = try builtin_gateway.selectedWebSearchBackend(),
-        .max_results = policy.max_results,
-        .max_output_tokens = policy.max_output_tokens,
-        .max_output_chars = policy.max_output_chars,
-    });
-    defer alloc.free(provider_tools);
-    if (provider_tools.len < 2 or provider_tools[0] != '[' or provider_tools[provider_tools.len - 1] != ']') {
-        return error.InvalidGatewayAdvertisement;
-    }
-    try writer.writeAll(provider_tools[1 .. provider_tools.len - 1]);
-}
-
 pub const web_search = ToolSpec{
     .name = "web_search",
     .description = web_search_description,
@@ -442,8 +424,6 @@ pub const web_search = ToolSpec{
             .additional_properties = false,
         },
     },
-    .write_provider_advertisement_fn = writeWebSearchGatewayAdvertisement,
-    .provider_executed = true,
     .executor_kind = .web_search,
     .activity_kind = .read,
     .requires_approval = false,
@@ -1307,20 +1287,10 @@ test "built-in web_search is registered in default production tools" {
     try std.testing.expect(lookup("web_search") != null);
 }
 
-test "built-in web_search owns its Gateway provider advertisement" {
+test "built-in web_search does not advertise a Gateway provider" {
     const registered = registry.lookup("web_search") orelse return error.TestExpectedEqual;
-    const write_advertisement = registered.write_provider_advertisement_fn orelse return error.TestExpectedEqual;
-
-    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
-    try write_advertisement(std.testing.allocator, &out.writer);
-    const json = try out.toOwnedSlice();
-    defer std.testing.allocator.free(json);
-
-    try std.testing.expectEqualStrings(
-        "{\"type\":\"provider\",\"id\":\"gateway.exa_search\",\"name\":\"exa_search\",\"args\":{\"numResults\":10,\"contents\":{\"highlights\":true}}}",
-        json,
-    );
+    try std.testing.expect(registered.write_provider_advertisement_fn == null);
+    try std.testing.expect(!registered.provider_executed);
 }
 
 fn expectWebSearchSchemaContains(needle: []const u8) !void {

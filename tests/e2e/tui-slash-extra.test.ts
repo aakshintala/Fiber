@@ -10,22 +10,18 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  cleanupIsolatedTestHome,
-  createIsolatedTestHome,
-  HAS_API_KEY,
-} from "../evals/eval-helpers";
 import { readTrace } from "./tui-render-assertions";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
+  codexFinalText,
+  fakeCodexEnv,
   hasEmptyComposer,
-  startDynamicFakeGateway,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
+  writeSeededChatGptLogin,
 } from "./tmux-helpers";
 
-const SKIP = !tmuxAvailable() || !HAS_API_KEY;
+const SKIP = !tmuxAvailable();
 const TIMEOUT = 30_000;
 const LONG_TIMEOUT = 120_000;
 const TRACE_SCOPES = "agent,worker,gateway,tool,permission,history,interrupt,prompt";
@@ -91,87 +87,6 @@ describe.skipIf(!tmuxAvailable())("tui: skills command recovery", () => {
   );
 });
 
-function startFakeCreditsGateway() {
-  const requests: Array<{
-    method: string;
-    path: string;
-    authorizationMatchesExpected: boolean;
-  }> = [];
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(request) {
-      requests.push({
-        method: request.method,
-        path: new URL(request.url).pathname,
-        authorizationMatchesExpected:
-          request.headers.get("authorization") ===
-          "Bearer credits-fake-key",
-      });
-      return Response.json(
-        { error: { code: "credit_card_required", message: "Buy credits to use AI Gateway." } },
-        { status: 403 },
-      );
-    },
-  });
-  return {
-    url: `http://127.0.0.1:${server.port}/v1/credits`,
-    requests,
-    stop() {
-      server.stop(true);
-    },
-  };
-}
-
-describe.skipIf(!tmuxAvailable())("tui: credits slash command", () => {
-  test(
-    "/credits shows actionable Gateway denial and returns to prompt",
-    async () => {
-      const gateway = startFakeCreditsGateway();
-      const home = createIsolatedTestHome();
-      try {
-        session = await TmuxSession.create({
-          env: {
-            HOME: home,
-            AI_GATEWAY_API_KEY: "credits-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_E2E_GATEWAY_CREDITS_URL: gateway.url,
-          },
-          width: 120,
-          height: 40,
-        });
-        await session.waitForComposer(10_000);
-
-        await session.sendText("/credits");
-        await session.waitForText("Buy credits to use AI Gateway.", 10_000);
-        await session.waitForComposer(10_000);
-
-        const scrollback = await session.captureFullScrollback();
-        expect(gateway.requests).toEqual([{
-          method: "GET",
-          path: "/v1/credits",
-          authorizationMatchesExpected: true,
-        }]);
-        expect(scrollback).toContain("API access denied");
-        expect(scrollback).toContain("HTTP 403");
-        expect(scrollback).toContain("Buy credits to use AI Gateway.");
-        expect(hasEmptyComposer(scrollback)).toBe(true);
-      } finally {
-        gateway.stop();
-        try {
-          if (session) {
-            await session.kill();
-            session = null;
-          }
-        } finally {
-          cleanupIsolatedTestHome(home);
-        }
-      }
-    },
-    TIMEOUT,
-  );
-});
-
 describe.skipIf(!tmuxAvailable() || CLIPBOARD_PROGRAM === null)("tui: clipboard host", () => {
   test(
     "/copy sends exact reply bytes to the host clipboard and reports process failure",
@@ -190,19 +105,14 @@ describe.skipIf(!tmuxAvailable() || CLIPBOARD_PROGRAM === null)("tui: clipboard 
       chmodSync(clipboardPath, 0o755);
 
       const reply = "clipboard host sentinel\nsecond line";
-      const gateway = startDynamicFakeGateway(() => fakeGatewayFinalText(reply));
+      const codex = startFakeCodex({ route: () => codexFinalText(reply) });
       try {
+        writeSeededChatGptLogin(homeDir, codex.accessToken);
         session = await TmuxSession.create({
           cwd: workDir,
           stderrPath,
           env: {
-            HOME: homeDir,
-            AI_GATEWAY_API_KEY: "clipboard-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
+            ...fakeCodexEnv(homeDir, codex),
             FX_TEST_CLIPBOARD_CAPTURE: capturePath,
             PATH: `${binDir}:${process.env.PATH ?? ""}`,
           },
@@ -226,7 +136,7 @@ describe.skipIf(!tmuxAvailable() || CLIPBOARD_PROGRAM === null)("tui: clipboard 
           await session.kill();
           session = null;
         }
-        gateway.stop();
+        codex.stop();
         rmSync(workDir, { recursive: true, force: true });
       }
     },
@@ -242,25 +152,22 @@ describe.skipIf(!tmuxAvailable())("tui: active session transitions", () => {
       const homeDir = mkdtempSync(join(tmpdir(), "fx-active-clear-home-"));
       const stderrPath = join(workDir, "stderr.log");
       let requestCount = 0;
-      const gateway = startDynamicFakeGateway(() => {
-        requestCount += 1;
-        if (requestCount > 1) return fakeGatewayFinalText("NATIVE_FOLLOWUP_OK");
-        return new Promise<Response>(() => {});
+      const codex = startFakeCodex({
+        route: () => {
+          requestCount += 1;
+          if (requestCount > 1) return codexFinalText("NATIVE_FOLLOWUP_OK");
+          return new Promise<string>(() => {});
+        },
       });
 
       try {
+        writeSeededChatGptLogin(homeDir, codex.accessToken);
         session = await TmuxSession.create({
           cwd: workDir,
           stderrPath,
-          env: {
-            HOME: homeDir,
-            AI_GATEWAY_API_KEY: "active-clear-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
-          },
+          env: fakeCodexEnv(homeDir, codex, {
+            FX_AUTO_UPGRADE: "0",
+          }),
           width: 120,
           height: 40,
         });
@@ -273,9 +180,9 @@ describe.skipIf(!tmuxAvailable())("tui: active session transitions", () => {
 
         await session.sendText("complete the follow-up");
         await session.waitForText("NATIVE_FOLLOWUP_OK", 10_000);
-        expect(gateway.requests).toHaveLength(2);
-        expect(gateway.requests[1].body).toContain("complete the follow-up");
-        expect(gateway.requests[1].body).not.toContain("start an active turn");
+        expect(codex.requests).toHaveLength(2);
+        expect(codex.requests[1].body).toContain("complete the follow-up");
+        expect(codex.requests[1].body).not.toContain("start an active turn");
         expect(session.isAlive()).toBe(true);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
@@ -283,7 +190,7 @@ describe.skipIf(!tmuxAvailable())("tui: active session transitions", () => {
           await session.kill();
           session = null;
         }
-        gateway.stop();
+        codex.stop();
         rmSync(workDir, { recursive: true, force: true });
         rmSync(homeDir, { recursive: true, force: true });
       }
@@ -317,24 +224,19 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         join(homeDir, ".fx", "settings.json"),
         JSON.stringify({ permission: { ask_user_question: "deny" } }),
       );
-      const gateway = startDynamicFakeGateway(() =>
-        fakeGatewayFinalText("pineapple fixture response")
-      );
+      const codex = startFakeCodex({
+        route: () => codexFinalText("pineapple fixture response"),
+      });
 
       try {
+        writeSeededChatGptLogin(homeDir, codex.accessToken);
         session = await TmuxSession.create({
           cwd: workDir,
-          env: {
-            HOME: homeDir,
-            AI_GATEWAY_API_KEY: "clear-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
+          env: fakeCodexEnv(homeDir, codex, {
+            FX_AUTO_UPGRADE: "0",
             FX_TRACE_SCOPES: TRACE_SCOPES,
             FX_TRACE_LOG: tracePath,
-          },
+          }),
           width: 120,
           height: 40,
         });
@@ -364,13 +266,13 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         expect(postClearEnd).toContain("history_turns=0");
         expect(postClearEnd).toContain("added_gateway_messages=0");
         expect(postClearEnd).toContain("projected_message_roles=none");
-        expect(gateway.requests).toHaveLength(2);
+        expect(codex.requests).toHaveLength(2);
       } finally {
         if (session) {
           await session.kill();
           session = null;
         }
-        gateway.stop();
+        codex.stop();
         rmSync(workDir, { recursive: true, force: true });
         rmSync(homeDir, { recursive: true, force: true });
       }
@@ -425,17 +327,6 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         5_000,
       );
       expect(aliasPane).toContain("[30 days]");
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "/credits shows credit info",
-    async () => {
-      session = await launchAndWait();
-      await session.sendText("/credits");
-      const pane = await session.waitForText(/credit|balance|error|failed/i, 10_000);
-      expect(pane.length).toBeGreaterThan(0);
     },
     TIMEOUT,
   );
@@ -567,7 +458,10 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         const toolPreview = await session.waitForText("untrusted metadata", 10_000);
         expect(toolPreview).toContain("mcp_fixture_echo");
         await session.sendKeys("Escape");
-        await session.waitForText("mcp_fixture_echo", 5_000);
+        await session.waitForPane(
+          (pane) => pane.includes("[Tools]") && !pane.includes("untrusted metadata"),
+          5_000,
+        );
 
         await session.sendKeys("Right");
         const resources = await session.waitForText("[Resources]", 10_000);
