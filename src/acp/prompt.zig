@@ -5,6 +5,7 @@ const auth_runtime = @import("../core/auth/auth_runtime.zig");
 const credentials = @import("../core/auth/credentials.zig");
 const model_provider = @import("../core/config/model_provider.zig");
 const host = @import("../core/hosts/host.zig");
+const host_target = @import("../core/hosts/target.zig");
 const io_mod = @import("../core/shared/io.zig");
 const image_attachments = @import("../core/images/image_attachments.zig");
 const jsonrpc = @import("jsonrpc.zig");
@@ -397,14 +398,16 @@ const AcpContext = struct {
                 .session_id = session.session_id,
             },
         };
-        if (session.mcp != null) {
-            tc.mcp_ctx = @ptrCast(self);
-            tc.mcp_has_tool = mcpHasTool;
-            tc.mcp_validate_tool = mcpValidateTool;
-            tc.mcp_call_tool = mcpCallTool;
-            tc.mcp_search_tools = mcpSearchTools;
-            tc.mcp_tool_schema = mcpToolSchemaJson;
-            tc.mcp_call_feature = mcpCallFeature;
+        if (comptime !host_target.is_wasm) {
+            if (session.mcp != null) {
+                tc.mcp_ctx = @ptrCast(self);
+                tc.mcp_has_tool = mcpHasTool;
+                tc.mcp_validate_tool = mcpValidateTool;
+                tc.mcp_call_tool = mcpCallTool;
+                tc.mcp_search_tools = mcpSearchTools;
+                tc.mcp_tool_schema = mcpToolSchemaJson;
+                tc.mcp_call_feature = mcpCallFeature;
+            }
         }
         return tc;
     }
@@ -566,6 +569,7 @@ pub fn handlePrompt(
         return promptInputFailure(err);
     defer prompt_input.deinit(alloc);
     if (prompt_input.pending_images.len > 0) {
+        if (comptime host_target.is_wasm) return promptInputFailure(error.UnsupportedPromptImage);
         var temporary_snapshot_dir: ?[]u8 = null;
         defer if (temporary_snapshot_dir) |path| alloc.free(path);
         const snapshot_dir = try session_store.imageSnapshotStorageDir(
@@ -1208,6 +1212,7 @@ fn agentRuntimeDeps(ctx: *AcpContext) agent_runtime.AgentRuntimeDeps {
     return .{
         .ctx = @ptrCast(ctx),
         .agent_stream_provider = server.streamProviderFor(ctx.state, ctx.state.active_session.?.provider),
+        .flush_assistant_stream_per_content_chunk = host_target.is_wasm,
         .tool_registry = ctx.toolRegistry(),
         .context_registry = ctx.state.cfg.context_registry,
         .context_enabled = ctx.state.context_enabled,
@@ -1621,6 +1626,7 @@ fn describeToolActionDenied(raw_ctx: *anyopaque, arena: Allocator, call: ToolCal
 }
 
 fn lifecycleDynamicMcpToolAvailable(ctx: *AcpContext, name: []const u8, advertised_dynamic_tool_names: []const []const u8) bool {
+    if (comptime host_target.is_wasm) return false;
     return dynamicMcpToolAvailable(ctx.toolRegistry(), name, advertised_dynamic_tool_names, @ptrCast(ctx), mcpHasTool, .unrestricted);
 }
 
@@ -1669,7 +1675,10 @@ fn executeToolCall(
     tool_ctx.session_grants = request.session_grants;
     tool_ctx.advertised_dynamic_tool_names = request.advertised_dynamic_tool_names;
     tool_ctx.max_tool_result_bytes = request.max_tool_result_bytes;
-    const result = tool_runtime.executeToolCallAuthorized(tool_ctx, request) catch |err| {
+    const result = (if (comptime host_target.is_wasm)
+        tool_runtime.executeHostToolCallAuthorized(tool_ctx, request)
+    else
+        tool_runtime.executeToolCallAuthorized(tool_ctx, request)) catch |err| {
         const err_text = try formatToolExecutionError(
             raw_ctx,
             request.result_allocator,
@@ -1858,6 +1867,10 @@ fn persistAcpHistoryTurn(
     defer session.session_write_mutex.unlock(io_mod.getIo());
     try session.session_rt.appendHistoryEntry(alloc, turn);
     if (current_prompt_input) |prompt_input| prompt_input.retainImageSnapshots();
+    if (comptime host_target.is_wasm) {
+        if (session.wasm_state != null) try sessions.commitWasmSessionLocked(alloc, session);
+        return;
+    }
     const writable = if (session.writable) |*value| value else return;
     try subagent_resume_admission.retainExternalRootUserTurn(
         session.store,

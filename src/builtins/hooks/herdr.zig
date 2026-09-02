@@ -6,6 +6,7 @@
 const std = @import("std");
 const io_mod = @import("../../core/shared/io.zig");
 const debug_trace = @import("../../core/shared/debug_trace.zig");
+const host_target = @import("../../core/hosts/target.zig");
 const jsonrpc = @import("../../acp/jsonrpc.zig");
 
 pub const State = enum { idle, working, blocked };
@@ -129,6 +130,7 @@ pub const Client = struct {
     }
 
     fn sendAll(self: *Client, requests: []const Request) void {
+        if (comptime host_target.is_wasm) return;
         if (!self.enabled) return;
         const io = io_mod.getIo();
         self.mutex.lockUncancelable(io);

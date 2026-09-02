@@ -3,6 +3,7 @@ const managed_execution = @import("../core/execution/managed_execution.zig");
 const acp_runner = @import("../core/cli/acp_runner.zig");
 const config_runtime = @import("../core/config/config_runtime.zig");
 const io_mod = @import("../core/shared/io.zig");
+const host_target = @import("../core/hosts/target.zig");
 const jsonrpc = @import("jsonrpc.zig");
 const acp_types = @import("types.zig");
 const sessions = @import("sessions.zig");
@@ -215,7 +216,7 @@ const ActivePrompt = struct {
     /// Mid-turn mode changes apply to the next prompt, never the running one.
     mode: []const u8,
     permission_mode: types.PermissionMode,
-    thread: std.Thread = undefined,
+    thread: if (host_target.is_wasm) void else std.Thread = if (host_target.is_wasm) {} else undefined,
     reapable: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 };
 
@@ -336,8 +337,10 @@ fn adoptServerCredential(state: *ServerState, credential: *credentials.Credentia
         active.api_key = state.api_key;
         active.credential_source = state.credential_source;
         active.account_id = state.account_id;
-        if (state.credential_source == .chatgpt_subscription or state.credential_source == .grok_subscription) {
-            active.session_rt.usage.clearReconciliationCredential();
+        if (comptime !host_target.is_wasm) {
+            if (state.credential_source == .chatgpt_subscription or state.credential_source == .grok_subscription) {
+                active.session_rt.usage.clearReconciliationCredential();
+            }
         }
     }
 }
@@ -439,40 +442,44 @@ pub fn releaseActiveSession(state: *ServerState) !void {
     clearPendingLegacyUrls(state);
     const active = if (state.active_session) |*session| session else return;
     disableSubagentHost(state);
-    active.session_rt.usage.cancelReconciliation();
-    active.session_rt.usage.finishProfilePublicationsBeforeShutdown();
-    flushActiveSessionUsage(state) catch |err| {
-        if (state.cfg.provider_set.select(active.provider).deferred_usage == null) {
-            active.session_rt.usage.clearReconciliationCredential();
-        } else if (active.credential_source) |source| {
-            active.session_rt.usage.replaceProviderReconciliationCredential(
-                state.alloc,
-                active.provider,
-                source,
-                active.account_id,
-                state.api_key,
-            );
-        } else {
-            active.session_rt.usage.clearReconciliationCredential();
-        }
-        return err;
-    };
-    active.session_rt.usage.configurePublicationSink(null);
-    active.session_rt.usage.configureCheckpointSink(null);
+    if (comptime !host_target.is_wasm) {
+        active.session_rt.usage.cancelReconciliation();
+        active.session_rt.usage.finishProfilePublicationsBeforeShutdown();
+        flushActiveSessionUsage(state) catch |err| {
+            if (state.cfg.provider_set.select(active.provider).deferred_usage == null) {
+                active.session_rt.usage.clearReconciliationCredential();
+            } else if (active.credential_source) |source| {
+                active.session_rt.usage.replaceProviderReconciliationCredential(
+                    state.alloc,
+                    active.provider,
+                    source,
+                    active.account_id,
+                    state.api_key,
+                );
+            } else {
+                active.session_rt.usage.clearReconciliationCredential();
+            }
+            return err;
+        };
+        active.session_rt.usage.configurePublicationSink(null);
+        active.session_rt.usage.configureCheckpointSink(null);
+    }
     destroyActiveSession(state);
 }
 
 fn closeActiveSession(state: *ServerState) !void {
     const active = if (state.active_session) |*session| session else return;
     disableSubagentHost(state);
-    active.session_rt.usage.cancelReconciliation();
-    active.session_rt.usage.finishProfilePublicationsBeforeShutdown();
-    flushActiveSessionUsage(state) catch |err| {
-        destroyActiveSession(state);
-        return err;
-    };
-    active.session_rt.usage.configurePublicationSink(null);
-    active.session_rt.usage.configureCheckpointSink(null);
+    if (comptime !host_target.is_wasm) {
+        active.session_rt.usage.cancelReconciliation();
+        active.session_rt.usage.finishProfilePublicationsBeforeShutdown();
+        flushActiveSessionUsage(state) catch |err| {
+            destroyActiveSession(state);
+            return err;
+        };
+        active.session_rt.usage.configurePublicationSink(null);
+        active.session_rt.usage.configureCheckpointSink(null);
+    }
     destroyActiveSession(state);
 }
 
@@ -481,10 +488,12 @@ fn destroyActiveSession(state: *ServerState) void {
     state.alloc.free(active.session_id);
     state.alloc.free(active.model);
     types.freePermissionGrantSlice(state.alloc, active.session_grants);
-    if (active.mcp) |runtime| {
-        runtime.retireAndWait();
-        runtime.deinit();
-        state.alloc.destroy(runtime);
+    if (comptime !host_target.is_wasm) {
+        if (active.mcp) |runtime| {
+            runtime.retireAndWait();
+            runtime.deinit();
+            state.alloc.destroy(runtime);
+        }
     }
     active.session_rt.deinit(state.alloc);
     if (active.writable) |*writable| writable.deinit(state.alloc);
@@ -1210,8 +1219,14 @@ fn startPrompt(state: *ServerState, alloc: Allocator, msg: *const jsonrpc.Messag
     errdefer jsonrpc.freeMessage(alloc, &active.msg);
 
     session.cancel_flag.store(false, .seq_cst);
-    active.thread = try std.Thread.spawn(.{}, promptWorkerMain, .{active});
-    state.active_prompt = active;
+    if (comptime host_target.is_wasm) {
+        promptWorkerMain(active);
+        jsonrpc.freeMessage(active.alloc, &active.msg);
+        active.alloc.destroy(active);
+    } else {
+        active.thread = try std.Thread.spawn(.{}, promptWorkerMain, .{active});
+        state.active_prompt = active;
+    }
 }
 
 fn parsedSessionTargetDecision(state: *const ServerState, root: std.json.Value) SessionTargetDecision {
@@ -1330,13 +1345,15 @@ fn publishPromptOutcome(active: *ActivePrompt, outcome: prompt_handler.TerminalO
 }
 
 fn reapActivePrompt(state: *ServerState, wait: bool) void {
-    const active = state.active_prompt orelse return;
-    if (!wait and !active.reapable.load(.seq_cst)) return;
-    prompt_test_controls.noteReapBeforeJoin();
-    active.thread.join();
-    jsonrpc.freeMessage(active.alloc, &active.msg);
-    active.alloc.destroy(active);
-    state.active_prompt = null;
+    if (!host_target.is_wasm) {
+        const active = state.active_prompt orelse return;
+        if (!wait and !active.reapable.load(.seq_cst)) return;
+        prompt_test_controls.noteReapBeforeJoin();
+        active.thread.join();
+        jsonrpc.freeMessage(active.alloc, &active.msg);
+        active.alloc.destroy(active);
+        state.active_prompt = null;
+    }
 }
 
 fn cloneMessage(alloc: Allocator, msg: *const jsonrpc.Message) !jsonrpc.Message {
@@ -1581,7 +1598,7 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
 
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
-    try acp_types.writeInitializeResponse(&out.writer, true);
+    try acp_types.writeInitializeResponse(&out.writer, !host_target.is_wasm);
     try state.writer.writeResponse(alloc, msg.id, out.writer.buffered());
 }
 
@@ -1686,30 +1703,32 @@ fn handleSetConfigOption(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Me
                 .code = ErrorCode.invalid_params,
                 .message = "Invalid session model",
             });
-        if (session.provider != .gateway) {
-            var model_available = false;
-            if (state.capability_resolver.catalogEntries()) |entries| {
-                for (entries) |entry| {
-                    if (std.mem.eql(u8, entry.id, value)) {
-                        model_available = true;
-                        break;
+        if (comptime !host_target.is_wasm) {
+            if (session.provider != .gateway) {
+                var model_available = false;
+                if (state.capability_resolver.catalogEntries()) |entries| {
+                    for (entries) |entry| {
+                        if (std.mem.eql(u8, entry.id, value)) {
+                            model_available = true;
+                            break;
+                        }
                     }
                 }
-            }
-            if (!model_available) {
-                return state.writer.writeError(alloc, msg.id, .{
-                    .code = ErrorCode.invalid_params,
-                    .message = "Model is not available for the active provider",
-                });
-            }
-            if (!try selectCredentialForProvider(state, session.provider)) {
-                return state.writer.writeError(alloc, msg.id, .{
-                    .code = ErrorCode.invalid_request,
-                    .message = if (session.provider == .codex)
-                        credentials.missing_chatgpt_credential_message
-                    else
-                        credentials.missing_grok_credential_message,
-                });
+                if (!model_available) {
+                    return state.writer.writeError(alloc, msg.id, .{
+                        .code = ErrorCode.invalid_params,
+                        .message = "Model is not available for the active provider",
+                    });
+                }
+                if (!try selectCredentialForProvider(state, session.provider)) {
+                    return state.writer.writeError(alloc, msg.id, .{
+                        .code = ErrorCode.invalid_request,
+                        .message = if (session.provider == .codex)
+                            credentials.missing_chatgpt_credential_message
+                        else
+                            credentials.missing_grok_credential_message,
+                    });
+                }
             }
         }
         commitActiveSessionModel(
@@ -1858,11 +1877,13 @@ fn handleSetConfigOption(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Me
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.writeAll("{\"configOptions\":[");
-    try sessions.writeProviderConfigOption(
-        &out.writer,
-        if (state.active_session) |session| session.provider else state.provider,
-    );
-    try out.writer.writeAll(",");
+    if (comptime !host_target.is_wasm) {
+        try sessions.writeProviderConfigOption(
+            &out.writer,
+            if (state.active_session) |session| session.provider else state.provider,
+        );
+        try out.writer.writeAll(",");
+    }
     try sessions.writeModelConfigOption(
         &out.writer,
         current_model,

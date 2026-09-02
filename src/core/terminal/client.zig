@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const host_target = @import("../hosts/target.zig");
 const contracts = @import("contracts.zig");
 const protocol = @import("protocol.zig");
 const host = @import("host.zig");
@@ -214,6 +215,7 @@ pub const Runtime = struct {
         correlation_id: contracts.CorrelationId,
         request: contracts.ActionRequest,
     ) AdmissionError!void {
+        if (comptime host_target.is_wasm) return error.TerminalUnavailable;
         try correlation_id.validate();
         var intent = Intent{
             .correlation_id = correlation_id,

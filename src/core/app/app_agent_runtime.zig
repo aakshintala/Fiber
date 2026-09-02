@@ -4,7 +4,7 @@ const agent_stream_provider = @import("../agent/stream_provider.zig");
 const command_admission = @import("../permissions/command_admission.zig");
 const permission_auto_classifier = @import("../permissions/auto_classifier.zig");
 const app_callbacks = @import("app_callbacks.zig");
-
+const runtime_profile = @import("../hosts/runtime_profile.zig");
 const host = @import("../hosts/host.zig");
 const app_permission_runtime = @import("app_permission_runtime.zig");
 const app_session_runtime = @import("app_session_runtime.zig");
@@ -260,12 +260,12 @@ pub fn Runtime(comptime App: type) type {
                 .permission_reviewer_provider = if (comptime @hasDecl(App, "permissionReviewerProvider")) app.permissionReviewerProvider() else null,
                 .tracker = &app.change_tracker,
                 .mcp_ctx = @ptrCast(app),
-                .mcp_has_tool = mcpHasTool,
-                .mcp_validate_tool = validateMcpTool,
-                .mcp_call_tool = callMcpTool,
-                .mcp_search_tools = searchMcpTools,
-                .mcp_tool_schema = mcpToolSchemaJson,
-                .mcp_call_feature = callMcpFeature,
+                .mcp_has_tool = if (comptime runtime_profile.allows(App, .mcp)) mcpHasTool else null,
+                .mcp_validate_tool = if (comptime runtime_profile.allows(App, .mcp)) validateMcpTool else null,
+                .mcp_call_tool = if (comptime runtime_profile.allows(App, .mcp)) callMcpTool else null,
+                .mcp_search_tools = if (comptime runtime_profile.allows(App, .mcp)) searchMcpTools else null,
+                .mcp_tool_schema = if (comptime runtime_profile.allows(App, .mcp)) mcpToolSchemaJson else null,
+                .mcp_call_feature = if (comptime runtime_profile.allows(App, .mcp)) callMcpFeature else null,
                 .mcp_progress_ctx = @ptrCast(app),
                 .on_mcp_progress = app_callbacks.Bindings(App).onMcpProgress,
                 .lifecycle_view = app.lifecycle_view,
@@ -296,7 +296,8 @@ pub fn Runtime(comptime App: type) type {
                 ctx.web_search_progress_ctx = @ptrCast(app);
                 ctx.on_web_search_progress = app_callbacks.Bindings(App).onWebSearchProgress;
             }
-            if (comptime @hasDecl(@TypeOf(app.worker), "requestMcpElicitationAnswerBlocking") and
+            if (comptime runtime_profile.allows(App, .mcp) and
+                @hasDecl(@TypeOf(app.worker), "requestMcpElicitationAnswerBlocking") and
                 @hasDecl(App, "urlOpener"))
             {
                 ctx.mcp_input_responder = .{

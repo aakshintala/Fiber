@@ -1,4 +1,6 @@
 const std = @import("std");
+const host_target = @import("../hosts/target.zig");
+const atomic_value = @import("atomic_value.zig");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const debug_trace = @import("../shared/debug_trace.zig");
@@ -98,22 +100,22 @@ pub const State = struct {
     notification_passthrough: ?NotificationPassthrough = null,
     resource_subscriptions: [][]u8 = &.{},
     connection_generation: u64,
-    active_request_id: std.atomic.Value(u64),
-    active_generation: std.atomic.Value(u64),
+    active_request_id: atomic_value.Value(u64),
+    active_generation: atomic_value.Value(u64),
     acknowledged: std.atomic.Value(bool) = .init(false),
     unsupported_filter: std.atomic.Value(bool) = .init(false),
-    invalidation_generation: std.atomic.Value(u64) = .init(0),
-    handled_invalidation_generation: std.atomic.Value(u64) = .init(0),
-    resources_invalidation_generation: std.atomic.Value(u64) = .init(0),
-    handled_resources_invalidation_generation: std.atomic.Value(u64) = .init(0),
-    resource_update_generation: std.atomic.Value(u64) = .init(0),
-    handled_resource_update_generation: std.atomic.Value(u64) = .init(0),
-    prompts_invalidation_generation: std.atomic.Value(u64) = .init(0),
-    handled_prompts_invalidation_generation: std.atomic.Value(u64) = .init(0),
+    invalidation_generation: atomic_value.Value(u64) = .init(0),
+    handled_invalidation_generation: atomic_value.Value(u64) = .init(0),
+    resources_invalidation_generation: atomic_value.Value(u64) = .init(0),
+    handled_resources_invalidation_generation: atomic_value.Value(u64) = .init(0),
+    resource_update_generation: atomic_value.Value(u64) = .init(0),
+    handled_resource_update_generation: atomic_value.Value(u64) = .init(0),
+    prompts_invalidation_generation: atomic_value.Value(u64) = .init(0),
+    handled_prompts_invalidation_generation: atomic_value.Value(u64) = .init(0),
     commit_lock: std.Io.Mutex = .init,
     cancel_flag: std.atomic.Value(bool) = .init(false),
-    notifications_seen: std.atomic.Value(u64) = .init(0),
-    notifications_coalesced: std.atomic.Value(u64) = .init(0),
+    notifications_seen: atomic_value.Value(u64) = .init(0),
+    notifications_coalesced: atomic_value.Value(u64) = .init(0),
     listener_finished: std.atomic.Value(bool) = .init(false),
     finish_reason: std.atomic.Value(FinishReason) = .init(.running),
     startup_readiness: stdio_dispatcher.RequestReadiness = .{},
@@ -132,6 +134,7 @@ pub const State = struct {
         startup_deadline: ?std.Io.Clock.Timestamp,
         startup_cancel_flag: ?*std.atomic.Value(bool),
     ) !*State {
+        if (comptime host_target.is_wasm) return error.McpTransportUnavailable;
         return createStdioCommon(
             owner_allocator,
             dispatcher,
@@ -154,6 +157,7 @@ pub const State = struct {
         filters: Filters,
         notification_passthrough: NotificationPassthrough,
     ) !*State {
+        if (comptime host_target.is_wasm) return error.McpTransportUnavailable;
         return createStdioCommon(
             owner_allocator,
             dispatcher,
@@ -231,6 +235,7 @@ pub const State = struct {
         subscription_generation: u64,
         filters: Filters,
     ) !*State {
+        if (comptime host_target.is_wasm) return error.McpTransportUnavailable;
         const self = try allocateHttpState(
             owner_allocator,
             server_name,
@@ -284,6 +289,7 @@ pub const State = struct {
         filters: Filters,
         notification_passthrough: ?NotificationPassthrough,
     ) !*State {
+        if (comptime host_target.is_wasm) return error.McpTransportUnavailable;
         const self = try owner_allocator.create(State);
         errdefer owner_allocator.destroy(self);
         self.* = .{
@@ -312,6 +318,7 @@ pub const State = struct {
         subscription_generation: u64,
         filters: Filters,
     ) !*State {
+        if (comptime host_target.is_wasm) return error.McpTransportUnavailable;
         const self = try owner_allocator.create(State);
         errdefer owner_allocator.destroy(self);
         self.* = .{
@@ -1075,7 +1082,7 @@ fn waitForRetry(self: *State, delay_ms: u64) bool {
     return !self.cancel_flag.load(.acquire);
 }
 
-fn saturatingIncrement(value: *std.atomic.Value(u64)) void {
+fn saturatingIncrement(value: *atomic_value.Value(u64)) void {
     var current = value.load(.monotonic);
     while (current != std.math.maxInt(u64)) {
         const result = value.cmpxchgWeak(current, current + 1, .monotonic, .monotonic);

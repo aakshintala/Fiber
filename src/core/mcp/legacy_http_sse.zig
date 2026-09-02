@@ -1,4 +1,5 @@
 const std = @import("std");
+const host_target = @import("../hosts/target.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 const legacy_sse = @import("legacy_sse.zig");
@@ -90,6 +91,7 @@ pub const Client = struct {
         control: Control,
         auth_challenge_out: *?[]u8,
     ) !*Client {
+        if (comptime host_target.is_wasm) return error.McpTransportUnavailable;
         auth_challenge_out.* = null;
         try streamable_http.validateEndpoint(discovery_url);
         try streamable_http.validateStaticHeaders(static_headers);

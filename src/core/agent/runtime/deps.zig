@@ -168,6 +168,7 @@ pub const AgentRuntimeDeps = struct {
     ctx: *anyopaque,
     agent_stream_provider: agent_stream_provider.Provider = agent_stream_provider.unavailable_provider,
     flush_assistant_stream_per_content_chunk: bool = false,
+    cooperative_transport_pulse: ?agent_stream_provider.CooperativePulse = null,
     tool_registry: tool_dispatch.Registry = .{},
     context_registry: ?context_contract.Registry = null,
     context_enabled: bool = false,

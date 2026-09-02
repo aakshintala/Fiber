@@ -20,6 +20,7 @@ const config_runtime = @import("../core/config/config_runtime.zig");
 const model_catalog = @import("../core/gateway/model_catalog.zig");
 const provider_set = @import("../core/gateway/provider_set.zig");
 const host = @import("../core/hosts/host.zig");
+const host_target = @import("../core/hosts/target.zig");
 const image_attachments = @import("../core/images/image_attachments.zig");
 const credentials = @import("../core/auth/credentials.zig");
 const model_provider = @import("../core/config/model_provider.zig");
@@ -165,8 +166,10 @@ fn writeNewSessionResponse(
     try out.writer.writeAll("{\"sessionId\":");
     try writeJsonStr(session_id, &out.writer);
     try out.writer.writeAll(",\"configOptions\":[");
-    try writeProviderConfigOption(&out.writer, state.active_session.?.provider);
-    try out.writer.writeAll(",");
+    if (comptime !host_target.is_wasm) {
+        try writeProviderConfigOption(&out.writer, state.active_session.?.provider);
+        try out.writer.writeAll(",");
+    }
     try writeModelConfigOption(
         &out.writer,
         state.active_session.?.model,
@@ -578,8 +581,10 @@ fn writeLoadSessionResponse(
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.writeAll("{\"configOptions\":[");
-    try writeProviderConfigOption(&out.writer, state.active_session.?.provider);
-    try out.writer.writeAll(",");
+    if (comptime !host_target.is_wasm) {
+        try writeProviderConfigOption(&out.writer, state.active_session.?.provider);
+        try out.writer.writeAll(",");
+    }
     try writeModelConfigOption(
         &out.writer,
         model,
@@ -1155,7 +1160,10 @@ pub fn writeProviderConfigOption(
 ) !void {
     try w.writeAll("{\"id\":\"provider\",\"name\":\"Provider\",\"category\":\"model\",\"type\":\"select\",\"currentValue\":");
     try writeJsonStr(@tagName(current), w);
-    try w.writeAll(",\"options\":[{\"value\":\"gateway\",\"name\":\"Vercel AI Gateway\"},{\"value\":\"codex\",\"name\":\"Codex subscription\"},{\"value\":\"grok\",\"name\":\"Grok subscription\"}");
+    try w.writeAll(",\"options\":[{\"value\":\"gateway\",\"name\":\"Vercel AI Gateway\"},{\"value\":\"codex\",\"name\":\"Codex subscription\"}");
+    if (comptime !host_target.is_wasm) {
+        try w.writeAll(",{\"value\":\"grok\",\"name\":\"Grok subscription\"}");
+    }
     try w.writeAll("]}");
 }
 

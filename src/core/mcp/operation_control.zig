@@ -1,4 +1,5 @@
 const std = @import("std");
+const atomic_value = @import("atomic_value.zig");
 
 pub const CancellationState = enum {
     active,
@@ -40,7 +41,7 @@ pub const CancellationSources = struct {
 };
 
 pub const DeadlineGate = struct {
-    deadline_ms: std.atomic.Value(i64),
+    deadline_ms: atomic_value.Value(i64),
 
     pub fn init(deadline_ms: i64) DeadlineGate {
         return .{ .deadline_ms = .init(deadline_ms) };

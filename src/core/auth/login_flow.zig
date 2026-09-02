@@ -5,6 +5,7 @@ const chatgpt_session = @import("chatgpt_session.zig");
 const grok_session = @import("grok_session.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const host = @import("../hosts/host.zig");
+const host_target = @import("../hosts/target.zig");
 const io_mod = @import("../shared/io.zig");
 const oauth = @import("oauth.zig");
 const oauth_session = @import("oauth_session.zig");
@@ -207,6 +208,7 @@ pub const SignInRuntime = struct {
     flow: ?PreparedLogin = null,
     completion: ?SignInCompletion = null,
     failure: ?anyerror = null,
+    poll_state: ?LoginPollState = null,
     deps: SignInRuntimeDeps = .{},
 
     pub fn start(
@@ -226,6 +228,34 @@ pub const SignInRuntime = struct {
         prepared: PreparedLogin,
         deps: SignInRuntimeDeps,
     ) !bool {
+        return self.startPreparedWithMode(alloc, prepared, deps, host_target.is_wasm);
+    }
+
+    fn startPreparedCooperative(
+        self: *Self,
+        alloc: Allocator,
+        prepared: PreparedLogin,
+        deps: SignInRuntimeDeps,
+    ) !bool {
+        return self.startPreparedWithMode(alloc, prepared, deps, true);
+    }
+
+    fn startPreparedWithMode(
+        self: *Self,
+        alloc: Allocator,
+        prepared: PreparedLogin,
+        deps: SignInRuntimeDeps,
+        comptime cooperative: bool,
+    ) !bool {
+        const poll_state = if (cooperative)
+            LoginPollState.init(deps.poll, prepared.device) catch |err| {
+                var rejected = prepared;
+                rejected.deinit(alloc);
+                if (deps.deinit_ctx) |deinit_ctx| deinit_ctx(deps.ctx, alloc);
+                return err;
+            }
+        else
+            null;
         self.mutex.lockUncancelable(io_mod.getIo());
         if (self.thread != null or self.state == .polling or self.completion != null) {
             self.mutex.unlock(io_mod.getIo());
@@ -237,11 +267,13 @@ pub const SignInRuntime = struct {
         self.state = .polling;
         self.failure = null;
         self.flow = prepared;
+        self.poll_state = poll_state;
         self.deps = deps;
         self.deps.poll.cancel_flag = &self.cancel_requested;
         self.cancel_requested.store(false, .seq_cst);
         self.mutex.unlock(io_mod.getIo());
 
+        if (cooperative) return true;
         self.thread = std.Thread.spawn(.{}, workerMain, .{ self, alloc }) catch |err| {
             self.mutex.lockUncancelable(io_mod.getIo());
             self.state = .idle;
@@ -261,7 +293,9 @@ pub const SignInRuntime = struct {
         self.thread = null;
         self.mutex.unlock(io_mod.getIo());
 
-        if (thread) |handle| handle.join();
+        if (comptime !host_target.is_wasm) {
+            if (thread) |handle| handle.join();
+        }
         self.clearFlow(alloc);
         return cancelled;
     }
@@ -316,7 +350,9 @@ pub const SignInRuntime = struct {
         self.mutex.unlock(io_mod.getIo());
         if (!terminal) return .none;
 
-        if (thread) |handle| handle.join();
+        if (comptime !host_target.is_wasm) {
+            if (thread) |handle| handle.join();
+        }
         self.clearFlow(alloc);
 
         self.mutex.lockUncancelable(io_mod.getIo());
@@ -357,6 +393,40 @@ pub const SignInRuntime = struct {
         defer token.deinit(alloc);
 
         self.completeToken(alloc, &token);
+    }
+
+    pub fn pulse(self: *Self, alloc: Allocator) void {
+        if (comptime !host_target.is_wasm) return;
+        self.pulseCooperative(alloc);
+    }
+
+    fn pulseCooperative(self: *Self, alloc: Allocator) void {
+        if (self.state != .polling) return;
+        const flow = if (self.flow) |*prepared| prepared else return;
+        const poll_state = if (self.poll_state) |*state| state else {
+            self.publishFailure(error.LoginPollStateMissing);
+            return;
+        };
+        const step = pollTokenStep(
+            alloc,
+            self.deps.oauth_transport,
+            flow.metadata,
+            flow.client_id,
+            flow.device,
+            self.deps.poll,
+            poll_state,
+        ) catch |err| {
+            self.publishFailure(err);
+            return;
+        };
+        switch (step) {
+            .waiting => {},
+            .succeeded => |token| {
+                var owned = token;
+                defer owned.deinit(alloc);
+                self.completeToken(alloc, &owned);
+            },
+        }
     }
 
     fn completeToken(self: *Self, alloc: Allocator, token: *oauth.TokenSet) void {
@@ -420,6 +490,7 @@ pub const SignInRuntime = struct {
         var flow = self.flow;
         const deps = self.deps;
         self.flow = null;
+        self.poll_state = null;
         self.deps = .{};
         self.mutex.unlock(io_mod.getIo());
         if (flow) |*prepared| prepared.deinit(alloc);
@@ -714,7 +785,10 @@ pub const LoginPollDeps = struct {
         std.Io.Clock.Timestamp,
     ) anyerror!oauth.PollResult = realPollDeviceToken,
     sleep_ms: *const fn (?*anyopaque, u64) void = realSleepMs,
-    wait_for_enter: *const fn (?*anyopaque, u64) bool = realWaitForEnter,
+    wait_for_enter: *const fn (?*anyopaque, u64) bool = if (host_target.is_wasm)
+        unavailableWaitForEnter
+    else
+        realWaitForEnter,
     url_opener: host.UrlOpener = host.unavailable_url_opener,
     is_cancelled: *const fn (?*anyopaque) bool = neverCancelled,
     cancel_flag: ?*std.atomic.Value(bool) = null,
@@ -920,6 +994,10 @@ fn neverCancelled(_: ?*anyopaque) bool {
 
 fn realSleepMs(_: ?*anyopaque, ms: u64) void {
     io_mod.sleep(ms *| std.time.ns_per_ms);
+}
+
+fn unavailableWaitForEnter(_: ?*anyopaque, _: u64) bool {
+    return false;
 }
 
 fn realWaitForEnter(_: ?*anyopaque, timeout_ms: u64) bool {
@@ -1556,6 +1634,59 @@ const SignInTestState = struct {
     }
 };
 
+const CooperativeSignInTestState = struct {
+    poll: LoginPollTestState,
+    complete_count: usize = 0,
+    save_count: usize = 0,
+    fail_save: bool = false,
+
+    fn init(alloc: Allocator, results: []const ScriptedPollResult) @This() {
+        return .{ .poll = LoginPollTestState.init(alloc, results) };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.poll.deinit();
+    }
+
+    fn deps(self: *@This()) SignInRuntimeDeps {
+        return .{
+            .ctx = self,
+            .poll = self.poll.deps(),
+            .complete = complete,
+            .save = save,
+        };
+    }
+
+    fn complete(
+        raw: ?*anyopaque,
+        alloc: Allocator,
+        issuer_url: []const u8,
+        client_id: []const u8,
+        token: *oauth.TokenSet,
+    ) !SignInCompletion {
+        const self = state(raw);
+        self.complete_count += 1;
+        return .{ .vercel = .{ .session = try take_login_session(
+            alloc,
+            issuer_url,
+            client_id,
+            token,
+            null,
+            0,
+        ) } };
+    }
+
+    fn save(raw: ?*anyopaque, _: Allocator, _: SignInCompletion) !void {
+        const self = state(raw);
+        self.save_count += 1;
+        if (self.fail_save) return error.TestStoreCommitFailed;
+    }
+
+    fn state(raw: ?*anyopaque) *@This() {
+        return @ptrCast(@alignCast(raw.?));
+    }
+};
+
 fn makeTestPreparedLogin(alloc: Allocator) !PreparedLogin {
     var metadata = try oauth.parseMetadata(
         alloc,
@@ -1613,22 +1744,14 @@ test "sign-in runtime releases an owned provider context exactly once" {
     const alloc = std.testing.allocator;
     var cleanup_count: usize = 0;
     var runtime: SignInRuntime = .{};
-    var state = SignInTestState{ .mode = .in_flight };
-    try std.testing.expect(try runtime.startPrepared(
+    try std.testing.expect(try runtime.startPreparedCooperative(
         alloc,
         try makeTestPreparedLogin(alloc),
         .{
             .ctx = &cleanup_count,
             .deinit_ctx = Cleanup.run,
-            .poll = .{
-                .ctx = &state,
-                .poll_device_token = SignInTestState.poll,
-            },
-            .complete = SignInTestState.complete,
-            .save = SignInTestState.save,
         },
     ));
-    try std.testing.expect(waitForAtomic(&state.poll_started, 1000));
     try std.testing.expect(runtime.cancel(alloc));
     runtime.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 1), cleanup_count);
@@ -1731,6 +1854,121 @@ fn makeLoopbackPreparedLogin(alloc: Allocator, token_endpoint: []const u8) !Prep
 
 fn elapsedAwakeMs(started: std.Io.Clock.Timestamp) i64 {
     return started.durationTo(std.Io.Clock.Timestamp.now(io_mod.getIo(), .awake)).raw.toMilliseconds();
+}
+
+test "cooperative sign-in polls once per pulse and shares pending and slow_down timing" {
+    const alloc = std.testing.allocator;
+    var runtime: SignInRuntime = .{};
+    defer runtime.deinit(alloc);
+    var state = CooperativeSignInTestState.init(alloc, &.{ .pending, .slow_down, .success });
+    defer state.deinit();
+    try std.testing.expect(try runtime.startPreparedCooperative(
+        alloc,
+        try makeTestPreparedLogin(alloc),
+        state.deps(),
+    ));
+
+    runtime.pulseCooperative(alloc);
+    try std.testing.expectEqual(@as(usize, 1), state.poll.poll_index);
+    try std.testing.expectEqual(@as(i64, 1000), runtime.poll_state.?.next_poll_at_ms);
+    runtime.pulseCooperative(alloc);
+    try std.testing.expectEqual(@as(usize, 1), state.poll.poll_index);
+
+    state.poll.now_ms = 1000;
+    runtime.pulseCooperative(alloc);
+    try std.testing.expectEqual(@as(usize, 2), state.poll.poll_index);
+    try std.testing.expectEqual(@as(u64, 6000), runtime.poll_state.?.interval_ms);
+    try std.testing.expectEqual(@as(i64, 7000), runtime.poll_state.?.next_poll_at_ms);
+    state.poll.now_ms = 6999;
+    runtime.pulseCooperative(alloc);
+    try std.testing.expectEqual(@as(usize, 2), state.poll.poll_index);
+
+    state.poll.now_ms = 7000;
+    runtime.pulseCooperative(alloc);
+    var transition = runtime.pollTransition(alloc);
+    switch (transition) {
+        .succeeded => |*selection| selection.deinit(alloc),
+        else => return error.TestExpectedSuccessfulSignIn,
+    }
+    try std.testing.expectEqual(@as(usize, 1), state.complete_count);
+    try std.testing.expectEqual(@as(usize, 1), state.save_count);
+}
+
+test "cooperative sign-in cancellation publishes no session" {
+    const alloc = std.testing.allocator;
+    var runtime: SignInRuntime = .{};
+    defer runtime.deinit(alloc);
+    var state = CooperativeSignInTestState.init(alloc, &.{.pending});
+    defer state.deinit();
+    try std.testing.expect(try runtime.startPreparedCooperative(
+        alloc,
+        try makeTestPreparedLogin(alloc),
+        state.deps(),
+    ));
+    runtime.pulseCooperative(alloc);
+
+    try std.testing.expect(runtime.cancel(alloc));
+    try std.testing.expectEqual(SignInTransition.cancelled, runtime.pollTransition(alloc));
+    try std.testing.expectEqual(@as(usize, 0), state.complete_count);
+    try std.testing.expectEqual(@as(usize, 0), state.save_count);
+}
+
+test "cooperative sign-in reports device-code expiry without another poll" {
+    const alloc = std.testing.allocator;
+    var runtime: SignInRuntime = .{};
+    defer runtime.deinit(alloc);
+    var state = CooperativeSignInTestState.init(alloc, &.{.success});
+    defer state.deinit();
+    var prepared = try makeTestPreparedLogin(alloc);
+    prepared.device.expires_in = 1;
+    try std.testing.expect(try runtime.startPreparedCooperative(alloc, prepared, state.deps()));
+    state.poll.now_ms = 1000;
+    runtime.pulseCooperative(alloc);
+
+    switch (runtime.pollTransition(alloc)) {
+        .failed => |err| try std.testing.expectEqual(LoginError.LoginTimedOut, err),
+        else => return error.TestExpectedExpiredSignIn,
+    }
+    try std.testing.expectEqual(@as(usize, 0), state.poll.poll_index);
+    try std.testing.expectEqual(@as(usize, 0), state.save_count);
+}
+
+test "cooperative sign-in store failure is traced and becomes a recoverable transition" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
+    const trace_path = try std.fs.path.join(alloc, &.{ root, "sign-in-store-failure.log" });
+    defer alloc.free(trace_path);
+    debug_trace.resetForTest();
+    defer debug_trace.resetForTest();
+    try debug_trace.configureForTestWithScopes(alloc, trace_path, "auth");
+
+    var runtime: SignInRuntime = .{};
+    defer runtime.deinit(alloc);
+    var state = CooperativeSignInTestState.init(alloc, &.{.success});
+    defer state.deinit();
+    state.fail_save = true;
+    try std.testing.expect(try runtime.startPreparedCooperative(
+        alloc,
+        try makeTestPreparedLogin(alloc),
+        state.deps(),
+    ));
+    runtime.pulseCooperative(alloc);
+
+    switch (runtime.pollTransition(alloc)) {
+        .failed => |err| try std.testing.expectEqual(error.TestStoreCommitFailed, err),
+        else => return error.TestExpectedStoreFailure,
+    }
+    debug_trace.shutdown();
+    var trace_file = try std.Io.Dir.openFileAbsolute(std.testing.io, trace_path, .{});
+    defer trace_file.close(std.testing.io);
+    const trace = try io_mod.readFileToEnd(alloc, &trace_file, 4096);
+    defer alloc.free(trace);
+    try std.testing.expect(std.mem.find(u8, trace, "sign-in session save failed err=TestStoreCommitFailed") != null);
+    try std.testing.expect(std.mem.find(u8, trace, "access") == null);
+    try std.testing.expect(std.mem.find(u8, trace, "refresh") == null);
 }
 
 test "VT-8(b) cancelling sign-in during the inter-poll wait publishes and saves nothing" {

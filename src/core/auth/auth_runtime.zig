@@ -4,6 +4,7 @@ const credentials = @import("credentials.zig");
 const chatgpt_oauth = @import("chatgpt_oauth.zig");
 const grok_oauth = @import("grok_oauth.zig");
 const host = @import("../hosts/host.zig");
+const host_target = @import("../hosts/target.zig");
 const login_flow = @import("login_flow.zig");
 const oauth = @import("oauth.zig");
 const model_provider = @import("../config/model_provider.zig");
@@ -484,10 +485,12 @@ pub const PickerView = struct {
         return switch (self.stage) {
             .root => if (self.include_skip)
                 connectionChoiceCount()
+            else if (comptime host_target.is_wasm)
+                3
             else
                 4,
             .connections => connectionChoiceCount(),
-            .provider => 3,
+            .provider => if (comptime host_target.is_wasm) 2 else 3,
             .sign_in, .api_key => 0,
             .change_team => blk: {
                 var count: usize = 0;
@@ -502,7 +505,14 @@ pub const PickerView = struct {
 
     pub fn choiceAt(self: PickerView, index: usize) ?Choice {
         return switch (self.stage) {
-            .root => if (self.include_skip) connectionChoiceAt(index) else switch (index) {
+            .root => if (self.include_skip) connectionChoiceAt(index) else if (comptime host_target.is_wasm)
+                switch (index) {
+                    0 => .{ .action = .connections },
+                    1 => .{ .action = .change_team },
+                    2 => .{ .action = .switch_credential },
+                    else => null,
+                }
+            else switch (index) {
                 0 => .{ .action = .connections },
                 1 => .{ .action = .switch_provider },
                 2 => .{ .action = .change_team },
@@ -513,7 +523,7 @@ pub const PickerView = struct {
             .provider => switch (index) {
                 0 => .{ .provider = .gateway },
                 1 => .{ .provider = .codex },
-                2 => .{ .provider = .grok },
+                2 => if (comptime host_target.is_wasm) null else .{ .provider = .grok },
                 else => null,
             },
             .sign_in, .api_key => null,
@@ -587,7 +597,9 @@ pub const PickerView = struct {
 
     pub fn choiceEnabled(self: PickerView, choice: Choice) bool {
         return switch (choice) {
-            .action => |action| (action != .change_team or self.fx_login_session_available),
+            .action => |action| (action != .change_team or self.fx_login_session_available) and
+                (action != .chatgpt_login or !host_target.is_wasm) and
+                (action != .grok_login or !host_target.is_wasm),
             .provider, .source, .team => true,
         };
     }
@@ -601,10 +613,17 @@ pub const PickerView = struct {
 };
 
 fn connectionChoiceCount() usize {
-    return 4;
+    return if (comptime host_target.is_wasm) 2 else 4;
 }
 
 fn connectionChoiceAt(index: usize) ?Choice {
+    if (comptime host_target.is_wasm) {
+        return switch (index) {
+            0 => .{ .action = .login },
+            1 => .{ .action = .setup },
+            else => null,
+        };
+    }
     return switch (index) {
         0 => .{ .action = .login },
         1 => .{ .action = .chatgpt_login },
@@ -1306,18 +1325,22 @@ pub const Runtime = struct {
     }
 
     pub fn openChatGptSignInPickerFromRoot(self: *Self, alloc: Allocator) !bool {
+        if (comptime host_target.is_wasm) return error.ChatGptOAuthUnavailable;
         return self.openSignInPickerWithParent(alloc, true, .chatgpt_subscription);
     }
 
     pub fn openChatGptSignInPickerForProviderSwitch(self: *Self, alloc: Allocator) !bool {
+        if (comptime host_target.is_wasm) return error.ChatGptOAuthUnavailable;
         return self.openSignInPickerWithParent(alloc, false, .chatgpt_subscription);
     }
 
     pub fn openGrokSignInPickerFromRoot(self: *Self, alloc: Allocator) !bool {
+        if (comptime host_target.is_wasm) return error.GrokOAuthUnavailable;
         return self.openSignInPickerWithParent(alloc, true, .grok_subscription);
     }
 
     pub fn openGrokSignInPickerForProviderSwitch(self: *Self, alloc: Allocator) !bool {
+        if (comptime host_target.is_wasm) return error.GrokOAuthUnavailable;
         return self.openSignInPickerWithParent(alloc, false, .grok_subscription);
     }
 
@@ -1375,6 +1398,10 @@ pub const Runtime = struct {
 
     pub fn pollSignInTransition(self: *Self, alloc: Allocator) login_flow.SignInTransition {
         return self.sign_in_flow.pollTransition(alloc);
+    }
+
+    pub fn pulseSignIn(self: *Self, alloc: Allocator) void {
+        self.sign_in_flow.pulse(alloc);
     }
 
     pub fn appendSignInCodeByte(self: *Self, alloc: Allocator, byte: u8) !bool {

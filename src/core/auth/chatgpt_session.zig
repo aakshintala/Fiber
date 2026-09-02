@@ -1,5 +1,6 @@
 const std = @import("std");
 const debug_trace = @import("../shared/debug_trace.zig");
+const host_target = @import("../hosts/target.zig");
 const host = @import("../hosts/host.zig");
 const io_mod = @import("../shared/io.zig");
 const profile_paths = @import("../shared/profile_paths.zig");
@@ -80,6 +81,7 @@ pub const Mutation = struct {
 };
 
 pub fn load(alloc: Allocator) !?Session {
+    if (comptime host_target.is_wasm) return null;
     const home = io_mod.getenv("HOME") orelse return null;
     var home_dir = std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{ .iterate = true }) catch |err| {
         debug_trace.logf("auth", "ChatGPT session load failed step=open_home err={s}", .{@errorName(err)});
@@ -134,12 +136,14 @@ fn loadFromDir(alloc: Allocator, fx_dir: *std.Io.Dir, report_open_failure: bool)
 }
 
 pub fn saveNewSession(alloc: Allocator, session: Session) !void {
+    if (comptime host_target.is_wasm) return error.ChatGptOAuthUnavailable;
     var mutation = try beginMutation();
     defer mutation.deinit();
     try mutation.save(alloc, session);
 }
 
 pub fn beginExistingMutation() !?Mutation {
+    if (comptime host_target.is_wasm) return null;
     const home = io_mod.getenv("HOME") orelse return error.HomeNotSet;
     var home_dir = io_mod.VerifiedDir{
         .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{ .iterate = true }),

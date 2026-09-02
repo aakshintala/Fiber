@@ -2,6 +2,7 @@ const std = @import("std");
 const change_tracker = @import("../core/workspace/change_tracker.zig");
 const debug_trace = @import("../core/shared/debug_trace.zig");
 const host = @import("../core/hosts/host.zig");
+const host_target = @import("../core/hosts/target.zig");
 const io_mod = @import("../core/shared/io.zig");
 const model_context_encoding = @import("../core/shared/model_context_encoding.zig");
 const pathing = @import("../core/workspace/pathing.zig");
@@ -163,7 +164,7 @@ const SelectionScratch = struct {
 };
 
 fn loadsProjectInstructionFiles() bool {
-    return true;
+    return !host_target.is_wasm;
 }
 
 fn gatherProjectContext(alloc: Allocator, input: InitialContextInput) context_contract.ProviderError!ProviderContext {

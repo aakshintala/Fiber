@@ -63,6 +63,8 @@ const builtin_mcp = @import("builtins/mcp.zig");
 const builtin_modes = @import("builtins/modes.zig");
 const builtin_skills = @import("builtins/skills.zig");
 const host = @import("core/hosts/host.zig");
+const host_runtime_profile = @import("core/hosts/runtime_profile.zig");
+const host_target = @import("core/hosts/target.zig");
 const native_host = @import("core/hosts/native.zig");
 const debug_trace = @import("core/shared/debug_trace.zig");
 const display_width = @import("core/shared/display_width.zig");
@@ -167,6 +169,7 @@ const RawEnviron = io_mod.RawEnviron;
 const footer_rows: u16 = 4;
 const active_poll_timeout_ms: i32 = 8;
 const focused_ui_worker_poll_timeout_ms: i32 = 1;
+const idle_wasm_poll_timeout_ms: i32 = 16;
 const resize_debounce_ms: i64 = 100;
 const max_transcript_bytes: usize = 256 * 1024;
 const default_max_agent_steps: usize = agent_steps.default_max_agent_steps;
@@ -351,6 +354,7 @@ test "skill submit snapshot keeps display spans exact while agent bindings dedup
 
 var resize_interlock = shell_runtime.ResizeApprovalInterlock{};
 const default_context_registry = context_contract.Registry{ .default_provider = builtin_context.provider };
+const selected_host_profile = host_runtime_profile.native;
 const app_api_key_validator = builtin_gateway.api_key_validator;
 const app_oauth_transport = builtin_gateway.oauth_transport_provider;
 const app_secret_store = native_host.secret_store;
@@ -364,6 +368,7 @@ fn currentBuild() update_target.CurrentBuild {
 
 const App = struct {
     pub const app_version = version;
+    pub const host_profile = selected_host_profile;
     pub const input_limits = paste_framing.default_input_limits;
     pub const build_update_channel = compiled_update_channel;
     pub const build_revision = build_options.git_commit;
@@ -406,7 +411,10 @@ const App = struct {
     }
 
     pub fn urlOpener(_: *const Self) host.UrlOpener {
-        return url_opener.native_opener;
+        return if (comptime host_profile.url_opening)
+            url_opener.native_opener
+        else
+            host.unavailable_url_opener;
     }
 
     pub fn creditsProvider(self: *const Self) gateway_provider.CreditsProvider {
@@ -436,12 +444,29 @@ const App = struct {
         });
     }
 
+    pub fn cooperativeTransportPulse(self: *Self) !void {
+        if (comptime !host_target.is_wasm) return;
+        if (try event_loop.pump_ready_input(
+            self.terminal,
+            &self.should_exit,
+            RenderAppRuntime.eventLoopCallbacks(self),
+        )) |exit_cause| {
+            if (exit_cause == .input_closed) self.should_exit = true;
+            return;
+        }
+        try WorkerAppRuntime.tick(
+            self,
+            app_callbacks.Bindings(App).workerEventHandlers(self),
+        );
+        try self.flushRequestedFrame();
+    }
+
     pub fn secretStore(self: *const Self) host.SecretStore {
         return self.auth.secret_store;
     }
 
     pub fn clipboard(_: *const Self) host.Clipboard {
-        return native_host.clipboard;
+        return if (comptime host_profile.clipboard) native_host.clipboard else host.unavailable_clipboard;
     }
 
     pub fn terminalTitle(self: *const Self) host.TerminalTitle {
@@ -467,7 +492,7 @@ const App = struct {
     agent_step_limit: usize = default_max_agent_steps,
     web_fetch_runtime: web_fetch_runtime.Runtime = web_fetch_runtime.Runtime.init(.{}),
     web_search_runtime: web_search_runtime.Runtime = web_search_runtime.Runtime.init(.{
-        .provider = builtin_providers.native.gateway.fx_search,
+        .provider = if (host_profile.web_search) builtin_providers.native.gateway.fx_search else null,
     }),
     web_search_models_path: []const u8 = builtin_gateway.models_path,
     lifecycle_runtime: hooks.Runtime = hooks.Runtime.init(std.heap.c_allocator),
@@ -477,7 +502,10 @@ const App = struct {
 
     session: SessionRuntime = SessionRuntime.initWithProviders(
         max_history_turns,
-        builtin_providers.native.deferredUsageProviders(),
+        if (host_profile.generation_usage)
+            builtin_providers.native.deferredUsageProviders()
+        else
+            .{},
     ),
     session_persistence: app_session_runtime.Persistence = .{},
     prompt_history: PromptHistoryRuntime = .{},
@@ -526,6 +554,14 @@ const App = struct {
 
     stream: StreamState = .{},
     metrics: Metrics = .{},
+    fn loadNoMcpRuntime(
+        _: Allocator,
+        _: []const u8,
+        _: @import("core/mcp/elicitation.zig").Capabilities,
+    ) !?*mcp_runtime_mod.McpRuntime {
+        return null;
+    }
+
     pub fn init(alloc: Allocator, launch: *cli_surface.InteractiveLaunch) !Self {
         var app = Self{
             .alloc = alloc,
@@ -570,18 +606,22 @@ const App = struct {
             launch.modifiers.saved_directories_suppressed,
         );
         app.context_limits.applyCommandLine(launch.modifiers.context_limit_overrides);
-        if (app.requested_resume != null) {
-            if (launch.upgrade_relaunch) {
-                try SessionAppRuntime.resumeRequestedSessionAfterUpgrade(
-                    &app,
-                    app_version,
-                );
-            } else {
-                try SessionAppRuntime.resumeRequestedSession(&app);
+        if (comptime host_profile.durable_sessions) {
+            if (app.requested_resume != null) {
+                if (launch.upgrade_relaunch) {
+                    try SessionAppRuntime.resumeRequestedSessionAfterUpgrade(
+                        &app,
+                        app_version,
+                    );
+                } else {
+                    try SessionAppRuntime.resumeRequestedSession(&app);
+                }
+                SessionAppRuntime.syncTerminalTitle(&app);
             }
-            SessionAppRuntime.syncTerminalTitle(&app);
         }
-        SessionAppRuntime.primeSessionPicker(&app);
+        if (comptime host_profile.durable_sessions) {
+            SessionAppRuntime.primeSessionPicker(&app);
+        }
         const env_disabled = if (io_mod.getenv("FX_AUTO_UPGRADE")) |val|
             std.mem.eql(u8, val, "0") or std.ascii.eqlIgnoreCase(val, "false")
         else
@@ -589,6 +629,7 @@ const App = struct {
         if (env_disabled or !auto_upgrade.shouldEnableForCurrentExecutable()) {
             app.auto_upgrade_enabled = false;
         }
+        if (comptime !host_profile.auto_upgrade) app.auto_upgrade_enabled = false;
         SessionAppRuntime.syncTerminalTitle(&app);
         return app;
     }
@@ -889,16 +930,29 @@ const App = struct {
 
     pub fn loopPollTimeoutMs(ctx: *anyopaque, default_timeout_ms: i32) i32 {
         const self: *App = @ptrCast(@alignCast(ctx));
-        return nativeLoopPollTimeoutMs(
-            default_timeout_ms,
-            self.auth.sourceInventoryRefreshActive(),
-            self.skills.refreshActive(),
-            self.fullTranscriptFocusedWorkActive(),
-        );
+        if (comptime !host_target.is_wasm) {
+            return nativeLoopPollTimeoutMs(
+                default_timeout_ms,
+                self.auth.sourceInventoryRefreshActive(),
+                self.skills.refreshActive(),
+                self.fullTranscriptFocusedWorkActive(),
+            );
+        }
+        return if (self.pacer.hasPending()) default_timeout_ms else idle_wasm_poll_timeout_ms;
     }
 
     fn fullTranscriptFocusedWorkActive(self: *App) bool {
         return self.shell.fullTranscriptFocusedWorkActive();
+    }
+
+    fn processNextCooperativePrompt(self: *App) !void {
+        if (comptime !host_target.is_wasm) return;
+        try app_process_runtime.Runtime(App).processNextCooperativePrompt(
+            self,
+            app_callbacks.Bindings(App).workerEventHandlers(self),
+            flushRequestedFrame,
+        );
+        try SessionAppRuntime.settlePendingLiveSessionTransition(self);
     }
 
     fn flushRequestedFrame(self: *App) !void {
@@ -1406,7 +1460,7 @@ const App = struct {
             self.alloc,
             self.workspace_root,
             .{ .form = true, .url = true },
-            builtin_mcp.loadRuntime,
+            if (comptime host_target.is_wasm) loadNoMcpRuntime else builtin_mcp.loadRuntime,
             builtin_mcp.previewNativeWorkspaceAuthority,
             self.toolRegistry(),
             @intCast(@max(io_mod.milliTimestamp(), 0)),
@@ -1418,7 +1472,7 @@ const App = struct {
             self.alloc,
             self.workspace_root,
             .{ .form = true, .url = true },
-            builtin_mcp.loadRuntime,
+            if (comptime host_target.is_wasm) loadNoMcpRuntime else builtin_mcp.loadRuntime,
             builtin_mcp.previewNativeWorkspaceAuthority,
             self.toolRegistry(),
             @intCast(@max(io_mod.milliTimestamp(), 0)),
@@ -1431,7 +1485,7 @@ const App = struct {
             self.alloc,
             self.workspace_root,
             .{ .form = true, .url = true },
-            builtin_mcp.loadRuntime,
+            if (comptime host_target.is_wasm) loadNoMcpRuntime else builtin_mcp.loadRuntime,
             self.toolRegistry(),
             @intCast(@max(io_mod.milliTimestamp(), 0)),
             rebuild,
@@ -1450,7 +1504,7 @@ const App = struct {
             self.alloc,
             self.workspace_root,
             .{ .form = true, .url = true },
-            builtin_mcp.loadRuntime,
+            if (comptime host_target.is_wasm) loadNoMcpRuntime else builtin_mcp.loadRuntime,
             self.toolRegistry(),
             @intCast(@max(io_mod.milliTimestamp(), 0)),
             rebuild,
@@ -1767,6 +1821,7 @@ const App = struct {
         self: *App,
         pending: *input_submit_runtime.PendingSubmission,
     ) !input_submit_runtime.PendingSkillRefresh {
+        if (comptime host_target.is_wasm) return .current;
         const generation = pending.skill_refresh_generation orelse blk: {
             const requested = try self.requestSkillsRefresh();
             pending.skill_refresh_generation = requested;
@@ -1807,7 +1862,13 @@ const App = struct {
     }
 
     pub fn providerSet(_: *const App) provider_set.Set {
-        return builtin_providers.native;
+        var providers = builtin_providers.native;
+        if (comptime !host_profile.tools) {
+            providers.gateway.permission_reviewer = null;
+            providers.codex.permission_reviewer = null;
+            providers.grok.permission_reviewer = null;
+        }
+        return providers;
     }
 
     pub fn describeToolAction(self: *App, arena: Allocator, call: ToolCall, display_target: ?[]const u8, advertised_dynamic_tool_names: []const []const u8) ![]const u8 {
@@ -1898,10 +1959,21 @@ const App = struct {
     }
 
     pub fn startModelCacheWarmup(self: *App) void {
-        self.model_cache.startWarmup(
-            self.providerSet().select(self.provider_selection.selection().provider).model_catalog orelse unreachable,
-            self.auth.modelCatalogAccess(),
-        );
+        if (comptime host_profile.cooperative_agent) {
+            if (self.auth.credentialNeedsRefresh()) {
+                debug_trace.logf("auth", "model_cache_warmup_deferred reason=credential_refresh_required", .{});
+                return;
+            }
+            self.model_cache.loadCooperative(
+                self.providerSet().select(self.provider_selection.selection().provider).model_catalog orelse unreachable,
+                self.auth.modelCatalogAccess(),
+            );
+        } else {
+            self.model_cache.startWarmup(
+                self.providerSet().select(self.provider_selection.selection().provider).model_catalog orelse unreachable,
+                self.auth.modelCatalogAccess(),
+            );
+        }
     }
 
     pub fn ensureModelCache(self: *App) void {
@@ -1963,6 +2035,7 @@ const App = struct {
     }
 
     pub fn refreshFileIndex(self: *App) void {
+        if (comptime !host_profile.file_index) return;
         WorkspaceAppRuntime.refreshFileIndex(self);
     }
 
@@ -2009,6 +2082,10 @@ const App = struct {
         try self.worker.pushEvent(std.heap.c_allocator, .{ .assistant_presentation = .{
             .text = @constCast(text),
         } });
+        if (comptime host_profile.cooperative_agent) {
+            try WorkerAppRuntime.tick(self, app_callbacks.Bindings(App).workerEventHandlers(self));
+            try self.flushRequestedFrame();
+        }
     }
 
     pub fn processQueuedPrompt(self: *App, job: QueuedPrompt) !void {
@@ -2637,19 +2714,23 @@ const App = struct {
         const self: *App = @ptrCast(@alignCast(ctx));
         if (!try WorkerAppRuntime.authorizeInteractiveAdmission(self)) return;
 
-        if (self.file_index.joinThreadIfDone(std.heap.c_allocator)) {
-            self.shell.render_requests.request(.footer);
+        if (comptime !host_target.is_wasm) {
+            if (self.file_index.joinThreadIfDone(std.heap.c_allocator)) {
+                self.shell.render_requests.request(.footer);
+            }
+            switch (try self.pollSkillsRefresh()) {
+                .none, .unchanged => {},
+                .adopted, .failed => self.shell.render_requests.request(.footer),
+            }
+            try app_commands.Handlers(App).collectSkillsRefreshFacts(self);
         }
-        switch (try self.pollSkillsRefresh()) {
-            .none, .unchanged => {},
-            .adopted, .failed => self.shell.render_requests.request(.footer),
-        }
-        try app_commands.Handlers(App).collectSkillsRefreshFacts(self);
         InputSubmitRuntime.collectPendingSubmissionFacts(self);
 
         try self.collectThemeFacts();
 
-        UpgradeAppRuntime.collectUpgradeFacts(self);
+        if (comptime !host_target.is_wasm) {
+            UpgradeAppRuntime.collectUpgradeFacts(self);
+        }
         app_permission_runtime.Runtime(App).tick(
             self,
             app_permission_runtime.monotonicMillis(),
@@ -2673,10 +2754,15 @@ const App = struct {
         }
         try app_commands.Handlers(App).collectMcpAuthenticationFacts(self);
         try app_commands.Handlers(App).collectMcpReloadFacts(self);
-        try AuthAppRuntime.collectSourceInventoryFacts(self);
-        try AuthAppRuntime.collectSignInFacts(self);
-        try AuthAppRuntime.collectApiKeySaveFacts(self);
-        try app_terminal_runtime.Runtime(App).collectFacts(self);
+        if (comptime host_profile.native_auth) {
+            try AuthAppRuntime.collectSourceInventoryFacts(self);
+            try AuthAppRuntime.collectSignInFacts(self);
+        }
+        if (comptime host_profile.native_auth) {
+            try AuthAppRuntime.collectApiKeySaveFacts(self);
+            try app_terminal_runtime.Runtime(App).collectFacts(self);
+        }
+        try self.processNextCooperativePrompt();
 
         const cols_before_resize = self.shell.layout.cols;
         if (self.terminal_input_runtime.native_clear_probe.active() or
@@ -2708,7 +2794,9 @@ const App = struct {
             self.input_runtime.vertical_navigation.reset();
         }
 
-        try SessionAppRuntime.pollSessionPicker(self);
+        if (comptime !host_target.is_wasm) {
+            try SessionAppRuntime.pollSessionPicker(self);
+        }
         try self.shell.prewarmFullTranscriptPage(
             self.fullTranscriptSidecarCapability(),
             self.fullTranscriptDiffResolver(),
