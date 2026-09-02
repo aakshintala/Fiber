@@ -10,10 +10,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, HAS_API_KEY } from "../evals/eval-helpers";
-import { hasEmptyComposer, TmuxSession, tmuxAvailable } from "./tmux-helpers";
+import { FX_BIN } from "../evals/eval-helpers";
+import {
+  chatGptAccessToken,
+  hasEmptyComposer,
+  TmuxSession,
+  tmuxAvailable,
+  writeSeededChatGptLogin,
+} from "./tmux-helpers";
 
-const SKIP = !tmuxAvailable() || !HAS_API_KEY;
+const SKIP = !tmuxAvailable();
 const SKIP_TMUX = !tmuxAvailable();
 const TIMEOUT = 30_000;
 
@@ -40,7 +46,7 @@ describe.skipIf(SKIP)("tui: startup and exit", () => {
       session = await TmuxSession.create();
       await session.waitForComposer(10_000);
       await session.sendText("/help");
-      const pane = await session.waitForText("Commands 35", 5_000);
+      const pane = await session.waitForText("Commands 32", 5_000);
       expect(pane).toContain("[All]");
       expect(pane).toContain("Tab Category");
       expect(pane).toContain("Enter Open");
@@ -74,14 +80,13 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
       mkdirSync(join(workspace, ".git"), { recursive: true });
       writeFileSync(join(workspace, ".git", "HEAD"), "ref: refs/heads/default-hidden-branch\n");
       writeFileSync(stderrPath, "");
+      writeSeededChatGptLogin(home, chatGptAccessToken());
 
       try {
         session = await TmuxSession.create({
           cwd: workspace,
           env: {
             HOME: home,
-            AI_GATEWAY_API_KEY: undefined,
-            VERCEL_OIDC_TOKEN: undefined,
             FX_AUTO_UPGRADE: "0",
             FX_DISABLE_KEYCHAIN: "1",
             FX_SKIP_ONBOARDING: "1",
@@ -176,6 +181,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
       mkdirSync(join(home, ".fx"), { recursive: true });
       mkdirSync(join(repository, ".git"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
+      writeSeededChatGptLogin(home, chatGptAccessToken());
       writeFileSync(headPath, "ref: refs/heads/initial-branch\n");
       writeFileSync(
         join(home, ".fx", "settings.json"),
@@ -188,8 +194,6 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
           cwd: workspace,
           env: {
             HOME: home,
-            AI_GATEWAY_API_KEY: undefined,
-            VERCEL_OIDC_TOKEN: undefined,
             FX_AUTO_UPGRADE: "0",
             FX_DISABLE_KEYCHAIN: "1",
             FX_SKIP_ONBOARDING: "1",
@@ -372,61 +376,10 @@ describe.skipIf(SKIP_TMUX)("tui: MCP startup", () => {
 
 describe.skipIf(SKIP_TMUX)("tui: credential onboarding", () => {
   test(
-    "/setup opens an inline status-first hub",
-    async () => {
-      const home = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-direct-setup-")));
-      session = await TmuxSession.create({
-        env: {
-          AI_GATEWAY_API_KEY: undefined,
-          VERCEL_OIDC_TOKEN: undefined,
-          HOME: home,
-          FX_AUTO_UPGRADE: "0",
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_SKIP_ONBOARDING: "0",
-        },
-      });
-
-      await session.waitForComposer(TIMEOUT);
-      await session.sendText("/setup");
-      const setup = await session.waitForPane(
-        (pane) =>
-          pane.includes("Setup") &&
-          pane.includes("Connections") &&
-          pane.includes("Model provider") &&
-          pane.includes("Vercel team") &&
-          pane.includes("Credential source") &&
-          pane.includes("Enter Open") &&
-          pane.includes("Esc Close"),
-        TIMEOUT,
-      );
-      expect(setup).not.toContain("AI_GATEWAY_API_KEY");
-      expect(setup).not.toContain("fx login");
-      expect(setup).not.toContain("Vercel account");
-      expect(setup).not.toContain("run /login");
-
-      for (let index = 0; index < 2; index += 1) {
-        await session.sendKeys("Down");
-      }
-      await session.sendKeys("Enter");
-      await session.waitForPane(
-        (pane) => pane.includes("Credential source") && pane.includes("Automatic"),
-        TIMEOUT,
-      );
-      await session.sendKeys("Escape");
-      await session.waitForText("Setup", TIMEOUT);
-      await session.sendKeys("Escape");
-      await session.waitForComposer(TIMEOUT);
-    },
-    TIMEOUT,
-  );
-
-  test(
     "startup shows credential onboarding on the first frame and Escape remains session-only",
     async () => {
       const home = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-login-onboarding-")));
       const env = {
-        AI_GATEWAY_API_KEY: undefined,
-        VERCEL_OIDC_TOKEN: undefined,
         HOME: home,
         USER: "fx-e2e-login-onboarding",
         FX_AUTO_UPGRADE: "0",
@@ -437,26 +390,20 @@ describe.skipIf(SKIP_TMUX)("tui: credential onboarding", () => {
 
       session = await TmuxSession.create({ env });
 
-      const initial = await session.waitForText("Welcome to fx", TIMEOUT);
-      expect(initial).toContain("Sign in with Vercel");
-      expect(initial).toContain("Add an API key");
-      expect(initial).toContain("Esc to set up later");
-      expect(initial).not.toContain("Change team");
-      expect(initial).not.toContain("Switch credential");
-      expect(initial).not.toContain("Skip for now");
+      const initial = await session.waitForText("› Connections", TIMEOUT);
+      expect(initial).not.toContain("Sign in with Vercel");
+      expect(initial).not.toContain("Add an API key");
 
       await session.sendKeys("Escape");
       const skipped = await session.waitForPane(
-        (pane) => !pane.includes("Welcome to fx") && !pane.includes("Sign in with Vercel"),
+        (pane) => !pane.includes("› Connections") && hasEmptyComposer(pane),
         TIMEOUT,
       );
-      expect(skipped).not.toContain("Add an API key");
+      expect(skipped).not.toContain("Esc to set up later");
 
       await session.kill();
       session = await TmuxSession.create({ env });
-      const restarted = await session.waitForText("Welcome to fx", TIMEOUT);
-      expect(restarted).toContain("Sign in with Vercel");
-      expect(restarted).toContain("Add an API key");
+      await session.waitForText("› Connections", TIMEOUT);
     },
     60_000,
   );
