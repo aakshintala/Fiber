@@ -18,8 +18,7 @@ const provider_runtime = @import("provider_runtime.zig");
 const types = @import("../shared/types.zig");
 
 fn oauthAuthEnabled(comptime App: type) bool {
-    return runtime_profile.allows(App, .native_auth) or
-        runtime_profile.allows(App, .js_host_auth);
+    return runtime_profile.allows(App, .native_auth);
 }
 
 const ProviderSwitchDecision = auth_transition.ProviderSwitchDecision;
@@ -1841,26 +1840,6 @@ test "login inventory failure leaves the picker closed and reports one error" {
         app.transcript.items,
         "picker was not opened with stale data",
     ) != null);
-}
-
-test "OAuth app gating accepts native auth or JS-host auth and rejects neither" {
-    const NativeApp = struct {
-        pub const host_profile = runtime_profile.native;
-    };
-    const JsHostApp = struct {
-        pub const host_profile = runtime_profile.wasm;
-    };
-    const NeitherApp = struct {
-        pub const host_profile = blk: {
-            var profile = runtime_profile.wasm;
-            profile.js_host_auth = false;
-            break :blk profile;
-        };
-    };
-
-    try std.testing.expect(oauthAuthEnabled(NativeApp));
-    try std.testing.expect(oauthAuthEnabled(JsHostApp));
-    try std.testing.expect(!oauthAuthEnabled(NeitherApp));
 }
 
 test "interactive sign-in opens the owned browser URL through the host" {

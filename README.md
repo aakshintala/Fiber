@@ -111,15 +111,13 @@ Inside a saved session, `/permissions remember <allow|deny> <tool-name> <argumen
 
 ## Embed fx
 
-fx builds as a native binary or WebAssembly. Applications embedding fx can provide network transport, session storage, configuration, permission handling, and terminal I/O.
+fx builds as a native binary. Applications embedding fx can provide network transport, session storage, configuration, and permission handling.
 
 | Surface | Use |
 | --- | --- |
 | `fx acp` | Connect the native agent to editors and other Agent Client Protocol clients. |
-| `createFxAgent()` | Embed the agent core in a JavaScript host with `fx-core.wasm`. |
-| `createFxTerminal()` | Embed the interactive terminal with `fx-term.wasm`. |
 
-The WebAssembly SDK is experimental. See the [WebAssembly SDK](sdk/README.md) and [ACP documentation](https://fx.sh/docs/using-fx/acp).
+See the [ACP documentation](https://fx.sh/docs/using-fx/acp).
 
 ## Extend fx
 

@@ -7,7 +7,6 @@ const debug_trace = @import("../shared/debug_trace.zig");
 const host = @import("../hosts/host.zig");
 const host_target = @import("../hosts/target.zig");
 const io_mod = @import("../shared/io.zig");
-const js_host_auth = @import("js_host_auth.zig");
 const oauth = @import("oauth.zig");
 const oauth_session = @import("oauth_session.zig");
 const oauth_transport = @import("oauth_transport.zig");
@@ -1024,7 +1023,6 @@ fn discardStdinLine() void {
 }
 
 fn fetchTeams(alloc: Allocator, access_token: []const u8, issuer_url: []const u8) !std.ArrayList(Team) {
-    if (comptime host_target.is_wasm) return fetchTeamsFromJsHost(alloc, access_token, issuer_url);
     var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
     defer client.deinit();
 
@@ -1055,24 +1053,6 @@ fn fetchTeams(alloc: Allocator, access_token: []const u8, issuer_url: []const u8
     const body = try out.toOwnedSlice();
     defer alloc.free(body);
     return parseTeams(alloc, body);
-}
-
-fn fetchTeamsFromJsHost(
-    alloc: Allocator,
-    access_token: []const u8,
-    issuer_url: []const u8,
-) !std.ArrayList(Team) {
-    const e2e_endpoint = if (oauth_session.isLoopbackE2EIssuer(issuer_url))
-        try std.fmt.allocPrint(alloc, "{s}/v2/teams", .{issuer_url})
-    else
-        null;
-    defer if (e2e_endpoint) |endpoint| alloc.free(endpoint);
-    const endpoint = e2e_endpoint orelse teams_endpoint;
-
-    var response = try js_host_auth.executeBearerGet(alloc, endpoint, access_token);
-    defer response.deinit(alloc);
-    if (response.disposition != .accepted) return error.TeamRequestFailed;
-    return parseTeams(alloc, response.body);
 }
 
 fn parseTeams(alloc: Allocator, bytes: []const u8) !std.ArrayList(Team) {

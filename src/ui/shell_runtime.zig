@@ -9,7 +9,6 @@ const frame_layout = @import("render_engine/frame_layout.zig");
 const cursor_probe = @import("terminal/cursor_probe.zig");
 const resize_runtime = @import("resize_runtime.zig");
 const ui_terminal = @import("terminal/terminal.zig");
-const wasm_terminal = if (builtin.os.tag == .wasi) @import("terminal/wasm_terminal.zig") else struct {};
 
 const Allocator = std.mem.Allocator;
 const Layout = types.Layout;
@@ -161,10 +160,7 @@ pub const TerminalState = struct {
     }
 
     pub fn queryLayout(self: TerminalState, footer_rows: u16) !Layout {
-        return if (comptime builtin.os.tag == .wasi)
-            wasm_terminal.queryLayout(footer_rows)
-        else
-            ui_terminal.queryLayout(self.stdin_fd, footer_rows);
+        return ui_terminal.queryLayout(self.stdin_fd, footer_rows);
     }
 
     pub fn queryCursorPosition(self: TerminalState) !CursorPosition {
@@ -247,13 +243,6 @@ pub const TerminalState = struct {
     }
 
     pub fn pollInput(self: TerminalState, timeout_ms: i32) !PollResult {
-        if (comptime builtin.os.tag == .wasi) {
-            return switch (wasm_terminal.pollInput(timeout_ms)) {
-                1 => .{ .readable = true },
-                -1 => .{ .hung_up = true },
-                else => .{},
-            };
-        }
         var fds = [_]std.posix.pollfd{.{
             .fd = self.stdin_fd,
             .events = std.posix.POLL.IN,
