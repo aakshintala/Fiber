@@ -1578,14 +1578,10 @@ test "rendered top-level help is a complete CLI navigation page" {
     try std.testing.expect(std.mem.find(u8, text, "ask <prompt>") != null);
     try std.testing.expect(std.mem.find(u8, text, "Run one noninteractive request") != null);
     try std.testing.expect(std.mem.find(u8, text, "Draft or publish a GitHub issue") != null);
-    try std.testing.expect(std.mem.find(u8, text, "credits|balance") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Sign in to a model provider") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Sign out of a model provider") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Choose the active model provider") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Configure a Vercel AI Gateway API key") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Choose a Vercel AI Gateway team") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Show Vercel AI Gateway credits") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Sign in to Codex") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Sign out of the Codex session") != null);
     try std.testing.expect(std.mem.find(u8, text, "Sign in to Vercel or a selected provider") == null);
+    try std.testing.expect(std.mem.find(u8, text, "credits|balance") == null);
     try std.testing.expect(std.mem.find(u8, text, "Flags:") != null);
     try std.testing.expect(std.mem.find(u8, text, "--context-limit <spec>") != null);
     try std.testing.expect(std.mem.find(u8, text, "Set name=bytes|off; repeatable") != null);
@@ -1609,7 +1605,7 @@ test "rendered top-level help is a complete CLI navigation page" {
     try std.testing.expect(std.mem.find(u8, text, "command-specific options and examples") == null);
     try std.testing.expect(std.mem.find(u8, text, "Run `/help` inside an interactive session for slash commands.") != null);
     try std.testing.expect(std.mem.find(u8, text, "Learn more about fx:  https://fx.sh/docs") != null);
-    try std.testing.expect(std.mem.find(u8, text, "\nReport a problem:     run `/feedback` inside fx\n") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Report a problem") == null);
     try std.testing.expect(std.mem.find(u8, text, "\n\n\nRun `fx <command> --help`") == null);
     try std.testing.expect(std.mem.find(u8, text, "Start:") == null);
     try std.testing.expect(std.mem.find(u8, text, "  Work      ") == null);
@@ -1622,8 +1618,8 @@ test "top-level help summary overrides do not change command-specific help" {
     const login = try renderTopLevelCommandHelp(std.testing.allocator, testTopLevelRegistry(), .login);
     defer std.testing.allocator.free(login);
 
-    try std.testing.expect(std.mem.find(u8, login, "Sign in to Vercel or a selected provider") != null);
-    try std.testing.expect(std.mem.find(u8, login, "Sign in to a model provider") == null);
+    try std.testing.expect(std.mem.find(u8, login, "Sign in to Codex") != null);
+    try std.testing.expect(std.mem.find(u8, login, "Sign in to Vercel or a selected provider") == null);
 }
 
 test "terminal top-level help adds styling without changing visible content" {
@@ -1640,7 +1636,7 @@ test "terminal top-level help adds styling without changing visible content" {
     try std.testing.expect(std.mem.find(u8, terminal, "\x1b[39mask <prompt>\x1b[0m") != null);
     try std.testing.expect(std.mem.find(u8, terminal, "\x1b[38;5;243mFast, native coding agent") != null);
     try std.testing.expect(std.mem.find(u8, terminal, "\x1b[4mhttps://fx.sh/docs\x1b[0m") != null);
-    try std.testing.expect(std.mem.find(u8, terminal, "\x1b[39mrun `/feedback` inside fx\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, terminal, "run `/feedback` inside fx") == null);
     try std.testing.expect(std.mem.find(u8, terminal, "\x1b[38;5;252m") == null);
     try std.testing.expect(std.mem.find(u8, terminal, "\x1b[38;5;245m") == null);
     try std.testing.expectEqualStrings(plain, stripped);
@@ -1659,8 +1655,7 @@ test "top-level help renders flags as compact aligned rows" {
     try std.testing.expect(lineContainsBoth(wide, "--resume [last|<id>]", "Resume the latest workspace session or an exact ID"));
     try std.testing.expect(lineContainsBoth(wide, "--resume-last", "Resume the latest workspace session"));
     try std.testing.expect(std.mem.find(u8, wide, "Print the fx version and exit\n\nExamples:") != null);
-    try std.testing.expect(std.mem.find(u8, wide, "List available models\n\n  setup") != null);
-    try std.testing.expect(std.mem.find(u8, wide, "Show Vercel AI Gateway credits\n\n  usage") != null);
+    try std.testing.expect(std.mem.find(u8, wide, "List available models\n\n  usage") != null);
     try expectAllLinesFit(narrow, 60);
 }
 
@@ -1789,7 +1784,7 @@ test "slash completion categories follow canonical entries" {
 test "help catalog groups visible commands and searches all command metadata" {
     const registry = testSlashRegistry();
 
-    try std.testing.expectEqual(@as(usize, 35), helpCatalogCount(registry, ""));
+    try std.testing.expectEqual(@as(usize, 32), helpCatalogCount(registry, ""));
     try std.testing.expectEqualStrings("/help", helpCatalogSpecAt(registry, "", 0).?.command);
     try std.testing.expectEqual(@as(usize, 5), helpCatalogCategoryCount(registry, "", .general));
     try std.testing.expectEqual(@as(usize, 3), helpCatalogCount(registry, "appearance"));
@@ -2104,7 +2099,6 @@ test "slash completion descriptions follow completion matches" {
     try std.testing.expectEqualStrings("choose what model and reasoning effort to use", nthSlashCompletionDescription(testSlashRegistry(), "/mo", 0).?);
     try std.testing.expectEqualStrings("start a fresh conversation while keeping managed processes", nthSlashCompletionDescription(testSlashRegistry(), "/cl", 0).?);
     try std.testing.expectEqualStrings("undo the latest tracked file operation", nthSlashCompletionDescription(testSlashRegistry(), "/un", 0).?);
-    try std.testing.expectEqualStrings("open the fx feedback form", nthSlashCompletionDescription(testSlashRegistry(), "/fee", 0).?);
     try std.testing.expectEqualStrings("copy a private diagnostic trace", nthSlashCompletionDescription(testSlashRegistry(), "/tr", 0).?);
     try std.testing.expectEqualStrings("compact older conversation turns", nthSlashCompletionDescription(testSlashRegistry(), "/comp", 0).?);
     try std.testing.expectEqualStrings("show alias availability", nthSlashCompletionDescription(testSlashRegistry(), "/ali", 0).?);
@@ -2112,11 +2106,11 @@ test "slash completion descriptions follow completion matches" {
 }
 
 test "slash completion aliases participate in ranked order" {
-    try std.testing.expectEqualStrings("/balance", firstSlashCompletion(testSlashRegistry(), "/ba").?);
-    try std.testing.expectEqual(@as(usize, 2), slashCompletionCount(testSlashRegistry(), "/ba"));
-    try std.testing.expectEqualStrings("/balance", nthSlashCompletion(testSlashRegistry(), "/ba", 0).?);
-    try std.testing.expectEqualStrings("/feedback", nthSlashCompletion(testSlashRegistry(), "/ba", 1).?);
-    try std.testing.expectEqualStrings("/balance", firstSlashCompletion(testSlashRegistry(), "/bal").?);
+    try std.testing.expectEqualStrings("/img", nthSlashCompletion(testSlashRegistry(), "/img", 0).?);
+    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/img"));
+    try std.testing.expectEqualStrings("/image", firstSlashCompletion(testSlashRegistry(), "/ima").?);
+    try std.testing.expectEqual(@as(usize, 2), slashCompletionCount(testSlashRegistry(), "/ima"));
+    try std.testing.expectEqualStrings("/images", nthSlashCompletion(testSlashRegistry(), "/ima", 1).?);
 }
 
 test "rendered slash welcome excludes non-welcome help entries" {

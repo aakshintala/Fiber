@@ -1710,10 +1710,6 @@ test "ACP new and loaded sessions provide a writable subagent host" {
         );
         try std.testing.expectEqualStrings("review", new_active.mode);
         try std.testing.expect(new_writable.state.usage != null);
-        try std.testing.expect(
-            new_active.session_rt.usage.generation_usage_providers.select(.codex).?.lookup_fn ==
-                state.cfg.provider_set.deferredUsageProviders().select(.codex).?.lookup_fn,
-        );
         io_mod.sleep(10 * std.time.ns_per_ms);
         var live_usage = try new_active.session_rt.usage.snapshot(alloc);
         defer live_usage.deinit(alloc);
@@ -1749,10 +1745,6 @@ test "ACP new and loaded sessions provide a writable subagent host" {
         try std.testing.expect(loaded_writable.state.usage != null);
         try std.testing.expect(state.subagent_store != null);
         try std.testing.expect(state.subagent_host != null);
-        try std.testing.expect(
-            loaded_active.session_rt.usage.generation_usage_providers.select(.codex).?.lookup_fn ==
-                state.cfg.provider_set.deferredUsageProviders().select(.codex).?.lookup_fn,
-        );
 
         try capture.sync(io_mod.getIo());
     }

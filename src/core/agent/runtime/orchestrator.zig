@@ -2875,21 +2875,6 @@ test "potentially sent recovery rejects missing or changed credential authority"
         .chatgpt_subscription,
         "acct_1",
     ));
-    legacy.authority.credential_source = .chatgpt_subscription;
-    legacy.authority.credential_identity = credential_authority.derive(
-        .chatgpt_subscription,
-        null,
-    );
-    try std.testing.expect(!shouldRejectRecoveryAuthority(
-        legacy,
-        .chatgpt_subscription,
-        null,
-    ));
-    try std.testing.expect(shouldRejectRecoveryAuthority(
-        legacy,
-        .chatgpt_subscription,
-        null,
-    ));
     legacy.authority.credential_source = null;
     legacy.authority.credential_identity = null;
     legacy.consumed_provider_attempts = 0;

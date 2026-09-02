@@ -3361,10 +3361,9 @@ test "direct exact generation IDs are deterministic and provider scoped" {
 
     var gateway_buffer: [30]u8 = undefined;
     const gateway_id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV";
-    try std.testing.expectEqualStrings(
-        gateway_id,
-        try canonicalExactGenerationId(.codex, gateway_id, &gateway_buffer),
-    );
+    const canonicalized = try canonicalExactGenerationId(.codex, gateway_id, &gateway_buffer);
+    try std.testing.expect(!std.mem.eql(u8, gateway_id, canonicalized));
+    try std.testing.expect(types.validGatewayGenerationId(canonicalized));
     try std.testing.expectError(
         error.InvalidGenerationId,
         canonicalExactGenerationId(.codex, "", &gateway_buffer),
@@ -4391,7 +4390,7 @@ test "invalid generation identity settles the provider observation" {
     try observation.complete(
         alloc,
         .{
-            .generation_id = "resp_provider_local",
+            .generation_id = "resp\nprovider local",
             .billing = .{
                 .created_at_ms = 1,
                 .model = "provider/model",
@@ -5741,7 +5740,7 @@ test "stale reconciliation credential cannot replace a refreshed credential" {
     try std.testing.expect(!usage.reconciliation_credential_blocked);
 }
 
-test "resumed provider reconciliation uses Gateway credential slot identity" {
+test "resumed provider reconciliation uses Codex account credential identity" {
     const alloc = std.testing.allocator;
     var usage = Usage.initFresh();
     defer usage.deinit(alloc);
@@ -5766,7 +5765,7 @@ test "resumed provider reconciliation uses Gateway credential slot identity" {
         alloc,
         .codex,
         .chatgpt_subscription,
-        null,
+        "acct_1",
         "secret-key",
     );
     try std.testing.expect(usage.reconciliation_key_digest != null);

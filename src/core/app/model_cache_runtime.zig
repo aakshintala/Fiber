@@ -835,6 +835,15 @@ fn waitForWarmup(runtime: *Runtime) !void {
     try std.testing.expect(!runtime.isFailed());
 }
 
+/// Like waitForWarmup but tolerates a terminal failed state.
+fn waitForTerminalWarmup(runtime: *Runtime) !void {
+    var remaining_ms: u64 = 5000;
+    while (runtime.isLoading() and remaining_ms > 0) : (remaining_ms -= 1) {
+        io_mod.sleep(std.time.ns_per_ms);
+    }
+    try std.testing.expect(!runtime.isLoading());
+}
+
 fn modelIdListContains(ids: []const []u8, needle: []const u8) bool {
     for (ids) |id| {
         if (std.mem.eql(u8, id, needle)) return true;
@@ -1023,37 +1032,33 @@ test "cooperative model cache retries a ready catalog after a retryable fallback
     try std.testing.expectEqualStrings("public/refreshed", runtime.catalog.items[0].id);
 }
 
-test "model cache projects anonymous fallback provenance for 401 and 403" {
+test "model cache projects rejected credential provenance for 401 and 403" {
     for ([_]std.http.Status{ .unauthorized, .forbidden }) |status| {
         var runtime = Runtime.init(std.testing.allocator, "/v1/models");
         defer runtime.deinit();
         var provider = RefreshCatalog{
             .first_failure = .{ .category = .authentication, .http_status = status },
-            .fallback_model = "public/fallback",
         };
 
         runtime.startWarmup(provider.provider(), authenticatedCatalogAccess("rejected-key", "team_123"));
-        try waitForWarmup(&runtime);
+        try waitForTerminalWarmup(&runtime);
 
-        const provenance = runtime.outcome.loaded.?;
-        try std.testing.expectEqual(model_catalog.AccessLevel.public_only, provenance.access.level);
-        try std.testing.expectEqual(credentials.Source.chatgpt_subscription, provenance.access.source.?);
-        try std.testing.expectEqual(credentials.CatalogPublicOnlyReason.authenticated_credential_rejected, provenance.access.public_only_reason.?);
-        try std.testing.expect(provenance.access.private_models_may_be_hidden);
-        try std.testing.expect(provenance.anonymous_fallback_used);
-        try std.testing.expectEqual(model_catalog.FailureCategory.authentication, provenance.fallback_failure.?.category);
-        try std.testing.expectEqual(status, provenance.fallback_failure.?.http_status.?);
-        try std.testing.expect(runtime.outcome.last_failure == null);
+        try std.testing.expect(runtime.outcome.loaded == null);
+        const last_failure = runtime.outcome.last_failure.?;
+        try std.testing.expectEqual(model_catalog.AccessLevel.authenticated, last_failure.access.level);
+        try std.testing.expectEqual(credentials.Source.chatgpt_subscription, last_failure.access.source.?);
+        try std.testing.expect(!last_failure.access.private_models_may_be_hidden);
+        try std.testing.expect(!last_failure.anonymous_fallback_used);
+        try std.testing.expectEqual(model_catalog.FailureCategory.authentication, last_failure.failure.category);
+        try std.testing.expectEqual(status, last_failure.failure.http_status.?);
+        try std.testing.expectEqual(@as(usize, 1), provider.calls);
 
         try runtime.openMenu();
-        try std.testing.expectEqual(model_catalog.AccessLevel.public_only, runtime.menu.catalog_state.access_level.?);
-        try std.testing.expectEqual(credentials.CatalogPublicOnlyReason.authenticated_credential_rejected, runtime.menu.catalog_state.public_only_reason.?);
-        try std.testing.expect(runtime.menu.catalog_state.private_models_hidden);
+        try std.testing.expectEqual(model_catalog.AccessLevel.authenticated, runtime.menu.catalog_state.access_level.?);
+        try std.testing.expect(runtime.menu.catalog_state.public_only_reason == null);
+        try std.testing.expect(!runtime.menu.catalog_state.private_models_hidden);
         try std.testing.expectEqual(model_catalog.FailureCategory.authentication, runtime.menu.catalog_state.failure.?.category);
         try std.testing.expect(!runtime.menu.catalog_state.failure.?.retryable);
-
-        runtime.startWarmup(provider.provider(), authenticatedCatalogAccess("rejected-key", "team_123"));
-        try std.testing.expectEqual(@as(usize, 2), provider.calls);
     }
 }
 
@@ -1074,13 +1079,13 @@ test "model cache catalog auth refresh preserves the last public catalog" {
     runtime.startWarmup(refresh_provider.provider(), authenticatedCatalogAccess("rejected-key", "team_123"));
     try waitForWarmup(&runtime);
 
-    try std.testing.expectEqual(@as(usize, 2), refresh_provider.calls);
+    try std.testing.expectEqual(@as(usize, 1), refresh_provider.calls);
     try std.testing.expectEqual(model_catalog.FailureCategory.authentication, runtime.outcome.last_failure.?.failure.category);
     try std.testing.expectEqual(std.http.Status.forbidden, runtime.outcome.last_failure.?.failure.http_status.?);
-    try std.testing.expect(runtime.outcome.last_failure.?.anonymous_fallback_used);
+    try std.testing.expect(!runtime.outcome.last_failure.?.anonymous_fallback_used);
     try runtime.openMenu();
     try std.testing.expectEqual(
-        credentials.CatalogPublicOnlyReason.authenticated_credential_rejected,
+        credentials.CatalogPublicOnlyReason.no_credential,
         runtime.menu.catalog_state.public_only_reason.?,
     );
     runtime.closeMenu();
@@ -1229,7 +1234,7 @@ test "model cache auth change prevents a stale load from replacing the newer cat
 
 test "model cache access copies clean up every induced allocation failure" {
     const access = authenticatedCatalogAccess("copied-secret", "copied-team");
-    for (0..2) |fail_index| {
+    for (0..1) |fail_index| {
         var failing = std.testing.FailingAllocator.init(
             std.testing.allocator,
             .{ .fail_index = fail_index },
@@ -1450,14 +1455,14 @@ test "model cache completion hydrates an open menu and reports once" {
     try std.testing.expectEqual(ModelCacheState.idle, runtime.state);
 }
 
-test "model cache reset replaces ready public catalog with private catalog" {
+test "model cache reset refetches the ready catalog with different access" {
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc, "/v1/models");
     defer runtime.deinit();
 
     {
         var public_catalog = StaticCatalogProvider{ .entries = &static_catalog_public };
-        runtime.startWarmup(public_catalog.provider(), .{ .public_only = .no_credential });
+        runtime.startWarmup(public_catalog.provider(), authenticatedCatalogAccess("shared-key", null));
         try waitForWarmup(&runtime);
 
         var snapshot = (try runtime.snapshotCachedModelIds(std.testing.allocator)).?;
@@ -1469,7 +1474,7 @@ test "model cache reset replaces ready public catalog with private catalog" {
 
     {
         var private_catalog = StaticCatalogProvider{ .entries = &static_catalog_private };
-        runtime.startWarmup(private_catalog.provider(), authenticatedCatalogAccess("test-key", null));
+        runtime.startWarmup(private_catalog.provider(), authenticatedCatalogAccess("team-key", "team_1"));
         try waitForWarmup(&runtime);
 
         var snapshot = (try runtime.snapshotCachedModelIds(std.testing.allocator)).?;

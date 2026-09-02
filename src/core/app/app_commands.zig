@@ -4074,7 +4074,7 @@ test "trace auth summary preserves missing and loaded status text" {
     defer missing.deinit();
     try writeAuthStateSummary(&missing.writer, &app);
     try std.testing.expectEqualStrings(
-        "auth: source=missing refreshable=false gateway_team=unknown\n",
+        "auth: source=missing refreshable=false\n",
         missing.written(),
     );
 
@@ -4088,7 +4088,7 @@ test "trace auth summary preserves missing and loaded status text" {
     defer loaded.deinit();
     try writeAuthStateSummary(&loaded.writer, &app);
     try std.testing.expectEqualStrings(
-        "auth: source=fx login refreshable=true gateway_team=unset\n",
+        "auth: source=Codex subscription refreshable=true\n",
         loaded.written(),
     );
 }

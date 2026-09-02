@@ -454,7 +454,7 @@ test "capability resolver uses provider catalog metadata" {
     try std.testing.expectEqual(model_capabilities.ImageInputSupport.unknown, missing.image_input_support);
 }
 
-test "capability resolver retries rejected authenticated catalog access anonymously" {
+test "capability resolver keeps a rejected authenticated catalog access terminal" {
     var resolver: CapabilityResolver = .{};
     defer resolver.deinit(std.testing.allocator);
     var fake = FakeCatalog{ .outcome = .authenticated_rejected_then_ready };
@@ -470,10 +470,10 @@ test "capability resolver retries rejected authenticated catalog access anonymou
         .{},
     );
 
-    try std.testing.expectEqual(@as(usize, 2), fake.calls);
+    try std.testing.expectEqual(@as(usize, 1), fake.calls);
     try std.testing.expect(fake.saw_authenticated_access);
-    try std.testing.expect(fake.saw_public_retry);
-    try std.testing.expect(capabilities.supports_vision);
+    try std.testing.expect(!fake.saw_public_retry);
+    try std.testing.expect(!capabilities.supports_vision);
 }
 
 test "capability resolver degrades terminal catalog failures to local capabilities" {

@@ -153,15 +153,12 @@ pub const SignInRuntime = struct {
         deps: SignInRuntimeDeps,
         comptime cooperative: bool,
     ) !bool {
-        const poll_state = if (cooperative)
-            LoginPollState.init(deps.poll, prepared.device) catch |err| {
-                var rejected = prepared;
-                rejected.deinit(alloc);
-                if (deps.deinit_ctx) |deinit_ctx| deinit_ctx(deps.ctx, alloc);
-                return err;
-            }
-        else
-            null;
+        const poll_state = LoginPollState.init(deps.poll, prepared.device) catch |err| {
+            var rejected = prepared;
+            rejected.deinit(alloc);
+            if (deps.deinit_ctx) |deinit_ctx| deinit_ctx(deps.ctx, alloc);
+            return err;
+        };
         self.mutex.lockUncancelable(io_mod.getIo());
         if (self.thread != null or self.state == .polling or self.completion != null) {
             self.mutex.unlock(io_mod.getIo());
@@ -247,9 +244,22 @@ pub const SignInRuntime = struct {
 
     pub fn pollTransition(self: *Self, alloc: Allocator) SignInTransition {
         self.mutex.lockUncancelable(io_mod.getIo());
+        const terminal = switch (self.state) {
+            .succeeded, .failed, .cancelled => true,
+            .idle, .polling => false,
+        };
+        const thread = if (terminal) self.thread else null;
+        if (terminal) self.thread = null;
+        self.mutex.unlock(io_mod.getIo());
+        if (!terminal) return .none;
+
+        if (comptime !host_target.is_wasm) {
+            if (thread) |handle| handle.join();
+        }
+
+        self.mutex.lockUncancelable(io_mod.getIo());
         defer self.mutex.unlock(io_mod.getIo());
         switch (self.state) {
-            .idle, .polling => return .none,
             .succeeded => {
                 self.state = .idle;
                 var flow = self.flow;
@@ -274,6 +284,7 @@ pub const SignInRuntime = struct {
                 self.state = .idle;
                 return .cancelled;
             },
+            .idle, .polling => unreachable,
         }
     }
 

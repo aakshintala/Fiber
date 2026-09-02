@@ -3556,7 +3556,7 @@ test "ACP auth failure emits a valid detail-free JSON-RPC notification" {
     const update = parsed.value.object.get("params").?.object.get("update").?.object;
     const content = update.get("content").?.object;
     try std.testing.expectEqualStrings(
-        "VERCEL_OIDC_TOKEN authentication failed · HTTP 401",
+        "Codex subscription authentication failed · HTTP 401",
         content.get("text").?.string,
     );
     try std.testing.expect(std.mem.find(u8, captured, "access-token-secret") == null);
@@ -4233,6 +4233,9 @@ test "ACP prompt projection configures web search then blocks native execution" 
         calls: usize = 0,
     };
     const FailingWebSearchProvider = struct {
+        fn preferredBackends(_: ?*anyopaque) !?[]const web_search_contract.SearchBackendId {
+            return null;
+        }
         fn execute(
             raw_ctx: ?*anyopaque,
             _: Allocator,
@@ -4258,11 +4261,13 @@ test "ACP prompt projection configures web search then blocks native execution" 
     state.writer = .{ .stdout = capture };
     var ctx = AcpContext{ .alloc = arena, .state = &state, .session_id = "session_1" };
     var provider_state = ProviderState{};
-    var provider = state.web_search_runtime.provider orelse return error.TestExpectedEqual;
-    provider.context = @ptrCast(&provider_state);
-    provider.execute_fn = FailingWebSearchProvider.execute;
     state.web_search_runtime = web_search_runtime.Runtime.init(.{
-        .provider = provider,
+        .provider = .{
+            .context = @ptrCast(&provider_state),
+            .policy = .{},
+            .preferred_backends_fn = FailingWebSearchProvider.preferredBackends,
+            .execute_fn = FailingWebSearchProvider.execute,
+        },
     });
 
     state.web_search_runtime.configure(.{
@@ -4289,10 +4294,6 @@ test "ACP prompt projection configures web search then blocks native execution" 
     });
     const session = state.active_session orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("web_search field \"query\" must contain at least two characters", validation.failure);
-    try std.testing.expectEqualStrings(session.api_key, state.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(session.model, state.web_search_runtime.worker_model);
-    try std.testing.expectEqual(state.cfg.gateway_retry_count, state.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(state.cfg.gateway_chat_url, state.web_search_runtime.gateway_chat_url);
 
     const execute = deps.execute_tool_call;
     const execution = try execute(deps.ctx, .{
@@ -4308,15 +4309,11 @@ test "ACP prompt projection configures web search then blocks native execution" 
         .advertised_dynamic_tool_names = &.{},
         .max_tool_result_bytes = session.max_tool_result_bytes,
     });
-    try std.testing.expectEqualStrings(session.api_key, state.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(session.model, state.web_search_runtime.worker_model);
-    try std.testing.expectEqual(state.cfg.gateway_retry_count, state.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(state.cfg.gateway_chat_url, state.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqual(.failure, execution.status);
     try std.testing.expectEqual(@as(usize, 0), provider_state.calls);
 }
 
-test "ACP ChatGPT route removes Gateway-backed auxiliary capabilities" {
+test "ACP ChatGPT route keeps Codex-owned review and drops web search backend" {
     const alloc = std.testing.allocator;
     var state = try initTestAcpState(alloc, "/tmp/workspace", .auto);
     defer state.deinit();
@@ -4327,8 +4324,7 @@ test "ACP ChatGPT route removes Gateway-backed auxiliary capabilities" {
 
     const tool_ctx = ctx.toolContext();
     try std.testing.expect(tool_ctx.web_search_backend == null);
-    try std.testing.expect(tool_ctx.permission_reviewer_provider == null);
-    try std.testing.expect(!tool_ctx.auto_classifier.enabled());
+    try std.testing.expect(tool_ctx.permission_reviewer_provider != null);
 }
 
 test "ACP default user commands require configured authority or review" {
@@ -4654,7 +4650,7 @@ test "ACP full advertisement includes direct provider search with explicit permi
     });
     defer projection.deinit(std.testing.allocator);
     try std.testing.expect(tool_projection_mod.containsName(projection.advertised_names, "web_search"));
-    try std.testing.expectEqualStrings(builtin_tools.web_search.description, projection.custom_guidance);
+    try std.testing.expectEqualStrings("", projection.custom_guidance);
 }
 
 test "ACP prompt agent config carries request options from active session" {
@@ -4697,8 +4693,5 @@ test "ACP prompt agent config carries request options from active session" {
     try std.testing.expect(tool_ctx.web_search_backend == null);
     try std.testing.expect(state.web_search_runtime.provider == null);
     try std.testing.expect(tool_ctx.web_fetch_runtime.? == &state.web_fetch_runtime);
-    try std.testing.expectEqualStrings(session.model, state.web_search_runtime.worker_model);
-    try std.testing.expectEqual(state.cfg.gateway_retry_count, state.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(state.cfg.gateway_chat_url, state.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqualStrings("/models", tool_ctx.gateway_models_path);
 }

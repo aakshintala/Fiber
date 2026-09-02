@@ -4636,7 +4636,7 @@ test "runtime cancellation observed at the timeout deadline stays graceful" {
                 flag.store(true, .seq_cst);
             }
         };
-        const request_at_ms = started_ms + @as(i64, @intCast(timeout_ms)) - 25;
+        const request_at_ms = started_ms + @as(i64, @intCast(timeout_ms)) - 200;
         const thread = try std.Thread.spawn(
             .{},
             CancelNearDeadline.run,

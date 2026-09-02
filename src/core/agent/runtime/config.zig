@@ -36,10 +36,7 @@ pub const Config = struct {
     advertised_tool_names: []const []const u8 = &.{},
     advertised_functions: []const model_tool_schema.FunctionSchema = &.{},
     initial_dynamic_tools: []const stream_provider.DynamicFunctionTool = &.{},
-    provider_capabilities: provider_set.Bundle.Capabilities = .{
-        .fx_search = true,
-        .vision_fallback = true,
-    },
+    provider_capabilities: provider_set.Bundle.Capabilities = .{ .vision_fallback = true },
     custom_tool_guidance: []const u8 = "",
     agent_step_limit: usize,
     max_tool_result_bytes: usize = tool_result_limits.default_max_tool_result_bytes,

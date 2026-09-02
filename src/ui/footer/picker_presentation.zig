@@ -1367,6 +1367,7 @@ const picker_test_slash_specs = [_]command_specs.SlashSpec{
     .{ .kind = .mcp, .command = "/mcp", .help_entry = "/mcp [list|resource|prompt|add|remove]", .completion_description = "manage MCP servers, resources, and prompts", .presentation_category = .extensions, .has_args = true },
     .{ .kind = .permissions, .command = "/permissions", .help_entry = "/permissions [ask|auto|remember|revoke|yolo|reset]", .completion_description = "choose permission behavior", .presentation_category = .security, .has_args = true },
     .{ .kind = .settings, .command = "/settings", .help_entry = "/settings", .completion_description = "configure fx", .presentation_category = .general },
+    .{ .kind = .status, .command = "/status", .help_entry = "/status", .completion_description = "show runtime configuration", .presentation_category = .general },
 };
 const picker_test_slash_registry = command_specs.SlashRegistry{ .commands = picker_test_slash_specs[0..] };
 
@@ -1679,13 +1680,14 @@ test "registry-aware mixed slash completion maps skills after injected commands"
 }
 
 test "registry-aware slash presentation preserves aliases" {
+    const builtin_commands = @import("../../builtins/commands.zig");
     try std.testing.expectEqual(
         @as(usize, 1),
-        mixedSlashCompletionCount(picker_test_slash_registry, "/bal", &.{}),
+        mixedSlashCompletionCount(builtin_commands.slash_registry, "/img", &.{}),
     );
     try std.testing.expectEqualStrings(
-        "/balance",
-        nthMixedSlashCompletionText(picker_test_slash_registry, "/bal", &.{}, 0).?,
+        "/img",
+        nthMixedSlashCompletionText(builtin_commands.slash_registry, "/img", &.{}, 0).?,
     );
 }
 
@@ -1989,7 +1991,7 @@ test "setup root fits the inline picker with status and controls" {
         .include_skip = false,
     };
     const row_count = authPickerRowCount(view);
-    try std.testing.expectEqual(@as(u16, 6), row_count);
+    try std.testing.expectEqual(@as(u16, 3), row_count);
 
     var screen: std.ArrayList(u8) = .empty;
     defer screen.deinit(alloc);
@@ -2001,9 +2003,9 @@ test "setup root fits the inline picker with status and controls" {
     }
 
     try std.testing.expect(std.mem.find(u8, screen.items, "Connections") != null);
-    try std.testing.expect(std.mem.find(u8, screen.items, "Model provider") != null);
-    try std.testing.expect(std.mem.find(u8, screen.items, "Vercel team") != null);
-    try std.testing.expect(std.mem.find(u8, screen.items, "Credential source") != null);
+    try std.testing.expect(std.mem.find(u8, screen.items, "Model provider") == null);
+    try std.testing.expect(std.mem.find(u8, screen.items, "Vercel team") == null);
+    try std.testing.expect(std.mem.find(u8, screen.items, "Credential source") == null);
     try std.testing.expect(std.mem.find(u8, screen.items, "Enter Open") == null);
     try std.testing.expect(std.mem.find(u8, screen.items, "Esc Close") == null);
     try std.testing.expect(std.mem.find(u8, screen.items, "Routing") == null);
@@ -2046,21 +2048,21 @@ test "sign-in stage renders the complete device authorization screen" {
         },
     };
 
-    try std.testing.expectEqual(@as(u16, 7), authPickerRowCount(view));
+    try std.testing.expectEqual(@as(u16, 4), authPickerRowCount(view));
     var screen: std.ArrayList(u8) = .empty;
     defer screen.deinit(alloc);
     for (0..authPickerRowCount(view)) |row_index| {
-        var row = try composeAuthPickerRow(alloc, view, @intCast(row_index), 7, 100);
+        var row = try composeAuthPickerRow(alloc, view, @intCast(row_index), authPickerRowCount(view), 100);
         defer row.deinit(alloc);
         try screen.appendSlice(alloc, row.items);
         try screen.append(alloc, '\n');
     }
     for ([_][]const u8{
-        "Sign in with Vercel",
-        "Open   https://vercel.test/verify",
+        "Sign in with Codex",
+        "https://vercel.test/verify",
         "Code   TEST-CODE",
+        "Authorize with Codex",
         "Waiting for authorization",
-        "Enter reopens browser · Esc cancels",
     }) |expected| {
         try std.testing.expect(std.mem.find(u8, screen.items, expected) != null);
     }
