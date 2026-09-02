@@ -1441,6 +1441,7 @@ fn footerGeometryForRows(rows: FooterRows, activity: ActivityPlacement) footer_v
 
 const surface_test_slash_specs = [_]command_specs.SlashSpec{
     .{ .kind = .help, .command = "/help", .help_entry = "/help", .completion_description = "show available slash commands", .presentation_category = .general },
+    .{ .kind = .trace, .command = "/trace", .help_entry = "/trace", .completion_description = "copy a private diagnostic trace", .presentation_category = .product },
 };
 const surface_test_slash_registry = command_specs.SlashRegistry{ .commands = surface_test_slash_specs[0..] };
 
@@ -1773,7 +1774,7 @@ test "surface footer measurement reserves capped picker rows for active list pic
 
     var slash_input = InputRuntime{};
     defer slash_input.deinit(alloc);
-    try slash_input.edit_state.input.appendSlice(alloc, "/fe");
+    try slash_input.edit_state.input.appendSlice(alloc, "/tr");
     slash_input.edit_state.cursor = slash_input.edit_state.input.items.len;
     var slash_shell = surfaceTestShell(24, 80);
     defer slash_shell.deinit(alloc);

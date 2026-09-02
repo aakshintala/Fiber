@@ -662,12 +662,12 @@ test "model menu places catalog note after an item gap and preserves the heading
 
     var status = try composeModelMenuRow(alloc, projection, 5, 120, rows);
     defer status.deinit(alloc);
-    try std.testing.expect(std.mem.find(u8, status.items, "Note: Gateway catalog is authenticated with an API key") != null);
+    try std.testing.expect(std.mem.find(u8, status.items, "Codex catalog: authenticated with a subscription.") != null);
 }
 
 test "model menu status follows provenance and retryable failure precedence" {
     try std.testing.expectEqualStrings(
-        "Gateway catalog: authenticated with fx login.",
+        "Codex catalog: authenticated with a subscription.",
         loadedCatalogStatusText(.{ .access_level = .authenticated, .source = .chatgpt_subscription }).?,
     );
 

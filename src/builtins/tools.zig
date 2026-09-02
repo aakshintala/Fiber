@@ -1287,20 +1287,10 @@ test "built-in web_search is registered in default production tools" {
     try std.testing.expect(lookup("web_search") != null);
 }
 
-test "built-in web_search owns its Gateway provider advertisement" {
+test "built-in web_search does not advertise a Gateway provider" {
     const registered = registry.lookup("web_search") orelse return error.TestExpectedEqual;
-    const write_advertisement = registered.write_provider_advertisement_fn orelse return error.TestExpectedEqual;
-
-    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
-    try write_advertisement(std.testing.allocator, &out.writer);
-    const json = try out.toOwnedSlice();
-    defer std.testing.allocator.free(json);
-
-    try std.testing.expectEqualStrings(
-        "{\"type\":\"provider\",\"id\":\"gateway.exa_search\",\"name\":\"exa_search\",\"args\":{\"numResults\":10,\"contents\":{\"highlights\":true}}}",
-        json,
-    );
+    try std.testing.expect(registered.write_provider_advertisement_fn == null);
+    try std.testing.expect(!registered.provider_executed);
 }
 
 fn expectWebSearchSchemaContains(needle: []const u8) !void {

@@ -659,7 +659,7 @@ test "catalog HTTP failure classification preserves policy evidence" {
     }
 }
 
-test "catalog authentication fallback is anonymous and bounded" {
+test "rejected authenticated catalog access stays bounded and traced" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -673,27 +673,11 @@ test "catalog authentication fallback is anonymous and bounded" {
 
     const access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key", "team_123");
     const rejection = Failure{ .category = .authentication, .http_status = .unauthorized };
-    var accepted = FallbackProbe{ .failures = .{ rejection, null } };
-    var loaded = fetchWithPublicFallback(accepted.provider(), std.testing.allocator, .{
-        .access = access,
-        .endpoint = "/v1/models",
-    });
-    defer freeModelCatalog(std.testing.allocator, &loaded.loaded.catalog);
-    try std.testing.expectEqual(AccessLevel.public_only, loaded.loaded.provenance.access.level);
-    try std.testing.expectEqual(credentials.Source.chatgpt_subscription, loaded.loaded.provenance.access.source.?);
-    try std.testing.expectEqual(credentials.CatalogPublicOnlyReason.authenticated_credential_rejected, loaded.loaded.provenance.access.public_only_reason.?);
-    try std.testing.expect(loaded.loaded.provenance.access.private_models_may_be_hidden);
-    try std.testing.expect(loaded.loaded.provenance.anonymous_fallback_used);
-    try std.testing.expectEqual(FailureCategory.authentication, loaded.loaded.provenance.fallback_failure.?.category);
-    try std.testing.expectEqual(std.http.Status.unauthorized, loaded.loaded.provenance.fallback_failure.?.http_status.?);
-    try std.testing.expect(!loaded.loaded.provenance.fallback_failure.?.retryable);
-    try std.testing.expectEqual(@as(usize, 2), accepted.calls);
-    try std.testing.expect(accepted.anonymous_retry);
-
     for ([_]Failure{
         .{ .category = .authentication },
         .{ .category = .cancellation },
         .{ .category = .transport, .retryable = true },
+        rejection,
     }) |failure| {
         var rejected = FallbackProbe{ .failures = .{ failure, null } };
         const failed = fetchWithPublicFallback(rejected.provider(), std.testing.allocator, .{
@@ -706,31 +690,21 @@ test "catalog authentication fallback is anonymous and bounded" {
         try std.testing.expectEqual(@as(usize, 1), rejected.calls);
     }
 
-    var twice = FallbackProbe{ .failures = .{ rejection, rejection } };
-    const failed = fetchWithPublicFallback(twice.provider(), std.testing.allocator, .{
-        .access = access,
-        .endpoint = "/v1/models",
-    }).failed;
-    try std.testing.expectEqual(AccessLevel.public_only, failed.access.level);
-    try std.testing.expect(failed.anonymous_fallback_used);
-    try std.testing.expectEqual(std.http.Status.unauthorized, failed.failure.http_status.?);
-    try std.testing.expectEqual(@as(usize, 2), twice.calls);
-
     debug_trace.shutdown();
     var trace_file = try std.Io.Dir.openFileAbsolute(io_mod.getIo(), trace_path, .{});
     defer trace_file.close(io_mod.getIo());
     const trace = try io_mod.readFileToEnd(alloc, &trace_file, 8192);
     defer alloc.free(trace);
-    try std.testing.expectEqual(@as(usize, 5), std.mem.count(u8, trace, "event=model_catalog_load "));
+    try std.testing.expectEqual(@as(usize, 4), std.mem.count(u8, trace, "event=model_catalog_load "));
+    try std.testing.expectEqual(@as(usize, 4), std.mem.count(
+        u8,
+        trace,
+        "requested_access=authenticated credential_source=chatgpt_subscription effective_access=authenticated public_only_reason=none anonymous_fallback=false outcome=failed",
+    ));
     try std.testing.expect(std.mem.find(
         u8,
         trace,
-        "requested_access=authenticated credential_source=ai_gateway_api_key effective_access=public_only public_only_reason=authenticated_credential_rejected anonymous_fallback=true outcome=loaded failure_category=authentication http_status=401 retryable=false",
-    ) != null);
-    try std.testing.expect(std.mem.find(
-        u8,
-        trace,
-        "requested_access=authenticated credential_source=ai_gateway_api_key effective_access=authenticated public_only_reason=none anonymous_fallback=false outcome=failed failure_category=transport http_status=none retryable=true",
+        "failure_category=authentication http_status=401 retryable=false",
     ) != null);
     try std.testing.expect(std.mem.find(u8, trace, "test-key") == null);
     try std.testing.expect(std.mem.find(u8, trace, "team_123") == null);
@@ -756,35 +730,31 @@ test "catalog fallback classification stays bounded across repeated cycles" {
     for (0..128) |iteration| {
         const status: std.http.Status = if (iteration % 2 == 0) .unauthorized else .forbidden;
         const rejection = Failure{ .category = .authentication, .http_status = status };
-        var fallback = FallbackProbe{ .failures = .{ rejection, null } };
-        var loaded = fetchWithPublicFallback(fallback.provider(), std.testing.allocator, .{
-            .access = access,
-            .endpoint = "/v1/models",
-        });
-        switch (loaded) {
-            .loaded => |*result| {
-                defer freeModelCatalog(std.testing.allocator, &result.catalog);
-                try std.testing.expectEqual(AccessLevel.public_only, result.provenance.access.level);
-                try std.testing.expectEqual(status, result.provenance.fallback_failure.?.http_status.?);
-                try std.testing.expect(result.provenance.anonymous_fallback_used);
-            },
-            .failed => return error.TestExpectedEqual,
-        }
-        try std.testing.expectEqual(@as(usize, 2), fallback.calls);
-        try std.testing.expect(fallback.anonymous_retry);
-
-        const expected = terminal_failures[iteration % terminal_failures.len];
-        var terminal = FallbackProbe{ .failures = .{ expected, null } };
-        const failed = fetchWithPublicFallback(terminal.provider(), std.testing.allocator, .{
+        var rejected = FallbackProbe{ .failures = .{ rejection, null } };
+        const failed = fetchWithPublicFallback(rejected.provider(), std.testing.allocator, .{
             .access = access,
             .endpoint = "/v1/models",
         });
         switch (failed) {
-            .loaded => |result| {
-                var catalog = result.catalog;
-                freeModelCatalog(std.testing.allocator, &catalog);
-                return error.TestExpectedEqual;
+            .loaded => return error.TestExpectedEqual,
+            .failed => |result| {
+                try std.testing.expectEqual(rejection.category, result.failure.category);
+                try std.testing.expectEqual(status, result.failure.http_status);
+                try std.testing.expectEqual(AccessLevel.authenticated, result.access.level);
+                try std.testing.expect(!result.anonymous_fallback_used);
             },
+        }
+        try std.testing.expectEqual(@as(usize, 1), rejected.calls);
+        try std.testing.expect(!rejected.anonymous_retry);
+
+        const expected = terminal_failures[iteration % terminal_failures.len];
+        var terminal = FallbackProbe{ .failures = .{ expected, null } };
+        const terminal_failed = fetchWithPublicFallback(terminal.provider(), std.testing.allocator, .{
+            .access = access,
+            .endpoint = "/v1/models",
+        });
+        switch (terminal_failed) {
+            .loaded => return error.TestExpectedEqual,
             .failed => |result| {
                 try std.testing.expectEqual(expected.category, result.failure.category);
                 try std.testing.expectEqual(expected.http_status, result.failure.http_status);

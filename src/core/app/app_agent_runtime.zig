@@ -184,7 +184,7 @@ pub fn Runtime(comptime App: type) type {
             const provider_capabilities = if (comptime @hasDecl(App, "providerSet"))
                 app.providerSet().select(selected_provider).capabilities
             else if (selected_provider == .codex)
-                provider_set.Bundle.Capabilities{ .fx_search = true, .vision_fallback = true }
+                provider_set.Bundle.Capabilities{ .vision_fallback = true }
             else
                 provider_set.Bundle.Capabilities{};
             var ctx: tool_runtime.Context = .{
@@ -1104,7 +1104,7 @@ pub fn Runtime(comptime App: type) type {
                 .provider_capabilities = if (comptime @hasDecl(App, "providerSet"))
                     app.providerSet().select(job.provider).capabilities
                 else if (job.provider == .codex)
-                    .{ .fx_search = true, .vision_fallback = true }
+                    .{ .vision_fallback = true }
                 else
                     .{},
                 .custom_tool_guidance = tool_projection.custom_guidance,
@@ -1765,13 +1765,11 @@ test "app agent runtime builds tool context from app state and MCP callbacks" {
     try std.testing.expect(ctx.fast_mode);
     try std.testing.expectEqual(types.ReasoningEffort.literal("high"), ctx.effort);
     try std.testing.expect(!ctx.web_search_runtime_ready);
-    try std.testing.expect(ctx.web_search_backend != null);
+    try std.testing.expect(ctx.web_search_backend == null);
     try std.testing.expect(ctx.web_fetch_runtime.? == &app.web_fetch_runtime);
     try std.testing.expect(ctx.web_fetch_progress_ctx != null);
     try std.testing.expect(ctx.on_web_fetch_progress != null);
-    try std.testing.expectEqualStrings("test-model", app.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.gateway_retry_count, app.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.gateway_chat_url, app.web_search_runtime.gateway_chat_url);
+    try std.testing.expect(app.web_search_runtime.provider == null);
     try std.testing.expectEqualStrings("/models", ctx.gateway_models_path);
     try std.testing.expectEqual(@as(usize, 4096), ctx.max_tool_result_bytes);
     try std.testing.expectEqual(types.ToolChoice.none, ctx.first_call_tool_choice);
@@ -1871,6 +1869,9 @@ test "app prompt projection configures web search then blocks native execution" 
         calls: usize = 0,
     };
     const FailingWebSearchProvider = struct {
+        fn preferredBackends(_: ?*anyopaque) !?[]const web_search_contract.SearchBackendId {
+            return null;
+        }
         fn execute(
             raw_ctx: ?*anyopaque,
             _: Allocator,
@@ -1887,11 +1888,13 @@ test "app prompt projection configures web search then blocks native execution" 
     var app = try FakeApp.init(alloc);
     defer app.deinit();
     var provider_state = ProviderState{};
-    var provider = app.web_search_runtime.provider orelse return error.TestExpectedEqual;
-    provider.context = @ptrCast(&provider_state);
-    provider.execute_fn = FailingWebSearchProvider.execute;
     app.web_search_runtime = web_search_runtime.Runtime.init(.{
-        .provider = provider,
+        .provider = .{
+            .context = @ptrCast(&provider_state),
+            .policy = .{},
+            .preferred_backends_fn = FailingWebSearchProvider.preferredBackends,
+            .execute_fn = FailingWebSearchProvider.execute,
+        },
     });
 
     app.web_search_runtime.configure(.{
@@ -1917,10 +1920,6 @@ test "app prompt projection configures web search then blocks native execution" 
         .arguments_json = "{\"query\":\"x\"}",
     });
     try std.testing.expectEqualStrings("web_search field \"query\" must contain at least two characters", validation.failure);
-    try std.testing.expectEqualStrings(app.auth.apiKey().?, app.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(app.selected_model.items, app.web_search_runtime.worker_model);
-    try std.testing.expectEqual(@as(usize, 2), app.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(test_gateway_chat_url, app.web_search_runtime.gateway_chat_url);
 
     const execution = try app.executeToolCall(.{
         .call_allocator = arena,
@@ -1935,10 +1934,6 @@ test "app prompt projection configures web search then blocks native execution" 
         .advertised_dynamic_tool_names = &.{},
         .max_tool_result_bytes = 2048,
     });
-    try std.testing.expectEqualStrings(app.auth.apiKey().?, app.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(app.selected_model.items, app.web_search_runtime.worker_model);
-    try std.testing.expectEqual(@as(usize, 2), app.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(test_gateway_chat_url, app.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqual(.failure, execution.status);
     try std.testing.expectEqual(@as(usize, 0), provider_state.calls);
 }

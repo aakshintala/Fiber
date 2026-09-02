@@ -126,10 +126,7 @@ pub const Context = struct {
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
     provider: model_provider.ProviderId = .codex,
-    provider_capabilities: provider_set.Bundle.Capabilities = .{
-        .fx_search = true,
-        .vision_fallback = true,
-    },
+    provider_capabilities: provider_set.Bundle.Capabilities = .{ .vision_fallback = true },
     oauth_transport: oauth_transport.Provider = oauth_transport.unavailable_provider,
     secret_store: host_mod.SecretStore = host_mod.unavailable_secret_store,
     model: []const u8,
@@ -2021,10 +2018,7 @@ const TestRuntime = struct {
     max_tool_result_bytes: usize = 64 * 1024,
     api_key: []const u8 = "",
     provider: model_provider.ProviderId = .codex,
-    provider_capabilities: provider_set.Bundle.Capabilities = .{
-        .fx_search = true,
-        .vision_fallback = true,
-    },
+    provider_capabilities: provider_set.Bundle.Capabilities = .{ .vision_fallback = true },
     gateway_team: ?[]const u8 = null,
     gateway_retry_count: usize = 0,
     gateway_chat_url: []const u8 = "",

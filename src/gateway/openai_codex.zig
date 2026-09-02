@@ -660,7 +660,7 @@ test "OpenAI Codex rejects a wrong-origin credential before network I/O" {
     var evidence: stream_provider.AttemptEvidence = .{};
     var callback_context: u8 = 0;
     try std.testing.expectError(
-        error.CodexSubscriptionCredentialRequired,
+        error.InvalidChatGptAccessToken,
         agent_stream_provider.stream(std.testing.allocator, .{
             .credential = .{ .secret = "gateway-key", .source = .chatgpt_subscription },
             .model = "gpt-5.6-sol",

@@ -3975,14 +3975,11 @@ fn testProcessQueuedPromptChecksTimeout(_: *agent_runtime.Agent, deps: *const ag
     const tool_ctx = ctx.toolContext();
     try std.testing.expectEqual(@as(?usize, std.time.ms_per_s), tool_ctx.command_timeout_ms);
     try std.testing.expect(!tool_ctx.web_search_runtime_ready);
-    try std.testing.expect(tool_ctx.web_search_backend != null);
+    try std.testing.expect(tool_ctx.web_search_backend == null);
     try std.testing.expect(tool_ctx.web_fetch_runtime.? == &ctx.web_fetch_runtime);
     try std.testing.expect(tool_ctx.web_fetch_progress_ctx != null);
     try std.testing.expect(tool_ctx.on_web_fetch_progress != null);
-    try std.testing.expectEqualStrings(ctx.model, ctx.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.cfg.gateway_retry_count, ctx.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.cfg.gateway_chat_url, ctx.web_search_runtime.gateway_chat_url);
-    try std.testing.expect(ctx.web_search_runtime.provider.?.execute_fn == ctx.cfg.provider_set.codex.fx_search.?.execute_fn);
+    try std.testing.expect(ctx.web_search_runtime.provider == null);
     try std.testing.expectEqualStrings("/models", tool_ctx.gateway_models_path);
     try testPushAssistantText(deps, "assistant text");
 }
@@ -4006,7 +4003,7 @@ fn testProcessQueuedPromptChecksExecOnlyTerminal(_: *agent_runtime.Agent, deps: 
         "request",
     ));
     try std.testing.expect(std.mem.find(u8, advertised_shell.description, "shell.interact") != null);
-    try std.testing.expectEqualStrings(builtin_tools.web_search.description, cfg.custom_tool_guidance);
+    try std.testing.expectEqualStrings("", cfg.custom_tool_guidance);
     try std.testing.expectEqualStrings("test model overlay", cfg.model_prompt_overlay.?);
     const runtime_shell = deps.tool_registry.lookup("shell") orelse
         return error.TestExpectedEqual;
@@ -4656,6 +4653,9 @@ test "CLI prompt projection configures web search then blocks native execution" 
         calls: usize = 0,
     };
     const FailingWebSearchProvider = struct {
+        fn preferredBackends(_: ?*anyopaque) !?[]const web_search_contract.SearchBackendId {
+            return null;
+        }
         fn execute(
             raw_ctx: ?*anyopaque,
             _: Allocator,
@@ -4676,11 +4676,13 @@ test "CLI prompt projection configures web search then blocks native execution" 
     var ctx = AskContext.init(alloc, testConfig(), testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup), "/tmp/workspace");
     defer ctx.deinit();
     var provider_state = ProviderState{};
-    var provider = ctx.web_search_runtime.provider orelse return error.TestExpectedEqual;
-    provider.context = @ptrCast(&provider_state);
-    provider.execute_fn = FailingWebSearchProvider.execute;
     ctx.web_search_runtime = web_search_runtime.Runtime.init(.{
-        .provider = provider,
+        .provider = .{
+            .context = @ptrCast(&provider_state),
+            .policy = .{},
+            .preferred_backends_fn = FailingWebSearchProvider.preferredBackends,
+            .execute_fn = FailingWebSearchProvider.execute,
+        },
     });
 
     ctx.web_search_runtime.configure(.{
@@ -4709,10 +4711,6 @@ test "CLI prompt projection configures web search then blocks native execution" 
         .arguments_json = "{\"query\":\"x\"}",
     });
     try std.testing.expectEqualStrings("web_search field \"query\" must contain at least two characters", validation.failure);
-    try std.testing.expectEqualStrings(ctx.api_key, ctx.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(ctx.model, ctx.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.cfg.gateway_retry_count, ctx.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.cfg.gateway_chat_url, ctx.web_search_runtime.gateway_chat_url);
 
     const execute = deps.execute_tool_call;
     const execution = try execute(deps.ctx, .{
@@ -4728,15 +4726,11 @@ test "CLI prompt projection configures web search then blocks native execution" 
         .advertised_dynamic_tool_names = &.{},
         .max_tool_result_bytes = ctx.max_tool_result_bytes,
     });
-    try std.testing.expectEqualStrings(ctx.api_key, ctx.web_search_runtime.api_key);
-    try std.testing.expectEqualStrings(ctx.model, ctx.web_search_runtime.worker_model);
-    try std.testing.expectEqual(ctx.cfg.gateway_retry_count, ctx.web_search_runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings(ctx.cfg.gateway_chat_url, ctx.web_search_runtime.gateway_chat_url);
     try std.testing.expectEqual(.failure, execution.status);
     try std.testing.expectEqual(@as(usize, 0), provider_state.calls);
 }
 
-test "fx ask ChatGPT route disables Gateway-backed auxiliary providers" {
+test "fx ask ChatGPT route keeps Codex review and drops web search backend" {
     const alloc = std.testing.allocator;
     var stdout_capture = TestCapture{};
     defer stdout_capture.deinit(alloc);
@@ -4756,7 +4750,7 @@ test "fx ask ChatGPT route disables Gateway-backed auxiliary providers" {
 
     const tool_ctx = ctx.toolContext();
     try std.testing.expect(tool_ctx.web_search_backend == null);
-    try std.testing.expect(!tool_ctx.auto_classifier.enabled());
+    try std.testing.expect(tool_ctx.auto_classifier.enabled());
     try std.testing.expect(tool_ctx.permission_reviewer_provider == null);
 }
 
@@ -7637,18 +7631,18 @@ test "fx ask text and JSON share the selected auth failure facts" {
 
     try std.testing.expectEqual(@as(u8, 1), exit_code);
     try std.testing.expectEqualStrings(
-        "fx ask: AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "fx ask: Codex subscription authentication failed · HTTP 401\n",
         stderr_capture.bytes.items,
     );
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, stdout_capture.bytes.items, .{});
     defer parsed.deinit();
     try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
     try std.testing.expectEqualStrings(
-        "AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "Codex subscription authentication failed · HTTP 401\n",
         parsed.value.object.get("output").?.string,
     );
     const auth_failure = parsed.value.object.get("auth_failure").?.object;
-    try std.testing.expectEqualStrings("AI_GATEWAY_API_KEY", auth_failure.get("source").?.string);
+    try std.testing.expectEqualStrings("Codex subscription", auth_failure.get("source").?.string);
     try std.testing.expectEqualStrings("http_unauthorized", auth_failure.get("reason").?.string);
     try std.testing.expectEqual(@as(i64, 401), auth_failure.get("http_status").?.integer);
     try std.testing.expect(std.mem.find(u8, stdout_capture.bytes.items, "secret-key") == null);
@@ -7898,7 +7892,7 @@ test "indeterminate saved auth cleanup keeps the primary result and session id" 
     try std.testing.expectEqual(@as(usize, 1), probe.calls);
     try std.testing.expect(probe.borrowers_detached);
     try std.testing.expectEqualStrings(
-        "fx ask: AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "fx ask: Codex subscription authentication failed · HTTP 401\n",
         stderr_capture.bytes.items,
     );
     var parsed = try std.json.parseFromSlice(
@@ -7911,7 +7905,7 @@ test "indeterminate saved auth cleanup keeps the primary result and session id" 
     try std.testing.expect(parsed.value.object.get("error") == null);
     try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
     try std.testing.expectEqualStrings(
-        "AI_GATEWAY_API_KEY authentication failed · HTTP 401\n",
+        "Codex subscription authentication failed · HTTP 401\n",
         parsed.value.object.get("output").?.string,
     );
     const session_id = parsed.value.object.get("session_id").?.string;

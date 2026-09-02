@@ -2107,7 +2107,7 @@ test "user patch writes user preferences at top level" {
 
     const bytes = try store.readPrimaryForTest(alloc);
     defer alloc.free(bytes);
-    try std.testing.expect(std.mem.find(u8, bytes, "\"models\":{\"gateway\":\"openai/gpt-5.4\"}") != null);
+    try std.testing.expect(std.mem.find(u8, bytes, "\"models\":{\"codex\":\"openai/gpt-5.4\"}") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"permission_mode\":\"yolo\"") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"yolo_acknowledged\":true") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"effort\":\"high\"") != null);
@@ -2285,7 +2285,7 @@ test "user patch snapshots and removes legacy workspace copies" {
 
     const bytes = try store.readPrimaryForTest(alloc);
     defer alloc.free(bytes);
-    try std.testing.expect(std.mem.find(u8, bytes, "\"models\":{\"gateway\":\"openai/gpt-5.4\"}") != null);
+    try std.testing.expect(std.mem.find(u8, bytes, "\"models\":{\"codex\":\"openai/gpt-5.4\"}") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"permission_mode\":\"auto\"") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "input_appearance") == null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"model\":\"workspace/a\"") == null);

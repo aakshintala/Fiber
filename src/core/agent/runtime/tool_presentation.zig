@@ -1572,7 +1572,7 @@ test "stream start execution certainty follows provider ownership" {
         test_tool_registry,
         "read_file",
     ));
-    try std.testing.expect(streamStartMayHaveExecutedAtProvider(
+    try std.testing.expect(!streamStartMayHaveExecutedAtProvider(
         provider_registry,
         "web_search",
     ));

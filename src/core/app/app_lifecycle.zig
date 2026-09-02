@@ -1058,25 +1058,16 @@ fn initialModelId(default_model: []const u8, configured: ?[]const u8) []const u8
 }
 
 test "startup provider chooses only its provider-scoped model" {
-    var gateway_settings = config_runtime.Settings{ .provider = .codex };
-    gateway_settings.models.values[@intFromEnum(model_provider.ProviderId.codex)] = @constCast("gateway/model");
-    gateway_settings.models.values[@intFromEnum(model_provider.ProviderId.codex)] = @constCast("gpt-model");
-    const gateway = try configuredProviderSelection("default/model", &gateway_settings);
-    try std.testing.expectEqual(model_provider.ProviderId.codex, gateway.provider);
-    try std.testing.expectEqualStrings("gateway/model", gateway.model);
-
     var codex_settings = config_runtime.Settings{ .provider = .codex };
-    codex_settings.models.values[@intFromEnum(model_provider.ProviderId.codex)] = @constCast("gateway/model");
     codex_settings.models.values[@intFromEnum(model_provider.ProviderId.codex)] = @constCast("gpt-model");
     const codex = try configuredProviderSelection("default/model", &codex_settings);
     try std.testing.expectEqual(model_provider.ProviderId.codex, codex.provider);
     try std.testing.expectEqualStrings("gpt-model", codex.model);
 
     const missing_codex = config_runtime.Settings{ .provider = .codex };
-    try std.testing.expectError(
-        error.CodexModelNotSelected,
-        configuredProviderSelection("default/model", &missing_codex),
-    );
+    const fallback = try configuredProviderSelection("default/model", &missing_codex);
+    try std.testing.expectEqual(model_provider.ProviderId.codex, fallback.provider);
+    try std.testing.expectEqualStrings("default/model", fallback.model);
 }
 
 fn loadInitialModel(alloc: Allocator, default_model: []const u8, configured: ?[]const u8) ![]u8 {
@@ -1835,9 +1826,14 @@ test "startup credential modes select a refresh policy, never a narrower source 
 }
 
 test "loadStartupState applies core env overrides" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, ".");
+    defer std.testing.allocator.free(home);
+
     var env = try TestEnv.install(std.testing.allocator, &.{
+        .{ .key = "HOME", .value = home },
         .{ .key = "FX_MODEL", .value = "  env-model  " },
-        .{ .key = "AI_GATEWAY_API_KEY", .value = "gateway-key" },
         .{ .key = "FX_PERMISSION_MODE", .value = "auto" },
         .{ .key = "FX_MAX_AGENT_STEPS", .value = "37" },
     });
@@ -1857,8 +1853,7 @@ test "loadStartupState applies core env overrides" {
     try std.testing.expectEqualStrings("default-model", state.configured_model);
     try std.testing.expectEqual(config_runtime.ModelSource.process_override, state.model_source);
     try std.testing.expect(!state.fast_mode);
-    try std.testing.expectEqualStrings("gateway-key", state.apiKey().?);
-    try std.testing.expectEqual(credentials.Source.chatgpt_subscription, state.credential.?.source);
+    try std.testing.expect(state.credential == null);
     try std.testing.expectEqual(PermissionMode.auto, state.permission_mode);
     try std.testing.expectEqual(@as(usize, 37), state.agent_step_limit);
 }
