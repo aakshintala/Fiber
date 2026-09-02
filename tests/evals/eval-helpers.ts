@@ -522,6 +522,10 @@ export async function runFx(
   });
 }
 
+// Live, model-backed suites need real Codex credentials. This used to key off
+// AI_GATEWAY_API_KEY / VERCEL_OIDC_TOKEN, which the Codex-only runtime never
+// sets, so every gated suite skipped silently and reported success.
 export const HAS_API_KEY: boolean = !!(
-  process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN
+  process.env.FX_E2E_LIVE ||
+  existsSync(join(process.env.HOME ?? "", ".fx", "chatgpt-auth.json"))
 );
