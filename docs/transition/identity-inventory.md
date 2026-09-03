@@ -44,6 +44,7 @@ sed'd, and each needs a runtime check beyond `zig build test`.
 | `@fx-terminal-env:` | `src/core/execution/command_environment.zig:35` | permission identity prefix |
 | `/tmp/fx-terminal-*` socket and bootstrap paths | `core/terminal/host.zig:139`, `native_session.zig:2183`, `tmux_session.zig:2694` | terminal host handshake |
 | `--fx-internal-terminal-*` | 14 references, embedded in a generated shell bootstrap string | re-exec handoff; review the bootstrap string by hand |
+| `originator=fx` | `src/core/auth/chatgpt_oauth.zig:749` | **sent upstream.** Verify the endpoint accepts a new originator before renaming; a rejected value breaks Codex authentication. Leave as `fx` if unverifiable and record it as a known exception. |
 
 **Inert renames** are identifiers, help text, fixture filenames, and
 documentation. Mechanical replacement, verified by a residual-count search.

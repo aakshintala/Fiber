@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const PgsoArtifact = enum {
-    fx,
+    fiber,
     file_index,
     ui_activity,
     approval_review,
@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
     build_options.addOption([]const u8, "update_channel", "stable");
 
     const exe = b.addExecutable(.{
-        .name = "fx",
+        .name = "fiber",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
@@ -48,7 +48,7 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    const run_step = b.step("run", "Run fx");
+    const run_step = b.step("run", "Run fiber");
     run_step.dependOn(&run_cmd.step);
 
     const exe_tests = b.addTest(.{
@@ -58,7 +58,7 @@ pub fn build(b: *std.Build) void {
     run_exe_tests.step.dependOn(b.getInstallStep());
     run_exe_tests.setEnvironmentVariable(
         "FX_TEST_PRODUCT_EXE",
-        b.getInstallPath(.bin, "fx"),
+        b.getInstallPath(.bin, "fiber"),
     );
 
     const test_step = b.step("test", "Run tests");
@@ -251,13 +251,13 @@ pub fn build(b: *std.Build) void {
     );
     if (pgso_artifact) |artifact| {
         const selected: *std.Build.Step.Compile = switch (artifact) {
-            .fx => exe,
+            .fiber => exe,
             .file_index => file_index_bench,
             .ui_activity => ui_activity_bench,
             .approval_review => approval_review_bench,
         };
         const output_name = switch (artifact) {
-            .fx => "pgso/fx.bc",
+            .fiber => "pgso/fiber.bc",
             .file_index => "pgso/file-index.bc",
             .ui_activity => "pgso/ui-activity.bc",
             .approval_review => "pgso/approval-review.bc",

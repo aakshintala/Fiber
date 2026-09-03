@@ -597,7 +597,7 @@ function findFxProcessId(rows: readonly string[]): number | undefined {
     const match = row.trim().match(/^(\d+)\s+(.+)$/);
     if (!match) continue;
     const command = match[2]!;
-    if (command === "fx" || command === FX_BIN || command.endsWith("/fx")) {
+    if (command === "fiber" || command === FX_BIN || command.endsWith("/fiber")) {
       return Number(match[1]);
     }
   }
@@ -605,8 +605,8 @@ function findFxProcessId(rows: readonly string[]): number | undefined {
 }
 
 test("fx process discovery accepts basename and path process names", () => {
-  expect(findFxProcessId(["11361 fx"])).toBe(11361);
-  expect(findFxProcessId(["11362 /workspace/zig-out/bin/fx"])).toBe(11362);
+  expect(findFxProcessId(["11361 fiber"])).toBe(11361);
+  expect(findFxProcessId(["11362 /workspace/zig-out/bin/fiber"])).toBe(11362);
 });
 
 function residentKib(pid: number): number {

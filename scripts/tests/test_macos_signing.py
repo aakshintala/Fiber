@@ -467,7 +467,7 @@ class MacosSigningWorkflowTests(unittest.TestCase):
         self.assertNotIn("environment: apple-signing", pgso)
         self.assertIn(
             "scripts/sign-and-notarize-macos.sh "
-            '"$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx"',
+            '"$RUNNER_TEMP/fx-pgso-aggregate/candidate/fiber"',
             release,
         )
         arm64_caller = release.split("  build-macos-arm64:\n", 1)[1].split(

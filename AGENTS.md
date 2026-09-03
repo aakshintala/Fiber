@@ -36,15 +36,15 @@ If you cannot run the binary in your environment, say so explicitly and ask the 
 
 ### Always use the built binary in this repo
 
-When running fx for verification, **always use the freshly-built binary at** **`./zig-out/bin/fx`** from this checkout. Never run `fx` from `PATH`, never rely on whatever is at `~/.fx/bin/fx`, and never assume an installed copy reflects your change.
+When running fx for verification, **always use the freshly-built binary at** **`./zig-out/bin/fiber`** from this checkout. Never run `fx` from `PATH`, never rely on whatever is at `~/.fx/bin/fx`, and never assume an installed copy reflects your change.
 
 * The user may have an older `fx` on their PATH (e.g. installed via `fx upgrade` or the CDN install script). Running that one will not exercise your edits.
 
-* `zig build` writes to `zig-out/bin/fx`. That is the only binary that contains your latest change.
+* `zig build` writes to `zig-out/bin/fiber`. That is the only binary that contains your latest change.
 
 * When a user reports "still not working" after you believe you fixed something, do not assume they are running the wrong binary. Assume your fix is incomplete and investigate further. If you genuinely suspect a PATH mismatch, ask — do not silently copy binaries into `~/.fx/bin/`.
 
-* In any shell invocation — tmux, direct run, scripts — reference fx as `/Users/<you>/path/to/repo/zig-out/bin/fx` (absolute) or `./zig-out/bin/fx` (when cwd is the repo root). Bare `fx` is always wrong for dev verification.
+* In any shell invocation — tmux, direct run, scripts — reference fiber as `/Users/<you>/path/to/repo/zig-out/bin/fiber` (absolute) or `./zig-out/bin/fiber` (when cwd is the repo root). Bare `fx` is always wrong for dev verification.
 
 ## Language and Toolchain
 
@@ -286,7 +286,7 @@ Keep PR titles as clean imperative sentences, such as `Restore feedback report f
 
 ## Full CI on Feature Branches
 
-Do not run the complete deterministic test suite locally as the default development loop. Run the focused test for the changed path, build the binary, and exercise that path with `./zig-out/bin/fx`.
+Do not run the complete deterministic test suite locally as the default development loop. Run the focused test for the changed path, build the binary, and exercise that path with `./zig-out/bin/fiber`.
 
 After the focused checks pass, create a clean checkpoint commit, push the non-`main` feature branch, and open a draft PR immediately. `.github/workflows/full-ci.yml` runs the following on all four supported native runner architectures:
 
@@ -322,12 +322,12 @@ Recording dumps every byte fx writes and every resize into a framed binary tape.
 Replay the tape through the built-in virtual terminal:
 
 ```bash
-FX_DEBUG_RECORD=1 ./zig-out/bin/fx
-FX_RECORD=/tmp/bug.fxtape ./zig-out/bin/fx
-./zig-out/bin/fx replay /tmp/bug.fxtape
-./zig-out/bin/fx replay /tmp/bug.fxtape --frames
-./zig-out/bin/fx replay /tmp/bug.fxtape --json
-./zig-out/bin/fx replay /tmp/bug.fxtape --golden out.txt
+FX_DEBUG_RECORD=1 ./zig-out/bin/fiber
+FX_RECORD=/tmp/bug.fxtape ./zig-out/bin/fiber
+./zig-out/bin/fiber replay /tmp/bug.fxtape
+./zig-out/bin/fiber replay /tmp/bug.fxtape --frames
+./zig-out/bin/fiber replay /tmp/bug.fxtape --json
+./zig-out/bin/fiber replay /tmp/bug.fxtape --golden out.txt
 ```
 
 The tape is deterministic — any reviewer can replay it without a TTY, and a golden file can be checked in as a regression test.
@@ -480,7 +480,7 @@ The canonical repository is `vercel-labs/fx` on GitHub. All URLs, links, and ref
 ## Before Marking a PR Ready
 
 1. Run `zig fmt --check src/` and the focused tests for the changed path.
-2. Build and exercise the change locally with `./zig-out/bin/fx`.
+2. Build and exercise the change locally with `./zig-out/bin/fiber`.
 3. Push a clean checkpoint commit and open a draft PR immediately.
 4. Require **Full CI** and the final ship gate to pass on the exact current commit across all four native runners.
 5. Update docs if behavior changed.

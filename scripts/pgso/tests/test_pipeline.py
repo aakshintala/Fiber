@@ -202,7 +202,7 @@ class PgsoPipelineTests(unittest.TestCase):
         self.assertIn("-Doptimize=ReleaseSafe", control)
         self.assertIn("-Dupdate-channel=stable", control)
         self.assertIn("pgso-ir", ir)
-        self.assertIn("-Dpgso-artifact=fx", ir)
+        self.assertIn("-Dpgso-artifact=fiber", ir)
         self.assertNotEqual(
             control[control.index("--cache-dir") + 1],
             ir[ir.index("--cache-dir") + 1],
@@ -350,7 +350,7 @@ with pathlib.Path({str(actions)!r}).open('a') as stream:
         )
 
     def test_bitcode_hash_must_match_the_original(self) -> None:
-        bitcode = self.root / "fx.bc"
+        bitcode = self.root / "fiber.bc"
         bitcode.write_bytes(b"release-safe bitcode")
 
         validate_bitcode_hash(bitcode, sha256_file(bitcode))

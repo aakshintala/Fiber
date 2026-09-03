@@ -15,7 +15,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FX_BIN="${REPO_ROOT}/zig-out/bin/fx"
+FX_BIN="${REPO_ROOT}/zig-out/bin/fiber"
 RESULTS_DIR="${REPO_ROOT}/benchmarks/results"
 SESSION_FIXTURE_ROOT="${TMPDIR:-/tmp}/fx-session-list-benchmark-$$"
 SESSION_FIXTURE_HOME="${SESSION_FIXTURE_ROOT}/home"
@@ -45,12 +45,12 @@ case "${1:-}" in
 esac
 
 if [ "$SKIP_BUILD" = false ]; then
-  echo "Building fx (ReleaseSafe)..."
+  echo "Building fiber (ReleaseSafe)..."
   (cd "$REPO_ROOT" && zig build -Doptimize=ReleaseSafe)
 fi
 
 if [ ! -x "$FX_BIN" ]; then
-  echo "error: fx binary not found at $FX_BIN"
+  echo "error: fiber binary not found at $FX_BIN"
   exit 1
 fi
 
@@ -75,7 +75,7 @@ else
   TRUE_BIN=true
 fi
 
-echo "=== fx startup benchmarks ==="
+echo "=== fiber startup benchmarks ==="
 echo "binary: $FX_BIN"
 echo "runs:   $RUNS (warmup: $WARMUP)"
 echo ""
@@ -93,62 +93,62 @@ HOME="$GENERAL_FIXTURE_HOME" hyperfine \
 
 echo ""
 
-# Benchmark 0: fx startup (CLI dispatch, no TTY needed)
-echo "--- fx (startup) ---"
+# Benchmark 0: fiber startup (CLI dispatch, no TTY needed)
+echo "--- fiber (startup) ---"
 HOME="$GENERAL_FIXTURE_HOME" FX_BENCH=1 hyperfine \
   "${SHELL_OPTS[@]}" \
   --runs "$RUNS" \
   --warmup "$WARMUP" \
   --export-json "${RESULTS_DIR}/startup.json" \
-  --command-name "fx (startup)" \
+  --command-name "fiber (startup)" \
   "$FX_BIN"
 
 echo ""
 
-# Benchmark 1: fx help (minimal startup path)
-echo "--- fx help ---"
+# Benchmark 1: fiber help (minimal startup path)
+echo "--- fiber help ---"
 HOME="$GENERAL_FIXTURE_HOME" hyperfine \
   "${SHELL_OPTS[@]}" \
   --runs "$RUNS" \
   --warmup "$WARMUP" \
   --export-json "${RESULTS_DIR}/help.json" \
-  --command-name "fx help" \
+  --command-name "fiber help" \
   "$FX_BIN help"
 
 echo ""
 
-# Benchmark 2: fx status --json (config load + JSON serialize)
-echo "--- fx status --json ---"
+# Benchmark 2: fiber status --json (config load + JSON serialize)
+echo "--- fiber status --json ---"
 HOME="$GENERAL_FIXTURE_HOME" hyperfine \
   "${SHELL_OPTS[@]}" \
   --runs "$RUNS" \
   --warmup "$WARMUP" \
   --export-json "${RESULTS_DIR}/status.json" \
-  --command-name "fx status --json" \
+  --command-name "fiber status --json" \
   "$FX_BIN status --json"
 
 echo ""
 
-# Benchmark 3: fx doctor --json (system checks)
-echo "--- fx doctor --json ---"
+# Benchmark 3: fiber doctor --json (system checks)
+echo "--- fiber doctor --json ---"
 HOME="$GENERAL_FIXTURE_HOME" hyperfine \
   "${SHELL_OPTS[@]}" \
   --runs "$RUNS" \
   --warmup "$WARMUP" \
   --export-json "${RESULTS_DIR}/doctor.json" \
-  --command-name "fx doctor --json" \
+  --command-name "fiber doctor --json" \
   "$FX_BIN doctor --json"
 
 echo ""
 
-# Benchmark 4: fx sessions --json (file I/O path)
-echo "--- fx sessions --json ---"
+# Benchmark 4: fiber sessions --json (file I/O path)
+echo "--- fiber sessions --json ---"
 HOME="$SESSION_FIXTURE_HOME" hyperfine \
   "${SHELL_OPTS[@]}" \
   --runs "$RUNS" \
   --warmup "$WARMUP" \
   --export-json "${RESULTS_DIR}/sessions.json" \
-  --command-name "fx sessions --json" \
+  --command-name "fiber sessions --json" \
   "$FX_BIN sessions --json"
 
 echo ""

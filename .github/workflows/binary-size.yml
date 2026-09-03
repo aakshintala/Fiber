@@ -67,14 +67,14 @@ jobs:
             -Doptimize=ReleaseSafe \
             --cache-dir "$RUNNER_TEMP/fx-head-cache" \
             --global-cache-dir "$RUNNER_TEMP/fx-global-cache"
-          cp zig-out/bin/fx "$evidence_dir/head-fx"
-          file "$evidence_dir/head-fx" > "$evidence_dir/head-file.txt"
+          cp zig-out/bin/fiber "$evidence_dir/head-fiber"
+          file "$evidence_dir/head-fiber" > "$evidence_dir/head-file.txt"
           cat "$evidence_dir/head-file.txt"
           grep -Eq "$EXPECTED_FILE" "$evidence_dir/head-file.txt"
           if [ "$SECTION_FORMAT" = "macho" ]; then
-            size -m "$evidence_dir/head-fx" > "$evidence_dir/head-sections.txt"
+            size -m "$evidence_dir/head-fiber" > "$evidence_dir/head-sections.txt"
           else
-            size -A -d "$evidence_dir/head-fx" > "$evidence_dir/head-sections.txt"
+            size -A -d "$evidence_dir/head-fiber" > "$evidence_dir/head-sections.txt"
           fi
           cat "$evidence_dir/head-sections.txt"
 
@@ -98,14 +98,14 @@ jobs:
               --cache-dir "$RUNNER_TEMP/fx-base-cache" \
               --global-cache-dir "$RUNNER_TEMP/fx-global-cache"
           )
-          cp "$base_worktree/zig-out/bin/fx" "$evidence_dir/base-fx"
-          file "$evidence_dir/base-fx" > "$evidence_dir/base-file.txt"
+          cp "$base_worktree/zig-out/bin/fiber" "$evidence_dir/base-fiber"
+          file "$evidence_dir/base-fiber" > "$evidence_dir/base-file.txt"
           cat "$evidence_dir/base-file.txt"
           grep -Eq "$EXPECTED_FILE" "$evidence_dir/base-file.txt"
           if [ "$SECTION_FORMAT" = "macho" ]; then
-            size -m "$evidence_dir/base-fx" > "$evidence_dir/base-sections.txt"
+            size -m "$evidence_dir/base-fiber" > "$evidence_dir/base-sections.txt"
           else
-            size -A -d "$evidence_dir/base-fx" > "$evidence_dir/base-sections.txt"
+            size -A -d "$evidence_dir/base-fiber" > "$evidence_dir/base-sections.txt"
           fi
           cat "$evidence_dir/base-sections.txt"
 
@@ -116,8 +116,8 @@ jobs:
           set -euo pipefail
           evidence_dir="$RUNNER_TEMP/fx-binary-size-evidence"
           python3 -m scripts.binary_size \
-            --base-binary "$evidence_dir/base-fx" \
-            --head-binary "$evidence_dir/head-fx" \
+            --base-binary "$evidence_dir/base-fiber" \
+            --head-binary "$evidence_dir/head-fiber" \
             --base-sections "$evidence_dir/base-sections.txt" \
             --head-sections "$evidence_dir/head-sections.txt" \
             --base-sha "$BASE_SHA" \
@@ -158,7 +158,7 @@ jobs:
         with:
           name: binary-size-binaries-${{ matrix.name }}-${{ github.event.pull_request.number }}
           path: |
-            ${{ runner.temp }}/fx-binary-size-evidence/base-fx
-            ${{ runner.temp }}/fx-binary-size-evidence/head-fx
+            ${{ runner.temp }}/fx-binary-size-evidence/base-fiber
+            ${{ runner.temp }}/fx-binary-size-evidence/head-fiber
           compression-level: 0
           retention-days: 7

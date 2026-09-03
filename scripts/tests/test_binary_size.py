@@ -31,8 +31,8 @@ class BinarySizeCliTests(unittest.TestCase):
     def test_threshold_increase_emits_warning_and_exact_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="fx-binary-size-") as tmp:
             root = pathlib.Path(tmp)
-            base_binary = root / "base-fx"
-            head_binary = root / "head-fx"
+            base_binary = root / "base-fiber"
+            head_binary = root / "head-fiber"
             base_binary.write_bytes(b"b" * 100_000)
             head_binary.write_bytes(b"h" * 152_429)
             base_sections = root / "base-sections.txt"
@@ -117,8 +117,8 @@ class BinarySizeCliTests(unittest.TestCase):
     def test_linux_report_attributes_elf_section_growth(self) -> None:
         with tempfile.TemporaryDirectory(prefix="fx-binary-size-") as tmp:
             root = pathlib.Path(tmp)
-            base_binary = root / "base-fx"
-            head_binary = root / "head-fx"
+            base_binary = root / "base-fiber"
+            head_binary = root / "head-fiber"
             base_binary.write_bytes(b"b" * 100_000)
             head_binary.write_bytes(b"h" * 100_100)
             base_sections = root / "base-sections.txt"
@@ -198,8 +198,8 @@ class BinarySizeCliTests(unittest.TestCase):
     def test_decrease_is_informational_and_named_explicitly(self) -> None:
         with tempfile.TemporaryDirectory(prefix="fx-binary-size-") as tmp:
             root = pathlib.Path(tmp)
-            base_binary = root / "base-fx"
-            head_binary = root / "head-fx"
+            base_binary = root / "base-fiber"
+            head_binary = root / "head-fiber"
             base_binary.write_bytes(b"b" * 100)
             head_binary.write_bytes(b"h" * 90)
             base_sections = root / "base-sections.txt"

@@ -419,7 +419,7 @@ class PgsoCorpusTests(unittest.TestCase):
                 ("tui-command-permissions.test.ts", "contains sound"),
             ),
         )
-        binary = self.root / "candidate-fx"
+        binary = self.root / "candidate-fiber"
         binary.write_bytes(b"candidate")
         calls: list[str] = []
 
@@ -506,7 +506,7 @@ class PgsoCorpusTests(unittest.TestCase):
         profile_dir = output / "profiles" / "raw"
         profile_dir.mkdir(parents=True, exist_ok=True)
         merged_profile = output / "profiles" / "merged.profdata"
-        binary = self.root / "instrumented-fx"
+        binary = self.root / "instrumented-fiber"
         binary.write_bytes(b"instrumented")
         calls: list[dict[str, object]] = []
         merges: list[tuple[str, ...]] = []
@@ -580,7 +580,7 @@ class PgsoCorpusTests(unittest.TestCase):
         self.assertEqual(0, result.skipped)
         self.assertEqual(0, result.failed)
         self.assertEqual(2, result.merged_raw_profiles)
-        self.assertFalse((self.root / "zig-out" / "bin" / "fx").exists())
+        self.assertFalse((self.root / "zig-out" / "bin" / "fiber").exists())
         self.assertTrue(merged.is_file())
         self.assertEqual(2, len(calls))
         self.assertNotIn("PGSO_INHERITED", calls[0]["env"])
@@ -642,7 +642,7 @@ class PgsoCorpusTests(unittest.TestCase):
         scenarios[-1]["profile_runs"] = 3
         loaded = load_corpus(self.write_manifest(payload), repo_root=self.root)
         corpus = self.make_corpus(loaded.scenarios[-1])
-        binary = self.root / "candidate-fx"
+        binary = self.root / "candidate-fiber"
         binary.write_bytes(b"candidate")
         calls: list[tuple[str, ...]] = []
 
@@ -703,7 +703,7 @@ class PgsoCorpusTests(unittest.TestCase):
         output = self.root / "retry-output"
         profile_dir = output / "profiles" / "raw"
         profile_dir.mkdir(parents=True)
-        binary = self.root / "retry-instrumented-fx"
+        binary = self.root / "retry-instrumented-fiber"
         binary.write_bytes(b"instrumented")
         calls: list[dict[str, str]] = []
         merged_profiles: list[str] = []
@@ -767,7 +767,7 @@ class PgsoCorpusTests(unittest.TestCase):
             "tui-fails.test.ts",
         )
         corpus = self.make_corpus(scenario)
-        binary = self.root / "failed-candidate-fx"
+        binary = self.root / "failed-candidate-fiber"
         binary.write_bytes(b"candidate")
         calls = 0
 
@@ -798,7 +798,7 @@ class PgsoCorpusTests(unittest.TestCase):
             "plain-e2e.test.ts",
         )
         corpus = self.make_corpus(scenario)
-        binary = self.root / "plain-candidate-fx"
+        binary = self.root / "plain-candidate-fiber"
         binary.write_bytes(b"candidate")
         calls = 0
 
@@ -862,11 +862,11 @@ class PgsoCorpusTests(unittest.TestCase):
 
     def test_behavior_corpus_restores_the_previous_canonical_binary(self) -> None:
         corpus = self.make_corpus(self.make_scenario("first"))
-        canonical = self.root / "zig-out" / "bin" / "fx"
+        canonical = self.root / "zig-out" / "bin" / "fiber"
         canonical.parent.mkdir(parents=True)
         canonical.write_bytes(b"stale")
         stale_inode = canonical.stat().st_ino
-        binary = self.root / "candidate-fx"
+        binary = self.root / "candidate-fiber"
         binary.write_bytes(b"candidate")
 
         def command_runner(argv, **kwargs):
@@ -890,10 +890,10 @@ class PgsoCorpusTests(unittest.TestCase):
 
     def test_interruption_cleans_tmux_and_restores_the_canonical_binary(self) -> None:
         corpus = self.make_corpus(self.make_scenario("first", requires_tmux=True))
-        canonical = self.root / "zig-out" / "bin" / "fx"
+        canonical = self.root / "zig-out" / "bin" / "fiber"
         canonical.parent.mkdir(parents=True)
         canonical.write_bytes(b"original")
-        binary = self.root / "candidate-fx"
+        binary = self.root / "candidate-fiber"
         binary.write_bytes(b"candidate")
 
         def interrupted_runner(*_args, **_kwargs):
@@ -918,7 +918,7 @@ class PgsoCorpusTests(unittest.TestCase):
             self.make_scenario("first"),
             self.make_scenario("second"),
         )
-        binary = self.root / "candidate-fx"
+        binary = self.root / "candidate-fiber"
         binary.write_bytes(b"candidate")
         calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
 
@@ -939,7 +939,7 @@ class PgsoCorpusTests(unittest.TestCase):
             command_runner=command_runner,
         )
 
-        canonical = self.root / "zig-out" / "bin" / "fx"
+        canonical = self.root / "zig-out" / "bin" / "fiber"
         self.assertEqual(2, result.passed)
         self.assertEqual(0, result.failed)
         self.assertEqual(0, result.merged_raw_profiles)
