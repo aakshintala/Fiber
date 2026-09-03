@@ -192,7 +192,7 @@ else:
         runner_temp = root / "runner-temp"
         runner_temp.mkdir()
         tool_paths = self.make_tools(root)
-        binary = root / "fx"
+        binary = root / "fiber"
         binary.write_bytes(b"unsigned\n")
         binary.chmod(0o755)
         event_log = root / "events.log"
@@ -229,7 +229,7 @@ else:
         self,
     ) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
             p12_secret = "p12-private-material"
             p8_secret = "p8-private-material"
@@ -256,7 +256,7 @@ else:
 
     def test_imports_pkcs12_private_key_for_codesign_and_security(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
             result, _, _, event_log = self.run_script(root)
 
@@ -328,7 +328,7 @@ else:
         for extra_env, stage in cases:
             with self.subTest(stage=stage):
                 with tempfile.TemporaryDirectory(
-                    prefix="fx-macos-signing-test-"
+                    prefix="fiber-macos-signing-test-"
                 ) as tmp:
                     root = pathlib.Path(tmp)
                     result, _, _, _ = self.run_script(root, extra_env)
@@ -341,7 +341,7 @@ else:
 
     def test_rejects_notarization_log_issues_and_cleans_credentials(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
             issues = json.dumps(
                 [
@@ -368,7 +368,7 @@ else:
 
     def test_rejects_empty_secret_without_echoing_credential_material(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
 
             result, _, runner_temp, _ = self.run_script(
@@ -389,7 +389,7 @@ else:
 
     def test_rejects_a_signature_from_the_wrong_apple_team(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
 
             result, _, runner_temp, _ = self.run_script(
@@ -404,7 +404,7 @@ else:
 
     def test_rejects_a_signature_with_the_wrong_identifier(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
 
             result, _, runner_temp, _ = self.run_script(
@@ -419,7 +419,7 @@ else:
 
     def test_rejects_a_notarization_ticket_for_another_binary(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
 
             result, _, runner_temp, _ = self.run_script(
@@ -437,7 +437,7 @@ else:
 
     def test_rejects_a_failed_notarization_submission(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
 
             result, _, runner_temp, event_log = self.run_script(

@@ -2087,9 +2087,11 @@ pub fn billingProjectionEql(first: Snapshot, second: Snapshot) bool {
 pub fn writeSnapshot(writer: *std.Io.Writer, snapshot: Snapshot) !void {
     try validateSnapshot(snapshot);
     // Keep the durable session payload in the exact pre-usage-dashboard
-    // shape. Older fx binaries reject unknown snapshot fields instead of
-    // ignoring them; richer metrics and recovery hints live in the validated
-    // session sidecar.
+    // shape. This froze because older fiber binaries reject unknown snapshot
+    // fields instead of ignoring them. Fiber keeps no fiber compatibility and
+    // has published no release, so nothing enforces the constraint now;
+    // widening the shape is a later-phase decision, not a rename.
+    // Richer metrics and recovery hints live in the validated session sidecar.
     try writer.writeAll("{\"billing\":");
     try std.json.Stringify.value(@tagName(snapshot.billing), .{}, writer);
     try writer.print(

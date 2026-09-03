@@ -1,6 +1,6 @@
 # macOS arm64 PGSO candidate pipeline
 
-This directory owns the non-publishing Stage 1 build for a smaller macOS arm64 `fx` candidate. It preserves Zig ReleaseSafe semantics and the complete product feature set, then uses native LLVM profiles to keep measured hot code speed-oriented and compile profile-proven cold functions for size.
+This directory owns the non-publishing Stage 1 build for a smaller macOS arm64 `fiber` candidate. It preserves Zig ReleaseSafe semantics and the complete product feature set, then uses native LLVM profiles to keep measured hot code speed-oriented and compile profile-proven cold functions for size.
 
 The candidate is accepted only when it is no larger than **7.800 MiB**, has the preferred **0.250 MiB** of size headroom, passes the deterministic product corpus, and stays within a **10%** p50 and p95 performance regression limit. The ordinary ReleaseSafe binary remains the control and recovery path.
 
@@ -67,7 +67,7 @@ command requires all 36 training scenarios, all 53 behavior scenarios, and all
 
 Every root `tests/e2e/*.test.ts` file must be classified as training, verification-only, or intentionally excluded. The corpus loader fails on missing, duplicate, stale, or unclassified files, so a new E2E owner cannot silently bypass release qualification. New tests added to an already classified file inherit that file's classification.
 
-Sound-bearing `notifications.test.ts` and `tui-command-permissions.test.ts` are explicitly excluded. The credential-dependent `tui-agent.test.ts` suite is replaced by deterministic fake-Gateway permission-error coverage. Live-model and live-network files are forbidden. Corpus processes receive per-scenario homes and isolated tmux sockets and cannot inherit model credentials, the caller's tmux session, an external LLVM profile destination, or caller-selected fx tracing. The CLI and MCP authentication suites explicitly link the host Keychains directory into only their scenario homes so their uniquely named fake macOS Keychain assertions can run; no other scenario receives that access.
+Sound-bearing `notifications.test.ts` and `tui-command-permissions.test.ts` are explicitly excluded. The credential-dependent `tui-agent.test.ts` suite is replaced by deterministic fake-Gateway permission-error coverage. Live-model and live-network files are forbidden. Corpus processes receive per-scenario homes and isolated tmux sockets and cannot inherit model credentials, the caller's tmux session, an external LLVM profile destination, or caller-selected fiber tracing. The CLI and MCP authentication suites explicitly link the host Keychains directory into only their scenario homes so their uniquely named fake macOS Keychain assertions can run; no other scenario receives that access.
 
 Each training scenario must create a new nonempty raw profile. The driver merges that batch into the accumulator atomically, deletes only the successfully merged raw files, and stops before profile use on any missing scenario, timeout, warning, merge failure, or cleanup failure.
 

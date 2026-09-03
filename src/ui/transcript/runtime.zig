@@ -4118,12 +4118,12 @@ pub const TranscriptRuntime = struct {
     layout: Layout = undefined,
     cursor_row: u16 = 1,
     cursor_col: u16 = 1,
-    /// Top terminal row owned by fx. Rows above this contain pre-fiber scrollback
-    /// and must not be touched by fx repaint logic.
+    /// Top terminal row owned by fiber. Rows above this contain pre-fiber scrollback
+    /// and must not be touched by fiber repaint logic.
     /// Initialized to the cursor row captured at `initViewport`, and
     /// decreased as the transcript scrolls until it reaches row 1.
     viewport_top_row: u16 = 1,
-    /// First row fx is allowed to clear or repaint. This is set after
+    /// First row fiber is allowed to clear or repaint. This is set after
     /// launch-time reservation has created fiber-owned rows. Rows above it
     /// belong to pre-fiber terminal content and must not be touched by
     /// resize/layout repair.
@@ -4131,15 +4131,15 @@ pub const TranscriptRuntime = struct {
     /// Set when a resize leaves no drawable rows below `owned_top_row`.
     /// The next successful repaint uses natural terminal scroll to
     /// compact older visible rows into scrollback before drawing the
-    /// latest fx frame.
+    /// latest fiber frame.
     pending_scroll_compact: bool = false,
-    /// Minimum body rows fx should keep available for the visible
+    /// Minimum body rows fiber should keep available for the visible
     /// viewport. Startup sets this to the welcome banner height so a
     /// later resize cannot leave the renderer with a partial banner
     /// band and stale resize-reflow cells above it.
     min_visible_viewport_rows: u16 = 0,
     /// Resize-only guard rows to clear above `viewport_top_row` on the
-    /// next replay. Real terminals can reflow old fx cells just above
+    /// next replay. Real terminals can reflow old fiber cells just above
     /// the logical band during a drag; this lets the settled pass erase
     /// that residue without widening normal streaming paints.
     reflow_clear_guard_rows: u16 = 0,
@@ -4240,7 +4240,7 @@ pub const TranscriptRuntime = struct {
     /// frame on its own.
     transcript_band_dirty: bool = false,
     /// False until the first non-empty viewport paint has established
-    /// fx's transcript band. Before that point transcript writes are
+    /// fiber's transcript band. Before that point transcript writes are
     /// model updates only: emitting scroll newlines would move pre-fiber
     /// shell rows before the renderer has had a chance to respect
     /// `viewport_top_row`.

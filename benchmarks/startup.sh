@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Startup latency benchmarks for fx.
+# Startup latency benchmarks for fiber.
 #
 # Measures wall-clock time for common CLI commands using hyperfine.
 # Results are written to benchmarks/results/ in JSON format for CI consumption.
@@ -81,7 +81,7 @@ echo "runs:   $RUNS (warmup: $WARMUP)"
 echo ""
 
 # Baseline: process launch floor on this host. This is reported for context;
-# the budget checker still enforces each fx command's raw wall-clock mean.
+# the budget checker still enforces each fiber command's raw wall-clock mean.
 echo "--- process baseline ---"
 HOME="$GENERAL_FIXTURE_HOME" hyperfine \
   "${SHELL_OPTS[@]}" \

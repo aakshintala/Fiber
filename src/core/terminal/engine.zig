@@ -366,7 +366,7 @@ pub const Grid = struct {
     /// Resize the grid. Keeps top-left content, clips anything outside
     /// the new bounds, fills any grown area with blanks. Matches what a
     /// real terminal does when the pane shrinks or grows — content is
-    /// not auto-cleared, so the caller (fx) is responsible for
+    /// not auto-cleared, so the caller (fiber) is responsible for
     /// repainting.
     pub fn resize(self: *Grid, cols: u16, rows: u16) !void {
         if (cols == 0 or rows == 0) return error.InvalidGridSize;
@@ -1521,7 +1521,7 @@ pub const Grid = struct {
 
     /// Produce a blank cell in the current erase-style — space
     /// glyph with default fg/flags but the cursor's active bg.
-    /// Real terminals extend the current bg into erased cells; fx's
+    /// Real terminals extend the current bg into erased cells; fiber's
     /// user-message card relies on that behaviour to draw the bar
     /// without having to pad with literal spaces.
     fn blankCell(self: Grid) Cell {

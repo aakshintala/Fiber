@@ -1,4 +1,4 @@
-// Provider-neutral agent request body shaping for fx's internal transport
+// Provider-neutral agent request body shaping for fiber's internal transport
 // fixtures. This retains the historical message-JSON shape that the agent-loop
 // tests assert on; it carries no endpoint, auth, or header behavior.
 const std = @import("std");

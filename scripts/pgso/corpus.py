@@ -817,7 +817,7 @@ def run_behavior_corpus(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Inspect the fx PGSO corpus")
+    parser = argparse.ArgumentParser(description="Inspect the fiber PGSO corpus")
     parser.add_argument(
         "--manifest",
         required=True,

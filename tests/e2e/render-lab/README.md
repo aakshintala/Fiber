@@ -14,7 +14,7 @@ The oracle is byte replay plus terminal-owned text/grid capture.
 Render Lab is designed to answer these questions:
 
 - Did the freshly built Fx binary emit coherent terminal bytes?
-- Did replaying those bytes through `fx replay` produce the expected model?
+- Did replaying those bytes through `fiber replay` produce the expected model?
 - Did the real terminal-owned text/grid settle after each user-visible event?
 - Did old shell scrollback stay outside Fx-owned viewport rows?
 - Did quit, relaunch, resize, and native clear-scrollback actions preserve the intended boundaries?
@@ -48,7 +48,7 @@ Zig VT tests
 tmux Render Lab
   Deterministic real PTY coverage. Good for resize, scrollback, cursor, ANSI, relaunch.
 
-FIBER_RECORD tape and fx replay
+FIBER_RECORD tape and fiber replay
   Byte-level recording of what Fx wrote plus replay through the built-in virtual terminal.
 
 Native Render Lab
@@ -204,7 +204,7 @@ Important files:
 - `runtime-evidence.json`: compact witness summary for every frame.
 - `trace.log`: Fx debug trace for repaint, resize, footer, input, and related scopes.
 - `render.fxtape`: byte-level replay tape produced by the freshly built Fx binary.
-- `replay-summary.json`: structured `fx replay` output.
+- `replay-summary.json`: structured `fiber replay` output.
 - `final-grid.txt`: replay golden output for the final tape state.
 - `failure.md`: short human-readable failure list.
 - `repro.sh`: command to recreate the scenario.
@@ -388,7 +388,7 @@ bun run render-lab -- --scenario same-shell-relaunch --runs 1 --out /private/tmp
 git diff --check
 ```
 
-Use the exact freshly built binary from this checkout. Do not run bare `fx`.
+Use the exact freshly built binary from this checkout. Do not run bare `fiber`.
 
 If the bug was reported in a native terminal, also run the matching native scenario and include the artifact path in the run notes.
 

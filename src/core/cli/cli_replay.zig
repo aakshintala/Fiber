@@ -1,4 +1,4 @@
-//! `fx replay <tape>` implementation.
+//! `fiber replay <tape>` implementation.
 //!
 //! This module keeps tape parsing and virtual-terminal replay isolated from
 //! the top-level CLI dispatch.

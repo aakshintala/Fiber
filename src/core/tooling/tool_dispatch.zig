@@ -464,7 +464,7 @@ pub const Tool = struct {
     model_schema: model_tool_schema.FunctionSchema,
     model_visible: bool = true,
     write_provider_advertisement_fn: ?WriteProviderAdvertisementFn = null,
-    /// Set when the provider runs the tool instead of fx dispatch. Such a tool
+    /// Set when the provider runs the tool instead of fiber dispatch. Such a tool
     /// never reaches a call-time permission check, so advertisement is its only
     /// enforcement point and requires an already-settled allow.
     provider_executed: bool = false,

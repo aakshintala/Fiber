@@ -3,17 +3,17 @@
 //!     zig build run-bench-approval-review -Doptimize=ReleaseSafe -- combined 100 1
 
 const std = @import("std");
-const fx = @import("benchmark_exports");
+const fiber = @import("benchmark_exports");
 
-const approval_prompt = fx.approval_prompt;
-const approval_screen = fx.approval_screen;
-const diff_mod = fx.diff;
-const interaction_state = fx.interaction_state;
-const transcript_blocks = fx.transcript_blocks;
-const vt_emulator = fx.vt_emulator;
+const approval_prompt = fiber.approval_prompt;
+const approval_screen = fiber.approval_screen;
+const diff_mod = fiber.diff;
+const interaction_state = fiber.interaction_state;
+const transcript_blocks = fiber.transcript_blocks;
+const vt_emulator = fiber.vt_emulator;
 
 const Allocator = std.mem.Allocator;
-const TranscriptRuntime = fx.TranscriptRuntime;
+const TranscriptRuntime = fiber.TranscriptRuntime;
 const TranscriptEntry = transcript_blocks.TranscriptEntry;
 const seed: u64 = 0xF17ED1FF20260805;
 const standard_cols: u16 = 120;
@@ -354,7 +354,7 @@ const preview_lines = [_]diff_mod.PreviewLine{.{
     .text = "changed",
 }};
 
-fn fileRequest() fx.permission_request.PermissionRequest {
+fn fileRequest() fiber.permission_request.PermissionRequest {
     return .{
         .id = 0xA990,
         .label = "write_file approval-review-profile.txt",
@@ -373,7 +373,7 @@ fn fileRequest() fx.permission_request.PermissionRequest {
     };
 }
 
-fn layout(cols: u16, rows: u16) fx.types.Layout {
+fn layout(cols: u16, rows: u16) fiber.types.Layout {
     return .{
         .rows = rows,
         .cols = cols,
@@ -439,7 +439,7 @@ fn setDocumentTarget(
     fixture: *const Fixture,
     state: *interaction_state.ApprovalScreenState,
     transcript: []const u8,
-    active_layout: fx.types.Layout,
+    active_layout: fiber.types.Layout,
     target: DocumentTarget,
 ) !void {
     if (target == .tail) {
@@ -488,7 +488,7 @@ fn runPhase(
     alloc: Allocator,
     fixture: *Fixture,
     state: *interaction_state.ApprovalScreenState,
-    active_layout: fx.types.Layout,
+    active_layout: fiber.types.Layout,
     clear_display: bool,
     target: DocumentTarget,
     expected_marker: ?[]const u8,
@@ -496,7 +496,7 @@ fn runPhase(
 ) !PhaseResult {
     const paint_started = std.Io.Timestamp.now(io, .awake).nanoseconds;
     fixture.runtime.layout = active_layout;
-    var transcript_source: ?fx.TranscriptPreparationSource = null;
+    var transcript_source: ?fiber.TranscriptPreparationSource = null;
     defer if (transcript_source) |*source| source.deinit(alloc);
     const transcript_document: approval_screen.TranscriptDocument = switch (try approval_screen.transcriptDocumentPlan(
         fixture.projection(),

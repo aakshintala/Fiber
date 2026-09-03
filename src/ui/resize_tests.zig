@@ -4952,7 +4952,7 @@ test "reanchorTop preserves rows above launch-owned row" {
     defer h.deinit();
 
     try h.shell.initViewport(&h.metrics, 3);
-    try h.vt.feed("\x1b[2;1HPRE-FX");
+    try h.vt.feed("\x1b[2;1HPRE-FIBER");
     try h.shell.writeTranscript(h.alloc, &h.metrics, "line one\nline two\n", true);
     try h.flush();
 
@@ -4960,7 +4960,7 @@ test "reanchorTop preserves rows above launch-owned row" {
     try h.renderTranscriptFrame();
     try h.flush();
 
-    try expectRowPrefix(&h, 2, "PRE-FX");
+    try expectRowPrefix(&h, 2, "PRE-FIBER");
     try expectRowPrefix(&h, 3, "line one");
     try expectRowPrefix(&h, 4, "line two");
 }
@@ -5243,7 +5243,7 @@ test "settled resize clears reflowed rows above the launch-owned viewport" {
     try h.flush();
 
     try h.vt.resize(80, 23);
-    try h.vt.feed("\x1b[9;1HPRE-FX-ROW");
+    try h.vt.feed("\x1b[9;1HPRE-FIBER-ROW");
     try shell_runtime.applyResizeWithLayout(
         &h.shell,
         &h.metrics,
@@ -5253,7 +5253,7 @@ test "settled resize clears reflowed rows above the launch-owned viewport" {
     try h.renderTranscriptFrame();
     try h.flush();
 
-    try expectGridNotContains(&h, "PRE-FX-ROW");
+    try expectGridNotContains(&h, "PRE-FIBER-ROW");
     try expectRowPrefix(&h, 1, "FX01");
     try expectRowPrefix(&h, 11, "FX11");
 }
@@ -5263,7 +5263,7 @@ test "recovering from collapsed resize scroll-compacts stale viewport rows" {
     var h = try Harness.init(alloc, 80, 24, 4);
     defer h.deinit();
 
-    try h.vt.feed("\x1b[1;1HPRE-FX");
+    try h.vt.feed("\x1b[1;1HPRE-FIBER");
     try h.shell.initViewport(&h.metrics, 5);
 
     try h.shell.writeTranscript(
@@ -5275,7 +5275,7 @@ test "recovering from collapsed resize scroll-compacts stale viewport rows" {
     try h.renderTranscriptFrameIfDirty();
     try h.flush();
 
-    try expectRowPrefix(&h, 1, "PRE-FX");
+    try expectRowPrefix(&h, 1, "PRE-FIBER");
     try expectRowPrefix(&h, 5, "FX01");
 
     try h.driveResize(80, 5, 4, true);
@@ -5283,7 +5283,7 @@ test "recovering from collapsed resize scroll-compacts stale viewport rows" {
 
     try std.testing.expectEqual(@as(u16, 1), h.shell.owned_top_row);
     try std.testing.expectEqual(@as(u16, 1), h.shell.viewport_top_row);
-    try expectGridNotContains(&h, "PRE-FX");
+    try expectGridNotContains(&h, "PRE-FIBER");
     try expectRowPrefix(&h, 1, "FX01");
     try expectRowPrefix(&h, 9, "FX09");
 }
@@ -7287,7 +7287,7 @@ test "settled resize with rows-only change resets terminal scrollback" {
     try std.testing.expect(std.mem.find(u8, emitted, "\x1b[3J") != null);
 }
 
-test "theme reset retints fx entries and replays the retained transcript once" {
+test "theme reset retints fiber entries and replays the retained transcript once" {
     const alloc = std.testing.allocator;
     var h = try Harness.init(alloc, 80, 24, 4);
     defer h.deinit();
@@ -7298,12 +7298,12 @@ test "theme reset retints fx entries and replays the retained transcript once" {
     try h.shell.initViewportWithReservedRows(&h.metrics, 8, 5);
     _ = try h.shell.appendRawTranscriptEntryClassified(
         alloc,
-        "\x1b[1;38;5;255mFX THEME HEADER\x1b[0m\n",
+        "\x1b[1;38;5;255mFIBER THEME HEADER\x1b[0m\n",
         .welcome,
     );
     _ = try h.shell.appendRawTranscriptEntryClassified(
         alloc,
-        "\x1b[38;5;252mFX THEME TOOL\x1b[0m\n",
+        "\x1b[38;5;252mFIBER THEME TOOL\x1b[0m\n",
         .tool_status,
     );
     _ = try h.shell.appendRawTranscriptEntryClassified(
@@ -7313,7 +7313,7 @@ test "theme reset retints fx entries and replays the retained transcript once" {
     );
     const assistant_id = try h.shell.appendAssistantTurnEntry(alloc);
     const assistant = h.shell.lookupAssistantSegments(assistant_id) orelse unreachable;
-    try assistant.text.appendSlice(alloc, "\x1b[38;5;245mFX THEME INLINE CODE\x1b[39m\n");
+    try assistant.text.appendSlice(alloc, "\x1b[38;5;245mFIBER THEME INLINE CODE\x1b[39m\n");
 
     try h.renderTranscriptFrame();
     try h.flush();
@@ -7335,7 +7335,7 @@ test "theme reset retints fx entries and replays the retained transcript once" {
     try std.testing.expectEqual(@as(u16, 1), h.shell.viewport_top_row);
     try std.testing.expectEqual(min_visible_rows, h.shell.min_visible_viewport_rows);
     try std.testing.expectEqualStrings(
-        "\x1b[38;5;238mFX THEME TOOL\x1b[0m\n",
+        "\x1b[38;5;238mFIBER THEME TOOL\x1b[0m\n",
         h.shell.entries.items[1].raw_bytes.bytes,
     );
     try std.testing.expectEqualStrings(
@@ -7343,15 +7343,15 @@ test "theme reset retints fx entries and replays the retained transcript once" {
         h.shell.entries.items[2].raw_bytes.bytes,
     );
     try std.testing.expectEqualStrings(
-        "\x1b[38;5;247mFX THEME INLINE CODE\x1b[39m\n",
+        "\x1b[38;5;247mFIBER THEME INLINE CODE\x1b[39m\n",
         h.shell.lookupAssistantSegments(assistant_id).?.text.items,
     );
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, h.shell.transcript.items, "FX THEME HEADER"));
-    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, h.shell.transcript.items, "FX THEME TOOL"));
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, h.shell.transcript.items, "FX THEME INLINE CODE"));
-    try expectGridContains(&h, "FX THEME HEADER");
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, h.shell.transcript.items, "FIBER THEME HEADER"));
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, h.shell.transcript.items, "FIBER THEME TOOL"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, h.shell.transcript.items, "FIBER THEME INLINE CODE"));
+    try expectGridContains(&h, "FIBER THEME HEADER");
     try expectGridContains(&h, "tool activity");
-    try expectGridContains(&h, "FX THEME INLINE CODE");
+    try expectGridContains(&h, "FIBER THEME INLINE CODE");
 }
 
 pub fn testReconstructiveFullTranscriptReplay() !void {

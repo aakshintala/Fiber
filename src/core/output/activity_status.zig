@@ -43,7 +43,7 @@ pub fn buildTurnLabel(buf: []u8, stream: StreamState, now_ms: i64) ?[]const u8 {
 
 pub const activity_blink_half_period_ms: i64 = 500;
 
-/// The instant the turn clock reads. While fx waits on user input the
+/// The instant the turn clock reads. While fiber waits on user input the
 /// clock is frozen at the moment the wait began, so time spent on an approval
 /// or question never counts toward active work.
 fn turnClockNow(stream: StreamState, now_ms: i64) i64 {
@@ -92,7 +92,7 @@ fn writeElapsed(writer: *std.Io.Writer, seconds: i64) !void {
     }
 }
 
-/// Tracks whether fx is waiting on user input (approval prompt or question)
+/// Tracks whether fiber is waiting on user input (approval prompt or question)
 /// and keeps the turn clock honest: the clock freezes when the wait
 /// begins, and on resume the whole wait is excluded by shifting
 /// turn_started_ms forward. Call whenever the waiting state may have changed.

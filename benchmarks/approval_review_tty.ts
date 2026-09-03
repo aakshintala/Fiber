@@ -333,7 +333,7 @@ async function waitForPaneDeath(session: TmuxSession, timeoutMs: number): Promis
     if (status.dead) return status.status;
     await Bun.sleep(25);
   }
-  throw new Error("timed out waiting for fx process exit");
+  throw new Error("timed out waiting for fiber process exit");
 }
 
 const binary = realpathSync(requiredEnv("FIBER_APPROVAL_PROFILE_BIN"));

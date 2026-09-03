@@ -236,7 +236,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Shellcheck Fx scripts
+      - name: Shellcheck Fiber scripts
         run: |
           scripts=(
             benchmarks/startup.sh

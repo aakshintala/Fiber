@@ -119,7 +119,7 @@ test "native network failure evidence excludes opaque and configuration failures
     }
 }
 
-/// Identifies fx on every AI Gateway request; the zig std.http default
+/// Identifies fiber on every AI Gateway request; the zig std.http default
 /// (`zig/<version> (std.http)`) is never sent to the gateway.
 pub const user_agent = "fiber/" ++ build_options.app_version;
 var test_cancel_watcher_spawn_error: ?anyerror = null;

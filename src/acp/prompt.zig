@@ -3101,14 +3101,14 @@ test "parsePromptInput preserves resource text and accepts only local absolute f
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(std.testing.io, "Fx Project/src");
-    var file = try tmp.dir.createFile(std.testing.io, "Fx Project/src/main.zig", .{});
+    try tmp.dir.createDirPath(std.testing.io, "Fiber Project/src");
+    var file = try tmp.dir.createFile(std.testing.io, "Fiber Project/src/main.zig", .{});
     file.close(std.testing.io);
     const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
     defer alloc.free(root);
-    const expected_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "Fx Project/src/main.zig");
+    const expected_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "Fiber Project/src/main.zig");
     defer alloc.free(expected_path);
-    const local_uri = try std.fmt.allocPrint(alloc, "file://{s}/Fx%20Project/src/main.zig", .{root});
+    const local_uri = try std.fmt.allocPrint(alloc, "file://{s}/Fiber%20Project/src/main.zig", .{root});
     defer alloc.free(local_uri);
     const remote_uri = "https://example.test/reference.txt";
     const params = try std.fmt.allocPrint(

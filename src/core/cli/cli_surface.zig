@@ -482,8 +482,8 @@ pub fn parseInteractiveLaunch(
     }
 }
 
-/// Detects `fx <subcommand> --help` / `-h` and returns the subcommand kind so the
-/// caller can render command-specific help. Top-level `fx --help`/`fiber help` are
+/// Detects `fiber <subcommand> --help` / `-h` and returns the subcommand kind so the
+/// caller can render command-specific help. Top-level `fiber --help`/`fiber help` are
 /// handled separately and intentionally excluded here.
 fn topLevelHelpRequest(command_catalog: CommandCatalog, args: []const [:0]const u8) ?TopLevelKind {
     if (args.len < 2) return null;

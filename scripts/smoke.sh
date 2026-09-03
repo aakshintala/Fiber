@@ -4,7 +4,7 @@
 # config, workspace, and ACP framing -- the subsystems `help` alone misses.
 # Exit codes only: output shifts constantly during demolition and the rename.
 set -u
-BIN="${1:-$(ls zig-out/bin/fiber zig-out/bin/fx 2>/dev/null | head -1)}"
+BIN="${1:-zig-out/bin/fiber}"
 [ -x "$BIN" ] || { echo "smoke: no binary (build first, or pass a path)"; exit 2; }
 
 fail=0

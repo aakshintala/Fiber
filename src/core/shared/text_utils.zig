@@ -1162,11 +1162,11 @@ test "redactUrlForDisplay preserves benign keys containing sig" {
 }
 
 test "sanitizeAssistantText strips first-line assistant intro" {
-    const cleaned = sanitizeAssistantText(" \tI'm Fx, your local coding assistant.\n\n  Here is the answer.\n");
+    const cleaned = sanitizeAssistantText(" \tI'm Fiber, your local coding assistant.\n\n  Here is the answer.\n");
     try std.testing.expectEqualStrings("Here is the answer.", cleaned);
 
-    const unchanged = sanitizeAssistantText("I'm Fx, your local coding assistant.");
-    try std.testing.expectEqualStrings("I'm Fx, your local coding assistant.", unchanged);
+    const unchanged = sanitizeAssistantText("I'm Fiber, your local coding assistant.");
+    try std.testing.expectEqualStrings("I'm Fiber, your local coding assistant.", unchanged);
 }
 
 test "clippedLabel clips by display width with an ellipsis" {

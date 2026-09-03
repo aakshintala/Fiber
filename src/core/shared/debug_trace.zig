@@ -526,7 +526,7 @@ test "isTruthy parses accepted and rejected values" {
     try std.testing.expect(!isTruthy(null));
 }
 
-test "home default log path uses fx logs directory" {
+test "home default log path uses fiber logs directory" {
     const alloc = std.testing.allocator;
     const path = try defaultLogPathForHome(alloc, "/tmp/fake-home");
     defer alloc.free(path);

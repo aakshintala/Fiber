@@ -1,5 +1,5 @@
-name: fx bug report
-description: Report a problem with fx
+name: fiber bug report
+description: Report a problem with fiber
 title: "Bug: "
 labels:
   - bug

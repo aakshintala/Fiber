@@ -72,8 +72,8 @@ function startUpgradeServer(
   argvLogPath: string,
 ): { baseUrl: string; stop: () => void } {
   const artifactDir = join(root, "release-artifact");
-  const wrapperPath = join(artifactDir, "fx");
-  const archivePath = join(root, "fx.tar.gz");
+  const wrapperPath = join(artifactDir, "fiber");
+  const archivePath = join(root, "fiber.tar.gz");
   mkdirSync(artifactDir);
   const script = `#!/bin/sh
 {
@@ -87,13 +87,13 @@ exec ${shellQuote(FIBER_BIN)} "$@"
 `;
   writeFileSync(wrapperPath, script);
   chmodSync(wrapperPath, 0o755);
-  const tar = Bun.spawnSync(["tar", "-czf", archivePath, "-C", artifactDir, "fx"]);
+  const tar = Bun.spawnSync(["tar", "-czf", archivePath, "-C", artifactDir, "fiber"]);
   if (tar.exitCode !== 0) throw new Error(tar.stderr.toString());
 
   const archive = readFileSync(archivePath);
   const checksum = createHash("sha256").update(archive).digest("hex");
   const platform = `${process.platform === "darwin" ? "macos" : "linux"}-${process.arch === "arm64" ? "aarch64" : "x86_64"}`;
-  const archiveRoute = `/v9.9.9/fx-${platform}.tar.gz`;
+  const archiveRoute = `/v9.9.9/fiber-${platform}.tar.gz`;
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -3879,7 +3879,7 @@ test.skipIf(!tmuxAvailable())(
       await active.sendText("/quit");
       await waitForCondition(
         () => active?.paneStatus().dead === true,
-        "fx to exit after /quit",
+        "fiber to exit after /quit",
       );
       expect(paneExitMatches(active.paneStatus(), 0)).toBe(true);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
@@ -3982,7 +3982,7 @@ test.skipIf(!tmuxAvailable())(
 
       expect(paneExitMatches(contender.paneStatus(), 1)).toBe(true);
       expect(readFileSync(contenderStderrPath, "utf8")).toBe(
-        "fiber: another fx process may be using this session (running or suspended); check other terminals or run jobs, then use fg or quit that process\n",
+        "fiber: another fiber process may be using this session (running or suspended); check other terminals or run jobs, then use fg or quit that process\n",
       );
       expect(owner.isPaneAlive()).toBe(true);
       const contenderScrollback = await contender.captureFullScrollback();

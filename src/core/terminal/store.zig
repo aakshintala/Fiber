@@ -2196,7 +2196,7 @@ pub fn loadOrCreateOwnerCatalogClaim(
     return operation.ownOwnerCatalogClaim(alloc, claim);
 }
 
-/// Reloads authority for the current fx owner without trusting caller-supplied
+/// Reloads authority for the current fiber owner without trusting caller-supplied
 /// cwd, backend, or generation. Those facts are recovered from durable state;
 /// the active profile/session/workspace/transport identity must still match.
 pub fn reloadOwnerAuthorityClaim(
@@ -2288,7 +2288,7 @@ pub fn reloadHumanTakeoverAuthorityClaim(
     }, .humanTakeover());
 }
 
-/// Reloads a proof only through the managed-child capability of the durable fx
+/// Reloads a proof only through the managed-child capability of the durable fiber
 /// session that owns it. A terminal id alone cannot select proof storage.
 pub fn reloadAuthorityClaim(
     alloc: Allocator,
@@ -7726,7 +7726,7 @@ test "human owner takeover proof is narrow and excludes agent writes" {
     );
 }
 
-test "human takeover lease is reclaimable only after its fx process owner is gone" {
+test "human takeover lease is reclaimable only after its fiber process owner is gone" {
     const Match = struct {
         var result: process_identity.TokenMatch = .matched;
 

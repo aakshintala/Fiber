@@ -496,7 +496,7 @@ test "advertised dynamic calls stay opaque while unsupported calls are terminal"
     var dynamic = try prepareReadyCall(alloc, .{
         .id = "dynamic",
         .name = "mcp_filesystem",
-        .arguments_json = "{not parsed by Fx",
+        .arguments_json = "{not parsed by Fiber",
     }, .{
         .tool_registry = empty_registry,
         .workspace_root = "/tmp/workspace",
@@ -508,7 +508,7 @@ test "advertised dynamic calls stay opaque while unsupported calls are terminal"
     try std.testing.expectEqual(@as(usize, 0), dynamic.candidate.applicable_targets.len);
     try std.testing.expect(try ordinaryApplicableTargetsFresh(
         alloc,
-        .{ .id = "dynamic", .name = "mcp_filesystem", .arguments_json = "{not parsed by Fx" },
+        .{ .id = "dynamic", .name = "mcp_filesystem", .arguments_json = "{not parsed by Fiber" },
         empty_registry,
         "/tmp/workspace",
         &dynamic.candidate,

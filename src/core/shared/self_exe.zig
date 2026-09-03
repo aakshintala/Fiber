@@ -19,7 +19,7 @@ fn productionPathForReexec(alloc: Allocator) ![]u8 {
     return std.process.executablePathAlloc(io_mod.getIo(), alloc);
 }
 
-/// Returns an owned path another process can use to launch fx. Linux prefers
+/// Returns an owned path another process can use to launch fiber. Linux prefers
 /// the on-disk path, falling back to `/proc/<pid>/exe` after replacement.
 pub fn pathForPeerReexec(alloc: Allocator) ![]u8 {
     if (testProductExe()) |path| return alloc.dupe(u8, path);
