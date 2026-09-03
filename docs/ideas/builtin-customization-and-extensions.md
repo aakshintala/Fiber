@@ -80,17 +80,7 @@ One real extension should define the first API. Do not publish a broad host surf
 
 Start with the narrowest extension type that solves the demonstrated need. Prefer declarative registration and native protocol adapters over low-level callbacks.
 
-A minimal manifest may need:
-
-```toml
-id = "example"
-version = "0.1.0"
-fiber_api = "1"
-entrypoint = "main.lua"
-capabilities = ["tool.register"]
-```
-
-This is illustrative. Do not settle the directory layout, language, or capability vocabulary before choosing the first use case.
+An extension would need declared identity, a version, a Fiber API version it targets, an entrypoint, and an explicit capability grant. Do not settle the manifest format, directory layout, language, or capability vocabulary before choosing the first use case.
 
 Each executable extension should run in an isolated runtime instance. It should receive only declared host capabilities. Fiber should reject unsupported API versions with a clear error.
 

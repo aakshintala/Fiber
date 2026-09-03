@@ -6,6 +6,8 @@ Priority: after the Fiber product transition
 
 Last updated: September 1, 2026
 
+See [Providers](providers.md) for the deployment shape and the routing constraint this shares with the other provider work.
+
 ## Decision summary
 
 Add OpenCode Go support after the Fiber product transition and before Databricks support or a generic extension system.
@@ -28,7 +30,7 @@ The integration should work in the native CLI and agent runtime. It should not r
 
 ## Initial boundary
 
-The first version should use the existing native provider and model seams where they fit. Add only the OpenCode-specific transport, authentication, and response handling that the external contract requires.
+The first version should add only the OpenCode-specific transport, authentication, and response handling that the external contract requires. It should not assume the model-routing layer left by the Fiber cutover fits: one OpenCode provider serves several wire protocols, and the routing shape is an open decision below.
 
 Keep these concerns separate:
 
@@ -39,7 +41,7 @@ Keep these concerns separate:
 - model selection for subagents
 - usage and error reporting
 
-Do not introduce a runtime provider registry unless the current closed provider model blocks the integration. If it does, make the smallest change that supports Codex and OpenCode. Databricks can later test whether that contract needs to become more general.
+Do not introduce a runtime provider registry. Make the smallest change that supports Codex and OpenCode. Databricks can later test whether that contract needs to become more general.
 
 ## Subagent model routing
 
@@ -72,7 +74,7 @@ OpenCode Go is a $10/month OpenCode Zen subscription for open coding models.
 
 ## Authentication and configuration
 
-Store the credential in `~/.fiber/opencode-go-auth.json`, following the existing per-provider pattern (a sibling of the Codex auth file) and reusing existing credential loading and secret masking. The key is pasted once from the Zen console.
+Store the credential in Fiber profile state alongside other provider credentials, reusing existing credential loading and secret masking. The key is pasted once from the Zen console.
 
 Do not copy secrets into transcripts, logs, subagent metadata, or tool results.
 
@@ -85,9 +87,17 @@ The integration lives in the native provider and agent layers. The JavaScript SD
 ## Settled decisions
 
 - v1 covers only the `/chat/completions` protocol family (GLM, Kimi, DeepSeek, MiMo, LongCat, Hy). `/messages` and `/responses` are deferred; the catalog carries a per-model protocol field so adding them later is additive.
-- The model catalog is hardcoded, matching the Codex pattern in `src/gateway/openai_codex_models.zig`. Model discovery is deferred; the area is expected to be reworked soon, so discovery would be wasted work. The Grok adapter is not a reference: the cutover removes it.
+- The model catalog is built in. Model discovery is deferred; the area is expected to be reworked soon, so discovery would be wasted work. The removed Grok provider is not a reference.
 - The first end-to-end test owner is `glm-5.3-flash`.
-- Structure: add a `ProviderId.opencode_go` enum member and a provider bundle in `src/core/gateway/provider_set.zig`, plus a new per-provider SSE transport in `src/gateway/` modeled on the retained Codex adapter. No runtime registry, no extension runtime, no rename coupling.
+- No runtime provider registry, no extension runtime, and no dependency on cutover rename work.
+
+## Open decisions
+
+We still need to decide:
+
+- how a model identifier resolves to its wire protocol, route, and credential. The provider layer inherited from fx keys this per provider, which cannot express one provider serving three protocols. Databricks needs the same thing, so the shape should satisfy both.
+- whether Codex moves onto that resolution path in this work or stays on its own until Databricks forces the question.
+- how usage and rate-limit errors from dollar-based subscription limits surface to the user.
 
 ## Suggested delivery sequence
 

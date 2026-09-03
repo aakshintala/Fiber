@@ -4,6 +4,8 @@ Status: lower-priority idea under discussion
 
 Last updated: September 1, 2026
 
+See [Providers](providers.md) for the deployment shape and the routing constraint this shares with the other provider work.
+
 ## Decision summary
 
 Add Databricks support after OpenCode Go support and the Fiber product transition.
@@ -91,37 +93,13 @@ Databricks needs separate native values for:
 
 The first Databricks implementation should add only the contracts that current code cannot represent. Do not design a public provider extension API as part of this work.
 
-An illustrative model description may include:
-
-```zig
-pub const ModelDescriptor = struct {
-    id: []const u8,
-    display_name: []const u8,
-    protocol: ProtocolId,
-    endpoint: Endpoint,
-    capabilities: ModelCapabilities,
-};
-```
+OpenCode Go reaches this constraint first with a smaller version of it: one provider, several protocols. Whatever routing shape that work settles on should be the starting point here, not a second design.
 
 The final contract must define allocation ownership, secret handling, refresh behavior, and stable serialization.
 
 ## Normalize provider events
 
-Protocol adapters should translate Databricks wire events into Fiber's native event model. The agent loop should not depend on Databricks event types.
-
-Useful neutral events include:
-
-```text
-response.started
-output_text.delta
-reasoning.delta
-tool_call.started
-tool_call.arguments.delta
-tool_call.completed
-usage.updated
-response.completed
-response.failed
-```
+Protocol adapters should translate Databricks wire events into Fiber's native event model. The agent loop should not depend on Databricks event types. The neutral vocabulary needs to cover response lifecycle, text and reasoning deltas, tool-call lifecycle, usage updates, and failure.
 
 Preserve unknown provider data only when it has a bounded representation and a concrete use. Do not weaken common event types to retain speculative fields.
 
