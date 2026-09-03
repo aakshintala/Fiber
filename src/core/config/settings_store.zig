@@ -99,7 +99,6 @@ pub const UserSettingsPatch = struct {
     clear_credential_source: bool = false,
     yolo_acknowledged: ?bool = null,
     effort: ?types.ReasoningEffort = null,
-    fast_mode: ?bool = null,
     slash_menu_categories: ?bool = null,
     collapse_tool_calls: ?bool = null,
     update_channel: ?update_target.Channel = null,
@@ -117,7 +116,6 @@ pub const UserSettingsPatch = struct {
             !self.clear_credential_source and
             self.yolo_acknowledged == null and
             self.effort == null and
-            self.fast_mode == null and
             self.slash_menu_categories == null and
             self.collapse_tool_calls == null and
             self.update_channel == null and
@@ -210,7 +208,6 @@ const UserPreferenceField = enum(u4) {
     model,
     permission_mode,
     effort,
-    fast_mode,
     slash_menu_categories,
     collapse_tool_calls,
     update_channel,
@@ -228,7 +225,6 @@ const UserPreferenceField = enum(u4) {
             .model => "settings.json.preference-migration.model.json",
             .permission_mode => "settings.json.preference-migration.permission_mode.json",
             .effort => "settings.json.preference-migration.effort.json",
-            .fast_mode => "settings.json.preference-migration.fast_mode.json",
             .slash_menu_categories => "settings.json.preference-migration.slash_menu_categories.json",
             .collapse_tool_calls => "settings.json.preference-migration.collapse_tool_calls.json",
             .update_channel => "settings.json.preference-migration.update_channel.json",
@@ -244,7 +240,6 @@ const user_preference_fields = [_]UserPreferenceField{
     .model,
     .permission_mode,
     .effort,
-    .fast_mode,
     .slash_menu_categories,
     .collapse_tool_calls,
     .update_channel,
@@ -951,31 +946,6 @@ test "provider patch writes one bounded provider model collection" {
     try std.testing.expect(!root.object.contains("codex_model"));
 }
 
-test "model and fast patch binds the fast preference atomically" {
-    const alloc = std.testing.allocator;
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    defer arena.deinit();
-
-    var root = try std.json.parseFromSliceLeaky(
-        std.json.Value,
-        arena.allocator(),
-        "{\"models\":{\"gateway\":\"provider/old\"},\"fast_mode\":true}",
-        .{},
-    );
-    _ = try applyUserPatchToRoot(arena.allocator(), &root, .{
-        .model_preference = .{ .provider = .codex, .model = "provider/fast-toggle" },
-        .fast_mode = true,
-    });
-    const binding = root.object.get("fast_mode_model_bound");
-    try std.testing.expect(binding != null);
-    try std.testing.expect(binding.?.bool);
-
-    _ = try applyUserPatchToRoot(arena.allocator(), &root, .{
-        .model_preference = .{ .provider = .codex, .model = "provider/default" },
-    });
-    try std.testing.expect(!root.object.contains("fast_mode_model_bound"));
-}
-
 fn applyMutationToRoot(
     arena: Allocator,
     root: *std.json.Value,
@@ -1013,13 +983,6 @@ fn applyUserPatchToRoot(
     }
     if (patch.yolo_acknowledged) |value| application.changed = try putBool(arena, &root.object, "yolo_acknowledged", value) or application.changed;
     if (patch.effort) |value| application.changed = try putString(arena, &root.object, "effort", value.label()) or application.changed;
-    if (patch.fast_mode) |value| application.changed = try putBool(arena, &root.object, "fast_mode", value) or application.changed;
-    if (patch.model_preference != null and patch.fast_mode != null) {
-        application.changed = try putBool(arena, &root.object, "fast_mode_model_bound", true) or application.changed;
-    } else if ((patch.model_preference != null or patch.fast_mode != null) and root.object.contains("fast_mode_model_bound")) {
-        _ = root.object.orderedRemove("fast_mode_model_bound");
-        application.changed = true;
-    }
     if (patch.slash_menu_categories) |value| application.changed = try putBool(arena, &root.object, "slash_menu_categories", value) or application.changed;
     if (patch.collapse_tool_calls) |value| application.changed = try putBool(arena, &root.object, "collapse_tool_calls", value) or application.changed;
     if (patch.update_channel) |value| application.changed = try putString(arena, &root.object, "update_channel", value.label()) or application.changed;
@@ -1133,19 +1096,6 @@ fn cleanupLegacyWorkspacePreferences(
             patch.effort != null,
             application,
         );
-        removeLegacyLeaf(
-            &entry.value_ptr.object,
-            "fast_mode",
-            .fast_mode,
-            patch.fast_mode != null,
-            application,
-        );
-        if ((patch.model_preference != null or patch.fast_mode != null) and
-            entry.value_ptr.object.contains("fast_mode_model_bound"))
-        {
-            _ = entry.value_ptr.object.orderedRemove("fast_mode_model_bound");
-            application.legacy_fields_removed += 1;
-        }
         removeLegacyLeaf(
             &entry.value_ptr.object,
             "slash_menu_categories",
@@ -1850,7 +1800,7 @@ fn validateKnownSettingsObject(
     if (object.get("context_limits")) |value| {
         _ = context_limits.parseJsonObject(value) catch return error.InvalidSettingsFormat;
     }
-    inline for (&.{ "context", "fast_mode", "auto_upgrade", "slash_menu_categories", "startup_scrollback", "yolo_acknowledged" }) |key| {
+    inline for (&.{ "context", "auto_upgrade", "slash_menu_categories", "startup_scrollback", "yolo_acknowledged" }) |key| {
         if (object.get(key)) |value| {
             if (value != .bool) return error.InvalidSettingsFormat;
         }
@@ -2063,7 +2013,6 @@ test "user patch writes user preferences at top level" {
         .permission_mode = .yolo,
         .yolo_acknowledged = true,
         .effort = types.ReasoningEffort.literal("high"),
-        .fast_mode = true,
         .slash_menu_categories = false,
         .update_channel = .dev,
         .startup_scrollback = false,
@@ -2084,7 +2033,6 @@ test "user patch writes user preferences at top level" {
     try std.testing.expect(std.mem.find(u8, bytes, "\"permission_mode\":\"yolo\"") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"yolo_acknowledged\":true") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"effort\":\"high\"") != null);
-    try std.testing.expect(std.mem.find(u8, bytes, "\"fast_mode\":true") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"slash_menu_categories\":false") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"update_channel\":\"dev\"") != null);
     try std.testing.expect(std.mem.find(u8, bytes, "\"startup_scrollback\":false") != null);
@@ -2789,7 +2737,6 @@ test "user patch traces metadata without settings content" {
     defer store.deinit(alloc);
     var outcome = try store.applyUserPatch(alloc, .{
         .model_preference = .{ .provider = .codex, .model = "FX_MODEL_SECRET" },
-        .fast_mode = true,
     });
     defer outcome.deinit(alloc);
     debug_trace.shutdown();
@@ -2842,7 +2789,7 @@ test "settings primary accepts exactly 64 KiB and rejects one byte more" {
     try std.testing.expect(too_large == .oversized);
 }
 
-test "multi-value user patch commits model effort and fast mode once" {
+test "multi-value user patch commits model and effort once" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -2858,7 +2805,6 @@ test "multi-value user patch commits model effort and fast mode once" {
     var outcome = try store.applyUserPatch(alloc, .{
         .model_preference = .{ .provider = .codex, .model = "openai/gpt-5.4" },
         .effort = types.ReasoningEffort.literal("high"),
-        .fast_mode = false,
     });
     defer outcome.deinit(alloc);
     try std.testing.expect(outcome == .committed);
@@ -2901,7 +2847,7 @@ test "invalid primary is not replaced by backup or mutation" {
 
     try std.testing.expectError(
         error.InvalidSettingsFormat,
-        store.applyUserPatch(alloc, .{ .fast_mode = true }),
+        store.applyUserPatch(alloc, .{ .startup_scrollback = false }),
     );
     const primary = try store.readPrimaryForTest(alloc);
     defer alloc.free(primary);
@@ -3038,7 +2984,7 @@ test "second settings commit creates a sequenced private backup" {
     var store = try Store.initFromHome(alloc, home, .writable);
     defer store.deinit(alloc);
 
-    var first_outcome = try store.applyUserPatch(alloc, .{ .fast_mode = true });
+    var first_outcome = try store.applyUserPatch(alloc, .{ .startup_scrollback = false });
     defer first_outcome.deinit(alloc);
     var second_outcome = try store.applyUserPatch(alloc, .{ .effort = types.ReasoningEffort.literal("high") });
     defer second_outcome.deinit(alloc);
@@ -3077,7 +3023,7 @@ test "symlinked settings primary is rejected without touching its target" {
 
     try std.testing.expectError(
         error.DurablePathUnsafe,
-        store.applyUserPatch(alloc, .{ .fast_mode = true }),
+        store.applyUserPatch(alloc, .{ .startup_scrollback = false }),
     );
     var outside = try tmp.dir.openFile(io_mod.getIo(), "outside.json", .{});
     defer outside.close(io_mod.getIo());

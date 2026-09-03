@@ -46,8 +46,6 @@ pub const Settings = struct {
     context_limits: context_limits.Overrides = .{},
     first_call_tool_choice: ?types.ToolChoice = null,
     context: ?bool = null,
-    fast_mode: ?bool = null,
-    fast_mode_model_bound: ?bool = null,
     slash_menu_categories: ?bool = null,
     collapse_tool_calls: ?bool = null,
     auto_upgrade: ?bool = null,
@@ -113,8 +111,6 @@ pub const ConfigSources = struct {
     models: ProviderModelSources = .{},
     permission_mode: ConfigSource = .compiled_default,
     effort: ConfigSource = .compiled_default,
-    fast_mode: ConfigSource = .compiled_default,
-    fast_mode_model_bound: ConfigSource = .compiled_default,
     slash_menu_categories: ConfigSource = .compiled_default,
     collapse_tool_calls: ConfigSource = .compiled_default,
     startup_scrollback: ConfigSource = .compiled_default,
@@ -573,8 +569,6 @@ fn hasLegacyWorkspacePreferences(root: std.json.Value) bool {
         inline for (&.{
             "model",
             "effort",
-            "fast_mode",
-            "fast_mode_model_bound",
             "slash_menu_categories",
             "collapse_tool_calls",
             "startup_scrollback",
@@ -601,8 +595,6 @@ fn isProfileOnlySettingKey(key: []const u8) bool {
         "model",
         "models",
         "effort",
-        "fast_mode",
-        "fast_mode_model_bound",
         "slash_menu_categories",
         "collapse_tool_calls",
         "startup_scrollback",
@@ -648,8 +640,6 @@ fn updateConfigSources(sources: *ConfigSources, settings: Settings, source: Conf
     }
     if (settings.permission_mode != null) sources.permission_mode = source;
     if (settings.effort != null) sources.effort = source;
-    if (settings.fast_mode != null) sources.fast_mode = source;
-    if (settings.fast_mode_model_bound != null) sources.fast_mode_model_bound = source;
     if (settings.slash_menu_categories != null) sources.slash_menu_categories = source;
     if (settings.collapse_tool_calls != null) sources.collapse_tool_calls = source;
     if (settings.startup_scrollback != null) sources.startup_scrollback = source;
@@ -1393,17 +1383,6 @@ fn parseProfileOnlyFields(
         }
     }
 
-    if (root.object.get("fast_mode")) |fast_mode_value| {
-        const value = fast_mode_value;
-        if (value != .bool) return error.InvalidFastModeType;
-        settings.fast_mode = value.bool;
-    }
-
-    if (root.object.get("fast_mode_model_bound")) |bound_value| {
-        if (bound_value != .bool) return error.InvalidFastModeBindingType;
-        settings.fast_mode_model_bound = bound_value.bool;
-    }
-
     if (root.object.get("slash_menu_categories")) |slash_menu_categories_value| {
         const value = slash_menu_categories_value;
         if (value != .bool) return error.InvalidSlashMenuCategoriesType;
@@ -1530,8 +1509,6 @@ fn mergeSettings(target: *Settings, incoming: *Settings, alloc: Allocator) void 
     target.context_limits.merge(incoming.context_limits);
     if (incoming.first_call_tool_choice) |value| target.first_call_tool_choice = value;
     if (incoming.context) |value| target.context = value;
-    if (incoming.fast_mode) |value| target.fast_mode = value;
-    if (incoming.fast_mode_model_bound) |value| target.fast_mode_model_bound = value;
     if (incoming.slash_menu_categories) |value| target.slash_menu_categories = value;
     if (incoming.collapse_tool_calls) |value| target.collapse_tool_calls = value;
     if (incoming.auto_upgrade) |value| target.auto_upgrade = value;
@@ -2857,48 +2834,6 @@ test "user effort preference preserves unrelated workspace override keys" {
     try std.testing.expect((try workspaceOverrideObject(&parsed.value, workspace_root)).get("effort") == null);
 }
 
-test "user fast mode preference writes bool and preserves unrelated keys" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const fixture = try std.fmt.allocPrint(
-        std.testing.allocator,
-        "{{\"workspaces\":{{\"{s}\":{{\"model\":\"my-model\",\"permission_mode\":\"auto\"}}}}}}",
-        .{workspace_root},
-    );
-    defer std.testing.allocator.free(fixture);
-    try writeFixtureFile(tmp.dir, "home/.fx/settings.json", fixture);
-
-    const home = try TestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-
-    var outcome = try setUserPreferences(
-        std.testing.allocator,
-        .{ .fast_mode = true },
-    );
-    defer outcome.deinit(std.testing.allocator);
-
-    var settings = try loadMergedSettings(std.testing.allocator, workspace_root);
-    defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("my-model", settings.models.get(.codex).?);
-    try std.testing.expectEqual(types.PermissionMode.auto, settings.permission_mode.?);
-    try std.testing.expectEqual(true, settings.fast_mode.?);
-
-    const bytes = try readSettingsBytesForTest(std.testing.allocator, home_root);
-    defer std.testing.allocator.free(bytes);
-    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, bytes, .{});
-    defer parsed.deinit();
-    try std.testing.expectEqual(true, parsed.value.object.get("fast_mode").?.bool);
-    try std.testing.expect((try workspaceOverrideObject(&parsed.value, workspace_root)).get("fast_mode") == null);
-}
-
 test "user startup scrollback preference writes bool and preserves unrelated keys" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -2949,12 +2884,12 @@ test "project profile-only settings are ignored and diagnosed by key" {
     try writeFixtureFile(
         tmp.dir,
         "home/.fx/settings.json",
-        "{\"model\":\"profile/model\",\"permission_mode\":\"auto\",\"permission\":{\"bash\":{\"profile *\":\"allow\"}},\"prompt_history\":{\"enabled\":true},\"statusLine\":{\"sandbox\":true,\"context\":false},\"first_call_tool_choice\":\"none\",\"auto_upgrade\":false,\"update_channel\":\"dev\",\"fast_mode\":false,\"input_appearance\":\"tint\",\"maxxing_mode\":\"minimal\",\"slash_menu_categories\":false,\"effort\":\"high\",\"output_level\":\"quiet\",\"startup_scrollback\":false}\n",
+        "{\"model\":\"profile/model\",\"permission_mode\":\"auto\",\"permission\":{\"bash\":{\"profile *\":\"allow\"}},\"prompt_history\":{\"enabled\":true},\"statusLine\":{\"sandbox\":true,\"context\":false},\"first_call_tool_choice\":\"none\",\"auto_upgrade\":false,\"update_channel\":\"dev\",\"input_appearance\":\"tint\",\"maxxing_mode\":\"minimal\",\"slash_menu_categories\":false,\"effort\":\"high\",\"output_level\":\"quiet\",\"startup_scrollback\":false}\n",
     );
     try writeFixtureFile(
         tmp.dir,
         "workspace/.fx.json",
-        "{\"model\":\"project/model\",\"permission_mode\":\"ask\",\"permission\":\"deny\",\"prompt_history\":{\"enabled\":false},\"statusLine\":{\"sandbox\":false,\"context\":true},\"skill_match_fuzzy\":true,\"first_call_tool_choice\":\"auto\",\"auto_upgrade\":true,\"update_channel\":\"stable\",\"fast_mode\":true,\"input_appearance\":\"lines\",\"maxxing_mode\":\"normal\",\"slash_menu_categories\":true,\"effort\":\"low\",\"output_level\":\"normal\",\"startup_scrollback\":true,\"max_agent_steps\":17}\n",
+        "{\"model\":\"project/model\",\"permission_mode\":\"ask\",\"permission\":\"deny\",\"prompt_history\":{\"enabled\":false},\"statusLine\":{\"sandbox\":false,\"context\":true},\"skill_match_fuzzy\":true,\"first_call_tool_choice\":\"auto\",\"auto_upgrade\":true,\"update_channel\":\"stable\",\"input_appearance\":\"lines\",\"maxxing_mode\":\"normal\",\"slash_menu_categories\":true,\"effort\":\"low\",\"output_level\":\"normal\",\"startup_scrollback\":true,\"max_agent_steps\":17}\n",
     );
 
     const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
@@ -2973,14 +2908,13 @@ test "project profile-only settings are ignored and diagnosed by key" {
     try std.testing.expectEqual(types.ToolChoice.none, result.settings.first_call_tool_choice.?);
     try std.testing.expectEqual(false, result.settings.auto_upgrade.?);
     try std.testing.expectEqual(update_target.Channel.dev, result.settings.update_channel.?);
-    try std.testing.expectEqual(false, result.settings.fast_mode.?);
     try std.testing.expectEqual(false, result.settings.slash_menu_categories.?);
     try std.testing.expectEqual(types.ReasoningEffort.literal("high"), result.settings.effort.?);
     try std.testing.expectEqual(false, result.settings.startup_scrollback.?);
     try std.testing.expectEqual(@as(usize, 1), result.settings.permission_rules.rules.len);
     try expectPermissionRule(result.settings.permission_rules.rules[0], "bash", "profile *", .allow);
 
-    try std.testing.expectEqual(@as(usize, 13), result.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 12), result.diagnostics.len);
     inline for (&.{
         "model",
         "permission_mode",
@@ -2991,7 +2925,6 @@ test "project profile-only settings are ignored and diagnosed by key" {
         "first_call_tool_choice",
         "auto_upgrade",
         "update_channel",
-        "fast_mode",
         "slash_menu_categories",
         "effort",
         "startup_scrollback",
@@ -3008,12 +2941,12 @@ test "malformed project profile-only settings are ignored before value parsing" 
     try writeFixtureFile(
         tmp.dir,
         "home/.fx/settings.json",
-        "{\"model\":\"profile/model\",\"permission_mode\":\"ask\",\"fast_mode\":false}\n",
+        "{\"model\":\"profile/model\",\"permission_mode\":\"ask\"}\n",
     );
     try writeFixtureFile(
         tmp.dir,
         "workspace/.fx.json",
-        "{\"model\":123,\"permission_mode\":\"danger\",\"permission\":{\"bash\":true},\"statusLine\":7,\"fast_mode\":\"yes\",\"max_agent_steps\":12}\n",
+        "{\"model\":123,\"permission_mode\":\"danger\",\"permission\":{\"bash\":true},\"statusLine\":7,\"max_agent_steps\":12}\n",
     );
 
     const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
@@ -3025,10 +2958,9 @@ test "malformed project profile-only settings are ignored before value parsing" 
     defer result.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("profile/model", result.settings.models.get(.codex).?);
     try std.testing.expectEqual(types.PermissionMode.ask, result.settings.permission_mode.?);
-    try std.testing.expectEqual(false, result.settings.fast_mode.?);
     try std.testing.expectEqual(@as(usize, 12), result.settings.max_agent_steps.?);
-    try std.testing.expectEqual(@as(usize, 5), result.diagnostics.len);
-    inline for (&.{ "model", "permission_mode", "permission", "statusLine", "fast_mode" }) |key| {
+    try std.testing.expectEqual(@as(usize, 4), result.diagnostics.len);
+    inline for (&.{ "model", "permission_mode", "permission", "statusLine" }) |key| {
         try expectIgnoredProjectKey(result.diagnostics, key);
     }
 
@@ -3326,7 +3258,7 @@ test "detailed settings expose target sources and permission views" {
 
     const user_settings = try std.fmt.allocPrint(
         std.testing.allocator,
-        "{{\"model\":\"user/model\",\"permission_mode\":\"ask\",\"fast_mode\":true,\"input_appearance\":\"tint\",\"startup_scrollback\":false," ++
+        "{{\"model\":\"user/model\",\"permission_mode\":\"ask\",\"input_appearance\":\"tint\",\"startup_scrollback\":false," ++
             "\"prompt_history\":{{\"enabled\":false}},\"statusLine\":{{\"sandbox\":true,\"context\":false,\"session\":true}}," ++
             "\"permission\":{{\"bash\":{{\"user *\":\"allow\"}}}},\"workspaces\":{{\"{s}\":{{" ++
             "\"model\":\"workspace/model\",\"permission_mode\":\"auto\",\"input_appearance\":\"lines\",\"sandbox\":\"none\",\"permission\":{{\"bash\":{{\"local *\":\"allow\"}}}}" ++
@@ -3347,7 +3279,6 @@ test "detailed settings expose target sources and permission views" {
     try std.testing.expectEqual(ConfigSource.user_workspace, result.sources.models.get(.codex));
     try std.testing.expectEqual(ConfigSource.user_workspace, result.sources.permission_mode);
     try std.testing.expectEqual(ConfigSource.compiled_default, result.sources.effort);
-    try std.testing.expectEqual(ConfigSource.user_global, result.sources.fast_mode);
     try std.testing.expectEqual(ConfigSource.user_global, result.sources.startup_scrollback);
     try std.testing.expectEqual(ConfigSource.user_global, result.sources.prompt_history_enabled);
     try std.testing.expectEqual(ConfigSource.user_global, result.sources.statusline_context);

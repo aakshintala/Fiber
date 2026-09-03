@@ -175,7 +175,6 @@ fn appendShadowedUserSources(
     try appendShadowedUserSource(writer, "model", patch.model_preference != null, model_source, &wrote_header);
     try appendShadowedUserSource(writer, "permission_mode", patch.permission_mode != null, sources.permission_mode, &wrote_header);
     try appendShadowedUserSource(writer, "effort", patch.effort != null, sources.effort, &wrote_header);
-    try appendShadowedUserSource(writer, "fast_mode", patch.fast_mode != null, sources.fast_mode, &wrote_header);
     try appendShadowedUserSource(writer, "startup_scrollback", patch.startup_scrollback != null, sources.startup_scrollback, &wrote_header);
     try appendShadowedUserSource(writer, "prompt_history", patch.prompt_history_enabled != null, sources.prompt_history_enabled, &wrote_header);
     if (patch.statusline_item) |item| {
@@ -450,7 +449,7 @@ pub fn Commands(comptime App: type) type {
 
         fn toggleFastForModel(app: *App, model: []const u8, announce: bool) !void {
             if (app.fast_mode) {
-                try applyFastMode(app, false, announce, true);
+                try applyFastMode(app, false, announce);
                 return;
             }
             if (!model_capabilities.resolveForApp(App, app, model).supports_fast_mode) {
@@ -465,10 +464,10 @@ pub fn Commands(comptime App: type) type {
                 return;
             }
 
-            try applyFastMode(app, !app.fast_mode, announce, true);
+            try applyFastMode(app, !app.fast_mode, announce);
         }
 
-        fn applyFastMode(app: *App, enabled: bool, announce: bool, persist: bool) !void {
+        fn applyFastMode(app: *App, enabled: bool, announce: bool) !void {
             const previous = app.fast_mode;
             app.fast_mode = enabled;
             app.worker.syncQueuedPromptFastMode(app.fast_mode);
@@ -482,19 +481,6 @@ pub fn Commands(comptime App: type) type {
                     if (model_capabilities.resolveForApp(App, app, provider_runtime.model(app)).supports_fast_mode) "true" else "false",
                 },
             );
-
-            if (persist) {
-                try persistPreferenceTargets(
-                    app,
-                    .{
-                        .provider = provider_runtime.provider(app),
-                        .model = provider_runtime.model(app),
-                        .fast_mode = app.fast_mode,
-                    },
-                    "fast",
-                    !announce,
-                );
-            }
 
             if (announce) {
                 const label = if (app.fast_mode) "on" else "off";
@@ -540,7 +526,7 @@ pub fn Commands(comptime App: type) type {
             }
             const selected_fast_mode = capabilities.supports_fast_mode and fast_mode;
             if (selected_fast_mode != app.fast_mode) {
-                try applyFastMode(app, selected_fast_mode, false, false);
+                try applyFastMode(app, selected_fast_mode, false);
             }
             patch.fast_mode = selected_fast_mode;
             try persistPreferenceTargets(app, patch, "model picker", false);
@@ -671,7 +657,7 @@ pub fn Commands(comptime App: type) type {
             const model_changed = !std.mem.eql(u8, provider_runtime.model(app), resolved);
             try setResolvedModelRuntime(app, resolved, announce);
             if (model_changed and app.fast_mode) {
-                try applyFastMode(app, false, false, false);
+                try applyFastMode(app, false, false);
             }
             try persistPreferenceTargets(
                 app,
@@ -1649,25 +1635,8 @@ test "session_commands toggleFast reports unsupported model and redraws footer" 
 }
 
 test "session_commands toggleFast disables stale fast mode for unsupported model" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-    var fast_outcome = try config_runtime.setUserPreferences(
-        std.testing.allocator,
-        .{ .fast_mode = true },
-    );
-    defer fast_outcome.deinit(std.testing.allocator);
-
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "openai/gpt-4o");
+    const alloc = std.testing.allocator;
+    var app = try FakeApp.init(alloc, "/tmp/workspace", "openai/gpt-4o");
     defer app.deinit();
     app.fast_mode = true;
     app.worker.synced_fast_mode = true;
@@ -1677,10 +1646,6 @@ test "session_commands toggleFast disables stale fast mode for unsupported model
     try std.testing.expect(!app.fast_mode);
     try std.testing.expectEqual(@as(?bool, false), app.worker.synced_fast_mode);
     try std.testing.expectEqual(@as(usize, 1), app.worker.fast_sync_count);
-
-    var settings = try config_runtime.loadMergedSettings(std.testing.allocator, workspace_root);
-    defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(?bool, false), settings.fast_mode);
 }
 
 test "session_commands toggleFast syncs queued fast mode for supported models" {

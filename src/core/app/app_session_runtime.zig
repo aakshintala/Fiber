@@ -345,7 +345,6 @@ pub const SessionPreferencePatch = struct {
     pub fn userSettingsPatch(self: SessionPreferencePatch) config_runtime.UserSettingsPatch {
         var patch = config_runtime.UserSettingsPatch{
             .effort = self.effort,
-            .fast_mode = self.fast_mode,
         };
         if (self.model) |model| patch.model_preference = .{
             .provider = .codex,
@@ -8324,10 +8323,8 @@ test "combined preference patch writes user defaults cleans legacy fields and ap
     defer detailed.deinit(alloc);
     try std.testing.expectEqualStrings("user/model", detailed.settings.models.get(.codex).?);
     try std.testing.expectEqual(types.ReasoningEffort.literal("high"), detailed.settings.effort.?);
-    try std.testing.expectEqual(false, detailed.settings.fast_mode.?);
     try std.testing.expectEqual(config_runtime.ConfigSource.user_global, detailed.sources.models.get(.codex));
     try std.testing.expectEqual(config_runtime.ConfigSource.user_global, detailed.sources.effort);
-    try std.testing.expectEqual(config_runtime.ConfigSource.user_global, detailed.sources.fast_mode);
 }
 
 test "session picker refuses activation while a response is active" {

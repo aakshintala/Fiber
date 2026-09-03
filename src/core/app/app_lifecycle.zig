@@ -130,7 +130,6 @@ pub const StartupState = struct {
     context_enabled: bool = true,
     fast_mode: bool = false,
     fast_mode_model_bound: bool = false,
-    fast_mode_source: config_runtime.ConfigSource = .compiled_default,
     slash_menu_categories: bool = true,
     collapse_tool_calls: bool = false,
     auto_upgrade: bool = true,
@@ -404,16 +403,8 @@ fn loadStartupStateFromOwnedWorkspace(
     state.max_tool_result_bytes = tool_result_limits.resolveMaxToolResultBytes(settings.max_tool_result_bytes, tool_result_limits.default_max_tool_result_bytes);
     state.context_limits = config_runtime.resolveContextLimits(settings, &.{});
     state.context_enabled = settings.context orelse true;
-    const fast_mode = resolveStartupFastMode(
-        state.model_source,
-        settings.fast_mode,
-        detailed.sources.fast_mode,
-        settings.fast_mode_model_bound,
-        detailed.sources.fast_mode_model_bound,
-    );
-    state.fast_mode = fast_mode.enabled;
-    state.fast_mode_model_bound = fast_mode.model_bound;
-    state.fast_mode_source = detailed.sources.fast_mode;
+    state.fast_mode = false;
+    state.fast_mode_model_bound = false;
     state.slash_menu_categories = settings.slash_menu_categories orelse true;
     state.collapse_tool_calls = settings.collapse_tool_calls orelse false;
     state.auto_upgrade = settings.auto_upgrade orelse true;
@@ -432,31 +423,6 @@ fn loadStartupStateFromOwnedWorkspace(
     state.notification_max = max_override orelse settings.notification_max orelse false;
 
     return state;
-}
-
-const StartupFastMode = struct {
-    enabled: bool,
-    model_bound: bool,
-};
-
-fn resolveStartupFastMode(
-    model_source: config_runtime.ModelSource,
-    configured_fast_mode: ?bool,
-    fast_mode_source: config_runtime.ConfigSource,
-    model_bound: ?bool,
-    binding_source: config_runtime.ConfigSource,
-) StartupFastMode {
-    if (configured_fast_mode) |enabled| {
-        return .{
-            .enabled = enabled,
-            .model_bound = enabled and
-                model_bound == true and
-                model_source == fast_mode_source and
-                fast_mode_source == binding_source,
-        };
-    }
-    const enabled = model_source == .compiled_default;
-    return .{ .enabled = enabled, .model_bound = enabled };
 }
 
 pub fn bootstrapInteractiveApp(cfg: BootstrapConfig) !StartupState {
@@ -1840,82 +1806,6 @@ test "loadStartupState applies core env overrides" {
     try std.testing.expect(state.credential == null);
     try std.testing.expectEqual(PermissionMode.auto, state.permission_mode);
     try std.testing.expectEqual(@as(usize, 37), state.agent_step_limit);
-}
-
-test "loadStartupState defaults fast mode on only for the compiled Gateway default and requires bound explicit preferences" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
-    try tmp.dir.createDirPath(io_mod.getIo(), "absent");
-    try tmp.dir.createDirPath(io_mod.getIo(), "configured");
-    try tmp.dir.createDirPath(io_mod.getIo(), "disabled");
-    try tmp.dir.createDirPath(io_mod.getIo(), "legacy-fast");
-    try tmp.dir.createDirPath(io_mod.getIo(), "bound-fast");
-    try tmp.dir.createDirPath(io_mod.getIo(), "codex");
-
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const absent_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "absent");
-    defer std.testing.allocator.free(absent_root);
-    const configured_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "configured");
-    defer std.testing.allocator.free(configured_root);
-    const disabled_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "disabled");
-    defer std.testing.allocator.free(disabled_root);
-    const legacy_fast_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "legacy-fast");
-    defer std.testing.allocator.free(legacy_fast_root);
-    const bound_fast_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "bound-fast");
-    defer std.testing.allocator.free(bound_fast_root);
-    const codex_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "codex");
-    defer std.testing.allocator.free(codex_root);
-
-    const fixture = try std.fmt.allocPrint(
-        std.testing.allocator,
-        "{{\"workspaces\":{{\"{s}\":{{\"model\":\"openai/gpt-5\"}},\"{s}\":{{\"fast_mode\":false}},\"{s}\":{{\"model\":\"zai/glm-5.3\",\"fast_mode\":true}},\"{s}\":{{\"model\":\"provider/fast-toggle\",\"fast_mode\":true,\"fast_mode_model_bound\":true}},\"{s}\":{{\"model\":\"gpt-5.4-mini\"}}}}}}\n",
-        .{ configured_root, disabled_root, legacy_fast_root, bound_fast_root, codex_root },
-    );
-    defer std.testing.allocator.free(fixture);
-    try writeFixtureFile(tmp.dir, "home/.fx/settings.json", fixture);
-
-    var env = try TestEnv.install(std.testing.allocator, &.{.{ .key = "HOME", .value = home_root }});
-    defer env.deinit();
-
-    var absent = try loadStartupStateForWorkspace(std.testing.allocator, absent_root, "zai/glm-5.2", 25);
-    defer absent.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("zai/glm-5.2", absent.selected_model);
-    try std.testing.expectEqualStrings("zai/glm-5.2", absent.configured_model);
-    try std.testing.expect(absent.fast_mode);
-    try std.testing.expect(absent.fast_mode_model_bound);
-
-    var configured = try loadStartupStateForWorkspace(std.testing.allocator, configured_root, "zai/glm-5.2", 25);
-    defer configured.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("openai/gpt-5", configured.selected_model);
-    try std.testing.expectEqualStrings("openai/gpt-5", configured.configured_model);
-    try std.testing.expect(!configured.fast_mode);
-    try std.testing.expect(!configured.fast_mode_model_bound);
-
-    var disabled = try loadStartupStateForWorkspace(std.testing.allocator, disabled_root, "zai/glm-5.2", 25);
-    defer disabled.deinit(std.testing.allocator);
-    try std.testing.expect(!disabled.fast_mode);
-    try std.testing.expect(!disabled.fast_mode_model_bound);
-
-    var legacy_fast = try loadStartupStateForWorkspace(std.testing.allocator, legacy_fast_root, "zai/glm-5.2", 25);
-    defer legacy_fast.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("zai/glm-5.3", legacy_fast.selected_model);
-    try std.testing.expect(legacy_fast.fast_mode);
-    try std.testing.expect(!legacy_fast.fast_mode_model_bound);
-
-    var bound_fast = try loadStartupStateForWorkspace(std.testing.allocator, bound_fast_root, "zai/glm-5.2", 25);
-    defer bound_fast.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("provider/fast-toggle", bound_fast.selected_model);
-    try std.testing.expect(bound_fast.fast_mode);
-    try std.testing.expect(bound_fast.fast_mode_model_bound);
-
-    var codex = try loadStartupStateForWorkspace(std.testing.allocator, codex_root, "zai/glm-5.2", 25);
-    defer codex.deinit(std.testing.allocator);
-    try std.testing.expectEqual(model_provider.ProviderId.codex, codex.provider);
-    try std.testing.expectEqualStrings("gpt-5.4-mini", codex.selected_model);
-    try std.testing.expect(!codex.fast_mode);
 }
 
 test "loadStartupState resolves startup scrollback default and explicit false" {
