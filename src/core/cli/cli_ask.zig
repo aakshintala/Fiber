@@ -594,10 +594,9 @@ const AskContext = struct {
             .model = cfg.default_model,
             .seed_model = cfg.default_model,
             .mode_id = cfg.mode_registry.default_mode_id,
-            .session = session_runtime.SessionRuntime.initWithProviders(
-                cfg.max_history_turns,
-                cfg.provider_set.deferredUsageProviders(),
-            ),
+            .session = .{
+                .max_history_turns = cfg.max_history_turns,
+            },
             .web_search_runtime = web_search_runtime.Runtime.init(.{}),
             .terminal_client = terminal_client_runtime.Runtime.init(
                 cfg.process_provider,
@@ -694,7 +693,6 @@ const AskContext = struct {
         self.terminal_client.deinit();
         self.workspace_access.deinit(self.alloc);
         self.worker.deinit(std.heap.c_allocator);
-        self.session.usage.finishReconciliationBeforeShutdown();
         self.session.usage.finishProfilePublicationsBeforeShutdown();
         self.session.usage.configurePublicationSink(null);
         self.session.usage.configureCheckpointSink(null);
@@ -1527,15 +1525,6 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
         api_key,
         null,
     );
-    if (ctx.cfg.provider_set.select(ctx.provider).deferred_usage != null) {
-        ctx.session.usage.replaceProviderReconciliationCredential(
-            alloc,
-            ctx.provider,
-            credential.source,
-            credential.accountId(),
-            credential.token,
-        );
-    }
 
     const restored_image_catalog = try ctx.session.snapshotImageCatalog(alloc, &.{});
     defer types.freeImageAttachmentSlice(alloc, restored_image_catalog);

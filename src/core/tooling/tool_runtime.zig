@@ -60,7 +60,6 @@ const web_fetch_artifacts = @import("../session/web_fetch_artifacts.zig");
 const types = @import("../shared/types.zig");
 const model_provider = @import("../config/model_provider.zig");
 const provider_set = @import("../gateway/provider_set.zig");
-const credential_authority = @import("../auth/credential_authority.zig");
 const worker_runtime = @import("../agent/worker_runtime.zig");
 const context_contract = @import("../workspace/context_contract.zig");
 const test_builtin_tools = if (builtin.is_test)
@@ -6316,18 +6315,19 @@ const VisionGatewayFixture = struct {
                 .generation_id = response.generation_id,
                 .finish_reason = .stop,
                 .usage = response.usage,
+                .billing = .{
+                    .created_at_ms = 0,
+                    .model = request.model,
+                    .total_cost = 0,
+                    .input_tokens = response.usage.input_tokens orelse 0,
+                    .output_tokens = response.usage.output_tokens orelse 0,
+                    .cache_read_tokens = response.usage.cache_read_tokens orelse 0,
+                    .cache_write_tokens = response.usage.cache_write_tokens orelse 0,
+                    .reasoning_tokens = response.usage.reasoning_tokens,
+                    .billable_web_search_calls = 0,
+                },
             },
-            .usage = .{ .deferred = .{
-                .provider = .codex,
-                .generation_id = response.generation_id orelse "gen_test",
-                .scope = "https://ai-gateway.vercel.sh",
-                .tenant = request.credential.tenant,
-                .credential_source = request.credential.source orelse .chatgpt_subscription,
-                .credential_identity = credential_authority.derive(
-                    request.credential.source orelse .chatgpt_subscription,
-                    request.credential.account_id,
-                ),
-            } },
+            .usage = .{ .exact = .codex },
         } };
     }
 };
@@ -6898,7 +6898,7 @@ test "vision runtime resolves historical authorized images and batches twenty as
     try std.testing.expectEqual(@as(u64, 23), result.inner_usage.?.output_tokens);
     var usage_snapshot = try rt.session.usage.snapshot(alloc);
     defer usage_snapshot.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 3), usage_snapshot.pending.len);
+    try std.testing.expectEqual(@as(usize, 0), usage_snapshot.pending.len);
 }
 
 test "vision runtime rejects unauthorized ids before filesystem or provider access" {

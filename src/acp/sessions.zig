@@ -105,10 +105,9 @@ pub fn handleNewSession(state: *server.ServerState, alloc: Allocator, msg: *json
     defer if (model_owned) alloc.free(model_copy);
     const session_dir = try session_store.sessionDirPath(alloc, store.sessions_dir, writable.active_id);
     defer alloc.free(session_dir);
-    var session_rt = session_runtime.SessionRuntime.initWithProviders(
-        state.cfg.max_history_turns,
-        state.cfg.provider_set.deferredUsageProviders(),
-    );
+    var session_rt: session_runtime.SessionRuntime = .{
+        .max_history_turns = state.cfg.max_history_turns,
+    };
     var session_rt_owned = true;
     defer if (session_rt_owned) session_rt.deinit(alloc);
     _ = try session_rt.initializeProfileUsage(alloc, io_mod.getenv("HOME"));
@@ -357,10 +356,9 @@ fn handleRestoreSession(
     var model_owned = true;
     defer if (model_owned) alloc.free(model_copy);
 
-    var session_rt = session_runtime.SessionRuntime.initWithProviders(
-        state.cfg.max_history_turns,
-        state.cfg.provider_set.deferredUsageProviders(),
-    );
+    var session_rt: session_runtime.SessionRuntime = .{
+        .max_history_turns = state.cfg.max_history_turns,
+    };
     var session_rt_owned = true;
     defer if (session_rt_owned) session_rt.deinit(alloc);
     _ = try session_rt.initializeProfileUsage(alloc, io_mod.getenv("HOME"));
@@ -659,19 +657,6 @@ fn activateSession(
     };
     server.enableSubagentHost(state);
     state.active_session.?.session_rt.attachProfileUsagePublisher(state.alloc);
-    if (state.cfg.provider_set.select(activation.provider).deferred_usage == null) {
-        state.active_session.?.session_rt.usage.clearReconciliationCredential();
-    } else if (state.credential_source) |source| {
-        state.active_session.?.session_rt.usage.replaceProviderReconciliationCredential(
-            state.alloc,
-            activation.provider,
-            source,
-            state.account_id,
-            state.api_key,
-        );
-    } else {
-        state.active_session.?.session_rt.usage.clearReconciliationCredential();
-    }
 }
 
 fn handleLoadFailure(

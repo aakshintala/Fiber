@@ -325,9 +325,6 @@ fn adoptServerCredential(state: *ServerState, credential: *credentials.Credentia
         active.api_key = state.api_key;
         active.credential_source = state.credential_source;
         active.account_id = state.account_id;
-        if (state.credential_source == .chatgpt_subscription) {
-            active.session_rt.usage.clearReconciliationCredential();
-        }
     }
 }
 
@@ -423,24 +420,8 @@ pub fn releaseActiveSession(state: *ServerState) !void {
     clearPendingLegacyUrls(state);
     const active = if (state.active_session) |*session| session else return;
     disableSubagentHost(state);
-    active.session_rt.usage.cancelReconciliation();
     active.session_rt.usage.finishProfilePublicationsBeforeShutdown();
-    flushActiveSessionUsage(state) catch |err| {
-        if (state.cfg.provider_set.select(active.provider).deferred_usage == null) {
-            active.session_rt.usage.clearReconciliationCredential();
-        } else if (active.credential_source) |source| {
-            active.session_rt.usage.replaceProviderReconciliationCredential(
-                state.alloc,
-                active.provider,
-                source,
-                active.account_id,
-                state.api_key,
-            );
-        } else {
-            active.session_rt.usage.clearReconciliationCredential();
-        }
-        return err;
-    };
+    try flushActiveSessionUsage(state);
     active.session_rt.usage.configurePublicationSink(null);
     active.session_rt.usage.configureCheckpointSink(null);
     destroyActiveSession(state);
@@ -449,7 +430,6 @@ pub fn releaseActiveSession(state: *ServerState) !void {
 fn closeActiveSession(state: *ServerState) !void {
     const active = if (state.active_session) |*session| session else return;
     disableSubagentHost(state);
-    active.session_rt.usage.cancelReconciliation();
     active.session_rt.usage.finishProfilePublicationsBeforeShutdown();
     flushActiveSessionUsage(state) catch |err| {
         destroyActiveSession(state);

@@ -3,7 +3,6 @@ const stream_provider = @import("../agent/stream_provider.zig");
 const model_provider = @import("../config/model_provider.zig");
 const model_capabilities = @import("../config/model_capabilities.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
-const generation_usage_provider = @import("../session/generation_usage_provider.zig");
 const gateway_provider = @import("gateway_provider.zig");
 const web_search_provider = @import("../tooling/web_search_provider.zig");
 const auto_classifier = @import("../permissions/auto_classifier.zig");
@@ -28,7 +27,6 @@ pub const Bundle = struct {
     cli_model_catalog: ?gateway_provider.CliModelCatalogProvider = null,
     model_catalog: ?model_catalog.Provider = null,
     permission_reviewer: ?auto_classifier.Provider = null,
-    deferred_usage: ?generation_usage_provider.Provider = null,
     fx_search: ?web_search_provider.Provider = null,
 
     pub fn agent_stream_or_unavailable(self: Bundle) stream_provider.Provider {
@@ -50,12 +48,6 @@ pub const Set = struct {
     pub fn select(self: Set, provider: model_provider.ProviderId) Bundle {
         _ = provider;
         return self.codex;
-    }
-
-    pub fn deferredUsageProviders(self: Set) generation_usage_provider.Set {
-        return .{
-            .codex = self.codex.deferred_usage,
-        };
     }
 };
 
@@ -106,7 +98,6 @@ test "provider set selects the codex route" {
 
     try std.testing.expect(providers.select(.codex).agent_stream.?.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
     try std.testing.expect(!providers.select(.codex).capabilities.fx_search);
-    try std.testing.expect(providers.select(.codex).deferred_usage == null);
     try std.testing.expect(providers.select(.codex).model_catalog.?.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
     try std.testing.expect(providers.select(.codex).agent_stream_or_unavailable().context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
 

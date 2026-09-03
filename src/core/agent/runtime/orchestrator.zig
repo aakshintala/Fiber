@@ -3264,18 +3264,6 @@ fn refreshGatewayCredentialForJob(
         );
         return false;
     } orelse return false;
-    const previous_api_key = active_api_key.*;
-    if (deps.usage) |usage| {
-        if (source == .chatgpt_subscription or source == .chatgpt_subscription) {
-            usage.clearReconciliationCredential();
-        } else {
-            usage.refreshReconciliationCredential(
-                deps.usage_allocator,
-                previous_api_key,
-                refreshed,
-            );
-        }
-    }
     if (owned_api_key.*) |old| secret.zeroAndFree(alloc, old);
     owned_api_key.* = refreshed;
     active_api_key.* = refreshed;

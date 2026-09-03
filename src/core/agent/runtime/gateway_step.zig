@@ -83,13 +83,6 @@ pub fn streamModelCompletion(
                 completed.completion,
                 completed.usage,
             );
-            if (std.meta.activeTag(completed.usage) == .deferred) if (usage) |ledger| {
-                ledger.startDeferredReconciliation(
-                    usage_allocator,
-                    completed.usage.deferred,
-                    request.credential.secret,
-                );
-            };
         },
     }
     return result;

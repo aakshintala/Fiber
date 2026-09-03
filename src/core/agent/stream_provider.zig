@@ -6,7 +6,6 @@ const types = @import("../shared/types.zig");
 const tool_dispatch = @import("../tooling/tool_dispatch.zig");
 const model_tool_schema = @import("../tooling/model_tool_schema.zig");
 const model_provider = @import("../config/model_provider.zig");
-const credential_authority = @import("../auth/credential_authority.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -226,16 +225,6 @@ pub const FailureDiagnostics = struct {
     request_shape: ?[]u8 = null,
 };
 
-pub const DeferredUsageReference = struct {
-    provider: model_provider.ProviderId,
-    generation_id: []const u8,
-    scope: []const u8,
-    tenant: ?[]const u8 = null,
-    account_id: ?[]const u8 = null,
-    credential_source: types.CredentialSource,
-    credential_identity: ?credential_authority.Identity,
-};
-
 pub const UsageUnavailable = enum {
     unbilled,
     possibly_billed,
@@ -243,7 +232,6 @@ pub const UsageUnavailable = enum {
 
 pub const UsageOutcome = union(enum) {
     exact: model_provider.ProviderId,
-    deferred: DeferredUsageReference,
     unavailable: UsageUnavailable,
 };
 

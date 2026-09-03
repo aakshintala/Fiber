@@ -480,13 +480,9 @@ const App = struct {
     notifications: builtin_hooks.notifications.State = .{},
     herdr: builtin_hooks.Client = .{},
 
-    session: SessionRuntime = SessionRuntime.initWithProviders(
-        max_history_turns,
-        if (host_profile.generation_usage)
-            builtin_providers.native.deferredUsageProviders()
-        else
-            .{},
-    ),
+    session: SessionRuntime = .{
+        .max_history_turns = max_history_turns,
+    },
     session_persistence: app_session_runtime.Persistence = .{},
     prompt_history: PromptHistoryRuntime = .{},
     requested_resume: ?cli_surface.ResumeTarget = null,
@@ -1151,10 +1147,6 @@ const App = struct {
 
     pub fn finishLiveSessionResume(self: *App) !void {
         try SessionAppRuntime.finishLiveSessionResume(self);
-    }
-
-    pub fn startResumedSessionReconciliation(self: *App) void {
-        SessionAppRuntime.startResumedSessionReconciliation(self);
     }
 
     pub fn resumeSelectedSession(self: *App) !bool {

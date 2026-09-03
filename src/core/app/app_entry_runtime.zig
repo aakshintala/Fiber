@@ -214,7 +214,6 @@ pub fn runInteractive(comptime App: type, alloc: Allocator, launch: *cli_surface
 }
 
 fn runInteractiveWithDeps(comptime App: type, alloc: Allocator, launch: *cli_surface.InteractiveLaunch, deps: RunDeps) !RunOutcome {
-    const resume_requested = launch.requested_resume != null;
     var app = App.init(alloc, launch) catch |err| {
         switch (err) {
             error.NotATerminal => {
@@ -278,7 +277,6 @@ fn runInteractiveWithDeps(comptime App: type, alloc: Allocator, launch: *cli_sur
     {
         app.session.attachProfileUsagePublisher(app.alloc);
     }
-    if (resume_requested) app.startResumedSessionReconciliation();
     if (@hasDecl(App, "configureNotifications")) try app.configureNotifications();
     if (@hasDecl(App, "playStartupSound")) app.playStartupSound();
     if (@hasDecl(App, "startAutoUpgrade")) app.startAutoUpgrade();
@@ -747,10 +745,6 @@ const TestApp = struct {
         appendTestEvent("terminal-release");
     }
 
-    fn startResumedSessionReconciliation(_: *TestApp) void {
-        appendTestEvent("resume-reconciliation");
-    }
-
     fn startAutoUpgrade(_: *TestApp) void {
         appendTestEvent("auto-upgrade");
     }
@@ -1170,7 +1164,7 @@ test "app entry passes requested resume into app init" {
     const outcome = try runWithDeps(TestApp, alloc, &.{ @constCast("resume"), @constCast("session-123") }, testConfig(), capture.deps());
 
     try std.testing.expectEqual(RunOutcome.returned, outcome);
-    try expectEvents(&.{ "init:session-123", "mcp-discovery", "rebind-after-init", "resume-reconciliation", "auto-upgrade", "file-index", "worker-thread", "model-cache", "run", "terminal-release", "deinit" });
+    try expectEvents(&.{ "init:session-123", "mcp-discovery", "rebind-after-init", "auto-upgrade", "file-index", "worker-thread", "model-cache", "run", "terminal-release", "deinit" });
 }
 
 test "app entry maps noninteractive terminal startup to exit one" {

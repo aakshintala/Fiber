@@ -707,17 +707,6 @@ pub fn handlePrompt(
         else
             null,
     );
-    if (state.cfg.provider_set.select(session.provider).deferred_usage != null) {
-        if (session.credential_source) |source| {
-            session.session_rt.usage.replaceProviderReconciliationCredential(
-                alloc,
-                session.provider,
-                source,
-                session.account_id,
-                session.api_key,
-            );
-        }
-    }
     defer session.session_rt.usage.configureCheckpointSink(null);
     const deps = agentRuntimeDeps(&ctx);
     const current_prompt_is_root_authority = if (session.writable) |writable|

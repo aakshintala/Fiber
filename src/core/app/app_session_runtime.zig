@@ -1553,23 +1553,6 @@ pub fn Runtime(comptime App: type) type {
             try app.commitStartupResumeReplayAnchor();
         }
 
-        pub fn startResumedSessionReconciliation(app: *App) void {
-            if (comptime !@hasField(App, "auth") or !provider_runtime.supported(App)) return;
-            if (comptime !@hasDecl(@TypeOf(app.auth), "credentialSource") or
-                !@hasDecl(@TypeOf(app.auth), "accountId") or
-                !@hasDecl(@TypeOf(app.session.usage), "replaceProviderReconciliationCredential")) return;
-
-            const source = app.auth.credentialSource() orelse return;
-            const credential = app.auth.apiKey() orelse return;
-            app.session.usage.replaceProviderReconciliationCredential(
-                app.alloc,
-                provider_runtime.provider(app),
-                source,
-                app.auth.accountId(),
-                credential,
-            );
-        }
-
         pub fn resumeSelectedSession(app: *App) !bool {
             const selected_id = app.session_persistence.session_picker.selectedId() orelse return false;
             const log_options = session_log.Options{
@@ -1588,7 +1571,6 @@ pub fn Runtime(comptime App: type) type {
             loaded_owned = false;
             try installResumedSession(app, &loaded, .session);
             requestSubagentBackgroundRecovery(app);
-            startResumedSessionReconciliation(app);
             try app.finishLiveSessionResume();
             return true;
         }
@@ -4070,7 +4052,6 @@ pub fn Runtime(comptime App: type) type {
             const handoff_intent = app.session_persistence.resume_handoff_intent;
             app.session_persistence.resume_handoff_intent = .none;
             if (comptime @hasField(@TypeOf(app.session), "usage")) {
-                app.session.usage.cancelReconciliation();
                 app.session.usage.finishProfilePublicationsBeforeShutdown();
                 app.session.usage.configureCheckpointSink(null);
             }
@@ -9183,69 +9164,6 @@ test "renameActiveSession persists the title to the sidecar and session index" {
     defer display.deinit(alloc);
     try std.testing.expect(display.present);
     try std.testing.expectEqualStrings("deploy pipeline fix", display.title);
-}
-
-const ReconciliationOriginUsage = struct {
-    replaced_provider: ?model_provider.ProviderId = null,
-    replaced_source: ?types.CredentialSource = null,
-
-    fn replaceProviderReconciliationCredential(
-        self: *@This(),
-        _: Allocator,
-        provider: model_provider.ProviderId,
-        source: types.CredentialSource,
-        _: ?[]const u8,
-        _: []const u8,
-    ) void {
-        self.replaced_provider = provider;
-        self.replaced_source = source;
-    }
-};
-
-const ReconciliationOriginAuth = struct {
-    source: types.CredentialSource,
-
-    fn credentialSource(self: *const @This()) ?types.CredentialSource {
-        return self.source;
-    }
-
-    fn apiKey(_: *const @This()) ?[]const u8 {
-        return "origin-bound-token";
-    }
-
-    fn accountId(_: *const @This()) ?[]const u8 {
-        return null;
-    }
-
-    fn gatewayTeam(_: *const @This()) ?[]const u8 {
-        return null;
-    }
-};
-
-const ReconciliationOriginApp = struct {
-    alloc: Allocator = std.testing.allocator,
-    auth: ReconciliationOriginAuth,
-    session: struct { usage: ReconciliationOriginUsage = .{} } = .{},
-    selected_provider: model_provider.ProviderId,
-    selected_model: std.ArrayList(u8) = .empty,
-};
-
-test "resumed sessions install provider-scoped usage reconciliation authority" {
-    var chatgpt = ReconciliationOriginApp{
-        .auth = .{ .source = .chatgpt_subscription },
-        .selected_provider = .codex,
-    };
-    Runtime(ReconciliationOriginApp).startResumedSessionReconciliation(&chatgpt);
-    try std.testing.expectEqual(model_provider.ProviderId.codex, chatgpt.session.usage.replaced_provider.?);
-    try std.testing.expectEqual(types.CredentialSource.chatgpt_subscription, chatgpt.session.usage.replaced_source.?);
-
-    var gateway = ReconciliationOriginApp{
-        .auth = .{ .source = .chatgpt_subscription },
-        .selected_provider = .codex,
-    };
-    Runtime(ReconciliationOriginApp).startResumedSessionReconciliation(&gateway);
-    try std.testing.expectEqual(model_provider.ProviderId.codex, gateway.session.usage.replaced_provider.?);
-    try std.testing.expectEqual(types.CredentialSource.chatgpt_subscription, gateway.session.usage.replaced_source.?);
 }
 
 test "ensureCachedSessionTitle derives from the first prompt and then freezes" {

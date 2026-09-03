@@ -8,7 +8,6 @@ const text_utils = @import("../shared/text_utils.zig");
 const tool_result_errors = @import("../tooling/tool_result_errors.zig");
 const session_permission_state = @import("../permissions/session_permission_state.zig");
 const image_attachments = @import("../images/image_attachments.zig");
-const generation_usage_provider = @import("generation_usage_provider.zig");
 const web_fetch_artifacts = @import("web_fetch_artifacts.zig");
 const command_replay_store = @import("command_replay_store.zig");
 pub const session_usage = @import("session_usage.zig");
@@ -1614,26 +1613,6 @@ pub const SessionRuntime = struct {
     /// Count limit for owned model-context snapshots; canonical history is not truncated.
     max_history_turns: usize,
     context_history_start: usize = 0,
-
-    pub fn init(
-        max_history_turns: usize,
-        provider: generation_usage_provider.Provider,
-    ) SessionRuntime {
-        return .{
-            .usage = session_usage.Usage.initFreshWithProvider(provider),
-            .max_history_turns = max_history_turns,
-        };
-    }
-
-    pub fn initWithProviders(
-        max_history_turns: usize,
-        providers: generation_usage_provider.Set,
-    ) SessionRuntime {
-        return .{
-            .usage = session_usage.Usage.initFreshWithProviders(providers),
-            .max_history_turns = max_history_turns,
-        };
-    }
 
     pub fn deinit(self: *SessionRuntime, alloc: Allocator) void {
         self.clearWebFetchArtifacts();
