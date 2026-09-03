@@ -92,7 +92,6 @@ pub const ProjectMcpMutation = struct {
 
 pub const UserSettingsPatch = struct {
     model_preference: ?ModelPreferencePatch = null,
-    provider: ?model_provider.ProviderId = null,
     permission_mode: ?types.PermissionMode = null,
     credential_source: ?types.CredentialSource = null,
     /// Removes the key entirely so resolution returns to plain precedence.
@@ -113,7 +112,6 @@ pub const UserSettingsPatch = struct {
 
     fn isEmpty(self: UserSettingsPatch) bool {
         return self.model_preference == null and
-            self.provider == null and
             self.permission_mode == null and
             self.credential_source == null and
             !self.clear_credential_source and
@@ -945,15 +943,12 @@ test "provider patch writes one bounded provider model collection" {
         .{},
     );
     const application = try applyUserPatchToRoot(arena.allocator(), &root, .{
-        .provider = .codex,
         .model_preference = .{ .provider = .codex, .model = "gpt-5.4-mini" },
     });
     try std.testing.expect(application.changed);
     try std.testing.expectEqualStrings("gateway/model", root.object.get("model").?.string);
-    try std.testing.expectEqualStrings("codex", root.object.get("provider").?.string);
     try std.testing.expectEqualStrings("gpt-5.4-mini", root.object.get("models").?.object.get("codex").?.string);
     try std.testing.expect(!root.object.contains("codex_model"));
-    try std.testing.expectEqual(model_provider.ProviderId.codex, model_provider.parse(root.object.get("provider").?.string).?);
 }
 
 test "model and fast patch binds the fast preference atomically" {
@@ -1010,7 +1005,6 @@ fn applyUserPatchToRoot(
     if (patch.model_preference) |preference| {
         application.changed = try putModelPreference(arena, &root.object, preference) or application.changed;
     }
-    if (patch.provider) |value| application.changed = try putString(arena, &root.object, "provider", @tagName(value)) or application.changed;
     if (patch.permission_mode) |value| application.changed = try putString(arena, &root.object, "permission_mode", @tagName(value)) or application.changed;
     if (patch.credential_source) |value| application.changed = try putString(arena, &root.object, "credential_source", @tagName(value)) or application.changed;
     if (patch.clear_credential_source and root.object.contains("credential_source")) {
@@ -1584,15 +1578,7 @@ fn putModelPreference(
         changed = true;
         break :blk &root.getPtr("models").?.object;
     };
-    changed = try putString(arena, models, @tagName(preference.provider), preference.model) or changed;
-    const legacy_key = switch (preference.provider) {
-        .codex => "codex_model",
-    };
-    if (root.contains(legacy_key)) {
-        _ = root.orderedRemove(legacy_key);
-        changed = true;
-    }
-    return changed;
+    return try putString(arena, models, @tagName(preference.provider), preference.model) or changed;
 }
 
 fn putBool(arena: Allocator, object: *std.json.ObjectMap, key: []const u8, value: bool) !bool {
@@ -1819,19 +1805,6 @@ fn validateKnownSettingsObject(
     tolerate_non_object_user_containers: bool,
 ) !void {
     if (object.get("model")) |value| {
-        if (value != .string) return error.InvalidSettingsFormat;
-        try validateModel(value.string);
-    }
-    if (object.get("provider")) |value| {
-        if (value != .string or model_provider.parse(value.string) == null) {
-            return error.InvalidSettingsFormat;
-        }
-    }
-    if (object.get("codex_model")) |value| {
-        if (value != .string) return error.InvalidSettingsFormat;
-        try validateModel(value.string);
-    }
-    if (object.get("grok_model")) |value| {
         if (value != .string) return error.InvalidSettingsFormat;
         try validateModel(value.string);
     }

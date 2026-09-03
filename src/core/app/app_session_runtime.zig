@@ -344,7 +344,6 @@ pub const SessionPreferencePatch = struct {
 
     pub fn userSettingsPatch(self: SessionPreferencePatch) config_runtime.UserSettingsPatch {
         var patch = config_runtime.UserSettingsPatch{
-            .provider = self.provider,
             .effort = self.effort,
             .fast_mode = self.fast_mode,
         };

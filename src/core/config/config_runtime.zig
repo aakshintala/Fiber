@@ -38,7 +38,6 @@ pub const Paths = struct {
 
 pub const Settings = struct {
     models: model_preferences.Preferences = .{},
-    provider: ?model_provider.ProviderId = null,
     permission_mode: ?types.PermissionMode = null,
     credential_source: ?types.CredentialSource = null,
     yolo_acknowledged: ?bool = null,
@@ -112,7 +111,6 @@ pub const ModelSource = ConfigSource;
 
 pub const ConfigSources = struct {
     models: ProviderModelSources = .{},
-    provider: ConfigSource = .compiled_default,
     permission_mode: ConfigSource = .compiled_default,
     effort: ConfigSource = .compiled_default,
     fast_mode: ConfigSource = .compiled_default,
@@ -602,9 +600,6 @@ fn isProfileOnlySettingKey(key: []const u8) bool {
     inline for (&.{
         "model",
         "models",
-        "provider",
-        "codex_model",
-        "grok_model",
         "effort",
         "fast_mode",
         "fast_mode_model_bound",
@@ -651,7 +646,6 @@ fn updateConfigSources(sources: *ConfigSources, settings: Settings, source: Conf
     inline for (std.meta.tags(model_provider.ProviderId)) |provider| {
         if (settings.models.get(provider) != null) sources.models.set(provider, source);
     }
-    if (settings.provider != null) sources.provider = source;
     if (settings.permission_mode != null) sources.permission_mode = source;
     if (settings.effort != null) sources.effort = source;
     if (settings.fast_mode != null) sources.fast_mode = source;
@@ -1356,12 +1350,6 @@ fn parseProfileOnlyFields(
         try settings.models.putCopy(alloc, .codex, value.string);
     }
 
-    if (root.object.get("codex_model")) |model_value| {
-        if (model_value != .string) return error.InvalidCodexModelType;
-        settings_store.validateModel(model_value.string) catch return error.InvalidCodexModelValue;
-        try settings.models.putCopy(alloc, .codex, model_value.string);
-    }
-
     if (root.object.get("models")) |models_value| {
         if (models_value != .object) return error.InvalidModelType;
         inline for (std.meta.tags(model_provider.ProviderId)) |provider| {
@@ -1534,7 +1522,6 @@ fn parseProjectSafeFields(settings: *Settings, root: std.json.Value) !void {
 
 fn mergeSettings(target: *Settings, incoming: *Settings, alloc: Allocator) void {
     target.models.mergeOwnedFrom(alloc, &incoming.models);
-    if (incoming.provider) |value| target.provider = value;
     if (incoming.permission_mode) |value| target.permission_mode = value;
     if (incoming.credential_source) |value| target.credential_source = value;
     if (incoming.yolo_acknowledged) |value| target.yolo_acknowledged = value;
@@ -2064,14 +2051,14 @@ test "max_agent_steps absence and explicit values resolve distinctly" {
 test "provider settings keep independent provider models" {
     var settings = try parseSettingsJson(
         std.testing.allocator,
-        "{\"provider\":\"grok\",\"model\":\"gateway/model\",\"codex_model\":\"gpt-5.4-mini\",\"grok_model\":\"grok-4.20-0309-non-reasoning\"}",
+        "{\"model\":\"gpt-5.4-mini\"}",
     );
     defer settings.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("gpt-5.4-mini", settings.models.get(.codex).?);
 
     var current = try parseSettingsJson(
         std.testing.allocator,
-        "{\"model\":\"legacy/gateway\",\"codex_model\":\"legacy-codex\",\"models\":{\"gateway\":\"current/gateway\",\"codex\":\"current-codex\",\"grok\":\"current-grok\"}}",
+        "{\"model\":\"legacy/gateway\",\"models\":{\"codex\":\"current-codex\"}}",
     );
     defer current.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("current-codex", current.models.get(.codex).?);

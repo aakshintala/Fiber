@@ -1164,7 +1164,7 @@ test "writeModelConfigOption includes all cached model ids" {
     const entries = [_]model_catalog.ModelCatalogEntry{
         .{ .id = @constCast("anthropic/claude-opus-4.6"), .model_type = @constCast("language") },
         .{ .id = @constCast("openai/gpt-4o"), .model_type = @constCast("language") },
-        .{ .id = @constCast("xai/grok-3"), .model_type = @constCast("language") },
+        .{ .id = @constCast("custom/other-model"), .model_type = @constCast("language") },
     };
 
     var out: std.Io.Writer.Allocating = .init(alloc);
@@ -1174,7 +1174,7 @@ test "writeModelConfigOption includes all cached model ids" {
     try std.testing.expect(std.mem.find(u8, items, "\"currentValue\":\"openai/gpt-4o\"") != null);
     try std.testing.expect(std.mem.find(u8, items, "anthropic/claude-opus-4.6") != null);
     try std.testing.expect(std.mem.find(u8, items, "openai/gpt-4o") != null);
-    try std.testing.expect(std.mem.find(u8, items, "xai/grok-3") != null);
+    try std.testing.expect(std.mem.find(u8, items, "custom/other-model") != null);
 }
 
 test "writeModelConfigOption appends current model when not in cached list" {
