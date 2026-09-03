@@ -1,5 +1,7 @@
 # Fiber demolition inventory
 
+**2026-09-03: all 20 slices landed on `main` (`4dc28113`...`c3905530`).** Phase 1 (demolition) is complete. One item was parked rather than forced through Slice 20: `prepare-release.yml`'s Vercel AI Gateway changelog generation, whose removal has no stated replacement and reads as a Phase 6 decision — see that slice's findings block below. Phases 2-6 (`## Later-phase backlog`) are unstarted.
+
 ## Audited revision and worktree
 
 - Branch: `main`
