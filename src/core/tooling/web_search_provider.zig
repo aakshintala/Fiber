@@ -11,7 +11,6 @@ pub const Inputs = struct {
     credential_source: ?types.CredentialSource = null,
     worker_model: []const u8,
     gateway_retry_count: usize,
-    gateway_chat_url: []const u8,
     usage: ?*session_usage.Usage = null,
     usage_allocator: Allocator = std.heap.c_allocator,
 };

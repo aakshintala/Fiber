@@ -100,7 +100,6 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) tool_runtime.Context {
             return toolContextWithAuthority(
                 app,
@@ -111,7 +110,6 @@ pub fn Runtime(comptime App: type) type {
                 max_read_file_line_len,
                 max_command_output_bytes,
                 gateway_retry_count,
-                gateway_chat_url,
                 null,
             );
         }
@@ -125,7 +123,6 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
             admission: subagent_domain.AdmissionSnapshot,
         ) tool_runtime.Context {
             return toolContextWithAuthority(
@@ -137,7 +134,6 @@ pub fn Runtime(comptime App: type) type {
                 max_read_file_line_len,
                 max_command_output_bytes,
                 gateway_retry_count,
-                gateway_chat_url,
                 .{
                     .mode = admission.permission_mode,
                     .grants = admission.grants,
@@ -155,7 +151,6 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
             authority: ?ToolAuthorityView,
         ) tool_runtime.Context {
             const workspace_root = app.workspace_root;
@@ -208,7 +203,6 @@ pub fn Runtime(comptime App: type) type {
                 .oauth_transport = app.auth.oauthTransport(),
                 .model = provider_runtime.model(app),
                 .gateway_retry_count = gateway_retry_count,
-                .gateway_chat_url = gateway_chat_url,
                 .gateway_models_path = if (comptime @hasField(App, "web_search_models_path")) app.web_search_models_path else "/v1/models",
                 .agent_step_limit = app.agent_step_limit,
                 .fast_mode = agent_settings.fast_mode,
@@ -279,7 +273,6 @@ pub fn Runtime(comptime App: type) type {
                         .credential_source = app.auth.credentialSource(),
                         .worker_model = provider_runtime.model(app),
                         .gateway_retry_count = gateway_retry_count,
-                        .gateway_chat_url = gateway_chat_url,
                         .usage = &app.session.usage,
                         .usage_allocator = app.alloc,
                     });
@@ -461,9 +454,8 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) !?[]const u8 {
-            const ctx = toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count, gateway_chat_url);
+            const ctx = toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count);
             return tool_presentation.resolveTerminalDisplayTarget(
                 arena,
                 ctx.tool_registry,
@@ -483,7 +475,6 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) !void {
             return tool_runtime.release_agent_terminal_lease(
                 toolContext(
@@ -495,7 +486,6 @@ pub fn Runtime(comptime App: type) type {
                     max_read_file_line_len,
                     max_command_output_bytes,
                     gateway_retry_count,
-                    gateway_chat_url,
                 ),
                 session_id,
             );
@@ -514,9 +504,8 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) ![]const u8 {
-            const ctx = tool_runtime.withAdvertisedDynamicToolNames(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count, gateway_chat_url), advertised_dynamic_tool_names);
+            const ctx = tool_runtime.withAdvertisedDynamicToolNames(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count), advertised_dynamic_tool_names);
             return formatToolAction(ctx, arena, call, display_target, .active, null);
         }
 
@@ -533,9 +522,8 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) ![]const u8 {
-            const ctx = tool_runtime.withAdvertisedDynamicToolNames(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count, gateway_chat_url), advertised_dynamic_tool_names);
+            const ctx = tool_runtime.withAdvertisedDynamicToolNames(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count), advertised_dynamic_tool_names);
             return formatToolAction(ctx, arena, call, display_target, .completed, null);
         }
 
@@ -553,9 +541,8 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) ![]const u8 {
-            const ctx = tool_runtime.withAdvertisedDynamicToolNames(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count, gateway_chat_url), advertised_dynamic_tool_names);
+            const ctx = tool_runtime.withAdvertisedDynamicToolNames(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count), advertised_dynamic_tool_names);
             return formatToolAction(ctx, arena, call, display_target, .denied, label);
         }
 
@@ -576,9 +563,8 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) !command_admission.PermissionOutcome {
-            var ctx = tool_runtime.withAdvertisedDynamicToolNames(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count, gateway_chat_url), advertised_dynamic_tool_names);
+            var ctx = tool_runtime.withAdvertisedDynamicToolNames(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count), advertised_dynamic_tool_names);
             ctx.permission_review_turn = review_turn;
             const admission = ctx.admissionInputWithLiveAuthority(live_authority);
             return if (revalidation) |request| switch (request) {
@@ -617,7 +603,6 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) !command_admission.PermissionOutcome {
             var ctx = tool_runtime.withAdvertisedDynamicToolNames(
                 toolContext(
@@ -629,7 +614,6 @@ pub fn Runtime(comptime App: type) type {
                     max_read_file_line_len,
                     max_command_output_bytes,
                     gateway_retry_count,
-                    gateway_chat_url,
                 ),
                 advertised_dynamic_tool_names,
             );
@@ -656,9 +640,8 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) !agent_runtime.ToolCallValidationResult {
-            return tool_runtime.validateToolCall(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count, gateway_chat_url), arena, call);
+            return tool_runtime.validateToolCall(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count), arena, call);
         }
 
         pub fn checkToolAvailability(
@@ -672,9 +655,8 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) !?[]const u8 {
-            return tool_runtime.checkToolAvailability(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count, gateway_chat_url), arena, call);
+            return tool_runtime.checkToolAvailability(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count), arena, call);
         }
 
         pub fn permissionTargetForCall(
@@ -689,9 +671,8 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) ![]const u8 {
-            const ctx = tool_runtime.withAdvertisedDynamicToolNames(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count, gateway_chat_url), advertised_dynamic_tool_names);
+            const ctx = tool_runtime.withAdvertisedDynamicToolNames(toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count), advertised_dynamic_tool_names);
             return tool_admission.permissionTargetForCall(ctx.admissionInput(), arena, call);
         }
 
@@ -705,9 +686,8 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) !agent_runtime.ToolExecutionResult {
-            var ctx = toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count, gateway_chat_url);
+            var ctx = toolContext(app, ignored_list_entries, max_list_entries, max_read_file_bytes, max_read_file_lines, max_read_file_line_len, max_command_output_bytes, gateway_retry_count);
             ctx.root_user_intent_context = request.root_user_intent_context;
             ctx.root_user_messages = request.root_user_messages;
             ctx.root_user_evidence_complete = request.root_user_evidence_complete;
@@ -728,7 +708,6 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) !void {
             _ = ignored_list_entries;
             _ = max_list_entries;
@@ -737,7 +716,6 @@ pub fn Runtime(comptime App: type) type {
             _ = max_read_file_line_len;
             _ = max_command_output_bytes;
             _ = gateway_retry_count;
-            _ = gateway_chat_url;
             try app.contextRegistry().appendDefaultStatic(.{
                 .project_context = modelVisibleProjectContext(app),
             }, arena, messages);
@@ -782,7 +760,6 @@ pub fn Runtime(comptime App: type) type {
             max_read_file_line_len: usize,
             max_command_output_bytes: usize,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) !void {
             _ = ignored_list_entries;
             _ = max_list_entries;
@@ -791,7 +768,6 @@ pub fn Runtime(comptime App: type) type {
             _ = max_read_file_line_len;
             _ = max_command_output_bytes;
             _ = gateway_retry_count;
-            _ = gateway_chat_url;
             const permission_snapshot = app_permission_runtime.Runtime(App).livePermissionSnapshot(app);
             const workspace_root = app.workspace_root;
             try app.contextRegistry().appendDefaultTransient(.{
@@ -857,7 +833,6 @@ pub fn Runtime(comptime App: type) type {
             app: *App,
             job: worker_runtime.QueuedPrompt,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
         ) !void {
             var snapshot_ownership = worker_runtime.ActivePromptSnapshotOwnership.init(job.images);
             app.worker.beginActivePromptSnapshots(&snapshot_ownership);
@@ -959,7 +934,6 @@ pub fn Runtime(comptime App: type) type {
                 skills_section,
                 explicit_skills.text,
                 gateway_retry_count,
-                gateway_chat_url,
                 &tool_projection,
                 session_child_capability,
             );
@@ -1078,7 +1052,6 @@ pub fn Runtime(comptime App: type) type {
             skills_section: []const u8,
             explicit_skills_section: []const u8,
             gateway_retry_count: usize,
-            gateway_chat_url: []const u8,
             tool_projection: *const tool_projection_mod.EffectiveToolProjection,
             session_child_capability: ?*session_child_store.SessionChildCapability,
         ) agent_runtime.Config {
@@ -1093,7 +1066,6 @@ pub fn Runtime(comptime App: type) type {
                     &app.worker.worker_recovery_pause_requested
                 else
                     null,
-                .gateway_chat_url = gateway_chat_url,
                 .advertised_tool_names = tool_projection.advertised_names,
                 .advertised_functions = tool_projection.advertised_functions,
                 .provider_capabilities = if (comptime @hasDecl(App, "providerSet"))
@@ -1259,7 +1231,6 @@ fn mcpToolAvailable(ctx: tool_runtime.Context, name: []const u8) bool {
 }
 
 const test_ignored_list_entries = [_][]const u8{ ".git", "zig-out" };
-const test_gateway_chat_url = "https://gateway.test/chat";
 const test_tools = [_]tool_dispatch.Tool{
     test_builtin_tools.web_search,
     test_builtin_tools.shell,
@@ -1402,7 +1373,7 @@ fn makeTestContextSnapshot(alloc: Allocator, provider_id: []const u8, content: [
 }
 
 fn testToolContext(app: *FakeApp) tool_runtime.Context {
-    return Runtime(FakeApp).toolContext(app, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+    return Runtime(FakeApp).toolContext(app, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
 }
 
 const ProjectionBarrier = struct {
@@ -1539,7 +1510,6 @@ const FakeApp = struct {
             120,
             2048,
             2,
-            test_gateway_chat_url,
             admission,
         );
     }
@@ -1595,63 +1565,63 @@ const FakeApp = struct {
 
     pub fn appendRuntimeContextMessage(self: *FakeApp, arena: Allocator, messages: *std.ArrayList(ChatMessage)) !void {
         self.append_context_count += 1;
-        try Runtime(FakeApp).appendTransientRuntimeContextMessage(self, arena, messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        try Runtime(FakeApp).appendTransientRuntimeContextMessage(self, arena, messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn requestToolPermissionSync(self: *FakeApp, arena: Allocator, call: ToolCall, permission_mode: PermissionMode, local_grants: []const PermissionGrant) !command_admission.PermissionOutcome {
-        return Runtime(FakeApp).requestToolPermissionSync(self, arena, call, "", permission_mode, local_grants, null, null, &.{}, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).requestToolPermissionSync(self, arena, call, "", permission_mode, local_grants, null, null, &.{}, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn requestToolPermissionSyncWithAdvertised(self: *FakeApp, arena: Allocator, call: ToolCall, review_turn: permission_auto_classifier.ReviewTurnContext, permission_mode: PermissionMode, local_grants: []const PermissionGrant, live_authority: ?agent_runtime.LiveToolAuthority, revalidation: ?agent_runtime.LivePermissionRevalidation, advertised_dynamic_tool_names: []const []const u8) !command_admission.PermissionOutcome {
-        return Runtime(FakeApp).requestToolPermissionSync(self, arena, call, review_turn, permission_mode, local_grants, live_authority, revalidation, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).requestToolPermissionSync(self, arena, call, review_turn, permission_mode, local_grants, live_authority, revalidation, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn requestPreparedFileMutationPermissionSyncWithAdvertised(self: *FakeApp, arena: Allocator, call: ToolCall, prepared: *tool_admission.PreparedFileMutationCall, review_turn: permission_auto_classifier.ReviewTurnContext, permission_mode: PermissionMode, local_grants: []const PermissionGrant, live_authority: ?agent_runtime.LiveToolAuthority, advertised_dynamic_tool_names: []const []const u8) !command_admission.PermissionOutcome {
-        return Runtime(FakeApp).requestPreparedFileMutationPermissionSync(self, arena, call, prepared, review_turn, permission_mode, local_grants, live_authority, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).requestPreparedFileMutationPermissionSync(self, arena, call, prepared, review_turn, permission_mode, local_grants, live_authority, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn validateToolCall(self: *FakeApp, arena: Allocator, call: ToolCall) !agent_runtime.ToolCallValidationResult {
-        return Runtime(FakeApp).validateToolCall(self, arena, call, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).validateToolCall(self, arena, call, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn checkToolAvailability(self: *FakeApp, arena: Allocator, call: ToolCall) !?[]const u8 {
-        return Runtime(FakeApp).checkToolAvailability(self, arena, call, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).checkToolAvailability(self, arena, call, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn describeToolAction(self: *FakeApp, arena: Allocator, call: ToolCall) ![]const u8 {
-        return Runtime(FakeApp).describeToolAction(self, arena, call, null, &.{}, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).describeToolAction(self, arena, call, null, &.{}, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn describeToolActionWithAdvertised(self: *FakeApp, arena: Allocator, call: ToolCall, display_target: ?[]const u8, advertised_dynamic_tool_names: []const []const u8) ![]const u8 {
-        return Runtime(FakeApp).describeToolAction(self, arena, call, display_target, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).describeToolAction(self, arena, call, display_target, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn describeToolActionCompleted(self: *FakeApp, arena: Allocator, call: ToolCall) ![]const u8 {
-        return Runtime(FakeApp).describeToolActionCompleted(self, arena, call, null, &.{}, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).describeToolActionCompleted(self, arena, call, null, &.{}, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn describeToolActionCompletedWithAdvertised(self: *FakeApp, arena: Allocator, call: ToolCall, display_target: ?[]const u8, advertised_dynamic_tool_names: []const []const u8) ![]const u8 {
-        return Runtime(FakeApp).describeToolActionCompleted(self, arena, call, display_target, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).describeToolActionCompleted(self, arena, call, display_target, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn describeToolActionDenied(self: *FakeApp, arena: Allocator, call: ToolCall, label: []const u8) ![]const u8 {
-        return Runtime(FakeApp).describeToolActionDenied(self, arena, call, null, label, &.{}, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).describeToolActionDenied(self, arena, call, null, label, &.{}, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn describeToolActionDeniedWithAdvertised(self: *FakeApp, arena: Allocator, call: ToolCall, display_target: ?[]const u8, label: []const u8, advertised_dynamic_tool_names: []const []const u8) ![]const u8 {
-        return Runtime(FakeApp).describeToolActionDenied(self, arena, call, display_target, label, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).describeToolActionDenied(self, arena, call, display_target, label, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn permissionTargetForCall(self: *FakeApp, arena: Allocator, call: ToolCall) ![]const u8 {
-        return Runtime(FakeApp).permissionTargetForCall(self, arena, call, &.{}, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).permissionTargetForCall(self, arena, call, &.{}, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn permissionTargetForCallWithAdvertised(self: *FakeApp, arena: Allocator, call: ToolCall, advertised_dynamic_tool_names: []const []const u8) ![]const u8 {
-        return Runtime(FakeApp).permissionTargetForCall(self, arena, call, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).permissionTargetForCall(self, arena, call, advertised_dynamic_tool_names, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn executeToolCall(self: *FakeApp, request: agent_runtime.ToolExecutionRequest) !agent_runtime.ToolExecutionResult {
-        return Runtime(FakeApp).executeToolCall(self, request, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+        return Runtime(FakeApp).executeToolCall(self, request, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     }
 
     pub fn executeToolCallWithAdvertised(self: *FakeApp, request: agent_runtime.ToolExecutionRequest) !agent_runtime.ToolExecutionResult {
@@ -1896,7 +1866,6 @@ test "app prompt projection configures web search then blocks native execution" 
         .api_key = "stale-key",
         .worker_model = "stale-model",
         .gateway_retry_count = 99,
-        .gateway_chat_url = "https://stale.invalid/chat",
     });
 
     var arena_state = std.heap.ArenaAllocator.init(alloc);
@@ -1904,7 +1873,7 @@ test "app prompt projection configures web search then blocks native execution" 
     const arena = arena_state.allocator();
     var messages: std.ArrayList(ChatMessage) = .empty;
     defer messages.deinit(arena);
-    try Runtime(FakeApp).appendStaticContextMessage(&app, arena, &messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+    try Runtime(FakeApp).appendStaticContextMessage(&app, arena, &messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     try app.appendRuntimeContextMessage(arena, &messages);
 
     try std.testing.expectEqualStrings("stale-key", app.web_search_runtime.api_key);
@@ -1954,7 +1923,6 @@ test "app ChatGPT route removes Gateway-backed auxiliary capabilities" {
         120,
         2048,
         2,
-        test_gateway_chat_url,
     );
     try std.testing.expect(ctx.web_search_backend == null);
     try std.testing.expect(ctx.permission_reviewer_provider == null);
@@ -2065,18 +2033,18 @@ test "app agent runtime formats active completed denied and MCP tool actions" {
     try std.testing.expect(std.mem.find(u8, mcp_action, "mcp_lookup") != null);
 
     const advertised = [_][]const u8{"mcp_lookup"};
-    const advertised_mcp_active = try Runtime(FakeApp).describeToolAction(&app, arena, mcp_call, null, &advertised, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+    const advertised_mcp_active = try Runtime(FakeApp).describeToolAction(&app, arena, mcp_call, null, &advertised, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     try std.testing.expectEqualStrings(
         "● Running MCP\x1b[0m \x1b[38;5;245mmcp_lookup\x1b[0m",
         advertised_mcp_active,
     );
-    const advertised_mcp_action = try Runtime(FakeApp).describeToolActionCompleted(&app, arena, mcp_call, null, &advertised, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+    const advertised_mcp_action = try Runtime(FakeApp).describeToolActionCompleted(&app, arena, mcp_call, null, &advertised, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     try std.testing.expectEqualStrings(
         "● Ran MCP\x1b[0m \x1b[38;5;245mmcp_lookup\x1b[0m",
         advertised_mcp_action,
     );
     app.mcp_has_tool_calls = 0;
-    const advertised_mcp_denied = try Runtime(FakeApp).describeToolActionDenied(&app, arena, mcp_call, null, "Denied", &advertised, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+    const advertised_mcp_denied = try Runtime(FakeApp).describeToolActionDenied(&app, arena, mcp_call, null, "Denied", &advertised, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     try std.testing.expectEqualStrings(
         "● Denied\x1b[0m \x1b[38;5;245mmcp_lookup\x1b[0m",
         advertised_mcp_denied,
@@ -2085,13 +2053,13 @@ test "app agent runtime formats active completed denied and MCP tool actions" {
 
     app.mcp_name = "mcp_other";
     app.mcp_has_tool_calls = 0;
-    const unavailable_mcp_action = try Runtime(FakeApp).describeToolActionCompleted(&app, arena, mcp_call, null, &advertised, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+    const unavailable_mcp_action = try Runtime(FakeApp).describeToolActionCompleted(&app, arena, mcp_call, null, &advertised, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     try std.testing.expect(std.mem.find(u8, unavailable_mcp_action, "MCP") == null);
     try std.testing.expectEqual(@as(usize, 1), app.mcp_has_tool_calls);
 
     app.mcp_has_tool_calls = 0;
     const builtin_advertised = [_][]const u8{"shell"};
-    _ = try Runtime(FakeApp).describeToolActionCompleted(&app, arena, run_call, null, &builtin_advertised, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+    _ = try Runtime(FakeApp).describeToolActionCompleted(&app, arena, run_call, null, &builtin_advertised, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
     try std.testing.expectEqual(@as(usize, 0), app.mcp_has_tool_calls);
 }
 
@@ -2346,8 +2314,8 @@ test "app agent runtime appends static and transient context through configured 
     defer messages.deinit(arena);
     app.permission_engine.mode = .auto;
 
-    try Runtime(FakeApp).appendStaticContextMessage(&app, arena, &messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
-    try Runtime(FakeApp).appendTransientRuntimeContextMessage(&app, arena, &messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+    try Runtime(FakeApp).appendStaticContextMessage(&app, arena, &messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
+    try Runtime(FakeApp).appendTransientRuntimeContextMessage(&app, arena, &messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
 
     try std.testing.expectEqual(@as(usize, 3), messages.items.len);
     try std.testing.expectEqual(types.ChatRole.system, messages.items[0].role);
@@ -2371,7 +2339,7 @@ test "app agent runtime prefers active queued project context snapshot" {
     var messages: std.ArrayList(ChatMessage) = .empty;
     defer messages.deinit(arena);
 
-    try Runtime(FakeApp).appendStaticContextMessage(&app, arena, &messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2, test_gateway_chat_url);
+    try Runtime(FakeApp).appendStaticContextMessage(&app, arena, &messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
 
     try std.testing.expectEqual(@as(usize, 2), messages.items.len);
     try std.testing.expectEqualStrings("provider static:queued project context", messages.items[0].content.?);
@@ -2402,7 +2370,7 @@ test "app agent runtime processes a cancelled queued prompt" {
     const job = try makeQueuedPrompt(alloc);
     defer worker_runtime.freeQueuedPrompt(alloc, job);
 
-    try Runtime(FakeApp).processQueuedPrompt(&app, job, 1, test_gateway_chat_url);
+    try Runtime(FakeApp).processQueuedPrompt(&app, job, 1);
 
     try std.testing.expectEqual(@as(usize, 0), app.append_context_count);
     try std.testing.expectEqual(@as(usize, 1), app.snapshot_tools_count);
@@ -2451,7 +2419,7 @@ test "app direct ask delivers semantic presentation through the runtime sink" {
 
     app.agent_stream_provider = testAgentStreamProvider(Gateway.stream);
 
-    try Runtime(FakeApp).processQueuedPrompt(&app, job, 1, test_gateway_chat_url);
+    try Runtime(FakeApp).processQueuedPrompt(&app, job, 1);
 
     var events = app.worker.takeEvents();
     defer events.deinit(std.heap.c_allocator);
@@ -2519,7 +2487,7 @@ test "app agent runtime clears active turn settings when queued prompt setup fai
     };
     job.permission_mode = .yolo;
 
-    try std.testing.expectError(error.TestExpectedEqual, Runtime(FakeApp).processQueuedPrompt(&app, job, 1, test_gateway_chat_url));
+    try std.testing.expectError(error.TestExpectedEqual, Runtime(FakeApp).processQueuedPrompt(&app, job, 1));
     try std.testing.expectEqual(
         @as(?PermissionMode, .yolo),
         app.snapshot_permission_mode,
@@ -2712,7 +2680,7 @@ test "app agent runtime discards queued snapshots when tool projection preflight
 
     try std.testing.expectError(
         error.TestExpectedEqual,
-        Runtime(FakeApp).processQueuedPrompt(&app, job, 1, test_gateway_chat_url),
+        Runtime(FakeApp).processQueuedPrompt(&app, job, 1),
     );
     try std.testing.expectError(
         error.FileNotFound,
@@ -2763,7 +2731,7 @@ test "app agent runtime discards every snapshot in a failed multi-image prefligh
 
     try std.testing.expectError(
         error.TestExpectedEqual,
-        Runtime(FakeApp).processQueuedPrompt(&app, job, 1, test_gateway_chat_url),
+        Runtime(FakeApp).processQueuedPrompt(&app, job, 1),
     );
     try std.testing.expectError(
         error.FileNotFound,
@@ -2804,7 +2772,7 @@ test "app agent runtime queued prompt config uses captured job settings over sta
         .custom_guidance = custom_guidance,
     };
     defer tool_projection.deinit(alloc);
-    const config = Runtime(FakeApp).buildQueuedPromptConfig(&app, job, "", "", 1, test_gateway_chat_url, &tool_projection, null);
+    const config = Runtime(FakeApp).buildQueuedPromptConfig(&app, job, "", "", 1, &tool_projection, null);
 
     try std.testing.expect(config.fast_mode);
     try std.testing.expectEqual(types.ReasoningEffort.literal("high"), config.effort);

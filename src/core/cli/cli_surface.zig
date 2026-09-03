@@ -150,7 +150,6 @@ pub const Config = struct {
     default_agent_step_limit: usize,
     models_path: []const u8,
     gateway_retry_count: usize,
-    gateway_chat_url: []const u8,
     gateway_provider: gateway_provider.Provider,
     provider_set: provider_set.Set,
     process_provider: execution_process_provider.Provider = execution_process_provider.unavailable_provider,
@@ -732,7 +731,6 @@ fn runNonInteractiveWithDeps(
                 .default_model = cfg.default_model,
                 .default_agent_step_limit = cfg.default_agent_step_limit,
                 .gateway_retry_count = cfg.gateway_retry_count,
-                .gateway_chat_url = cfg.gateway_provider.chat_url.resolve(cfg.gateway_chat_url),
                 .gateway_models_path = cfg.models_path,
                 .gateway_provider = cfg.gateway_provider,
                 .provider_set = cfg.provider_set,
@@ -2491,7 +2489,6 @@ fn workflowConfig(cfg: Config) @import("cli_ask.zig").Config {
         .default_model = cfg.default_model,
         .default_agent_step_limit = cfg.default_agent_step_limit,
         .gateway_retry_count = cfg.gateway_retry_count,
-        .gateway_chat_url = cfg.gateway_provider.chat_url.resolve(cfg.gateway_chat_url),
         .gateway_models_path = cfg.models_path,
         .gateway_provider = cfg.gateway_provider,
         .provider_set = cfg.provider_set,
@@ -3122,13 +3119,7 @@ test "ACP command routes parsed options and launch config through the injected r
                 std.mem.eql(u8, cfg.default_model, expected.default_model) and
                 cfg.default_agent_step_limit == expected.default_agent_step_limit and
                 cfg.gateway_retry_count == expected.gateway_retry_count and
-                std.mem.eql(
-                    u8,
-                    cfg.gateway_chat_url,
-                    expected.gateway_provider.chat_url.resolve(expected.gateway_chat_url),
-                ) and
                 std.mem.eql(u8, cfg.gateway_models_path, expected.models_path) and
-                cfg.gateway_provider.chat_url.resolve_fn == expected.gateway_provider.chat_url.resolve_fn and
                 std.mem.eql(u8, cfg.prompt_policy.system_prompt, expected.prompt_policy.system_prompt) and
                 cfg.ignored_list_entries.len == expected.ignored_list_entries.len and
                 cfg.max_list_entries == expected.max_list_entries and
@@ -3920,16 +3911,12 @@ test "workflow config does not carry placeholder gateway tools" {
     const skill_roots = [_]skill_contract.RootSpec{
         .{ .source = .workspace_shared, .path = "skills" },
     };
-    var chat_url_probe = ChatUrlProbe{};
     var surface_cfg = testConfig();
     surface_cfg.skill_root_policy.workspace_roots = &skill_roots;
-    surface_cfg.gateway_provider.chat_url = chat_url_probe.provider();
     const cfg = workflowConfig(surface_cfg);
     try std.testing.expect(!@hasField(@TypeOf(cfg), "gateway_tools_json"));
     try std.testing.expect(!@hasField(@TypeOf(cfg), "context_registry"));
     try std.testing.expectEqualStrings("test-model", cfg.default_model);
-    try std.testing.expectEqualStrings("http://127.0.0.1:43123/chat", cfg.gateway_chat_url);
-    try std.testing.expect(chat_url_probe.called);
     try std.testing.expectEqualStrings("surface", cfg.mode_registry.default_mode_id);
     try std.testing.expectEqualStrings("skills", cfg.skill_root_policy.workspace_roots[0].path);
     try std.testing.expect(cfg.load_mcp_runtime == noMcpRuntimeForTest);
@@ -4518,7 +4505,6 @@ fn testConfig() Config {
         .default_agent_step_limit = 42,
         .models_path = "/v1/models",
         .gateway_retry_count = 1,
-        .gateway_chat_url = "https://example.test/chat",
         .gateway_provider = test_builtin_gateway.provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
@@ -4679,22 +4665,5 @@ const ModelFetchProbe = struct {
             .ids = ids,
             .provenance = .{ .access = .init(input.access) },
         } };
-    }
-};
-
-const ChatUrlProbe = struct {
-    called: bool = false,
-
-    fn provider(self: *ChatUrlProbe) gateway_provider.ChatUrlProvider {
-        return .{
-            .context = self,
-            .resolve_fn = resolve,
-        };
-    }
-
-    fn resolve(raw: ?*anyopaque, fallback: []const u8) []const u8 {
-        const self: *ChatUrlProbe = @ptrCast(@alignCast(raw.?));
-        self.called = std.mem.eql(u8, fallback, "https://example.test/chat");
-        return "http://127.0.0.1:43123/chat";
     }
 };

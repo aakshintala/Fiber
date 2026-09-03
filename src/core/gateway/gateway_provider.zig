@@ -8,18 +8,6 @@ const model_catalog_metadata = @import("model_catalog_metadata.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const ResolveChatUrlFn = *const fn (?*anyopaque, []const u8) []const u8;
-
-pub const ChatUrlProvider = struct {
-    /// When set, context must remain valid until every in-flight `resolve` returns.
-    context: ?*anyopaque = null,
-    resolve_fn: ResolveChatUrlFn,
-
-    pub fn resolve(self: ChatUrlProvider, fallback: []const u8) []const u8 {
-        return self.resolve_fn(self.context, fallback);
-    }
-};
-
 pub const CliModelCatalogInput = struct {
     access: credentials.CatalogAccess = .{ .public_only = .no_credential },
     endpoint: []const u8,
@@ -57,7 +45,6 @@ pub const CliModelCatalogProvider = struct {
 
 pub const Provider = struct {
     oauth_transport: oauth_transport.Provider,
-    chat_url: ChatUrlProvider,
 };
 
 const CapabilityResolverState = enum {
@@ -274,29 +261,6 @@ test "available capabilities never fetch and use a completed catalog snapshot" {
     try std.testing.expectEqual(@as(usize, 1), fake.calls);
     try std.testing.expectEqual(@as(?u32, 256_000), warm.context_window);
     try std.testing.expectEqual(@as(?u32, 32_000), warm.max_output_tokens);
-}
-
-const FakeChatUrl = struct {
-    resolved: []const u8,
-
-    fn resolve(raw: ?*anyopaque, fallback: []const u8) []const u8 {
-        const self: *FakeChatUrl = @ptrCast(@alignCast(raw.?));
-        _ = fallback;
-        return self.resolved;
-    }
-};
-
-test "gateway provider resolves chat url through the injected policy" {
-    var fake = FakeChatUrl{ .resolved = "http://127.0.0.1:43123/chat" };
-    const provider = ChatUrlProvider{
-        .context = &fake,
-        .resolve_fn = FakeChatUrl.resolve,
-    };
-
-    try std.testing.expectEqualStrings(
-        fake.resolved,
-        provider.resolve("https://fallback.test/chat"),
-    );
 }
 
 test "capability resolver leaves a cancelled catalog fetch retryable" {

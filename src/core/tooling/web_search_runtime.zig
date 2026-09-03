@@ -38,7 +38,6 @@ pub const Config = struct {
     credential_source: ?types.CredentialSource = null,
     worker_model: []const u8 = "",
     gateway_retry_count: usize = 3,
-    gateway_chat_url: []const u8 = "https://ai-gateway.vercel.sh/v3/ai/language-model",
     usage: ?*session_usage.Usage = null,
     usage_allocator: Allocator = std.heap.c_allocator,
 };
@@ -50,7 +49,6 @@ const OwnedInputs = struct {
     credential_source: ?types.CredentialSource = null,
     worker_model: []u8,
     gateway_retry_count: usize,
-    gateway_chat_url: []u8,
     // The usage pointer and allocator borrow the parent session's lifetime.
     usage: ?*session_usage.Usage,
     usage_allocator: Allocator,
@@ -58,7 +56,6 @@ const OwnedInputs = struct {
     fn deinit(self: *OwnedInputs, alloc: Allocator) void {
         alloc.free(self.api_key);
         alloc.free(self.worker_model);
-        alloc.free(self.gateway_chat_url);
         self.* = undefined;
     }
 
@@ -68,7 +65,6 @@ const OwnedInputs = struct {
             .credential_source = self.credential_source,
             .worker_model = self.worker_model,
             .gateway_retry_count = self.gateway_retry_count,
-            .gateway_chat_url = self.gateway_chat_url,
             .usage = self.usage,
             .usage_allocator = self.usage_allocator,
         };
@@ -85,7 +81,6 @@ pub const Runtime = struct {
     credential_source: ?types.CredentialSource = null,
     worker_model: []const u8,
     gateway_retry_count: usize,
-    gateway_chat_url: []const u8,
     usage: ?*session_usage.Usage,
     usage_allocator: Allocator,
     config_mutex: std.Io.Mutex = .init,
@@ -100,7 +95,6 @@ pub const Runtime = struct {
             .credential_source = config.credential_source,
             .worker_model = config.worker_model,
             .gateway_retry_count = config.gateway_retry_count,
-            .gateway_chat_url = config.gateway_chat_url,
             .usage = config.usage,
             .usage_allocator = config.usage_allocator,
         };
@@ -115,7 +109,6 @@ pub const Runtime = struct {
         self.credential_source = inputs.credential_source;
         self.worker_model = inputs.worker_model;
         self.gateway_retry_count = inputs.gateway_retry_count;
-        self.gateway_chat_url = inputs.gateway_chat_url;
         self.usage = inputs.usage;
         self.usage_allocator = inputs.usage_allocator;
     }
@@ -219,13 +212,11 @@ pub const Runtime = struct {
         errdefer alloc.free(api_key);
         const worker_model = try alloc.dupe(u8, self.worker_model);
         errdefer alloc.free(worker_model);
-        const gateway_chat_url = try alloc.dupe(u8, self.gateway_chat_url);
         return .{
             .api_key = api_key,
             .credential_source = self.credential_source,
             .worker_model = worker_model,
             .gateway_retry_count = self.gateway_retry_count,
-            .gateway_chat_url = gateway_chat_url,
             .usage = self.usage,
             .usage_allocator = self.usage_allocator,
         };
@@ -372,8 +363,7 @@ const FakeProvider = struct {
         const self: *@This() = @ptrCast(@alignCast(raw_ctx orelse return error.MissingTestProvider));
         self.configured_inputs_seen = std.mem.eql(u8, inputs.api_key, "provider-key") and
             std.mem.eql(u8, inputs.worker_model, "provider/private-worker") and
-            inputs.gateway_retry_count == 2 and
-            std.mem.eql(u8, inputs.gateway_chat_url, "https://gateway.test/chat");
+            inputs.gateway_retry_count == 2;
         return execute(@ptrCast(self), alloc, request, on_progress, progress_ctx);
     }
 
@@ -509,7 +499,6 @@ test "runtime routes configured inputs and backend selection through provider" {
         .api_key = "provider-key",
         .worker_model = "provider/private-worker",
         .gateway_retry_count = 2,
-        .gateway_chat_url = "https://gateway.test/chat",
     });
     var cancel_flag = std.atomic.Value(bool).init(false);
     const input = web_search_contract.Request{ .query = "latest Zig release" };
@@ -827,13 +816,11 @@ test "web_search runtime updates its worker model during configuration" {
         .api_key = "key",
         .worker_model = "provider/model",
         .gateway_retry_count = 2,
-        .gateway_chat_url = "https://gateway.test/chat",
     });
 
     try std.testing.expectEqualStrings("provider/model", runtime.worker_model);
     try std.testing.expectEqualStrings("key", runtime.api_key);
     try std.testing.expectEqual(@as(usize, 2), runtime.gateway_retry_count);
-    try std.testing.expectEqualStrings("https://gateway.test/chat", runtime.gateway_chat_url);
 }
 
 test "web_search runtime preserves session usage through worker input snapshots" {
@@ -858,13 +845,11 @@ test "web_search input snapshots stay coherent during parallel reconfiguration" 
         .api_key = "key-a",
         .worker_model = "model-a",
         .gateway_retry_count = 1,
-        .gateway_chat_url = "https://a.invalid/chat",
     };
     const inputs_b = Inputs{
         .api_key = "key-b",
         .worker_model = "model-b",
         .gateway_retry_count = 2,
-        .gateway_chat_url = "https://b.invalid/chat",
     };
     runtime.configure(inputs_a);
 
@@ -878,12 +863,10 @@ test "web_search input snapshots stay coherent during parallel reconfiguration" 
         defer snapshot.deinit(std.testing.allocator);
         const matches_a = std.mem.eql(u8, snapshot.api_key, inputs_a.api_key) and
             std.mem.eql(u8, snapshot.worker_model, inputs_a.worker_model) and
-            snapshot.gateway_retry_count == inputs_a.gateway_retry_count and
-            std.mem.eql(u8, snapshot.gateway_chat_url, inputs_a.gateway_chat_url);
+            snapshot.gateway_retry_count == inputs_a.gateway_retry_count;
         const matches_b = std.mem.eql(u8, snapshot.api_key, inputs_b.api_key) and
             std.mem.eql(u8, snapshot.worker_model, inputs_b.worker_model) and
-            snapshot.gateway_retry_count == inputs_b.gateway_retry_count and
-            std.mem.eql(u8, snapshot.gateway_chat_url, inputs_b.gateway_chat_url);
+            snapshot.gateway_retry_count == inputs_b.gateway_retry_count;
         try std.testing.expect(matches_a or matches_b);
     }
 }

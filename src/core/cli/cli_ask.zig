@@ -215,7 +215,6 @@ pub const Config = struct {
     default_model: []const u8,
     default_agent_step_limit: usize,
     gateway_retry_count: usize,
-    gateway_chat_url: []const u8,
     gateway_models_path: []const u8,
     gateway_provider: gateway_provider.Provider,
     provider_set: provider_set.Set,
@@ -915,7 +914,6 @@ const AskContext = struct {
                 .credential_source = self.credential_source,
                 .worker_model = self.model,
                 .gateway_retry_count = self.cfg.gateway_retry_count,
-                .gateway_chat_url = self.cfg.gateway_chat_url,
                 .usage = &self.session.usage,
                 .usage_allocator = self.alloc,
             });
@@ -939,7 +937,6 @@ const AskContext = struct {
             .oauth_transport = self.cfg.gateway_provider.oauth_transport,
             .model = self.model,
             .gateway_retry_count = self.cfg.gateway_retry_count,
-            .gateway_chat_url = self.cfg.gateway_chat_url,
             .gateway_models_path = self.cfg.gateway_models_path,
             .agent_step_limit = self.agent_step_limit,
             .fast_mode = self.fast_mode,
@@ -1025,7 +1022,6 @@ const AskContext = struct {
         return permission_auto_classifier.Classifier.withProvider(provider, .{
             .credential = self.api_key,
             .account_id = self.account_id,
-            .endpoint = self.cfg.gateway_chat_url,
             .cancel_flag = self.cancelFlag(),
             .usage = &self.session.usage,
             .usage_allocator = self.alloc,
@@ -1701,7 +1697,6 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
         .skills_prompt_section = skills_section,
         .explicit_skills_prompt_section = explicit_skills.text,
         .gateway_retry_count = cfg.gateway_retry_count,
-        .gateway_chat_url = cfg.gateway_chat_url,
         .advertised_tool_names = tool_projection.advertised_names,
         .advertised_functions = tool_projection.advertised_functions,
         .provider_capabilities = cfg.provider_set.select(ctx.provider).capabilities,
@@ -3783,7 +3778,6 @@ fn testConfig() Config {
         .default_model = "model",
         .default_agent_step_limit = 4,
         .gateway_retry_count = 1,
-        .gateway_chat_url = "https://example.invalid/chat",
         .gateway_models_path = "/models",
         .gateway_provider = test_builtin_gateway.provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
@@ -4636,7 +4630,6 @@ test "CLI prompt projection configures web search then blocks native execution" 
         .api_key = "stale-key",
         .worker_model = "stale-model",
         .gateway_retry_count = 99,
-        .gateway_chat_url = "https://stale.invalid/chat",
     });
 
     var arena_state = std.heap.ArenaAllocator.init(alloc);

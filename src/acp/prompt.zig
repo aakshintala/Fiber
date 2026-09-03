@@ -314,7 +314,6 @@ const AcpContext = struct {
                 .credential_source = session.credential_source,
                 .worker_model = session.model,
                 .gateway_retry_count = self.state.cfg.gateway_retry_count,
-                .gateway_chat_url = self.state.cfg.gateway_chat_url,
                 .usage = &session.session_rt.usage,
                 .usage_allocator = self.state.alloc,
             });
@@ -338,7 +337,6 @@ const AcpContext = struct {
             .oauth_transport = self.state.cfg.gateway_provider.oauth_transport,
             .model = session.model,
             .gateway_retry_count = self.state.cfg.gateway_retry_count,
-            .gateway_chat_url = self.state.cfg.gateway_chat_url,
             .gateway_models_path = self.state.cfg.gateway_models_path,
             .agent_step_limit = session.agent_step_limit,
             .fast_mode = session.fast_mode,
@@ -864,7 +862,6 @@ fn buildAgentConfig(
         .skills_prompt_section = sections.skills_prompt_section,
         .explicit_skills_prompt_section = sections.explicit_skills_prompt_section,
         .gateway_retry_count = state.cfg.gateway_retry_count,
-        .gateway_chat_url = state.cfg.gateway_chat_url,
         .advertised_tool_names = sections.advertised_tool_names,
         .advertised_functions = sections.advertised_functions,
         .initial_dynamic_tools = &.{},
@@ -3655,7 +3652,6 @@ fn testServerConfig() server.Config {
         .default_model = "test-model",
         .default_agent_step_limit = 4,
         .gateway_retry_count = 0,
-        .gateway_chat_url = "http://127.0.0.1",
         .gateway_models_path = "/models",
         .gateway_provider = test_builtin_gateway.provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
@@ -4242,7 +4238,6 @@ test "ACP prompt projection configures web search then blocks native execution" 
         .api_key = "stale-key",
         .worker_model = "stale-model",
         .gateway_retry_count = 99,
-        .gateway_chat_url = "https://stale.invalid/chat",
     });
 
     var messages: std.ArrayList(ChatMessage) = .empty;

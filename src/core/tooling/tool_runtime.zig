@@ -132,7 +132,6 @@ pub const Context = struct {
     root_user_evidence_complete: bool = false,
     current_turn_messages: []const ChatMessage = &.{},
     gateway_retry_count: usize,
-    gateway_chat_url: []const u8,
     gateway_models_path: []const u8 = "/v1/models",
     agent_step_limit: usize,
     fast_mode: bool = false,
@@ -262,7 +261,6 @@ pub const Context = struct {
         return permission_auto_classifier.Classifier.withProvider(provider, .{
             .credential = self.api_key,
             .account_id = self.account_id,
-            .endpoint = self.gateway_chat_url,
             .cancel_flag = self.cancel_flag,
             .usage = &self.session.usage,
             .usage_allocator = self.session_allocator,
@@ -1926,7 +1924,6 @@ const TestRuntime = struct {
     provider: model_provider.ProviderId = .codex,
     provider_capabilities: provider_set.Bundle.Capabilities = .{ .vision_fallback = true },
     gateway_retry_count: usize = 0,
-    gateway_chat_url: []const u8 = "",
     context_limits: context_limits.Values = .{},
     command_artifact_dir: ?[]const u8 = null,
     session_child_capability: ?*session_child_store.SessionChildCapability = null,
@@ -1975,7 +1972,6 @@ const TestRuntime = struct {
             .provider_capabilities = self.provider_capabilities,
             .model = self.model,
             .gateway_retry_count = self.gateway_retry_count,
-            .gateway_chat_url = self.gateway_chat_url,
             .agent_step_limit = 0,
             .permission_mode = self.permission_mode,
             .permission_grants = self.permission_grants,
@@ -4708,7 +4704,6 @@ test "no-save terminal exec publishes one readable ephemeral replay" {
         .{
             .system_prompt = "",
             .gateway_retry_count = 0,
-            .gateway_chat_url = "",
             .agent_step_limit = 1,
             .cancel_flag = &cancel,
             .ephemeral_command_replay = &store,
@@ -4889,7 +4884,6 @@ test "run_command timeout returns model-visible failure" {
     const config = runtime_config.Config{
         .system_prompt = "",
         .gateway_retry_count = 0,
-        .gateway_chat_url = "",
         .agent_step_limit = 1,
         .cancel_flag = &cancel,
         .session_child_capability = &capability,
@@ -6854,7 +6848,6 @@ test "vision runtime resolves historical authorized images and batches twenty as
         .tool_registry = .{ .tools = vision_test_registry_tools[0..] },
         .api_key = "gateway-key",
         .gateway_retry_count = 2,
-        .gateway_chat_url = "https://gateway.invalid/chat",
         .session_allocator = alloc,
         .context_limits = .{ .image_adapter_output_bytes = .{
             .value = .{ .bytes = 64 * 1024 },

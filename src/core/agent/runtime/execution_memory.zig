@@ -615,7 +615,6 @@ test "exact command sources delete replay and missing handles retain it" {
         .{
             .system_prompt = "",
             .gateway_retry_count = 0,
-            .gateway_chat_url = "",
             .agent_step_limit = 1,
             .cancel_flag = &cancel_flag,
             .session_child_capability = &capability,
@@ -854,7 +853,6 @@ test "required terminal exec stores large output only as replay" {
     var prepared = try prepareCapturedToolModelOutput(arena, .{
         .system_prompt = "",
         .gateway_retry_count = 0,
-        .gateway_chat_url = "",
         .agent_step_limit = 1,
         .max_tool_result_bytes = tool_result_limits.min_configured_tool_result_bytes,
         .cancel_flag = &cancel,
@@ -905,7 +903,6 @@ test "common execution memory does not mark stored read previews as full" {
         .{
             .system_prompt = "",
             .gateway_retry_count = 0,
-            .gateway_chat_url = "",
             .agent_step_limit = 1,
             .cancel_flag = &cancel_flag,
             .tool_result_dir = result_dir,
@@ -1015,7 +1012,6 @@ test "large result storage redacts secret-bearing output before preview and disk
     const prepared = try prepareToolModelOutput(arena, .{
         .system_prompt = "",
         .gateway_retry_count = 0,
-        .gateway_chat_url = "",
         .agent_step_limit = 1,
         .cancel_flag = &cancel_flag,
         .tool_result_dir = dir,

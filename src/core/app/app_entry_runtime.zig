@@ -64,7 +64,6 @@ pub const Config = struct {
     default_agent_step_limit: usize,
     models_path: []const u8,
     gateway_retry_count: usize,
-    gateway_chat_url: []const u8,
     gateway_provider: gateway_provider.Provider,
     provider_set: provider_set.Set,
     process_provider: process_provider.Provider = process_provider.unavailable_provider,
@@ -378,7 +377,6 @@ fn cliSurfaceConfig(cfg: Config) cli_surface.Config {
         .default_agent_step_limit = cfg.default_agent_step_limit,
         .models_path = cfg.models_path,
         .gateway_retry_count = cfg.gateway_retry_count,
-        .gateway_chat_url = cfg.gateway_chat_url,
         .gateway_provider = cfg.gateway_provider,
         .provider_set = cfg.provider_set,
         .process_provider = cfg.process_provider,
@@ -498,7 +496,6 @@ fn testConfig() Config {
         .default_agent_step_limit = 12,
         .models_path = "/models",
         .gateway_retry_count = 2,
-        .gateway_chat_url = "https://gateway/chat",
         .gateway_provider = test_builtin_gateway.provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
@@ -789,7 +786,6 @@ test "app entry returns after handled CLI success without initializing app" {
     try std.testing.expectEqualStrings("entry", capture.seen_config.?.mode_registry.default_mode_id);
     try std.testing.expectEqualStrings("entry_test_tool", capture.seen_config.?.tool_set.order[0]);
     try std.testing.expectEqualStrings("skills", capture.seen_config.?.skill_root_policy.workspace_roots[0].path);
-    try std.testing.expect(capture.seen_config.?.gateway_provider.chat_url.resolve_fn == test_builtin_gateway.chat_url_provider.resolve_fn);
     try std.testing.expect(capture.seen_config.?.provider_set.codex.cli_model_catalog.?.fetch_fn == test_builtin_gateway.provider_bundle.cli_model_catalog.?.fetch_fn);
     try std.testing.expect(capture.seen_config.?.provider_set.codex.model_catalog.?.fetch_fn == test_builtin_gateway.provider_bundle.model_catalog.?.fetch_fn);
     try std.testing.expect(capture.seen_config.?.url_opener.context == cfg.url_opener.context);

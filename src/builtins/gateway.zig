@@ -14,18 +14,8 @@ pub const oauth_transport_provider = oauth_transport.Provider{
     .execute_fn = executeOAuthRequest,
 };
 
-pub const chat_url_provider = gateway_provider.ChatUrlProvider{
-    .resolve_fn = resolveChatUrl,
-};
-
-fn resolveChatUrl(_: ?*anyopaque, fallback: []const u8) []const u8 {
-    _ = fallback;
-    return "";
-}
-
 pub const provider = gateway_provider.Provider{
     .oauth_transport = oauth_transport_provider,
-    .chat_url = chat_url_provider,
 };
 
 /// Codex-only provider bundle used by ACP/CLI test configurations.

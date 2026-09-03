@@ -13,7 +13,6 @@ pub const Config = struct {
     default_model: []const u8,
     default_agent_step_limit: usize,
     gateway_retry_count: usize,
-    gateway_chat_url: []const u8,
     gateway_models_path: []const u8,
     gateway_provider: gateway_provider.Provider,
     provider_set: provider_set.Set,

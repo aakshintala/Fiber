@@ -1390,7 +1390,6 @@ fn acpSessionTestConfig() server.Config {
         .default_model = "test/model",
         .default_agent_step_limit = 8,
         .gateway_retry_count = 0,
-        .gateway_chat_url = "http://127.0.0.1/unused",
         .gateway_models_path = "/v1/models",
         .gateway_provider = test_builtin_gateway.provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
