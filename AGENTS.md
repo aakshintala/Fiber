@@ -6,6 +6,12 @@ Instructions for AI coding agents working with this codebase.
 
 When implementing [`docs/ideas/fiber-product-transition.md`](docs/ideas/fiber-product-transition.md), follow [`docs/transition/plan.md`](docs/transition/plan.md) and the ordered slices in [`docs/transition/demolition-inventory.md`](docs/transition/demolition-inventory.md). This section overrides conflicting fx-era process, CI, release, platform, naming, authentication, and completion guidance elsewhere in this file or in `CONTRIBUTING.md` until the final documentation phase replaces it.
 
+Run one slice at a time, start to finish, on `main`. No parallel slices, no
+concurrent worktrees, no fanning slices out to multiple agents. The slices share
+command registries, `src/main.zig`, and test files; running two at once turns a
+stop condition into a merge conflict and destroys the evidence trail that makes
+a slice reviewable.
+
 During demolition, work in one subsystem or about 15 files at a time. Define the removal surface, retained invariants, exact searches, and stop conditions before editing. Use compilation and unit tests as the interim gate; defer routine E2E, live-model, editor, and exhaustive product verification to the repair phase.
 
 For each demolition slice, run `zig fmt --check src/`, `zig build -Doptimize=ReleaseSafe`, `zig build test -Doptimize=ReleaseSafe`, exact searches for removed references, and `./scripts/smoke.sh`. The smoke script finds `fiber` or `fx` on its own, so it needs no change at the identity cutover. Report every command and exit status. Classify tests that exclusively cover removed behavior for deletion; preserve failures covering retained behavior as repair evidence.
