@@ -33,12 +33,12 @@ function createIsolatedRoot(
   const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-web-search-codex-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   writeSeededChatGptLogin(home, chatGptAccessToken());
   const permission: Record<string, Record<string, string>> = {};
   if (webSearchPermission) permission.web_search = { "*": webSearchPermission };
-  writeFileSync(join(home, ".fx", "settings.json"), JSON.stringify({ ...settings, permission }));
+  writeFileSync(join(home, ".fiber", "settings.json"), JSON.stringify({ ...settings, permission }));
   return { root, home, workspace: realpathSync(workspace) };
 }
 

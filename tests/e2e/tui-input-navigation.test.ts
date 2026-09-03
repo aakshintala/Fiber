@@ -66,9 +66,9 @@ async function startFx(
   testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
   stderrPath = join(testHome, "stderr.log");
   writeFileSync(stderrPath, "");
-  mkdirSync(join(testHome, ".fx"), { recursive: true });
+  mkdirSync(join(testHome, ".fiber"), { recursive: true });
   writeFileSync(
-    join(testHome, ".fx", "settings.json"),
+    join(testHome, ".fiber", "settings.json"),
     JSON.stringify({ sandbox: "none" }),
   );
   if (withGateway) {
@@ -1583,7 +1583,7 @@ tmuxTest(
   "current composer and submitted prompt use connected rails",
   async () => {
     testHome = mkdtempSync(join(tmpdir(), "fx-tui-current-rails-"));
-    mkdirSync(join(testHome, ".fx"), { recursive: true });
+    mkdirSync(join(testHome, ".fiber"), { recursive: true });
     const localGateway = startFakeGateway([
       fakeGatewayFinalText("CURRENT_RAIL_MOCK_OK"),
     ]);

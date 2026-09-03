@@ -4762,7 +4762,7 @@ const TempStore = struct {
 };
 
 fn initTempStore(alloc: Allocator, tmp: *std.testing.TmpDir) !TempStore {
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
     errdefer alloc.free(home);
@@ -6784,7 +6784,7 @@ test "a writable session publishes latest after its Store is deinitialized" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
     defer alloc.free(home);
@@ -6863,7 +6863,7 @@ test "workspace rebind invalidates the old latest pointer before publishing the 
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-a");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-b");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
@@ -6918,7 +6918,7 @@ fn expectWorkspaceRebindPublicationFailureRepair(
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-a");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-b");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
@@ -7007,7 +7007,7 @@ test "workspace rebind honors an immediate commit lock deadline" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-a");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-b");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
@@ -7074,7 +7074,7 @@ test "workspace rebind honors an immediate latest cache lock deadline" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-a");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-b");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
@@ -8025,7 +8025,7 @@ test "workspace latest pointer bypasses unrelated authority repair" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-a");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-b");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
@@ -9173,7 +9173,7 @@ test "cross-workspace recovery preserves each workspace latest pointer" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-a");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-b");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
@@ -11500,7 +11500,7 @@ test "workspace latest pointer ignores a mutated session from another workspace"
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-a");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-b");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
@@ -11659,7 +11659,7 @@ test "writable last ignores unavailable boundary from another workspace" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-a");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-b");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
@@ -11766,7 +11766,7 @@ test "empty home read only operations create nothing" {
 
     try std.testing.expectError(
         error.FileNotFound,
-        tmp.dir.access(io_mod.getIo(), "home/.fx", .{}),
+        tmp.dir.access(io_mod.getIo(), "home/.fiber", .{}),
     );
 }
 
@@ -11799,7 +11799,7 @@ test "missing home is empty for reads and bootstrapped privately for writes" {
     const home_stat = try home_dir.stat(io_mod.getIo());
     try std.testing.expectEqual(std.Io.File.Kind.directory, home_stat.kind);
     try std.testing.expectEqual(@as(u32, 0o700), home_stat.permissions.toMode() & 0o777);
-    const sessions_path = try std.fs.path.join(alloc, &.{ missing_home, ".fx", "sessions" });
+    const sessions_path = try std.fs.path.join(alloc, &.{ missing_home, ".fiber", "sessions" });
     defer alloc.free(sessions_path);
     try std.Io.Dir.accessAbsolute(io_mod.getIo(), sessions_path, .{});
 }
@@ -11848,7 +11848,7 @@ test "first write traces and maps shared layout failure" {
     try std.testing.expect(std.mem.find(u8, trace, workspace) == null);
     try std.testing.expectError(
         error.FileNotFound,
-        tmp.dir.access(io_mod.getIo(), "home/.fx", .{}),
+        tmp.dir.access(io_mod.getIo(), "home/.fiber", .{}),
     );
 }
 
@@ -11883,10 +11883,10 @@ test "first write creates only the private session layout" {
     var home_iter = home_dir.iterate();
     const durable_entry = (try home_iter.next(io_mod.getIo())) orelse
         return error.TestExpectedEqual;
-    try std.testing.expectEqualStrings(".fx", durable_entry.name);
+    try std.testing.expectEqualStrings(".fiber", durable_entry.name);
     try std.testing.expect((try home_iter.next(io_mod.getIo())) == null);
 
-    var durable_dir = try home_dir.openDir(io_mod.getIo(), ".fx", .{
+    var durable_dir = try home_dir.openDir(io_mod.getIo(), ".fiber", .{
         .iterate = true,
     });
     defer durable_dir.close(io_mod.getIo());
@@ -11927,7 +11927,7 @@ test "explicit schema v3 resume rebinds workspace" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-a");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace-b");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
@@ -12350,7 +12350,7 @@ test "history page maps missing unsafe unavailable unsupported and corrupt sessi
     tmp.dir.symLink(
         io_mod.getIo(),
         "../../../outside-history-session",
-        "home/.fx/sessions/history-unsafe",
+        "home/.fiber/sessions/history-unsafe",
         .{ .is_directory = true },
     ) catch |err| switch (err) {
         error.AccessDenied => return error.SkipZigTest,

@@ -1100,9 +1100,9 @@ async function runStartupScrollbackOverflow(
   writeReproScript(manifest);
 
   const fixture = createFixture(runId);
-  mkdirSync(join(fixture.home, ".fx"), { recursive: true });
+  mkdirSync(join(fixture.home, ".fiber"), { recursive: true });
   writeFileSync(
-    join(fixture.home, ".fx", "settings.json"),
+    join(fixture.home, ".fiber", "settings.json"),
     `${JSON.stringify({ startup_scrollback: startupScrollback })}\n`,
   );
   const gateway = startLocalGatewayFixture(promptTail);
@@ -2258,12 +2258,12 @@ function createFixture(runId: string): Fixture {
     work: join(root, "w"),
     histfile: join(root, "hist"),
   };
-  mkdirSync(join(fixture.home, ".fx"), { recursive: true });
+  mkdirSync(join(fixture.home, ".fiber"), { recursive: true });
   mkdirSync(fixture.zdotdir, { recursive: true });
   mkdirSync(fixture.work, { recursive: true });
   writeSeededChatGptLogin(fixture.home, chatGptAccessToken());
   writeFileSync(
-    join(fixture.home, ".fx", "settings.json"),
+    join(fixture.home, ".fiber", "settings.json"),
     `${JSON.stringify({})}\n`,
   );
   writeFileSync(join(fixture.work, "run-id.txt"), `${runId}\n`);

@@ -85,7 +85,7 @@ If you cannot manage labels, a maintainer or repository agent will apply the lab
 
 * `src/gateway/`: AI Gateway client transport
 
-* `.fx/skills/`: optional fx-native workspace-level skill root
+* `.fiber/skills/`: optional fx-native workspace-level skill root
 
 * `skills/`: optional shared workspace-level skill root
 
@@ -120,38 +120,38 @@ duplicate, stale, and unclassified files without running the full PGSO gate.
 Config precedence (highest wins):
 
 1. Environment variables such as `FIBER_MODEL`, `FIBER_PERMISSION_MODE`, and `FIBER_MAX_AGENT_STEPS`
-2. `~/.fx/settings.json` → `workspaces["<workspace_path>"]` (profile workspace overrides)
-3. `~/.fx/settings.json` top-level (profile global settings)
-4. `<workspace>/.fx.json` (committed project defaults)
+2. `~/.fiber/settings.json` → `workspaces["<workspace_path>"]` (profile workspace overrides)
+3. `~/.fiber/settings.json` top-level (profile global settings)
+4. `<workspace>/.fiber.json` (committed project defaults)
 5. Built-in defaults
 
-Project `.fx.json` accepts only repo-safe defaults: `sandbox`, `max_agent_steps`, `max_tool_result_bytes`, and `context`. Profile-owned keys such as `model`, `effort`, `fast_mode`, `slash_menu_categories`, `startup_scrollback`, `prompt_history`, `statusLine`, `skill_match_fuzzy`, `first_call_tool_choice`, `auto_upgrade`, `update_channel`, `permission_mode`, and `permission` are ignored from project config before their values are parsed.
+Project `.fiber.json` accepts only repo-safe defaults: `sandbox`, `max_agent_steps`, `max_tool_result_bytes`, and `context`. Profile-owned keys such as `model`, `effort`, `fast_mode`, `slash_menu_categories`, `startup_scrollback`, `prompt_history`, `statusLine`, `skill_match_fuzzy`, `first_call_tool_choice`, `auto_upgrade`, `update_channel`, `permission_mode`, and `permission` are ignored from project config before their values are parsed.
 
-Runtime state lives under `~/.fx/`:
+Runtime state lives under `~/.fiber/`:
 
-* `~/.fx/sessions/<session-id>/session.json`
+* `~/.fiber/sessions/<session-id>/session.json`
 
-* `~/.fx/sessions/<session-id>/background/`
+* `~/.fiber/sessions/<session-id>/background/`
 
-* `~/.fx/sessions/<session-id>/subagent/`
+* `~/.fiber/sessions/<session-id>/subagent/`
 
-* `~/.fx/sessions/<session-id>/logs/`
+* `~/.fiber/sessions/<session-id>/logs/`
 
 Sessions are global and portable across workspaces. Each session tracks a `workspace_root` that updates when resumed from a different directory.
 
-Subagent children are internal ordinary sessions with their own `~/.fx/sessions/<child-id>/` directory and history. The parent owns one bounded `subagent/children.json` registry; each child carries only an immutable owner marker. Child sessions are hidden from ordinary session discovery and cannot be resumed directly. A first `subagent.message` creates a named persistent child for that parent; later messages continue it, and optional instructions replace only its child-specific system overlay.
+Subagent children are internal ordinary sessions with their own `~/.fiber/sessions/<child-id>/` directory and history. The parent owns one bounded `subagent/children.json` registry; each child carries only an immutable owner marker. Child sessions are hidden from ordinary session discovery and cannot be resumed directly. A first `subagent.message` creates a named persistent child for that parent; later messages continue it, and optional instructions replace only its child-specific system overlay.
 
 ## Skills
 
 There are two distinct skill categories in `fx`:
 
-* `fx` roots that belong to the product itself: `.fx/skills`, `skills/`, `~/.fx/skills`
+* `fx` roots that belong to the product itself: `.fiber/skills`, `skills/`, `~/.fiber/skills`
 
 * compatibility roots discovered for other agent installs: `.opencode/skills`, `.codex/skills`, `.claude/skills`, `.agents/skills`, `.claw/skills`, plus their global equivalents
 
 `/skills list` should make that distinction visible to the user.
 
-`/skills add` and `/skills install` install full skill directories into the profile-owned `~/.fx/skills` managed root, not just `SKILL.md`. Workspace `.fx/skills` and `skills/` remain discoverable project-local instructions, not managed install targets.
+`/skills add` and `/skills install` install full skill directories into the profile-owned `~/.fiber/skills` managed root, not just `SKILL.md`. Workspace `.fiber/skills` and `skills/` remain discoverable project-local instructions, not managed install targets.
 
 The interactive agent can also install skills via the `install_skill` tool when the user asks to install one in conversation, including pasted `npx skills add ...` syntax.
 
@@ -163,13 +163,13 @@ Version-scoped adapters retain legacy stdio,
 `2024-11-05` HTTP+SSE. Native sessions load trusted MCP configuration from the
 profile:
 
-* `~/.fx/mcp.json`
+* `~/.fiber/mcp.json`
 
 They also read Claude-compatible workspace configuration from:
 
 * `<workspace>/.mcp.json`
 
-Project `.fx.json` does not define runnable MCP commands, URLs, env, or secrets.
+Project `.fiber.json` does not define runnable MCP commands, URLs, env, or secrets.
 The profile file reads top-level `mcp` and accepts `mcpServers` as a
 compatibility alias; `mcp` wins when both exist, and every write uses `mcp`.
 Suspicious server-like unsupported keys produce a bounded warning and block
@@ -406,7 +406,7 @@ Check in the golden file and wire a regression test that re-runs `fx replay` in 
 
 * Do not document intended behavior as if it already exists
 
-* Do not commit generated state from `.fx/`, `.zig-cache/`, or `zig-out/`
+* Do not commit generated state from `.fiber/`, `.zig-cache/`, or `zig-out/`
 
 * Do not add a general alternate-screen (`\x1b[?1049h/l`) render path. fx is inline by design except for the three exclusive owner classes represented by `AlternateScreenOwner`: interactive tool-approval review, the full-transcript screen, and catalog menus. Every owner must leave or explicitly hand off the alternate buffer and restore the main grid, composer, cursor, paste, mouse, focus, and keyboard modes before resolving, cancelling, or shutting down
 

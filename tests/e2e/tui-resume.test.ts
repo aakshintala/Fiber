@@ -55,7 +55,7 @@ function fakeShellRun(
 }
 
 function sessionIdFromHome(home: string): string {
-  const sessions = join(home, ".fx", "sessions");
+  const sessions = join(home, ".fiber", "sessions");
   const ids = readdirSync(sessions, { withFileTypes: true })
     .filter((entry) => entry.name !== "latest" && entry.isDirectory())
     .map((entry) => entry.name);
@@ -261,7 +261,7 @@ async function waitForPersistedSessionMarker(
   marker: string,
   timeout = TIMEOUT,
 ): Promise<void> {
-  const sessionsDir = join(home, ".fx", "sessions");
+  const sessionsDir = join(home, ".fiber", "sessions");
   await waitForCondition(() => {
     if (!existsSync(sessionsDir)) return false;
     return readdirSync(sessionsDir, { withFileTypes: true })
@@ -279,7 +279,7 @@ async function waitForCommittedSessionMarker(
   marker: string,
   timeout = TIMEOUT,
 ): Promise<void> {
-  const sessionsDir = join(home, ".fx", "sessions");
+  const sessionsDir = join(home, ".fiber", "sessions");
   await waitForCondition(() => {
     if (!existsSync(sessionsDir)) return false;
     return readdirSync(sessionsDir, { withFileTypes: true })
@@ -760,10 +760,10 @@ test.skipIf(!tmuxAvailable())(
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -933,10 +933,10 @@ test.skipIf(!tmuxAvailable())(
     const trailingMarker = "BOUNDARY_TRAILING";
     const literalClose = "LITERAL_CLOSE_</stdout>";
     const doneMarker = "CONTROL_OUTPUT_DONE";
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -1135,10 +1135,10 @@ test.skipIf(!tmuxAvailable())(
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
     const tapePath = join(root, "ctrl-o.fxtape");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -1269,10 +1269,10 @@ test.skipIf(!tmuxAvailable())(
     const stderrPath = join(root, "stderr.log");
     const tracePath = join(root, "trace.log");
     const tapePath = join(root, "command-output-cap.fxtape");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -1323,7 +1323,7 @@ test.skipIf(!tmuxAvailable())(
       expect(active.paneStatus()).toEqual({ dead: false, status: null });
       const sessionId = sessionIdFromHome(home);
 
-      const commandDir = join(home, ".fx", "sessions", sessionId, "logs", "commands");
+      const commandDir = join(home, ".fiber", "sessions", sessionId, "logs", "commands");
       const artifactFiles = readdirSync(commandDir);
       const replayFiles = artifactFiles.filter((name) => name.endsWith(".bin"));
       expect(replayFiles).toHaveLength(1);
@@ -1387,10 +1387,10 @@ test.skipIf(!tmuxAvailable())(
     const tailMarker = "ACTIVE_OVERFLOW_TAIL";
     const doneMarker = "ACTIVE_OVERFLOW_DONE";
     const futureMarker = "│ … full output available when command finishes";
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -1521,7 +1521,7 @@ printf '${tailMarker}\\n'
       expect(terminalCompact).not.toContain(tailMarker);
       expect(terminalCompact).not.toContain(futureMarker);
       const sessionId = sessionIdFromHome(home);
-      const commandDir = join(home, ".fx", "sessions", sessionId, "logs", "commands");
+      const commandDir = join(home, ".fiber", "sessions", sessionId, "logs", "commands");
       const replayFiles = readdirSync(commandDir).filter((name) =>
         name.endsWith(".bin")
       );
@@ -1575,10 +1575,10 @@ test.skipIf(!tmuxAvailable())(
     const nextMarker = "CANCEL_CAP_UNRELATED_TURN_DONE";
     const callId = "cancelled-cap-command";
     const readyPath = join(workspace, ".cancel-cap-ready");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -1672,7 +1672,7 @@ while :; do :; done
       expect(beforePlain).not.toContain(tailMarker);
 
       const sessionId = sessionIdFromHome(home);
-      const commandDir = join(home, ".fx", "sessions", sessionId, "logs", "commands");
+      const commandDir = join(home, ".fiber", "sessions", sessionId, "logs", "commands");
       const replayNames = readdirSync(commandDir).filter((name) =>
         name.endsWith(".bin")
       );
@@ -1828,10 +1828,10 @@ test.skipIf(!tmuxAvailable())(
     const headMarker = "CANCEL_BELOW_CAP_HEAD";
     const tailMarker = "CANCEL_BELOW_CAP_TERM_TAIL_ONLY";
     const readyPath = join(workspace, ".cancel-below-ready");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -1893,7 +1893,7 @@ while :; do :; done
       expect(countOccurrences(compact, headMarker)).toBe(0);
       expect(compact).not.toContain(tailMarker);
       const sessionId = sessionIdFromHome(home);
-      const commandDir = join(home, ".fx", "sessions", sessionId, "logs", "commands");
+      const commandDir = join(home, ".fiber", "sessions", sessionId, "logs", "commands");
       const replayFiles = readdirSync(commandDir).filter((name) =>
         name.endsWith(".bin")
       );
@@ -1967,11 +1967,11 @@ test.skipIf(!tmuxAvailable())(
     const ctrlOScrollbackPath = join(root, "ctrl-o-scrollback.txt");
     const ctrlOAnsiPath = join(root, "ctrl-o-scrollback.ansi.txt");
     const replayJsonPath = join(root, "replay.json");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspaceDir);
     const workspace = realpathSync(workspaceDir);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -2173,7 +2173,7 @@ test.skipIf(!tmuxAvailable())(
     const tapePath = join(root, "ctrl-o-draft.fxtape");
     const sentinel = "CTRL_O_DRAFT_SCROLLBACK_SENTINEL";
     const draft = "CTRL_O_UNSENT_DRAFT";
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(stderrPath, "");
 
@@ -2247,7 +2247,7 @@ test.skipIf(!tmuxAvailable())(
     const stderrPath = join(root, "stderr.log");
     const saved = "CMD_R_SAVED_SESSION";
     const draft = "CMD_R_UNSENT_DRAFT";
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(stderrPath, "");
 
@@ -2316,10 +2316,10 @@ test.skipIf(!tmuxAvailable())(
     const firstDone = "CTRL_O_INPUT_FIRST_DONE";
     const followUpDone = "CTRL_O_INPUT_FOLLOW_UP_DONE";
     const fullViewDraft = "CTRL_O_FULL_VIEW_COMPOSER_DRAFT";
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -2399,10 +2399,10 @@ test.skipIf(!tmuxAvailable())(
     const stderrPath = join(root, "stderr.log");
     const tapePath = join(root, "ctrl-o-cancel.fxtape");
     const streamMarker = "CTRL_O_CANCEL_STREAM";
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -2463,10 +2463,10 @@ test.skipIf(!tmuxAvailable())(
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -2529,10 +2529,10 @@ test.skipIf(!tmuxAvailable())(
     const tapePath = join(root, "stream-scroll.fxtape");
     const tracePath = join(root, "trace.log");
     const phaseTwoComplete = join(workspace, "phase-two.complete");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -2698,10 +2698,10 @@ test.skipIf(!tmuxAvailable())(
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -2777,10 +2777,10 @@ test.skipIf(!tmuxAvailable())(
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
     const tapePath = join(root, "ctrl-o-question.fxtape");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -2856,10 +2856,10 @@ test.skipIf(!tmuxAvailable())(
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -2979,10 +2979,10 @@ test.skipIf(!tmuxAvailable())(
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -3045,10 +3045,10 @@ test.skipIf(!tmuxAvailable())(
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(
@@ -3106,10 +3106,10 @@ test.skipIf(!tmuxAvailable())(
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(join(workspace, "README.md"), "READ_FULL_DETAIL_MARKER\n");
@@ -3172,10 +3172,10 @@ test.skipIf(!tmuxAvailable())(
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
     const tapePath = join(root, "ctrl-o-file-approval.fxtape");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({
         sandbox: "none",
         permission_mode: "ask",
@@ -3310,10 +3310,10 @@ test.skipIf(!tmuxAvailable())(
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const stderrPath = join(root, "stderr.log");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "ask", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -3373,10 +3373,10 @@ test.skipIf(!tmuxAvailable())(
     const stderrPath = join(root, "stderr.log");
     const actionTimeout = 8_000;
     const transcriptTimeout = 90_000;
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "ask", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -3548,10 +3548,10 @@ test.skipIf(!tmuxAvailable())(
     const scrollbackPath = join(root, "scrollback.txt");
     const ansiScrollbackPath = join(root, "scrollback.ansi.txt");
     const releasePath = join(workspace, ".ctrl-o-pressure-release");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "ask", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -4165,10 +4165,10 @@ test.skipIf(!tmuxAvailable())(
     const nested = join(workspace, "nested");
     const liveStderrPath = join(root, "live-stderr.log");
     const resumeStderrPath = join(root, "resume-stderr.log");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(nested, { recursive: true });
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(join(workspace, "AGENTS.md"), "DEFERRED_TOOL_ROOT_SCOPE\n");
@@ -4707,7 +4707,7 @@ test.skipIf(!tmuxAvailable())(
       const sessionId = sessionIdFromHome(home);
       const resumeViewPath = join(
         home,
-        ".fx",
+        ".fiber",
         "sessions",
         sessionId,
         "resume-view.bin",
@@ -4948,10 +4948,10 @@ test.skipIf(!tmuxAvailable())(
       const toolWorkspace = join(root, "tool-workspace");
       const toolStderrPath = join(root, "tool-stderr.log");
       const toolWorkspaceMarker = "tool-workspace";
-      mkdirSync(join(toolHome, ".fx"), { recursive: true });
+      mkdirSync(join(toolHome, ".fiber"), { recursive: true });
       mkdirSync(toolWorkspace);
       writeFileSync(
-        join(toolHome, ".fx", "settings.json"),
+        join(toolHome, ".fiber", "settings.json"),
         JSON.stringify({}),
       );
       const toolWorkspaceRoot = realpathSync(toolWorkspace);
@@ -5199,7 +5199,7 @@ test.skipIf(!tmuxAvailable())(
         UPGRADE_TIMEOUT,
       );
 
-      const sessionDir = join(home, ".fx", "sessions", sessionId);
+      const sessionDir = join(home, ".fiber", "sessions", sessionId);
       const watermarkName = readdirSync(sessionDir).find(
         (name) => name.startsWith("commit.") && name.endsWith(".json"),
       )!;
@@ -5387,10 +5387,10 @@ test.skipIf(!tmuxAvailable())(
     );
     const firstCompletion = "RESUMED_FIRST_FILE_COMPLETE";
     const secondCompletion = "RESUMED_SECOND_FILE_COMPLETE";
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "ask", permission: {} }),
     );
     writeFileSync(stderrPath, "");
@@ -5450,7 +5450,7 @@ test.skipIf(!tmuxAvailable())(
 
       const sessionId = sessionIdFromHome(home);
       const eventsJsonl = readFileSync(
-        join(home, ".fx", "sessions", sessionId, "events.jsonl"),
+        join(home, ".fiber", "sessions", sessionId, "events.jsonl"),
         "utf8",
       );
       expect(eventsJsonl).toContain("committed_file_presentation");
@@ -5532,9 +5532,9 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(home);
     mkdirSync(workspace);
     const workspaceRoot = realpathSync(workspace);
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "ask", permission: {} }),
     );
     const lineCount = 40;
@@ -5809,7 +5809,7 @@ test.skipIf(!tmuxAvailable())(
       expect(filteredPicker).toContain("workspace B");
       expect(filteredPicker).toContain("workspace-b");
       expect(filteredPicker).not.toContain("Preview:");
-      const sessionIds = readdirSync(join(home, ".fx", "sessions"), {
+      const sessionIds = readdirSync(join(home, ".fiber", "sessions"), {
         withFileTypes: true,
       })
         .filter((entry) => entry.name !== "latest" && entry.isDirectory())
@@ -6349,10 +6349,10 @@ test.skipIf(!tmuxAvailable())(
     const bufferedTailMarker = "INTERRUPT_BUFFERED_TAIL";
     const artifactTailMarker = "INTERRUPT_TERM_TAIL";
     const followUpMarker = "INTERRUPT_FOLLOW_UP_DONE";
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(initialStderrPath, "");
@@ -6436,7 +6436,7 @@ while :; do sleep 1; done
       expect(followUpBody).not.toContain(".command_artifacts");
 
       const sessionId = sessionIdFromHome(home);
-      const commandDir = join(home, ".fx", "sessions", sessionId, "logs", "commands");
+      const commandDir = join(home, ".fiber", "sessions", sessionId, "logs", "commands");
       const replayNames = readdirSync(commandDir).filter((name) =>
         name.endsWith(".bin")
       );
@@ -6520,10 +6520,10 @@ test.skipIf(!tmuxAvailable())(
     const tracePath = join(root, "trace.log");
     const readyPath = join(workspace, ".zero-ready");
     const scriptPath = join(workspace, "z.sh");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace);
     writeFileSync(
-      join(home, ".fx", "settings.json"),
+      join(home, ".fiber", "settings.json"),
       JSON.stringify({ sandbox: "none", permission_mode: "auto", permission: {} }),
     );
     writeFileSync(initialStderrPath, "");

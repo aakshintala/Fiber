@@ -123,9 +123,9 @@ export function cleanupIsolatedTestHome(home: string): void {
 
 function createEvalHome(): string {
   const home = mkdtempSync(join(tmpdir(), HOME_PREFIX));
-  mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
   writeFileSync(
-    join(home, ".fx", "settings.json"),
+    join(home, ".fiber", "settings.json"),
     JSON.stringify({
       permission_mode: "auto",
       permission: {
@@ -527,5 +527,5 @@ export async function runFx(
 // sets, so every gated suite skipped silently and reported success.
 export const HAS_API_KEY: boolean = !!(
   process.env.FIBER_E2E_LIVE ||
-  existsSync(join(process.env.HOME ?? "", ".fx", "chatgpt-auth.json"))
+  existsSync(join(process.env.HOME ?? "", ".fiber", "chatgpt-auth.json"))
 );

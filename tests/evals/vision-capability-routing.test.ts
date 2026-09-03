@@ -42,7 +42,7 @@ function createRoot(name: string): Root {
   const root = realpathSync(mkdtempSync(join(tmpdir(), `${name}-`)));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace);
   roots.push(root);
   return {

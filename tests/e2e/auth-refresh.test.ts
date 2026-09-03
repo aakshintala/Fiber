@@ -63,7 +63,7 @@ function startFakeChatGptTokens(tokens: string[]) {
 }
 
 function sessionIdsFromHome(home: string): string[] {
-  return readdirSync(join(home, ".fx", "sessions"), {
+  return readdirSync(join(home, ".fiber", "sessions"), {
     withFileTypes: true,
   })
     .filter((entry) => entry.isDirectory() && entry.name !== "latest")
@@ -139,7 +139,7 @@ test(
       });
 
       const persisted = JSON.parse(
-        readFileSync(join(home, ".fx", "chatgpt-auth.json"), "utf8"),
+        readFileSync(join(home, ".fiber", "chatgpt-auth.json"), "utf8"),
       );
       expect(persisted.refresh_token).toBe("rotated-refresh-token");
       expect(result.stdout).not.toContain(EXPIRED_REFRESH_TOKEN);
@@ -161,7 +161,7 @@ test(
     const home = mkdtempSync(join(tmpdir(), "fx-auth-expired-report-e2e-"));
     const tokens = startFakeChatGptTokens([EXPIRED_REFRESH_TOKEN]);
     writeChatGptLogin(home, "seeded-refresh-token");
-    const authPath = join(home, ".fx", "chatgpt-auth.json");
+    const authPath = join(home, ".fiber", "chatgpt-auth.json");
     const seededAuthFile = readFileSync(authPath, "utf8");
     const env = {
       HOME: home,

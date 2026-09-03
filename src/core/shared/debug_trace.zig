@@ -530,7 +530,7 @@ test "home default log path uses fx logs directory" {
     const alloc = std.testing.allocator;
     const path = try defaultLogPathForHome(alloc, "/tmp/fake-home");
     defer alloc.free(path);
-    try std.testing.expectEqualStrings("/tmp/fake-home/.fx/logs/trace.log", path);
+    try std.testing.expectEqualStrings("/tmp/fake-home/.fiber/logs/trace.log", path);
 }
 
 test "fallback default log path uses tmp trace path" {

@@ -196,10 +196,10 @@ async function cleanupOwnedTestResources(
 function makeHome(): string {
   const home = mkdtempSync(join(tmpdir(), "fx-terminal-host-"));
   chmodSync(home, 0o700);
-  const owner = join(home, ".fx", "sessions", TERMINAL_OWNER_SESSION);
+  const owner = join(home, ".fiber", "sessions", TERMINAL_OWNER_SESSION);
   mkdirSync(owner, { recursive: true, mode: 0o700 });
-  chmodSync(join(home, ".fx"), 0o700);
-  chmodSync(join(home, ".fx", "sessions"), 0o700);
+  chmodSync(join(home, ".fiber"), 0o700);
+  chmodSync(join(home, ".fiber", "sessions"), 0o700);
   chmodSync(owner, 0o700);
   homes.push(home);
   return home;
@@ -574,7 +574,7 @@ int main(int argc, char **argv) {
 buildCurrentClientFixture();
 
 function hostPaths(home: string) {
-  const dir = join(home, ".fx", "terminal-host-v7");
+  const dir = join(home, ".fiber", "terminal-host-v7");
   return {
     dir,
     socket: join(dir, "host.sock"),
@@ -615,7 +615,7 @@ function terminalTransportPaths(home: string) {
 
 function makeLongHome(endpointBytes = 141): string {
   const root = mkdtempSync(join(tmpdir(), "fx-terminal-long-home-"));
-  const endpointSuffix = join(".fx", "terminal-host-v7", "host.sock");
+  const endpointSuffix = join(".fiber", "terminal-host-v7", "host.sock");
   const componentBytes = endpointBytes -
     Buffer.byteLength(root) -
     Buffer.byteLength(endpointSuffix) -
@@ -624,10 +624,10 @@ function makeLongHome(endpointBytes = 141): string {
   const home = join(root, "x".repeat(componentBytes));
   mkdirSync(home, { recursive: true, mode: 0o700 });
   chmodSync(home, 0o700);
-  const owner = join(home, ".fx", "sessions", TERMINAL_OWNER_SESSION);
+  const owner = join(home, ".fiber", "sessions", TERMINAL_OWNER_SESSION);
   mkdirSync(owner, { recursive: true, mode: 0o700 });
-  chmodSync(join(home, ".fx"), 0o700);
-  chmodSync(join(home, ".fx", "sessions"), 0o700);
+  chmodSync(join(home, ".fiber"), 0o700);
+  chmodSync(join(home, ".fiber", "sessions"), 0o700);
   chmodSync(owner, 0o700);
   homes.push(home, root);
   transportRoots.add(terminalTransportPaths(home).dir);
@@ -640,7 +640,7 @@ function durableTerminalRecord(home: string): {
 } {
   const state = join(
     home,
-    ".fx",
+    ".fiber",
     "sessions",
     TERMINAL_OWNER_SESSION,
     "terminal",
@@ -663,7 +663,7 @@ function durableTerminalRecordFor(
 ): Record<string, unknown> {
   return JSON.parse(readFileSync(join(
     home,
-    ".fx",
+    ".fiber",
     "sessions",
     TERMINAL_OWNER_SESSION,
     "terminal",
@@ -675,7 +675,7 @@ function durableTerminalRecordFor(
 function durableEventIds(home: string, sessionId: string): number[] {
   const state = join(
     home,
-    ".fx",
+    ".fiber",
     "sessions",
     TERMINAL_OWNER_SESSION,
     "terminal",
@@ -1092,7 +1092,7 @@ function rememberStartAuthority(
   });
   const home = homes.find((candidate) => existsSync(join(
     candidate,
-    ".fx",
+    ".fiber",
     "sessions",
     TERMINAL_OWNER_SESSION,
     "terminal",
@@ -1131,7 +1131,7 @@ function ownerCatalogAuthorityForSession(
   );
   const terminalRoot = join(
     home,
-    ".fx",
+    ".fiber",
     "sessions",
     ownerPrincipal.durable_session_id,
     "terminal",
@@ -1611,7 +1611,7 @@ test("fresh hidden host is singular, correlated, reconnectable, private, and idl
     () => contenders.filter((child) => child.exitCode === null).length === 1,
   );
 
-  expect(statSync(join(home, ".fx")).mode & 0o777).toBe(0o700);
+  expect(statSync(join(home, ".fiber")).mode & 0o777).toBe(0o700);
   expect(statSync(paths.dir).mode & 0o777).toBe(0o700);
   expect(statSync(paths.lock).mode & 0o777).toBe(0o600);
   expect(statSync(paths.socket).mode & 0o777).toBe(0o600);
@@ -2157,7 +2157,7 @@ test.skipIf(!tmuxAvailable())(
           .toMatchObject({ action: "start", code: "startup_failed" });
         const state = join(
           home,
-          ".fx",
+          ".fiber",
           "sessions",
           TERMINAL_OWNER_SESSION,
           "terminal",
@@ -5659,7 +5659,7 @@ test.skipIf(!tmuxAvailable())(
     const invalidId = (invalid.session as { session_id: string }).session_id;
     const stateDir = join(
       home,
-      ".fx",
+      ".fiber",
       "sessions",
       TERMINAL_OWNER_SESSION,
       "terminal",
@@ -5830,7 +5830,7 @@ test.skipIf(!tmuxAvailable())(
     const closingId = (closing.session as { session_id: string }).session_id;
     const stateDir = join(
       home,
-      ".fx",
+      ".fiber",
       "sessions",
       TERMINAL_OWNER_SESSION,
       "terminal",
@@ -5998,7 +5998,7 @@ test.skipIf(!tmuxAvailable())(
     const closingId = (closing.session as { session_id: string }).session_id;
     const stateDir = join(
       home,
-      ".fx",
+      ".fiber",
       "sessions",
       TERMINAL_OWNER_SESSION,
       "terminal",
@@ -7465,7 +7465,7 @@ test("current client rejects same revision host without complete signal capabili
   expect(readFileSync(paths.identity, "utf8")).toBe(identityBefore);
   const terminalState = join(
     home,
-    ".fx",
+    ".fiber",
     "sessions",
     TERMINAL_OWNER_SESSION,
     "terminal",

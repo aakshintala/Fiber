@@ -381,7 +381,7 @@ function createFixture() {
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   const skillsRoot = join(workspace, ".agents", "skills");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(skillsRoot, { recursive: true });
   const hash = createHash("sha256");
   let generationSkillPath = "";

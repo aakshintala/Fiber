@@ -106,7 +106,7 @@ function tree(root: string, relative = ""): string[] {
 }
 
 function migrationSnapshotPath(home: string, field: string): string {
-  const backups = join(home, ".fx", "backups");
+  const backups = join(home, ".fiber", "backups");
   const name = `settings.json.preference-migration.${field}.json`;
   expect(readdirSync(backups)).toContain(name);
   return join(backups, name);
@@ -142,7 +142,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const workspaceB = join(root, "workspace-b");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspaceA);
         mkdirSync(workspaceB);
@@ -150,10 +150,10 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const workspaceBRoot = realpathSync(workspaceB);
         const projectABytes = "{\"project_future\":{\"name\":\"a\"}}\n";
         const projectBBytes = "{\"project_future\":{\"name\":\"b\"}}\n";
-        writeFileSync(join(workspaceA, ".fx.json"), projectABytes);
-        writeFileSync(join(workspaceB, ".fx.json"), projectBBytes);
+        writeFileSync(join(workspaceA, ".fiber.json"), projectABytes);
+        writeFileSync(join(workspaceB, ".fiber.json"), projectBBytes);
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             future_global: { nested: "preserve-me" },
             workspaces: {
@@ -207,7 +207,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForText("auto ·", TIMEOUT);
         await session.pasteText(`/model ${CODEX_MODEL} auto`);
         const beforeModelCommit = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(beforeModelCommit).not.toHaveProperty("model");
         await session.sendKeys("Enter");
@@ -220,12 +220,12 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForText("● Statusline: workspace:", TIMEOUT);
         await session.sendText("/settings startup-scrollback off");
         await session.waitForText("startup_scrollback: off", TIMEOUT);
-        await disablePromptHistory(session, join(home, ".fx", "settings.json"));
+        await disablePromptHistory(session, join(home, ".fiber", "settings.json"));
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
-        const stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+        const stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         expect(stored.models.codex).toBe(CODEX_MODEL);
         expect(stored.permission_mode).toBe("auto");
         expect(stored.effort).toBe("auto");
@@ -253,8 +253,8 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           expect(override.statusLine).toEqual({ sandbox: false, workspace: false, future: statusFuture });
           expect(override.future_workspace).toEqual({ nested: futureWorkspace });
         }
-        expect(readFileSync(join(workspaceA, ".fx.json"), "utf8")).toBe(projectABytes);
-        expect(readFileSync(join(workspaceB, ".fx.json"), "utf8")).toBe(projectBBytes);
+        expect(readFileSync(join(workspaceA, ".fiber.json"), "utf8")).toBe(projectABytes);
+        expect(readFileSync(join(workspaceB, ".fiber.json"), "utf8")).toBe(projectBBytes);
 
         const migrationSnapshots = [
           "model",
@@ -320,7 +320,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         const afterOverride = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(afterOverride.models.codex).toBe(CODEX_MODEL);
         expect(readFileSync(stderrAPath, "utf8")).toBe("");
@@ -343,13 +343,13 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const workspaceB = join(root, "workspace-b");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspaceA);
         mkdirSync(workspaceB);
         const workspaceARoot = realpathSync(workspaceA);
         const workspaceBRoot = realpathSync(workspaceB);
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             permission: {
               " bash ": {
@@ -375,7 +375,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         const afterA = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(afterA.permission.bash["user *"]).toBe("allow");
         expect(afterA.workspaces[workspaceARoot].permission.bash["local-a *"]).toBe(
@@ -431,7 +431,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         const afterB = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(afterB.permission).toEqual({});
         expect(afterB.workspaces[workspaceARoot].permission.bash["local-a *"]).toBe(
@@ -457,12 +457,12 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
         const projectBytes =
           "{\"output_level\":{\"legacy\":true},\"future\":{\"keep\":true}}\n";
-        writeFileSync(join(workspace, ".fx.json"), projectBytes);
+        writeFileSync(join(workspace, ".fiber.json"), projectBytes);
         const unrelatedWorkspace = join(root, "unrelated-workspace");
         const settingsBytes =
           JSON.stringify({
@@ -480,7 +480,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
             },
           }) + "\n";
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           settingsBytes,
           { mode: 0o600 },
         );
@@ -509,7 +509,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         const stored = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(stored.output_level).toEqual({ legacy: true });
         expect(stored.startup_scrollback).toBe(false);
@@ -521,7 +521,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           model: 123,
           future_workspace: { preserve: true },
         });
-        expect(readFileSync(join(workspace, ".fx.json"), "utf8")).toBe(projectBytes);
+        expect(readFileSync(join(workspace, ".fiber.json"), "utf8")).toBe(projectBytes);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
         rmSync(root, { recursive: true, force: true });
@@ -540,11 +540,11 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({ model: CODEX_MODEL }) + "\n",
         );
 
@@ -635,11 +635,11 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           const home = join(root, "home");
           const workspace = join(root, "workspace");
           const stderrPath = join(root, "stderr.log");
-          mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+          mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
           writeSeededChatGptLogin(home, chatGptAccessToken());
           mkdirSync(workspace);
           writeFileSync(
-            join(home, ".fx", "settings.json"),
+            join(home, ".fiber", "settings.json"),
             JSON.stringify({
               model: testCase.model,
               permission_mode: "auto",
@@ -687,10 +687,10 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         const initialSettings = JSON.stringify({
           model: CODEX_INTRINSIC_FAST_MODEL,
           fast_mode: false,
@@ -735,8 +735,8 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        const settingsPath = join(home, ".fx", "settings.json");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        const settingsPath = join(home, ".fiber", "settings.json");
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         writeFileSync(
@@ -803,11 +803,11 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const home = join(root, "home");
         const opusWorkspace = join(root, "opus-workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(opusWorkspace);
         const opusRoot = realpathSync(opusWorkspace);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         const initialSettings = JSON.stringify({
           model: CODEX_PICKER_MODEL,
           effort: "high",
@@ -913,11 +913,11 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -1009,7 +1009,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
@@ -1035,7 +1035,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
-        const stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+        const stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         expect(stored).toMatchObject({
           models: { codex: CODEX_PICKER_MODEL },
           effort: "high",
@@ -1060,7 +1060,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        const skillRoot = join(home, ".fx", "skills", "model-helper");
+        const skillRoot = join(home, ".fiber", "skills", "model-helper");
         mkdirSync(skillRoot, { recursive: true, mode: 0o700 });
         writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
@@ -1093,7 +1093,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         );
         expect(await session.capturePane()).not.toContain("saved to user settings");
 
-        const stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+        const stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         expect(stored.models.codex).toBe(CODEX_PICKER_MODEL);
         expect(stored.effort).toBe("auto");
         expect(stored.fast_mode).toBe(false);
@@ -1131,7 +1131,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
@@ -1155,7 +1155,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.sendKeys("Enter");
         await session.waitForText(`● Switched to ${CODEX_PICKER_MODEL}`, TIMEOUT);
 
-        let stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+        let stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         expect(stored.models.codex).toBe(CODEX_PICKER_MODEL);
         expect(stored.fast_mode).toBe(false);
         expect(stored.fast_mode_model_bound).toBe(true);
@@ -1178,11 +1178,11 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.sendKeys("Enter");
         await session.waitForText("· low", TIMEOUT);
 
-        stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+        stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         const persistenceDeadline = Date.now() + TIMEOUT;
         while (stored.effort !== "low" && Date.now() < persistenceDeadline) {
           await Bun.sleep(25);
-          stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+          stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         }
         expect(stored).toMatchObject({
           models: { codex: CODEX_PICKER_MODEL },
@@ -1200,7 +1200,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
-        stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+        stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         expect(stored).toMatchObject({
           models: { codex: CODEX_PICKER_MODEL },
           effort: "low",
@@ -1224,8 +1224,8 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        writeFileSync(join(home, ".fx", "sessions"), "blocked\n", {
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeFileSync(join(home, ".fiber", "sessions"), "blocked\n", {
           mode: 0o600,
         });
         mkdirSync(workspace);
@@ -1247,18 +1247,18 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         expect(tree(home)).toEqual([
-          ".fx",
-          ".fx/history.jsonl",
-          ".fx/history.lock",
-          ".fx/sessions",
-          ".fx/settings.json",
-          ".fx/settings.lock",
+          ".fiber",
+          ".fiber/history.jsonl",
+          ".fiber/history.lock",
+          ".fiber/sessions",
+          ".fiber/settings.json",
+          ".fiber/settings.lock",
         ]);
-        expect(statSync(join(home, ".fx")).mode & 0o777).toBe(0o700);
-        expect(statSync(join(home, ".fx", "history.jsonl")).mode & 0o777).toBe(0o600);
-        expect(statSync(join(home, ".fx", "history.lock")).mode & 0o777).toBe(0o600);
-        expect(statSync(join(home, ".fx", "settings.json")).mode & 0o777).toBe(0o600);
-        expect(statSync(join(home, ".fx", "settings.lock")).mode & 0o777).toBe(0o600);
+        expect(statSync(join(home, ".fiber")).mode & 0o777).toBe(0o700);
+        expect(statSync(join(home, ".fiber", "history.jsonl")).mode & 0o777).toBe(0o600);
+        expect(statSync(join(home, ".fiber", "history.lock")).mode & 0o777).toBe(0o600);
+        expect(statSync(join(home, ".fiber", "settings.json")).mode & 0o777).toBe(0o600);
+        expect(statSync(join(home, ".fiber", "settings.lock")).mode & 0o777).toBe(0o600);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
         rmSync(root, { recursive: true, force: true });
@@ -1274,10 +1274,10 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace-write-failure-visible");
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         const externalSettings = join(root, "external-settings.json");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         writeFileSync(settingsPath, '{"statusLine":{"workspace":false}}\n', { mode: 0o600 });
         writeFileSync(externalSettings, '{"statusLine":{"workspace":false}}\n', { mode: 0o600 });
@@ -1316,10 +1316,10 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
     try {
       const home = join(root, "home");
       const workspace = join(root, "workspace");
-      mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+      mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
       mkdirSync(workspace);
       const workspaceRoot = realpathSync(workspace);
-      const settingsPath = join(home, ".fx", "settings.json");
+      const settingsPath = join(home, ".fiber", "settings.json");
 
       const malformed = "{bad\n";
       writeFileSync(settingsPath, malformed, { mode: 0o600 });
@@ -1410,11 +1410,11 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             future_global: { nested: "keep-global" },
             workspaces: {
@@ -1427,7 +1427,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           }) + "\n",
           { mode: 0o600 },
         );
-        writeFileSync(join(home, ".fx", "sessions"), "blocked\n", {
+        writeFileSync(join(home, ".fiber", "sessions"), "blocked\n", {
           mode: 0o600,
         });
         const env = {
@@ -1463,7 +1463,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         secondSession = null;
 
         const stored = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(stored.future_global).toEqual({ nested: "keep-global" });
         expect(stored.startup_scrollback).toBe(false);
@@ -1491,7 +1491,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const launch = join(root, "launch");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(added);
         mkdirSync(launch);
@@ -1504,7 +1504,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           return realpathSync(path);
         });
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             workspaces: {
               [workspaceRoot]: {
@@ -1514,7 +1514,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           }) + "\n",
           { mode: 0o600 },
         );
-        writeFileSync(join(home, ".fx", "sessions"), "blocked\n", {
+        writeFileSync(join(home, ".fiber", "sessions"), "blocked\n", {
           mode: 0o600,
         });
         const env = {
@@ -1559,7 +1559,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         secondSession = null;
 
         const stored = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(
           stored.workspaces[workspaceRoot].additional_directories,
@@ -1583,7 +1583,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const added = join(root, "added");
         const launch = join(root, "launch");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(added);
         mkdirSync(launch);
@@ -1595,7 +1595,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           mkdirSync(path);
           return realpathSync(path);
         });
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         const originalSettings =
           JSON.stringify({
             workspaces: {
@@ -1605,7 +1605,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
             },
           }) + "\n";
         writeFileSync(settingsPath, originalSettings, { mode: 0o600 });
-        writeFileSync(join(home, ".fx", "sessions"), "blocked\n", {
+        writeFileSync(join(home, ".fiber", "sessions"), "blocked\n", {
           mode: 0o600,
         });
 
@@ -1647,12 +1647,12 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const shared = join(root, "shared");
         const savedLink = join(root, "saved-link");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(shared);
         symlinkSync(shared, savedLink, "dir");
         const workspaceRoot = realpathSync(workspace);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -1702,14 +1702,14 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const second = join(root, "second");
         const savedLink = join(root, "saved-link");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(first);
         mkdirSync(second);
         symlinkSync(first, savedLink, "dir");
         const workspaceRoot = realpathSync(workspace);
         const firstRoot = realpathSync(first);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -1761,7 +1761,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const unseenAfter = join(root, "unseen-after");
         const targetLink = join(root, "target-link");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(target);
         mkdirSync(unseenBefore);
@@ -1771,7 +1771,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const targetRoot = realpathSync(target);
         const unseenBeforeRoot = realpathSync(unseenBefore);
         const unseenAfterRoot = realpathSync(unseenAfter);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -1854,7 +1854,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const survivorLinkB = join(root, "survivor-link-b");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(removed);
         mkdirSync(survivor);
@@ -1870,7 +1870,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const retargetRoot = realpathSync(retarget);
         const unseenBeforeRoot = realpathSync(unseenBefore);
         const unseenAfterRoot = realpathSync(unseenAfter);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -1967,14 +1967,14 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const savedLink = join(root, "saved-link");
         const unseenLink = join(root, "unseen-link");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(first);
         mkdirSync(second);
         symlinkSync(first, savedLink, "dir");
         const workspaceRoot = realpathSync(workspace);
         const firstRoot = realpathSync(first);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -2041,7 +2041,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const savedLink = join(root, "saved-link");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(first);
         mkdirSync(second);
@@ -2051,7 +2051,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const firstRoot = realpathSync(first);
         const secondRoot = realpathSync(second);
         const addedRoot = realpathSync(added);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -2123,7 +2123,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const shared = join(root, "shared project");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(shared);
         const workspaceRoot = realpathSync(workspace);
@@ -2152,7 +2152,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         const stored = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(stored.workspaces[workspaceRoot].additional_directories).toEqual([
           sharedRoot,
@@ -2177,7 +2177,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         secondSession = null;
 
         const cleared = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(cleared.workspaces?.[workspaceRoot]?.additional_directories).toBeUndefined();
         expect(readFileSync(stderrAPath, "utf8")).toBe("");
@@ -2198,7 +2198,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const workspace = join(root, "workspace");
         const shared = join(root, "shared");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(shared);
         const workspaceRoot = realpathSync(workspace);
@@ -2262,7 +2262,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const stderrPath = join(root, "stderr.log");
         const fixture = "RESTORED_CANONICAL_ROOT_FIXTURE";
         const instructionSentinel = "RESTORED_ROOT_AGENTS_MUST_NOT_LOAD";
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(shared, { recursive: true });
         writeFileSync(join(shared, "fixture.txt"), `${fixture}\n`);
@@ -2271,7 +2271,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const sharedRoot = realpathSync(shared);
         writeSeededChatGptLogin(home, chatGptAccessToken());
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             sandbox: "none",
             permission_mode: "auto",
@@ -2351,7 +2351,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const shared = join(root, "shared");
         const unknown = join(root, "unknown");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(shared);
         mkdirSync(unknown);
@@ -2401,7 +2401,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         if (statSync(settingsPath, { throwIfNoEntry: false })) {
           const stored = JSON.parse(readFileSync(settingsPath, "utf8"));
           expect(

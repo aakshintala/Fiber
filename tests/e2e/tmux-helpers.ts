@@ -1312,7 +1312,7 @@ export function writeSeededChatGptLogin(
   accessToken: string,
   options: { accountId?: string; refreshToken?: string; expiresAtMs?: number } = {},
 ): void {
-  const fxDir = join(home, ".fx");
+  const fxDir = join(home, ".fiber");
   mkdirSync(fxDir, { recursive: true, mode: 0o700 });
   chmodSync(fxDir, 0o700);
   const authPath = join(fxDir, "chatgpt-auth.json");

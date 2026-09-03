@@ -164,7 +164,7 @@ function createFixture(prefix: string): Fixture {
   const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   const created = {
     root,

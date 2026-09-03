@@ -53,7 +53,7 @@ afterEach(async () => {
 });
 
 function authPath(testHome: string): string {
-  return join(testHome, ".fx", "chatgpt-auth.json");
+  return join(testHome, ".fiber", "chatgpt-auth.json");
 }
 
 function startFx(

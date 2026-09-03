@@ -36,13 +36,13 @@ If you cannot run the binary in your environment, say so explicitly and ask the 
 
 ### Always use the built binary in this repo
 
-When running fx for verification, **always use the freshly-built binary at** **`./zig-out/bin/fiber`** from this checkout. Never run `fx` from `PATH`, never rely on whatever is at `~/.fx/bin/fx`, and never assume an installed copy reflects your change.
+When running fx for verification, **always use the freshly-built binary at** **`./zig-out/bin/fiber`** from this checkout. Never run `fx` from `PATH`, never rely on whatever is at `~/.fiber/bin/fx`, and never assume an installed copy reflects your change.
 
 * The user may have an older `fx` on their PATH (e.g. installed via `fx upgrade` or the CDN install script). Running that one will not exercise your edits.
 
 * `zig build` writes to `zig-out/bin/fiber`. That is the only binary that contains your latest change.
 
-* When a user reports "still not working" after you believe you fixed something, do not assume they are running the wrong binary. Assume your fix is incomplete and investigate further. If you genuinely suspect a PATH mismatch, ask — do not silently copy binaries into `~/.fx/bin/`.
+* When a user reports "still not working" after you believe you fixed something, do not assume they are running the wrong binary. Assume your fix is incomplete and investigate further. If you genuinely suspect a PATH mismatch, ask — do not silently copy binaries into `~/.fiber/bin/`.
 
 * In any shell invocation — tmux, direct run, scripts — reference fiber as `/Users/<you>/path/to/repo/zig-out/bin/fiber` (absolute) or `./zig-out/bin/fiber` (when cwd is the repo root). Bare `fx` is always wrong for dev verification.
 
@@ -134,19 +134,19 @@ Do not scatter help text or argument parsing across multiple files.
 
 ## Configuration and State
 
-Profile configuration and runtime state lives under `~/.fx/`. Project `.fx.json` contains committed project defaults only.
+Profile configuration and runtime state lives under `~/.fiber/`. Project `.fiber.json` contains committed project defaults only.
 
 Config precedence (highest wins):
 
 1. Environment variables such as `FIBER_MODEL`, `FIBER_PERMISSION_MODE`, and `FIBER_MAX_AGENT_STEPS`
-2. `~/.fx/settings.json` → `workspaces["<workspace_path>"]` (profile workspace overrides)
-3. `~/.fx/settings.json` top-level (profile global settings)
-4. `<workspace>/.fx.json` (committed project defaults)
+2. `~/.fiber/settings.json` → `workspaces["<workspace_path>"]` (profile workspace overrides)
+3. `~/.fiber/settings.json` top-level (profile global settings)
+4. `<workspace>/.fiber.json` (committed project defaults)
 5. Built-in defaults
 
-Project `.fx.json` accepts only repo-safe defaults: `sandbox`, `max_agent_steps`, `max_tool_result_bytes`, and `context`. Profile-owned keys such as `model`, `effort`, `fast_mode`, `slash_menu_categories`, `startup_scrollback`, `prompt_history`, `statusLine`, `skill_match_fuzzy`, `first_call_tool_choice`, `auto_upgrade`, `permission_mode`, `credential_source`, and `permission` are ignored from project config before their values are parsed.
+Project `.fiber.json` accepts only repo-safe defaults: `sandbox`, `max_agent_steps`, `max_tool_result_bytes`, and `context`. Profile-owned keys such as `model`, `effort`, `fast_mode`, `slash_menu_categories`, `startup_scrollback`, `prompt_history`, `statusLine`, `skill_match_fuzzy`, `first_call_tool_choice`, `auto_upgrade`, `permission_mode`, `credential_source`, and `permission` are ignored from project config before their values are parsed.
 
-Runtime state lives under `~/.fx/sessions/<session-id>/` (`session.json`, `background/`, `subagent/`, `logs/`). Sessions are global and portable across workspaces. Each session tracks its `workspace_root`, which updates when resumed in a different workspace. A subagent child is an internal ordinary session with its own history. Its parent owns one bounded `subagent/children.json` registry, and the child carries only an immutable owner marker. Child sessions stay out of ordinary session discovery and cannot be resumed directly. A first `subagent.message` creates a named persistent child in that parent; later messages continue it, and optional instructions replace only its child-specific system overlay.
+Runtime state lives under `~/.fiber/sessions/<session-id>/` (`session.json`, `background/`, `subagent/`, `logs/`). Sessions are global and portable across workspaces. Each session tracks its `workspace_root`, which updates when resumed in a different workspace. A subagent child is an internal ordinary session with its own history. Its parent owns one bounded `subagent/children.json` registry, and the child carries only an immutable owner marker. Child sessions stay out of ordinary session discovery and cannot be resumed directly. A first `subagent.message` creates a named persistent child in that parent; later messages continue it, and optional instructions replace only its child-specific system overlay.
 
 ## Permissions
 
@@ -314,7 +314,7 @@ cd tests/e2e && bun test tui-resize.test.ts
 ### Debug terminal recording and replay
 
 Set `FIBER_DEBUG_RECORD=1` to create an automatic private tape under
-`~/.fx/recordings/`. Set `FIBER_DEBUG_RECORD_SILENT_BANNER=1` as well when the
+`~/.fiber/recordings/`. Set `FIBER_DEBUG_RECORD_SILENT_BANNER=1` as well when the
 developer-only recording notice must stay out of the inline transcript during
 a screen share. The notice remains available in the Ctrl+O full transcript.
 Use `FIBER_RECORD=<path>` when a test or investigation needs an exact destination.
@@ -465,7 +465,7 @@ The canonical repository is `vercel-labs/fx` on GitHub. All URLs, links, and ref
 
 * Do not add a second execution path for the same feature without a clear reason
 
-* Do not commit generated state from `.fx/`, `.zig-cache/`, or `zig-out/`
+* Do not commit generated state from `.fiber/`, `.zig-cache/`, or `zig-out/`
 
 * Do not add dependencies outside the Zig standard library without discussion
 

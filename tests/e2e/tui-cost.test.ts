@@ -130,7 +130,7 @@ async function waitForProfileUsage(
   generationId: string,
 ): Promise<void> {
   const deadline = Date.now() + TIMEOUT;
-  const usagePath = join(home, ".fx", "usage.jsonl");
+  const usagePath = join(home, ".fiber", "usage.jsonl");
   while (Date.now() < deadline) {
     try {
       if (readFileSync(usagePath, "utf8").includes(generationId)) return;

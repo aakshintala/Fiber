@@ -144,7 +144,7 @@ fn formatMcpIssuerMismatch(
             try std.json.Stringify.value(returned.bytes, .{}, &out.writer);
             try out.writer.writeAll(". Add \"oauth\":{\"issuer\":");
             try std.json.Stringify.value(returned.bytes, .{}, &out.writer);
-            try out.writer.writeAll("} to this server's entry in ~/.fx/mcp.json and retry.");
+            try out.writer.writeAll("} to this server's entry in ~/.fiber/mcp.json and retry.");
         },
         .authorization_response => {
             try out.writer.writeAll(" but the authorization response returned issuer ");
@@ -4551,12 +4551,12 @@ test "skills remove prefers a managed match after a workspace duplicate" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeTempSkillFile(&tmp, "home/.fx/skills/review/SKILL.md", "---\nname: review\n---\nmanaged body\n");
+    try writeTempSkillFile(&tmp, "home/.fiber/skills/review/SKILL.md", "---\nname: review\n---\nmanaged body\n");
     try writeTempSkillFile(&tmp, "home/workspace/.agents/skills/review/SKILL.md", "---\nname: review\n---\nworkspace body\n");
 
-    const managed_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    const managed_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
     defer alloc.free(managed_root);
-    const managed_skill = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills/review");
+    const managed_skill = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills/review");
     defer alloc.free(managed_skill);
     const workspace_skill = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace/.agents/skills/review");
     defer alloc.free(workspace_skill);
@@ -4588,7 +4588,7 @@ test "skills remove prefers a managed match after a workspace duplicate" {
     try std.testing.expectEqual(@as(usize, 1), app.reload_count);
     try std.testing.expectError(
         error.FileNotFound,
-        tmp.dir.access(io_mod.getIo(), "home/.fx/skills/review", .{}),
+        tmp.dir.access(io_mod.getIo(), "home/.fiber/skills/review", .{}),
     );
     try tmp.dir.access(io_mod.getIo(), "home/workspace/.agents/skills/review/SKILL.md", .{});
 }

@@ -100,10 +100,10 @@ function writeLegacySession(
     historyLen?: number;
   } = {},
 ): void {
-  const sessionDir = join(home, ".fx", "sessions", sessionId);
+  const sessionDir = join(home, ".fiber", "sessions", sessionId);
   mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
-  chmodSync(join(home, ".fx"), 0o700);
-  chmodSync(join(home, ".fx", "sessions"), 0o700);
+  chmodSync(join(home, ".fiber"), 0o700);
+  chmodSync(join(home, ".fiber", "sessions"), 0o700);
   chmodSync(sessionDir, 0o700);
   const historyLen = opts.historyLen ?? 0;
   writeFileSync(
@@ -363,7 +363,7 @@ describe("cli: status", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-mcp-config-diagnostic-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
-      const fxDir = join(home, ".fx");
+      const fxDir = join(home, ".fiber");
       mkdirSync(fxDir, { recursive: true, mode: 0o700 });
       mkdirSync(workspace);
       writeSeededChatGptLogin(home, chatGptAccessToken());
@@ -400,7 +400,7 @@ describe("cli: status", () => {
           mcp_config_error: "McpConfigInvalidJson",
         });
         expect(doctorText.stdout).toContain(
-          "[fail] mcp_config: failed to load ~/.fx/mcp.json: McpConfigInvalidJson\n",
+          "[fail] mcp_config: failed to load ~/.fiber/mcp.json: McpConfigInvalidJson\n",
         );
         const doctorJson = JSON.parse(doctorJsonResult.stdout);
         expect(doctorJson.fail_count).toBe(1);
@@ -412,7 +412,7 @@ describe("cli: status", () => {
           {
             name: "mcp_config",
             status: "fail",
-            detail: "failed to load ~/.fx/mcp.json: McpConfigInvalidJson",
+            detail: "failed to load ~/.fiber/mcp.json: McpConfigInvalidJson",
           },
         ]);
         expect(ask.code).toBe(1);
@@ -584,7 +584,7 @@ describe("cli: status", () => {
           FIBER_DISABLE_KEYCHAIN: "1",
         };
         const cwd = realpathSync(workspace);
-        const authPath = join(home, ".fx", "chatgpt-auth.json");
+        const authPath = join(home, ".fiber", "chatgpt-auth.json");
         const seededAuthFile = readFileSync(authPath, "utf8");
 
         const status = await runFx(["status", "--json"], { cwd, env });
@@ -665,10 +665,10 @@ describe("cli: status", () => {
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           '{"update_channel":"dev"}\n',
           { mode: 0o600 },
         );
@@ -776,7 +776,7 @@ describe("cli: status", () => {
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
-        mkdirSync(join(home, ".fx"), { recursive: true });
+        mkdirSync(join(home, ".fiber"), { recursive: true });
         mkdirSync(workspace);
         const homeRoot = realpathSync(home);
         const workspaceRoot = realpathSync(workspace);
@@ -789,14 +789,14 @@ describe("cli: status", () => {
         };
 
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             model: "anthropic/claude-sonnet-4.6",
             permission_mode: "auto",
           }) + "\n",
         );
         writeFileSync(
-          join(workspace, ".fx.json"),
+          join(workspace, ".fiber.json"),
           JSON.stringify({
             model: 123,
             permission_mode: "danger",
@@ -831,7 +831,7 @@ describe("cli: status", () => {
         expect(status.stderr).not.toContain("danger");
 
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             model: "anthropic/claude-sonnet-4.6",
             permission_mode: "auto",
@@ -868,7 +868,7 @@ describe("cli: status", () => {
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
-        const fxDir = join(home, ".fx");
+        const fxDir = join(home, ".fiber");
         mkdirSync(fxDir, { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         chmodSync(fxDir, 0o700);
@@ -894,7 +894,7 @@ describe("cli: status", () => {
         expect(user.stderr).toContain("fx: config user: durable_path_unsafe");
 
         rmSync(join(fxDir, "settings.json"));
-        expect(spawnSync("mkfifo", [join(workspace, ".fx.json")]).status).toBe(0);
+        expect(spawnSync("mkfifo", [join(workspace, ".fiber.json")]).status).toBe(0);
         const projectStartedAt = Date.now();
         const project = await runFx(["status", "--json"], {
           cwd: workspace,
@@ -920,7 +920,7 @@ describe("cli: usage", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-usage-"));
       try {
         const home = join(root, "home");
-        const fxDir = join(home, ".fx");
+        const fxDir = join(home, ".fiber");
         mkdirSync(fxDir, { recursive: true, mode: 0o700 });
         chmodSync(fxDir, 0o700);
         const now = Date.now();
@@ -1021,7 +1021,7 @@ describe("cli: usage", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-usage-incomplete-"));
       try {
         const home = join(root, "home");
-        const fxDir = join(home, ".fx");
+        const fxDir = join(home, ".fiber");
         mkdirSync(fxDir, { recursive: true, mode: 0o700 });
         const now = Date.now();
         const records = [
@@ -1095,7 +1095,7 @@ describe("cli: usage", () => {
           coverage: { status: "not_started" },
           totals: null,
         });
-        expect(existsSync(join(home, ".fx"))).toBe(false);
+        expect(existsSync(join(home, ".fiber"))).toBe(false);
 
         const invalid = await runFx(
           ["usage", "--period", "session", "--json"],
@@ -1107,7 +1107,7 @@ describe("cli: usage", () => {
           code: "InvalidUsageArgs",
         });
 
-        const fxDir = join(home, ".fx");
+        const fxDir = join(home, ".fiber");
         mkdirSync(fxDir, { mode: 0o700 });
         chmodSync(fxDir, 0o700);
         writeFileSync(
@@ -1188,7 +1188,7 @@ describe("cli: usage", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-usage-recovery-"));
       try {
         const home = join(root, "home");
-        const fxDir = join(home, ".fx");
+        const fxDir = join(home, ".fiber");
         mkdirSync(fxDir, { recursive: true, mode: 0o700 });
         chmodSync(fxDir, 0o700);
         writeFileSync(
@@ -1330,7 +1330,7 @@ describe("cli: doctor", () => {
 
         expect(r.code).toBe(0);
         expect(JSON.parse(r.stdout.trim()).kind).toBe("doctor");
-        expect(existsSync(join(home, ".fx"))).toBe(false);
+        expect(existsSync(join(home, ".fiber"))).toBe(false);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -1359,7 +1359,7 @@ describe("cli: doctor", () => {
           );
         }
 
-        expect(existsSync(join(home, ".fx", "sessions", "summary.json"))).toBe(false);
+        expect(existsSync(join(home, ".fiber", "sessions", "summary.json"))).toBe(false);
 
         const r = await runFx(["doctor", "--json"], {
           cwd: workspaceRoot,
@@ -1412,7 +1412,7 @@ describe("cli: logout", () => {
     "fx logout deletes the saved Codex login",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-codex-"));
-      const authPath = join(home, ".fx", "chatgpt-auth.json");
+      const authPath = join(home, ".fiber", "chatgpt-auth.json");
       try {
         writeSeededChatGptLogin(home, chatGptAccessToken());
 
@@ -1455,7 +1455,7 @@ describe("cli: logout", () => {
     "fx logout removes a saved login rejected for unsafe permissions",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-rejected-login-"));
-      const authPath = join(home, ".fx", "chatgpt-auth.json");
+      const authPath = join(home, ".fiber", "chatgpt-auth.json");
       try {
         writeSeededChatGptLogin(home, chatGptAccessToken());
         chmodSync(authPath, 0o644);
@@ -1483,7 +1483,7 @@ describe("cli: logout", () => {
     "fx logout fails when the saved login cannot be deleted",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-delete-failure-"));
-      const fxDir = join(home, ".fx");
+      const fxDir = join(home, ".fiber");
       const authPath = join(fxDir, "chatgpt-auth.json");
       try {
         writeSeededChatGptLogin(home, chatGptAccessToken());
@@ -1549,7 +1549,7 @@ describe("cli: stored key file backend", () => {
     "a 0600 key file resolves, and a loosened one is refused rather than reported absent",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fx-stored-key-file-"));
-      const fxDir = join(home, ".fx");
+      const fxDir = join(home, ".fiber");
       mkdirSync(fxDir, { recursive: true, mode: 0o700 });
       chmodSync(fxDir, 0o700);
       const keyPath = join(fxDir, "api-key");
@@ -1629,7 +1629,7 @@ describe("cli: read-only no-create matrix", () => {
             expect(result.stderr).toBe("");
           }
           expect(snapshotTree(home)).toEqual(before);
-          expect(existsSync(join(home, ".fx"))).toBe(false);
+          expect(existsSync(join(home, ".fiber"))).toBe(false);
         } finally {
           rmSync(root, { recursive: true, force: true });
         }
@@ -1694,7 +1694,7 @@ describe("cli: missing durable home", () => {
         expect(JSON.parse(asked.stdout).output.trim()).toBe(
           "FAKE_CODEX_RESPONSE",
         );
-        expect(existsSync(join(home, ".fx", "sessions"))).toBe(true);
+        expect(existsSync(join(home, ".fiber", "sessions"))).toBe(true);
         expect(codex.requests).toHaveLength(1);
       } finally {
         codex.stop();
@@ -1781,10 +1781,10 @@ describe("cli: sessions", () => {
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
-        const sessionsDir = join(home, ".fx", "sessions");
+        const sessionsDir = join(home, ".fiber", "sessions");
         mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
-        chmodSync(join(home, ".fx"), 0o700);
+        chmodSync(join(home, ".fiber"), 0o700);
         chmodSync(sessionsDir, 0o700);
         const workspaceRoot = realpathSync(workspace);
         const named = {
@@ -1894,10 +1894,10 @@ describe("cli: sessions", () => {
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
-        const sessionsDir = join(home, ".fx", "sessions");
+        const sessionsDir = join(home, ".fiber", "sessions");
         mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
-        chmodSync(join(home, ".fx"), 0o700);
+        chmodSync(join(home, ".fiber"), 0o700);
         chmodSync(sessionsDir, 0o700);
         const workspaceRoot = realpathSync(workspace);
         const sessions = Array.from({ length: 9_001 }, (_, index) => {
@@ -2015,7 +2015,7 @@ describe("cli: sessions", () => {
         );
         expect(fixture.status).toBe(0);
 
-        const before = snapshotTree(join(home, ".fx"));
+        const before = snapshotTree(join(home, ".fiber"));
         const listed = await runFx(["sessions", "--json"], {
           cwd: workspaceRoot,
           env: { HOME: home },
@@ -2050,7 +2050,7 @@ describe("cli: sessions", () => {
             },
           ],
         });
-        expect(snapshotTree(join(home, ".fx"))).toEqual(before);
+        expect(snapshotTree(join(home, ".fiber"))).toEqual(before);
 
         const latest = await runFx(["session", "last", "--json"], {
           cwd: workspaceRoot,
@@ -2070,7 +2070,7 @@ describe("cli: sessions", () => {
           history_len: 1,
           conversation_language: "en",
         });
-        expect(snapshotTree(join(home, ".fx"))).toEqual(before);
+        expect(snapshotTree(join(home, ".fiber"))).toEqual(before);
 
         const detail = await runFx(
           ["session", "--id", "benchmark-session-00", "--json"],
@@ -2082,7 +2082,7 @@ describe("cli: sessions", () => {
         );
         expect(detail.code).not.toBe(0);
         expect(detail.stderr).toContain("AccessDenied");
-        expect(snapshotTree(join(home, ".fx"))).toEqual(before);
+        expect(snapshotTree(join(home, ".fiber"))).toEqual(before);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -2179,7 +2179,7 @@ describe("cli: sessions", () => {
           ["invalid-json", "{"],
           ["truncated", '{"schema_version":2,"id":"truncated"}'],
         ] as const) {
-          const directory = join(home, ".fx", "sessions", id);
+          const directory = join(home, ".fiber", "sessions", id);
           mkdirSync(directory, { recursive: true, mode: 0o700 });
           writeFileSync(join(directory, "session.json"), contents, {
             mode: 0o600,
@@ -2199,7 +2199,7 @@ describe("cli: sessions", () => {
           sessions: [{ id: "readable-session" }],
         });
 
-        rmSync(join(home, ".fx", "sessions", "readable-session"), {
+        rmSync(join(home, ".fiber", "sessions", "readable-session"), {
           recursive: true,
           force: true,
         });
@@ -2274,9 +2274,9 @@ describe("cli: sessions", () => {
         try {
           const home = join(root, "home");
           const workspace = join(root, "workspace");
-          mkdirSync(join(home, ".fx", "sessions"), { recursive: true });
+          mkdirSync(join(home, ".fiber", "sessions"), { recursive: true });
           mkdirSync(workspace, { recursive: true });
-          writeFileSync(join(home, ".fx", "sessions", "list.json"), cached);
+          writeFileSync(join(home, ".fiber", "sessions", "list.json"), cached);
 
           const r = await runFx(["sessions", "--json"], {
             cwd: realpathSync(workspace),
@@ -2408,7 +2408,7 @@ describe("cli: removed task and background commands", () => {
         mkdirSync(workspace, { recursive: true });
         const workspaceRoot = realpathSync(workspace);
         writeLegacySession(home, workspaceRoot, "legacy-tasks-session");
-        const tasksDir = join(home, ".fx", "sessions", "legacy-tasks-session", "tasks");
+        const tasksDir = join(home, ".fiber", "sessions", "legacy-tasks-session", "tasks");
         mkdirSync(tasksDir, { recursive: true });
         writeFileSync(join(tasksDir, "unreadable-legacy-shape.json"), "not json\n");
 
@@ -2790,7 +2790,7 @@ describe("cli: ask input validation", () => {
           error: "InvalidPromptText",
         });
         expect(requests).toEqual([]);
-        expect(existsSync(join(home, ".fx"))).toBe(false);
+        expect(existsSync(join(home, ".fiber"))).toBe(false);
       } finally {
         server.stop(true);
         rmSync(root, { recursive: true, force: true });
@@ -2817,7 +2817,7 @@ describe("cli: session", () => {
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
-        mkdirSync(join(home, ".fx", "sessions"), {
+        mkdirSync(join(home, ".fiber", "sessions"), {
           recursive: true,
           mode: 0o700,
         });
@@ -2830,7 +2830,7 @@ describe("cli: session", () => {
         writeLegacySession(home, workspaceRoot, childId);
         const childControl = join(
           home,
-          ".fx",
+          ".fiber",
           "sessions",
           childId,
           "subagent",
@@ -2952,7 +2952,7 @@ describe("cli: ask success", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-explicit-skill-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
-      const skillDirectory = join(home, ".fx", "skills", "cli-explicit");
+      const skillDirectory = join(home, ".fiber", "skills", "cli-explicit");
       const skillBody = "CLI_EXPLICIT_SKILL_BODY";
       const codex = startFakeCodex();
       try {
@@ -3083,7 +3083,7 @@ describe("cli: ask success", () => {
         writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           `${JSON.stringify({ model: FAKE_CODEX_DEFAULT_MODEL, effort: "high" })}\n`,
         );
 
@@ -3166,7 +3166,7 @@ describe("cli: ask success", () => {
         expect(firstJson.session_id.length).toBeGreaterThan(0);
         expect(
           existsSync(
-            join(savedHome, ".fx", "sessions", firstJson.session_id),
+            join(savedHome, ".fiber", "sessions", firstJson.session_id),
           ),
         ).toBe(true);
 
@@ -3221,7 +3221,7 @@ describe("cli: ask success", () => {
         expect(noSave.code).toBe(0);
         expect(noSave.stderr).toBe("");
         expect(JSON.parse(noSave.stdout.trim()).session_id).toBe("");
-        expect(existsSync(join(noSaveHome, ".fx", "sessions"))).toBe(false);
+        expect(existsSync(join(noSaveHome, ".fiber", "sessions"))).toBe(false);
         expect(codex.requests).toHaveLength(3);
       } finally {
         server.stop(true);
@@ -3295,7 +3295,7 @@ describe("cli: ask success", () => {
         expect(first.code).toBe(0);
         expect(first.stderr).toBe("");
         const sessionId = JSON.parse(first.stdout).session_id as string;
-        const lockPath = join(home, ".fx", "sessions", "latest.lock");
+        const lockPath = join(home, ".fiber", "sessions", "latest.lock");
         lockHolder = Bun.spawn(
           [
             "python3",
@@ -3333,7 +3333,7 @@ describe("cli: ask success", () => {
         expect(JSON.parse(exact.stdout).output.trim()).toBe("contended exact turn");
         const tokenPath = join(
           home,
-          ".fx",
+          ".fiber",
           "sessions",
           "latest",
           "deferred",
@@ -3586,8 +3586,8 @@ describe("cli: workspace access", () => {
         const shared = join(root, "shared");
         const unknown = join(root, "unknown");
         const missing = join(root, "missing");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        chmodSync(join(home, ".fx"), 0o700);
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        chmodSync(join(home, ".fiber"), 0o700);
         mkdirSync(workspace);
         mkdirSync(shared);
         mkdirSync(unknown);
@@ -3623,7 +3623,7 @@ describe("cli: workspace access", () => {
         ]);
 
         const stored = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(stored.workspaces[workspaceRoot].additional_directories).toEqual([
           sharedRoot,
@@ -3702,7 +3702,7 @@ describe("cli: workspace access", () => {
           additional_directories: [],
         });
         const removedSettings = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(
           removedSettings.workspaces?.[workspaceRoot]?.additional_directories,
@@ -3744,8 +3744,8 @@ describe("cli: workspace access", () => {
         const missing = join(root, "missing");
         const realParent = join(root, "real-parent");
         const parentLink = join(root, "parent-link");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        chmodSync(join(home, ".fx"), 0o700);
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        chmodSync(join(home, ".fiber"), 0o700);
         mkdirSync(workspace);
         mkdirSync(shared);
         mkdirSync(realParent);
@@ -3753,7 +3753,7 @@ describe("cli: workspace access", () => {
         symlinkSync(realParent, parentLink, "dir");
         const workspaceRoot = realpathSync(workspace);
         const sharedRoot = realpathSync(shared);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         const baseEnv = {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
@@ -3871,11 +3871,11 @@ describe("cli: MCP profile add", () => {
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const pidPath = join(root, "mcp.pid");
-    mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+    mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
     mkdirSync(workspace);
-    writeFileSync(join(home, ".fx", "settings.json"), "{}\n", { mode: 0o600 });
+    writeFileSync(join(home, ".fiber", "settings.json"), "{}\n", { mode: 0o600 });
     writeFileSync(
-      join(home, ".fx", "mcp.json"),
+      join(home, ".fiber", "mcp.json"),
       JSON.stringify({
         mcp: {
           fixture: {
@@ -3934,11 +3934,11 @@ describe("cli: MCP profile add", () => {
     const workspace = join(root, "workspace");
     const profileMarker = join(root, "profile-launched");
     const workspaceMarker = join(root, "workspace-launched");
-    mkdirSync(join(home, ".fx"), { recursive: true });
+    mkdirSync(join(home, ".fiber"), { recursive: true });
     mkdirSync(workspace, { recursive: true });
-    writeFileSync(join(home, ".fx", "settings.json"), JSON.stringify({}));
+    writeFileSync(join(home, ".fiber", "settings.json"), JSON.stringify({}));
     writeFileSync(
-      join(home, ".fx", "mcp.json"),
+      join(home, ".fiber", "mcp.json"),
       JSON.stringify({
         mcp: {
           shared: {
@@ -3970,7 +3970,7 @@ describe("cli: MCP profile add", () => {
       const path = await runFx(["mcp", "path"], { cwd: workspace, env });
       expect(path.code).toBe(0);
       expect(path.stderr).toBe("");
-      expect(path.stdout.trim()).toBe(join(home, ".fx", "mcp.json"));
+      expect(path.stdout.trim()).toBe(join(home, ".fiber", "mcp.json"));
 
       const before = await runFx(["mcp", "list"], { cwd: workspace, env });
       expect(before.code).toBe(0);
@@ -3991,7 +3991,7 @@ describe("cli: MCP profile add", () => {
       expect(removed.code).toBe(0);
       expect(removed.stderr).toBe("");
       expect(removed.stdout).toContain("Removed MCP server 'shared'");
-      expect(JSON.parse(readFileSync(join(home, ".fx", "mcp.json"), "utf8")))
+      expect(JSON.parse(readFileSync(join(home, ".fiber", "mcp.json"), "utf8")))
         .toEqual({ mcp: {} });
 
       const after = await runFx(["mcp", "list"], { cwd: workspace, env });
@@ -4056,7 +4056,7 @@ describe("cli: MCP profile add", () => {
       expect(remote.stderr).toBe("");
 
       const profile = JSON.parse(
-        readFileSync(join(home, ".fx", "mcp.json"), "utf8"),
+        readFileSync(join(home, ".fiber", "mcp.json"), "utf8"),
       );
       expect(profile).not.toHaveProperty("mcpServers");
       expect(profile.mcp.local.command).toEqual([
@@ -4076,7 +4076,7 @@ describe("cli: MCP profile add", () => {
   test("canonicalizes alias input and refuses ambiguous server-like keys", async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-cli-mcp-alias-")));
     const home = join(root, "home");
-    const fxDir = join(home, ".fx");
+    const fxDir = join(home, ".fiber");
     mkdirSync(fxDir, { recursive: true, mode: 0o700 });
     const profilePath = join(fxDir, "mcp.json");
     try {
@@ -4128,7 +4128,7 @@ describe("cli: MCP profile add", () => {
       expect(first.code).toBe(0);
       expect(second.code).toBe(0);
       const profile = JSON.parse(
-        readFileSync(join(home, ".fx", "mcp.json"), "utf8"),
+        readFileSync(join(home, ".fiber", "mcp.json"), "utf8"),
       );
       expect(Object.keys(profile.mcp).sort()).toEqual(["first", "second"]);
     } finally {

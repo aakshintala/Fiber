@@ -22,10 +22,10 @@ describe.skipIf(!LIVE_ENABLED || !HAS_API_KEY)("live source context limits", () 
         "live-context-probe",
       );
       const tracePath = join(root, "trace.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
+      mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(skillDirectory, { recursive: true });
       writeFileSync(
-        join(home, ".fx", "settings.json"),
+        join(home, ".fiber", "settings.json"),
         JSON.stringify({
           model: MODEL,
           context_limits: { skill_description_bytes: 16 },

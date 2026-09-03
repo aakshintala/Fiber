@@ -150,14 +150,14 @@ function createRoot(
       `printf '%s\\n' "$$" >> "$FIBER_MCP_LAUNCH_LOG"; exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"`,
     ]
     : [process.execPath, scriptPath];
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   writeFileSync(
-    join(home, ".fx", "settings.json"),
+    join(home, ".fiber", "settings.json"),
     JSON.stringify({}),
   );
   writeFileSync(
-    join(home, ".fx", "mcp.json"),
+    join(home, ".fiber", "mcp.json"),
     JSON.stringify({
       mcp: {
         fixture: {
@@ -226,7 +226,7 @@ function createRoot(
 }
 
 function moveProfileFixtureToWorkspace(root: FixtureRoot): void {
-  const profilePath = join(root.home, ".fx", "mcp.json");
+  const profilePath = join(root.home, ".fiber", "mcp.json");
   const profile = JSON.parse(readFileSync(profilePath, "utf8"));
   const fixture = profile.mcp.fixture;
   if (Array.isArray(fixture.command)) {
@@ -400,7 +400,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
 `,
       { mode: 0o755 },
     );
-    const profilePath = join(root.home, ".fx", "mcp.json");
+    const profilePath = join(root.home, ".fiber", "mcp.json");
     const profile = JSON.parse(readFileSync(profilePath, "utf8"));
     profile.mcp.fixture.command = [
       fakeDocker,
@@ -545,10 +545,10 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const marker = join(root, "project-mcp-launched");
-    mkdirSync(join(home, ".fx"), { recursive: true });
-    mkdirSync(join(workspace, ".fx"), { recursive: true });
-    writeFileSync(join(home, ".fx", "settings.json"), JSON.stringify({}));
-    writeFileSync(join(home, ".fx", "mcp.json"), JSON.stringify({ mcp: {} }));
+    mkdirSync(join(home, ".fiber"), { recursive: true });
+    mkdirSync(join(workspace, ".fiber"), { recursive: true });
+    writeFileSync(join(home, ".fiber", "settings.json"), JSON.stringify({}));
+    writeFileSync(join(home, ".fiber", "mcp.json"), JSON.stringify({ mcp: {} }));
 
     let projectRequestCount = 0;
     const projectEndpoint = Bun.serve({
@@ -577,7 +577,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       },
     });
     writeFileSync(join(workspace, ".mcp.json"), hostile);
-    writeFileSync(join(workspace, ".fx", "mcp.json"), hostile);
+    writeFileSync(join(workspace, ".fiber", "mcp.json"), hostile);
 
     gateway = startFakeGateway([fakeGatewayFinalText("Project MCP stayed inert.")], {
       models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
@@ -656,7 +656,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       "skipped unapproved project MCP servers: fixture",
     );
     expect(existsSync(root.wireLogPath)).toBe(false);
-    let settings = readFileSync(join(root.home, ".fx", "settings.json"), "utf8");
+    let settings = readFileSync(join(root.home, ".fiber", "settings.json"), "utf8");
     expect(settings).not.toContain("enabledMcpjsonServers");
     expect(settings).not.toContain("enableAllProjectMcpServers");
 
@@ -666,7 +666,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     );
     expect(trusted.code).toBe(0);
     expect(trusted.stdout).toContain("Approved project MCP server 'fixture'");
-    settings = readFileSync(join(root.home, ".fx", "settings.json"), "utf8");
+    settings = readFileSync(join(root.home, ".fiber", "settings.json"), "utf8");
     expect(settings).toContain("enabledMcpjsonServers");
 
     const result = await runFx(
@@ -755,7 +755,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   test("top-level mcp add persists stdio and a later ask calls it", async () => {
     const root = createRoot("top-level-add", MODERN_FIXTURE);
     writeFileSync(
-      join(root.home, ".fx", "mcp.json"),
+      join(root.home, ".fiber", "mcp.json"),
       JSON.stringify({ mcp: {} }),
     );
     gateway = startToolGateway("TOP_LEVEL_STDIO_MCP_READY");
@@ -838,7 +838,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
     moveProfileFixtureToWorkspace(root);
     writeFileSync(
-      join(root.home, ".fx", "settings.json"),
+      join(root.home, ".fiber", "settings.json"),
       JSON.stringify({
         workspaces: {
           [root.workspace]: { disabledMcpjsonServers: "fixture" },
@@ -895,7 +895,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       await tui.sendText("/mcp list");
       let pane = await tui.waitForText("admission=approved", 10_000);
       expect(pane).toContain("state=ready");
-      expect(readFileSync(join(root.home, ".fx", "settings.json"), "utf8"))
+      expect(readFileSync(join(root.home, ".fiber", "settings.json"), "utf8"))
         .toContain("enabledMcpjsonServers");
 
       await tui.sendText("/mcp trust reset");
@@ -908,7 +908,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       await tui.sendText("/mcp list");
       pane = await tui.waitForText("admission=rejected", 10_000);
       expect(pane).toContain("state=disabled");
-      expect(readFileSync(join(root.home, ".fx", "settings.json"), "utf8"))
+      expect(readFileSync(join(root.home, ".fiber", "settings.json"), "utf8"))
         .toContain("disabledMcpjsonServers");
 
       await tui.kill();
@@ -942,7 +942,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       await Bun.sleep(250);
       expect((await tui.capturePane())).toContain("[2] Approve all");
       expect(existsSync(root.launchLogPath)).toBe(false);
-      expect(readFileSync(join(root.home, ".fx", "settings.json"), "utf8"))
+      expect(readFileSync(join(root.home, ".fiber", "settings.json"), "utf8"))
         .not.toContain("enableAllProjectMcpServers");
       await tui.sendKeys("Escape");
       await tui.waitForText("Project MCP approval prompts dismissed for this process", 10_000);
@@ -988,7 +988,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     initialGateway.stop();
     gateway = null;
 
-    const profilePath = join(root.home, ".fx", "mcp.json");
+    const profilePath = join(root.home, ".fiber", "mcp.json");
     const profile = JSON.parse(readFileSync(profilePath, "utf8"));
     profile.mcp.fixture.environment.FIBER_MCP_INITIAL_TOOL_NAME = "sum";
     profile.mcp.fixture.environment.FIBER_MCP_RESULT_TEXT = "RESUMED_PROFILE_TOOL_RESULT";
@@ -1209,7 +1209,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     const marker = "PERSISTENT";
     test(`${label} child with no configured MCP runtime fails closed before transport`, async () => {
       const root = createRoot(`${label}-mcp-disabled`, MODERN_FIXTURE);
-      writeFileSync(join(root.home, ".fx", "mcp.json"), JSON.stringify({ mcp: {} }));
+      writeFileSync(join(root.home, ".fiber", "mcp.json"), JSON.stringify({ mcp: {} }));
       const parentPrompt = `CREATE_DISABLED_MCP_${marker}`;
       const childPrompt = `DISABLED_MCP_${marker}_WORK`;
       let releaseParent!: (response: Response) => void;
@@ -1285,7 +1285,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       });
       const allowedWirePath = join(root.root, "allowed-wire.jsonl");
       const deniedWirePath = join(root.root, "denied-wire.jsonl");
-      const profilePath = join(root.home, ".fx", "mcp.json");
+      const profilePath = join(root.home, ".fiber", "mcp.json");
       const profile = JSON.parse(readFileSync(profilePath, "utf8"));
       const base = profile.mcp.fixture;
       profile.mcp = {
@@ -1312,7 +1312,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       };
       writeFileSync(profilePath, JSON.stringify(profile));
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           permission: { mcp_denied_blocked: "deny" },
         }),
@@ -1469,7 +1469,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
     const maliciousTarget = join(root.workspace, "malicious-resource-write.txt");
     writeFileSync(
-      join(root.home, ".fx", "settings.json"),
+      join(root.home, ".fiber", "settings.json"),
       JSON.stringify({
         permission: { edit: { "**": "deny" } },
       }),
@@ -4420,7 +4420,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       const originalPid = beforeWire.find((entry) => entry.message.method === "tools/call")?.pid;
       expect(originalPid).toBeDefined();
 
-      writeFileSync(join(root.home, ".fx", "mcp.json"), "{not valid json");
+      writeFileSync(join(root.home, ".fiber", "mcp.json"), "{not valid json");
       await tui.sendText("/mcp reload");
       await tui.waitForText("MCP configuration could not be reloaded", 5_000);
       expect(isProcessAlive(originalPid!)).toBe(true);
@@ -4455,7 +4455,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       });
       await tui.waitForComposer(15_000);
 
-      const profilePath = join(root.home, ".fx", "mcp.json");
+      const profilePath = join(root.home, ".fiber", "mcp.json");
       const profile = JSON.parse(readFileSync(profilePath, "utf8"));
       profile.mcp.fixture.environment.FIBER_MCP_MODE = "stall_startup";
       profile.mcp.fixture.startup_timeout_ms = 60_000;
@@ -4505,7 +4505,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
 
       await tui.waitForComposer(15_000);
       const originalPid = Number(readFileSync(join(root.root, "mcp.pid"), "utf8"));
-      const profilePath = join(root.home, ".fx", "mcp.json");
+      const profilePath = join(root.home, ".fiber", "mcp.json");
       const profile = JSON.parse(readFileSync(profilePath, "utf8"));
       profile.mcp.fixture.command = ["/definitely/missing-required-mcp-command"];
       profile.mcp.fixture.required = true;
@@ -4610,7 +4610,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     "/mcp list renders complete secret-free health after releasing runtime locks",
     async () => {
       const root = createRoot("health-output", MODERN_FIXTURE, { mode: "features" });
-      const profilePath = join(root.home, ".fx", "mcp.json");
+      const profilePath = join(root.home, ".fiber", "mcp.json");
       const profile = JSON.parse(readFileSync(profilePath, "utf8"));
       profile.mcp.fixture.environment.S11_SECRET_ENV = "HEALTH_SECRET_SENTINEL";
       writeFileSync(profilePath, JSON.stringify(profile));

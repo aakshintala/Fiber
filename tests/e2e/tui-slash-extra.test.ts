@@ -69,7 +69,7 @@ describe.skipIf(!tmuxAvailable())("tui: skills command recovery", () => {
         );
         expect(session.isAlive()).toBe(true);
         expect(hasEmptyComposer(rejected)).toBe(true);
-        expect(existsSync(join(home, ".fx", "escape-attempt"))).toBe(false);
+        expect(existsSync(join(home, ".fiber", "escape-attempt"))).toBe(false);
 
         await session.sendText("/skills path");
         const recovered = await session.waitForText("fx managed install root:", 5_000);
@@ -218,9 +218,9 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
       const workDir = mkdtempSync(join(tmpdir(), "fx-row03-clear-"));
       const homeDir = mkdtempSync(join(tmpdir(), "fx-row03-clear-home-"));
       const tracePath = join(workDir, "trace.log");
-      mkdirSync(join(homeDir, ".fx"), { recursive: true });
+      mkdirSync(join(homeDir, ".fiber"), { recursive: true });
       writeFileSync(
-        join(homeDir, ".fx", "settings.json"),
+        join(homeDir, ".fiber", "settings.json"),
         JSON.stringify({ permission: { ask_user_question: "deny" } }),
       );
       const codex = startFakeCodex({
@@ -335,8 +335,8 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-mcp-menu-empty-"));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
-      writeFileSync(join(home, ".fx", "settings.json"), "{}");
+      mkdirSync(join(home, ".fiber"), { recursive: true });
+      writeFileSync(join(home, ".fiber", "settings.json"), "{}");
 
       try {
         session = await TmuxSession.create({
@@ -360,7 +360,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         expect(menu).not.toContain("MCP: no servers configured");
 
         await session.sendKeys("C");
-        const info = await session.waitForText("~/.fx/mcp.json", 5_000);
+        const info = await session.waitForText("~/.fiber/mcp.json", 5_000);
         expect(info).toContain("<workspace>/.mcp.json");
         await session.sendKeys("Escape");
         await session.waitForText("No MCP servers configured.", 5_000);
@@ -400,9 +400,9 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       const wireLogPath = join(root, "mcp-wire.jsonl");
-      mkdirSync(join(home, ".fx"), { recursive: true });
+      mkdirSync(join(home, ".fiber"), { recursive: true });
       writeFileSync(
-        join(home, ".fx", "mcp.json"),
+        join(home, ".fiber", "mcp.json"),
         JSON.stringify({
           mcp: {
             fixture: {
@@ -576,8 +576,8 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-mcp-menu-mutate-"));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
-      writeFileSync(join(home, ".fx", "settings.json"), "{}");
+      mkdirSync(join(home, ".fiber"), { recursive: true });
+      writeFileSync(join(home, ".fiber", "settings.json"), "{}");
       const fixture = join(import.meta.dir, "fixtures", "mcp-modern-stdio.mjs");
 
       try {
@@ -601,7 +601,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
 
         const added = await session.waitForText("MCP configuration reloaded.", 15_000);
         expect(added).toContain("fixture");
-        const profile = JSON.parse(readFileSync(join(home, ".fx", "mcp.json"), "utf8"));
+        const profile = JSON.parse(readFileSync(join(home, ".fiber", "mcp.json"), "utf8"));
         expect(profile.mcp.fixture.command).toEqual([process.execPath, fixture]);
 
         await session.sendKeys("Enter");
@@ -637,9 +637,9 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
+      mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace);
-      writeFileSync(join(home, ".fx", "settings.json"), "{}");
+      writeFileSync(join(home, ".fiber", "settings.json"), "{}");
       writeFileSync(
         join(workspace, ".mcp.json"),
         JSON.stringify({
@@ -688,7 +688,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         await session.sendKeys("X");
         await session.waitForText("Reject this project MCP server?", 5_000);
         await session.sendKeys("Enter");
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         await session.waitForPane(() => {
           const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
           return Object.values(settings.workspaces ?? {}).some(

@@ -121,7 +121,7 @@ async function createSession(cwd: string, home: string): Promise<string> {
 }
 
 function sessionIdsFromHome(home: string): string[] {
-  const sessionsRoot = join(home, ".fx", "sessions");
+  const sessionsRoot = join(home, ".fiber", "sessions");
   return readdirSync(sessionsRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name !== "latest")
     .map((entry) => entry.name);
@@ -249,7 +249,7 @@ describe("session recovery", () => {
       mkdirSync(workspace);
       const workspaceRoot = realpathSync(workspace);
       const sessionId = await createSession(workspaceRoot, home);
-      const sessionDir = join(home, ".fx", "sessions", sessionId);
+      const sessionDir = join(home, ".fiber", "sessions", sessionId);
       const currentName = readdirSync(sessionDir).find(
         (name) => name.startsWith("commit.") && name.endsWith(".json"),
       )!;
@@ -306,7 +306,7 @@ describe("session recovery", () => {
       writer.kill();
       await Bun.sleep(100);
 
-      const sessionDir = join(home, ".fx", "sessions", sessionId);
+      const sessionDir = join(home, ".fiber", "sessions", sessionId);
       const watermarkName = readdirSync(sessionDir).find(
         (name) => name.startsWith("commit.") && name.endsWith(".json"),
       )!;
@@ -418,7 +418,7 @@ describe("session recovery", () => {
       await Bun.sleep(10);
       const newestBId = await createSession(workspaceBRoot, home);
 
-      const sourceDir = join(home, ".fx", "sessions", sourceId);
+      const sourceDir = join(home, ".fiber", "sessions", sourceId);
       const watermarkName = readdirSync(sourceDir).find(
         (name) => name.startsWith("commit.") && name.endsWith(".json"),
       )!;
@@ -496,7 +496,7 @@ describe("session recovery", () => {
         first.kill();
         await Bun.sleep(100);
 
-        const sessionsRoot = join(home, ".fx", "sessions");
+        const sessionsRoot = join(home, ".fiber", "sessions");
         const ids = sessionIdsFromHome(home);
         expect(ids).toHaveLength(1);
         const sessionId = ids[0]!;
@@ -609,7 +609,7 @@ describe("session recovery", () => {
 
           const intentPath = join(
             home,
-            ".fx",
+            ".fiber",
             "sessions",
             sessionId,
             "commit.pending.json",

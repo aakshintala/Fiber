@@ -42,7 +42,7 @@ function createIsolatedRoot(prefix: string) {
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(home, { recursive: true });
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   return { root, home, workspace };
 }
@@ -113,7 +113,7 @@ async function runTtyPromptPermissionsCase(
   const marker = join(root.workspace, `${decision}-marker.txt`);
   const stdoutPath = join(root.root, `${decision}.stdout`);
   writeFileSync(
-    join(root.home, ".fx", "settings.json"),
+    join(root.home, ".fiber", "settings.json"),
     JSON.stringify({ permission_mode: "ask", sandbox: "none" }),
   );
   writeFileSync(stdoutPath, "");
@@ -175,7 +175,7 @@ describe("generic permission typed errors", () => {
       ]);
       try {
         writeFileSync(
-          join(root.home, ".fx", "settings.json"),
+          join(root.home, ".fiber", "settings.json"),
           JSON.stringify({
             workspaces: {
               [root.workspace]: {
@@ -245,7 +245,7 @@ describe("generic permission typed errors", () => {
       );
       const stdoutPath = join(root.root, "auto.stdout");
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({ permission_mode: "auto", sandbox: "none" }),
       );
       writeFileSync(stdoutPath, "");
@@ -328,7 +328,7 @@ describe("generic permission typed errors", () => {
         );
         const marker = join(root.workspace, "must-not-run.txt");
         writeFileSync(
-          join(root.home, ".fx", "settings.json"),
+          join(root.home, ".fiber", "settings.json"),
           JSON.stringify({ permission_mode: "ask", sandbox: "none" }),
         );
         const gateway = startFakeGateway([

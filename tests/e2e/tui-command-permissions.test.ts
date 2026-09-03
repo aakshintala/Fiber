@@ -221,7 +221,7 @@ function twoEffectfulCommandBatch(first: string, second: string) {
 }
 
 function sessionIdFromHome(root: IsolatedRoot): string {
-  const sessions = join(root.home, ".fx", "sessions");
+  const sessions = join(root.home, ".fiber", "sessions");
   const ids = readdirSync(sessions, { withFileTypes: true })
     .filter((entry) => entry.name !== "latest" && entry.isDirectory())
     .map((entry) => entry.name);
@@ -601,11 +601,11 @@ function createIsolatedRoot(baseDir = tmpdir()): IsolatedRoot {
   const hostileBin = join(root, "hostile-bin");
   const profileMarker = join(root, "hostile-profile-used");
   const commandMarkers: Record<string, string> = {};
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   mkdirSync(hostileBin, { recursive: true });
   writeFileSync(
-    join(home, ".fx", "settings.json"),
+    join(home, ".fiber", "settings.json"),
     JSON.stringify({ sandbox: "none", permission: {} }),
   );
   writeFileSync(join(home, ".profile"), `printf profile > ${JSON.stringify(profileMarker)}\n`);
@@ -679,7 +679,7 @@ function definedEnv(env: Record<string, string | undefined>) {
 
 async function launchPermissionResumeHarness(initialResponses: Response[]) {
   const root = createIsolatedRoot();
-  const settingsPath = join(root.home, ".fx", "settings.json");
+  const settingsPath = join(root.home, ".fiber", "settings.json");
   const markerPath = join(root.workspace, "must-not-exist");
   const initialStderrPath = join(root.root, "permission-resume-initial-stderr.log");
   const resumedStderrPath = join(root.root, "permission-resume-resumed-stderr.log");
@@ -739,7 +739,7 @@ function expectUserProfileTrace(tracePath: string) {
 }
 
 function expectNoCommandArtifacts(root: IsolatedRoot) {
-  const sessions = join(root.home, ".fx", "sessions");
+  const sessions = join(root.home, ".fiber", "sessions");
   if (!existsSync(sessions)) return;
   const files = Bun.spawnSync(["find", sessions, "-type", "f"], {
     stdout: "pipe",
@@ -752,7 +752,7 @@ function expectNoCommandArtifacts(root: IsolatedRoot) {
 }
 
 function commandReplayFiles(root: IsolatedRoot): string[] {
-  const sessions = join(root.home, ".fx", "sessions");
+  const sessions = join(root.home, ".fiber", "sessions");
   if (!existsSync(sessions)) return [];
   const result = Bun.spawnSync(
     ["find", sessions, "-type", "f", "-name", "fx-command-replay-*"],
@@ -899,7 +899,7 @@ describe("effect-aware command permissions", () => {
 
       const sessionId = sessionIdFromHome(root);
       const events = readFileSync(
-        join(root.home, ".fx", "sessions", sessionId, "events.jsonl"),
+        join(root.home, ".fiber", "sessions", sessionId, "events.jsonl"),
         "utf8",
       );
       expect(events).toContain(feedback);
@@ -1126,7 +1126,7 @@ describe("effect-aware command permissions", () => {
       const stderrPath = join(root.root, "current-command-output-stderr.log");
       const resumedStderrPath = join(root.root, "current-command-output-resumed-stderr.log");
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission_mode: "auto",
@@ -1496,7 +1496,7 @@ describe("effect-aware command permissions", () => {
         toolCall(command, {}, "fxc29_compact_output"),
         finalText(responseRows.join("\n")),
       ]);
-      const settingsPath = join(root.home, ".fx", "settings.json");
+      const settingsPath = join(root.home, ".fiber", "settings.json");
       writeFileSync(
         settingsPath,
         JSON.stringify({
@@ -2032,7 +2032,7 @@ describe("effect-aware command permissions", () => {
 
         writeTerminalOwnershipFixture(fixturePath);
         writeFileSync(
-          join(root.home, ".fx", "settings.json"),
+          join(root.home, ".fiber", "settings.json"),
           JSON.stringify({ sandbox: "os", permission: {} }),
         );
         writeFileSync(join(root.home, ".profile"), "");
@@ -2259,7 +2259,7 @@ describe("effect-aware command permissions", () => {
       activeSession = null;
 
       rmSync(
-        join(root.home, ".fx", "sessions", sessionId, "resume-view.bin"),
+        join(root.home, ".fiber", "sessions", sessionId, "resume-view.bin"),
         { force: true },
       );
       activeSession = await TmuxSession.create({
@@ -2665,7 +2665,7 @@ describe("effect-aware command permissions", () => {
       expect(dismissalPlan).toContain("semantic_rows=0 planned_rows=0");
       expect(dismissalPlan).toContain("geometry_rebase=true");
       expect(commandTrace).toContain("transcript_projection_history_floor");
-      expect(JSON.parse(readFileSync(join(root.home, ".fx", "settings.json"), "utf8")).permission_mode)
+      expect(JSON.parse(readFileSync(join(root.home, ".fiber", "settings.json"), "utf8")).permission_mode)
         .toBe("ask");
       expect(gateway.requests).toHaveLength(1);
       expect(activeSession.isAlive()).toBe(true);
@@ -3668,7 +3668,7 @@ describe("effect-aware command permissions", () => {
     async () => {
       const root = createIsolatedRoot();
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission: { bash: { pwd: "allow" } },

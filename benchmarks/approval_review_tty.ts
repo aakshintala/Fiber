@@ -349,14 +349,14 @@ const stderrPath = join(outRoot, "approval-review.stderr.log");
 const samplesPath = join(outRoot, "timings.jsonl");
 const resourcesPath = join(outRoot, "resources.jsonl");
 const fixturePath = join(outRoot, "fixture.json");
-mkdirSync(join(home, ".fx"), { recursive: true });
+mkdirSync(join(home, ".fiber"), { recursive: true });
 mkdirSync(workspace, { recursive: true });
 writeFileSync(samplesPath, "");
 writeFileSync(resourcesPath, "");
 writeFileSync(tracePath, "");
 writeFileSync(stderrPath, "");
 writeFileSync(
-  join(home, ".fx", "settings.json"),
+  join(home, ".fiber", "settings.json"),
   JSON.stringify({
     sandbox: "none",
     permission_mode: "ask",

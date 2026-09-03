@@ -71,14 +71,14 @@ function createRoot(
   cleanupRoot = root;
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   writeFileSync(
-    join(home, ".fx", "settings.json"),
+    join(home, ".fiber", "settings.json"),
     JSON.stringify({}),
   );
   writeFileSync(
-    join(home, ".fx", "mcp.json"),
+    join(home, ".fiber", "mcp.json"),
     JSON.stringify({
       mcp: {
         fixture: {
@@ -100,10 +100,10 @@ function createEmptyRoot(label: string) {
   cleanupRoot = root;
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
-  writeFileSync(join(home, ".fx", "settings.json"), JSON.stringify({}));
-  writeFileSync(join(home, ".fx", "mcp.json"), JSON.stringify({ mcp: {} }));
+  writeFileSync(join(home, ".fiber", "settings.json"), JSON.stringify({}));
+  writeFileSync(join(home, ".fiber", "mcp.json"), JSON.stringify({ mcp: {} }));
   return { root, home, workspace, traceLogPath: join(root, "fx-trace.log") };
 }
 
@@ -422,7 +422,7 @@ describe("modern MCP Streamable HTTP", () => {
       );
 
       const profile = JSON.parse(
-        readFileSync(join(root.home, ".fx", "mcp.json"), "utf8"),
+        readFileSync(join(root.home, ".fiber", "mcp.json"), "utf8"),
       );
       expect(profile.mcp.prisma).toMatchObject({
         type: "http",
@@ -1448,7 +1448,7 @@ describe("modern MCP Streamable HTTP", () => {
     fixture = startModernMcpHttpFixture("json");
     const root = createRoot("environment-headers", fixture);
     writeFileSync(
-      join(root.home, ".fx", "mcp.json"),
+      join(root.home, ".fiber", "mcp.json"),
       JSON.stringify({
         mcp: {
           fixture: {
@@ -1485,7 +1485,7 @@ describe("modern MCP Streamable HTTP", () => {
     }
     expect(result.stdout).not.toContain("environment-bearer-secret");
     expect(result.stderr).not.toContain("environment-bearer-secret");
-    expect(readFileSync(join(root.home, ".fx", "mcp.json"), "utf8")).not
+    expect(readFileSync(join(root.home, ".fiber", "mcp.json"), "utf8")).not
       .toContain("environment-bearer-secret");
   }, 30_000);
 
@@ -1493,7 +1493,7 @@ describe("modern MCP Streamable HTTP", () => {
     fixture = startModernMcpHttpFixture("json");
     const root = createRoot("workspace-expanded-headers", fixture);
     writeFileSync(
-      join(root.home, ".fx", "mcp.json"),
+      join(root.home, ".fiber", "mcp.json"),
       JSON.stringify({ mcp: {} }),
     );
     writeFileSync(

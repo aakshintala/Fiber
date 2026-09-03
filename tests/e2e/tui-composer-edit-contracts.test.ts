@@ -57,10 +57,10 @@ async function startFx(
   root = realpathSync(mkdtempSync(join(tmpdir(), "fx-edit-contracts-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace);
   writeFileSync(
-    join(home, ".fx", "settings.json"),
+    join(home, ".fiber", "settings.json"),
     JSON.stringify({}),
   );
   stderrPath = join(root, "stderr.log");
@@ -73,7 +73,7 @@ async function startFx(
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   );
   writeFileSync(join(workspace, "target.txt"), "target\n");
-  const skillRoot = join(home, ".fx", "skills", "review");
+  const skillRoot = join(home, ".fiber", "skills", "review");
   mkdirSync(skillRoot, { recursive: true });
   writeFileSync(
     join(skillRoot, "SKILL.md"),
@@ -131,7 +131,7 @@ async function startFx(
 }
 
 function historyImageSnapshotPath(): string {
-  const sessionsRoot = join(root!, "home", ".fx", "sessions");
+  const sessionsRoot = join(root!, "home", ".fiber", "sessions");
   const sessionNames = readdirSync(sessionsRoot, { withFileTypes: true })
     .filter((entry) =>
       entry.isDirectory() &&

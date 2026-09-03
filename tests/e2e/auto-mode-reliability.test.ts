@@ -55,10 +55,10 @@ function createIsolatedRoot(baseDir = tmpdir()): IsolatedRoot {
   );
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   writeFileSync(
-    join(home, ".fx", "settings.json"),
+    join(home, ".fiber", "settings.json"),
     JSON.stringify({ sandbox: "none", permission: {} }),
   );
   roots.push(root);
@@ -199,7 +199,7 @@ describe("lean auto mode reliability", () => {
     async () => {
       const root = createIsolatedRoot();
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission: { bash: { pwd: "allow" } },
@@ -243,7 +243,7 @@ describe("lean auto mode reliability", () => {
         "substitution-bypass-must-not-run",
       );
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission: { "*": { "printf *": "allow" } },
@@ -1077,12 +1077,12 @@ describe("lean auto mode reliability", () => {
         timeoutMs: TIMEOUT,
       });
       expect(first.code).toBe(0);
-      const sessionIds = readdirSync(join(root.home, ".fx", "sessions"), {
+      const sessionIds = readdirSync(join(root.home, ".fiber", "sessions"), {
         withFileTypes: true,
       })
         .filter((entry) =>
           entry.isDirectory() &&
-          existsSync(join(root.home, ".fx", "sessions", entry.name, "session.json"))
+          existsSync(join(root.home, ".fiber", "sessions", entry.name, "session.json"))
         )
         .map((entry) => entry.name);
       expect(sessionIds).toHaveLength(1);
@@ -1134,7 +1134,7 @@ describe("lean auto mode reliability", () => {
     async () => {
       const root = createIsolatedRoot();
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission: { bash: { pwd: "allow" } },
@@ -1503,7 +1503,7 @@ describe("lean auto mode reliability", () => {
     async () => {
       const root = createIsolatedRoot();
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission: { bash: { pwd: "allow" } },
@@ -1571,7 +1571,7 @@ describe("lean auto mode reliability", () => {
     async () => {
       const root = createIsolatedRoot();
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission: { bash: { pwd: "allow" } },
@@ -1630,7 +1630,7 @@ describe("lean auto mode reliability", () => {
       const allowedMarker = join(root.workspace, "saved-allow-ran");
       const allowedCommand = `touch ${JSON.stringify(allowedMarker)}`;
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission: { bash: { [allowedCommand]: "ask" } },
@@ -1665,13 +1665,13 @@ describe("lean auto mode reliability", () => {
       await activeSession.kill();
       activeSession = null;
 
-      const sessionIds = readdirSync(join(root.home, ".fx", "sessions"), {
+      const sessionIds = readdirSync(join(root.home, ".fiber", "sessions"), {
         withFileTypes: true,
       })
         .filter((entry) =>
           entry.isDirectory() &&
           existsSync(
-            join(root.home, ".fx", "sessions", entry.name, "session.json"),
+            join(root.home, ".fiber", "sessions", entry.name, "session.json"),
           )
         )
         .map((entry) => entry.name);
@@ -1748,7 +1748,7 @@ describe("lean auto mode reliability", () => {
       const blockedMarker = join(root.workspace, "saved-deny-must-not-run");
       const blockedCommand = `touch ${JSON.stringify(blockedMarker)}`;
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission: { bash: { [blockedCommand]: "allow", pwd: "allow" } },
