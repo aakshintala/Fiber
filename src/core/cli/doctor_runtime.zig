@@ -4,7 +4,6 @@ const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 const agent_steps = @import("../config/agent_steps.zig");
 const config_runtime = @import("../config/config_runtime.zig");
-const host = @import("../hosts/host.zig");
 const mcp_contract = @import("../mcp/mcp_contract.zig");
 const session_store = @import("../session/session_store.zig");
 const types = @import("../shared/types.zig");
@@ -57,7 +56,6 @@ const ResolvedModel = struct {
 
 pub fn collect(
     alloc: Allocator,
-    secret_store: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
     mcp_config_diagnostic: mcp_contract.ProfileConfigDiagnostic,
@@ -94,7 +92,7 @@ pub fn collect(
 
     var detailed = config_runtime.loadMergedSettingsDetailed(alloc, snapshot.workspace_root) catch |err| {
         // Settings are unreadable, so no remembered choice is available to honour.
-        snapshot.auth = try auth_runtime.loadStatusSnapshot(alloc, secret_store, null);
+        snapshot.auth = try auth_runtime.loadStatusSnapshot(alloc, null);
         try appendConfigLoadFailureCheck(&checks, alloc, "config", "failed to load config", err);
         try appendMcpConfigCheck(&checks, alloc, mcp_config_diagnostic);
         try appendAuthCheck(&checks, alloc, snapshot.auth);
@@ -111,7 +109,6 @@ pub fn collect(
 
     snapshot.auth = try auth_runtime.loadStatusSnapshotForProvider(
         alloc,
-        secret_store,
         snapshot.provider,
         detailed.settings.credential_source,
     );

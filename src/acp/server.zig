@@ -343,7 +343,6 @@ pub fn selectCredentialForProvider(
         const resolution = try credentials.resolveForProvider(
             state.alloc,
             state.cfg.gateway_provider.oauth_transport,
-            state.cfg.secret_store,
             .refresh_if_needed,
             provider,
             state.credential_source,
@@ -1376,7 +1375,6 @@ fn loadConfiguredStartupState(state: *const ServerState, alloc: Allocator) !app_
     return app_lifecycle.loadStartupState(
         alloc,
         state.cfg.gateway_provider.oauth_transport,
-        state.cfg.secret_store,
         state.cfg.default_model,
         state.cfg.default_agent_step_limit,
     );
@@ -1456,7 +1454,6 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
         const resolution = try credentials.resolveForProvider(
             alloc,
             state.cfg.gateway_provider.oauth_transport,
-            state.cfg.secret_store,
             .refresh_if_needed,
             state.provider,
             preferred,

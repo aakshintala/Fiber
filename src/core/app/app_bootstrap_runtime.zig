@@ -197,10 +197,6 @@ pub fn Runtime(comptime App: type) type {
                 .startup_min_body_rows = ui_render.welcome_message_reserved_rows,
                 .default_model = default_model,
                 .default_agent_step_limit = default_agent_step_limit,
-                .secret_store = if (comptime @hasDecl(App, "secretStore"))
-                    app.secretStore()
-                else
-                    host.unavailable_secret_store,
                 .resize_handler = resize_handler,
                 .fx_version = App.app_version,
             });

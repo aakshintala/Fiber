@@ -4,7 +4,6 @@ const command_admission = @import("../core/permissions/command_admission.zig");
 const auth_runtime = @import("../core/auth/auth_runtime.zig");
 const credentials = @import("../core/auth/credentials.zig");
 const model_provider = @import("../core/config/model_provider.zig");
-const host = @import("../core/hosts/host.zig");
 const io_mod = @import("../core/shared/io.zig");
 const image_attachments = @import("../core/images/image_attachments.zig");
 const jsonrpc = @import("jsonrpc.zig");
@@ -337,7 +336,6 @@ const AcpContext = struct {
             .provider = session.provider,
             .provider_capabilities = provider_capabilities,
             .oauth_transport = self.state.cfg.gateway_provider.oauth_transport,
-            .secret_store = self.state.cfg.secret_store,
             .model = session.model,
             .gateway_retry_count = self.state.cfg.gateway_retry_count,
             .gateway_chat_url = self.state.cfg.gateway_chat_url,
@@ -3661,7 +3659,6 @@ fn testServerConfig() server.Config {
         .gateway_models_path = "/models",
         .gateway_provider = test_builtin_gateway.provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
-        .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{
             .system_prompt = "test",
             .model_prompt_overlay_fn = testModelPromptOverlay,

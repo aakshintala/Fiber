@@ -5,7 +5,6 @@ const command_admission = @import("../permissions/command_admission.zig");
 const permission_auto_classifier = @import("../permissions/auto_classifier.zig");
 const app_callbacks = @import("app_callbacks.zig");
 const runtime_profile = @import("../hosts/runtime_profile.zig");
-const host = @import("../hosts/host.zig");
 const app_permission_runtime = @import("app_permission_runtime.zig");
 const app_session_runtime = @import("app_session_runtime.zig");
 const provider_runtime = @import("provider_runtime.zig");
@@ -207,10 +206,6 @@ pub fn Runtime(comptime App: type) type {
                 .provider = selected_provider,
                 .provider_capabilities = provider_capabilities,
                 .oauth_transport = app.auth.oauthTransport(),
-                .secret_store = if (comptime @hasDecl(@TypeOf(app.auth), "secretStore"))
-                    app.auth.secretStore()
-                else
-                    host.unavailable_secret_store,
                 .model = provider_runtime.model(app),
                 .gateway_retry_count = gateway_retry_count,
                 .gateway_chat_url = gateway_chat_url,

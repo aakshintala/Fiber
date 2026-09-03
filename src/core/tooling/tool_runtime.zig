@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const agent_stream_provider = @import("../agent/stream_provider.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
 const oauth_transport = @import("../auth/oauth_transport.zig");
-const host_mod = @import("../hosts/host.zig");
 const command_contract = @import("../execution/command_contract.zig");
 const command_environment = @import("../execution/command_environment.zig");
 const managed_execution = @import("../execution/managed_execution.zig");
@@ -126,7 +125,6 @@ pub const Context = struct {
     provider: model_provider.ProviderId = .codex,
     provider_capabilities: provider_set.Bundle.Capabilities = .{ .vision_fallback = true },
     oauth_transport: oauth_transport.Provider = oauth_transport.unavailable_provider,
-    secret_store: host_mod.SecretStore = host_mod.unavailable_secret_store,
     model: []const u8,
     permission_review_turn: ?permission_auto_classifier.ReviewTurnContext = null,
     root_user_intent_context: []const u8 = "",

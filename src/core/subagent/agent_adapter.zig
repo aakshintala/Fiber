@@ -149,7 +149,6 @@ pub fn run(
         const resolution = credentials.resolveForProvider(
             turn.alloc,
             config.tool_context.oauth_transport,
-            config.tool_context.secret_store,
             .refresh_if_needed,
             admission.provider,
             config.tool_context.credential_source,

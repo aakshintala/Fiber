@@ -77,117 +77,11 @@ fn ignoreTerminalTitleSet(_: ?*anyopaque, _: []const u8) void {}
 
 fn ignoreTerminalTitleClear(_: ?*anyopaque) void {}
 
-pub const SecretStoreLoadError = std.mem.Allocator.Error || error{
-    StoredKeyInsecure,
-    StoredKeyUnreadable,
-};
-
-pub const SecretStoreWriteError = std.mem.Allocator.Error || error{
-    StoredKeyWriteFailed,
-};
-
 pub const SecretStorePresence = enum {
     present,
     missing,
     unavailable,
 };
-
-pub const SecretStore = struct {
-    context: ?*anyopaque = null,
-    backend_label: []const u8,
-    is_disabled_fn: *const fn (?*anyopaque) bool,
-    presence_fn: *const fn (?*anyopaque) SecretStorePresence = unavailableSecretStorePresence,
-    load_fn: *const fn (
-        ?*anyopaque,
-        std.mem.Allocator,
-    ) SecretStoreLoadError!?[]u8,
-    store_fn: *const fn (
-        ?*anyopaque,
-        std.mem.Allocator,
-        []const u8,
-    ) SecretStoreWriteError!void,
-    store_interactive_fn: *const fn (
-        ?*anyopaque,
-    ) SecretStoreWriteError!bool,
-
-    pub fn isDisabled(self: SecretStore) bool {
-        return self.is_disabled_fn(self.context);
-    }
-
-    /// Reports only whether a secret exists. No secret bytes are returned or
-    /// transferred across this host boundary.
-    pub fn presence(self: SecretStore) SecretStorePresence {
-        return self.presence_fn(self.context);
-    }
-
-    /// Returns an owned secret, or null when none is stored. The caller must
-    /// zero and free a returned secret with the allocator passed to this call.
-    pub fn load(
-        self: SecretStore,
-        alloc: std.mem.Allocator,
-    ) SecretStoreLoadError!?[]u8 {
-        return self.load_fn(self.context, alloc);
-    }
-
-    /// Borrows `value` for this call. The caller retains ownership.
-    pub fn store(
-        self: SecretStore,
-        alloc: std.mem.Allocator,
-        value: []const u8,
-    ) SecretStoreWriteError!void {
-        return self.store_fn(self.context, alloc, value);
-    }
-
-    /// Lets the host collect and store a secret without exposing its bytes to
-    /// Core. Returns false when the host has no interactive secret prompt.
-    pub fn storeInteractive(
-        self: SecretStore,
-    ) SecretStoreWriteError!bool {
-        return self.store_interactive_fn(self.context);
-    }
-};
-
-pub const unavailable_secret_store: SecretStore = .{
-    .backend_label = "configured credential store",
-    .is_disabled_fn = unavailableSecretStoreIsDisabled,
-    .presence_fn = missingSecretStorePresence,
-    .load_fn = unavailableSecretStoreLoad,
-    .store_fn = unavailableSecretStoreWrite,
-    .store_interactive_fn = unavailableSecretStoreInteractiveWrite,
-};
-
-fn unavailableSecretStoreIsDisabled(_: ?*anyopaque) bool {
-    return false;
-}
-
-fn unavailableSecretStorePresence(_: ?*anyopaque) SecretStorePresence {
-    return .unavailable;
-}
-
-fn missingSecretStorePresence(_: ?*anyopaque) SecretStorePresence {
-    return .missing;
-}
-
-fn unavailableSecretStoreLoad(
-    _: ?*anyopaque,
-    _: std.mem.Allocator,
-) SecretStoreLoadError!?[]u8 {
-    return null;
-}
-
-fn unavailableSecretStoreWrite(
-    _: ?*anyopaque,
-    _: std.mem.Allocator,
-    _: []const u8,
-) SecretStoreWriteError!void {
-    return error.StoredKeyWriteFailed;
-}
-
-fn unavailableSecretStoreInteractiveWrite(
-    _: ?*anyopaque,
-) SecretStoreWriteError!bool {
-    return false;
-}
 
 pub const ClipboardError = error{CopyFailed};
 
@@ -344,16 +238,6 @@ test "unavailable URL opener keeps the manual fallback available" {
         std.testing.allocator,
         "https://example.test",
     ));
-}
-
-test "unavailable secret store reports absence and refuses writes" {
-    try std.testing.expect(!unavailable_secret_store.isDisabled());
-    try std.testing.expect((try unavailable_secret_store.load(std.testing.allocator)) == null);
-    try std.testing.expectError(
-        error.StoredKeyWriteFailed,
-        unavailable_secret_store.store(std.testing.allocator, "secret"),
-    );
-    try std.testing.expect(!try unavailable_secret_store.storeInteractive());
 }
 
 test "unavailable clipboard rejects text and file references" {

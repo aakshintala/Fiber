@@ -3,7 +3,6 @@ const config_runtime = @import("../config/config_runtime.zig");
 const process_provider = @import("../execution/process_provider.zig");
 const gateway_provider = @import("../gateway/gateway_provider.zig");
 const provider_set = @import("../gateway/provider_set.zig");
-const host = @import("../hosts/host.zig");
 const mode_registry = @import("../modes/mode_registry.zig");
 const prompt_policy = @import("../config/prompt_policy.zig");
 const context_contract = @import("../workspace/context_contract.zig");
@@ -19,7 +18,6 @@ pub const Config = struct {
     gateway_provider: gateway_provider.Provider,
     provider_set: provider_set.Set,
     process_provider: process_provider.Provider = process_provider.unavailable_provider,
-    secret_store: host.SecretStore,
     prompt_policy: prompt_policy.Policy,
     ignored_list_entries: []const []const u8,
     max_list_entries: usize,

@@ -2,7 +2,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const chatgpt_oauth = @import("chatgpt_oauth.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
-const host = @import("../hosts/host.zig");
 const io_mod = @import("../shared/io.zig");
 const model_provider = @import("../config/model_provider.zig");
 const oauth_transport = @import("oauth_transport.zig");
@@ -158,22 +157,18 @@ pub const Resolution = struct {
 pub fn resolve(
     alloc: std.mem.Allocator,
     transport: oauth_transport.Provider,
-    secret_store: host.SecretStore,
     mode: LoadMode,
 ) !Resolution {
-    _ = secret_store;
-    return resolveForProvider(alloc, transport, undefined, mode, .codex, null);
+    return resolveForProvider(alloc, transport, mode, .codex, null);
 }
 
 pub fn resolveForProvider(
     alloc: std.mem.Allocator,
     transport: oauth_transport.Provider,
-    secret_store: host.SecretStore,
     mode: LoadMode,
     provider: model_provider.ProviderId,
     preferred: ?Source,
 ) !Resolution {
-    _ = secret_store;
     _ = preferred;
     switch (provider) {
         .codex => {

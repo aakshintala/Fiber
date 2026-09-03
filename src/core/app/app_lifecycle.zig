@@ -241,7 +241,6 @@ pub const BootstrapConfig = struct {
     startup_min_body_rows: u16 = 0,
     default_model: []const u8,
     default_agent_step_limit: usize,
-    secret_store: host.SecretStore,
     resize_handler: ResizeHandler,
     fx_version: []const u8 = "",
 };
@@ -249,17 +248,16 @@ pub const BootstrapConfig = struct {
 pub fn loadStartupState(
     alloc: Allocator,
     transport: oauth_transport.Provider,
-    secret_store: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !StartupState {
     const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-    return loadStartupStateFromOwnedWorkspace(alloc, transport, secret_store, workspace_root, default_model, default_agent_step_limit, null, .refresh_if_needed);
+    return loadStartupStateFromOwnedWorkspace(alloc, transport, workspace_root, default_model, default_agent_step_limit, null, .refresh_if_needed);
 }
 
 pub fn loadStartupStateWithoutCredentials(alloc: Allocator, default_model: []const u8, default_agent_step_limit: usize) !StartupState {
     const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, workspace_root, default_model, default_agent_step_limit, null, null);
+    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, workspace_root, default_model, default_agent_step_limit, null, null);
 }
 
 pub fn loadEmbeddedStartupState(
@@ -273,7 +271,6 @@ pub fn loadEmbeddedStartupState(
     return loadStartupStateFromOwnedWorkspace(
         alloc,
         oauth_transport.unavailable_provider,
-        host.unavailable_secret_store,
         owned_workspace_root,
         default_model,
         default_agent_step_limit,
@@ -284,17 +281,15 @@ pub fn loadEmbeddedStartupState(
 
 pub fn loadCatalogStartupState(
     alloc: Allocator,
-    secret_store: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !StartupState {
     const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, secret_store, workspace_root, default_model, default_agent_step_limit, null, .stored);
+    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, workspace_root, default_model, default_agent_step_limit, null, .stored);
 }
 
 pub fn loadStartupStatus(
     alloc: Allocator,
-    secret_store: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !StartupStatus {
@@ -312,7 +307,6 @@ pub fn loadStartupStatus(
 
     var auth_status = try auth_runtime.loadStatusSnapshotForProvider(
         alloc,
-        secret_store,
         configured_selection.provider,
         settings.credential_source,
     );
@@ -349,7 +343,7 @@ pub fn applyWorkspaceLaunch(
 
 fn loadStartupStateForWorkspace(alloc: Allocator, workspace_root: []const u8, default_model: []const u8, default_agent_step_limit: usize) !StartupState {
     const owned_workspace_root = try alloc.dupe(u8, workspace_root);
-    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, owned_workspace_root, default_model, default_agent_step_limit, null, null);
+    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, owned_workspace_root, default_model, default_agent_step_limit, null, null);
 }
 
 const CredentialLoadMode = credentials.LoadMode;
@@ -357,7 +351,6 @@ const CredentialLoadMode = credentials.LoadMode;
 fn loadStartupStateFromOwnedWorkspace(
     alloc: Allocator,
     transport: oauth_transport.Provider,
-    secret_store: host.SecretStore,
     owned_workspace_root: []u8,
     default_model: []const u8,
     default_agent_step_limit: usize,
@@ -398,7 +391,6 @@ fn loadStartupStateFromOwnedWorkspace(
         const resolution = try credentials.resolveForProvider(
             alloc,
             transport,
-            secret_store,
             mode,
             state.provider,
             settings.credential_source,
@@ -478,7 +470,6 @@ pub fn bootstrapInteractiveApp(cfg: BootstrapConfig) !StartupState {
 
     var state = try loadCatalogStartupState(
         cfg.alloc,
-        cfg.secret_store,
         cfg.default_model,
         cfg.default_agent_step_limit,
     );
@@ -1836,7 +1827,6 @@ test "loadStartupState applies core env overrides" {
     var state = try loadStartupState(
         std.testing.allocator,
         oauth_transport.unavailable_provider,
-        host.unavailable_secret_store,
         "default-model",
         12,
     );

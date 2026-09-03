@@ -301,7 +301,6 @@ pub fn Runtime(comptime App: type) type {
             const resolution = try credentials.resolveForProvider(
                 app.alloc,
                 app.auth.oauthTransport(),
-                app.auth.secretStore(),
                 .refresh_if_needed,
                 .codex,
                 null,

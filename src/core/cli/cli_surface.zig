@@ -155,7 +155,6 @@ pub const Config = struct {
     provider_set: provider_set.Set,
     process_provider: execution_process_provider.Provider = execution_process_provider.unavailable_provider,
     url_opener: host.UrlOpener,
-    secret_store: host.SecretStore,
     prompt_policy: prompt_policy.Policy,
     skill_root_policy: skill_contract.RootPolicy,
     ignored_list_entries: []const []const u8,
@@ -273,10 +272,10 @@ const WorkflowOptions = struct {
 };
 
 const WriteFn = *const fn (?*anyopaque, []const u8) anyerror!void;
-const LoadStartupStateFn = *const fn (Allocator, oauth_transport.Provider, host.SecretStore, []const u8, usize) anyerror!app_lifecycle.StartupState;
-const LoadCatalogStartupStateFn = *const fn (Allocator, host.SecretStore, []const u8, usize) anyerror!app_lifecycle.StartupState;
+const LoadStartupStateFn = *const fn (Allocator, oauth_transport.Provider, []const u8, usize) anyerror!app_lifecycle.StartupState;
+const LoadCatalogStartupStateFn = *const fn (Allocator, []const u8, usize) anyerror!app_lifecycle.StartupState;
 const LoadStartupStateWithoutCredentialsFn = *const fn (Allocator, []const u8, usize) anyerror!app_lifecycle.StartupState;
-const LoadStartupStatusFn = *const fn (Allocator, host.SecretStore, []const u8, usize) anyerror!app_lifecycle.StartupStatus;
+const LoadStartupStatusFn = *const fn (Allocator, []const u8, usize) anyerror!app_lifecycle.StartupStatus;
 const GetenvFn = *const fn (?*anyopaque, []const u8) ?[]const u8;
 const EnvironMapFn = *const fn (?*anyopaque) ?*const std.process.Environ.Map;
 const SelfExePathFn = *const fn (?*anyopaque, Allocator) anyerror![]u8;
@@ -595,7 +594,6 @@ fn activateProviderSelection(
     var resolution = try credentials.resolveForProvider(
         alloc,
         cfg.gateway_provider.oauth_transport,
-        cfg.secret_store,
         .refresh_if_needed,
         .codex,
         null,
@@ -739,7 +737,6 @@ fn runNonInteractiveWithDeps(
                 .gateway_provider = cfg.gateway_provider,
                 .provider_set = cfg.provider_set,
                 .process_provider = cfg.process_provider,
-                .secret_store = cfg.secret_store,
                 .prompt_policy = cfg.prompt_policy,
                 .ignored_list_entries = cfg.ignored_list_entries,
                 .max_list_entries = cfg.max_list_entries,
@@ -819,7 +816,6 @@ fn runNonInteractiveWithDeps(
             };
             var startup = try deps.load_startup_status(
                 alloc,
-                cfg.secret_store,
                 cfg.default_model,
                 cfg.default_agent_step_limit,
             );
@@ -880,7 +876,6 @@ fn runNonInteractiveWithDeps(
 
             var startup = try deps.load_catalog_startup_state(
                 alloc,
-                cfg.secret_store,
                 cfg.default_model,
                 cfg.default_agent_step_limit,
             );
@@ -949,7 +944,6 @@ fn runNonInteractiveWithDeps(
             defer mcp_inspection.deinit(alloc);
             var snapshot = try doctor_runtime.collect(
                 alloc,
-                cfg.secret_store,
                 cfg.default_model,
                 cfg.default_agent_step_limit,
                 mcp_inspection.profile_diagnostic,
@@ -2502,7 +2496,6 @@ fn workflowConfig(cfg: Config) @import("cli_ask.zig").Config {
         .gateway_provider = cfg.gateway_provider,
         .provider_set = cfg.provider_set,
         .process_provider = cfg.process_provider,
-        .secret_store = cfg.secret_store,
         .prompt_policy = cfg.prompt_policy,
         .skill_root_policy = cfg.skill_root_policy,
         .ignored_list_entries = cfg.ignored_list_entries,
@@ -4529,7 +4522,6 @@ fn testConfig() Config {
         .gateway_provider = test_builtin_gateway.provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
-        .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "system" },
         .skill_root_policy = .{ .managed_root_source = .global_fx },
         .ignored_list_entries = &.{},
@@ -4556,7 +4548,6 @@ fn testConfig() Config {
 fn stubLoadStartupState(
     alloc: Allocator,
     _: oauth_transport.Provider,
-    _: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !app_lifecycle.StartupState {
@@ -4594,16 +4585,14 @@ fn failingStartupStateWithoutCredentials(
 
 fn stubLoadCatalogStartupState(
     alloc: Allocator,
-    secret_store: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !app_lifecycle.StartupState {
-    return stubLoadStartupState(alloc, oauth_transport.unavailable_provider, secret_store, default_model, default_agent_step_limit);
+    return stubLoadStartupState(alloc, oauth_transport.unavailable_provider, default_model, default_agent_step_limit);
 }
 
 fn stubLoadStartupStatus(
     alloc: Allocator,
-    _: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !app_lifecycle.StartupStatus {
@@ -4623,7 +4612,6 @@ fn stubLoadStartupStatus(
 fn failingStartupState(
     _: Allocator,
     _: oauth_transport.Provider,
-    _: host.SecretStore,
     _: []const u8,
     _: usize,
 ) !app_lifecycle.StartupState {

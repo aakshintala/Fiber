@@ -18,7 +18,6 @@ const workspace_config = @import("../core/mcp/workspace_config.zig");
 const config_runtime = @import("../core/config/config_runtime.zig");
 const model_catalog = @import("../core/gateway/model_catalog.zig");
 const provider_set = @import("../core/gateway/provider_set.zig");
-const host = @import("../core/hosts/host.zig");
 const image_attachments = @import("../core/images/image_attachments.zig");
 const credentials = @import("../core/auth/credentials.zig");
 const model_provider = @import("../core/config/model_provider.zig");
@@ -1395,7 +1394,6 @@ fn acpSessionTestConfig() server.Config {
         .gateway_models_path = "/v1/models",
         .gateway_provider = test_builtin_gateway.provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
-        .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "test" },
         .ignored_list_entries = &.{},
         .max_list_entries = 100,

@@ -361,7 +361,6 @@ var resize_interlock = shell_runtime.ResizeApprovalInterlock{};
 const default_context_registry = context_contract.Registry{ .default_provider = builtin_context.provider };
 const selected_host_profile = host_runtime_profile.native;
 const app_oauth_transport = builtin_gateway.oauth_transport_provider;
-const app_secret_store = host.unavailable_secret_store;
 fn currentBuild() update_target.CurrentBuild {
     return .{
         .channel = compiled_update_channel,
@@ -442,10 +441,6 @@ const App = struct {
         });
     }
 
-    pub fn secretStore(self: *const Self) host.SecretStore {
-        return self.auth.secret_store;
-    }
-
     pub fn clipboard(_: *const Self) host.Clipboard {
         return if (comptime host_profile.clipboard) native_host.clipboard else host.unavailable_clipboard;
     }
@@ -459,7 +454,6 @@ const App = struct {
 
     auth: auth_runtime.Runtime = auth_runtime.Runtime.init(
         app_oauth_transport,
-        app_secret_store,
     ),
     provider_selection: provider_runtime.Runtime = provider_runtime.Runtime.init(std.heap.c_allocator),
     model_cache: model_cache_runtime.Runtime = model_cache_runtime.Runtime.init(std.heap.c_allocator, codex_models_path),
@@ -544,7 +538,6 @@ const App = struct {
         auth_runtime.Runtime.initInto(
             &app.auth,
             app_oauth_transport,
-            app_secret_store,
         );
         usage_dashboard_runtime.Runtime.initInto(&app.usage_dashboard, std.heap.c_allocator);
         app_session_runtime.Persistence.initInto(&app.session_persistence);
@@ -3420,7 +3413,6 @@ fn fullEntryConfig() app_entry_runtime.Config {
         .provider_set = builtin_providers.native,
         .process_provider = shell_process_provider.provider,
         .url_opener = url_opener.native_opener,
-        .secret_store = host.unavailable_secret_store,
         .prompt_policy = builtin_context.prompt_policy,
         .skill_root_policy = builtin_skills.root_policy,
         .ignored_list_entries = &ignored_list_entries,
@@ -3458,7 +3450,6 @@ fn localEntryConfig() app_entry_runtime.Config {
         .provider_set = builtin_providers.native,
         .process_provider = shell_process_provider.provider,
         .url_opener = url_opener.native_opener,
-        .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "" },
         .skill_root_policy = builtin_skills.root_policy,
         .ignored_list_entries = &.{},
@@ -3496,7 +3487,6 @@ fn emptyEntryConfig() app_entry_runtime.Config {
         .provider_set = builtin_providers.native,
         .process_provider = shell_process_provider.provider,
         .url_opener = url_opener.native_opener,
-        .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "" },
         .skill_root_policy = builtin_skills.root_policy,
         .ignored_list_entries = &.{},

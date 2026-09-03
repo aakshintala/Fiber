@@ -69,7 +69,6 @@ pub const Config = struct {
     provider_set: provider_set.Set,
     process_provider: process_provider.Provider = process_provider.unavailable_provider,
     url_opener: host.UrlOpener,
-    secret_store: host.SecretStore,
     prompt_policy: prompt_policy.Policy,
     skill_root_policy: skill_contract.RootPolicy,
     ignored_list_entries: []const []const u8,
@@ -384,7 +383,6 @@ fn cliSurfaceConfig(cfg: Config) cli_surface.Config {
         .provider_set = cfg.provider_set,
         .process_provider = cfg.process_provider,
         .url_opener = cfg.url_opener,
-        .secret_store = cfg.secret_store,
         .prompt_policy = cfg.prompt_policy,
         .skill_root_policy = cfg.skill_root_policy,
         .ignored_list_entries = cfg.ignored_list_entries,
@@ -504,7 +502,6 @@ fn testConfig() Config {
         .gateway_provider = test_builtin_gateway.provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
-        .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "system" },
         .skill_root_policy = .{ .managed_root_source = .global_fx },
         .ignored_list_entries = &.{ ".git", "zig-out" },
@@ -780,9 +777,7 @@ test "app entry returns after handled CLI success without initializing app" {
     };
     var cfg = testConfig();
     var url_opener_context: u8 = 0;
-    var secret_store_context: u8 = 0;
     cfg.url_opener.context = &url_opener_context;
-    cfg.secret_store.context = &secret_store_context;
     cfg.skill_root_policy.workspace_roots = &skill_roots;
     const outcome = try runWithDeps(TestApp, alloc, &.{@constCast("help")}, cfg, capture.deps());
 
@@ -799,8 +794,6 @@ test "app entry returns after handled CLI success without initializing app" {
     try std.testing.expect(capture.seen_config.?.provider_set.codex.model_catalog.?.fetch_fn == test_builtin_gateway.provider_bundle.model_catalog.?.fetch_fn);
     try std.testing.expect(capture.seen_config.?.url_opener.context == cfg.url_opener.context);
     try std.testing.expect(capture.seen_config.?.url_opener.open_fn == cfg.url_opener.open_fn);
-    try std.testing.expect(capture.seen_config.?.secret_store.context == cfg.secret_store.context);
-    try std.testing.expect(capture.seen_config.?.secret_store.load_fn == cfg.secret_store.load_fn);
     try std.testing.expect(capture.seen_config.?.inspect_mcp_profile_config == noMcpConfigInspectionForTest);
     try std.testing.expect(capture.seen_config.?.load_mcp_runtime == noMcpRuntimeForTest);
     try std.testing.expectEqual(@as(usize, 0), test_event_count);

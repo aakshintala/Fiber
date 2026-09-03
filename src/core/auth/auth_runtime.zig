@@ -1,7 +1,6 @@
 const std = @import("std");
 const credentials = @import("credentials.zig");
 const chatgpt_oauth = @import("chatgpt_oauth.zig");
-const host = @import("../hosts/host.zig");
 const login_flow = @import("login_flow.zig");
 const model_provider = @import("../config/model_provider.zig");
 const oauth_transport = @import("oauth_transport.zig");
@@ -109,7 +108,7 @@ pub fn refreshCredentialTokenForAccount(
 
     var credential = switch (source) {
         .chatgpt_subscription => switch (mode) {
-            .if_needed => (try credentials.resolveForProvider(alloc, transport, undefined, .refresh_if_needed, .codex, null)).credential orelse return null,
+            .if_needed => (try credentials.resolveForProvider(alloc, transport, .refresh_if_needed, .codex, null)).credential orelse return null,
             .force => (try credentials.refreshChatGptCredential(alloc, transport)) orelse return null,
         },
     };
@@ -291,15 +290,13 @@ pub const StatusSnapshot = struct {
 
 pub fn loadStatusSnapshot(
     alloc: Allocator,
-    secret_store: host.SecretStore,
     preferred: ?credentials.Source,
 ) !StatusSnapshot {
-    return loadStatusSnapshotForProvider(alloc, secret_store, null, preferred);
+    return loadStatusSnapshotForProvider(alloc, null, preferred);
 }
 
 pub fn loadStatusSnapshotForProvider(
     alloc: Allocator,
-    secret_store: host.SecretStore,
     provider: ?model_provider.ProviderId,
     preferred: ?credentials.Source,
 ) !StatusSnapshot {
@@ -314,7 +311,6 @@ pub fn loadStatusSnapshotForProvider(
     const resolution = credentials.resolveForProvider(
         alloc,
         oauth_transport.unavailable_provider,
-        secret_store,
         .stored,
         provider orelse .codex,
         null,
@@ -359,7 +355,6 @@ pub const Runtime = struct {
     const Self = @This();
 
     oauth_transport: oauth_transport.Provider = oauth_transport.unavailable_provider,
-    secret_store: host.SecretStore = host.unavailable_secret_store,
     selected_credential: ?credentials.Credential = null,
     credential_refresh_failure_source: ?credentials.Source = null,
     source_inventory: SourceSet = .empty,
@@ -375,11 +370,9 @@ pub const Runtime = struct {
 
     pub fn init(
         transport: oauth_transport.Provider,
-        secret_store: host.SecretStore,
     ) Self {
         return .{
             .oauth_transport = transport,
-            .secret_store = secret_store,
         };
     }
 
@@ -388,11 +381,9 @@ pub const Runtime = struct {
     pub fn initInto(
         storage: *Self,
         transport: oauth_transport.Provider,
-        secret_store: host.SecretStore,
     ) void {
         storage.* = undefined;
         storage.oauth_transport = transport;
-        storage.secret_store = secret_store;
         storage.selected_credential = null;
         storage.credential_refresh_failure_source = null;
         storage.source_inventory = .empty;
@@ -432,10 +423,6 @@ pub const Runtime = struct {
 
     pub fn oauthTransport(self: *const Self) oauth_transport.Provider {
         return self.oauth_transport;
-    }
-
-    pub fn secretStore(self: *const Self) host.SecretStore {
-        return self.secret_store;
     }
 
     pub fn modelCatalogAccess(self: *const Self) credentials.CatalogAccess {
@@ -937,7 +924,7 @@ fn probeCredentialSourceForLogout(raw_context: ?*anyopaque, alloc: Allocator, so
 
 fn loadRuntimeCredentialSource(_: ?*anyopaque, alloc: Allocator, source: credentials.Source) !?credentials.Credential {
     return switch (source) {
-        .chatgpt_subscription => (try credentials.resolveForProvider(alloc, oauth_transport.unavailable_provider, undefined, .stored, .codex, null)).credential,
+        .chatgpt_subscription => (try credentials.resolveForProvider(alloc, oauth_transport.unavailable_provider, .stored, .codex, null)).credential,
     };
 }
 
@@ -952,7 +939,6 @@ test "auth in-place initialization preserves empty runtime state" {
     Runtime.initInto(
         &runtime,
         oauth_transport.unavailable_provider,
-        host.unavailable_secret_store,
     );
     defer runtime.deinit(std.testing.allocator);
 
@@ -967,7 +953,7 @@ test "auth in-place initialization preserves empty runtime state" {
 
 test "picker root offers connections and the onboarding picker offers skip" {
     var runtime: Runtime = undefined;
-    Runtime.initInto(&runtime, oauth_transport.unavailable_provider, host.unavailable_secret_store);
+    Runtime.initInto(&runtime, oauth_transport.unavailable_provider);
     defer runtime.deinit(std.testing.allocator);
 
     runtime.openPicker();
@@ -998,7 +984,7 @@ test "picker root offers connections and the onboarding picker offers skip" {
 
 test "model catalog access distinguishes missing and present credentials" {
     var runtime: Runtime = undefined;
-    Runtime.initInto(&runtime, oauth_transport.unavailable_provider, host.unavailable_secret_store);
+    Runtime.initInto(&runtime, oauth_transport.unavailable_provider);
     defer runtime.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(credentials.CatalogPublicOnlyReason.no_credential, runtime.modelCatalogAccess().publicOnlyReason().?);
@@ -1006,7 +992,7 @@ test "model catalog access distinguishes missing and present credentials" {
 
 test "credential refresh failure is surfaced through catalog access" {
     var runtime: Runtime = undefined;
-    Runtime.initInto(&runtime, oauth_transport.unavailable_provider, host.unavailable_secret_store);
+    Runtime.initInto(&runtime, oauth_transport.unavailable_provider);
     defer runtime.deinit(std.testing.allocator);
 
     runtime.credential_refresh_failure_source = .chatgpt_subscription;
