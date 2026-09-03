@@ -14,13 +14,9 @@ import unittest
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "sign-and-notarize-macos.sh"
 RELEASE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "release.yml"
-PUBLISH_LIBFX_WORKFLOW_PATH = (
-    REPO_ROOT / ".github" / "workflows" / "publish-libfx.yml"
-)
 PGSO_WORKFLOW_PATH = (
     REPO_ROOT / ".github" / "workflows" / "pgso-macos-arm64.yml"
 )
-DEV_RELEASE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "dev-release.yml"
 PGSO_SETUP_ACTION_PATH = REPO_ROOT / ".github" / "actions" / "setup-pgso" / "action.yml"
 SIGNING_IDENTITY = "Developer ID Application: Vercel, Inc (JW6Y669B67)"
 TEST_CDHASH = "0123456789abcdef0123456789abcdef01234567"
@@ -460,26 +456,12 @@ else:
 
 
 class MacosSigningWorkflowTests(unittest.TestCase):
-    def test_every_privileged_publish_job_uses_an_environment_gate(self) -> None:
-        release = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
-        publish_libfx = PUBLISH_LIBFX_WORKFLOW_PATH.read_text(encoding="utf-8")
-
-        release_job = release.split("  release:\n", 1)[1]
-        npm_publish_job = publish_libfx.split("  publish:\n", 1)[1]
-
-        self.assertIn("environment: release", release_job)
-        self.assertIn("environment: npm", npm_publish_job)
-
     def test_stable_release_is_the_only_workflow_with_signing_secrets(self) -> None:
         release = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
         pgso = PGSO_WORKFLOW_PATH.read_text(encoding="utf-8")
-        dev_release = DEV_RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-        self.assertIn("build-macos-x86_64:", release)
-        self.assertIn("runs-on: macos-15-intel", release)
         self.assertIn("sign-macos-arm64:", release)
-        self.assertEqual(2, release.count("environment: apple-signing"))
-        self.assertIn("scripts/sign-and-notarize-macos.sh zig-out/bin/fx", release)
+        self.assertEqual(1, release.count("environment: apple-signing"))
         self.assertNotIn("sign-stable-release:", pgso)
         self.assertNotIn("package_release", pgso)
         self.assertNotIn("environment: apple-signing", pgso)
@@ -499,7 +481,7 @@ class MacosSigningWorkflowTests(unittest.TestCase):
         self.assertIn("needs: [check-version, build-macos-arm64]", sign_release)
         self.assertIn("environment: apple-signing", sign_release)
         self.assertIn(
-            "needs: [check-version, build-linux, build-macos-x86_64, sign-macos-arm64]",
+            "needs: [check-version, build-linux, sign-macos-arm64]",
             release,
         )
         workflow_call = pgso.split("  workflow_dispatch:\n", 1)[0]
@@ -530,9 +512,7 @@ class MacosSigningWorkflowTests(unittest.TestCase):
             self.assertNotIn(secret_name, workflow_call)
             self.assertNotIn(secret_name, aggregate)
             self.assertNotIn(secret_name, pgso)
-            self.assertNotIn(secret_name, dev_release)
         self.assertNotIn("sign-and-notarize-macos", pgso)
-        self.assertNotIn("sign-and-notarize-macos", dev_release)
 
     def test_pgso_release_chain_pins_every_external_action(self) -> None:
         mutable_references: list[str] = []

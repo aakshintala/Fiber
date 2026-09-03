@@ -249,7 +249,6 @@ class BinarySizeWorkflowTests(unittest.TestCase):
         for name, target, runner in (
             ("linux-x86_64", "x86_64-linux", "ubuntu-24.04"),
             ("linux-aarch64", "aarch64-linux", "ubuntu-24.04-arm"),
-            ("macos-x86_64", "x86_64-macos", "macos-15-intel"),
             ("macos-aarch64", "aarch64-macos", "macos-15"),
         ):
             self.assertIn(f"name: {name}", workflow)
