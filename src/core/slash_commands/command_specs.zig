@@ -40,7 +40,6 @@ pub const SlashKind = enum {
     images,
     model,
     permissions,
-    allowlist,
     usage,
     undo,
     mcp,
@@ -558,9 +557,6 @@ pub fn slashCompletionPrefix(registry: SlashRegistry, input: []const u8) ?[]cons
 }
 
 pub fn slashCompletionCount(registry: SlashRegistry, prefix: []const u8) usize {
-    if (allowlistArgCompletionPrefix(prefix)) |query| {
-        return allowlistArgCompletionCount(query);
-    }
     if (statuslineArgCompletionPrefix(prefix)) |query| {
         return statuslineArgCompletionCount(query);
     }
@@ -583,9 +579,6 @@ pub fn slashCompletionCount(registry: SlashRegistry, prefix: []const u8) usize {
 }
 
 pub fn nthSlashCompletion(registry: SlashRegistry, prefix: []const u8, n: usize) ?[]const u8 {
-    if (allowlistArgCompletionPrefix(prefix)) |query| {
-        return nthAllowlistArgCompletion(query, n);
-    }
     if (statuslineArgCompletionPrefix(prefix)) |query| {
         return nthStatuslineArgCompletion(query, n);
     }
@@ -610,7 +603,6 @@ pub fn argCompletionAnchor(prefix: []const u8) usize {
     if (notificationsArgCompletionPrefix(prefix) != null) return "/sound ".len;
     if (permissionsArgCompletionPrefix(prefix) != null) return "/permissions ".len;
     if (workspaceArgCompletionPrefix(prefix) != null) return "/workspace ".len;
-    if (allowlistArgCompletionAnchor(prefix)) |anchor| return anchor;
     return 0;
 }
 
@@ -619,9 +611,6 @@ pub fn argCompletionAnchor(prefix: []const u8) usize {
 /// shows only the argument. For everything else the
 /// full command string is returned unchanged.
 pub fn nthSlashCompletionLabel(registry: SlashRegistry, prefix: []const u8, n: usize) ?[]const u8 {
-    if (allowlistArgCompletionPrefix(prefix)) |query| {
-        return nthAllowlistArgLabel(query, n);
-    }
     if (statuslineArgCompletionPrefix(prefix)) |query| {
         return nthStatuslineArgLabel(query, n);
     }
@@ -638,7 +627,6 @@ pub fn nthSlashCompletionLabel(registry: SlashRegistry, prefix: []const u8, n: u
 }
 
 pub fn nthSlashCompletionDescription(registry: SlashRegistry, prefix: []const u8, n: usize) ?[]const u8 {
-    if (allowlistArgCompletionPrefix(prefix) != null) return null;
     if (statuslineArgCompletionPrefix(prefix) != null) return null;
     if (notificationsArgCompletionPrefix(prefix) != null) return null;
     if (permissionsArgCompletionPrefix(prefix) != null) return null;
@@ -654,7 +642,6 @@ pub fn nthSlashCompletionCategory(registry: SlashRegistry, prefix: []const u8, n
 }
 
 pub fn slashCompletionHasArgs(registry: SlashRegistry, command: []const u8) bool {
-    if (allowlistCompletionHasArgs(command)) return true;
     if (std.mem.eql(u8, command, "/workspace add") or
         std.mem.eql(u8, command, "/workspace remove")) return true;
     for (registry.commands) |spec| {
@@ -662,51 +649,6 @@ pub fn slashCompletionHasArgs(registry: SlashRegistry, command: []const u8) bool
         for (spec.aliases) |alias| {
             if (std.mem.eql(u8, alias, command)) return spec.has_args;
         }
-    }
-    return false;
-}
-
-fn allowlistCompletionHasArgs(command: []const u8) bool {
-    const completions_with_more_args = [_][]const u8{
-        "/allowlist add",
-        "/allowlist remove",
-        "/allowlist reset",
-        "/allowlist view",
-        "/allowlist local",
-        "/allowlist user",
-        "/allowlist local add",
-        "/allowlist local remove",
-        "/allowlist local reset",
-        "/allowlist user add",
-        "/allowlist user remove",
-        "/allowlist user reset",
-        "/allowlist add command",
-        "/allowlist add tool",
-        "/allowlist add url",
-        "/allowlist add web-fetch-domain",
-        "/allowlist remove command",
-        "/allowlist remove tool",
-        "/allowlist remove url",
-        "/allowlist remove web-fetch-domain",
-        "/allowlist local add command",
-        "/allowlist local add tool",
-        "/allowlist local add url",
-        "/allowlist local add web-fetch-domain",
-        "/allowlist local remove command",
-        "/allowlist local remove tool",
-        "/allowlist local remove url",
-        "/allowlist local remove web-fetch-domain",
-        "/allowlist user add command",
-        "/allowlist user add tool",
-        "/allowlist user add url",
-        "/allowlist user add web-fetch-domain",
-        "/allowlist user remove command",
-        "/allowlist user remove tool",
-        "/allowlist user remove url",
-        "/allowlist user remove web-fetch-domain",
-    };
-    for (completions_with_more_args) |completion| {
-        if (std.mem.eql(u8, command, completion)) return true;
     }
     return false;
 }
@@ -739,117 +681,12 @@ const workspace_arg_completions = [_][]const u8{
     "/workspace clear",
 };
 
-const allowlist_action_completions = [_][]const u8{
-    "/allowlist view",
-    "/allowlist add",
-    "/allowlist remove",
-    "/allowlist reset",
-    "/allowlist local",
-    "/allowlist user",
-};
-
-const allowlist_view_completions = [_][]const u8{
-    "/allowlist view effective",
-    "/allowlist view local",
-    "/allowlist view user",
-};
-
-const allowlist_scoped_action_suffixes = [_][]const u8{
-    "add",
-    "remove",
-    "reset",
-};
-
-const allowlist_add_kind_completions = [_][]const u8{
-    "/allowlist add command",
-    "/allowlist add tool",
-    "/allowlist add url",
-    "/allowlist add web-fetch-domain",
-};
-
-const allowlist_remove_kind_completions = [_][]const u8{
-    "/allowlist remove command",
-    "/allowlist remove tool",
-    "/allowlist remove url",
-    "/allowlist remove web-fetch-domain",
-};
-
-const allowlist_reset_scope_completions = [_][]const u8{
-    "/allowlist reset commands",
-    "/allowlist reset tools",
-    "/allowlist reset urls",
-    "/allowlist reset web-fetch-domains",
-    "/allowlist reset all",
-};
-
-const allowlist_add_tool_completions = [_][]const u8{
-    "/allowlist add tool read_file",
-    "/allowlist add tool write_file",
-    "/allowlist add tool edit_file",
-    "/allowlist add tool glob_files",
-    "/allowlist add tool grep_files",
-    "/allowlist add tool skill",
-    "/allowlist add tool install_skill",
-    "/allowlist add tool subagent",
-};
-
-const allowlist_remove_tool_completions = [_][]const u8{
-    "/allowlist remove tool read_file",
-    "/allowlist remove tool write_file",
-    "/allowlist remove tool edit_file",
-    "/allowlist remove tool glob_files",
-    "/allowlist remove tool grep_files",
-    "/allowlist remove tool skill",
-    "/allowlist remove tool install_skill",
-    "/allowlist remove tool subagent",
-};
-
-fn scopedAllowlistCompletions(
-    comptime scope: []const u8,
-    comptime source: anytype,
-) [source.len][]const u8 {
-    var result: [source.len][]const u8 = undefined;
-    inline for (source, 0..) |completion, idx| {
-        const suffix = if (std.mem.startsWith(u8, completion, "/allowlist "))
-            completion["/allowlist ".len..]
-        else
-            completion;
-        result[idx] = std.fmt.comptimePrint("/allowlist {s} {s}", .{ scope, suffix });
-    }
-    return result;
-}
-
-const allowlist_local_action_completions = scopedAllowlistCompletions("local", allowlist_scoped_action_suffixes);
-const allowlist_user_action_completions = scopedAllowlistCompletions("user", allowlist_scoped_action_suffixes);
-const allowlist_local_add_kind_completions = scopedAllowlistCompletions("local", allowlist_add_kind_completions);
-const allowlist_user_add_kind_completions = scopedAllowlistCompletions("user", allowlist_add_kind_completions);
-const allowlist_local_remove_kind_completions = scopedAllowlistCompletions("local", allowlist_remove_kind_completions);
-const allowlist_user_remove_kind_completions = scopedAllowlistCompletions("user", allowlist_remove_kind_completions);
-const allowlist_local_reset_scope_completions = scopedAllowlistCompletions("local", allowlist_reset_scope_completions);
-const allowlist_user_reset_scope_completions = scopedAllowlistCompletions("user", allowlist_reset_scope_completions);
-const allowlist_local_add_tool_completions = scopedAllowlistCompletions("local", allowlist_add_tool_completions);
-const allowlist_user_add_tool_completions = scopedAllowlistCompletions("user", allowlist_add_tool_completions);
-const allowlist_local_remove_tool_completions = scopedAllowlistCompletions("local", allowlist_remove_tool_completions);
-const allowlist_user_remove_tool_completions = scopedAllowlistCompletions("user", allowlist_remove_tool_completions);
-
 fn argCompletionPrefix(prefix: []const u8, command: []const u8) ?[]const u8 {
     if (!std.mem.startsWith(u8, prefix, command)) return null;
     if (prefix.len == command.len) return null;
     const boundary = prefix[command.len];
     if (boundary != ' ' and boundary != '\t') return null;
     return std.mem.trim(u8, prefix[command.len..], " \t");
-}
-
-fn rawArgCompletionPrefix(prefix: []const u8, command: []const u8) ?[]const u8 {
-    if (!std.mem.startsWith(u8, prefix, command)) return null;
-    if (prefix.len == command.len) return null;
-    const boundary = prefix[command.len];
-    if (boundary != ' ' and boundary != '\t') return null;
-    return std.mem.trimStart(u8, prefix[command.len..], " \t");
-}
-
-pub fn allowlistArgCompletionPrefix(prefix: []const u8) ?[]const u8 {
-    return rawArgCompletionPrefix(prefix, "/allowlist");
 }
 
 pub fn statuslineArgCompletionPrefix(prefix: []const u8) ?[]const u8 {
@@ -890,11 +727,6 @@ fn permissionsArgCompletionCount(query: []const u8) usize {
 
 fn workspaceArgCompletionCount(query: []const u8) usize {
     return argCompletionCount(&workspace_arg_completions, "/workspace ".len, query);
-}
-
-fn allowlistArgCompletionCount(query: []const u8) usize {
-    const state = allowlistArgCompletionState(query);
-    return argCompletionCount(state.completions, state.label_offset, state.query);
 }
 
 fn nthArgCompletion(completions: []const []const u8, command_with_space_len: usize, query: []const u8, n: usize) ?[]const u8 {
@@ -943,24 +775,9 @@ fn nthWorkspaceArgLabel(query: []const u8, n: usize) ?[]const u8 {
     return full["/workspace ".len..];
 }
 
-fn nthAllowlistArgCompletion(query: []const u8, n: usize) ?[]const u8 {
-    const state = allowlistArgCompletionState(query);
-    return nthArgCompletion(state.completions, state.label_offset, state.query, n);
-}
-
-fn nthAllowlistArgLabel(query: []const u8, n: usize) ?[]const u8 {
-    const state = allowlistArgCompletionState(query);
-    const full = nthArgCompletion(state.completions, state.label_offset, state.query, n) orelse return null;
-    return full[state.label_offset..];
-}
-
 /// Returns the index of `label` among the matching arg completions for
 /// the given prefix, or null if the label is not in the filtered set.
 pub fn argCompletionIndexForLabel(prefix: []const u8, label: []const u8) ?usize {
-    if (allowlistArgCompletionPrefix(prefix)) |query| {
-        const state = allowlistArgCompletionState(query);
-        return indexOfArgLabel(state.completions, state.label_offset, state.query, label);
-    }
     if (statuslineArgCompletionPrefix(prefix)) |query| {
         return indexOfArgLabel(&statusline_arg_completions, "/statusline ".len, query, label);
     }
@@ -990,248 +807,6 @@ fn indexOfArgLabel(completions: []const []const u8, command_with_space_len: usiz
 fn argCompletionMatches(completion: []const u8, command_with_space_len: usize, query: []const u8) bool {
     const arg = completion[command_with_space_len..];
     return query.len == 0 or std.ascii.startsWithIgnoreCase(arg, query);
-}
-
-const AllowlistArgCompletionState = struct {
-    completions: []const []const u8,
-    label_offset: usize,
-    query: []const u8,
-};
-
-fn allowlistArgCompletionState(query: []const u8) AllowlistArgCompletionState {
-    const split = splitAllowlistArgQuery(query);
-    if (split.has_rest) {
-        if (std.ascii.eqlIgnoreCase(split.word, "view")) {
-            return .{
-                .completions = &allowlist_view_completions,
-                .label_offset = "/allowlist view ".len,
-                .query = split.rest,
-            };
-        }
-        if (std.ascii.eqlIgnoreCase(split.word, "local")) {
-            return scopedAllowlistArgCompletionState(.local, split.rest);
-        }
-        if (std.ascii.eqlIgnoreCase(split.word, "user")) {
-            return scopedAllowlistArgCompletionState(.user, split.rest);
-        }
-        if (std.ascii.eqlIgnoreCase(split.word, "add")) {
-            if (allowlistToolArgQuery(split.rest)) |tool_query| {
-                return .{
-                    .completions = &allowlist_add_tool_completions,
-                    .label_offset = "/allowlist add tool ".len,
-                    .query = tool_query,
-                };
-            }
-            return .{
-                .completions = &allowlist_add_kind_completions,
-                .label_offset = "/allowlist add ".len,
-                .query = split.rest,
-            };
-        }
-        if (std.ascii.eqlIgnoreCase(split.word, "remove")) {
-            if (allowlistToolArgQuery(split.rest)) |tool_query| {
-                return .{
-                    .completions = &allowlist_remove_tool_completions,
-                    .label_offset = "/allowlist remove tool ".len,
-                    .query = tool_query,
-                };
-            }
-            return .{
-                .completions = &allowlist_remove_kind_completions,
-                .label_offset = "/allowlist remove ".len,
-                .query = split.rest,
-            };
-        }
-        if (std.ascii.eqlIgnoreCase(split.word, "reset")) {
-            return .{
-                .completions = &allowlist_reset_scope_completions,
-                .label_offset = "/allowlist reset ".len,
-                .query = split.rest,
-            };
-        }
-        return .{ .completions = &.{}, .label_offset = "/allowlist ".len, .query = "" };
-    }
-
-    return .{
-        .completions = &allowlist_action_completions,
-        .label_offset = "/allowlist ".len,
-        .query = split.word,
-    };
-}
-
-const AllowlistCompletionScope = enum {
-    local,
-    user,
-};
-
-fn scopedAllowlistArgCompletionState(
-    scope: AllowlistCompletionScope,
-    query: []const u8,
-) AllowlistArgCompletionState {
-    const scope_label = @tagName(scope);
-    const split = splitAllowlistArgQuery(query);
-    if (!split.has_rest) {
-        return switch (scope) {
-            .local => .{
-                .completions = &allowlist_local_action_completions,
-                .label_offset = "/allowlist local ".len,
-                .query = split.word,
-            },
-            .user => .{
-                .completions = &allowlist_user_action_completions,
-                .label_offset = "/allowlist user ".len,
-                .query = split.word,
-            },
-        };
-    }
-
-    if (std.ascii.eqlIgnoreCase(split.word, "add")) {
-        if (allowlistToolArgQuery(split.rest)) |tool_query| {
-            return switch (scope) {
-                .local => .{
-                    .completions = &allowlist_local_add_tool_completions,
-                    .label_offset = "/allowlist local add tool ".len,
-                    .query = tool_query,
-                },
-                .user => .{
-                    .completions = &allowlist_user_add_tool_completions,
-                    .label_offset = "/allowlist user add tool ".len,
-                    .query = tool_query,
-                },
-            };
-        }
-        return switch (scope) {
-            .local => .{
-                .completions = &allowlist_local_add_kind_completions,
-                .label_offset = "/allowlist local add ".len,
-                .query = split.rest,
-            },
-            .user => .{
-                .completions = &allowlist_user_add_kind_completions,
-                .label_offset = "/allowlist user add ".len,
-                .query = split.rest,
-            },
-        };
-    }
-    if (std.ascii.eqlIgnoreCase(split.word, "remove")) {
-        if (allowlistToolArgQuery(split.rest)) |tool_query| {
-            return switch (scope) {
-                .local => .{
-                    .completions = &allowlist_local_remove_tool_completions,
-                    .label_offset = "/allowlist local remove tool ".len,
-                    .query = tool_query,
-                },
-                .user => .{
-                    .completions = &allowlist_user_remove_tool_completions,
-                    .label_offset = "/allowlist user remove tool ".len,
-                    .query = tool_query,
-                },
-            };
-        }
-        return switch (scope) {
-            .local => .{
-                .completions = &allowlist_local_remove_kind_completions,
-                .label_offset = "/allowlist local remove ".len,
-                .query = split.rest,
-            },
-            .user => .{
-                .completions = &allowlist_user_remove_kind_completions,
-                .label_offset = "/allowlist user remove ".len,
-                .query = split.rest,
-            },
-        };
-    }
-    if (std.ascii.eqlIgnoreCase(split.word, "reset")) {
-        return switch (scope) {
-            .local => .{
-                .completions = &allowlist_local_reset_scope_completions,
-                .label_offset = "/allowlist local reset ".len,
-                .query = split.rest,
-            },
-            .user => .{
-                .completions = &allowlist_user_reset_scope_completions,
-                .label_offset = "/allowlist user reset ".len,
-                .query = split.rest,
-            },
-        };
-    }
-    return .{
-        .completions = &.{},
-        .label_offset = "/allowlist ".len + scope_label.len + 1,
-        .query = "",
-    };
-}
-
-fn allowlistArgCompletionAnchor(prefix: []const u8) ?usize {
-    const query = allowlistArgCompletionPrefix(prefix) orelse return null;
-    const split = splitAllowlistArgQuery(query);
-    if (!split.has_rest) return "/allowlist ".len;
-    if (std.ascii.eqlIgnoreCase(split.word, "view")) return "/allowlist view ".len;
-    if (std.ascii.eqlIgnoreCase(split.word, "local")) {
-        return scopedAllowlistArgCompletionAnchor(.local, split.rest);
-    }
-    if (std.ascii.eqlIgnoreCase(split.word, "user")) {
-        return scopedAllowlistArgCompletionAnchor(.user, split.rest);
-    }
-    if (std.ascii.eqlIgnoreCase(split.word, "add")) {
-        if (allowlistToolArgQuery(split.rest) != null) return "/allowlist add tool ".len;
-        return "/allowlist add ".len;
-    }
-    if (std.ascii.eqlIgnoreCase(split.word, "remove")) {
-        if (allowlistToolArgQuery(split.rest) != null) return "/allowlist remove tool ".len;
-        return "/allowlist remove ".len;
-    }
-    if (std.ascii.eqlIgnoreCase(split.word, "reset")) return "/allowlist reset ".len;
-    return "/allowlist ".len;
-}
-
-fn scopedAllowlistArgCompletionAnchor(
-    scope: AllowlistCompletionScope,
-    query: []const u8,
-) usize {
-    const split = splitAllowlistArgQuery(query);
-    const base = switch (scope) {
-        .local => "/allowlist local ",
-        .user => "/allowlist user ",
-    };
-    if (!split.has_rest) return base.len;
-    if (std.ascii.eqlIgnoreCase(split.word, "add")) {
-        if (allowlistToolArgQuery(split.rest) != null) return base.len + "add tool ".len;
-        return base.len + "add ".len;
-    }
-    if (std.ascii.eqlIgnoreCase(split.word, "remove")) {
-        if (allowlistToolArgQuery(split.rest) != null) return base.len + "remove tool ".len;
-        return base.len + "remove ".len;
-    }
-    if (std.ascii.eqlIgnoreCase(split.word, "reset")) return base.len + "reset ".len;
-    return base.len;
-}
-
-fn allowlistToolArgQuery(query: []const u8) ?[]const u8 {
-    const split = splitAllowlistArgQuery(query);
-    if (!split.has_rest) return null;
-    if (!std.ascii.eqlIgnoreCase(split.word, "tool")) return null;
-    return split.rest;
-}
-
-const AllowlistArgQuery = struct {
-    word: []const u8,
-    rest: []const u8,
-    has_rest: bool,
-};
-
-fn splitAllowlistArgQuery(query: []const u8) AllowlistArgQuery {
-    const trimmed_start = std.mem.trimStart(u8, query, " \t");
-    for (trimmed_start, 0..) |c, idx| {
-        if (c == ' ' or c == '\t') {
-            return .{
-                .word = trimmed_start[0..idx],
-                .rest = std.mem.trimStart(u8, trimmed_start[idx + 1 ..], " \t"),
-                .has_rest = true,
-            };
-        }
-    }
-    return .{ .word = trimmed_start, .rest = "", .has_rest = false };
 }
 
 fn renderSlashEntries(alloc: Allocator, registry: SlashRegistry, welcome_only: bool) ![]u8 {
@@ -1774,7 +1349,7 @@ test "slash completion categories follow canonical entries" {
 test "help catalog groups visible commands and searches all command metadata" {
     const registry = testSlashRegistry();
 
-    try std.testing.expectEqual(@as(usize, 28), helpCatalogCount(registry, ""));
+    try std.testing.expectEqual(@as(usize, 27), helpCatalogCount(registry, ""));
     try std.testing.expectEqualStrings("/help", helpCatalogSpecAt(registry, "", 0).?.command);
     try std.testing.expectEqual(@as(usize, 4), helpCatalogCategoryCount(registry, "", .general));
     try std.testing.expectEqual(@as(usize, 3), helpCatalogCount(registry, "appearance"));
@@ -1929,99 +1504,6 @@ test "slash completion prefix yields to no-argument command submission" {
     try std.testing.expect(slashCompletionPrefix(registry, "/exit\t") == null);
 }
 
-test "slash completions include allowlist staged arguments" {
-    try std.testing.expectEqual(@as(usize, 6), slashCompletionCount(testSlashRegistry(), "/allowlist "));
-    try std.testing.expectEqualStrings("/allowlist view", nthSlashCompletion(testSlashRegistry(), "/allowlist ", 0).?);
-    try std.testing.expectEqualStrings("/allowlist add", nthSlashCompletion(testSlashRegistry(), "/allowlist ", 1).?);
-    try std.testing.expectEqualStrings("/allowlist remove", nthSlashCompletion(testSlashRegistry(), "/allowlist ", 2).?);
-    try std.testing.expectEqualStrings("/allowlist reset", nthSlashCompletion(testSlashRegistry(), "/allowlist ", 3).?);
-    try std.testing.expectEqualStrings("/allowlist local", nthSlashCompletion(testSlashRegistry(), "/allowlist ", 4).?);
-    try std.testing.expectEqualStrings("/allowlist user", nthSlashCompletion(testSlashRegistry(), "/allowlist ", 5).?);
-    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/allowlist a"));
-    try std.testing.expectEqualStrings("/allowlist add", nthSlashCompletion(testSlashRegistry(), "/allowlist a", 0).?);
-    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/allowlist v"));
-    try std.testing.expectEqualStrings("/allowlist view", nthSlashCompletion(testSlashRegistry(), "/allowlist v", 0).?);
-    try std.testing.expectEqual(@as(usize, 2), slashCompletionCount(testSlashRegistry(), "/allowlist re"));
-    try std.testing.expectEqualStrings("/allowlist remove", nthSlashCompletion(testSlashRegistry(), "/allowlist re", 0).?);
-    try std.testing.expectEqualStrings("/allowlist reset", nthSlashCompletion(testSlashRegistry(), "/allowlist re", 1).?);
-    try std.testing.expectEqual(@as(usize, 0), slashCompletionCount(testSlashRegistry(), "/allowlist nope "));
-
-    try std.testing.expectEqual(@as(usize, 4), slashCompletionCount(testSlashRegistry(), "/allowlist add "));
-    try std.testing.expectEqualStrings("/allowlist add command", nthSlashCompletion(testSlashRegistry(), "/allowlist add ", 0).?);
-    try std.testing.expectEqualStrings("/allowlist add tool", nthSlashCompletion(testSlashRegistry(), "/allowlist add ", 1).?);
-    try std.testing.expectEqualStrings("/allowlist add url", nthSlashCompletion(testSlashRegistry(), "/allowlist add ", 2).?);
-    try std.testing.expectEqualStrings("/allowlist add web-fetch-domain", nthSlashCompletion(testSlashRegistry(), "/allowlist add ", 3).?);
-    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/allowlist add u"));
-    try std.testing.expectEqualStrings("/allowlist add url", nthSlashCompletion(testSlashRegistry(), "/allowlist add u", 0).?);
-    try std.testing.expectEqual(@as(usize, allowlist_add_tool_completions.len), slashCompletionCount(testSlashRegistry(), "/allowlist add tool "));
-    try std.testing.expectEqualStrings("/allowlist add tool read_file", nthSlashCompletion(testSlashRegistry(), "/allowlist add tool ", 0).?);
-    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/allowlist add tool write"));
-    try std.testing.expectEqualStrings("/allowlist add tool write_file", nthSlashCompletion(testSlashRegistry(), "/allowlist add tool write", 0).?);
-
-    try std.testing.expectEqual(@as(usize, 4), slashCompletionCount(testSlashRegistry(), "/allowlist remove "));
-    try std.testing.expectEqualStrings("/allowlist remove command", nthSlashCompletion(testSlashRegistry(), "/allowlist remove ", 0).?);
-    try std.testing.expectEqualStrings("/allowlist remove tool", nthSlashCompletion(testSlashRegistry(), "/allowlist remove ", 1).?);
-    try std.testing.expectEqualStrings("/allowlist remove url", nthSlashCompletion(testSlashRegistry(), "/allowlist remove ", 2).?);
-    try std.testing.expectEqualStrings("/allowlist remove web-fetch-domain", nthSlashCompletion(testSlashRegistry(), "/allowlist remove ", 3).?);
-    try std.testing.expectEqual(@as(usize, allowlist_remove_tool_completions.len), slashCompletionCount(testSlashRegistry(), "/allowlist remove tool "));
-    try std.testing.expectEqualStrings("/allowlist remove tool read_file", nthSlashCompletion(testSlashRegistry(), "/allowlist remove tool ", 0).?);
-    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/allowlist remove tool skill"));
-    try std.testing.expectEqualStrings("/allowlist remove tool skill", nthSlashCompletion(testSlashRegistry(), "/allowlist remove tool skill", 0).?);
-
-    try std.testing.expectEqual(@as(usize, 5), slashCompletionCount(testSlashRegistry(), "/allowlist reset "));
-    try std.testing.expectEqualStrings("/allowlist reset commands", nthSlashCompletion(testSlashRegistry(), "/allowlist reset ", 0).?);
-    try std.testing.expectEqualStrings("/allowlist reset tools", nthSlashCompletion(testSlashRegistry(), "/allowlist reset ", 1).?);
-    try std.testing.expectEqualStrings("/allowlist reset urls", nthSlashCompletion(testSlashRegistry(), "/allowlist reset ", 2).?);
-    try std.testing.expectEqualStrings("/allowlist reset web-fetch-domains", nthSlashCompletion(testSlashRegistry(), "/allowlist reset ", 3).?);
-    try std.testing.expectEqualStrings("/allowlist reset all", nthSlashCompletion(testSlashRegistry(), "/allowlist reset ", 4).?);
-    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/allowlist reset c"));
-    try std.testing.expectEqualStrings("/allowlist reset commands", nthSlashCompletion(testSlashRegistry(), "/allowlist reset c", 0).?);
-
-    try std.testing.expectEqual(@as(usize, 3), slashCompletionCount(testSlashRegistry(), "/allowlist view "));
-    try std.testing.expectEqualStrings("/allowlist view effective", nthSlashCompletion(testSlashRegistry(), "/allowlist view ", 0).?);
-    try std.testing.expectEqualStrings("/allowlist view local", nthSlashCompletion(testSlashRegistry(), "/allowlist view ", 1).?);
-    try std.testing.expectEqualStrings("/allowlist view user", nthSlashCompletion(testSlashRegistry(), "/allowlist view ", 2).?);
-
-    try std.testing.expectEqual(@as(usize, 3), slashCompletionCount(testSlashRegistry(), "/allowlist user "));
-    try std.testing.expectEqualStrings("/allowlist user add", nthSlashCompletion(testSlashRegistry(), "/allowlist user ", 0).?);
-    try std.testing.expectEqualStrings("/allowlist user remove", nthSlashCompletion(testSlashRegistry(), "/allowlist user ", 1).?);
-    try std.testing.expectEqualStrings("/allowlist user reset", nthSlashCompletion(testSlashRegistry(), "/allowlist user ", 2).?);
-    try std.testing.expectEqual(@as(usize, 4), slashCompletionCount(testSlashRegistry(), "/allowlist user add "));
-    try std.testing.expectEqualStrings("/allowlist user add command", nthSlashCompletion(testSlashRegistry(), "/allowlist user add ", 0).?);
-    try std.testing.expectEqual(@as(usize, allowlist_user_add_tool_completions.len), slashCompletionCount(testSlashRegistry(), "/allowlist user add tool "));
-    try std.testing.expectEqualStrings("/allowlist user add tool read_file", nthSlashCompletion(testSlashRegistry(), "/allowlist user add tool ", 0).?);
-    try std.testing.expectEqual(@as(usize, 5), slashCompletionCount(testSlashRegistry(), "/allowlist local reset "));
-    try std.testing.expectEqualStrings("/allowlist local reset all", nthSlashCompletion(testSlashRegistry(), "/allowlist local reset ", 4).?);
-}
-
-test "slash completions include web_fetch allowlist domain forms" {
-    try std.testing.expectEqualStrings("/allowlist add web-fetch-domain", nthSlashCompletion(testSlashRegistry(), "/allowlist add web-", 0).?);
-    try std.testing.expectEqualStrings("web-fetch-domain", nthSlashCompletionLabel(testSlashRegistry(), "/allowlist add web-", 0).?);
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist add web-fetch-domain"));
-
-    try std.testing.expectEqualStrings("/allowlist remove web-fetch-domain", nthSlashCompletion(testSlashRegistry(), "/allowlist remove web-", 0).?);
-    try std.testing.expectEqualStrings("web-fetch-domain", nthSlashCompletionLabel(testSlashRegistry(), "/allowlist remove web-", 0).?);
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist remove web-fetch-domain"));
-
-    try std.testing.expectEqualStrings("/allowlist reset web-fetch-domains", nthSlashCompletion(testSlashRegistry(), "/allowlist reset web-", 0).?);
-    try std.testing.expectEqualStrings("web-fetch-domains", nthSlashCompletionLabel(testSlashRegistry(), "/allowlist reset web-", 0).?);
-    try std.testing.expect(!slashCompletionHasArgs(testSlashRegistry(), "/allowlist reset web-fetch-domains"));
-}
-
-test "allowlist staged completions with more arguments append space on tab" {
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist add"));
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist remove"));
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist reset"));
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist add command"));
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist remove url"));
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist user"));
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist user add"));
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist local remove tool"));
-    try std.testing.expect(slashCompletionHasArgs(testSlashRegistry(), "/allowlist view"));
-    try std.testing.expect(!slashCompletionHasArgs(testSlashRegistry(), "/allowlist view user"));
-    try std.testing.expect(!slashCompletionHasArgs(testSlashRegistry(), "/allowlist reset all"));
-}
-
 test "workspace completions expose actions and keep path actions open" {
     try std.testing.expectEqual(@as(usize, 4), slashCompletionCount(testSlashRegistry(), "/workspace "));
     try std.testing.expectEqualStrings("/workspace list", nthSlashCompletion(testSlashRegistry(), "/workspace ", 0).?);
@@ -2073,13 +1555,6 @@ test "slash completion labels strip argument prefixes" {
     try std.testing.expectEqualStrings("revoke", nthSlashCompletionLabel(testSlashRegistry(), "/permissions ", 3).?);
     try std.testing.expectEqualStrings("yolo", nthSlashCompletionLabel(testSlashRegistry(), "/permissions ", 4).?);
     try std.testing.expectEqualStrings("reset", nthSlashCompletionLabel(testSlashRegistry(), "/permissions ", 5).?);
-    try std.testing.expectEqualStrings("view", nthSlashCompletionLabel(testSlashRegistry(), "/allowlist ", 0).?);
-    try std.testing.expectEqualStrings("add", nthSlashCompletionLabel(testSlashRegistry(), "/allowlist ", 1).?);
-    try std.testing.expectEqualStrings("command", nthSlashCompletionLabel(testSlashRegistry(), "/allowlist add ", 0).?);
-    try std.testing.expectEqualStrings("write_file", nthSlashCompletionLabel(testSlashRegistry(), "/allowlist add tool write", 0).?);
-    try std.testing.expectEqualStrings("url", nthSlashCompletionLabel(testSlashRegistry(), "/allowlist remove u", 0).?);
-    try std.testing.expectEqualStrings("read_file", nthSlashCompletionLabel(testSlashRegistry(), "/allowlist remove tool ", 0).?);
-    try std.testing.expectEqualStrings("commands", nthSlashCompletionLabel(testSlashRegistry(), "/allowlist reset c", 0).?);
     try std.testing.expectEqualStrings("/help", nthSlashCompletionLabel(testSlashRegistry(), "/he", 0).?);
 }
 
@@ -2116,7 +1591,7 @@ test "rendered slash welcome excludes non-welcome help entries" {
     try std.testing.expect(std.mem.find(u8, welcome_text, "/pr") == null);
     try std.testing.expect(std.mem.find(u8, welcome_text, "/issue") == null);
     try std.testing.expect(std.mem.find(u8, welcome_text, "/permissions") != null);
-    try std.testing.expect(std.mem.find(u8, welcome_text, "/allowlist") != null);
+    try std.testing.expect(std.mem.find(u8, welcome_text, "/allowlist") == null);
     try std.testing.expect(std.mem.find(u8, welcome_text, "/quit") != null);
 }
 

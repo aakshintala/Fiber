@@ -19,7 +19,6 @@ pub const ParsedCommand = union(enum) {
     images: []const u8,
     model: []const u8,
     permissions: []const u8,
-    allowlist: []const u8,
     usage,
     undo,
     mcp: []const u8,
@@ -51,7 +50,6 @@ pub const CommandHandlers = struct {
     manage_images: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_model: *const fn (ctx: *anyopaque, query: []const u8) anyerror!void,
     handle_permissions: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
-    handle_allowlist: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     show_usage: *const fn (ctx: *anyopaque) anyerror!void,
     undo_last: *const fn (ctx: *anyopaque) anyerror!void,
     handle_mcp: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
@@ -89,7 +87,6 @@ fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
         .image => .{ .image = payload },
         .model => .{ .model = payload },
         .permissions => .{ .permissions = payload },
-        .allowlist => .{ .allowlist = payload },
         .usage => .usage,
         .undo => .undo,
         .mcp => .{ .mcp = payload },
@@ -135,7 +132,6 @@ pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []c
         .images => |rest| try handlers.manage_images(handlers.ctx, rest),
         .model => |query| try handlers.handle_model(handlers.ctx, query),
         .permissions => |rest| try handlers.handle_permissions(handlers.ctx, rest),
-        .allowlist => |rest| try handlers.handle_allowlist(handlers.ctx, rest),
         .usage => try handlers.show_usage(handlers.ctx),
         .undo => try handlers.undo_last(handlers.ctx),
         .mcp => |rest| try handlers.handle_mcp(handlers.ctx, rest),
@@ -181,13 +177,6 @@ test "parse rejects the removed provider command" {
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/provider codex"));
 }
 
-test "parse extracts allowlist command payload" {
-    switch (parse(testSlashRegistry(), "/allowlist add command \"git *\"")) {
-        .allowlist => |rest| try std.testing.expectEqualStrings("add command \"git *\"", rest),
-        else => return error.TestExpectedEqual,
-    }
-}
-
 test "parse extracts sound command payload" {
     switch (parse(testSlashRegistry(), "/sound off")) {
         .notifications => |rest| try std.testing.expectEqualStrings("off", rest),
@@ -231,6 +220,8 @@ test "parse rejects removed slash commands" {
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/alias build zig build"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/version"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/cost"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/allowlist"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/allowlist add command git"));
 }
 
 test "parse extracts image commands" {
@@ -315,10 +306,6 @@ test "parse returns empty payload for bare prefix commands" {
         .mcp => |rest| try std.testing.expectEqualStrings("", rest),
         else => return error.TestExpectedEqual,
     }
-    switch (parse(testSlashRegistry(), "/allowlist")) {
-        .allowlist => |rest| try std.testing.expectEqualStrings("", rest),
-        else => return error.TestExpectedEqual,
-    }
     switch (parse(testSlashRegistry(), "/skills")) {
         .skills => |rest| try std.testing.expectEqualStrings("", rest),
         else => return error.TestExpectedEqual,
@@ -399,12 +386,6 @@ fn recordModel(ctx: *anyopaque, value: []const u8) anyerror!void {
     test_context.payload = value;
 }
 
-fn recordAllowlist(ctx: *anyopaque, value: []const u8) anyerror!void {
-    const test_context = testContext(ctx);
-    test_context.called = "allowlist";
-    test_context.payload = value;
-}
-
 fn recordSettings(ctx: *anyopaque, value: []const u8) anyerror!void {
     const test_context = testContext(ctx);
     test_context.called = "settings";
@@ -444,7 +425,6 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
         .manage_images = unexpectedPayload,
         .handle_model = unexpectedPayload,
         .handle_permissions = unexpectedPayload,
-        .handle_allowlist = unexpectedPayload,
         .show_usage = unexpectedNoPayload,
         .undo_last = unexpectedNoPayload,
         .handle_mcp = unexpectedPayload,
@@ -505,18 +485,6 @@ test "route forwards borrowed payload slice" {
     try std.testing.expectEqualStrings("model", ctx.called);
     try std.testing.expectEqualStrings("claude-opus", ctx.payload);
     try std.testing.expect(ctx.payload.ptr == cmd["/model ".len..].ptr);
-}
-
-test "route forwards allowlist payload" {
-    var ctx: TestContext = .{};
-    var handlers = testHandlers(&ctx);
-    handlers.handle_allowlist = recordAllowlist;
-    const cmd = "/allowlist add tool read_file";
-
-    try route(testSlashRegistry(), &handlers, cmd);
-
-    try std.testing.expectEqualStrings("allowlist", ctx.called);
-    try std.testing.expectEqualStrings("add tool read_file", ctx.payload);
 }
 
 test "route forwards settings payload" {

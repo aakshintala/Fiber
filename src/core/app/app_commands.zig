@@ -356,7 +356,6 @@ pub fn Handlers(comptime App: type) type {
                 .manage_images = commandManageImages,
                 .handle_model = commandHandleModel,
                 .handle_permissions = commandHandlePermissions,
-                .handle_allowlist = commandHandleAllowlist,
                 .show_usage = commandShowUsage,
                 .undo_last = commandUndoLast,
                 .handle_mcp = commandHandleMcp,
@@ -931,11 +930,6 @@ pub fn Handlers(comptime App: type) type {
                 .tone = tone,
                 .body = body,
             }, true);
-        }
-
-        fn commandHandleAllowlist(ctx: *anyopaque, rest: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try session_commands.Commands(App).handleAllowlist(app, rest);
         }
 
         fn commandShowUsage(ctx: *anyopaque) !void {
