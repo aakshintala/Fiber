@@ -160,3 +160,43 @@ passes, and an exact search for `fx` across the tree returns only:
 
 Anything else is either renamed or explicitly reclassified into a later phase
 with exact path and symbol evidence.
+
+## Phase 2 completion
+
+Slices S1 through S8 landed on `main` (`fe3594c2`...`8fe722ab`), with one
+correction commit after S6 and one exit-verification commit (`7ac29541`).
+
+Exit search at `7ac29541`: `git ls-files | xargs grep -ciE '\bfx\b'` leaves
+only these categories.
+
+| Category | Where |
+| --- | --- |
+| Upstream attribution | `NOTICE`, `LICENSE`, `THIRD_PARTY_NOTICES.md`, README credits, the CHANGELOG fork note |
+| Glossary defining the distinction | `CONTEXT.md`, which exists to separate Fiber from fx |
+| Transition and design documents | `docs/transition/*`, `docs/ideas/*` |
+| Parked for Phase 6 | `.github/workflows/prepare-release.yml` (Gateway changelog generation), `com.vercel.fx` in the signing script |
+| Owned by Phase 5 | `FX_GATEWAY_BASE_URL`, `FX_GATEWAY_CHAT_URL`, `FX_E2E_GATEWAY_CHAT_URL` in the fake-Gateway test files |
+| Deliberate reintroduction guards | assertions that `fx.sh` is absent in `command_specs.zig` and `context.zig` |
+| Git remote parser fixtures | `builtins/context.zig` uses `vercel-labs/fx` as a realistic remote |
+| Developer-local capture | `fx-render-bug-20260510-073148` in `tui-render-replay.test.ts`, a path under `/private/tmp` |
+
+### What the per-slice gate could not catch
+
+The gate builds and runs unit tests, so it never exercised the release
+pipeline. Three breaks survived to the exit search: the updater fetched
+`fx-{platform}.tar.gz` and looked for an extracted `fx` binary while
+`release.yml` published `fiber-*`, and `release.yml` itself uploaded `fiber-*`
+but downloaded and published `fx-*`. A Fiber release would have shipped assets
+no Fiber build could install. Phase 5 should add a check that exercises
+package, publish, and install as one contract.
+
+### Unverified at phase exit
+
+- Session resume and permission-state persistence across a restart need an
+  authenticated turn.
+- `originator=fiber` replaces `originator=fx` on the OAuth authorize request
+  and both Codex request headers. The first `fiber login codex` verifies it.
+  Reverting is one line in `chatgpt_oauth.zig` and the two gateway files.
+- `scripts/smoke.sh` relaxes its `models` and ACP checks while
+  `~/.fiber/chatgpt-auth.json` is absent. It returns to the strict path on its
+  own once that file exists.
