@@ -3230,7 +3230,7 @@ test "non-web_fetch tool-call metrics retain bounded args and result" {
     diagnostics.recordToolCallResult(.{
         .name = "read_file",
         .arguments_json = "{\"path\":\"README.md\"}",
-        .model_output = "<path>README.md</path>\n<content>\n# fx\nnormal result\n</content>",
+        .model_output = "<path>README.md</path>\n<content>\n# fiber\nnormal result\n</content>",
         .ok = true,
         .started_at_ms = 1000,
     });
@@ -3240,7 +3240,7 @@ test "non-web_fetch tool-call metrics retain bounded args and result" {
     try std.testing.expectEqual(@as(usize, 1), n);
     try std.testing.expectEqualStrings("read_file", buf[0].name());
     try expectContains(buf[0].args(), "README.md");
-    try expectContains(buf[0].result(), "# fx");
+    try expectContains(buf[0].result(), "# fiber");
     try expectContains(buf[0].result(), "normal result");
 }
 
@@ -5994,7 +5994,7 @@ test "install_skill explicit tool installs local skill source" {
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     const result = try executeToolCall(rt.context(), arena_state.allocator(), .{ .id = "1", .name = "install_skill", .arguments_json = args_json });
-    try expectContains(result.model_output, "Installed 1 skill(s) into fx.");
+    try expectContains(result.model_output, "Installed 1 skill(s) into fiber.");
     try expectContains(result.model_output, "- workflow&quot;&lt;injected&gt;\n");
     try expectNotContains(result.model_output, "<skill");
     try expectNotContains(result.model_output, "BODY SENTINEL");

@@ -378,7 +378,7 @@ pub fn Runtime(comptime App: type) type {
                     try app.writeDomainNotice(.{
                         .topic = "keychain",
                         .tone = .warning,
-                        .body = "fx could not access the credential store. Continuing without it.",
+                        .body = "fiber could not access the credential store. Continuing without it.",
                     }, true);
                 }
             }

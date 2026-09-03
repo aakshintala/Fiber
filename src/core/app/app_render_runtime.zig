@@ -3803,7 +3803,7 @@ test "core.app_render_runtime main skill menu origins share the inline footer" {
         .{ .label = "Keep going", .description = null },
     };
     const entries = [_]types.QuestionBatchEntry{
-        .{ .question = "What should fx do next?", .options = &options },
+        .{ .question = "What should fiber do next?", .options = &options },
     };
     try app.question_prompt.syncFrom(alloc, &entries);
     app.shell.render_requests.request(.modal);
@@ -4760,7 +4760,7 @@ test "core.app_render_runtime question prompt exits the full transcript screen b
         .{ .label = "Keep going", .description = null },
     };
     const entries = [_]types.QuestionBatchEntry{
-        .{ .question = "What should fx do next?", .options = &options },
+        .{ .question = "What should fiber do next?", .options = &options },
     };
     try app.question_prompt.syncFrom(alloc, &entries);
 

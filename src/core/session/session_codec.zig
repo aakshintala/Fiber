@@ -363,7 +363,7 @@ fn formatLegacyBackgroundAssistant(
         }
     }
     try out.writer.writeAll(
-        "[Historical command record: fx no longer owns or controls this process",
+        "[Historical command record: fiber no longer owns or controls this process",
     );
     if (log_path.len != 0) try out.writer.print("; former log={s}", .{log_path});
     if (url) |value| try out.writer.print("; recorded url={s}", .{value});

@@ -250,7 +250,7 @@ fn prioritizedRowIndex(
     return source_row_count -| 1;
 }
 
-const onboarding_note = "   ⚠︎ Note: fx is experimental and defaults to auto mode.";
+const onboarding_note = "   ⚠︎ Note: fiber is experimental and defaults to auto mode.";
 const onboarding_note_link = onboarding_note ++ " \x1b]8;id=fx-onboarding;https://fx.sh/docs/stability\x1b\\\x1b[4mLearn more\x1b[24m\x1b]8;;\x1b\\";
 
 fn onboardingProjectedRowIndex(view: auth_runtime.PickerView, row_index: u16, row_count: u16) u16 {
@@ -307,9 +307,9 @@ fn composeOnboardingPickerRow(
 
     try row.appendSlice(alloc, ui_render.hint_style);
     const label = switch (source_row_index) {
-        0 => "   Welcome to fx",
+        0 => "   Welcome to fiber",
         1 => "",
-        2 => "   fx can access AI models with an account, subscription, or API key.",
+        2 => "   fiber can access AI models with an account, subscription, or API key.",
         3 => "   Choose a sign-in option below, or add your own API key.",
         4 => "",
         5 => "   You can change this anytime with /setup.",
@@ -1333,7 +1333,7 @@ const picker_test_slash_specs = [_]command_specs.SlashSpec{
     .{ .kind = .model, .command = "/model", .help_entry = "/model <id-or-query>", .completion_description = "choose what model and reasoning effort to use", .presentation_category = .model, .has_args = true },
     .{ .kind = .mcp, .command = "/mcp", .help_entry = "/mcp [list|resource|prompt|add|remove]", .completion_description = "manage MCP servers, resources, and prompts", .presentation_category = .extensions, .has_args = true },
     .{ .kind = .permissions, .command = "/permissions", .help_entry = "/permissions [ask|auto|remember|revoke|yolo|reset]", .completion_description = "choose permission behavior", .presentation_category = .security, .has_args = true },
-    .{ .kind = .settings, .command = "/settings", .help_entry = "/settings", .completion_description = "configure fx", .presentation_category = .general },
+    .{ .kind = .settings, .command = "/settings", .help_entry = "/settings", .completion_description = "configure fiber", .presentation_category = .general },
     .{ .kind = .status, .command = "/status", .help_entry = "/status", .completion_description = "show runtime configuration", .presentation_category = .general },
 };
 const picker_test_slash_registry = command_specs.SlashRegistry{ .commands = picker_test_slash_specs[0..] };
@@ -1466,7 +1466,7 @@ test "slash menu hides metadata for commands and skills" {
 test "slash menu keeps matching skill source labels" {
     const skills = [_]skill_runtime.Skill{.{
         .name = "fx-test-strategy",
-        .description = "choose focused regression coverage for the affected fx behavior",
+        .description = "choose focused regression coverage for the affected fiber behavior",
         .path = "/tmp/.codex/skills/fx-test-strategy",
         .source = .global_codex,
     }};
