@@ -285,7 +285,7 @@ fn cloneClippedRow(alloc: Allocator, text: []const u8, width: u16) !std.ArrayLis
 const help_menu_test_specs = [_]command_specs.SlashSpec{
     .{ .kind = .help, .command = "/help", .help_entry = "/help", .completion_description = "show available slash commands", .presentation_category = .general },
     .{ .kind = .status, .command = "/status", .help_entry = "/status", .completion_description = "show runtime configuration", .presentation_category = .general },
-    .{ .kind = .paste, .command = "/paste", .help_entry = "/paste", .completion_description = "attach an image from the clipboard when supported", .presentation_category = .media },
+    .{ .kind = .fast, .command = "/fast", .help_entry = "/fast", .completion_description = "toggle Fast mode when supported", .presentation_category = .model },
 };
 const help_menu_test_registry = command_specs.SlashRegistry{ .commands = help_menu_test_specs[0..] };
 
@@ -354,14 +354,14 @@ test "help menu search keeps headings non-selectable and reports empty results" 
     const projection: render_input.HelpMenuProjection = .{
         .active = true,
         .registry = help_menu_test_registry,
-        .query = "clipboard",
+        .query = "fast",
     };
     const rows = menuRowCount(projection, 80, 12);
     try std.testing.expectEqual(@as(u16, 3), rows);
 
     var item = try composeHelpMenuRow(alloc, projection, 2, 80, rows);
     defer item.deinit(alloc);
-    try std.testing.expect(std.mem.find(u8, item.items, "/paste") != null);
+    try std.testing.expect(std.mem.find(u8, item.items, "/fast") != null);
 
     const empty_projection: render_input.HelpMenuProjection = .{
         .active = true,

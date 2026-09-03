@@ -343,18 +343,14 @@ pub const slash_specs = [_]SlashSpec{
     .{ .kind = .logout, .command = "/logout", .help_entry = "/logout [codex]", .completion_description = "sign out of the Codex session", .presentation_category = .account, .has_args = true, .accepts_payload = true },
     .{ .kind = .usage, .command = "/usage", .help_entry = "/usage", .completion_description = "show local fx tokens, models, and spend", .presentation_category = .account },
     .{ .kind = .status, .command = "/status", .help_entry = "/status", .completion_description = "show runtime configuration", .presentation_category = .general, .show_in_welcome = true },
-    .{ .kind = .image, .command = "/image", .aliases = &.{"/img"}, .help_entry = "/image <path> (/img)", .completion_description = "attach an image by path", .presentation_category = .media, .has_args = true, .accepts_payload = true },
-    .{ .kind = .images, .command = "/images", .help_entry = "/images [clear]", .completion_description = "manage pending image attachments", .presentation_category = .media, .has_args = true, .accepts_payload = true },
     .{ .kind = .model, .command = "/model", .help_entry = "/model <id-or-query>", .completion_description = "choose what model and reasoning effort to use", .presentation_category = .model, .has_args = true, .accepts_payload = true },
     .{ .kind = .permissions, .command = "/permissions", .help_entry = "/permissions [ask|auto|yolo|reset]", .completion_description = "choose what fx is allowed to do", .presentation_category = .security, .show_in_welcome = true, .has_args = true, .accepts_payload = true },
     .{ .kind = .undo, .command = "/undo", .help_entry = "/undo", .completion_description = "undo the latest tracked file operation", .presentation_category = .session },
     .{ .kind = .mcp, .command = "/mcp", .help_entry = "/mcp [list|resource|prompt|add|remove|path|reload|auth|logout|trust]", .completion_description = "manage local and remote MCP servers, resources, prompts, and project trust", .presentation_category = .extensions, .has_args = true, .accepts_payload = true },
     .{ .kind = .skills, .command = "/skills", .help_entry = "/skills [list|add|install|show|create|remove|path] [name|url|path] ($ opens skill search)", .completion_description = "browse and manage skills", .presentation_category = .extensions, .has_args = true, .accepts_payload = true },
-    .{ .kind = .copy, .command = "/copy", .help_entry = "/copy", .completion_description = "copy the last assistant response", .presentation_category = .session },
     .{ .kind = .trace, .command = "/trace", .help_entry = "/trace", .completion_description = "copy a private diagnostic trace", .presentation_category = .product },
     .{ .kind = .compact, .command = "/compact", .help_entry = "/compact", .completion_description = "compact older conversation turns", .presentation_category = .session },
     .{ .kind = .settings, .command = "/settings", .help_entry = "/settings [startup-scrollback [on|off]]", .completion_description = "browse and update settings", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
-    .{ .kind = .paste, .command = "/paste", .help_entry = "/paste", .completion_description = "attach an image from the clipboard when supported", .presentation_category = .media },
     .{ .kind = .fast, .command = "/fast", .help_entry = "/fast", .completion_description = "toggle Fast mode when supported", .presentation_category = .model },
     .{ .kind = .statusline, .command = "/statusline", .help_entry = "/statusline [context|session|workspace]", .completion_description = "toggle status line segments", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
     .{ .kind = .notifications, .command = "/sound", .help_entry = "/sound [on|off|max]", .completion_description = "toggle sounds and terminal bells", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
@@ -430,18 +426,14 @@ test "built-in slash commands register exact active order" {
         "/logout",
         "/usage",
         "/status",
-        "/image",
-        "/images",
         "/model",
         "/permissions",
         "/undo",
         "/mcp",
         "/skills",
-        "/copy",
         "/trace",
         "/compact",
         "/settings",
-        "/paste",
         "/fast",
         "/statusline",
         "/sound",
@@ -456,15 +448,15 @@ test "built-in slash commands register exact active order" {
 }
 
 test "built-in slash registry resolves primary commands and aliases" {
-    const image = slash_registry.lookup("/img") orelse return error.TestExpectedEqual;
-    try std.testing.expectEqual(SlashKind.image, image.kind);
+    const quit = slash_registry.lookup("/exit") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(SlashKind.quit, quit.kind);
 
     const usage = slash_registry.lookup("/usage") orelse return error.TestExpectedEqual;
     try std.testing.expectEqual(SlashKind.usage, usage.kind);
 
-    const quit = slash_registry.matchExact("/exit\t") orelse return error.TestExpectedEqual;
-    try std.testing.expectEqual(SlashKind.quit, quit.command.kind);
-    try std.testing.expectEqualStrings("/exit", quit.token);
+    const quit_alias = slash_registry.matchExact("/exit\t") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(SlashKind.quit, quit_alias.command.kind);
+    try std.testing.expectEqualStrings("/exit", quit_alias.token);
 
     const model = command_specs.matchedSlashPrefix(slash_registry, "/model\tmodel-id", .model) orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("/model", model);
@@ -485,14 +477,6 @@ test "retired appearance slash commands are not registered" {
     try std.testing.expect(!isExactSlashCommand("/maxxing\t"));
     try std.testing.expect(!isExactSlashCommand("/input lines"));
     try std.testing.expect(!isExactSlashCommand("/unknown"));
-}
-
-test "built-in paste completion describes clipboard image attachment" {
-    const completion = nthSlashCompletion("/pas", 0) orelse return error.TestExpectedEqual;
-    try std.testing.expectEqualStrings("/paste", completion);
-
-    const description = nthSlashCompletionDescription("/pas", 0) orelse return error.TestExpectedEqual;
-    try std.testing.expectEqualStrings("attach an image from the clipboard when supported", description);
 }
 
 test "built-in statusline help and completion include workspace" {

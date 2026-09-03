@@ -18,7 +18,6 @@ const debug_trace = @import("../shared/debug_trace.zig");
 const output_contracts = @import("../output/output_contracts.zig");
 const diagnostics = @import("../workspace/diagnostics.zig");
 const workspace_commands = @import("../workspace/workspace_commands.zig");
-const image_commands = @import("../images/image_commands.zig");
 const mcp_auth = @import("../mcp/mcp_auth.zig");
 const mcp_command_provider = @import("../mcp/command_provider.zig");
 const mcp_runtime = @import("../mcp/mcp_runtime.zig");
@@ -352,19 +351,15 @@ pub fn Handlers(comptime App: type) type {
                 .login = commandLogin,
                 .logout = commandLogout,
                 .show_status = commandShowStatus,
-                .attach_image = commandAttachImage,
-                .manage_images = commandManageImages,
                 .handle_model = commandHandleModel,
                 .handle_permissions = commandHandlePermissions,
                 .show_usage = commandShowUsage,
                 .undo_last = commandUndoLast,
                 .handle_mcp = commandHandleMcp,
                 .handle_skills = commandHandleSkills,
-                .copy_last = commandCopyLast,
                 .create_trace = commandCreateTrace,
                 .compact_history = commandCompactHistory,
                 .handle_settings = commandHandleSettings,
-                .paste_clipboard = commandPasteClipboard,
                 .toggle_fast = commandToggleFast,
                 .handle_statusline = commandHandleStatusline,
                 .rename_session = commandRenameSession,
@@ -679,16 +674,6 @@ pub fn Handlers(comptime App: type) type {
         fn commandShowStatus(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try session_commands.Commands(App).showStatus(app);
-        }
-
-        fn commandAttachImage(ctx: *anyopaque, path: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try image_commands.Commands(App).attachPath(app, path);
-        }
-
-        fn commandManageImages(ctx: *anyopaque, rest: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try image_commands.Commands(App).managePending(app, rest);
         }
 
         fn commandHandleModel(ctx: *anyopaque, query: []const u8) !void {
@@ -1841,32 +1826,6 @@ pub fn Handlers(comptime App: type) type {
             if (comptime @hasField(InputRuntime, "workspace_menu")) app.input_runtime.workspace_menu.close();
         }
 
-        fn commandCopyLast(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            const last_reply = app.session.lastAssistantReply() orelse {
-                try app.writeDomainNotice(.{
-                    .topic = "clipboard",
-                    .tone = .neutral,
-                    .body = "No assistant reply to copy.",
-                }, true);
-                return;
-            };
-            const copied = app.clipboard().copy(last_reply) catch false;
-            if (!copied) {
-                try app.writeDomainNotice(.{
-                    .topic = "clipboard",
-                    .tone = .@"error",
-                    .body = "Failed to copy to clipboard.",
-                }, true);
-                return;
-            }
-            try app.writeDomainNotice(.{
-                .topic = "clipboard",
-                .tone = .neutral,
-                .body = "Copied to clipboard.",
-            }, true);
-        }
-
         fn commandCreateTrace(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try handleTraceReport(app);
@@ -1901,11 +1860,6 @@ pub fn Handlers(comptime App: type) type {
                 return;
             }
             try session_commands.Commands(App).handleSettings(app, rest);
-        }
-
-        fn commandPasteClipboard(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try image_commands.Commands(App).attachClipboard(app);
         }
 
         fn commandToggleFast(ctx: *anyopaque) !void {
@@ -3834,58 +3788,6 @@ test "quit command requests resume handoff before exit" {
     );
 }
 
-const ClipboardCommandFakeApp = struct {
-    const CopyOutcome = enum {
-        copied,
-        unavailable,
-        failed,
-    };
-
-    const Session = struct {
-        reply: ?[]const u8 = null,
-
-        fn lastAssistantReply(self: *const Session) ?[]const u8 {
-            return self.reply;
-        }
-    };
-
-    session: Session = .{},
-    copy_outcome: CopyOutcome = .copied,
-    copy_calls: usize = 0,
-    copied_text: ?[]const u8 = null,
-    last_topic: ?[]const u8 = null,
-    last_tone: ?types.NoticeTone = null,
-    last_body: ?[]const u8 = null,
-
-    pub fn clipboard(self: *ClipboardCommandFakeApp) host.Clipboard {
-        return .{
-            .context = self,
-            .copy_fn = copy,
-        };
-    }
-
-    fn copy(raw_context: ?*anyopaque, text: []const u8) host.ClipboardError!bool {
-        const self: *ClipboardCommandFakeApp = @ptrCast(@alignCast(raw_context.?));
-        self.copy_calls += 1;
-        self.copied_text = text;
-        return switch (self.copy_outcome) {
-            .copied => true,
-            .unavailable => false,
-            .failed => error.CopyFailed,
-        };
-    }
-
-    noinline fn writeDomainNotice(
-        self: *ClipboardCommandFakeApp,
-        notice: types.SemanticNotice,
-        _: bool,
-    ) !void {
-        self.last_topic = notice.topic;
-        self.last_tone = notice.tone;
-        self.last_body = notice.body;
-    }
-};
-
 const SkillsInstallReplayApp = struct {
     const FakeInputRuntime = struct {
         const TextReplacementState = struct {
@@ -4341,42 +4243,6 @@ test "app_commands routes clear through carry-forward session reset" {
 
     try std.testing.expectEqual(@as(usize, 1), app.clear_count);
     try std.testing.expectEqual(@as(usize, 0), app.reset_count);
-}
-
-test "copy command routes exact reply bytes through the host clipboard" {
-    var app = ClipboardCommandFakeApp{
-        .session = .{ .reply = "reply\nwith exact bytes" },
-    };
-
-    try Handlers(ClipboardCommandFakeApp).commandCopyLast(@ptrCast(&app));
-
-    try std.testing.expectEqual(@as(usize, 1), app.copy_calls);
-    try std.testing.expectEqualStrings("reply\nwith exact bytes", app.copied_text.?);
-    try std.testing.expectEqualStrings("clipboard", app.last_topic.?);
-    try std.testing.expectEqual(types.NoticeTone.neutral, app.last_tone.?);
-    try std.testing.expectEqualStrings("Copied to clipboard.", app.last_body.?);
-}
-
-test "copy command reports missing replies and host failures" {
-    var app = ClipboardCommandFakeApp{};
-
-    try Handlers(ClipboardCommandFakeApp).commandCopyLast(@ptrCast(&app));
-    try std.testing.expectEqual(@as(usize, 0), app.copy_calls);
-    try std.testing.expectEqual(types.NoticeTone.neutral, app.last_tone.?);
-    try std.testing.expectEqualStrings("No assistant reply to copy.", app.last_body.?);
-
-    app.session.reply = "reply";
-    for ([_]ClipboardCommandFakeApp.CopyOutcome{ .unavailable, .failed }) |outcome| {
-        app.copy_outcome = outcome;
-        app.last_tone = null;
-        app.last_body = null;
-
-        try Handlers(ClipboardCommandFakeApp).commandCopyLast(@ptrCast(&app));
-
-        try std.testing.expectEqual(types.NoticeTone.@"error", app.last_tone.?);
-        try std.testing.expectEqualStrings("Failed to copy to clipboard.", app.last_body.?);
-    }
-    try std.testing.expectEqual(@as(usize, 2), app.copy_calls);
 }
 
 test "app_commands renders transactional status for explicit MCP reload" {

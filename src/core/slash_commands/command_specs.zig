@@ -36,19 +36,15 @@ pub const SlashKind = enum {
     login,
     logout,
     status,
-    image,
-    images,
     model,
     permissions,
     usage,
     undo,
     mcp,
     skills,
-    copy,
     trace,
     compact,
     settings,
-    paste,
     fast,
     statusline,
     notifications,
@@ -1130,9 +1126,10 @@ test "top-level matcher recognizes help aliases" {
 }
 
 test "slash prefix matcher recognizes aliases and whitespace boundaries" {
-    try std.testing.expectEqualStrings("/image", matchedSlashPrefix(testSlashRegistry(), "/image screenshot.png", .image).?);
-    try std.testing.expectEqualStrings("/img", matchedSlashPrefix(testSlashRegistry(), "/img screenshot.png", .image).?);
-    try std.testing.expect(matchedSlashPrefix(testSlashRegistry(), "/imagesx", .images) == null);
+    try std.testing.expectEqualStrings("/model", matchedSlashPrefix(testSlashRegistry(), "/model claude-opus", .model).?);
+    const quit = testSlashRegistry().lookup("/exit") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(SlashKind.quit, quit.kind);
+    try std.testing.expect(matchedSlashPrefix(testSlashRegistry(), "/models", .model) == null);
 }
 
 test "rendered top-level help is a complete CLI navigation page" {
@@ -1349,11 +1346,11 @@ test "slash completion categories follow canonical entries" {
 test "help catalog groups visible commands and searches all command metadata" {
     const registry = testSlashRegistry();
 
-    try std.testing.expectEqual(@as(usize, 27), helpCatalogCount(registry, ""));
+    try std.testing.expectEqual(@as(usize, 23), helpCatalogCount(registry, ""));
     try std.testing.expectEqualStrings("/help", helpCatalogSpecAt(registry, "", 0).?.command);
     try std.testing.expectEqual(@as(usize, 4), helpCatalogCategoryCount(registry, "", .general));
     try std.testing.expectEqual(@as(usize, 3), helpCatalogCount(registry, "appearance"));
-    try std.testing.expectEqualStrings("/paste", helpCatalogSpecAt(registry, "clipboard", 0).?.command);
+    try std.testing.expectEqualStrings("/trace", helpCatalogSpecAt(registry, "diagnostic", 0).?.command);
 }
 
 test "help menu selection follows the filtered catalog without executing commands" {
@@ -1384,7 +1381,7 @@ test "completion command matcher returns primary or alias" {
 test "rendered slash summaries include aliases and welcome entries" {
     const help_text = try renderSlashHelp(std.testing.allocator, testSlashRegistry());
     defer std.testing.allocator.free(help_text);
-    try std.testing.expect(std.mem.find(u8, help_text, "/image <path> (/img)") != null);
+    try std.testing.expect(std.mem.find(u8, help_text, "/workspace [list|add PATH|remove PATH|clear]") != null);
 
     const welcome_text = try renderSlashWelcome(std.testing.allocator, testSlashRegistry());
     defer std.testing.allocator.free(welcome_text);
@@ -1441,12 +1438,12 @@ test "interactive model command has no plural spelling" {
 
 test "default slash registry resolves primary commands and aliases" {
     const registry = testSlashRegistry();
-    const image = registry.lookup("/img") orelse return error.TestExpectedEqual;
-    try std.testing.expectEqual(SlashKind.image, image.kind);
+    const quit = registry.lookup("/exit") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(SlashKind.quit, quit.kind);
 
-    const quit = registry.matchExact("/exit\t") orelse return error.TestExpectedEqual;
-    try std.testing.expectEqual(SlashKind.quit, quit.command.kind);
-    try std.testing.expectEqualStrings("/exit", quit.token);
+    const quit_match = registry.matchExact("/exit\t") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(SlashKind.quit, quit_match.command.kind);
+    try std.testing.expectEqualStrings("/exit", quit_match.token);
 
     const model = registry.matchEntryPrefix("/model\tmodel-id", slashSpecPtr(registry, .model)) orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("/model", model);
@@ -1483,8 +1480,8 @@ test "slash specs keep unique commands and aliases" {
 }
 
 test "slash prefix matcher accepts tab boundary and rejects newline boundary" {
-    try std.testing.expectEqualStrings("/image", matchedSlashPrefix(testSlashRegistry(), "/image\tshot.png", .image).?);
-    try std.testing.expect(matchedSlashPrefix(testSlashRegistry(), "/image\nshot.png", .image) == null);
+    try std.testing.expectEqualStrings("/model", matchedSlashPrefix(testSlashRegistry(), "/model\tclaude-opus", .model).?);
+    try std.testing.expect(matchedSlashPrefix(testSlashRegistry(), "/model\nclaude-opus", .model) == null);
 }
 
 test "slash completion prefix normalizes leading whitespace and preserves argument queries" {
@@ -1571,18 +1568,16 @@ test "slash completion descriptions follow completion matches" {
 }
 
 test "slash completion aliases participate in ranked order" {
-    try std.testing.expectEqualStrings("/img", nthSlashCompletion(testSlashRegistry(), "/img", 0).?);
-    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/img"));
-    try std.testing.expectEqualStrings("/image", firstSlashCompletion(testSlashRegistry(), "/ima").?);
-    try std.testing.expectEqual(@as(usize, 2), slashCompletionCount(testSlashRegistry(), "/ima"));
-    try std.testing.expectEqualStrings("/images", nthSlashCompletion(testSlashRegistry(), "/ima", 1).?);
+    try std.testing.expectEqualStrings("/exit", nthSlashCompletion(testSlashRegistry(), "/exit", 0).?);
+    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/exit"));
+    try std.testing.expectEqualStrings("/quit", firstSlashCompletion(testSlashRegistry(), "/qui").?);
+    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/qui"));
 }
 
 test "rendered slash welcome excludes non-welcome help entries" {
     const welcome_text = try renderSlashWelcome(std.testing.allocator, testSlashRegistry());
     defer std.testing.allocator.free(welcome_text);
 
-    try std.testing.expect(std.mem.find(u8, welcome_text, "/image") == null);
     try std.testing.expect(std.mem.find(u8, welcome_text, "/help") != null);
     try std.testing.expect(std.mem.find(u8, welcome_text, "/clear") != null);
     try std.testing.expect(std.mem.find(u8, welcome_text, "/new") != null);

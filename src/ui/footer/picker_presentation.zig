@@ -1650,11 +1650,11 @@ test "registry-aware slash presentation preserves aliases" {
     const builtin_commands = @import("../../builtins/commands.zig");
     try std.testing.expectEqual(
         @as(usize, 1),
-        mixedSlashCompletionCount(builtin_commands.slash_registry, "/img", &.{}),
+        mixedSlashCompletionCount(builtin_commands.slash_registry, "/exit", &.{}),
     );
     try std.testing.expectEqualStrings(
-        "/img",
-        nthMixedSlashCompletionText(builtin_commands.slash_registry, "/img", &.{}, 0).?,
+        "/exit",
+        nthMixedSlashCompletionText(builtin_commands.slash_registry, "/exit", &.{}, 0).?,
     );
 }
 

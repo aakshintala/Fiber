@@ -3155,8 +3155,6 @@ const FakeApprovalShell = struct {
 const routing_test_slash_specs = [_]command_specs.SlashSpec{
     .{ .kind = .help, .command = "/help", .help_entry = "/help", .completion_description = "show available slash commands", .presentation_category = .general },
     .{ .kind = .clear_screen, .command = "/clear", .help_entry = "/clear", .completion_description = "clear the terminal transcript", .presentation_category = .general },
-    .{ .kind = .image, .command = "/image", .aliases = &.{"/img"}, .help_entry = "/image <path> (/img)", .completion_description = "attach an image by path", .presentation_category = .media, .has_args = true, .accepts_payload = true },
-    .{ .kind = .images, .command = "/images", .help_entry = "/images [clear]", .completion_description = "manage pending image attachments", .presentation_category = .media, .has_args = true, .accepts_payload = true },
     .{ .kind = .model, .command = "/model", .help_entry = "/model <id-or-query>", .completion_description = "choose a model", .presentation_category = .model, .has_args = true, .accepts_payload = true, .requires_prompt_credential = true },
     .{ .kind = .skills, .command = "/skills", .help_entry = "/skills", .completion_description = "browse and manage skills", .presentation_category = .extensions, .has_args = true, .accepts_payload = true },
     .{ .kind = .workspace, .command = "/workspace", .help_entry = "/workspace [list|add PATH|remove PATH|clear]", .completion_description = "manage additional workspace directories", .presentation_category = .workspace, .has_args = true, .accepts_payload = true },
@@ -4096,15 +4094,15 @@ test "app_input_runtime slash completion window moves up before reverse scrollin
     app.input_runtime.edit_state.cursor = app.input_runtime.edit_state.input.items.len;
 
     var down: usize = 0;
-    while (down < 6) : (down += 1) {
+    while (down < routing_test_slash_specs.len - 1) : (down += 1) {
         try std.testing.expect(Runtime(FakeApprovalCancelApp).routeSlashCompletionMove(&app, 1));
     }
-    try std.testing.expectEqual(@as(usize, 6), app.input_runtime.picker.slash_completion_index);
-    try std.testing.expectEqual(@as(usize, 1), app.input_runtime.picker.slash_completion_window_start);
+    try std.testing.expectEqual(routing_test_slash_specs.len - 1, app.input_runtime.picker.slash_completion_index);
+    try std.testing.expectEqual(@as(usize, 0), app.input_runtime.picker.slash_completion_window_start);
 
     try std.testing.expect(Runtime(FakeApprovalCancelApp).routeSlashCompletionMove(&app, -1));
-    try std.testing.expectEqual(@as(usize, 5), app.input_runtime.picker.slash_completion_index);
-    try std.testing.expectEqual(@as(usize, 1), app.input_runtime.picker.slash_completion_window_start);
+    try std.testing.expectEqual(routing_test_slash_specs.len - 2, app.input_runtime.picker.slash_completion_index);
+    try std.testing.expectEqual(@as(usize, 0), app.input_runtime.picker.slash_completion_window_start);
 }
 
 test "app_input_runtime one-row session picker keeps reverse scrolling sticky" {
@@ -11357,7 +11355,6 @@ const FakeSubmitApp = struct {
     capture_error: ?anyerror = null,
     fail_enqueue_after_snapshot: bool = false,
     fail_pending_finalization: bool = false,
-    fail_command_after_pending_clear: bool = false,
     snapshot_dir: ?[]const u8 = null,
 
     pub fn slashRegistry(_: *const FakeSubmitApp) command_specs.SlashRegistry {
@@ -11421,21 +11418,6 @@ const FakeSubmitApp = struct {
         self.last_command = try self.alloc.dupe(u8, text);
         self.command_count += 1;
         self.input_len_at_command = self.input_runtime.edit_state.input.items.len;
-        if (std.mem.eql(u8, text, "/images clear")) {
-            self.clearPendingImages();
-            if (self.fail_command_after_pending_clear) return error.InjectedCommandFailure;
-        }
-        // Attach through the production handler so routing tests observe real placeholder
-        // insertion, id allocation, and snapshot capture rather than a stub.
-        const attach_prefix: ?[]const u8 = if (std.mem.startsWith(u8, text, "/image "))
-            "/image "
-        else if (std.mem.startsWith(u8, text, "/img "))
-            "/img "
-        else
-            null;
-        if (attach_prefix) |prefix| {
-            try image_commands.Commands(FakeSubmitApp).attachPath(self, text[prefix.len..]);
-        }
     }
 
     pub fn ensurePromptCredential(self: *FakeSubmitApp) !bool {
@@ -12041,103 +12023,6 @@ test "app_input_runtime local commands clear unrelated pending images" {
     try std.testing.expectEqual(@as(usize, 0), app.pending_images.items.len);
 }
 
-test "app_input_runtime routes pending image list locally and preserves its placeholder" {
-    const alloc = std.testing.allocator;
-    var app = FakeSubmitApp{ .alloc = alloc, .prompt_admitted = false };
-    defer app.deinit();
-    try appendOwnedPendingImage(&app, 1, "/tmp/image.png");
-    try app.input_runtime.edit_state.input.appendSlice(alloc, "[Image #1]/images");
-    try app.input_runtime.entities.image_tokens.append(alloc, .{
-        .id = 1,
-        .span = .{ .raw_start = 0, .raw_end = "[Image #1]".len },
-    });
-    app.input_runtime.edit_state.cursor = app.input_runtime.edit_state.input.items.len;
-
-    try Runtime(FakeSubmitApp).submit(&app, 100);
-
-    const command = app.last_command orelse return error.TestExpectedImageCommand;
-    try std.testing.expectEqualStrings("/images", command);
-    try std.testing.expectEqual(@as(usize, "[Image #1]".len), app.input_len_at_command);
-    try std.testing.expectEqualStrings("[Image #1]", app.input_runtime.edit_state.input.items);
-    try std.testing.expectEqual(@as(usize, "[Image #1]".len), app.input_runtime.edit_state.cursor);
-    try std.testing.expectEqual(@as(usize, 1), app.pending_images.items.len);
-    try std.testing.expectEqual(@as(usize, 0), app.preflight_count);
-    try std.testing.expectEqual(@as(usize, 0), app.queue_accept_count);
-    try std.testing.expectEqual(@as(usize, 1), app.input_runtime.composer_history.count());
-    try std.testing.expectEqualStrings(
-        "/images",
-        app.input_runtime.composer_history.entryText(0).?,
-    );
-    try std.testing.expect(app.last_prompt == null);
-}
-
-test "app_input_runtime routes image-prefixed slash command with reversed pending image order" {
-    const alloc = std.testing.allocator;
-    var app = FakeSubmitApp{ .alloc = alloc };
-    defer app.deinit();
-
-    try appendOwnedPendingImage(&app, 2, "/tmp/two.png");
-    try appendOwnedPendingImage(&app, 1, "/tmp/one.png");
-    try app.input_runtime.edit_state.input.appendSlice(alloc, "[Image #2] [Image #1] /images");
-    try appendImageTokenForPlaceholderAt(&app, 2, 0);
-    try appendImageTokenForPlaceholderAt(&app, 1, "[Image #2] ".len);
-    app.input_runtime.edit_state.cursor = app.input_runtime.edit_state.input.items.len;
-
-    try Runtime(FakeSubmitApp).submit(&app, 100);
-
-    try std.testing.expectEqualStrings("/images", app.last_command.?);
-    try std.testing.expect(app.last_prompt == null);
-    try std.testing.expectEqual(@as(usize, 2), app.pending_images.items[0].id);
-    try std.testing.expectEqual(@as(usize, 1), app.pending_images.items[1].id);
-}
-
-test "app_input_runtime clears pending image placeholders after image command state clears" {
-    const alloc = std.testing.allocator;
-
-    for ([_]bool{ false, true }) |fail_after_clear| {
-        var app = FakeSubmitApp{
-            .alloc = alloc,
-            .prompt_admitted = false,
-            .fail_command_after_pending_clear = fail_after_clear,
-        };
-        defer app.deinit();
-        try appendOwnedPendingImage(&app, 1, "/tmp/image.png");
-        try app.input_runtime.edit_state.input.appendSlice(alloc, "[Image #1]/images clear");
-        try app.input_runtime.entities.image_tokens.append(alloc, .{
-            .id = 1,
-            .span = .{ .raw_start = 0, .raw_end = "[Image #1]".len },
-        });
-        app.input_runtime.edit_state.cursor = app.input_runtime.edit_state.input.items.len;
-
-        if (fail_after_clear) {
-            try std.testing.expectError(
-                error.InjectedCommandFailure,
-                Runtime(FakeSubmitApp).submit(&app, 100),
-            );
-        } else {
-            try Runtime(FakeSubmitApp).submit(&app, 100);
-        }
-
-        const command = app.last_command orelse return error.TestExpectedImageCommand;
-        try std.testing.expectEqualStrings("/images clear", command);
-        try std.testing.expectEqual(@as(usize, "[Image #1]".len), app.input_len_at_command);
-        try std.testing.expectEqual(@as(usize, 0), app.input_runtime.edit_state.input.items.len);
-        try std.testing.expectEqual(@as(usize, 0), app.input_runtime.edit_state.cursor);
-        try std.testing.expectEqual(@as(usize, 0), app.pending_images.items.len);
-        try std.testing.expectEqual(@as(usize, 0), app.preflight_count);
-        try std.testing.expectEqual(@as(usize, 0), app.queue_accept_count);
-        try std.testing.expectEqual(
-            @as(usize, 1),
-            app.input_runtime.composer_history.count(),
-        );
-        try std.testing.expectEqualStrings(
-            "/images clear",
-            app.input_runtime.composer_history.entryText(0).?,
-        );
-        try std.testing.expect(app.last_prompt == null);
-    }
-}
-
 test "app_input_runtime keeps mixed unknown and non-images attachment suffixes as prompts" {
     const alloc = std.testing.allocator;
     const cases = [_][]const u8{
@@ -12206,32 +12091,6 @@ test "app_input_runtime preserves pending image draft when model selection prefl
     try std.testing.expectEqual(@as(usize, 0), app.queue_accept_count);
 }
 
-test "app_input_runtime routes image slash commands before inline attachment extraction" {
-    const alloc = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try writeTestImage(&tmp, "slash-image.png");
-    const image_path = try realTmpPath(alloc, &tmp, "slash-image.png");
-    defer alloc.free(image_path);
-
-    for ([_][]const u8{ "/image", "/img" }) |command| {
-        var app = FakeSubmitApp{ .alloc = alloc, .prompt_admitted = false };
-        defer app.deinit();
-        const input = try std.fmt.allocPrint(alloc, "{s} {s}", .{ command, image_path });
-        defer alloc.free(input);
-        try app.input_runtime.edit_state.input.appendSlice(alloc, input);
-        app.input_runtime.edit_state.cursor = app.input_runtime.edit_state.input.items.len;
-
-        try Runtime(FakeSubmitApp).submit(&app, 100);
-
-        const last_command = app.last_command orelse return error.TestExpectedImageCommand;
-        try std.testing.expectEqualStrings(input, last_command);
-        try std.testing.expectEqual(@as(usize, 0), app.preflight_count);
-        try std.testing.expect(app.last_prompt == null);
-        try std.testing.expectEqual(@as(usize, 0), app.last_images.len);
-    }
-}
-
 test "app_input_runtime keeps image-command near misses on the prompt path" {
     const alloc = std.testing.allocator;
     const cases = [_][]const u8{
@@ -12259,97 +12118,56 @@ test "app_input_runtime keeps image-command near misses on the prompt path" {
     }
 }
 
-test "app_input_runtime keeps a repeated image command local while an image is pending" {
-    const alloc = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try writeTestImage(&tmp, "second.png");
-    const second_path = try realTmpPath(alloc, &tmp, "second.png");
-    defer alloc.free(second_path);
-
-    for ([_][]const u8{ "/image", "/img" }) |command| {
-        var app = FakeSubmitApp{ .alloc = alloc, .prompt_admitted = false, .queue_admitted = false };
-        defer app.deinit();
-        try appendOwnedPendingImage(&app, 1, "/tmp/first.png");
-        app.next_image_id_counter = 2;
-        const input = try std.fmt.allocPrint(alloc, "[Image #1]{s} {s}", .{ command, second_path });
-        defer alloc.free(input);
-        try app.input_runtime.edit_state.input.appendSlice(alloc, input);
-        try appendImageTokenForPlaceholderAt(&app, 1, 0);
-        app.input_runtime.edit_state.cursor = app.input_runtime.edit_state.input.items.len;
-
-        try Runtime(FakeSubmitApp).submit(&app, 100);
-
-        const last_command = app.last_command orelse return error.TestExpectedImageCommand;
-        try std.testing.expectEqualStrings(input["[Image #1]".len..], last_command);
-        try std.testing.expectEqual(@as(usize, 1), app.command_count);
-        try std.testing.expectEqual(@as(usize, 2), app.pending_images.items.len);
-        try std.testing.expectEqual(@as(usize, 1), app.pending_images.items[0].id);
-        try std.testing.expectEqual(@as(usize, 2), app.pending_images.items[1].id);
-        try std.testing.expectEqualStrings(second_path, app.pending_images.items[1].path);
-        try std.testing.expectEqualStrings("[Image #1][Image #2]", app.input_runtime.edit_state.input.items);
-        try std.testing.expectEqual(@as(usize, 0), app.preflight_count);
-        try std.testing.expectEqual(@as(usize, 0), app.queue_accept_count);
-        try std.testing.expectEqual(@as(usize, 1), app.input_runtime.composer_history.count());
-        try std.testing.expectEqualStrings(
-            last_command,
-            app.input_runtime.composer_history.entryText(0).?,
-        );
-        try std.testing.expect(app.last_prompt == null);
-        try std.testing.expectEqual(@as(usize, 0), app.last_images.len);
-        try std.testing.expectEqual(@as(usize, 0), app.transcript.items.len);
-    }
-}
-
-test "app_input_runtime attaches three sequential image commands in appearance order" {
+test "app_input_runtime attaches three sequential images in appearance order" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const names = [_][]const u8{ "one.png", "two.png", "three.png" };
     for (names) |name| try writeTestImage(&tmp, name);
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
 
-    var app = FakeSubmitApp{ .alloc = alloc, .prompt_admitted = false, .queue_admitted = false };
+    var app = FakeSubmitApp{
+        .alloc = alloc,
+        .workspace_root = root,
+        .prompt_admitted = false,
+        .queue_admitted = false,
+    };
     defer app.deinit();
 
     for (names, 1..) |name, expected_id| {
         const path = try realTmpPath(alloc, &tmp, name);
         defer alloc.free(path);
-        const suffix = try std.fmt.allocPrint(alloc, "/image {s}", .{path});
-        defer alloc.free(suffix);
-        try app.input_runtime.insertionState().insertSlice(alloc, suffix, .preserve);
-
-        try Runtime(FakeSubmitApp).submit(&app, 100);
+        try image_commands.Commands(FakeSubmitApp).attachPath(&app, path);
 
         try std.testing.expectEqual(expected_id, app.pending_images.items.len);
         try std.testing.expectEqual(expected_id, app.pending_images.items[expected_id - 1].id);
     }
 
     try std.testing.expectEqualStrings("[Image #1][Image #2][Image #3]", app.input_runtime.edit_state.input.items);
-    try std.testing.expectEqual(@as(usize, 3), app.command_count);
     try std.testing.expectEqual(@as(usize, 0), app.preflight_count);
     try std.testing.expectEqual(@as(usize, 0), app.queue_accept_count);
     try std.testing.expect(app.last_prompt == null);
 }
 
-test "app_input_runtime submits one prompt carrying every image attached by repeated commands" {
+test "app_input_runtime submits one prompt carrying every image attached in sequence" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try writeTestImage(&tmp, "second.png");
     const second_path = try realTmpPath(alloc, &tmp, "second.png");
     defer alloc.free(second_path);
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
 
-    var app = FakeSubmitApp{ .alloc = alloc };
+    var app = FakeSubmitApp{ .alloc = alloc, .workspace_root = root };
     defer app.deinit();
     try appendOwnedPendingImage(&app, 1, "/tmp/first.png");
     app.next_image_id_counter = 2;
-    const attach = try std.fmt.allocPrint(alloc, "[Image #1]/image {s}", .{second_path});
-    defer alloc.free(attach);
-    try app.input_runtime.edit_state.input.appendSlice(alloc, attach);
+    try app.input_runtime.edit_state.input.appendSlice(alloc, "[Image #1]");
     try appendImageTokenForPlaceholderAt(&app, 1, 0);
     app.input_runtime.edit_state.cursor = app.input_runtime.edit_state.input.items.len;
-
-    try Runtime(FakeSubmitApp).submit(&app, 100);
+    try image_commands.Commands(FakeSubmitApp).attachPath(&app, second_path);
     try std.testing.expectEqual(@as(usize, 2), app.pending_images.items.len);
     try std.testing.expectEqual(@as(usize, 0), app.queue_accept_count);
 
@@ -12381,23 +12199,19 @@ test "app_input_runtime rejected second image keeps the first pending image and 
         .prompt_admitted = false,
         .queue_admitted = false,
         .snapshot_dir = snapshot_dir,
+        .workspace_root = snapshot_dir,
     };
     defer app.deinit();
-    const attach_first = try std.fmt.allocPrint(alloc, "/image {s}", .{first_path});
-    defer alloc.free(attach_first);
-    try app.input_runtime.insertionState().insertSlice(alloc, attach_first, .preserve);
-    try Runtime(FakeSubmitApp).submit(&app, 100);
+    try image_commands.Commands(FakeSubmitApp).attachPath(&app, first_path);
     try std.testing.expectEqual(@as(usize, 1), app.pending_images.items.len);
     const first_snapshot = try alloc.dupe(u8, app.pending_images.items[0].snapshot_path.?);
     defer alloc.free(first_snapshot);
 
     const missing = try realTmpPath(alloc, &tmp, ".");
     defer alloc.free(missing);
-    const attach_missing = try std.fmt.allocPrint(alloc, "/image {s}/absent.png", .{missing});
-    defer alloc.free(attach_missing);
-    try app.input_runtime.insertionState().insertSlice(alloc, attach_missing, .preserve);
-
-    try Runtime(FakeSubmitApp).submit(&app, 100);
+    const missing_path = try std.fmt.allocPrint(alloc, "{s}/absent.png", .{missing});
+    defer alloc.free(missing_path);
+    try image_commands.Commands(FakeSubmitApp).attachPath(&app, missing_path);
 
     try std.testing.expectEqualStrings("images", app.notice_topic.items);
     try std.testing.expectEqualStrings("image file not found", app.notice_body.items);
@@ -12416,36 +12230,39 @@ test "app_input_runtime rejected second image keeps the first pending image and 
     snapshot_file.close(std.testing.io);
 }
 
-test "app_input_runtime repeated image command releases every allocation on failure" {
+test "app_input_runtime repeated image attach releases every allocation on failure" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try writeTestImage(&tmp, "second.png");
     const second_path = try realTmpPath(alloc, &tmp, "second.png");
     defer alloc.free(second_path);
-    const input = try std.fmt.allocPrint(alloc, "[Image #1]/image {s}", .{second_path});
-    defer alloc.free(input);
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
 
     var counting = std.testing.FailingAllocator.init(alloc, .{});
-    try runRepeatedImageCommand(counting.allocator(), input);
+    try runRepeatedImageAttach(counting.allocator(), second_path, root);
 
     var fail_index: usize = 0;
     while (fail_index < counting.alloc_index) : (fail_index += 1) {
         var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = fail_index });
-        runRepeatedImageCommand(failing.allocator(), input) catch {};
+        runRepeatedImageAttach(failing.allocator(), second_path, root) catch {};
         try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
     }
 }
 
-fn runRepeatedImageCommand(alloc: std.mem.Allocator, input: []const u8) !void {
-    var app = FakeSubmitApp{ .alloc = alloc, .prompt_admitted = false, .queue_admitted = false };
+fn runRepeatedImageAttach(alloc: std.mem.Allocator, second_path: []const u8, workspace_root: []const u8) !void {
+    var app = FakeSubmitApp{
+        .alloc = alloc,
+        .workspace_root = workspace_root,
+        .prompt_admitted = false,
+        .queue_admitted = false,
+    };
     defer app.deinit();
     try appendOwnedPendingImage(&app, 1, "/tmp/first.png");
     app.next_image_id_counter = 2;
-    try app.input_runtime.edit_state.input.appendSlice(alloc, input);
     try appendImageTokenForPlaceholderAt(&app, 1, 0);
-    app.input_runtime.edit_state.cursor = app.input_runtime.edit_state.input.items.len;
-    try Runtime(FakeSubmitApp).submit(&app, 100);
+    try image_commands.Commands(FakeSubmitApp).attachPath(&app, second_path);
 }
 
 test "app_input_runtime slash command records output without a pre-frame terminal write" {

@@ -15,19 +15,15 @@ pub const ParsedCommand = union(enum) {
     login,
     logout: []const u8,
     status,
-    image: []const u8,
-    images: []const u8,
     model: []const u8,
     permissions: []const u8,
     usage,
     undo,
     mcp: []const u8,
     skills: []const u8,
-    copy,
     trace,
     compact,
     settings: []const u8,
-    paste,
     fast,
     statusline: []const u8,
     notifications: []const u8,
@@ -46,19 +42,15 @@ pub const CommandHandlers = struct {
     login: *const fn (ctx: *anyopaque) anyerror!void,
     logout: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     show_status: *const fn (ctx: *anyopaque) anyerror!void,
-    attach_image: *const fn (ctx: *anyopaque, path: []const u8) anyerror!void,
-    manage_images: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_model: *const fn (ctx: *anyopaque, query: []const u8) anyerror!void,
     handle_permissions: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     show_usage: *const fn (ctx: *anyopaque) anyerror!void,
     undo_last: *const fn (ctx: *anyopaque) anyerror!void,
     handle_mcp: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_skills: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
-    copy_last: *const fn (ctx: *anyopaque) anyerror!void,
     create_trace: *const fn (ctx: *anyopaque) anyerror!void,
     compact_history: *const fn (ctx: *anyopaque) anyerror!void,
     handle_settings: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
-    paste_clipboard: *const fn (ctx: *anyopaque) anyerror!void,
     toggle_fast: *const fn (ctx: *anyopaque) anyerror!void,
     handle_statusline: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     rename_session: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
@@ -83,19 +75,15 @@ fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
         .login => .login,
         .logout => .{ .logout = payload },
         .status => .status,
-        .images => .{ .images = payload },
-        .image => .{ .image = payload },
         .model => .{ .model = payload },
         .permissions => .{ .permissions = payload },
         .usage => .usage,
         .undo => .undo,
         .mcp => .{ .mcp = payload },
         .skills => .{ .skills = payload },
-        .copy => .copy,
         .trace => .trace,
         .compact => .compact,
         .settings => .{ .settings = payload },
-        .paste => .paste,
         .fast => .fast,
         .statusline => .{ .statusline = payload },
         .notifications => .{ .notifications = payload },
@@ -128,19 +116,15 @@ pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []c
         .login => try handlers.login(handlers.ctx),
         .logout => |rest| try handlers.logout(handlers.ctx, rest),
         .status => try handlers.show_status(handlers.ctx),
-        .image => |path| try handlers.attach_image(handlers.ctx, path),
-        .images => |rest| try handlers.manage_images(handlers.ctx, rest),
         .model => |query| try handlers.handle_model(handlers.ctx, query),
         .permissions => |rest| try handlers.handle_permissions(handlers.ctx, rest),
         .usage => try handlers.show_usage(handlers.ctx),
         .undo => try handlers.undo_last(handlers.ctx),
         .mcp => |rest| try handlers.handle_mcp(handlers.ctx, rest),
         .skills => |rest| try handlers.handle_skills(handlers.ctx, rest),
-        .copy => try handlers.copy_last(handlers.ctx),
         .trace => try handlers.create_trace(handlers.ctx),
         .compact => try handlers.compact_history(handlers.ctx),
         .settings => |rest| try handlers.handle_settings(handlers.ctx, rest),
-        .paste => try handlers.paste_clipboard(handlers.ctx),
         .fast => try handlers.toggle_fast(handlers.ctx),
         .statusline => |rest| try handlers.handle_statusline(handlers.ctx, rest),
         .notifications => |rest| try handlers.handle_notifications(handlers.ctx, rest),
@@ -222,21 +206,11 @@ test "parse rejects removed slash commands" {
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/cost"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/allowlist"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/allowlist add command git"));
-}
-
-test "parse extracts image commands" {
-    switch (parse(testSlashRegistry(), "/image screenshot.png")) {
-        .image => |path| try std.testing.expectEqualStrings("screenshot.png", path),
-        else => return error.TestExpectedEqual,
-    }
-    switch (parse(testSlashRegistry(), "/img screenshot.png")) {
-        .image => |path| try std.testing.expectEqualStrings("screenshot.png", path),
-        else => return error.TestExpectedEqual,
-    }
-    switch (parse(testSlashRegistry(), "/images clear")) {
-        .images => |rest| try std.testing.expectEqualStrings("clear", rest),
-        else => return error.TestExpectedEqual,
-    }
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/image screenshot.png"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/img screenshot.png"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/images clear"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/copy"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/paste"));
 }
 
 test "parse extracts mcp command payload" {
@@ -254,10 +228,8 @@ test "parse rejects removed upstream-service slash commands" {
 }
 
 test "parse recognizes exact no-payload commands" {
-    try std.testing.expectEqual(ParsedCommand.copy, parse(testSlashRegistry(), "/copy"));
     try std.testing.expectEqual(ParsedCommand.trace, parse(testSlashRegistry(), "/trace"));
     try std.testing.expectEqual(ParsedCommand.compact, parse(testSlashRegistry(), "/compact"));
-    try std.testing.expectEqual(ParsedCommand.paste, parse(testSlashRegistry(), "/paste"));
     try std.testing.expectEqual(ParsedCommand.fast, parse(testSlashRegistry(), "/fast"));
 }
 
@@ -293,7 +265,7 @@ test "parse tolerates trailing whitespace on exact-match commands" {
     try std.testing.expectEqual(ParsedCommand.quit, parse(testSlashRegistry(), "/quit  "));
     try std.testing.expectEqual(ParsedCommand.quit, parse(testSlashRegistry(), "/exit \t"));
     try std.testing.expectEqual(ParsedCommand.help, parse(testSlashRegistry(), "/help "));
-    try std.testing.expectEqual(ParsedCommand.copy, parse(testSlashRegistry(), "/copy "));
+    try std.testing.expectEqual(ParsedCommand.trace, parse(testSlashRegistry(), "/trace "));
     try std.testing.expectEqual(ParsedCommand.clear_screen, parse(testSlashRegistry(), "/clear\t"));
 }
 
@@ -368,8 +340,8 @@ fn unexpectedPayload(ctx: *anyopaque, value: []const u8) anyerror!void {
     return error.UnexpectedCallback;
 }
 
-fn recordCopy(ctx: *anyopaque) anyerror!void {
-    testContext(ctx).called = "copy";
+fn recordTrace(ctx: *anyopaque) anyerror!void {
+    testContext(ctx).called = "trace";
 }
 
 fn recordResumeSession(ctx: *anyopaque) anyerror!void {
@@ -421,19 +393,15 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
         .login = unexpectedNoPayload,
         .logout = unexpectedPayload,
         .show_status = unexpectedNoPayload,
-        .attach_image = unexpectedPayload,
-        .manage_images = unexpectedPayload,
         .handle_model = unexpectedPayload,
         .handle_permissions = unexpectedPayload,
         .show_usage = unexpectedNoPayload,
         .undo_last = unexpectedNoPayload,
         .handle_mcp = unexpectedPayload,
         .handle_skills = unexpectedPayload,
-        .copy_last = unexpectedNoPayload,
         .create_trace = unexpectedNoPayload,
         .compact_history = unexpectedNoPayload,
         .handle_settings = unexpectedPayload,
-        .paste_clipboard = unexpectedNoPayload,
         .toggle_fast = unexpectedNoPayload,
         .handle_statusline = unexpectedPayload,
         .rename_session = unexpectedPayload,
@@ -446,11 +414,11 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
 test "route calls expected no-payload handler" {
     var ctx: TestContext = .{};
     var handlers = testHandlers(&ctx);
-    handlers.copy_last = recordCopy;
+    handlers.create_trace = recordTrace;
 
-    try route(testSlashRegistry(), &handlers, "/copy");
+    try route(testSlashRegistry(), &handlers, "/trace");
 
-    try std.testing.expectEqualStrings("copy", ctx.called);
+    try std.testing.expectEqualStrings("trace", ctx.called);
     try std.testing.expectEqualStrings("", ctx.payload);
 }
 
