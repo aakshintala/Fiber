@@ -31,7 +31,7 @@ const TRANSIENT_ACTIVITY_CAPTURE_DIR = "/private/tmp/fx-render-bug-20260510-0731
 const READ_ONLY_TOOLS_CAPTURE_TARBALL = join(
   import.meta.dirname,
   "fixtures",
-  "fx-render-bug-20260510-075848.tar.gz",
+  "fiber-render-bug-20260510-075848.tar.gz",
 );
 
 let session: TmuxSession | null = null;
@@ -56,10 +56,10 @@ async function launch(options: {
   goldenPath: string;
   tracePath: string;
 }> {
-  const workDir = mkdtempSync(join(tmpdir(), "fx-render-replay-"));
+  const workDir = mkdtempSync(join(tmpdir(), "fiber-render-replay-"));
   workDirs.push(workDir);
 
-  const tapePath = join(workDir, "render.fxtape");
+  const tapePath = join(workDir, "render.fibertape");
   const goldenPath = join(workDir, "grid.txt");
   const tracePath = join(workDir, "trace.log");
   mkdirSync(join(workDir, ".fiber"), { recursive: true });
@@ -104,7 +104,7 @@ async function launchAutomaticRecording(options: {
   tracePath: string;
   home: string;
 }> {
-  const workDir = mkdtempSync("/tmp/fx-render-auto-replay-");
+  const workDir = mkdtempSync("/tmp/fiber-render-auto-replay-");
   workDirs.push(workDir);
   const home = join(workDir, "home");
   mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -137,7 +137,7 @@ async function launchAutomaticRecording(options: {
   await s.waitForComposer(10_000);
   const recordingsDir = join(home, ".fiber", "recordings");
   const tapes = readdirSync(recordingsDir).filter((name) =>
-    name.endsWith(".fxtape")
+    name.endsWith(".fibertape")
   );
   if (tapes.length !== 1) {
     throw new Error(`expected one automatic tape, found ${tapes.length}`);
@@ -147,20 +147,20 @@ async function launchAutomaticRecording(options: {
 }
 
 describe("tui: render record/replay", () => {
-  test.skipIf(!existsSync(TRANSIENT_ACTIVITY_CAPTURE_TARBALL) && !existsSync(join(TRANSIENT_ACTIVITY_CAPTURE_DIR, "bug.fxtape")))(
+  test.skipIf(!existsSync(TRANSIENT_ACTIVITY_CAPTURE_TARBALL) && !existsSync(join(TRANSIENT_ACTIVITY_CAPTURE_DIR, "bug.fibertape")))(
     "replays transient activity capture without layout validation failures",
     () => {
       const failures: string[] = [];
       let captureDir = TRANSIENT_ACTIVITY_CAPTURE_DIR;
-      if (!existsSync(join(captureDir, "bug.fxtape"))) {
-        const workDir = mkdtempSync(join(tmpdir(), "fx-render-capture-"));
+      if (!existsSync(join(captureDir, "bug.fibertape"))) {
+        const workDir = mkdtempSync(join(tmpdir(), "fiber-render-capture-"));
         workDirs.push(workDir);
         execFileSync("tar", ["-xzf", TRANSIENT_ACTIVITY_CAPTURE_TARBALL, "-C", workDir]);
         captureDir = join(workDir, "fx-render-bug-20260510-073148");
       }
 
-      const tapePath = join(captureDir, "bug.fxtape");
-      const workDir = mkdtempSync(join(tmpdir(), "fx-render-capture-replay-"));
+      const tapePath = join(captureDir, "bug.fibertape");
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-render-capture-replay-"));
       workDirs.push(workDir);
       const goldenPath = join(workDir, "grid.txt");
       const tracePath = join(workDir, "trace.log");
@@ -283,12 +283,12 @@ describe("tui: render record/replay", () => {
     "replays read-only tools capture without layout validation failures",
     () => {
       const failures: string[] = [];
-      const extractDir = mkdtempSync(join(tmpdir(), "fx-render-read-only-tools-"));
+      const extractDir = mkdtempSync(join(tmpdir(), "fiber-render-read-only-tools-"));
       workDirs.push(extractDir);
       execFileSync("tar", ["-xzf", READ_ONLY_TOOLS_CAPTURE_TARBALL, "-C", extractDir]);
-      const captureDir = join(extractDir, "fx-render-bug-20260510-075848");
-      const tapePath = join(captureDir, "bug.fxtape");
-      const workDir = mkdtempSync(join(tmpdir(), "fx-render-read-only-tools-replay-"));
+      const captureDir = join(extractDir, "fiber-render-bug-20260510-075848");
+      const tapePath = join(captureDir, "bug.fibertape");
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-render-read-only-tools-replay-"));
       workDirs.push(workDir);
       const goldenPath = join(workDir, "grid.txt");
       const tracePath = join(workDir, "trace.log");

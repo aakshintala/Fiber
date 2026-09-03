@@ -27,7 +27,7 @@ const COMMAND_APPROVAL_PROMPT = "Would you like to run the following command?";
 function createNotificationRoot(
   notifications = { turn_end: true, attention_required: true },
 ) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-notifications-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-notifications-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   const profile = join(home, ".fiber");
@@ -236,7 +236,7 @@ test.skipIf(!tmuxAvailable())(
 );
 
 test(
-  "fx ask keeps redirected stdout JSON and stderr byte-clean with notifications enabled",
+  "fiber ask keeps redirected stdout JSON and stderr byte-clean with notifications enabled",
   async () => {
     const fixture = createNotificationRoot();
     const gateway = startFakeGateway([
@@ -270,7 +270,7 @@ test(
 );
 
 test.skipIf(!tmuxAvailable())(
-  "fx ask correlates permission attention and turn-end notifications",
+  "fiber ask correlates permission attention and turn-end notifications",
   async () => {
     const fixture = createNotificationRoot();
     const marker = join(fixture.workspace, "ask-permission-marker.txt");

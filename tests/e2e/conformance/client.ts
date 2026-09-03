@@ -83,7 +83,7 @@ for (const call of toolCalls) {
 }
 
 const fxBin = resolve(import.meta.dirname, "../../../zig-out/bin/fiber");
-const root = mkdtempSync(join(tmpdir(), "fx-mcp-conformance-client-"));
+const root = mkdtempSync(join(tmpdir(), "fiber-mcp-conformance-client-"));
 const home = join(root, "home");
 const workspace = join(root, "workspace");
 mkdirSync(join(home, ".fiber", "skills"), { recursive: true, mode: 0o700 });

@@ -63,7 +63,7 @@ async function startFx(
   recordRender = false,
   gatewayResponseCount = 1,
 ): Promise<TmuxSession> {
-  testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
+  testHome = mkdtempSync(join(tmpdir(), "fiber-tui-input-"));
   stderrPath = join(testHome, "stderr.log");
   writeFileSync(stderrPath, "");
   mkdirSync(join(testHome, ".fiber"), { recursive: true });
@@ -96,7 +96,7 @@ async function startFx(
         : {}),
       ...(recordRender
         ? {
-          FIBER_RECORD: join(testHome, "session.fxtape"),
+          FIBER_RECORD: join(testHome, "session.fibertape"),
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: join(testHome, "trace.log"),
           FIBER_TRACE_SCOPES: RENDER_TRACE_SCOPES,
@@ -192,7 +192,7 @@ function rowHasBackgroundSgr(row: string): boolean {
 }
 
 test("selected slash row ignores the welcome header help hint", () => {
-  const header = `${SELECTED_COMPLETION_SGR}𝒇x\x1b[0m\x1b[38;5;245m v0.3.27 · Run /help for commands`;
+  const header = `${SELECTED_COMPLETION_SGR}fiber\x1b[0m\x1b[38;5;245m v0.3.27 · Run /help for commands`;
   const composer = `${SELECTED_COMPLETION_SGR}┃ /\x1b[39m`;
   const selected = `${SELECTED_COMPLETION_SGR}  /clear\x1b[38;5;245m Clear the conversation`;
 
@@ -568,7 +568,7 @@ tmuxTest(
     expect(prompt.match(/\t/g)).toHaveLength(21);
 
     const active = await startFx(72, 16, true, true);
-    const tapePath = join(testHome!, "session.fxtape");
+    const tapePath = join(testHome!, "session.fibertape");
     await active.pasteText(prompt);
     await active.waitForText("[Pasted text #1, 11 lines]", READY_TIMEOUT);
     await active.sendKeys("Enter");
@@ -996,7 +996,7 @@ tmuxTest(
 tmuxTest(
   "typed pasted and slash-command images share the queued Gateway and session contract",
   async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
+    testHome = mkdtempSync(join(tmpdir(), "fiber-tui-input-"));
     stderrPath = join(testHome, "stderr.log");
     writeFileSync(stderrPath, "");
     const workspacePath = join(testHome, "workspace");
@@ -1179,10 +1179,10 @@ tmuxTest(
 tmuxTest(
   "repeated image commands stay local and submit together as one prompt",
   async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
+    testHome = mkdtempSync(join(tmpdir(), "fiber-tui-input-"));
     stderrPath = join(testHome, "stderr.log");
     writeFileSync(stderrPath, "");
-    const workspace = mkdtempSync(join(tmpdir(), "fx-tui-images-"));
+    const workspace = mkdtempSync(join(tmpdir(), "fiber-tui-images-"));
     const firstPath = join(workspace, "first.png");
     const secondPath = join(workspace, "second.png");
     copyFileSync(imageFixture, firstPath);
@@ -1286,10 +1286,10 @@ tmuxTest(
 tmuxTest(
   "a later turn's image keeps its own id in the composer and transcript",
   async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
+    testHome = mkdtempSync(join(tmpdir(), "fiber-tui-input-"));
     stderrPath = join(testHome, "stderr.log");
     writeFileSync(stderrPath, "");
-    const workspace = mkdtempSync(join(tmpdir(), "fx-tui-image-ids-"));
+    const workspace = mkdtempSync(join(tmpdir(), "fiber-tui-image-ids-"));
     const firstPath = join(workspace, "one.png");
     const secondPath = join(workspace, "two.png");
     copyFileSync(imageFixture, firstPath);
@@ -1382,10 +1382,10 @@ tmuxTest(
 tmuxTest(
   "image line kill and repeated yank preserve captured bytes under fresh ids",
   async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
+    testHome = mkdtempSync(join(tmpdir(), "fiber-tui-input-"));
     stderrPath = join(testHome, "stderr.log");
     writeFileSync(stderrPath, "");
-    const workspace = mkdtempSync(join(tmpdir(), "fx-tui-image-yank-"));
+    const workspace = mkdtempSync(join(tmpdir(), "fiber-tui-image-yank-"));
     const sourcePath = join(workspace, "source.png");
     copyFileSync(imageFixture, sourcePath);
     const source = realpathSync(sourcePath);
@@ -1457,7 +1457,7 @@ tmuxTest(
 tmuxTest(
   "pending image commands stay local",
   async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
+    testHome = mkdtempSync(join(tmpdir(), "fiber-tui-input-"));
     stderrPath = join(testHome, "stderr.log");
     writeFileSync(stderrPath, "");
     const localGateway = startFakeGateway(
@@ -1582,7 +1582,7 @@ tmuxTest(
 tmuxTest(
   "current composer and submitted prompt use connected rails",
   async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-current-rails-"));
+    testHome = mkdtempSync(join(tmpdir(), "fiber-tui-current-rails-"));
     mkdirSync(join(testHome, ".fiber"), { recursive: true });
     const localGateway = startFakeGateway([
       fakeGatewayFinalText("CURRENT_RAIL_MOCK_OK"),

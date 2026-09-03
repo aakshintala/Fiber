@@ -67,7 +67,7 @@ jobs:
 
       - name: Package
         run: |
-          package_dir="$RUNNER_TEMP/fx-package-${{ matrix.name }}"
+          package_dir="$RUNNER_TEMP/fiber-package-${{ matrix.name }}"
           mkdir -p "$package_dir"
           cp zig-out/bin/fiber LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
           tar -czf fiber-${{ matrix.name }}.tar.gz -C "$package_dir" fiber LICENSE THIRD_PARTY_NOTICES.md
@@ -109,13 +109,13 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: pgso-evidence-macos-arm64-${{ github.sha }}
-          path: ${{ runner.temp }}/fx-pgso-aggregate
+          path: ${{ runner.temp }}/fiber-pgso-aggregate
 
       - name: Restore executable mode
-        run: chmod +x "$RUNNER_TEMP/fx-pgso-aggregate/candidate/fiber"
+        run: chmod +x "$RUNNER_TEMP/fiber-pgso-aggregate/candidate/fiber"
 
       - name: Confirm release eligibility
-        run: python3 -m scripts.pgso report --output-dir "$RUNNER_TEMP/fx-pgso-aggregate" >/dev/null
+        run: python3 -m scripts.pgso report --output-dir "$RUNNER_TEMP/fiber-pgso-aggregate" >/dev/null
 
       - name: Sign and notarize stable release candidate
         env:
@@ -124,14 +124,14 @@ jobs:
           APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: scripts/sign-and-notarize-macos.sh "$RUNNER_TEMP/fx-pgso-aggregate/candidate/fiber"
+        run: scripts/sign-and-notarize-macos.sh "$RUNNER_TEMP/fiber-pgso-aggregate/candidate/fiber"
 
       - name: Package stable release candidate
         run: |
           archive="$RUNNER_TEMP/fiber-macos-aarch64.tar.gz"
-          package_dir="$RUNNER_TEMP/fx-release-package"
+          package_dir="$RUNNER_TEMP/fiber-release-package"
           mkdir -p "$package_dir"
-          cp "$RUNNER_TEMP/fx-pgso-aggregate/candidate/fiber" LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
+          cp "$RUNNER_TEMP/fiber-pgso-aggregate/candidate/fiber" LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
           tar -czf "$archive" -C "$package_dir" fiber LICENSE THIRD_PARTY_NOTICES.md
           cd "$RUNNER_TEMP"
           shasum -a 256 fiber-macos-aarch64.tar.gz > fiber-macos-aarch64.tar.gz.sha256

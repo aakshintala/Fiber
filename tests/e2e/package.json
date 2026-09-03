@@ -1,5 +1,5 @@
 {
-  "name": "fx-e2e",
+  "name": "fiber-e2e",
   "private": true,
   "type": "module",
   "scripts": {

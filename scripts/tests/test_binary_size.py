@@ -29,7 +29,7 @@ class BinarySizeCliTests(unittest.TestCase):
         self.assertEqual(["", "## Segment changes", "", "No changes detected."], lines)
 
     def test_threshold_increase_emits_warning_and_exact_evidence(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="fx-binary-size-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-binary-size-") as tmp:
             root = pathlib.Path(tmp)
             base_binary = root / "base-fiber"
             head_binary = root / "head-fiber"
@@ -115,7 +115,7 @@ class BinarySizeCliTests(unittest.TestCase):
             )
 
     def test_linux_report_attributes_elf_section_growth(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="fx-binary-size-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-binary-size-") as tmp:
             root = pathlib.Path(tmp)
             base_binary = root / "base-fiber"
             head_binary = root / "head-fiber"
@@ -182,7 +182,7 @@ class BinarySizeCliTests(unittest.TestCase):
             self.assertIn("| `.text` | +60 |", markdown_path.read_text())
 
     def test_section_parser_rejects_duplicate_architecture_output(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="fx-binary-size-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-binary-size-") as tmp:
             report = pathlib.Path(tmp) / "sections.txt"
             report.write_text(
                 "Segment __TEXT: 65536\n"
@@ -196,7 +196,7 @@ class BinarySizeCliTests(unittest.TestCase):
                 parse_macho_sections(report)
 
     def test_decrease_is_informational_and_named_explicitly(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="fx-binary-size-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-binary-size-") as tmp:
             root = pathlib.Path(tmp)
             base_binary = root / "base-fiber"
             head_binary = root / "head-fiber"
@@ -229,7 +229,7 @@ class BinarySizeCliTests(unittest.TestCase):
             )
 
     def test_section_parser_requires_executable_text_segment(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="fx-binary-size-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-binary-size-") as tmp:
             report = pathlib.Path(tmp) / "sections.txt"
             report.write_text("Segment __DATA: 16384\n", encoding="utf-8")
 

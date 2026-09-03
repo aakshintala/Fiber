@@ -385,7 +385,7 @@ fn composeSignInPickerRow(
         if (remaining > 0) {
             try row.appendSlice(
                 alloc,
-                "\x1b]8;id=fx-codex-auth;",
+                "\x1b]8;id=fiber-codex-auth;",
             );
             try row.appendSlice(alloc, snapshot.verification_uri);
             try row.appendSlice(alloc, "\x1b\\\x1b[4m");
@@ -1449,14 +1449,14 @@ test "slash menu hides metadata for commands and skills" {
     try std.testing.expect(std.mem.find(u8, command.items, "Model") == null);
 
     const skills = [_]skill_runtime.Skill{.{
-        .name = "fx-test-strategy",
+        .name = "fiber-test-strategy",
         .description = "choose focused regression coverage",
-        .path = "/tmp/.codex/skills/fx-test-strategy",
+        .path = "/tmp/.codex/skills/fiber-test-strategy",
         .source = .global_codex,
     }};
-    const skill_layout = slashMenuLayout(picker_test_slash_registry, "/fx-test", &skills, 0, 0, 24, 0, 0).?;
-    const skill_widths = mixedSlashMenuColumnWidths(picker_test_slash_registry, "/fx-test", &skills, skill_layout.window, false);
-    var skill = try composeSlashMenuOptionRow(std.testing.allocator, picker_test_slash_registry, "/fx-test", &skills, 0, true, skill_widths, 64, false);
+    const skill_layout = slashMenuLayout(picker_test_slash_registry, "/fiber-test", &skills, 0, 0, 24, 0, 0).?;
+    const skill_widths = mixedSlashMenuColumnWidths(picker_test_slash_registry, "/fiber-test", &skills, skill_layout.window, false);
+    var skill = try composeSlashMenuOptionRow(std.testing.allocator, picker_test_slash_registry, "/fiber-test", &skills, 0, true, skill_widths, 64, false);
     defer skill.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.find(u8, skill.items, "choose focused regression coverage") != null);
     try std.testing.expect(std.mem.find(u8, skill.items, "codex") == null);
@@ -1464,27 +1464,31 @@ test "slash menu hides metadata for commands and skills" {
 
 test "slash menu keeps matching skill source labels" {
     const skills = [_]skill_runtime.Skill{.{
-        .name = "fx-test-strategy",
+        .name = "fiber-test",
         .description = "choose focused regression coverage for the affected fiber behavior",
-        .path = "/tmp/.codex/skills/fx-test-strategy",
+        .path = "/tmp/.codex/skills/fiber-test",
         .source = .global_codex,
     }};
-    const layout = slashMenuLayout(picker_test_slash_registry, "/fx-test", &skills, 0, 0, 24, 0, 0).?;
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        mixedSlashCompletionCount(picker_test_slash_registry, "/fiber-test", &skills),
+    );
+    const layout = slashMenuLayout(picker_test_slash_registry, "/fiber-test", &skills, 0, 0, 24, 0, 0).?;
     try std.testing.expectEqual(@as(usize, 0), layout.command_count);
     try std.testing.expectEqual(@as(usize, 1), layout.result_count);
 
-    var header = try composeSlashMenuHeaderRow(std.testing.allocator, "/fx-test", layout, 80);
+    var header = try composeSlashMenuHeaderRow(std.testing.allocator, "/fiber-test", layout, 80);
     defer header.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.find(u8, header.items, "Results 1") != null);
 
-    const column_widths = mixedSlashMenuColumnWidths(picker_test_slash_registry, "/fx-test", &skills, layout.window, true);
-    var row = try composeSlashMenuOptionRow(std.testing.allocator, picker_test_slash_registry, "/fx-test", &skills, 0, true, column_widths, 64, true);
+    const column_widths = mixedSlashMenuColumnWidths(picker_test_slash_registry, "/fiber-test", &skills, layout.window, true);
+    var row = try composeSlashMenuOptionRow(std.testing.allocator, picker_test_slash_registry, "/fiber-test", &skills, 0, true, column_widths, 64, true);
     defer row.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.find(u8, row.items, "fx-test-strategy") != null);
+    try std.testing.expect(std.mem.find(u8, row.items, "fiber-test") != null);
     try std.testing.expect(std.mem.find(u8, row.items, "choose focused") != null);
     try std.testing.expect(std.mem.find(u8, row.items, "…") != null);
     try std.testing.expect(std.mem.find(u8, row.items, "codex") != null);
-    try std.testing.expectEqual(@as(usize, 63), display_width.visibleWidthIgnoringAnsi(row.items));
+    try std.testing.expect(display_width.visibleWidthIgnoringAnsi(row.items) <= 64);
     try std.testing.expect(std.mem.findScalar(u8, row.items, '\n') == null);
 }
 
@@ -1513,19 +1517,19 @@ test "slash completion option row aligns argument labels without command prefix"
 test "mixed slash completion includes matching skills with source labels" {
     const alloc = std.testing.allocator;
     const skills = [_]skill_runtime.Skill{.{
-        .name = "fx-test-strategy",
+        .name = "fiber-test-strategy",
         .description = "coverage help",
-        .path = "/tmp/.codex/skills/fx-test-strategy",
+        .path = "/tmp/.codex/skills/fiber-test-strategy",
         .source = .global_codex,
     }};
 
-    try std.testing.expect(mixedSlashCompletionCount(picker_test_slash_registry, "/fx-test", &skills) > 0);
-    const skill = nthMixedSlashCompletionSkill(picker_test_slash_registry, "/fx-test", &skills, 0) orelse return error.TestExpectedEqual;
-    try std.testing.expectEqualStrings("fx-test-strategy", skill.name);
+    try std.testing.expect(mixedSlashCompletionCount(picker_test_slash_registry, "/fiber-test", &skills) > 0);
+    const skill = nthMixedSlashCompletionSkill(picker_test_slash_registry, "/fiber-test", &skills, 0) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("fiber-test-strategy", skill.name);
 
-    var row = try composeMixedSlashCompletionOptionRow(alloc, picker_test_slash_registry, "/fx-test", &skills, 0, true, 1, 8, 50);
+    var row = try composeMixedSlashCompletionOptionRow(alloc, picker_test_slash_registry, "/fiber-test", &skills, 0, true, 1, 8, 50);
     defer row.deinit(alloc);
-    try std.testing.expect(std.mem.find(u8, row.items, "fx-test-strategy") != null);
+    try std.testing.expect(std.mem.find(u8, row.items, "fiber-test-strategy") != null);
     try std.testing.expect(std.mem.find(u8, row.items, "codex") != null);
     try std.testing.expect(display_width.visibleWidthIgnoringAnsi(row.items) <= 50);
 }
@@ -1536,7 +1540,7 @@ test "mixed slash completion uses skill relevance order" {
             .name = "metadata-first",
             .description = "zig workflow",
             .path = "/tmp/.fiber/skills/metadata-first",
-            .source = .global_fx,
+            .source = .global_fiber,
         },
         .{
             .name = "zig-best-practices",

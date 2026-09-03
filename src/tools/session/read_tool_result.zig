@@ -288,8 +288,8 @@ test "read_tool_result admission restores only omitted stored-result suffixes" {
             .expected_handle = "result-web_fetch-1705079ba6e278c4-553514ccf082aeb9.txt",
         },
         .{
-            .arguments_json = "{\"handle\":\"fx-command-replay-canonical.bin\"}",
-            .expected_handle = "fx-command-replay-canonical.bin",
+            .arguments_json = "{\"handle\":\"fiber-command-replay-canonical.bin\"}",
+            .expected_handle = "fiber-command-replay-canonical.bin",
         },
         .{
             .arguments_json = "{\"handle\":\"unknown-dogfood-handle\"}",

@@ -5881,7 +5881,7 @@ test "automatic trusted-root write keeps persistence targets on reviewer path" {
         ".git/hooks/pre-commit",
         ".git/config",
         ".ssh/authorized_keys",
-        "Library/LaunchAgents/com.fx.smoke.plist",
+        "Library/LaunchAgents/com.fiber.smoke.plist",
     };
     for (relative_targets, 0..) |relative_target, index| {
         const target_path = try std.fs.path.join(arena, &.{ workspace, relative_target });

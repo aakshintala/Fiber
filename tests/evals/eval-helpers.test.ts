@@ -7,10 +7,10 @@ describe("eval helpers", () => {
     process.env.FIBER_MODEL = "ambient/model";
 
     try {
-      const env = buildEvalProcessEnv("/tmp/fx-eval-home-test", "selected/model");
+      const env = buildEvalProcessEnv("/tmp/fiber-eval-home-test", "selected/model");
 
       expect(env.FIBER_MODEL).toBe("selected/model");
-      expect(env.HOME).toBe("/tmp/fx-eval-home-test");
+      expect(env.HOME).toBe("/tmp/fiber-eval-home-test");
       expect(env.NO_COLOR).toBe("1");
     } finally {
       if (previous === undefined) {

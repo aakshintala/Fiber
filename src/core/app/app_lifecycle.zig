@@ -238,7 +238,7 @@ pub const BootstrapConfig = struct {
     default_model: []const u8,
     default_agent_step_limit: usize,
     resize_handler: ResizeHandler,
-    fx_version: []const u8 = "",
+    fiber_version: []const u8 = "",
 };
 
 pub fn loadStartupState(
@@ -454,7 +454,7 @@ pub fn bootstrapInteractiveApp(cfg: BootstrapConfig) !StartupState {
         cfg.alloc,
         cfg.shell.layout.cols,
         cfg.shell.layout.rows,
-        cfg.fx_version,
+        cfg.fiber_version,
     ) catch |err| {
         debug_trace.logf("record", "startup recording failed err={s}", .{@errorName(err)});
         return error.RecordingStartFailed;

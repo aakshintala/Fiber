@@ -30,7 +30,7 @@ function createIsolatedRoot(
   webSearchPermission: PermissionAction = "allow",
   settings: Record<string, unknown> = {},
 ) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-web-search-codex-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-web-search-codex-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });

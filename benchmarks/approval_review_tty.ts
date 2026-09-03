@@ -343,7 +343,7 @@ mkdirSync(outRoot, { recursive: true });
 
 const home = join(outRoot, "home");
 const workspace = join(outRoot, "workspace");
-const tapePath = join(outRoot, "approval-review.fxtape");
+const tapePath = join(outRoot, "approval-review.fibertape");
 const tracePath = join(outRoot, "approval-review.trace.log");
 const stderrPath = join(outRoot, "approval-review.stderr.log");
 const samplesPath = join(outRoot, "timings.jsonl");
@@ -715,7 +715,7 @@ try {
     );
     assert(decisions.length === 1, `${callId} decision count was ${decisions.length}, expected 1`);
   }
-  assert(readFileSync(stderrPath, "utf8") === "", "fx wrote to stderr");
+  assert(readFileSync(stderrPath, "utf8") === "", "fiber wrote to stderr");
   // Escape cancels without a tool-result request. Ctrl-C reports the
   // interrupted tool result once before returning to the composer.
   assert(gateway.requests.length === 1 + cycles * 2 + 3, `unexpected gateway request count ${gateway.requests.length}`);
@@ -731,7 +731,7 @@ try {
     children: 0,
     exit_status: exitStatus,
   });
-  assert(exitStatus === 0, `fx exit status was ${exitStatus}`);
+  assert(exitStatus === 0, `fiber exit status was ${exitStatus}`);
   passed = true;
   console.log(JSON.stringify({
     status: "PASS",

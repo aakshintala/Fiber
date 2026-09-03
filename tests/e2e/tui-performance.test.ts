@@ -369,7 +369,7 @@ function longTranscript(): string {
     if (index === 0) rows.push("PERF_TRANSCRIPT_HEAD");
     else if (index === 1_050) rows.push("PERF_TRANSCRIPT_MIDDLE");
     else if (index === 2_099) rows.push("PERF_TRANSCRIPT_TAIL");
-    else if (index % 17 === 0) rows.push(`| ${index} | wide unicode 𝒇x 漢字 | wrapped ${"x".repeat(96)} |`);
+    else if (index % 17 === 0) rows.push(`| ${index} | wide unicode fiber 漢字 | wrapped ${"x".repeat(96)} |`);
     else if (index % 11 === 0) rows.push("");
     else rows.push(`transcript row ${String(index).padStart(4, "0")}`);
   }
@@ -377,7 +377,7 @@ function longTranscript(): string {
 }
 
 function createFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-performance-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-performance-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   const skillsRoot = join(workspace, ".agents", "skills");
@@ -406,7 +406,7 @@ function createFixture() {
     root,
     home,
     workspace: realpathSync(workspace),
-    tapePath: join(root, "performance.fxtape"),
+    tapePath: join(root, "performance.fibertape"),
     stderrPath: join(root, "stderr.log"),
     fixtureHash: hash.digest("hex"),
     transcript,

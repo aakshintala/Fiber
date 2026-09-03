@@ -14,7 +14,7 @@ const Allocator = std.mem.Allocator;
 pub const launcher_mode = "--fiber-internal-terminal-tmux-launcher";
 pub const capture_mode = "--fiber-internal-terminal-tmux-capture";
 
-const namespace_option = "@fx_terminal_namespace";
+const namespace_option = "@fiber_terminal_namespace";
 const namespace_value = "1";
 const minimum_tmux_major: u16 = 3;
 const minimum_tmux_minor: u16 = 2;
@@ -161,7 +161,7 @@ pub const Paths = struct {
         }
         const session_name = try std.fmt.allocPrint(
             alloc,
-            "fx-{s}",
+            "fiber-{s}",
             .{backend_identity},
         );
         errdefer alloc.free(session_name);
@@ -203,13 +203,13 @@ pub const Paths = struct {
         errdefer alloc.free(command);
         const marker_socket = try std.fmt.allocPrint(
             alloc,
-            "/tmp/fx-tmux-marker-{s}.sock",
+            "/tmp/fiber-tmux-marker-{s}.sock",
             .{backend_identity},
         );
         errdefer alloc.free(marker_socket);
         const capture_socket = try std.fmt.allocPrint(
             alloc,
-            "/tmp/fx-tmux-capture-{s}.sock",
+            "/tmp/fiber-tmux-capture-{s}.sock",
             .{backend_identity},
         );
         errdefer alloc.free(capture_socket);
@@ -668,7 +668,7 @@ pub const Backend = struct {
     pub fn write(self: *Backend, bytes: []const u8, paste: bool) !void {
         const buffer_name = try std.fmt.allocPrint(
             self.alloc,
-            "fx-{s}",
+            "fiber-{s}",
             .{self.backend_identity},
         );
         defer self.alloc.free(buffer_name);
@@ -2429,7 +2429,7 @@ test "tmux peer deadline bounds accept receive partial frames and cancellation" 
     const alloc = std.testing.allocator;
     const socket_path = try std.fmt.allocPrint(
         alloc,
-        "/tmp/fx-peer-deadline-{d}.sock",
+        "/tmp/fiber-peer-deadline-{d}.sock",
         .{std.c.getpid()},
     );
     defer alloc.free(socket_path);

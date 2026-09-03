@@ -1529,7 +1529,7 @@ test "full projection prefers a persisted command artifact over the compact tool
     );
     defer capability.deinit();
 
-    const artifact_name = "fx-command-full-transcript.log";
+    const artifact_name = "fiber-command-full-transcript.log";
     var artifact = try capability.createExclusiveFile(
         alloc,
         .command_artifacts,
@@ -1624,7 +1624,7 @@ test "stored command artifact appends records beyond the callback count once" {
     );
     defer capability.deinit();
 
-    const artifact_name = "fx-command-late-tail.log";
+    const artifact_name = "fiber-command-late-tail.log";
     var artifact = try capability.createExclusiveFile(
         alloc,
         .command_artifacts,
@@ -2135,7 +2135,7 @@ test "corrupt required replay keeps a safe fallback and permanent marker" {
         .{},
     );
     defer capability.deinit();
-    const handle = "fx-command-replay-corrupt.bin";
+    const handle = "fiber-command-replay-corrupt.bin";
     var corrupt = try capability.createExclusiveFile(alloc, .command_artifacts, handle);
     defer corrupt.deinit();
     try corrupt.writeAll("not replay");
@@ -2444,7 +2444,7 @@ test "bounded command source rejects a truncated absolute record range" {
     );
     defer capability.deinit();
 
-    const handle = "fx-command-artifact-short-range.bin";
+    const handle = "fiber-command-artifact-short-range.bin";
     var artifact = try capability.createExclusiveFile(alloc, .command_artifacts, handle);
     defer artifact.deinit();
     try artifact.writeAll("ONLY_RECORD\n");
@@ -3097,7 +3097,7 @@ test "missing command artifact uses the retained tool result sidecar" {
     defer projection.deinit(alloc);
     try projection.segments.append(alloc, .{ .stored_result = .{
         .kind = .command_artifact,
-        .handle = "fx-command-missing.log",
+        .handle = "fiber-command-missing.log",
         .preview = "preview",
         .fallback_handle = fallback_handle,
     } });

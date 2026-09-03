@@ -12,7 +12,7 @@ const NO_GATEWAY_AUTH = {
 };
 
 async function runWithoutGatewayAuth(args: string[]) {
-  const root = mkdtempSync(join(tmpdir(), "fx-web-fetch-no-auth-"));
+  const root = mkdtempSync(join(tmpdir(), "fiber-web-fetch-no-auth-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(home);
@@ -44,7 +44,7 @@ describe("web_fetch permission progress", () => {
       ]);
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain("fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.");
+      expect(result.stderr).toContain("fiber needs access to Vercel AI Gateway. Run fiber login to sign in, fiber setup to use an API key, or set AI_GATEWAY_API_KEY.");
       expectNoFetchProgress(result.stderr);
     },
     TIMEOUT,

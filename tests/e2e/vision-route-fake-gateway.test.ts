@@ -255,7 +255,7 @@ function startImageGateway(
 }
 
 function createIsolatedRoot() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-vision-route-e2e-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-vision-route-e2e-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -561,7 +561,7 @@ function toolResultText(body: string, toolCallId: string): string {
 
 describe("Vision route fake Gateway", () => {
   test(
-    "fx ask rejects missing images before Gateway startup in text and JSON modes",
+    "fiber ask rejects missing images before Gateway startup in text and JSON modes",
     async () => {
       const root = createIsolatedRoot();
       const gateway = startImageGateway([]);
@@ -662,7 +662,7 @@ describe("Vision route fake Gateway", () => {
   );
 
   test(
-    "fx ask gates GLM images through Vision without leaking paths",
+    "fiber ask gates GLM images through Vision without leaking paths",
     async () => {
       const root = createIsolatedRoot();
       const fixture = createScopedImageFixture(root);
@@ -721,7 +721,7 @@ describe("Vision route fake Gateway", () => {
   );
 
   test(
-    "fx ask recovers when the model rejects the post-Vision prompt as assistant prefill",
+    "fiber ask recovers when the model rejects the post-Vision prompt as assistant prefill",
     async () => {
       const root = createIsolatedRoot();
       const fixture = createScopedImageFixture(root);
@@ -785,13 +785,13 @@ describe("Vision route fake Gateway", () => {
   );
 
   test(
-    "fx ask executes path-source Vision and cleans transient snapshots without failure telemetry",
+    "fiber ask executes path-source Vision and cleans transient snapshots without failure telemetry",
     async () => {
       const root = createIsolatedRoot();
       const imagePath = join(root.workspace, "path-source.png");
       const tracePath = join(root.root, "trace.log");
       const snapshotsBefore = readdirSync("/tmp")
-        .filter((name) => name.startsWith("fx-image-snapshots-"))
+        .filter((name) => name.startsWith("fiber-image-snapshots-"))
         .sort();
       writeMarkedImage(imagePath, "HEADLESS_PATH_SOURCE");
       const gateway = startImageGateway([
@@ -835,7 +835,7 @@ describe("Vision route fake Gateway", () => {
         expect(readFileSync(tracePath, "utf8")).not.toContain("snapshot_cleanup_failed");
         expect(
           readdirSync("/tmp")
-            .filter((name) => name.startsWith("fx-image-snapshots-"))
+            .filter((name) => name.startsWith("fiber-image-snapshots-"))
             .sort(),
         ).toEqual(snapshotsBefore);
       } finally {
@@ -956,7 +956,7 @@ describe("Vision route fake Gateway", () => {
           for (const request of gateway.chatRequests) {
             for (const imagePath of fixture.paths) expect(request.body).not.toContain(imagePath);
             expect(request.body).not.toContain("data:image");
-            expect(request.body).not.toContain("fx-image-snapshots");
+            expect(request.body).not.toContain("fiber-image-snapshots");
             expect(request.body).not.toContain(".fiber/sessions");
           }
         } finally {
@@ -1026,7 +1026,7 @@ describe("Vision route fake Gateway", () => {
   );
 
   test(
-    "fx ask preserves native image parts for Gemini",
+    "fiber ask preserves native image parts for Gemini",
     async () => {
       const root = createIsolatedRoot();
       const fixture = createScopedImageFixture(root);
@@ -1068,7 +1068,7 @@ describe("Vision route fake Gateway", () => {
   );
 
   test(
-    "fx ask uses Kimi native vision without Vision tool",
+    "fiber ask uses Kimi native vision without Vision tool",
     async () => {
       const root = createIsolatedRoot();
       const fixture = createScopedImageFixture(root);
@@ -1110,7 +1110,7 @@ describe("Vision route fake Gateway", () => {
   );
 
   test(
-    "fx ask normalizes encoded-oversized native images on macOS and rejects elsewhere",
+    "fiber ask normalizes encoded-oversized native images on macOS and rejects elsewhere",
     async () => {
       const root = createIsolatedRoot();
       const oversizedPath = join(root.workspace, "encoded-oversized.png");
@@ -1419,7 +1419,7 @@ describe("Vision route fake Gateway", () => {
   );
 
   test(
-    "fx ask applies image_adapter_output_bytes to Vision provider capture",
+    "fiber ask applies image_adapter_output_bytes to Vision provider capture",
     async () => {
       const root = createIsolatedRoot();
       const fixture = createScopedImageFixture(root);
@@ -1635,7 +1635,7 @@ describe("Vision route fake Gateway", () => {
         expect(result.code).toBe(1);
         expect(result.stdout).toBe("");
         expect(result.stderr).toBe(
-          "fx ask: Unable to verify image support for this model, so the image was not sent. Try again later, choose another model, or remove the image.\n",
+          "fiber ask: Unable to verify image support for this model, so the image was not sent. Try again later, choose another model, or remove the image.\n",
         );
         expect(result.stderr).not.toContain("ModelImageCapabilityUnavailable");
         expect(gateway.catalogRequests).toBe(1);
@@ -2950,7 +2950,7 @@ describe("Vision route fake Gateway", () => {
         await session.sendText(rootRequest);
         await session.waitForText("Would you like to allow this action?", TIMEOUT);
         await session.sendKeys("Tab");
-        await session.waitForText("Yes, and tell fx what to do next", TIMEOUT);
+        await session.waitForText("Yes, and tell fiber what to do next", TIMEOUT);
         await session.sendLiteralText(feedback);
         await session.waitForText(`Yes, ${feedback}`, TIMEOUT);
         await session.sendKeys("Enter");

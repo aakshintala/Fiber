@@ -101,7 +101,7 @@ pub fn prepare(alloc: Allocator, argv: []const []const u8) !Prepared {
     const nonce_hex = std.fmt.bytesToHex(nonce, .lower);
     const cidfile_path = try std.fmt.allocPrint(
         alloc,
-        "{s}/fx-mcp-{s}.cid",
+        "{s}/fiber-mcp-{s}.cid",
         .{ std.mem.trimEnd(u8, temp_root, "/\\"), &nonce_hex },
     );
     errdefer alloc.free(cidfile_path);

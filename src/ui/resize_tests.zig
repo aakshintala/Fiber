@@ -5050,7 +5050,7 @@ test "clean footer frame does not spam trace on idle ticks" {
     try std.testing.expect(std.mem.find(u8, trace, "footer.clean") == null);
 }
 
-test "startup reservation scrolls to fit first paint without wiping pre-fx rows" {
+test "startup reservation scrolls to fit first paint without wiping pre-fiber rows" {
     const alloc = std.testing.allocator;
     var h = try Harness.init(alloc, 80, 24, 4);
     defer h.deinit();
@@ -5075,7 +5075,7 @@ test "startup reservation scrolls to fit first paint without wiping pre-fx rows"
     try h.vt.feed("PRE17\n");
     try h.vt.feed("PRE18\n");
     try h.vt.feed("PRE19\n");
-    try h.vt.feed("$ fx");
+    try h.vt.feed("$ fiber");
 
     try h.initStartupViewport(24, 11);
     try std.testing.expectEqual(@as(u16, 10), h.shell.viewport_top_row);
@@ -5091,7 +5091,7 @@ test "startup reservation scrolls to fit first paint without wiping pre-fx rows"
     try h.flush();
 
     try expectRowPrefix(&h, 1, "PRE15");
-    try expectRowPrefix(&h, 6, "$ fx");
+    try expectRowPrefix(&h, 6, "$ fiber");
     try expectRowPrefix(&h, 10, "FX01");
     try expectRowPrefix(&h, 19, "FX10");
 }
@@ -5313,7 +5313,7 @@ test "empty pre-paint defers scrolling until first content frame" {
     try h.vt.feed("PRE17\n");
     try h.vt.feed("PRE18\n");
     try h.vt.feed("PRE19\n");
-    try h.vt.feed("$ fx");
+    try h.vt.feed("$ fiber");
 
     try h.shell.initViewport(&h.metrics, 24);
     try h.renderTranscriptFrame();
@@ -5683,7 +5683,7 @@ test "compact picker dismissal preserves committed history floor" {
                 "auth=AI_GATEWAY_API_KEY\n" ++
                 "auth_refreshable=false\n" ++
                 "permission_mode=auto\n" ++
-                "workspace=/tmp/fx\n" ++
+                "workspace=/tmp/fiber\n" ++
                 "history_turns=0\n" ++
                 "session_permission_grants=0\n" ++
                 "agent_step_limit=0",
@@ -6052,7 +6052,7 @@ test "footer suppresses slash skill rows for streaming model-shaped input" {
         .name = "model-helper",
         .description = "model helper",
         .path = "/tmp/model-helper/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
 
     var input = InputRuntime{};
@@ -6691,7 +6691,7 @@ test "settled resize reanchors viewport_top_row at row one" {
     try std.testing.expectEqual(@as(u16, 1), h.shell.viewport_top_row);
 }
 
-test "grow after shrink-overflow restores transcript inside fx's viewport band" {
+test "grow after shrink-overflow restores transcript inside fiber's viewport band" {
     var h = try Harness.init(std.testing.allocator, 80, 30, 4);
     defer h.deinit();
 
@@ -6909,17 +6909,17 @@ test "rapid settled resizes retain the four-skill transcript" {
     );
 }
 
-test "settled resize clears pre-fx shell history and reanchors at row one" {
+test "settled resize clears pre-fiber shell history and reanchors at row one" {
     var h = try Harness.init(std.testing.allocator, 40, 20, 4);
     defer h.deinit();
 
     try h.vt.feed("\x1b[1;1H");
     try h.vt.feed("$ ls\n");
     try h.vt.feed("README.md  src  tests\n");
-    try h.vt.feed("$ fx\n");
+    try h.vt.feed("$ fiber\n");
 
     try h.shell.initViewport(&h.metrics, 4);
-    try h.shell.writeTranscript(h.alloc, &h.metrics, "first fx line\nsecond fx line\n", true);
+    try h.shell.writeTranscript(h.alloc, &h.metrics, "first fiber line\nsecond fiber line\n", true);
     try h.flush();
 
     try h.driveResize(40, 24, 4, true);
@@ -6927,14 +6927,14 @@ test "settled resize clears pre-fx shell history and reanchors at row one" {
 
     try expectGridNotContains(&h, "$ ls");
     try expectGridNotContains(&h, "README.md  src  tests");
-    try expectGridNotContains(&h, "$ fx");
+    try expectGridNotContains(&h, "$ fiber");
     try std.testing.expectEqual(@as(u16, 1), h.shell.owned_top_row);
     try std.testing.expectEqual(@as(u16, 1), h.shell.viewport_top_row);
-    try expectRowPrefix(&h, 1, "first fx line");
-    try expectRowPrefix(&h, 2, "second fx line");
+    try expectRowPrefix(&h, 1, "first fiber line");
+    try expectRowPrefix(&h, 2, "second fiber line");
 }
 
-test "settled width resize clears pre-fx shell rows and reanchors at row one" {
+test "settled width resize clears pre-fiber shell rows and reanchors at row one" {
     const alloc = std.testing.allocator;
     var h = try Harness.init(alloc, 80, 24, 4);
     defer h.deinit();
@@ -6942,10 +6942,10 @@ test "settled width resize clears pre-fx shell rows and reanchors at row one" {
     try h.vt.feed("\x1b[1;1H");
     try h.vt.feed("$ git status\n");
     try h.vt.feed("On branch feature\n");
-    try h.vt.feed("$ fx\n");
+    try h.vt.feed("$ fiber\n");
 
     try h.shell.initViewport(&h.metrics, 4);
-    try h.shell.writeTranscript(alloc, &h.metrics, "first fx line\nsecond fx line\n", true);
+    try h.shell.writeTranscript(alloc, &h.metrics, "first fiber line\nsecond fiber line\n", true);
     try h.flush();
 
     const before = try h.file.length(io_mod.getIo());
@@ -6955,7 +6955,7 @@ test "settled width resize clears pre-fx shell rows and reanchors at row one" {
 
     try expectGridNotContains(&h, "$ git status");
     try expectGridNotContains(&h, "On branch feature");
-    try expectGridNotContains(&h, "$ fx");
+    try expectGridNotContains(&h, "$ fiber");
     try std.testing.expectEqual(@as(u16, 1), h.shell.owned_top_row);
     try std.testing.expectEqual(@as(u16, 1), h.shell.viewport_top_row);
     try std.testing.expect(std.mem.find(u8, emitted, "\x1b[3J") != null);
@@ -7124,7 +7124,7 @@ test "large tabbed user turn keeps frame scroll plan aligned" {
     try std.testing.expectEqual(@as(usize, 21), std.mem.count(u8, raw_prompt, "\t"));
 
     try h.shell.initViewport(&h.metrics, 12);
-    try h.shell.writeTranscript(alloc, &h.metrics, "What would you like fx to do?\n", true);
+    try h.shell.writeTranscript(alloc, &h.metrics, "What would you like fiber to do?\n", true);
     h.frame_redraw = true;
     try renderTestFooter(&h, &input, &approval, &h.frame_redraw);
     try h.flush();

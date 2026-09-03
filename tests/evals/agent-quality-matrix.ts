@@ -46,7 +46,7 @@ export interface ExpectedFirstTool {
 }
 
 export interface CoveredEntrypoint {
-  entrypoint: "interactive" | "fx ask" | "ACP" | "subagent";
+  entrypoint: "interactive" | "fiber ask" | "ACP" | "subagent";
   contextContract: typeof SHARED_MODEL_CONTEXT_CONTRACT;
   notes: string;
 }
@@ -113,7 +113,7 @@ const DESTRUCTIVE_OR_MUTATING_TOOLS = [
 
 function askEntrypoint(notes: string): CoveredEntrypoint {
   return {
-    entrypoint: "fx ask",
+    entrypoint: "fiber ask",
     contextContract: SHARED_MODEL_CONTEXT_CONTRACT,
     notes,
   };
@@ -297,7 +297,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     targetResult:
       "Stops after confirming the command-policy wiring and any defined-but-uncalled helper, then exits 0 with known facts, uncertainty, and the next useful step.",
     coveredEntrypoints: [
-      askEntrypoint("Applies to long --auto --json local source investigations in fx ask."),
+      askEntrypoint("Applies to long --auto --json local source investigations in fiber ask."),
       interactiveEntrypoint("Interactive runs should show the same milestone-only progress and stop condition."),
     ],
   },
@@ -1077,7 +1077,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     currentBaselineResult: {
       status: "passing",
       notes:
-        "shell.interact exposes only fx-owned execution output for the exact returned handle.",
+        "shell.interact exposes only fiber-owned execution output for the exact returned handle.",
     },
     targetResult:
       "Long-running commands remain inspectable through the same handle without replaying the command or inventing PID/log authority.",

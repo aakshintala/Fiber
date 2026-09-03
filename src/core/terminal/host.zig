@@ -192,7 +192,7 @@ pub const Config = struct {
 
 pub const Paths = struct {
     home_dir: io_mod.VerifiedDir,
-    fx_dir: io_mod.VerifiedDir,
+    fiber_dir: io_mod.VerifiedDir,
     host_dir: io_mod.VerifiedDir,
     transport_dir: ?io_mod.VerifiedDir,
     authority_root_path: []u8,
@@ -216,13 +216,13 @@ pub const Paths = struct {
             }),
         };
         errdefer home_dir.close();
-        var fx_dir = try io_mod.openOrCreateVerifiedPrivateDir(
+        var fiber_dir = try io_mod.openOrCreateVerifiedPrivateDir(
             &home_dir,
             profile_paths.root_dir_name,
         );
-        errdefer fx_dir.close();
+        errdefer fiber_dir.close();
         var host_dir = try io_mod.openOrCreateVerifiedPrivateDir(
-            &fx_dir,
+            &fiber_dir,
             host_dir_name,
         );
         errdefer host_dir.close();
@@ -237,7 +237,7 @@ pub const Paths = struct {
         selection_owned = false;
         return .{
             .home_dir = home_dir,
-            .fx_dir = fx_dir,
+            .fiber_dir = fiber_dir,
             .host_dir = host_dir,
             .transport_dir = transport_dir,
             .authority_root_path = selection.authority_root,
@@ -257,7 +257,7 @@ pub const Paths = struct {
         alloc.free(self.authority_root_path);
         if (self.transport_dir) |*dir| dir.close();
         self.host_dir.close();
-        self.fx_dir.close();
+        self.fiber_dir.close();
         self.home_dir.close();
         self.* = undefined;
     }
@@ -1557,11 +1557,11 @@ fn verifyEndpointPermissions(host_dir: *io_mod.VerifiedDir) !void {
 }
 
 test "hidden host mode is exact and remains private" {
-    const exact = [_][*:0]const u8{ "fx", internal_mode };
+    const exact = [_][*:0]const u8{ "fiber", internal_mode };
     try std.testing.expect(isInternalModeRaw(&exact));
-    const public_like = [_][*:0]const u8{ "fx", "terminal-host" };
+    const public_like = [_][*:0]const u8{ "fiber", "terminal-host" };
     try std.testing.expect(!isInternalModeRaw(&public_like));
-    const extra = [_][*:0]const u8{ "fx", internal_mode, "extra" };
+    const extra = [_][*:0]const u8{ "fiber", internal_mode, "extra" };
     try std.testing.expect(!isInternalModeRaw(&extra));
 }
 

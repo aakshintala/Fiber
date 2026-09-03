@@ -189,7 +189,7 @@ export async function runNativeRenderLab(
     binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -365,9 +365,9 @@ async function launchFx(
   await controller.sendText(
     `FIBER_RECORD=${shQuote(context.manifest.tapePath)} FIBER_RECORD_INPUT=1 ${shQuote(FIBER_BIN)}`,
   );
-  await capture(context, controller, `${label}-fx-launch-requested`);
+  await capture(context, controller, `${label}-fiber-launch-requested`);
   await waitForText(controller, "Run /help for commands", 30_000);
-  await capture(context, controller, `${label}-fx-prompt-visible`);
+  await capture(context, controller, `${label}-fiber-prompt-visible`);
 }
 
 async function submitSlashCommand(
@@ -384,7 +384,7 @@ async function submitSlashCommand(
 
 async function quitFx(context: NativeContext, controller: NativeController, label: string): Promise<void> {
   await controller.sendText("/quit");
-  await capture(context, controller, `${label}-fx-quit-requested`);
+  await capture(context, controller, `${label}-fiber-quit-requested`);
   await waitForText(controller, PROMPT_TEXT, 20_000);
   await capture(context, controller, `${label}-post-quit-shell-prompt`);
 }
@@ -709,11 +709,11 @@ function preflightNative(scenario: NativeScenario): void {
     throw new Error(`${scenario.name} requires macOS native terminal automation`);
   }
   if (!existsSync(FIBER_BIN)) {
-    throw new Error(`fx binary not found at ${FIBER_BIN}. Run zig build first.`);
+    throw new Error(`fiber binary not found at ${FIBER_BIN}. Run zig build first.`);
   }
   const stat = statSync(FIBER_BIN);
   if (!stat.isFile() || (stat.mode & 0o111) === 0) {
-    throw new Error(`fx binary is not executable at ${FIBER_BIN}`);
+    throw new Error(`fiber binary is not executable at ${FIBER_BIN}`);
   }
   if (!existsSync(scenario.appPath)) {
     throw new Error(`${scenario.appName} app not found at ${scenario.appPath}`);

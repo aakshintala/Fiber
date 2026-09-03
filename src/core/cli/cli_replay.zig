@@ -554,14 +554,14 @@ const testing = std.testing;
 test "parseArgs requires a positional tape path" {
     try testing.expectError(Error.MissingTapePath, parseArgs(&.{}));
     try testing.expectError(Error.MissingTapePath, parseArgs(&.{ "--frames", "--json" }));
-    const opts = try parseArgs(&.{"tape.fxtape"});
-    try testing.expectEqualStrings("tape.fxtape", opts.path);
+    const opts = try parseArgs(&.{"tape.fibertape"});
+    try testing.expectEqualStrings("tape.fibertape", opts.path);
     try testing.expect(!opts.frames);
 }
 
 test "parseArgs accepts supported flags" {
-    const opts = try parseArgs(&.{ "--frames", "t.fxtape", "--json", "--golden", "out.txt", "--frames-dir", "frames-out" });
-    try testing.expectEqualStrings("t.fxtape", opts.path);
+    const opts = try parseArgs(&.{ "--frames", "t.fibertape", "--json", "--golden", "out.txt", "--frames-dir", "frames-out" });
+    try testing.expectEqualStrings("t.fibertape", opts.path);
     try testing.expect(opts.frames);
     try testing.expect(opts.json);
     try testing.expectEqualStrings("out.txt", opts.golden_path.?);
@@ -569,10 +569,10 @@ test "parseArgs accepts supported flags" {
 }
 
 test "parseArgs rejects invalid forms" {
-    try testing.expectError(Error.TooManyArgs, parseArgs(&.{ "a.fxtape", "b.fxtape" }));
-    try testing.expectError(Error.UnknownFlag, parseArgs(&.{ "a.fxtape", "--unknown" }));
-    try testing.expectError(Error.MissingGoldenPath, parseArgs(&.{ "a.fxtape", "--golden" }));
-    try testing.expectError(Error.MissingFramesDirPath, parseArgs(&.{ "a.fxtape", "--frames-dir" }));
+    try testing.expectError(Error.TooManyArgs, parseArgs(&.{ "a.fibertape", "b.fibertape" }));
+    try testing.expectError(Error.UnknownFlag, parseArgs(&.{ "a.fibertape", "--unknown" }));
+    try testing.expectError(Error.MissingGoldenPath, parseArgs(&.{ "a.fibertape", "--golden" }));
+    try testing.expectError(Error.MissingFramesDirPath, parseArgs(&.{ "a.fibertape", "--frames-dir" }));
 }
 
 test "minimal stdout tape replays to final grid snapshot" {
@@ -580,7 +580,7 @@ test "minimal stdout tape replays to final grid snapshot" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tape_path = try testPath(alloc, tmp.dir, "stdout.fxtape");
+    const tape_path = try testPath(alloc, tmp.dir, "stdout.fibertape");
     defer alloc.free(tape_path);
 
     const tape = try buildTape(alloc, 5, 2, "vtest", &.{
@@ -605,7 +605,7 @@ test "frames mode prints non-marker frame snapshots only" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tape_path = try testPath(alloc, tmp.dir, "frames.fxtape");
+    const tape_path = try testPath(alloc, tmp.dir, "frames.fibertape");
     defer alloc.free(tape_path);
 
     const tape = try buildTape(alloc, 4, 1, "vtest", &.{
@@ -632,7 +632,7 @@ test "json summary reports frame resize and stdout metadata" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tape_path = try testPath(alloc, tmp.dir, "summary.fxtape");
+    const tape_path = try testPath(alloc, tmp.dir, "summary.fibertape");
     defer alloc.free(tape_path);
 
     const resize = resizePayload(2, 2);
@@ -660,7 +660,7 @@ test "json output escapes metadata strings" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tape_path = try testPath(alloc, tmp.dir, "escape.fxtape");
+    const tape_path = try testPath(alloc, tmp.dir, "escape.fibertape");
     defer alloc.free(tape_path);
 
     const version = "v\"\\\n\t" ++ [_]u8{1};
@@ -687,7 +687,7 @@ test "json output includes unknown frame metadata without altering grid" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tape_path = try testPath(alloc, tmp.dir, "unknown-json.fxtape");
+    const tape_path = try testPath(alloc, tmp.dir, "unknown-json.fibertape");
     defer alloc.free(tape_path);
 
     const tape = try buildTape(alloc, 3, 1, "vtest", &.{
@@ -717,7 +717,7 @@ test "json replay recovers an incomplete final frame through stderr" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tape_path = try testPath(alloc, tmp.dir, "truncated-tail.fxtape");
+    const tape_path = try testPath(alloc, tmp.dir, "truncated-tail.fibertape");
     defer alloc.free(tape_path);
     const tape = try buildTape(alloc, 4, 1, "vtest", &.{
         .{ .delta_ms = 0, .kind = .stdout, .payload = "ok" },
@@ -748,7 +748,7 @@ test "frames mode prints unknown frame snapshots without trapping" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tape_path = try testPath(alloc, tmp.dir, "unknown-frames.fxtape");
+    const tape_path = try testPath(alloc, tmp.dir, "unknown-frames.fibertape");
     defer alloc.free(tape_path);
 
     const tape = try buildTape(alloc, 3, 1, "vtest", &.{
@@ -772,7 +772,7 @@ test "golden path writes final snapshot and suppresses final stdout" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tape_path = try testPath(alloc, tmp.dir, "golden.fxtape");
+    const tape_path = try testPath(alloc, tmp.dir, "golden.fibertape");
     defer alloc.free(tape_path);
     const golden_path = try testPath(alloc, tmp.dir, "golden.txt");
     defer alloc.free(golden_path);
@@ -804,7 +804,7 @@ test "frames-dir writes manifest and per-frame grid artifacts" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tape_path = try testPath(alloc, tmp.dir, "frames-dir.fxtape");
+    const tape_path = try testPath(alloc, tmp.dir, "frames-dir.fibertape");
     defer alloc.free(tape_path);
     const frames_dir = try testPath(alloc, tmp.dir, "frames-dir-out");
     defer alloc.free(frames_dir);
@@ -880,7 +880,7 @@ test "json failures use stdout for missing arguments files and malformed tapes" 
     defer missing_file.deinit();
     try testing.expectEqual(
         @as(u8, 1),
-        try runCaptured(alloc, &.{ "/definitely/missing/fx-replay.fxtape", "--json" }, &missing_file),
+        try runCaptured(alloc, &.{ "/definitely/missing/fiber-replay.fibertape", "--json" }, &missing_file),
     );
     try testing.expectEqual(@as(usize, 0), missing_file.stderr.written().len);
     var missing_json = try std.json.parseFromSlice(
@@ -895,7 +895,7 @@ test "json failures use stdout for missing arguments files and malformed tapes" 
 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
-    const path = try testPath(alloc, tmp.dir, "bad-json.fxtape");
+    const path = try testPath(alloc, tmp.dir, "bad-json.fibertape");
     defer alloc.free(path);
     try writeTestFile(path, "not a tape");
     const path_arg: [:0]u8 = try alloc.dupeZ(u8, path);
@@ -922,7 +922,7 @@ test "run malformed tape returns bad tape stderr" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tape_path = try testPath(alloc, tmp.dir, "malformed.fxtape");
+    const tape_path = try testPath(alloc, tmp.dir, "malformed.fibertape");
     defer alloc.free(tape_path);
     try writeTestFile(tape_path, "not a tape");
     const tape_arg = try alloc.dupeZ(u8, tape_path);

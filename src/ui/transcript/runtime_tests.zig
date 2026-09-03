@@ -3160,7 +3160,7 @@ test "staged soft-wrapped presentation resumes across committed projections" {
     const stable_flow = "base\n";
     const filler_row_count: usize = @as(usize, std.math.maxInt(u16)) - 3;
     const link_url = "https://staged.example";
-    const link_params = "id=fx-42";
+    const link_params = "id=fiber-42";
     const presentation_open =
         "\x1b[1;31m\x1b[9m" ++
         "\x1b]8;" ++ link_params ++ ";" ++ link_url ++ "\x1b\\";
@@ -12109,7 +12109,7 @@ test "command output retention preserves its artifact detail owner" {
         .entry_id = detail_entry_id,
         .tool_name = "run_command",
         .arguments_json = "{\"command\":\"generate output\"}",
-        .result = "output_file=/tmp/fx-command-retained.log\n",
+        .result = "output_file=/tmp/fiber-command-retained.log\n",
         .result_handle = "result-run-command.txt",
         .turn_id = 1,
         .call_id = "retained-command",

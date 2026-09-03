@@ -99,9 +99,9 @@ export interface EvalOptions {
   setup?: (dir: string) => Promise<void>;
 }
 
-const PREFIX = "fx-eval-";
-const HOME_PREFIX = "fx-eval-home-";
-const TEST_HOME_PREFIX = "fx-test-home-";
+const PREFIX = "fiber-eval-";
+const HOME_PREFIX = "fiber-eval-home-";
+const TEST_HOME_PREFIX = "fiber-test-home-";
 
 export function createWorkDir(): string {
   return mkdtempSync(join(tmpdir(), PREFIX));
@@ -219,7 +219,7 @@ export async function runEval(
       json = JSON.parse(result.stdout.trim());
     } catch {
       throw new Error(
-        `Failed to parse fx JSON output.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+        `Failed to parse fiber JSON output.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
       );
     }
 
@@ -241,7 +241,7 @@ export async function runEval(
 
     if (json.error) {
       throw new Error(
-        `fx returned error: ${json.error}\nstderr: ${result.stderr.slice(-1000)}`,
+        `fiber returned error: ${json.error}\nstderr: ${result.stderr.slice(-1000)}`,
       );
     }
 

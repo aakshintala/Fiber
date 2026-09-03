@@ -477,7 +477,7 @@ fn defaultLogPathForHome(alloc: Allocator, home: []const u8) ![]u8 {
 }
 
 fn fallbackLogPathForMillis(alloc: Allocator, millis: i64) ![]u8 {
-    return std.fmt.allocPrint(alloc, "/tmp/fx-trace-{d}.log", .{millis});
+    return std.fmt.allocPrint(alloc, "/tmp/fiber-trace-{d}.log", .{millis});
 }
 
 fn ensureParentDir(path: []const u8) !void {
@@ -537,7 +537,7 @@ test "fallback default log path uses tmp trace path" {
     const alloc = std.testing.allocator;
     const path = try fallbackLogPathForMillis(alloc, 12345);
     defer alloc.free(path);
-    try std.testing.expectEqualStrings("/tmp/fx-trace-12345.log", path);
+    try std.testing.expectEqualStrings("/tmp/fiber-trace-12345.log", path);
 }
 
 test "trace logger writes configured file" {
@@ -660,9 +660,9 @@ test "trace lines encode every non-ASCII and control byte" {
 
 test "resolveLogPath resolves absolute and relative paths" {
     const alloc = std.testing.allocator;
-    const absolute = try resolveLogPath(alloc, "/tmp/workspace", " \t/tmp/fx-absolute-trace.log\n");
+    const absolute = try resolveLogPath(alloc, "/tmp/workspace", " \t/tmp/fiber-absolute-trace.log\n");
     defer alloc.free(absolute);
-    try std.testing.expectEqualStrings("/tmp/fx-absolute-trace.log", absolute);
+    try std.testing.expectEqualStrings("/tmp/fiber-absolute-trace.log", absolute);
 
     const relative = try resolveLogPath(alloc, "/tmp/workspace", "logs/trace.log");
     defer alloc.free(relative);

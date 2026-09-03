@@ -756,7 +756,7 @@ function createArtifactRoot(): string {
     artifactRoot = realpathSync(configured);
   } else {
     artifactRoot = realpathSync(
-      mkdtempSync(join(tmpdir(), "fx-streamed-tool-lifecycle-artifacts-")),
+      mkdtempSync(join(tmpdir(), "fiber-streamed-tool-lifecycle-artifacts-")),
     );
   }
   return artifactRoot;
@@ -768,15 +768,15 @@ function writeLifecycleWrapper(
 ): string {
   const wrapperPath = join(artifacts, "run-fixture.sh");
   const fxCommand = invocation === "invalid-added-root"
-    ? '"$fx_bin" --add-dir "$FIBER_INVALID_ADDED_ROOT"'
-    : '"$fx_bin"';
+    ? '"$fiber_bin" --add-dir "$FIBER_INVALID_ADDED_ROOT"'
+    : '"$fiber_bin"';
   writeFileSync(
     wrapperPath,
     `#!/bin/sh
 set -u
 
 artifact_dir="\${FIBER_LIFECYCLE_ARTIFACT_DIR:?}"
-fx_bin="\${FIBER_TEST_BIN:?}"
+fiber_bin="\${FIBER_TEST_BIN:?}"
 
 write_atomic() {
   name="$1"
@@ -1196,7 +1196,7 @@ async function runCanonicalLifecycleFixture(
   stage: LifecycleStage,
   traceStderr = false,
 ) {
-  root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-gateway-ordering-")));
+  root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-gateway-ordering-")));
   const home = join(root, "home");
   const workspacePath = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -1448,7 +1448,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const model = "meta/muse-spark-1.2-contributor";
       const finalText = "Full-window output limit omitted.";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-full-window-output-limit-",
+        "fiber-tui-full-window-output-limit-",
         [fakeGatewayFinalText(finalText)],
         {
           model,
@@ -1494,7 +1494,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const finalSentinel = "FIBER_LIVE_TOKEN_COUNTER_COMPLETE";
       const streamedText = `${"streaming output\n".repeat(256)}${finalSentinel}`;
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-live-token-counter-",
+        "fiber-tui-live-token-counter-",
         [
           () =>
             stagedTokenProgressResponse(
@@ -1564,11 +1564,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "assistant publishes a complete markdown block before the following tool",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-bounded-assistant-pacing-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-bounded-assistant-pacing-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       const framesRoot = join(root, "replay-frames");
       const hold: HoldState = { started: false, cancelled: false };
       const renderedSentence =
@@ -1683,7 +1683,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const assistantText = "I will write the staged payload now.";
       const finalSentinel = "FIBER_TOOL_PAYLOAD_PROGRESS_COMPLETE";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-tool-payload-progress-",
+        "fiber-tui-tool-payload-progress-",
         [
           () =>
             stagedToolPayloadResponse(
@@ -1765,7 +1765,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const firstFinal = `FIRST_TURN_CONTEXT_COMPLETE ${"retained assistant context ".repeat(128)}`;
       const followupFinal = "FOLLOWUP_INPUT_COUNTER_COMPLETE";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-followup-input-counter-",
+        "fiber-tui-followup-input-counter-",
         [
           fakeGatewayFinalTextWithUsage(firstFinal, 30_000, 600),
           fakeGatewayFinalTextWithUsage(followupFinal, 16_000, 5),
@@ -1807,7 +1807,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
     async () => {
       const finalText = "Internal retry token counter completed.";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-live-token-counter-retry-",
+        "fiber-tui-live-token-counter-retry-",
         [
           new Response(
             JSON.stringify({ error: { message: "temporarily unavailable" } }),
@@ -1843,7 +1843,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
     "HTTP restricted provider error renders sticky status row",
     async () => {
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-route-http-403-",
+        "fiber-tui-route-http-403-",
         [restrictedProviderResponse()],
       );
 
@@ -1871,7 +1871,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "post-tool HTTP 503 omits empty assistant from follow-up",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-empty-assistant-history-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-empty-assistant-history-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
@@ -1990,7 +1990,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "provider route recovery counts down, times out a silent head, and recovers",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-route-recovery-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-route-recovery-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
@@ -2076,7 +2076,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
     "content filter opens local recovery modal without transcript card",
     async () => {
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-route-content-filter-",
+        "fiber-tui-route-content-filter-",
         [contentFilterResponse()],
       );
 
@@ -2089,7 +2089,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const scrollback = await session!.captureFullScrollback();
 
       expect(queuedGateway.requests.length).toBe(1);
-      expect(scrollback).not.toContain("What should fx do?");
+      expect(scrollback).not.toContain("What should fiber do?");
       expect(pane).toContain("Change model");
       expect(pane).toContain("Try again later");
       expect(pane).toContain("Response blocked by content filter");
@@ -2110,7 +2110,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const originalPrompt = "Preserve this interactive prompt.";
       const finalText = "Interactive recovery completed.";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-recovery-continue-",
+        "fiber-tui-recovery-continue-",
         [
           ...Array.from({ length: 10 }, () => retryAfterUnavailable(0)),
           fakeGatewayFinalText(finalText),
@@ -2151,7 +2151,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const hold: HoldState = { started: false, cancelled: false };
       const finalText = "Active checkpointed request completed once.";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-recovery-active-continue-",
+        "fiber-tui-recovery-active-continue-",
         [
           () => heldGatewayResponse(hold, [], [
             { type: "text-delta", id: "answer_1", delta: finalText },
@@ -2194,7 +2194,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
     async () => {
       const finalText = "Resumed tool lifecycle completed.";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-recovery-tool-lifecycle-",
+        "fiber-tui-recovery-tool-lifecycle-",
         [
           fakeGatewayToolCall("read_before_pause", "read_file", { path: "before.txt" }),
           ...Array.from({ length: 10 }, () => retryAfterUnavailable(0)),
@@ -2230,7 +2230,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         responses.push(retryAfterUnavailable(0));
       }
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-recovery-fast-budget-",
+        "fiber-tui-recovery-fast-budget-",
         responses,
         {
           model: GLM_MODEL,
@@ -2275,7 +2275,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const directFastModel = `${GLM_MODEL}-fast`;
       const finalText = "Canonical route recovered after process restart.";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-recovery-fast-backoff-restart-",
+        "fiber-tui-recovery-fast-backoff-restart-",
         [retryAfterUnavailable(5), fakeGatewayFinalText(finalText)],
         {
           model: directFastModel,
@@ -2337,7 +2337,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
     "Escape during provider recovery backoff cancels without ModelError",
     async () => {
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-recovery-backoff-cancel-",
+        "fiber-tui-recovery-backoff-cancel-",
         [
           providerErrorResponse("route failed once"),
           providerErrorResponse("route failed twice"),
@@ -2371,7 +2371,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const partialText = "Partial output before EOF.";
       const finalText = "Recovered final output once.";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-recovery-partial-continue-",
+        "fiber-tui-recovery-partial-continue-",
         [
           partialEofResponse(partialText),
           ...Array.from({ length: 9 }, () => retryAfterUnavailable(0)),
@@ -2401,7 +2401,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
     async () => {
       const finalText = "Recovered after disabling Fast.";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-route-disable-fast-",
+        "fiber-tui-route-disable-fast-",
         [
           providerErrorResponse("fast route failed once"),
           providerErrorResponse("fast route failed twice"),
@@ -2453,7 +2453,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       expect(scrollback).toContain(finalText);
       expect(scrollback).toMatch(TURN_SUMMARY_WITH_TOKENS);
       expect(scrollback).not.toContain("✓ recovered");
-      expect(scrollback).not.toContain("What should fx do?");
+      expect(scrollback).not.toContain("What should fiber do?");
       expect(scrollback).not.toContain("request failed: ModelError");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     },
@@ -2466,7 +2466,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const firstCatalogModel = "anthropic/claude-fable-5";
       const finalText = "partial unsafe output completed";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-route-unsafe-text-",
+        "fiber-tui-route-unsafe-text-",
         [providerErrorAfterTextResponse(), fakeGatewayFinalText(finalText)],
         {
           models: [
@@ -2493,7 +2493,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       expect(queuedGateway.requests.length).toBe(2);
       expect(scrollback.split("partial unsafe output").length - 1).toBe(1);
       expect(scrollback).toContain(finalText);
-      expect(scrollback).not.toContain("What should fx do?");
+      expect(scrollback).not.toContain("What should fiber do?");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     },
     TIMEOUT,
@@ -2504,7 +2504,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
     async () => {
       const finalText = "Recovered after unstarted tool activity.";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
-        "fx-tui-route-unsafe-tool-",
+        "fiber-tui-route-unsafe-tool-",
         [providerErrorAfterToolStartResponse(), fakeGatewayFinalText(finalText)],
       );
 
@@ -2514,7 +2514,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
 
       expect(queuedGateway.requests.length).toBe(2);
       expect(scrollback).toContain(finalText);
-      expect(scrollback).not.toContain("What should fx do?");
+      expect(scrollback).not.toContain("What should fiber do?");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     },
     TIMEOUT,
@@ -2523,11 +2523,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "unavailable read_tool_result renders and persists a failed result",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-read-tool-result-failure-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-read-tool-result-failure-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       const tracePath = join(root, "trace.log");
       const expectedFailure =
         "read_tool_result failed for handle unknown-dogfood-handle: ResultHandleNotFound. No exact match exists in the active tool-result store; handles are session-scoped and must be copied exactly from the tool result preview.";
@@ -2621,11 +2621,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "typing during a streamed response leaves the native cursor visible",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-streaming-caret-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-streaming-caret-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       const draft = "draft while stream is active";
       const stream = { started: false, cancelled: false };
       mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -2680,12 +2680,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "idle submitted prompt stays visible across a first-use context notice",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-idle-submit-order-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-idle-submit-order-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
-      const tracePath = join(root, "fx-trace.log");
+      const tapePath = join(root, "session.fibertape");
+      const tracePath = join(root, "fiber-trace.log");
       const framesRoot = join(root, "replay-frames");
       const submittedPrompt = "IDLE_SUBMIT_ORDER_SENTINEL";
       const newerDraft = "RAPID_SECOND_DRAFT_SENTINEL";
@@ -2769,11 +2769,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "idle submitted prompt keeps its canonical row after a completed turn",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-idle-submit-multiturn-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-idle-submit-multiturn-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       const framesRoot = join(root, "replay-frames");
       const seedPrompt = "MULTI_TURN_SEED_PROMPT";
       const seedReply = "MULTI_TURN_SEED_REPLY";
@@ -2840,11 +2840,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "complete assistant block precedes a queued user prompt in scrollback",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-prompt-boundary-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-prompt-boundary-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       const tracePath = join(root, "trace.log");
       const firstResponse: HoldState = { started: false, cancelled: false };
       const secondResponse = { started: false, cancelled: false };
@@ -2947,12 +2947,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "confirmed post-cancel queued prompt recovers duplicate-key tool arguments",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-cancel-integrity-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-cancel-integrity-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const tracePath = join(root, "trace.log");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspacePath, { recursive: true });
       writeFileSync(join(home, ".fiber", "settings.json"), "{}");
@@ -3073,13 +3073,13 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "queued prompt stays pending until active assistant text completes",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-order-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-order-")));
       const home = join(root, "home");
       const launchAncestor = join(home, "projects");
       const workspacePath = join(launchAncestor, "workspace");
       const tracePath = join(root, "trace.log");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspacePath, { recursive: true });
       writeFileSync(join(home, ".fiber", "settings.json"), "{}");
@@ -3367,7 +3367,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "Up pauses queued admission and commits every edited prompt in FIFO order",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-review-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-review-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const tracePath = join(root, "trace.log");
@@ -3496,7 +3496,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "Escape hides a focused queue editor without cancelling the active stream",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-review-escape-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-review-escape-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const tracePath = join(root, "trace.log");
@@ -3590,7 +3590,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "queued review preserves pasted backing and follows a long draft cursor",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-semantic-drafts-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-semantic-drafts-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const tracePath = join(root, "trace.log");
@@ -3714,7 +3714,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "queued review shows file completions and preserves the accepted path",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-file-picker-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-file-picker-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const tracePath = join(root, "trace.log");
@@ -3822,7 +3822,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "streaming model selection applies to the next turn without changing the active request",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-next-turn-model-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-next-turn-model-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
@@ -3932,7 +3932,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "queued review keeps the disabled model picker hidden",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-model-picker-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-model-picker-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
@@ -4024,7 +4024,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "empty Enter resumes a hidden paused queue without editing it",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-empty-enter-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-empty-enter-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const tracePath = join(root, "trace.log");
@@ -4124,7 +4124,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "Up edits a queued card in place and repeated Ctrl+U deletes only the empty draft",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-inline-delete-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-inline-delete-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const tracePath = join(root, "trace.log");
@@ -4292,7 +4292,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "queued image yank survives deleting its queue card",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-image-yank-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-image-yank-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const tracePath = join(root, "trace.log");
@@ -4436,7 +4436,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "Ctrl+C pauses two queued prompts until the visible draft is confirmed",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-post-cancel-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-post-cancel-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const tracePath = join(root, "trace.log");
@@ -4589,7 +4589,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         const workspace = join(artifacts, "workspace");
         const tracePath = join(artifacts, "trace.log");
         const stderrPath = join(artifacts, "stderr.log");
-        const tapePath = join(artifacts, "session.fxtape");
+        const tapePath = join(artifacts, "session.fibertape");
         mkdirSync(join(home, ".fiber"), { recursive: true });
         mkdirSync(workspace, { recursive: true });
         writeFileSync(
@@ -4783,7 +4783,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "post-cancel hidden queue offers Escape to cancel every queued prompt",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-queued-cancel-all-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-queued-cancel-all-")));
       const home = join(root, "home");
       const workspacePath = join(root, "workspace");
       const tracePath = join(root, "trace.log");
@@ -4892,7 +4892,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const workspace = join(artifacts, "workspace");
       const stderrPath = join(artifacts, "stderr.log");
       const tracePath = join(artifacts, "trace.log");
-      const tapePath = join(artifacts, "session.fxtape");
+      const tapePath = join(artifacts, "session.fibertape");
       mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
       writeFileSync(join(home, ".fiber", "settings.json"), "{}");
@@ -4973,7 +4973,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const workspace = join(artifacts, "workspace");
       const stderrPath = join(artifacts, "stderr.log");
       const tracePath = join(artifacts, "trace.log");
-      const tapePath = join(artifacts, "session.fxtape");
+      const tapePath = join(artifacts, "session.fibertape");
       const prompt = "Recall CTRL_C_EXIT_HISTORY_SENTINEL exactly.";
       const finalText = "CTRL_C_EXIT_HISTORY_DONE";
       const exitHint = "press ctrl+c again to exit";
@@ -5120,7 +5120,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         expect(observed.stderr).toBe(
           stage === "baseline-silent"
             ? ""
-            : "fx: LifecycleReconciliationCollision\n",
+            : "fiber: LifecycleReconciliationCollision\n",
         );
         return;
       }
@@ -5193,7 +5193,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "parallel read lifecycle updates preserve current grouped scrollback",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-status-scrollback-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-status-scrollback-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
@@ -5286,11 +5286,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "launch-row release preserves complete history during a large table append",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-launch-history-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-launch-history-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "launch-history.fxtape");
+      const tapePath = join(root, "launch-history.fibertape");
       const prefillMarkers = Array.from(
         { length: 5_000 },
         (_, index) =>
@@ -5411,7 +5411,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "dynamic MCP approval shows exact arguments and preserves deny once and session scope",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-mcp-approval-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-mcp-approval-")));
       const dynamicToolName = "mcp_fixture_echo";
       const argumentSentinel = "FXC194_ARGUMENT_SENTINEL";
       const secondArgumentSentinel = "FXC194_SECOND_ARGUMENT_SENTINEL";
@@ -5533,7 +5533,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "dynamic MCP approval ellipsizes overlong arguments in a narrow terminal",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-narrow-mcp-approval-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-narrow-mcp-approval-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
@@ -5619,13 +5619,13 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "current compact view keeps unsupported tool failures visible with supported calls",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-unsupported-tool-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-unsupported-tool-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
       const resumedStderrPath = join(root, "resumed-stderr.log");
-      const tracePath = join(root, "fx-trace.log");
-      const tapePath = join(root, "session.fxtape");
+      const tracePath = join(root, "fiber-trace.log");
+      const tapePath = join(root, "session.fibertape");
       mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
       writeFileSync(
@@ -5762,7 +5762,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
   test(
     "current compact command summaries hide no-op cwd prefixes and abbreviate the active workspace path",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-command-summary-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-command-summary-")));
       const home = join(root, "home");
       const workspace = join(
         root,
@@ -5788,7 +5788,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       );
       const stderrPath = join(root, "stderr.log");
       const resumedStderrPath = join(root, "resumed-stderr.log");
-      const tracePath = join(root, "fx-trace.log");
+      const tracePath = join(root, "fiber-trace.log");
       mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(nested, { recursive: true });
       writeFileSync(

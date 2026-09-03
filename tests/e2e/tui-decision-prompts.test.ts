@@ -32,12 +32,12 @@ const TIMEOUT = 30_000;
 const OUTER_MODEL = "openai/gpt-5";
 const APPROVAL_PROMPT = "Would you like to run the following command?";
 const DEFAULT_COMMAND_APPROVAL_REASON =
-  "Reason: fx needs your approval before running this shell command.";
+  "Reason: fiber needs your approval before running this shell command.";
 const COMMAND_ALWAYS_CHOICE = "Yes, and don't ask again for this exact command";
 const COMMAND_YES_CHOICE = "Yes";
 const COMMAND_NO_CHOICE = "No";
-const COMMAND_YES_AMENDMENT = "Yes, and tell fx what to do next";
-const COMMAND_NO_AMENDMENT = "No, and tell fx what to do differently";
+const COMMAND_YES_AMENDMENT = "Yes, and tell fiber what to do next";
+const COMMAND_NO_AMENDMENT = "No, and tell fiber what to do differently";
 const QUESTION_PROMPT = "Choose next step?";
 const FORBIDDEN_TYPING = "typing a reply";
 const FORBIDDEN_TYPING_SUFFIX = "ping a reply";
@@ -52,7 +52,7 @@ const MALFORMED_LABEL_SENTINEL = "FIBER_MALFORMED_LABEL_SENTINEL";
 const MALFORMED_STREAMED_ARGUMENTS =
   `{"path":"${MALFORMED_LABEL_SENTINEL}",`;
 const LONG_QUESTION =
-  "When you ask fx to ask a question interactively, the question text must remain fully visible even when it wraps.";
+  "When you ask fiber to ask a question interactively, the question text must remain fully visible even when it wraps.";
 const LONG_QUESTION_ANSWER =
   "Run the complete verification suite before pushing this branch";
 const LONG_QUESTION_DESCRIPTION =
@@ -405,7 +405,7 @@ function createIsolatedRoot(
   permissionMode: "ask" | "auto" = "ask",
   permission: Record<string, unknown> = {},
 ) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-decision-e2e-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-decision-e2e-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -1072,9 +1072,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       ].join("\n");
       const tapeRoot = process.env.FIBER_RECORD
         ? null
-        : mkdtempSync(join(tmpdir(), "fx-question-pacer-"));
+        : mkdtempSync(join(tmpdir(), "fiber-question-pacer-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "question.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "question.fibertape");
       const ctx = await launchScenario(
         [
           sse([
@@ -1191,9 +1191,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
     async () => {
       const tapeRoot = process.env.FIBER_RECORD
         ? null
-        : mkdtempSync(join(tmpdir(), "fx-inline-generic-approval-"));
+        : mkdtempSync(join(tmpdir(), "fiber-inline-generic-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fibertape");
       const ctx = await openApprovalPrompt("generic approval denied", {
         FIBER_RECORD: tapePath,
       });
@@ -1240,9 +1240,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
     async () => {
       const tapeRoot = process.env.FIBER_RECORD
         ? null
-        : mkdtempSync(join(tmpdir(), "fx-long-command-approval-"));
+        : mkdtempSync(join(tmpdir(), "fiber-long-command-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fibertape");
       const traceEnv = process.env.FIBER_TRACE_LOG
         ? {
             FIBER_TRACE_LOG: process.env.FIBER_TRACE_LOG,
@@ -1281,9 +1281,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
     async () => {
       const tapeRoot = process.env.FIBER_RECORD
         ? null
-        : mkdtempSync(join(tmpdir(), "fx-fragmented-command-approval-"));
+        : mkdtempSync(join(tmpdir(), "fiber-fragmented-command-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fibertape");
       const ctx = await launchScenario(
         [outerScrollableLongCommandCall(), outerText("long command fragmented approval complete")],
         "input,permission",
@@ -1356,9 +1356,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
     async () => {
       const tapeRoot = process.env.FIBER_RECORD
         ? null
-        : mkdtempSync(join(tmpdir(), "fx-inline-command-approval-"));
+        : mkdtempSync(join(tmpdir(), "fiber-inline-command-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fibertape");
       const ctx = await launchScenario([
         outerFittingCommandCall(),
         outerText("fitting command approval denied handled"),
@@ -1400,9 +1400,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
     async () => {
       const tapeRoot = process.env.FIBER_RECORD
         ? null
-        : mkdtempSync(join(tmpdir(), "fx-overflow-command-approval-"));
+        : mkdtempSync(join(tmpdir(), "fiber-overflow-command-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fibertape");
       const ctx = await launchScenario([
         outerFittingCommandCall(),
         outerText("overflow command approval Escape recovered"),
@@ -1438,9 +1438,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
     async () => {
       const tapeRoot = process.env.FIBER_RECORD
         ? null
-        : mkdtempSync(join(tmpdir(), "fx-command-approval-resize-"));
+        : mkdtempSync(join(tmpdir(), "fiber-command-approval-resize-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fibertape");
       const ctx = await launchScenario([outerFittingCommandCall()], "input", {
         FIBER_RECORD: tapePath,
       });
@@ -1478,9 +1478,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       const finalMarker = "generic approval accepted handled";
       const tapeRoot = process.env.FIBER_RECORD
         ? null
-        : mkdtempSync(join(tmpdir(), "fx-accepted-generic-approval-"));
+        : mkdtempSync(join(tmpdir(), "fiber-accepted-generic-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fibertape");
       const ctx = await launchScenario(
         [
           outerText(markers.join("\n")),
@@ -2643,7 +2643,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         .find((line) => line.includes("remain fully visible even when it wraps."));
       const questionLead = pane
         .split("\n")
-        .find((line) => line.includes("When you ask fx to ask a question"));
+        .find((line) => line.includes("When you ask fiber to ask a question"));
       const labelContinuation = pane
         .split("\n")
         .find((line) => line.includes("verification suite before"));
@@ -2657,7 +2657,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         .split("\n")
         .find((line) => line.includes("Keep the entire explanation"));
       expect(questionContinuation?.indexOf("remain fully visible even when it wraps.")).toBe(
-        questionLead?.indexOf("When you ask fx to ask a question"),
+        questionLead?.indexOf("When you ask fiber to ask a question"),
       );
       expect(labelContinuation?.indexOf("verification suite before")).toBe(
         labelLead?.indexOf("Run the complete"),

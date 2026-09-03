@@ -295,7 +295,7 @@ fn currentExecutablePathForTest(
     const state: *TestDepsState = @ptrCast(@alignCast(ctx.?));
     state.path_count += 1;
     if (state.path_error) |err| return err;
-    const executable_path = "/tmp/fx-upgraded";
+    const executable_path = "/tmp/fiber-upgraded";
     if (executable_path.len > executable_buf.len) return error.PathTooLong;
     @memcpy(executable_buf[0..executable_path.len], executable_path);
     return executable_buf[0..executable_path.len];
@@ -312,7 +312,7 @@ test "app_upgrade_runtime validates then requests normal relaunch handoff" {
     try std.testing.expectEqual(@as(usize, 1), app.prepare_count);
     try std.testing.expectEqual(@as(usize, 1), deps_state.path_count);
     try std.testing.expectEqualStrings(
-        "/tmp/fx-upgraded",
+        "/tmp/fiber-upgraded",
         app.relaunch_path[0..app.relaunch_path_len],
     );
     try std.testing.expectEqual(@as(usize, 1), app.request_handoff_count);

@@ -3889,7 +3889,7 @@ fn appendAuthorizedVisionAttemptIds(
 ) !bool {
     if (!std.mem.eql(u8, call.name, "vision") or
         call.argument_integrity != .valid or
-        call.provenance != .fx_local)
+        call.provenance != .fiber_local)
     {
         return false;
     }
@@ -5866,7 +5866,7 @@ fn processQueuedPromptLoop(
                 },
                 .reject_malformed_identity => |failure| {
                     try stream_ctx.provisional_statuses.finishRejectedCompletions(deps, arena, turn_id, completion.tool_calls, advertised_dynamic_tool_names);
-                    debug_trace.eventf("agent", "authoritative_tool_admission_rejected", step_ctx, "failure={s} provenance=fx_local", .{@tagName(failure)});
+                    debug_trace.eventf("agent", "authoritative_tool_admission_rejected", step_ctx, "failure={s} provenance=fiber_local", .{@tagName(failure)});
                     finish_trace.finish("malformed_tool_identity");
                     return error.MalformedAuthoritativeToolIdentity;
                 },
@@ -6934,7 +6934,7 @@ fn processQueuedPromptLoop(
                             "tool",
                             "argument_integrity_rejected",
                             step_ctx,
-                            "call_id={s} name={s} failure=malformed_json provenance=fx_local",
+                            "call_id={s} name={s} failure=malformed_json provenance=fiber_local",
                             .{ tool_call.id, tool_call.name },
                         );
                     } else if (blocked.kind == .route_unavailable) {
@@ -8894,7 +8894,7 @@ test "malformed duplicate unauthorized and path Vision calls settle no image ids
         .name = "vision",
         .arguments_json = "{\"image_ids\":[1]",
         .argument_integrity = .malformed_json,
-        .provenance = .fx_local,
+        .provenance = .fiber_local,
     };
     try std.testing.expect(!try appendAuthorizedVisionAttemptIds(
         std.testing.allocator,
@@ -8907,7 +8907,7 @@ test "malformed duplicate unauthorized and path Vision calls settle no image ids
         .id = "vision-duplicate",
         .name = "vision",
         .arguments_json = "{\"image_ids\":[1,1],\"focus\":\"inspect\"}",
-        .provenance = .fx_local,
+        .provenance = .fiber_local,
     };
     try std.testing.expect(!try appendAuthorizedVisionAttemptIds(
         std.testing.allocator,
@@ -8920,7 +8920,7 @@ test "malformed duplicate unauthorized and path Vision calls settle no image ids
         .id = "vision-unauthorized",
         .name = "vision",
         .arguments_json = "{\"image_ids\":[2],\"focus\":\"inspect\"}",
-        .provenance = .fx_local,
+        .provenance = .fiber_local,
     };
     try std.testing.expect(!try appendAuthorizedVisionAttemptIds(
         std.testing.allocator,
@@ -8933,7 +8933,7 @@ test "malformed duplicate unauthorized and path Vision calls settle no image ids
         .id = "vision-path",
         .name = "vision",
         .arguments_json = "{\"paths\":[\"photo.png\"],\"focus\":\"inspect\"}",
-        .provenance = .fx_local,
+        .provenance = .fiber_local,
     };
     try std.testing.expect(!try appendAuthorizedVisionAttemptIds(
         std.testing.allocator,

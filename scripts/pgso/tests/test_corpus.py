@@ -89,7 +89,7 @@ EXCLUDED_E2E_TESTS = (
 class PgsoCorpusTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory(
-            prefix="fx-pgso-corpus-"
+            prefix="fiber-pgso-corpus-"
         )
         self.root = pathlib.Path(self.temporary_directory.name)
         (self.root / "tests" / "e2e").mkdir(parents=True)
@@ -569,7 +569,7 @@ class PgsoCorpusTests(unittest.TestCase):
                 "PGSO_UNSET_ME": "remove",
                 "TMUX": "/tmp/user-tmux,1,0",
                 "TMUX_PANE": "%1",
-                "FIBER_TRACE_LOG": "/tmp/user-fx-trace.log",
+                "FIBER_TRACE_LOG": "/tmp/user-fiber-trace.log",
                 "FIBER_TRACE_SCOPES": "user-scope",
             },
             clear=False,

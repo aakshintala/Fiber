@@ -188,7 +188,7 @@ async function waitForFile(path: string): Promise<void> {
 test.skipIf(!tmuxAvailable())(
   "shell captured execution yields one handle and waits without respawn",
   async () => {
-    const fixture = createFixture("fx-shell-captured-");
+    const fixture = createFixture("fiber-shell-captured-");
     let sessionId = "";
     const gateway = startFakeGateway([
       fakeGatewayToolCall("shell_run", "shell", {
@@ -246,7 +246,7 @@ test.skipIf(!tmuxAvailable())(
 test.skipIf(!tmuxAvailable())(
   "running shell survives a model-completed turn without handoff policy",
   async () => {
-    const fixture = createFixture("fx-shell-cross-turn-");
+    const fixture = createFixture("fiber-shell-cross-turn-");
     let sessionId = "";
     const gateway = startFakeGateway([
       fakeGatewayToolCall("shell_cross_turn_run", "shell", {
@@ -300,7 +300,7 @@ test.skipIf(!tmuxAvailable())(
 test.skipIf(!tmuxAvailable())(
   "reused provider call ids start distinct captured commands",
   async () => {
-    const fixture = createFixture("fx-shell-reused-call-id-");
+    const fixture = createFixture("fiber-shell-reused-call-id-");
     const firstMarker = join(fixture.workspace, "first-command.txt");
     const secondMarker = join(fixture.workspace, "second-command.txt");
     const gateway = startFakeGateway([
@@ -352,7 +352,7 @@ test.skipIf(!tmuxAvailable())(
 test.skipIf(!tmuxAvailable())(
   "overlapping captured shell handles keep lifecycle output isolated",
   async () => {
-    const fixture = createFixture("fx-shell-overlap-");
+    const fixture = createFixture("fiber-shell-overlap-");
     let firstSessionId = "";
     let secondSessionId = "";
     const gateway = startFakeGateway([
@@ -423,7 +423,7 @@ test.skipIf(!tmuxAvailable())(
 test.skipIf(!tmuxAvailable())(
   "shell TTY execution writes atomically drains final output and closes host state",
   async () => {
-    const fixture = createFixture("fx-shell-tty-");
+    const fixture = createFixture("fiber-shell-tty-");
     let sessionId = "";
     const gateway = startFakeGateway([
       fakeGatewayToolCall("shell_tty_run", "shell", {
@@ -475,7 +475,7 @@ test.skipIf(!tmuxAvailable())(
 test.skipIf(!tmuxAvailable())(
   "shell TTY writes advance one runtime-owned cursor without duplicate output",
   async () => {
-    const fixture = createFixture("fx-shell-tty-cursor-");
+    const fixture = createFixture("fiber-shell-tty-cursor-");
     let sessionId = "";
     const gateway = startFakeGateway([
       fakeGatewayToolCall("shell_tty_cursor_run", "shell", {
@@ -535,7 +535,7 @@ test.skipIf(!tmuxAvailable())(
 test.skipIf(!tmuxAvailable())(
   "shell interact sends exact control characters",
   async () => {
-    const fixture = createFixture("fx-shell-tty-control-");
+    const fixture = createFixture("fiber-shell-tty-control-");
     let sessionId = "";
     const gateway = startFakeGateway([
       fakeGatewayToolCall("shell_tty_control_run", "shell", {
@@ -596,7 +596,7 @@ test.skipIf(!tmuxAvailable())(
 test.skipIf(!tmuxAvailable())(
   "shell TTY timeout stops the owned process and reports the deadline",
   async () => {
-    const fixture = createFixture("fx-shell-tty-timeout-");
+    const fixture = createFixture("fiber-shell-tty-timeout-");
     let sessionId = "";
     const gateway = startFakeGateway([
       fakeGatewayToolCall("shell_tty_timeout_run", "shell", {
@@ -646,9 +646,9 @@ test.skipIf(!tmuxAvailable())(
 );
 
 test.skipIf(!tmuxAvailable())(
-  "resumed fx reindexes and stops its durable managed TTY",
+  "resumed fiber reindexes and stops its durable managed TTY",
   async () => {
-    const fixture = createFixture("fx-shell-tty-resume-");
+    const fixture = createFixture("fiber-shell-tty-resume-");
     let sessionId = "";
     const gateway = startFakeGateway([
       fakeGatewayToolCall("shell_tty_resume_run", "shell", {

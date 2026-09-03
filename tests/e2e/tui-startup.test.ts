@@ -31,7 +31,7 @@ afterEach(async () => {
 
 describe.skipIf(SKIP)("tui: startup and exit", () => {
   test(
-    "fx launches and shows prompt",
+    "fiber launches and shows prompt",
     async () => {
       session = await TmuxSession.create();
       const pane = await session.waitForComposer(10_000);
@@ -72,7 +72,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
   test(
     "statusline hides the workspace identity by default",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-statusline-default-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-statusline-default-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace-default-hidden");
       const stderrPath = join(root, "stderr.log");
@@ -113,7 +113,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
   test(
     "/help keeps command descriptions close after a wide-to-narrow resize",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-help-columns-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-help-columns-")));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       mkdirSync(home, { recursive: true });
@@ -170,7 +170,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
   test(
     "statusline refreshes the working directory and Git branch",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-statusline-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-statusline-")));
       const home = join(root, "home");
       const repository = join(root, "repository");
       const workspace = join(repository, "packages", "status-root");
@@ -241,14 +241,14 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
   test(
     "restore the launch header without retaining prior output",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-fresh-session-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-fresh-session-")));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       mkdirSync(home, { recursive: true });
       writeFileSync(stderrPath, "");
 
       const version = execFileSync(FIBER_BIN, ["--version"], { encoding: "utf8" }).trim();
-      const banner = `𝒇x v${version} · Run /help for commands`;
+      const banner = `fiber v${version} · Run /help for commands`;
 
       try {
         session = await TmuxSession.create({
@@ -302,7 +302,7 @@ describe.skipIf(SKIP_TMUX)("tui: MCP startup", () => {
   test(
     "unresponsive MCP discovery does not block startup or shutdown",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-mcp-startup-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-mcp-startup-")));
       const home = join(root, "home");
       mkdirSync(join(home, ".fiber"), { recursive: true });
 
@@ -373,10 +373,10 @@ describe.skipIf(SKIP_TMUX)("tui: credential onboarding", () => {
   test(
     "startup shows credential onboarding on the first frame and Escape remains session-only",
     async () => {
-      const home = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-login-onboarding-")));
+      const home = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-login-onboarding-")));
       const env = {
         HOME: home,
-        USER: "fx-e2e-login-onboarding",
+        USER: "fiber-e2e-login-onboarding",
         FIBER_DISABLE_KEYCHAIN: "1",
         FIBER_NO_OPEN_BROWSER: "1",
         FIBER_SKIP_ONBOARDING: "0",

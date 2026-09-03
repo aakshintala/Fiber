@@ -1825,7 +1825,7 @@ test "interactive stream adapter queues byte-identical rendered spans" {
 
     const spans = [_][]const u8{
         "\x1b[1mbold\x1b[22m and \x1b[3mitalic\x1b[23m\n",
-        "\x1b]8;id=fx-1;https://example.com\x1b\\docs\x1b]8;;\x1b\\\n",
+        "\x1b]8;id=fiber-1;https://example.com\x1b\\docs\x1b]8;;\x1b\\\n",
         "\x1b[2m\xe2\x94\x82 \x1b[22mconst x = **literal**;\n",
     };
     const deps = Bindings(FakeApp).agentRuntimeDeps(&app);

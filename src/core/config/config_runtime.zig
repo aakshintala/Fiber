@@ -20,7 +20,7 @@ pub const Paths = struct {
     home_dir: ?[]u8 = null,
     user_settings: ?[]u8 = null,
     workspace_settings: []u8,
-    home_fx_dir: ?[]u8 = null,
+    home_fiber_dir: ?[]u8 = null,
     sessions_dir: ?[]u8 = null,
     workspace_root: []u8,
 
@@ -28,7 +28,7 @@ pub const Paths = struct {
         if (self.home_dir) |path| alloc.free(path);
         if (self.user_settings) |path| alloc.free(path);
         alloc.free(self.workspace_settings);
-        if (self.home_fx_dir) |path| alloc.free(path);
+        if (self.home_fiber_dir) |path| alloc.free(path);
         if (self.sessions_dir) |path| alloc.free(path);
         alloc.free(self.workspace_root);
         self.* = undefined;
@@ -745,7 +745,7 @@ pub fn loadStartupStatusSettingsFromHome(alloc: Allocator, home_dir: []const u8,
 }
 
 pub fn ensureStateLayout(paths: Paths) !void {
-    if (paths.home_fx_dir) |dir| try ensureAbsoluteDir(dir);
+    if (paths.home_fiber_dir) |dir| try ensureAbsoluteDir(dir);
     if (paths.sessions_dir) |dir| try ensureAbsoluteDir(dir);
 }
 
@@ -953,8 +953,8 @@ fn discoverPathsWithOptionalHome(alloc: Allocator, home_dir: ?[]const u8, worksp
         paths.home_dir = try alloc.dupe(u8, home);
         errdefer alloc.free(paths.home_dir.?);
 
-        paths.home_fx_dir = try profile_paths.rootDir(alloc, home);
-        errdefer alloc.free(paths.home_fx_dir.?);
+        paths.home_fiber_dir = try profile_paths.rootDir(alloc, home);
+        errdefer alloc.free(paths.home_fiber_dir.?);
 
         paths.user_settings = try profile_paths.settingsPath(alloc, home);
         errdefer alloc.free(paths.user_settings.?);
@@ -1742,7 +1742,7 @@ test "discoverPathsFromHome returns home-backed and workspace paths" {
     try std.testing.expectEqualStrings("/Users/tester", paths.home_dir.?);
     try std.testing.expectEqualStrings("/Users/tester/.fiber/settings.json", paths.user_settings.?);
     try std.testing.expectEqualStrings("/tmp/workspace/.fiber.json", paths.workspace_settings);
-    try std.testing.expectEqualStrings("/Users/tester/.fiber", paths.home_fx_dir.?);
+    try std.testing.expectEqualStrings("/Users/tester/.fiber", paths.home_fiber_dir.?);
     try std.testing.expectEqualStrings("/Users/tester/.fiber/sessions", paths.sessions_dir.?);
     try std.testing.expectEqualStrings("/tmp/workspace", paths.workspace_root);
 }
@@ -1824,7 +1824,7 @@ test "discoverPaths with absent HOME returns owned workspace paths only" {
     defer paths.deinit(std.testing.allocator);
 
     try std.testing.expect(paths.user_settings == null);
-    try std.testing.expect(paths.home_fx_dir == null);
+    try std.testing.expect(paths.home_fiber_dir == null);
     try std.testing.expect(paths.sessions_dir == null);
     try std.testing.expectEqualStrings("/tmp/workspace", paths.workspace_root);
     try std.testing.expectEqualStrings("/tmp/workspace/.fiber.json", paths.workspace_settings);
@@ -1847,11 +1847,11 @@ test "ensureStateLayout creates only home-backed state directories" {
 
     try ensureStateLayout(paths);
 
-    const home_fx_real = try io_mod.realpathAlloc(std.testing.allocator, paths.home_fx_dir.?);
-    defer std.testing.allocator.free(home_fx_real);
+    const home_fiber_real = try io_mod.realpathAlloc(std.testing.allocator, paths.home_fiber_dir.?);
+    defer std.testing.allocator.free(home_fiber_real);
     const sessions_real = try io_mod.realpathAlloc(std.testing.allocator, paths.sessions_dir.?);
     defer std.testing.allocator.free(sessions_real);
-    try std.testing.expectEqualStrings(paths.home_fx_dir.?, home_fx_real);
+    try std.testing.expectEqualStrings(paths.home_fiber_dir.?, home_fiber_real);
     try std.testing.expectEqualStrings(paths.sessions_dir.?, sessions_real);
 
     try std.testing.expectError(error.FileNotFound, std.Io.Dir.openFileAbsolute(io_mod.getIo(), paths.workspace_settings, .{}));

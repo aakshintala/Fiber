@@ -168,7 +168,7 @@ export async function runRenderLab(rawOptions: Partial<Options> = {}): Promise<R
   const options = {
     scenario: rawOptions.scenario ?? SCENARIO,
     runs: rawOptions.runs ?? 1,
-    out: rawOptions.out ?? join(shortTempBase(), "fx-render-lab-artifacts"),
+    out: rawOptions.out ?? join(shortTempBase(), "fiber-render-lab-artifacts"),
     analyze: rawOptions.analyze ?? null,
     listScenarios: rawOptions.listScenarios ?? false,
     sizes: rawOptions.sizes ?? null,
@@ -278,7 +278,7 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
     binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -432,7 +432,7 @@ async function runActiveToolPlacement(
     binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -676,7 +676,7 @@ async function runUserCardResizeReplayScrollback(
     binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -813,7 +813,7 @@ async function runTuiObservabilityGauntlet(
     binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -1076,7 +1076,7 @@ async function runStartupScrollbackOverflow(
     binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -1303,7 +1303,7 @@ function runBufferSystemFrameBench(
     binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -1655,9 +1655,9 @@ async function launchFx(
   await session.sendText(
     `${environmentPrefix}FIBER_RECORD=${shQuote(context.manifest.tapePath)} FIBER_RECORD_INPUT=1 ${shQuote(FIBER_BIN)}${stderrRedirect}`,
   );
-  await capture(context, session, `${label}-fx-launch-requested`);
+  await capture(context, session, `${label}-fiber-launch-requested`);
   await session.waitForPane((pane) => pane.includes("Run /help for commands"), 25_000);
-  await capture(context, session, `${label}-fx-prompt-visible`);
+  await capture(context, session, `${label}-fiber-prompt-visible`);
 }
 
 function startLocalGatewayFixture(expectedPromptTail: string): LocalGatewayFixture {
@@ -1880,7 +1880,7 @@ async function quitFx(context: ScenarioContext, session: RenderLabTmux, label: s
   await session.sendLiteral("/quit");
   await session.sendKeys("Enter");
   await session.sendKeys("Enter");
-  await capture(context, session, `${label}-fx-quit-requested`);
+  await capture(context, session, `${label}-fiber-quit-requested`);
   await session.waitForPane((pane) => pane.includes(PROMPT_TEXT), 15_000);
   await capture(context, session, `${label}-post-quit-shell-prompt`);
 }
@@ -2025,7 +2025,7 @@ class RenderLabTmux {
     width: number;
     height: number;
   }): Promise<RenderLabTmux> {
-    const name = `fx-render-lab-${process.pid}-${randomBytes(4).toString("hex")}`;
+    const name = `fiber-render-lab-${process.pid}-${randomBytes(4).toString("hex")}`;
     const env = testEnv(opts.fixture, opts.manifest);
     const command = [
       "env",
@@ -2224,11 +2224,11 @@ function preflight(): void {
 
 function preflightBinaryOnly(): void {
   if (!existsSync(FIBER_BIN)) {
-    throw new Error(`fx binary not found at ${FIBER_BIN}. Run zig build first.`);
+    throw new Error(`fiber binary not found at ${FIBER_BIN}. Run zig build first.`);
   }
   const stat = statSync(FIBER_BIN);
   if (!stat.isFile() || (stat.mode & 0o111) === 0) {
-    throw new Error(`fx binary is not executable at ${FIBER_BIN}`);
+    throw new Error(`fiber binary is not executable at ${FIBER_BIN}`);
   }
 }
 

@@ -6041,7 +6041,7 @@ test "resume falls back to saved command output when replay contains an empty fr
     const saved_output =
         "exit_code=0\n<stdout>\nFALLBACK_STDOUT_MARKER\n</stdout>\n" ++
         "<stderr>\n</stderr>\n";
-    const replay_handle = "fx-command-replay-empty-frame.bin";
+    const replay_handle = "fiber-command-replay-empty-frame.bin";
     var empty_replay = [_]u8{0} ** ("FBRPLY01".len + 9);
     @memcpy(empty_replay[0.."FBRPLY01".len], "FBRPLY01");
 
@@ -6797,7 +6797,7 @@ test "upgrade resume restores active session with the installed version notice" 
         .id = 41,
         .path = @constCast("/tmp/resumed.png"),
         .media_type = @constCast("image/png"),
-        .snapshot_path = @constCast("/tmp/fx-session/images/image-41-0123456789abcdef.bin"),
+        .snapshot_path = @constCast("/tmp/fiber-session/images/image-41-0123456789abcdef.bin"),
         .snapshot_sha256 = @constCast("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
     }};
     const history = [_]types.HistoryTurn{
@@ -7557,7 +7557,7 @@ test "cancelled command presentation survives a persisted session restart" {
             .{ .terminal = .{
                 .id = lifecycle_id,
                 .outcome = .{ .kind = .cancelled, .summary = "Cancelled slow" },
-                .command_artifact_handle = "fx-command-cancelled.log",
+                .command_artifact_handle = "fiber-command-cancelled.log",
             } },
             true,
         );
@@ -7591,7 +7591,7 @@ test "cancelled command presentation survives a persisted session restart" {
     try std.testing.expectEqual(@as(usize, 1), resumed.cancelled_command_detail_count);
     try std.testing.expect(resumed.cancelled_command_replayed_output);
     try std.testing.expectEqualStrings(
-        "fx-command-cancelled.log",
+        "fiber-command-cancelled.log",
         resumed.cancelled_command_artifact_handle.?,
     );
     try std.testing.expectEqualSlices(
@@ -7692,7 +7692,7 @@ fn expectAuthoritativeCancelledReplayIsSoleArtifact() !void {
         .{ .terminal = .{
             .id = lifecycle_id,
             .outcome = .{ .kind = .cancelled, .summary = "Cancelled" },
-            .command_artifact_handle = "fx-command-cancelled.log",
+            .command_artifact_handle = "fiber-command-cancelled.log",
         } },
         true,
     );
@@ -7719,7 +7719,7 @@ fn expectAuthoritativeCancelledReplayIsSoleArtifact() !void {
     };
     try std.testing.expectEqualStrings(descriptor.handle, stored.handle);
     try std.testing.expectEqualStrings(
-        "fx-command-cancelled.log",
+        "fiber-command-cancelled.log",
         history[0].interrupted.cancelled_command.?
             .command_artifact_handle orelse return error.TestExpectedArtifactHandle,
     );

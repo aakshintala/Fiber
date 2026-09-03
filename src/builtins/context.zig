@@ -915,11 +915,11 @@ test "context formatting preserves section order and separators" {
     defer out.deinit();
 
     try appendSection(&out, "project-instructions-guidance", "apply local rules");
-    try appendSectionFrom(&out, "global-rules", "/home/fx/.fiber/AGENTS.md", "global instructions");
+    try appendSectionFrom(&out, "global-rules", "/home/fiber/.fiber/AGENTS.md", "global instructions");
     try appendSectionFrom(&out, "project-rules", "/work/AGENTS.md", "project instructions");
 
     try std.testing.expectEqualStrings(
-        "<project-instructions-guidance>\napply local rules\n</project-instructions-guidance>\n\n<global-rules from=\"/home/fx/.fiber/AGENTS.md\">\nglobal instructions\n</global-rules>\n\n<project-rules from=\"/work/AGENTS.md\">\nproject instructions\n</project-rules>",
+        "<project-instructions-guidance>\napply local rules\n</project-instructions-guidance>\n\n<global-rules from=\"/home/fiber/.fiber/AGENTS.md\">\nglobal instructions\n</global-rules>\n\n<project-rules from=\"/work/AGENTS.md\">\nproject instructions\n</project-rules>",
         out.written(),
     );
 }
@@ -935,9 +935,9 @@ test "context formatting omits missing sections without extra blank lines" {
 
     var global_only: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer global_only.deinit();
-    try appendSectionFrom(&global_only, "global-rules", "/home/fx/.fiber/AGENTS.md", "global instructions");
+    try appendSectionFrom(&global_only, "global-rules", "/home/fiber/.fiber/AGENTS.md", "global instructions");
     try std.testing.expectEqualStrings(
-        "<global-rules from=\"/home/fx/.fiber/AGENTS.md\">\nglobal instructions\n</global-rules>",
+        "<global-rules from=\"/home/fiber/.fiber/AGENTS.md\">\nglobal instructions\n</global-rules>",
         global_only.written(),
     );
 
@@ -952,7 +952,7 @@ test "context formatting omits missing sections without extra blank lines" {
     var empty: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer empty.deinit();
     try appendSection(&empty, "project-instructions-guidance", "");
-    try appendSectionFrom(&empty, "global-rules", "/home/fx/.fiber/AGENTS.md", "");
+    try appendSectionFrom(&empty, "global-rules", "/home/fiber/.fiber/AGENTS.md", "");
     try appendSectionFrom(&empty, "project-rules", "/work/AGENTS.md", "");
     try std.testing.expectEqual(@as(usize, 0), empty.written().len);
 }

@@ -616,7 +616,7 @@ test "classifiers are ordered" {
     var unavailable = try prepareReadyCall(alloc, .{
         .id = "search",
         .name = "web_search",
-        .arguments_json = "{\"query\":\"fx context\"}",
+        .arguments_json = "{\"query\":\"fiber context\"}",
     }, .{ .tool_registry = registry, .workspace_root = "/tmp/workspace", .classifiers = classifiers });
     defer unavailable.deinit(alloc);
     try std.testing.expectEqual(TerminalKind.availability_failure, unavailable.terminal.kind);

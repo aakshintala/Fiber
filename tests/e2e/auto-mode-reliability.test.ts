@@ -51,7 +51,7 @@ afterEach(async () => {
 
 function createIsolatedRoot(baseDir = tmpdir()): IsolatedRoot {
   const root = realpathSync(
-    mkdtempSync(join(baseDir, "fx-auto-mode-reliability-e2e-")),
+    mkdtempSync(join(baseDir, "fiber-auto-mode-reliability-e2e-")),
   );
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -944,7 +944,7 @@ describe("lean auto mode reliability", () => {
     async () => {
       const root = createIsolatedRoot();
       const startup = join(root.home, ".zshrc");
-      const before = "alias r='cd ~/projects/research && fx'\n";
+      const before = "alias r='cd ~/projects/research && fiber'\n";
       const after = before +
         "\n_rfx() {\n" +
         "  local key\n" +
@@ -995,7 +995,7 @@ describe("lean auto mode reliability", () => {
       const root = createIsolatedRoot();
       const startup = join(root.home, ".zshrc");
       const tracePath = join(root.root, "trace.log");
-      const before = "alias r='cd ~/projects/research && fx'\n";
+      const before = "alias r='cd ~/projects/research && fiber'\n";
       const after = before + 'AI_GATEWAY_API_KEY="literal-fixture-value" run-sandbox\n';
       const edit = (id: string) => fakeGatewayToolCall(id, "edit_file", {
         path: startup,

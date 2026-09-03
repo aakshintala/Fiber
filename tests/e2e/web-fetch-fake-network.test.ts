@@ -108,7 +108,7 @@ function startFakeGateway(
 function createIsolatedRoot(args: {
   webFetchPermission?: PermissionAction;
 } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-web-fetch-e2e-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-web-fetch-e2e-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -425,7 +425,7 @@ describe("web_fetch Gateway fixture", () => {
   );
 
   test(
-    "default fx ask validates malformed web_fetch before transport",
+    "default fiber ask validates malformed web_fetch before transport",
     async () => {
       const root = createIsolatedRoot();
       const gateway = startFakeGateway([

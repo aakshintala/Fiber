@@ -483,7 +483,7 @@ pub fn parseInteractiveLaunch(
 }
 
 /// Detects `fx <subcommand> --help` / `-h` and returns the subcommand kind so the
-/// caller can render command-specific help. Top-level `fx --help`/`fx help` are
+/// caller can render command-specific help. Top-level `fx --help`/`fiber help` are
 /// handled separately and intentionally excluded here.
 fn topLevelHelpRequest(command_catalog: CommandCatalog, args: []const [:0]const u8) ?TopLevelKind {
     if (args.len < 2) return null;
@@ -3750,7 +3750,7 @@ test "runIfRequested local json success appends exactly one newline" {
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--json") }, testConfig(), deps);
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"auto\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42,\"mcp\":{\"connection_check\":\"not_checked\",\"servers\":[],\"configuration_issues\":[],\"inspection_error\":null}}\n",
+        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"auto\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42,\"mcp\":{\"connection_check\":\"not_checked\",\"servers\":[],\"configuration_issues\":[],\"inspection_error\":null}}\n",
         capture.stdout.written(),
     );
     try std.testing.expect(!std.mem.endsWith(u8, capture.stdout.written(), "\n\n"));
@@ -3825,7 +3825,7 @@ test "writeRenderedJsonLine falls back to heap and appends exactly one newline" 
 
     var tiny_buf: [8]u8 = undefined;
     const startup = app_lifecycle.StartupStatus{
-        .workspace_root = @constCast("/tmp/fx"),
+        .workspace_root = @constCast("/tmp/fiber"),
         .selected_model = "test-model",
         .permission_mode = .ask,
         .agent_step_limit = 42,
@@ -3839,7 +3839,7 @@ test "writeRenderedJsonLine falls back to heap and appends exactly one newline" 
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
+        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
         capture.stdout.written(),
     );
 }
@@ -3853,7 +3853,7 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
         .{ .name = "gh", .status = .warn, .detail = "GitHub CLI not found in PATH" },
     };
     const snapshot = doctor_runtime.Snapshot{
-        .workspace_root = @constCast("/tmp/fx"),
+        .workspace_root = @constCast("/tmp/fiber"),
         .model = "test-model",
         .auth = .{ .active_source = .chatgpt_subscription },
         .permission_mode = .auto,
@@ -3870,7 +3870,7 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"test-model\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"auto\",\"agent_step_limit\":42,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}\n",
+        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fiber\",\"model\":\"test-model\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"auto\",\"agent_step_limit\":42,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}\n",
         capture.stdout.written(),
     );
 }
@@ -3976,7 +3976,7 @@ fn configuredMcpRuntimeForTest(
     workspace_root: []const u8,
     _: @import("../mcp/elicitation.zig").Capabilities,
 ) !?*mcp_runtime.McpRuntime {
-    try std.testing.expectEqualStrings("/tmp/fx", workspace_root);
+    try std.testing.expectEqualStrings("/tmp/fiber", workspace_root);
     const runtime = try alloc.create(mcp_runtime.McpRuntime);
     errdefer alloc.destroy(runtime);
     runtime.* = mcp_runtime.McpRuntime.init(alloc);
@@ -4030,7 +4030,7 @@ fn testConfig() Config {
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
         .prompt_policy = .{ .system_prompt = "system" },
-        .skill_root_policy = .{ .managed_root_source = .global_fx },
+        .skill_root_policy = .{ .managed_root_source = .global_fiber },
         .ignored_list_entries = &.{},
         .max_list_entries = 10,
         .max_read_file_bytes = 1024,
@@ -4060,7 +4060,7 @@ fn stubLoadStartupState(
 ) !app_lifecycle.StartupState {
     var state = app_lifecycle.StartupState{ .agent_step_limit = default_agent_step_limit };
     errdefer state.deinit(alloc);
-    state.workspace_root = try alloc.dupe(u8, "/tmp/fx");
+    state.workspace_root = try alloc.dupe(u8, "/tmp/fiber");
     state.selected_model = try alloc.dupe(u8, default_model);
     state.credential = .{
         .token = try alloc.dupe(u8, "test-key"),
@@ -4078,7 +4078,7 @@ fn stubLoadStartupStateWithoutCredentials(
         .agent_step_limit = default_agent_step_limit,
     };
     errdefer state.deinit(alloc);
-    state.workspace_root = try alloc.dupe(u8, "/tmp/fx");
+    state.workspace_root = try alloc.dupe(u8, "/tmp/fiber");
     return state;
 }
 
@@ -4103,7 +4103,7 @@ fn stubLoadStartupStatus(
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !app_lifecycle.StartupStatus {
-    const workspace_root = try alloc.dupe(u8, "/tmp/fx");
+    const workspace_root = try alloc.dupe(u8, "/tmp/fiber");
     errdefer alloc.free(workspace_root);
     const selected_model = try alloc.dupe(u8, default_model);
     errdefer alloc.free(selected_model);

@@ -240,7 +240,7 @@ pub const SkillSource = skill_contract.SkillSource;
 
 pub const SkillMenuSourceFilter = enum {
     all,
-    fx,
+    fiber,
     workspace,
     opencode,
     codex,
@@ -251,7 +251,7 @@ pub const SkillMenuSourceFilter = enum {
 
 pub const skill_menu_source_filters = [_]SkillMenuSourceFilter{
     .all,
-    .fx,
+    .fiber,
     .workspace,
     .claude,
     .codex,
@@ -1059,13 +1059,13 @@ pub fn resolveSkill(skills: []const Skill, name: []const u8, location: ?[]const 
 }
 
 pub fn isManagedInstallSkill(skill: Skill) bool {
-    return skill.source == .global_fx;
+    return skill.source == .global_fiber;
 }
 
 pub fn skillGroupLabel(source: SkillSource) []const u8 {
     return switch (source) {
-        .global_fx => "Managed installs",
-        .workspace_fx => "Workspace skills",
+        .global_fiber => "Managed installs",
+        .workspace_fiber => "Workspace skills",
         .workspace_shared => "Workspace skills",
         .workspace_opencode,
         .workspace_codex,
@@ -1083,8 +1083,8 @@ pub fn skillGroupLabel(source: SkillSource) []const u8 {
 
 pub fn skillGroupRank(source: SkillSource) usize {
     return switch (source) {
-        .global_fx => 0,
-        .workspace_fx => 1,
+        .global_fiber => 0,
+        .workspace_fiber => 1,
         .workspace_shared => 1,
         .workspace_opencode,
         .workspace_codex,
@@ -1104,14 +1104,14 @@ const skill_group_count: usize = 3;
 
 pub fn skillSourceLabel(source: SkillSource) []const u8 {
     return switch (source) {
-        .workspace_fx => "workspace .fiber/skills",
+        .workspace_fiber => "workspace .fiber/skills",
         .workspace_shared => "workspace skills/",
         .workspace_opencode => "workspace .opencode/skills",
         .workspace_codex => "workspace .codex/skills",
         .workspace_claude => "workspace .claude/skills",
         .workspace_agents => "workspace .agents/skills",
         .workspace_claw => "workspace .claw/skills",
-        .global_fx => "global ~/.fiber/skills",
+        .global_fiber => "global ~/.fiber/skills",
         .global_opencode => "global ~/.config/opencode/skills",
         .global_codex => "global ~/.codex/skills",
         .global_claude => "global ~/.claude/skills",
@@ -1122,14 +1122,14 @@ pub fn skillSourceLabel(source: SkillSource) []const u8 {
 
 pub fn skillSourceShortLabel(source: SkillSource) []const u8 {
     return switch (source) {
-        .workspace_fx => "workspace .fiber",
+        .workspace_fiber => "workspace .fiber",
         .workspace_shared => "workspace skills/",
         .workspace_opencode => "workspace .opencode",
         .workspace_codex => "workspace .codex",
         .workspace_claude => "workspace .claude",
         .workspace_agents => "workspace .agents",
         .workspace_claw => "workspace .claw",
-        .global_fx => "global .fiber",
+        .global_fiber => "global .fiber",
         .global_opencode => "global opencode",
         .global_codex => "global .codex",
         .global_claude => "global .claude",
@@ -1141,7 +1141,7 @@ pub fn skillSourceShortLabel(source: SkillSource) []const u8 {
 pub fn skillMenuFilterLabel(filter: SkillMenuSourceFilter) []const u8 {
     return switch (filter) {
         .all => "All",
-        .fx => "Fiber",
+        .fiber => "Fiber",
         .workspace => "Workspace",
         .opencode => "OpenCode",
         .codex => "Codex",
@@ -1153,8 +1153,8 @@ pub fn skillMenuFilterLabel(filter: SkillMenuSourceFilter) []const u8 {
 
 pub fn skillMenuFilterForSource(source: SkillSource) SkillMenuSourceFilter {
     return switch (source) {
-        .global_fx => .fx,
-        .workspace_fx => .fx,
+        .global_fiber => .fiber,
+        .workspace_fiber => .fiber,
         .workspace_shared => .workspace,
         .workspace_opencode, .global_opencode => .opencode,
         .workspace_codex, .global_codex => .codex,
@@ -2729,10 +2729,10 @@ fn orderSkillsForPrompt(alloc: Allocator, skills: []const Skill, prompt: []const
 
 test "routed skill order uses name and description before stable fallback" {
     const skills = [_]Skill{
-        .{ .name = "aaa-one", .description = "unrelated synthetic fixture", .path = "/one", .source = .global_fx },
-        .{ .name = "aaa-two", .description = "another unrelated fixture", .path = "/two", .source = .global_fx },
-        .{ .name = "system-design-method", .description = "Use when designing system architecture and bounded recovery", .path = "/design", .source = .global_fx },
-        .{ .name = "test-helper", .description = "Use when deciding regression tests and integration coverage", .path = "/tests", .source = .global_fx },
+        .{ .name = "aaa-one", .description = "unrelated synthetic fixture", .path = "/one", .source = .global_fiber },
+        .{ .name = "aaa-two", .description = "another unrelated fixture", .path = "/two", .source = .global_fiber },
+        .{ .name = "system-design-method", .description = "Use when designing system architecture and bounded recovery", .path = "/design", .source = .global_fiber },
+        .{ .name = "test-helper", .description = "Use when deciding regression tests and integration coverage", .path = "/tests", .source = .global_fiber },
     };
 
     const design = try orderSkillsForPrompt(std.testing.allocator, &skills, "Design a system architecture with bounded recovery");
@@ -2752,8 +2752,8 @@ test "routed skill order uses name and description before stable fallback" {
 
 fn checkRoutedSkillOrderAllocationFailures(alloc: Allocator) !void {
     const skills = [_]Skill{
-        .{ .name = "unrelated", .description = "synthetic fixture", .path = "/one", .source = .global_fx },
-        .{ .name = "system-design", .description = "Design system architecture safely", .path = "/two", .source = .global_fx },
+        .{ .name = "unrelated", .description = "synthetic fixture", .path = "/one", .source = .global_fiber },
+        .{ .name = "system-design", .description = "Design system architecture safely", .path = "/two", .source = .global_fiber },
     };
     const ordered = try orderSkillsForPrompt(alloc, &skills, "Design a safe system architecture");
     defer alloc.free(ordered);
@@ -3172,7 +3172,7 @@ fn staticSkill(name: []const u8, description: []const u8, source: SkillSource) S
 
 test "skill name completion returns the first canonical prefix suffix" {
     const skills = [_]Skill{
-        staticSkill("managed-menu", "", .global_fx),
+        staticSkill("managed-menu", "", .global_fiber),
         staticSkill("manual-review", "", .workspace_shared),
     };
 
@@ -3186,7 +3186,7 @@ test "skill name completion ignores empty exact and metadata-only matches" {
         .name = "review",
         .description = "managed workflow",
         .path = "/tmp/managed-menu",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
 
     try std.testing.expectEqual(@as(?SkillNameCompletion, null), firstSkillNameCompletion(&skills, ""));
@@ -3207,12 +3207,12 @@ const test_global_roots = [_]skill_contract.RootSpec{
 
 const test_root_policy: skill_contract.RootPolicy = .{
     .workspace_roots = &test_workspace_roots,
-    .managed_root_source = .global_fx,
+    .managed_root_source = .global_fiber,
     .global_roots = &test_global_roots,
 };
 
 const test_managed_root_policy: skill_contract.RootPolicy = .{
-    .managed_root_source = .global_fx,
+    .managed_root_source = .global_fiber,
 };
 
 test "skill discovery bounds near-emergency valid metadata" {
@@ -3248,7 +3248,7 @@ test "skill discovery bounds near-emergency valid metadata" {
 }
 
 test "skill group labels distinguish managed workspace and compatibility roots" {
-    try std.testing.expectEqualStrings("Managed installs", skillGroupLabel(.global_fx));
+    try std.testing.expectEqualStrings("Managed installs", skillGroupLabel(.global_fiber));
     try std.testing.expectEqualStrings("Workspace skills", skillGroupLabel(.workspace_shared));
     try std.testing.expectEqualStrings("Compatibility roots", skillGroupLabel(.workspace_agents));
     try std.testing.expectEqualStrings("Compatibility roots", skillGroupLabel(.global_claude));
@@ -3257,12 +3257,12 @@ test "skill group labels distinguish managed workspace and compatibility roots" 
 
 test "skill display source is present only for ambiguous names" {
     const skills = [_]Skill{
-        staticSkill("review", "managed skill", .global_fx),
+        staticSkill("review", "managed skill", .global_fiber),
         staticSkill("review", "workspace skill", .workspace_shared),
         staticSkill("deploy", "workspace skill", .workspace_shared),
     };
 
-    try std.testing.expectEqual(SkillSource.global_fx, skillDisplaySource(&skills, skills[0]).?);
+    try std.testing.expectEqual(SkillSource.global_fiber, skillDisplaySource(&skills, skills[0]).?);
     try std.testing.expectEqual(SkillSource.workspace_shared, skillDisplaySource(&skills, skills[1]).?);
     try std.testing.expectEqual(@as(?SkillSource, null), skillDisplaySource(&skills, skills[2]));
 }
@@ -3271,7 +3271,7 @@ test "skill menu display order groups by source without copying inventory" {
     const skills = [_]Skill{
         staticSkill("compat", "compatibility skill", .global_agents),
         staticSkill("workspace", "workspace skill", .workspace_shared),
-        staticSkill("managed", "managed skill", .global_fx),
+        staticSkill("managed", "managed skill", .global_fiber),
     };
 
     try std.testing.expectEqualStrings("managed", skillMenuSkillAt(&skills, .all, 0).?.name);
@@ -3285,8 +3285,8 @@ test "skill menu query view preserves grouped display and actual indexes" {
     const skills = [_]Skill{
         staticSkill("review", "compatibility skill", .global_agents),
         staticSkill("review", "workspace skill", .workspace_shared),
-        staticSkill("review", "managed skill", .global_fx),
-        staticSkill("deploy", "managed skill", .global_fx),
+        staticSkill("review", "managed skill", .global_fiber),
+        staticSkill("deploy", "managed skill", .global_fiber),
     };
 
     try std.testing.expectEqual(@as(usize, 3), skillMenuFilterQueryCount(&skills, .all, "review"));
@@ -3300,7 +3300,7 @@ test "skill menu query view preserves grouped display and actual indexes" {
 
 test "skill menu query ranks name matches before metadata matches" {
     const skills = [_]Skill{
-        staticSkill("metadata-first", "zig workflow", .global_fx),
+        staticSkill("metadata-first", "zig workflow", .global_fiber),
         staticSkill("contains-zig-name", "compatibility skill", .global_agents),
         staticSkill("zig-best-practices", "compatibility skill", .global_agents),
         staticSkill("workspace-zig-name", "workspace skill", .workspace_shared),
@@ -3318,7 +3318,7 @@ test "skill menu query ranks name matches before metadata matches" {
 test "skill menu index materializes and reuses one stable query snapshot" {
     const alloc = std.testing.allocator;
     const skills = [_]Skill{
-        .{ .name = "zig-best-practices", .description = "Zig guidance", .path = "/skills/zig", .source = .global_fx },
+        .{ .name = "zig-best-practices", .description = "Zig guidance", .path = "/skills/zig", .source = .global_fiber },
         .{ .name = "pure-core", .description = "Functional core", .path = "/skills/pure", .source = .global_codex },
         .{ .name = "zig-review", .description = "Review Zig", .path = "/skills/review", .source = .workspace_agents },
     };
@@ -3343,7 +3343,7 @@ test "skill menu index materializes and reuses one stable query snapshot" {
 test "skill runtime keeps menu count selection and query on one index" {
     const alloc = std.testing.allocator;
     const skills = [_]Skill{
-        .{ .name = "zig-best-practices", .description = "Zig guidance", .path = "/skills/zig", .source = .global_fx },
+        .{ .name = "zig-best-practices", .description = "Zig guidance", .path = "/skills/zig", .source = .global_fiber },
         .{ .name = "pure-core", .description = "Functional core", .path = "/skills/pure", .source = .global_codex },
         .{ .name = "zig-review", .description = "Review Zig", .path = "/skills/review", .source = .workspace_agents },
     };
@@ -3367,7 +3367,7 @@ test "skill runtime keeps menu count selection and query on one index" {
 test "skill menu query navigation and close stay allocation free for ten thousand cycles" {
     const alloc = std.testing.allocator;
     const skills = [_]Skill{
-        .{ .name = "alpha", .description = "first", .path = "/skills/alpha", .source = .global_fx },
+        .{ .name = "alpha", .description = "first", .path = "/skills/alpha", .source = .global_fiber },
         .{ .name = "beta", .description = "second", .path = "/skills/beta", .source = .global_codex },
         .{ .name = "gamma", .description = "third", .path = "/skills/gamma", .source = .workspace_agents },
     };
@@ -3394,13 +3394,13 @@ test "skill menu query navigation and close stay allocation free for ten thousan
 test "skill runtime replacement preserves the active catalog when index allocation fails" {
     const alloc = std.testing.allocator;
     const active = [_]Skill{
-        .{ .name = "active", .description = "active", .path = "/skills/active", .source = .global_fx },
+        .{ .name = "active", .description = "active", .path = "/skills/active", .source = .global_fiber },
     };
     const replacement = [_]Skill{.{
         .name = "replacement",
         .description = "replacement",
         .path = "/skills/replacement",
-        .source = .global_fx,
+        .source = .global_fiber,
     }} ** 64;
     var runtime = Runtime{ .items = @constCast(&active) };
     defer {
@@ -3436,7 +3436,7 @@ test "skill catalog lease keeps one retired generation alive until release" {
         .name = try alloc.dupe(u8, "first"),
         .description = try alloc.dupe(u8, "first generation"),
         .path = try alloc.dupe(u8, "/skills/first"),
-        .source = .global_fx,
+        .source = .global_fiber,
     };
     try runtime.replaceLoaded(
         alloc,
@@ -3453,7 +3453,7 @@ test "skill catalog lease keeps one retired generation alive until release" {
         .name = try alloc.dupe(u8, "second"),
         .description = try alloc.dupe(u8, "second generation"),
         .path = try alloc.dupe(u8, "/skills/second"),
-        .source = .global_fx,
+        .source = .global_fiber,
     };
     try runtime.replaceLoaded(
         alloc,
@@ -3487,7 +3487,7 @@ test "skill refresh publishes one generation and coalesces one latest request" {
     defer alloc.free(managed);
     var runtime = Runtime{ .dir = try alloc.dupe(u8, managed) };
     defer runtime.deinit(alloc);
-    const policy: skill_contract.RootPolicy = .{ .managed_root_source = .global_fx };
+    const policy: skill_contract.RootPolicy = .{ .managed_root_source = .global_fiber };
 
     const first_generation = try runtime.requestRefresh(alloc, home, home, policy);
     const pending_generation = try runtime.requestRefresh(alloc, home, home, policy);
@@ -3569,7 +3569,7 @@ test "overlapping skill refresh actions retain only the latest bounded action" {
 
 test "skill menu fills a bounded query range in display order" {
     const skills = [_]Skill{
-        staticSkill("metadata-first", "zig workflow", .global_fx),
+        staticSkill("metadata-first", "zig workflow", .global_fiber),
         staticSkill("contains-zig-name", "compatibility skill", .global_agents),
         staticSkill("zig-best-practices", "compatibility skill", .global_agents),
         staticSkill("workspace-zig-name", "workspace skill", .workspace_shared),
@@ -3606,7 +3606,7 @@ test "skill menu empty query and source filters preserve source grouping" {
     const skills = [_]Skill{
         staticSkill("compat", "zig compatibility", .global_agents),
         staticSkill("workspace", "zig workspace", .workspace_shared),
-        staticSkill("managed", "zig managed", .global_fx),
+        staticSkill("managed", "zig managed", .global_fiber),
     };
 
     try std.testing.expectEqualStrings("managed", skillMenuSkillAtQuery(&skills, .all, "", 0).?.name);
@@ -3618,7 +3618,7 @@ test "skill menu empty query and source filters preserve source grouping" {
 
 test "skill menu opens focuses moves and clamps loaded items" {
     const skills = [_]Skill{
-        staticSkill("managed", "managed skill", .global_fx),
+        staticSkill("managed", "managed skill", .global_fiber),
         staticSkill("workspace", "workspace skill", .workspace_shared),
         staticSkill("compat", "compatibility skill", .global_agents),
     };
@@ -3667,7 +3667,7 @@ test "skill menu opens focuses moves and clamps loaded items" {
 
 test "skill menu visibility hides only zero-result mention queries" {
     const skills = [_]Skill{
-        staticSkill("managed", "managed skill", .global_fx),
+        staticSkill("managed", "managed skill", .global_fiber),
         staticSkill("workspace", "workspace skill", .workspace_shared),
     };
     var runtime = Runtime{ .items = @constCast(&skills) };
@@ -3694,16 +3694,16 @@ test "skill menu visibility hides only zero-result mention queries" {
 
 test "skill menu movement uses rendered visible rows before scrolling" {
     const skills = [_]Skill{
-        staticSkill("skill-00", "skill 00", .global_fx),
-        staticSkill("skill-01", "skill 01", .global_fx),
-        staticSkill("skill-02", "skill 02", .global_fx),
-        staticSkill("skill-03", "skill 03", .global_fx),
-        staticSkill("skill-04", "skill 04", .global_fx),
-        staticSkill("skill-05", "skill 05", .global_fx),
-        staticSkill("skill-06", "skill 06", .global_fx),
-        staticSkill("skill-07", "skill 07", .global_fx),
-        staticSkill("skill-08", "skill 08", .global_fx),
-        staticSkill("skill-09", "skill 09", .global_fx),
+        staticSkill("skill-00", "skill 00", .global_fiber),
+        staticSkill("skill-01", "skill 01", .global_fiber),
+        staticSkill("skill-02", "skill 02", .global_fiber),
+        staticSkill("skill-03", "skill 03", .global_fiber),
+        staticSkill("skill-04", "skill 04", .global_fiber),
+        staticSkill("skill-05", "skill 05", .global_fiber),
+        staticSkill("skill-06", "skill 06", .global_fiber),
+        staticSkill("skill-07", "skill 07", .global_fiber),
+        staticSkill("skill-08", "skill 08", .global_fiber),
+        staticSkill("skill-09", "skill 09", .global_fiber),
     };
     var runtime = Runtime{ .items = @constCast(&skills) };
 
@@ -3728,7 +3728,7 @@ test "skill menu movement uses rendered visible rows before scrolling" {
 
 test "skill menu focus refuses an ambiguous duplicate name" {
     const skills = [_]Skill{
-        staticSkill("review", "managed wins", .global_fx),
+        staticSkill("review", "managed wins", .global_fiber),
         staticSkill("review", "compat duplicate", .global_agents),
     };
     var runtime = Runtime{ .items = @constCast(&skills) };
@@ -3804,7 +3804,7 @@ test "skill runtime replaces and frees owned discovery diagnostics" {
     const first_diagnostics = try alloc.alloc(SkillDiagnostic, 1);
     first_diagnostics[0] = .{
         .path = try alloc.dupe(u8, "/tmp/first-skills/bad"),
-        .source = .global_fx,
+        .source = .global_fiber,
         .scope = .candidate,
         .cause = .{ .invalid_metadata = .missing_name },
     };
@@ -3826,7 +3826,7 @@ test "explicit skill matching accepts sigils and verbs without fuzzy activation"
     const alloc = std.testing.allocator;
     const skills = [_]Skill{
         staticSkill("review", "review help", .workspace_shared),
-        staticSkill("release-notes", "release help", .global_fx),
+        staticSkill("release-notes", "release help", .global_fiber),
     };
     const cases = [_]struct {
         prompt: []const u8,
@@ -3910,7 +3910,7 @@ test "explicit skill matching refuses ambiguous duplicate names" {
     const alloc = std.testing.allocator;
     const skills = [_]Skill{
         staticSkill("review", "workspace", .workspace_shared),
-        staticSkill("review", "global", .global_fx),
+        staticSkill("review", "global", .global_fiber),
     };
     const indices = try matchExplicitSkillIndices(alloc, "$review", &skills);
     defer alloc.free(indices);
@@ -3927,7 +3927,7 @@ test "skill diagnostic summary identifies candidate and root consequences" {
         },
         .{
             .path = "/tmp/unreadable-root",
-            .source = .global_fx,
+            .source = .global_fiber,
             .scope = .root,
             .cause = .unreadable,
         },
@@ -4043,7 +4043,7 @@ test "listSkillsSummary empty" {
 test "listSkillsSummary with skills" {
     const alloc = std.testing.allocator;
     const skills = [_]Skill{
-        staticSkill("managed", "installed", .global_fx),
+        staticSkill("managed", "installed", .global_fiber),
         staticSkill("local", "", .workspace_shared),
         staticSkill("compat", "external", .global_agents),
     };
@@ -4067,7 +4067,7 @@ test "listSkillsSummary with skills" {
 test "listSkillsSummaryStyled dims only source labels" {
     const alloc = std.testing.allocator;
     const skills = [_]Skill{
-        staticSkill("managed", "installed", .global_fx),
+        staticSkill("managed", "installed", .global_fiber),
     };
     const result = try listSkillsSummaryStyled(alloc, &skills, .{
         .source_label_style = "\x1b[38;5;245m",
@@ -4091,7 +4091,7 @@ test "buildSkillsSystemPromptSection includes all visible skills without active 
     const alloc = std.testing.allocator;
     const skills = [_]Skill{
         .{ .name = "deploy", .description = "deployment help", .path = "/tmp/deploy", .source = .workspace_shared },
-        .{ .name = "review", .description = "review help", .path = "/tmp/review", .source = .global_fx },
+        .{ .name = "review", .description = "review help", .path = "/tmp/review", .source = .global_fiber },
     };
     var result = try buildSkillsSystemPromptSectionWithLimits(alloc, &skills, .{});
     defer result.deinit(alloc);
@@ -4106,10 +4106,10 @@ test "routed skill prompt keeps a strong name and description match before bound
     const alloc = std.testing.allocator;
     const distractor_description = "Synthetic unrelated metadata repeated to consume the bounded catalog while remaining valid and harmless. " ** 4;
     var skills = [_]Skill{
-        .{ .name = "aaa-one", .description = distractor_description, .path = "/tmp/one", .source = .global_fx },
-        .{ .name = "aaa-two", .description = distractor_description, .path = "/tmp/two", .source = .global_fx },
-        .{ .name = "aaa-three", .description = distractor_description, .path = "/tmp/three", .source = .global_fx },
-        .{ .name = "fx-test-strategy", .description = "Use when deciding regression tests and integration coverage for fx behavior", .path = "/tmp/tests", .source = .global_fx },
+        .{ .name = "aaa-one", .description = distractor_description, .path = "/tmp/one", .source = .global_fiber },
+        .{ .name = "aaa-two", .description = distractor_description, .path = "/tmp/two", .source = .global_fiber },
+        .{ .name = "aaa-three", .description = distractor_description, .path = "/tmp/three", .source = .global_fiber },
+        .{ .name = "fiber-test-strategy", .description = "Use when deciding regression tests and integration coverage for fiber behavior", .path = "/tmp/tests", .source = .global_fiber },
     };
     var limits = context_limits.Values{};
     limits.skill_catalog_bytes = .{ .value = .{ .bytes = 1024 }, .source = .command_line };
@@ -4121,7 +4121,7 @@ test "routed skill prompt keeps a strong name and description match before bound
     );
     defer result.deinit(alloc);
 
-    try std.testing.expect(std.mem.find(u8, result.text, "<name>fx-test-strategy</name>") != null);
+    try std.testing.expect(std.mem.find(u8, result.text, "<name>fiber-test-strategy</name>") != null);
     try std.testing.expect(std.mem.find(u8, result.text, "Use when deciding regression tests") != null);
     try std.testing.expect(std.mem.find(u8, result.text, "<name>aaa-three</name>") == null);
     try std.testing.expect(std.mem.find(u8, result.text, "omitted_count=") != null);
@@ -4174,7 +4174,7 @@ test "skill catalog one-byte overflow reports every omitted name in stable order
     const alloc = std.testing.allocator;
     const skills = [_]Skill{
         .{ .name = "first", .description = "one", .path = "/tmp/first", .source = .workspace_shared },
-        .{ .name = "second", .description = "two", .path = "/tmp/second", .source = .global_fx },
+        .{ .name = "second", .description = "two", .path = "/tmp/second", .source = .global_fiber },
     };
     var exact = try buildSkillsSystemPromptSectionWithLimits(alloc, skills[0..1], .{});
     defer exact.deinit(alloc);
@@ -4339,7 +4339,7 @@ test "loadVisibleSkills preserves root-distinct duplicate skill names" {
     try std.testing.expectEqualStrings("ancestor", skills[1].description);
     try std.testing.expectEqual(SkillSource.workspace_agents, skills[1].source);
     try std.testing.expectEqualStrings("managed", skills[2].description);
-    try std.testing.expectEqual(SkillSource.global_fx, skills[2].source);
+    try std.testing.expectEqual(SkillSource.global_fiber, skills[2].source);
     try std.testing.expectEqualStrings("global compatibility", skills[3].description);
     try std.testing.expectEqual(SkillSource.global_agents, skills[3].source);
     try std.testing.expectEqual(@as(usize, 4), skillMenuFilterQueryCount(skills, .all, "review"));
@@ -5215,7 +5215,7 @@ test "loadVisibleSkills orders valid candidates diagnoses invalid metadata and r
     try std.testing.expectEqualStrings("", discovery.skills[2].description);
     try std.testing.expectEqual(@as(usize, 1), discovery.diagnostics.len);
     try std.testing.expectEqualStrings(bad_path, discovery.diagnostics[0].path);
-    try std.testing.expectEqual(SkillSource.global_fx, discovery.diagnostics[0].source);
+    try std.testing.expectEqual(SkillSource.global_fiber, discovery.diagnostics[0].source);
     try std.testing.expectEqual(SkillDiagnosticScope.candidate, discovery.diagnostics[0].scope);
     switch (discovery.diagnostics[0].cause) {
         .invalid_metadata => |cause| try std.testing.expectEqual(skill_contract.InvalidMetadataCause.missing_name, cause),
@@ -5249,7 +5249,7 @@ test "loadVisibleSkills diagnoses a hostile no-frontmatter directory name" {
     try std.testing.expectEqual(@as(usize, 0), discovery.skills.len);
     try std.testing.expectEqual(@as(usize, 1), discovery.diagnostics.len);
     try std.testing.expectEqualStrings(candidate_path, discovery.diagnostics[0].path);
-    try std.testing.expectEqual(SkillSource.global_fx, discovery.diagnostics[0].source);
+    try std.testing.expectEqual(SkillSource.global_fiber, discovery.diagnostics[0].source);
     switch (discovery.diagnostics[0].cause) {
         .invalid_metadata => |cause| try std.testing.expectEqual(skill_contract.InvalidMetadataCause.control_byte, cause),
         else => return error.TestExpectedInvalidMetadataDiagnostic,

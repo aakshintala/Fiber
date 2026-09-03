@@ -47,7 +47,7 @@ describe.skipIf(!tmuxAvailable())("tui: skills command recovery", () => {
   test(
     "invalid /skills create name reports an inline error and preserves the session",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-invalid-skill-name-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-invalid-skill-name-"));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       mkdirSync(home);
@@ -72,7 +72,7 @@ describe.skipIf(!tmuxAvailable())("tui: skills command recovery", () => {
         expect(existsSync(join(home, ".fiber", "escape-attempt"))).toBe(false);
 
         await session.sendText("/skills path");
-        const recovered = await session.waitForText("fx managed install root:", 5_000);
+        const recovered = await session.waitForText("fiber managed install root:", 5_000);
         expect(hasEmptyComposer(recovered)).toBe(true);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
@@ -93,7 +93,7 @@ describe.skipIf(!tmuxAvailable() || CLIPBOARD_PROGRAM === null)("tui: clipboard 
     async () => {
       if (CLIPBOARD_PROGRAM === null) throw new Error("unsupported clipboard platform");
 
-      const workDir = mkdtempSync(join(tmpdir(), "fx-clipboard-host-"));
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-clipboard-host-"));
       const homeDir = join(workDir, "home");
       const binDir = join(workDir, "bin");
       const capturePath = join(workDir, "clipboard.txt");
@@ -148,8 +148,8 @@ describe.skipIf(!tmuxAvailable())("tui: active session transitions", () => {
   test(
     "active /clear cancels a fake Gateway turn and accepts a follow-up prompt",
     async () => {
-      const workDir = mkdtempSync(join(tmpdir(), "fx-active-clear-"));
-      const homeDir = mkdtempSync(join(tmpdir(), "fx-active-clear-home-"));
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-active-clear-"));
+      const homeDir = mkdtempSync(join(tmpdir(), "fiber-active-clear-home-"));
       const stderrPath = join(workDir, "stderr.log");
       let requestCount = 0;
       const codex = startFakeCodex({
@@ -215,8 +215,8 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/clear resets projected history before the next prompt",
     async () => {
-      const workDir = mkdtempSync(join(tmpdir(), "fx-row03-clear-"));
-      const homeDir = mkdtempSync(join(tmpdir(), "fx-row03-clear-home-"));
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-row03-clear-"));
+      const homeDir = mkdtempSync(join(tmpdir(), "fiber-row03-clear-home-"));
       const tracePath = join(workDir, "trace.log");
       mkdirSync(join(homeDir, ".fiber"), { recursive: true });
       writeFileSync(
@@ -304,7 +304,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/usage and /cost open the same compact local usage dashboard",
     async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-usage-empty-home-"));
+      const home = mkdtempSync(join(tmpdir(), "fiber-usage-empty-home-"));
       session = await TmuxSession.create({ env: { HOME: home } });
       await session.waitForComposer(10_000);
       await session.sendText("/cost");
@@ -332,7 +332,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/mcp opens an inline menu without changing the transcript",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-mcp-menu-empty-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-mcp-menu-empty-"));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -396,7 +396,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/mcp browses live typed catalogs and inserts a resource preview without submitting",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-mcp-menu-catalog-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-mcp-menu-catalog-"));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       const wireLogPath = join(root, "mcp-wire.jsonl");
@@ -573,7 +573,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/mcp add and remove stay inside the menu and use the profile owner",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-mcp-menu-mutate-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-mcp-menu-mutate-"));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -633,7 +633,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/mcp project trust approval and rejection remain menu-owned",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-mcp-menu-trust-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-mcp-menu-trust-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");

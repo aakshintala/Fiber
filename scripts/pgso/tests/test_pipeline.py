@@ -41,7 +41,7 @@ from scripts.pgso.toolchain import Toolchain
 class PgsoPipelineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory(
-            prefix="fx-pgso-pipeline-"
+            prefix="fiber-pgso-pipeline-"
         )
         self.root = pathlib.Path(self.temporary_directory.name)
         self.paths = PipelinePaths.create(self.root / "run")

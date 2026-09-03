@@ -267,7 +267,7 @@ pub fn Runtime(comptime App: type) type {
                 ctx.on_web_fetch_progress = app_callbacks.Bindings(App).onWebFetchProgress;
             }
             if (comptime @hasField(App, "web_search_runtime")) {
-                if (provider_capabilities.fx_search) {
+                if (provider_capabilities.fiber_search) {
                     app.web_search_runtime.configure(.{
                         .api_key = app.auth.apiKey() orelse "",
                         .credential_source = app.auth.credentialSource(),

@@ -59,14 +59,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          evidence_dir="$RUNNER_TEMP/fx-binary-size-evidence"
+          evidence_dir="$RUNNER_TEMP/fiber-binary-size-evidence"
           mkdir -p "$evidence_dir"
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           zig build \
             -Dtarget=${{ matrix.target }} \
             -Doptimize=ReleaseSafe \
-            --cache-dir "$RUNNER_TEMP/fx-head-cache" \
-            --global-cache-dir "$RUNNER_TEMP/fx-global-cache"
+            --cache-dir "$RUNNER_TEMP/fiber-head-cache" \
+            --global-cache-dir "$RUNNER_TEMP/fiber-global-cache"
           cp zig-out/bin/fiber "$evidence_dir/head-fiber"
           file "$evidence_dir/head-fiber" > "$evidence_dir/head-file.txt"
           cat "$evidence_dir/head-file.txt"
@@ -82,8 +82,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          evidence_dir="$RUNNER_TEMP/fx-binary-size-evidence"
-          base_worktree="$RUNNER_TEMP/fx-binary-size-base"
+          evidence_dir="$RUNNER_TEMP/fiber-binary-size-evidence"
+          base_worktree="$RUNNER_TEMP/fiber-binary-size-base"
           cleanup() {
             git worktree remove --force "$base_worktree" >/dev/null 2>&1 || true
           }
@@ -95,8 +95,8 @@ jobs:
             zig build \
               -Dtarget=${{ matrix.target }} \
               -Doptimize=ReleaseSafe \
-              --cache-dir "$RUNNER_TEMP/fx-base-cache" \
-              --global-cache-dir "$RUNNER_TEMP/fx-global-cache"
+              --cache-dir "$RUNNER_TEMP/fiber-base-cache" \
+              --global-cache-dir "$RUNNER_TEMP/fiber-global-cache"
           )
           cp "$base_worktree/zig-out/bin/fiber" "$evidence_dir/base-fiber"
           file "$evidence_dir/base-fiber" > "$evidence_dir/base-file.txt"
@@ -114,7 +114,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          evidence_dir="$RUNNER_TEMP/fx-binary-size-evidence"
+          evidence_dir="$RUNNER_TEMP/fiber-binary-size-evidence"
           python3 -m scripts.binary_size \
             --base-binary "$evidence_dir/base-fiber" \
             --head-binary "$evidence_dir/head-fiber" \
@@ -143,12 +143,12 @@ jobs:
         with:
           name: binary-size-evidence-${{ matrix.name }}-${{ github.event.pull_request.number }}
           path: |
-            ${{ runner.temp }}/fx-binary-size-evidence/report.json
-            ${{ runner.temp }}/fx-binary-size-evidence/report.md
-            ${{ runner.temp }}/fx-binary-size-evidence/base-file.txt
-            ${{ runner.temp }}/fx-binary-size-evidence/head-file.txt
-            ${{ runner.temp }}/fx-binary-size-evidence/base-sections.txt
-            ${{ runner.temp }}/fx-binary-size-evidence/head-sections.txt
+            ${{ runner.temp }}/fiber-binary-size-evidence/report.json
+            ${{ runner.temp }}/fiber-binary-size-evidence/report.md
+            ${{ runner.temp }}/fiber-binary-size-evidence/base-file.txt
+            ${{ runner.temp }}/fiber-binary-size-evidence/head-file.txt
+            ${{ runner.temp }}/fiber-binary-size-evidence/base-sections.txt
+            ${{ runner.temp }}/fiber-binary-size-evidence/head-sections.txt
           if-no-files-found: warn
           retention-days: 30
 
@@ -158,7 +158,7 @@ jobs:
         with:
           name: binary-size-binaries-${{ matrix.name }}-${{ github.event.pull_request.number }}
           path: |
-            ${{ runner.temp }}/fx-binary-size-evidence/base-fiber
-            ${{ runner.temp }}/fx-binary-size-evidence/head-fiber
+            ${{ runner.temp }}/fiber-binary-size-evidence/base-fiber
+            ${{ runner.temp }}/fiber-binary-size-evidence/head-fiber
           compression-level: 0
           retention-days: 7

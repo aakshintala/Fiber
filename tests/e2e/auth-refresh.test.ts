@@ -72,9 +72,9 @@ function sessionIdsFromHome(home: string): string[] {
 }
 
 test(
-  "fx ask refreshes an expired login then forces one refresh and retry after 401",
+  "fiber ask refreshes an expired login then forces one refresh and retry after 401",
   async () => {
-    const home = mkdtempSync(join(tmpdir(), "fx-auth-refresh-e2e-"));
+    const home = mkdtempSync(join(tmpdir(), "fiber-auth-refresh-e2e-"));
     const tokens = startFakeChatGptTokens([EXPIRED_REFRESH_TOKEN, RETRY_REFRESH_TOKEN]);
     writeChatGptLogin(home, "seeded-refresh-token");
     const requests: string[] = [];
@@ -158,7 +158,7 @@ test(
 test(
   "status and doctor report an expired login instead of refreshing it",
   async () => {
-    const home = mkdtempSync(join(tmpdir(), "fx-auth-expired-report-e2e-"));
+    const home = mkdtempSync(join(tmpdir(), "fiber-auth-expired-report-e2e-"));
     const tokens = startFakeChatGptTokens([EXPIRED_REFRESH_TOKEN]);
     writeChatGptLogin(home, "seeded-refresh-token");
     const authPath = join(home, ".fiber", "chatgpt-auth.json");
@@ -208,7 +208,7 @@ test(
 test(
   "codex 401 after refresh discards only the new empty session and preserves resume last",
   async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-auth-empty-session-e2e-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-auth-empty-session-e2e-")));
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     mkdirSync(home);

@@ -780,7 +780,7 @@ fn addInteractiveAuthServer(
         .transport = .http,
         .url = try alloc.dupe(u8, server_url),
         .auth = .{
-            .client_id = try alloc.dupe(u8, "fx-mcp-auth-test"),
+            .client_id = try alloc.dupe(u8, "fiber-mcp-auth-test"),
         },
         .operation_timeout_ms = 10_000,
     });

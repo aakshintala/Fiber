@@ -21,7 +21,7 @@ def stat_fingerprint(path: Path, expected_size: int) -> str:
     encoded.extend(info.st_size.to_bytes(8, "big"))
     encoded.extend(info.st_mtime_ns.to_bytes(16, "big", signed=True))
     encoded.extend(info.st_ctime_ns.to_bytes(16, "big", signed=True))
-    return hashlib.sha256(b"fx:event-file-stat:v1\0" + encoded).hexdigest()
+    return hashlib.sha256(b"fiber:event-file-stat:v1\0" + encoded).hexdigest()
 
 
 def write_private_json(path: Path, value: object) -> None:

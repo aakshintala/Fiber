@@ -4391,16 +4391,16 @@ test "session snapshot locators resolve through their owning store" {
     try resolveSessionSnapshotLocators(
         alloc,
         history,
-        "/new/fx-home/sessions",
+        "/new/fiber-home/sessions",
         "id",
     );
 
     try std.testing.expectEqualStrings(
-        "/new/fx-home/sessions/id/images/image-1-aaaaaaaaaaaaaaaa.bin",
+        "/new/fiber-home/sessions/id/images/image-1-aaaaaaaaaaaaaaaa.bin",
         history[0].assistant.user.images[0].snapshot_path.?,
     );
     try std.testing.expectEqualStrings(
-        "/new/fx-home/sessions/id/images/image-2-bbbbbbbbbbbbbbbb.bin",
+        "/new/fiber-home/sessions/id/images/image-2-bbbbbbbbbbbbbbbb.bin",
         history[0].assistant.user.images[1].snapshot_path.?,
     );
     try std.testing.expect(history[0].assistant.user.images[2].snapshot_path == null);
@@ -4424,7 +4424,7 @@ test "current session snapshot locators reject absolute paths" {
         resolveSessionSnapshotLocators(
             alloc,
             history,
-            "/new/fx-home/sessions",
+            "/new/fiber-home/sessions",
             "id",
         ),
     );
@@ -4463,7 +4463,7 @@ test "session snapshot locator resolver rejects noncanonical tampering" {
             resolveSessionSnapshotLocators(
                 alloc,
                 history,
-                "/new/fx-home/sessions",
+                "/new/fiber-home/sessions",
                 "id",
             ),
         );
@@ -5229,15 +5229,15 @@ fn writeWritableManagedHistoryFixture(
         .lower,
     );
     const replay_handle = if (artifacts.legacy_replay)
-        try alloc.dupe(u8, "fx-command-replay-legacy.bin")
+        try alloc.dupe(u8, "fiber-command-replay-legacy.bin")
     else
         try std.fmt.allocPrint(
             alloc,
-            "fx-command-replay-test-{s}.bin",
+            "fiber-command-replay-test-{s}.bin",
             .{&replay_digest_hex},
         );
     defer alloc.free(replay_handle);
-    const interrupted_artifact_handle = "fx-command-cancelled.log";
+    const interrupted_artifact_handle = "fiber-command-cancelled.log";
     const interrupted_artifact = "interrupted command artifact";
     if (write_sidecars) {
         var output_file = try capability.createExclusiveFile(
@@ -9931,7 +9931,7 @@ test "recovery authenticates content-addressed command artifacts" {
     std.crypto.hash.sha2.Sha256.hash(contents, &digest, .{});
     const handle = try artifact_digest.contentAddressedHandle(
         alloc,
-        "fx-command-cancelled.log",
+        "fiber-command-cancelled.log",
         ".log",
         digest,
     );

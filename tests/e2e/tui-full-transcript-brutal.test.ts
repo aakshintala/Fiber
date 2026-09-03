@@ -205,14 +205,14 @@ function gatewayEnv(
 }
 
 function makeRoot(label: string): StressRoot {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), `fx-ctrl-o-${label}-`)));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), `fiber-ctrl-o-${label}-`)));
   return {
     root,
     home: join(root, "home"),
     workspace: join(root, "workspace"),
     stderrPath: join(root, "stderr.log"),
     resumedStderrPath: join(root, "resumed-stderr.log"),
-    tapePath: join(root, "ctrl-o-brutal.fxtape"),
+    tapePath: join(root, "ctrl-o-brutal.fibertape"),
     metricsPath: join(root, "ctrl-o-latency.json"),
     profilePath: join(root, "ctrl-o.sample.txt"),
     tracePath: join(root, "ctrl-o-cache-trace.log"),
@@ -588,7 +588,7 @@ function fxProcessId(session: TmuxSession): number {
   }).trim().split("\n");
   const pid = findFxProcessId(rows);
   if (pid !== undefined) return pid;
-  throw new Error(`Unable to find fx on ${tty}. Processes:\n${rows.join("\n")}`);
+  throw new Error(`Unable to find fiber on ${tty}. Processes:\n${rows.join("\n")}`);
 }
 
 function findFxProcessId(rows: readonly string[]): number | undefined {
@@ -603,7 +603,7 @@ function findFxProcessId(rows: readonly string[]): number | undefined {
   return undefined;
 }
 
-test("fx process discovery accepts basename and path process names", () => {
+test("fiber process discovery accepts basename and path process names", () => {
   expect(findFxProcessId(["11361 fiber"])).toBe(11361);
   expect(findFxProcessId(["11362 /workspace/zig-out/bin/fiber"])).toBe(11362);
 });

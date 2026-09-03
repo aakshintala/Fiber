@@ -8,12 +8,12 @@ import platform
 import sys
 
 LINUX_BUDGETS = {
-    "fx (startup)": 0.002,
-    "fx help": 0.002,
-    "fx status --json": 0.002,
-    "fx background --json": 0.002,
-    "fx doctor --json": 0.002,
-    "fx sessions --json": 0.002,
+    "fiber (startup)": 0.002,
+    "fiber help": 0.002,
+    "fiber status --json": 0.002,
+    "fiber background --json": 0.002,
+    "fiber doctor --json": 0.002,
+    "fiber sessions --json": 0.002,
 }
 DEFAULT_LINUX_BUDGET = 0.002
 

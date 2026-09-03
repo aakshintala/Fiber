@@ -218,7 +218,7 @@ pub fn assembleParallelToolResults(
                 "tool",
                 "argument_integrity_rejected",
                 step_ctx,
-                "call_id={s} name={s} failure=malformed_json provenance=fx_local",
+                "call_id={s} name={s} failure=malformed_json provenance=fiber_local",
                 .{ original_call.id, original_call.name },
             );
             try runtime_tool_admission.recordRejectedToolCall(

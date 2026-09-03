@@ -2928,7 +2928,7 @@ test "execution memory codec preserves feedback and reads v1 results without it"
             },
         },
         .command_output_replay = .{ .available = .{
-            .handle = "fx-command-replay-private.bin",
+            .handle = "fiber-command-replay-private.bin",
             .framed_bytes = 321,
         } },
         .command_process_presentation = .{ .exit_code = 7 },
@@ -2959,7 +2959,7 @@ test "execution memory codec preserves feedback and reads v1 results without it"
     try std.testing.expect(std.mem.find(u8, encoded.written(), "\"permission_feedback\"") != null);
     try std.testing.expect(std.mem.find(u8, encoded.written(), "\"committed_file_presentation\"") != null);
     try std.testing.expect(std.mem.find(u8, encoded.written(), "\"command_output_replay\"") != null);
-    try std.testing.expect(std.mem.find(u8, encoded.written(), "fx-command-replay-private.bin") != null);
+    try std.testing.expect(std.mem.find(u8, encoded.written(), "fiber-command-replay-private.bin") != null);
 
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, encoded.written(), .{});
     defer parsed.deinit();
@@ -2987,7 +2987,7 @@ test "execution memory codec preserves feedback and reads v1 results without it"
         .available => |value| value,
         .unavailable => return error.TestExpectedReplay,
     };
-    try std.testing.expectEqualStrings("fx-command-replay-private.bin", descriptor.handle);
+    try std.testing.expectEqualStrings("fiber-command-replay-private.bin", descriptor.handle);
     try std.testing.expectEqual(@as(usize, 321), descriptor.framed_bytes);
     try std.testing.expectEqual(
         types.CommandProcessPresentation{ .exit_code = 7 },
@@ -3327,10 +3327,10 @@ test "interrupted command presentation is strict and round trips" {
         },
         .cancelled_command = .{
             .output_replay = .{ .available = .{
-                .handle = "fx-command-replay.bin",
+                .handle = "fiber-command-replay.bin",
                 .framed_bytes = 42,
             } },
-            .command_artifact_handle = "fx-command.log",
+            .command_artifact_handle = "fiber-command.log",
         },
     } };
     var encoded: std.Io.Writer.Allocating = .init(alloc);
@@ -3345,9 +3345,9 @@ test "interrupted command presentation is strict and round trips" {
         .available => |value| value,
         .unavailable => return error.TestExpectedReplay,
     };
-    try std.testing.expectEqualStrings("fx-command-replay.bin", descriptor.handle);
+    try std.testing.expectEqualStrings("fiber-command-replay.bin", descriptor.handle);
     try std.testing.expectEqual(@as(usize, 42), descriptor.framed_bytes);
-    try std.testing.expectEqualStrings("fx-command.log", presentation.command_artifact_handle.?);
+    try std.testing.expectEqualStrings("fiber-command.log", presentation.command_artifact_handle.?);
     try std.testing.expectEqual(types.InterruptedTerminalReason.cancelled, decoded.interrupted.terminal_reason);
 
     const failed_turn: session.HistoryTurn = .{ .interrupted = .{
@@ -3555,7 +3555,7 @@ test "durable image snapshots serialize as session-relative locators" {
         .id = 1,
         .path = @constCast("/Users/private/source.png"),
         .media_type = @constCast("image/png"),
-        .snapshot_path = @constCast("/tmp/fx/sessions/session-id/images/image-1-deadbeef.bin"),
+        .snapshot_path = @constCast("/tmp/fiber/sessions/session-id/images/image-1-deadbeef.bin"),
         .snapshot_sha256 = @constCast("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
     }};
     const turn: session.HistoryTurn = .{ .assistant = .{
@@ -3570,7 +3570,7 @@ test "durable image snapshots serialize as session-relative locators" {
     try std.testing.expect(std.mem.find(
         u8,
         encoded.written(),
-        "/tmp/fx/sessions/session-id/images",
+        "/tmp/fiber/sessions/session-id/images",
     ) == null);
     try std.testing.expect(std.mem.find(
         u8,

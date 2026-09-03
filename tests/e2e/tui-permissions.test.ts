@@ -64,7 +64,7 @@ afterEach(async () => {
 function createIsolatedRoot(): IsolatedRoot {
   const tempRoot = existsSync("/private/tmp") ? "/private/tmp" : tmpdir();
   const root = realpathSync(
-    mkdtempSync(join(tempRoot, "fx-file-approval-e2e-")),
+    mkdtempSync(join(tempRoot, "fiber-file-approval-e2e-")),
   );
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -259,7 +259,7 @@ function expectApprovalControls(
   for (const oldCopy of [
     "1. Yes, proceed",
     "2. Yes, and don't ask again",
-    "3. No, and tell fx",
+    "3. No, and tell fiber",
     "This action changes files in your workspace.",
   ]) {
     expect(block).not.toContain(oldCopy);
@@ -406,7 +406,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       const root = createIsolatedRoot();
       const target = join(root.workspace, "pacer-gate.txt");
       const marker = "PENDING-FILE-APPROVAL-PACER-SENTINEL";
-      const tapePath = join(root.root, "pacer-gate.fxtape");
+      const tapePath = join(root.root, "pacer-gate.fibertape");
       const gateway = startFakeGateway([
         fakeGatewaySse([
           {
@@ -469,7 +469,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
     "file approval keeps fragmented mouse scrolling inside the review",
     async () => {
       const root = createIsolatedRoot();
-      const tapePath = join(root.root, "full-review.fxtape");
+      const tapePath = join(root.root, "full-review.fibertape");
       const tracePath = join(root.root, "full-review.trace.log");
       const injectionLogPath = join(root.root, "full-review.injected-input.log");
       const lines = Array.from(
@@ -701,7 +701,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
     "short file approval captures wheel input without moving the selected choice",
     async () => {
       const root = createIsolatedRoot();
-      const tapePath = join(root.root, "short-review.fxtape");
+      const tapePath = join(root.root, "short-review.fibertape");
       const gateway = startFakeGateway([
         toolCall("short_review", "write_file", {
           path: "short-review.txt",
@@ -795,7 +795,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         required: ["amended-review.txt", "+ amended review content"],
       });
       await session.sendKeys("Tab");
-      await session.waitForText("Apply once, and tell fx what to do next", TIMEOUT);
+      await session.waitForText("Apply once, and tell fiber what to do next", TIMEOUT);
       await session.sendLiteralText(feedback);
       await session.waitForText(`Apply once, ${feedback}`, TIMEOUT);
 
@@ -992,7 +992,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
     async () => {
       const root = createIsolatedRoot();
       const target = join(root.workspace, "cancelled.txt");
-      const tapePath = join(root.root, "cancelled.fxtape");
+      const tapePath = join(root.root, "cancelled.fibertape");
       const gateway = startFakeGateway([
         toolCall("cancel_write", "write_file", {
           path: "cancelled.txt",
@@ -1347,7 +1347,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       await session.waitForText("visual terminal capture:", TIMEOUT);
       const recording = (await session.capturePaneGrid()).join("\n");
       const tapePath = recording.match(
-        /visual terminal capture:\s*(\S+\.fxtape)/,
+        /visual terminal capture:\s*(\S+\.fibertape)/,
       )?.[1];
       if (!tapePath) {
         throw new Error(`recording path was not printed:\n${recording}`);
@@ -1442,7 +1442,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         }),
         finalText("WRAP_DIFF_COMPLETE"),
       ]);
-      const tapePath = join(root.root, "diff-wrap.fxtape");
+      const tapePath = join(root.root, "diff-wrap.fibertape");
       const { session, stderrPath } = await launch(
         root,
         gateway,

@@ -23,7 +23,7 @@ pub fn writeModelRecoveryInfoUpdate(
     status: ?core_types.RouteRecoveryStatus,
     durable: bool,
 ) !void {
-    try writer.writeAll("{\"sessionUpdate\":\"session_info_update\",\"_meta\":{\"fx\":{\"modelResponseRecovery\":");
+    try writer.writeAll("{\"sessionUpdate\":\"session_info_update\",\"_meta\":{\"fiber\":{\"modelResponseRecovery\":");
     const recovery = status orelse {
         try writer.writeAll("null}}}");
         return;

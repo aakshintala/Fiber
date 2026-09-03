@@ -2867,7 +2867,7 @@ const App = struct {
                 std.debug.assert(routed);
                 return;
             },
-            .fx_input => {},
+            .fiber_input => {},
         }
 
         if (self.terminal_input_runtime.terminal_theme_monitor.enabled) {
@@ -3543,8 +3543,8 @@ test "session reset traces and clears active paste state" {
 }
 
 test "raw benchmark preflight matches no-arg FIBER_BENCH presence" {
-    const no_args = [_][*:0]const u8{"fx"};
-    const help_args = [_][*:0]const u8{ "fx", "help" };
+    const no_args = [_][*:0]const u8{"fiber"};
+    const help_args = [_][*:0]const u8{ "fiber", "help" };
     const bench_env = [_:null]?[*:0]const u8{"FIBER_BENCH=1"};
     const empty_env = [_:null]?[*:0]const u8{};
 

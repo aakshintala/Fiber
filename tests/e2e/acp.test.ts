@@ -1140,7 +1140,7 @@ async function continueRecovery(
     params: {
       ...(sessionId ? { sessionId } : {}),
       prompt: [],
-      _meta: { fx: { continueRecovery: true } },
+      _meta: { fiber: { continueRecovery: true } },
     },
   });
 
@@ -1178,7 +1178,7 @@ describe("acp: model-independent", () => {
   test(
     "active ACP session uses typed MCP Resources Prompts and Completion state",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-features-");
+      const root = createIsolatedRoot("fiber-acp-mcp-features-");
       const pidPath = join(root.root, "mcp-features.pid");
       const wireLogPath = join(root.root, "mcp-features-wire.jsonl");
       const profilePidPath = join(root.root, "mcp-profile-features.pid");
@@ -1301,7 +1301,7 @@ describe("acp: model-independent", () => {
   test(
     "session/new advertises no unsupported slash commands",
     async () => {
-      const root = createIsolatedRoot("fx-acp-available-commands-");
+      const root = createIsolatedRoot("fiber-acp-available-commands-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -1330,7 +1330,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP sends continuation text normally with the full tool surface",
     async () => {
-      const root = createIsolatedRoot("fx-acp-continuation-text-");
+      const root = createIsolatedRoot("fiber-acp-continuation-text-");
       const gateway = startFakeGateway([finalText("ACP_CONTINUATION_TEXT_COMPLETE")]);
       const submitted = "Continue from the last useful progress update.";
       try {
@@ -1374,7 +1374,7 @@ describe("acp: model-independent", () => {
   test(
     "read_file rejects a FIFO without waiting for a writer",
     async () => {
-      const root = createIsolatedRoot("fx-acp-read-file-fifo-");
+      const root = createIsolatedRoot("fiber-acp-read-file-fifo-");
       const fifoPath = join(root.workspace, "search-pipe");
       const fifo = Bun.spawnSync(["mkfifo", fifoPath]);
       expect(fifo.exitCode).toBe(0);
@@ -1418,7 +1418,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP forwards exact Markdown source without rendered duplicates",
     async () => {
-      const root = createIsolatedRoot("fx-acp-markdown-source-");
+      const root = createIsolatedRoot("fiber-acp-markdown-source-");
       const markdown = [
         "# Heading\n\n- **bold** item\n\n",
         "| A | B |\n| - | - |\n| 1 | 2 |\n\n",
@@ -1476,7 +1476,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP publishes session title and authoritative context usage",
     async () => {
-      const root = createIsolatedRoot("fx-acp-session-metadata-");
+      const root = createIsolatedRoot("fiber-acp-session-metadata-");
       const title = "Publish ACP session metadata";
       const gateway = startFakeGateway(
         [
@@ -1574,7 +1574,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP sends a prompt above the old CLI limit with one capability snapshot",
     async () => {
-      const root = createIsolatedRoot("fx-acp-large-prompt-");
+      const root = createIsolatedRoot("fiber-acp-large-prompt-");
       const gateway = startFakeGateway(
         [finalText("ACP_LARGE_PROMPT_COMPLETE")],
       );
@@ -1612,7 +1612,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP executes the shared managed shell TTY path",
     async () => {
-      const root = createShortIsolatedRoot("fx-acp-terminal-");
+      const root = createShortIsolatedRoot("fiber-acp-terminal-");
       const toolCallId = "acp_shell_tty_1";
       const gateway = startFakeGateway([
         fakeGatewayToolCall(toolCallId, "shell", {
@@ -1673,7 +1673,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP added-root reads skip external deferral and added project instructions",
     async () => {
-      const root = createIsolatedRoot("fx-acp-added-root-");
+      const root = createIsolatedRoot("fiber-acp-added-root-");
       const sentinel = "ACP_ADDED_ROOT_AGENTS_SENTINEL";
       const target = join(root.external, "fixture.txt");
       writeFileSync(join(root.external, "AGENTS.md"), sentinel + "\n");
@@ -1718,7 +1718,7 @@ describe("acp: model-independent", () => {
   test(
     "context limit warnings use ACP session updates and dedupe for the live session",
     async () => {
-      const root = createIsolatedRoot("fx-acp-context-limits-");
+      const root = createIsolatedRoot("fiber-acp-context-limits-");
       writeFileSync(
         join(root.workspace, "AGENTS.md"),
         "ACP_RULE_PREFIX\nACP_RULE_SECOND\nACP_RULE_TAIL_SENTINEL\n",
@@ -1804,7 +1804,7 @@ describe("acp: model-independent", () => {
       const remoteUri = `https://example.test/${"a".repeat(256 * 1024)}/REMOTE_URI_TAIL_SENTINEL`;
 
       for (const testCase of cases) {
-        const root = createIsolatedRoot(`fx-acp-bounded-omission-${testCase.label}-`);
+        const root = createIsolatedRoot(`fiber-acp-bounded-omission-${testCase.label}-`);
         const gateway = startFakeGateway([finalText(`ACP_BOUNDED_OMISSION_${testCase.label}`)]);
         try {
           client = await AcpClient.create({
@@ -1854,7 +1854,7 @@ describe("acp: model-independent", () => {
   test(
     "project omissions reach ACP session updates and model context",
     async () => {
-      const root = createIsolatedRoot("fx-acp-project-omissions-");
+      const root = createIsolatedRoot("fiber-acp-project-omissions-");
       const { target } = writeProjectOmissionFixture(root);
       const gateway = startFakeGateway([finalText("ACP_PROJECT_OMISSIONS_COMPLETE")]);
       try {
@@ -1911,7 +1911,7 @@ describe("acp: model-independent", () => {
       }));
 
       for (const testCase of cases) {
-        const root = createIsolatedRoot(`fx-acp-aggregate-omissions-${testCase.label}-`);
+        const root = createIsolatedRoot(`fiber-acp-aggregate-omissions-${testCase.label}-`);
         const gateway = startFakeGateway([finalText(`ACP_AGGREGATE_OMISSIONS_${testCase.label}`)]);
         try {
           client = await AcpClient.create({
@@ -1960,7 +1960,7 @@ describe("acp: model-independent", () => {
   test(
     "initialize advertises native image prompt support",
     async () => {
-      const root = createIsolatedRoot("fx-acp-initialize-");
+      const root = createIsolatedRoot("fiber-acp-initialize-");
       try {
         const version = await runFx(["--version"], {
           cwd: root.workspace,
@@ -1989,7 +1989,7 @@ describe("acp: model-independent", () => {
         expect(resp.jsonrpc).toBe("2.0");
         expect(resp.id).toBe(1);
         expect(resp.result.protocolVersion).toBe(1);
-        expect(resp.result.agentInfo.name).toBe("fx");
+        expect(resp.result.agentInfo.name).toBe("fiber");
         expect(resp.result.agentInfo.version).toBe(version.stdout.trim());
         expect(resp.result.agentCapabilities.loadSession).toBe(true);
         expect(resp.result.agentCapabilities.promptCapabilities.image).toBe(true);
@@ -2008,7 +2008,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP session/new calls a supplied modern HTTP MCP server",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-http-");
+      const root = createIsolatedRoot("fiber-acp-mcp-http-");
       const httpFixture = startModernMcpHttpFixture("json");
       const gateway = startFakeGateway([
         fakeGatewayToolCall("search_http", "capability_search", {
@@ -2090,7 +2090,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP skips pending workspace MCP and loads it after explicit trust",
     async () => {
-      const root = createIsolatedRoot("fx-acp-project-mcp-");
+      const root = createIsolatedRoot("fiber-acp-project-mcp-");
       const pidPath = join(root.root, "project-mcp.pid");
       const wirePath = join(root.root, "project-mcp-wire.jsonl");
       writeFileSync(
@@ -2182,7 +2182,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP keeps duplicate primary server names and excludes a workspace collision",
     async () => {
-      const root = createIsolatedRoot("fx-acp-project-mcp-collision-");
+      const root = createIsolatedRoot("fiber-acp-project-mcp-collision-");
       const firstPid = join(root.root, "primary-first.pid");
       const secondPid = join(root.root, "primary-second.pid");
       const projectPid = join(root.root, "project-collision.pid");
@@ -2236,7 +2236,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP session/new keeps rejected and pending workspace MCP inert",
     async () => {
-      const root = createIsolatedRoot("fx-acp-project-mcp-optional-");
+      const root = createIsolatedRoot("fiber-acp-project-mcp-optional-");
       const pidPath = join(root.root, "rejected-project-mcp.pid");
       let unavailableAttempts = 0;
       const unavailable = Bun.serve({
@@ -2301,7 +2301,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP cross-session restore retires reduced project authority before required failure",
     async () => {
-      const root = createIsolatedRoot("fx-acp-project-mcp-reduce-");
+      const root = createIsolatedRoot("fiber-acp-project-mcp-reduce-");
       const pidPath = join(root.root, "active-project-mcp.pid");
       const wirePath = join(root.root, "active-project-mcp-wire.jsonl");
       writeFileSync(
@@ -2397,7 +2397,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP session/new retires reduced active project authority before required failure",
     async () => {
-      const root = createIsolatedRoot("fx-acp-project-mcp-new-reduce-");
+      const root = createIsolatedRoot("fiber-acp-project-mcp-new-reduce-");
       const pidPath = join(root.root, "active-project-mcp.pid");
       writeFileSync(
         join(root.home, ".fiber", "settings.json"),
@@ -2470,7 +2470,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP routes legacy HTTP and SSE configs through new load resume and close",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-legacy-remote-");
+      const root = createIsolatedRoot("fiber-acp-mcp-legacy-remote-");
       const newFixture = startLegacyStreamableHttpFixture("2025-11-25");
       const loadFixture = startLegacyHttpSseFixture();
       const resumeFixture = startLegacyHttpSseFixture();
@@ -2618,7 +2618,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP remote authentication never starts an interactive authorization flow",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-auth-required-");
+      const root = createIsolatedRoot("fiber-acp-mcp-auth-required-");
       let mcpRequests = 0;
       let metadataRequests = 0;
       const server = Bun.serve({
@@ -2684,7 +2684,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP bearer headers authenticate HTTP without persisting the credential",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-bearer-");
+      const root = createIsolatedRoot("fiber-acp-mcp-bearer-");
       const httpFixture = startModernMcpHttpFixture("json");
       const bearer = "acp-mcp-bearer-secret";
       const proxy = Bun.serve({
@@ -2761,7 +2761,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP HTTP tools and headers are recreated through load and resume",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-http-lifecycle-");
+      const root = createIsolatedRoot("fiber-acp-mcp-http-lifecycle-");
       const newFixture = startModernMcpHttpFixture("json");
       const loadFixture = startModernMcpHttpFixture("json");
       const resumeFixture = startModernMcpHttpFixture("json");
@@ -2891,7 +2891,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP replacement and close cancel stalled HTTP MCP calls",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-http-cancel-");
+      const root = createIsolatedRoot("fiber-acp-mcp-http-cancel-");
       const replacementFixture = startModernMcpHttpFixture("stall_call");
       const fastFixture = startModernMcpHttpFixture("json");
       const closeFixture = startModernMcpHttpFixture("stall_call");
@@ -2997,7 +2997,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP stdin EOF cancels a stalled HTTP MCP call",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-http-eof-");
+      const root = createIsolatedRoot("fiber-acp-mcp-http-eof-");
       const httpFixture = startModernMcpHttpFixture("stall_call");
       const gateway = startFakeGateway([
         fakeGatewayToolCall("select_http_eof_slow", "mcp_select_tool", {
@@ -3046,7 +3046,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP rejects redirects, bad status, and bad media types from HTTP MCP",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-http-failures-");
+      const root = createIsolatedRoot("fiber-acp-mcp-http-failures-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -3107,7 +3107,7 @@ describe("acp: model-independent", () => {
   test(
     "supplied stdio tools are recreated through new load and resume",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-lifecycle-");
+      const root = createIsolatedRoot("fiber-acp-mcp-lifecycle-");
       const newPid = join(root.root, "mcp-new.pid");
       const loadPid = join(root.root, "mcp-load.pid");
       const resumePid = join(root.root, "mcp-resume.pid");
@@ -3210,7 +3210,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP without elicitation capability returns input-required without a direct request",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-mrtr-");
+      const root = createIsolatedRoot("fiber-acp-mcp-mrtr-");
       const pidPath = join(root.root, "mcp-mrtr.pid");
       const gateway = startFakeGateway([
         fakeGatewayToolCall("select_mrtr", "mcp_select_tool", { name: MCP_TOOL_NAME }),
@@ -3264,7 +3264,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP never sends a URL mode the client did not advertise",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-unadvertised-url-");
+      const root = createIsolatedRoot("fiber-acp-mcp-unadvertised-url-");
       const pidPath = join(root.root, "mcp-unadvertised-url.pid");
       const gateway = startFakeGateway([
         fakeGatewayToolCall("select_unadvertised", "mcp_select_tool", {
@@ -3361,7 +3361,7 @@ describe("acp: model-independent", () => {
       ] as const;
 
       for (const testCase of cases) {
-        const root = createIsolatedRoot(`fx-acp-mcp-cap-${testCase.label}-`);
+        const root = createIsolatedRoot(`fiber-acp-mcp-cap-${testCase.label}-`);
         const pidPath = join(root.root, "mcp-cap.pid");
         const wirePath = join(root.root, "mcp-cap.wire.jsonl");
         const activeGateway = startFakeGateway([
@@ -3437,7 +3437,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP form elicitation resumes the exact modern MCP operation",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-elicitation-form-");
+      const root = createIsolatedRoot("fiber-acp-mcp-elicitation-form-");
       const pidPath = join(root.root, "mcp-elicitation-form.pid");
       const wirePath = join(root.root, "mcp-elicitation-form.wire.jsonl");
       const gateway = startFakeGateway([
@@ -3549,7 +3549,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP EOF cancels a pending direct elicitation without hanging",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-elicitation-eof-");
+      const root = createIsolatedRoot("fiber-acp-mcp-elicitation-eof-");
       const pidPath = join(root.root, "mcp-elicitation-eof.pid");
       const gateway = startFakeGateway([
         fakeGatewayToolCall("select_eof", "mcp_select_tool", { name: MCP_TOOL_NAME }),
@@ -3615,10 +3615,10 @@ describe("acp: model-independent", () => {
     "secret-like form fields are rejected before ACP publication or model exposure",
     async () => {
       const sentinel = "S10_SECRET_SENTINEL_7f3c";
-      const root = createIsolatedRoot("fx-acp-mcp-elicitation-secret-");
+      const root = createIsolatedRoot("fiber-acp-mcp-elicitation-secret-");
       const pidPath = join(root.root, "mcp-elicitation-secret.pid");
       const wirePath = join(root.root, "mcp-elicitation-secret.wire.jsonl");
-      const tracePath = join(root.root, "fx-trace.log");
+      const tracePath = join(root.root, "fiber-trace.log");
       const gateway = startFakeGateway([
         fakeGatewayToolCall("select_secret", "mcp_select_tool", { name: MCP_TOOL_NAME }),
         fakeGatewayToolCall("call_secret", MCP_TOOL_NAME, { text: "secret" }),
@@ -3694,7 +3694,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP URL consent completes only after modern MCP retry without prefetching",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-elicitation-url-");
+      const root = createIsolatedRoot("fiber-acp-mcp-elicitation-url-");
       const pidPath = join(root.root, "mcp-elicitation-url.pid");
       const wirePath = join(root.root, "mcp-elicitation-url.wire.jsonl");
       let urlRequests = 0;
@@ -3766,7 +3766,7 @@ describe("acp: model-independent", () => {
         });
         expect(direct.message).toContain("MCP server fixture");
         expect(direct.message).toContain("127.0.0.1");
-        expect(direct.elicitationId).toMatch(/^fx-\d+$/);
+        expect(direct.elicitationId).toMatch(/^fiber-\d+$/);
         expect(urlRequests).toBe(0);
 
         const completions = prompt.messages.filter((message) =>
@@ -3808,7 +3808,7 @@ describe("acp: model-independent", () => {
   test(
     "negotiated legacy MCP form requests use the versioned direct adapter",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-legacy-elicitation-");
+      const root = createIsolatedRoot("fiber-acp-mcp-legacy-elicitation-");
       const fixture = startLegacyStreamableHttpFixture("2025-06-18", {
         mode: "elicitation_form",
       });
@@ -3899,7 +3899,7 @@ describe("acp: model-independent", () => {
   test(
     "legacy URL completion is correlated from the notification listener to ACP",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-legacy-url-");
+      const root = createIsolatedRoot("fiber-acp-mcp-legacy-url-");
       let targetRequests = 0;
       const target = Bun.serve({
         port: 0,
@@ -3970,7 +3970,7 @@ describe("acp: model-independent", () => {
           url: targetUrl,
           message: expect.stringContaining("MCP server fixture"),
         });
-        expect(direct.elicitationId).toMatch(/^fx-\d+$/);
+        expect(direct.elicitationId).toMatch(/^fiber-\d+$/);
         expect(fixture.elicitationResponses).toEqual([{
           jsonrpc: "2.0",
           id: 9001,
@@ -4023,7 +4023,7 @@ describe("acp: model-independent", () => {
   test(
     "legacy URL completion waits for ACP consent and publishes exactly once",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-legacy-url-early-");
+      const root = createIsolatedRoot("fiber-acp-mcp-legacy-url-early-");
       const fixture = startLegacyStreamableHttpFixture("2025-11-25", {
         mode: "elicitation_url",
         completeBeforeElicitationResponse: true,
@@ -4112,7 +4112,7 @@ describe("acp: model-independent", () => {
   test(
     "declined legacy URL consent suppresses an early completion",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-legacy-url-decline-");
+      const root = createIsolatedRoot("fiber-acp-mcp-legacy-url-decline-");
       const fixture = startLegacyStreamableHttpFixture("2025-11-25", {
         mode: "elicitation_url",
         completeBeforeElicitationResponse: true,
@@ -4196,7 +4196,7 @@ describe("acp: model-independent", () => {
   test(
     "session cancellation interrupts a pending MCP elicitation",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-elicitation-cancel-");
+      const root = createIsolatedRoot("fiber-acp-mcp-elicitation-cancel-");
       const pidPath = join(root.root, "mcp-elicitation-cancel.pid");
       const gateway = startFakeGateway([
         fakeGatewayToolCall("select_cancelled_form", "mcp_select_tool", {
@@ -4291,7 +4291,7 @@ describe("acp: model-independent", () => {
   test(
     "sequential ACP sessions isolate same-named MCP tools",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-isolation-");
+      const root = createIsolatedRoot("fiber-acp-mcp-isolation-");
       const firstPid = join(root.root, "mcp-first.pid");
       const secondPid = join(root.root, "mcp-second.pid");
       const gateway = startFakeGateway([
@@ -4374,7 +4374,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP rejects invalid or unsupported MCP config and never loads profile MCP",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-admission-");
+      const root = createIsolatedRoot("fiber-acp-mcp-admission-");
       const profilePid = join(root.root, "profile.pid");
       const suppliedPid = join(root.root, "supplied.pid");
       const gateway = startFakeGateway([]);
@@ -4512,7 +4512,7 @@ describe("acp: model-independent", () => {
   test(
     "replacement and close cancel slow MCP calls and reap children",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-cancel-");
+      const root = createIsolatedRoot("fiber-acp-mcp-cancel-");
       const replacementPid = join(root.root, "replacement-slow.pid");
       const replacementWire = join(root.root, "replacement-slow.jsonl");
       const fastPid = join(root.root, "replacement-fast.pid");
@@ -4621,7 +4621,7 @@ describe("acp: model-independent", () => {
   test(
     "stdin EOF cancels a stalled MCP call and reaps its child and reader",
     async () => {
-      const root = createIsolatedRoot("fx-acp-mcp-eof-");
+      const root = createIsolatedRoot("fiber-acp-mcp-eof-");
       const pidPath = join(root.root, "stalled.pid");
       const wirePath = join(root.root, "stalled.jsonl");
       const tracePath = join(root.root, "trace.log");
@@ -4682,7 +4682,7 @@ describe("acp: model-independent", () => {
   test(
     "invalid initialize requests return invalid_params without poisoning the connection",
     async () => {
-      const root = createIsolatedRoot("fx-acp-invalid-initialize-");
+      const root = createIsolatedRoot("fiber-acp-invalid-initialize-");
       try {
         client = await AcpClient.create({
           cwd: root.workspace,
@@ -4731,7 +4731,7 @@ describe("acp: model-independent", () => {
   test(
     "prompt before session creation returns the canonical no-session error",
     async () => {
-      const root = createIsolatedRoot("fx-acp-prompt-without-session-");
+      const root = createIsolatedRoot("fiber-acp-prompt-without-session-");
       try {
         client = await AcpClient.create({
           cwd: root.workspace,
@@ -4777,7 +4777,7 @@ describe("acp: model-independent", () => {
   test(
     "session-scoped requests reject a stale active-session target",
     async () => {
-      const root = createIsolatedRoot("fx-acp-stale-session-target-");
+      const root = createIsolatedRoot("fiber-acp-stale-session-target-");
       const gateway = startFakeGateway([finalText("stale prompt executed")]);
       try {
         client = await AcpClient.create({
@@ -4846,7 +4846,7 @@ describe("acp: model-independent", () => {
   test(
     "image prompt reaches the Gateway and replays from saved history",
     async () => {
-      const root = createIsolatedRoot("fx-acp-image-prompt-");
+      const root = createIsolatedRoot("fiber-acp-image-prompt-");
       const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlXYX0AAAAASUVORK5CYII=";
       const gateway = startFakeGateway(
         [finalText("image prompt complete")],
@@ -4936,7 +4936,7 @@ describe("acp: model-independent", () => {
   test(
     "image-only prompt publishes and reloads the shared image title",
     async () => {
-      const root = createIsolatedRoot("fx-acp-image-only-title-");
+      const root = createIsolatedRoot("fiber-acp-image-only-title-");
       const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlXYX0AAAAASUVORK5CYII=";
       const gateway = startFakeGateway(
         [finalText("image-only prompt complete")],
@@ -5004,7 +5004,7 @@ describe("acp: model-independent", () => {
   test(
     "inline image above the portable encoded limit fails before effects",
     async () => {
-      const root = createIsolatedRoot("fx-acp-inline-image-limit-");
+      const root = createIsolatedRoot("fiber-acp-inline-image-limit-");
       const maxEncodedImageBytes = 5 * 1024 * 1024;
       const largestFittingRawImage = Math.floor(maxEncodedImageBytes / 4) * 3;
       const oversized = Buffer.alloc(largestFittingRawImage + 1);
@@ -5062,7 +5062,7 @@ describe("acp: model-independent", () => {
   test(
     "selected text-only model rejects images without leaking an internal error",
     async () => {
-      const root = createIsolatedRoot("fx-acp-image-model-capability-");
+      const root = createIsolatedRoot("fiber-acp-image-model-capability-");
       const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlXYX0AAAAASUVORK5CYII=";
       const gateway = startFakeGateway([]);
       const codex = startAcpFakeCodex();
@@ -5147,7 +5147,7 @@ describe("acp: model-independent", () => {
   test(
     "image prompt MIME mismatch fails before the Gateway without an orphaned snapshot",
     async () => {
-      const root = createIsolatedRoot("fx-acp-image-mime-mismatch-");
+      const root = createIsolatedRoot("fiber-acp-image-mime-mismatch-");
       const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlXYX0AAAAASUVORK5CYII=";
       const gateway = startFakeGateway([finalText("ACP image recovery complete")]);
       try {
@@ -5197,7 +5197,7 @@ describe("acp: model-independent", () => {
   test(
     "session load reports an unavailable saved image without failing",
     async () => {
-      const root = createIsolatedRoot("fx-acp-image-replay-missing-");
+      const root = createIsolatedRoot("fiber-acp-image-replay-missing-");
       const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlXYX0AAAAASUVORK5CYII=";
       const gateway = startFakeGateway(
         [finalText("image saved")],
@@ -5264,8 +5264,8 @@ describe("acp: model-independent", () => {
   test(
     "ACP automatic ask returns to the agent before requesting permission",
     async () => {
-      const acceptedRoot = createIsolatedRoot("fx-acp-auto-file-accepted-");
-      const blockedRoot = createIsolatedRoot("fx-acp-auto-file-check-");
+      const acceptedRoot = createIsolatedRoot("fiber-acp-auto-file-accepted-");
+      const blockedRoot = createIsolatedRoot("fiber-acp-auto-file-check-");
       try {
         const acceptedTarget = join(acceptedRoot.external, "accepted.txt");
         writeFileSync(acceptedTarget, "before");
@@ -5374,7 +5374,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP keeps the session active after repeated advisory cautions",
     async () => {
-      const root = createIsolatedRoot("fx-acp-auto-recovery-");
+      const root = createIsolatedRoot("fiber-acp-auto-recovery-");
       const target = join(root.external, "recovery.txt");
       writeFileSync(target, "before");
       const gateway = startFakeGateway(
@@ -5428,7 +5428,7 @@ describe("acp: model-independent", () => {
   test(
     "terminal prompt response admits immediate session/list before worker exit",
     async () => {
-      const root = createIsolatedRoot("fx-acp-terminal-list-");
+      const root = createIsolatedRoot("fiber-acp-terminal-list-");
       const boundary = createPromptTerminalBoundary(root.root);
       const gateway = startFakeGateway([finalText("first prompt complete")]);
       try {
@@ -5471,7 +5471,7 @@ describe("acp: model-independent", () => {
   test(
     "terminal prompt response admits an immediate second session/prompt",
     async () => {
-      const root = createIsolatedRoot("fx-acp-terminal-prompt-");
+      const root = createIsolatedRoot("fiber-acp-terminal-prompt-");
       const boundary = createPromptTerminalBoundary(root.root);
       const gateway = startFakeGateway([
         finalText("first prompt complete"),
@@ -5512,7 +5512,7 @@ describe("acp: model-independent", () => {
   test(
     "expected prompt validation error preserves -32602 and admits next prompt",
     async () => {
-      const root = createIsolatedRoot("fx-acp-terminal-validation-");
+      const root = createIsolatedRoot("fiber-acp-terminal-validation-");
       const boundary = createPromptTerminalBoundary(root.root);
       const gateway = startFakeGateway([finalText("valid prompt complete")]);
       try {
@@ -5554,7 +5554,7 @@ describe("acp: model-independent", () => {
   test(
     "non-retryable prompt failure preserves -32603 and leaves the server usable",
     async () => {
-      const root = createIsolatedRoot("fx-acp-terminal-failure-");
+      const root = createIsolatedRoot("fiber-acp-terminal-failure-");
       const boundary = createPromptTerminalBoundary(root.root);
       const gateway = startFakeGateway([
         fakeGatewaySse([
@@ -5608,7 +5608,7 @@ describe("acp: model-independent", () => {
   test(
     "auth failure names the selected source without leaking the provider body",
     async () => {
-      const root = createIsolatedRoot("fx-acp-auth-failure-");
+      const root = createIsolatedRoot("fiber-acp-auth-failure-");
       const providerDetail = "rejected Codex provider body";
       // The Codex path refreshes and retries once on 401 before failing.
       const gateway = startFakeGateway([() => new Response(
@@ -5665,7 +5665,7 @@ describe("acp: model-independent", () => {
   test(
     "running prompt rejects non-cancel requests",
     async () => {
-      const root = createIsolatedRoot("fx-acp-running-prompt-");
+      const root = createIsolatedRoot("fiber-acp-running-prompt-");
       const heldResponse = deferred<Response>();
       const gateway = startFakeGateway([() => heldResponse.promise]);
       try {
@@ -5710,7 +5710,7 @@ describe("acp: model-independent", () => {
   test(
     "stdin shutdown joins a terminal prompt worker before teardown",
     async () => {
-      const root = createIsolatedRoot("fx-acp-terminal-shutdown-");
+      const root = createIsolatedRoot("fiber-acp-terminal-shutdown-");
       const boundary = createPromptTerminalBoundary(root.root);
       const gateway = startFakeGateway([finalText("shutdown prompt complete")]);
       try {
@@ -5746,7 +5746,7 @@ describe("acp: model-independent", () => {
   test(
     "session/cancel requests receive JSON-RPC responses",
     async () => {
-      const root = createIsolatedRoot("fx-acp-cancel-framing-");
+      const root = createIsolatedRoot("fiber-acp-cancel-framing-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -5797,7 +5797,7 @@ describe("acp: model-independent", () => {
   test(
     "running prompt rejects non-cancel requests",
     async () => {
-      const root = createIsolatedRoot("fx-acp-running-prompt-");
+      const root = createIsolatedRoot("fiber-acp-running-prompt-");
       const heldResponse = deferred<Response>();
       const gateway = startFakeGateway([() => heldResponse.promise]);
       try {
@@ -5842,7 +5842,7 @@ describe("acp: model-independent", () => {
   test(
     "stdin shutdown joins a terminal prompt worker before teardown",
     async () => {
-      const root = createIsolatedRoot("fx-acp-terminal-shutdown-");
+      const root = createIsolatedRoot("fiber-acp-terminal-shutdown-");
       const boundary = createPromptTerminalBoundary(root.root);
       const gateway = startFakeGateway([finalText("shutdown prompt complete")]);
       try {
@@ -5878,7 +5878,7 @@ describe("acp: model-independent", () => {
   test(
     "session/cancel requests receive JSON-RPC responses",
     async () => {
-      const root = createIsolatedRoot("fx-acp-cancel-framing-");
+      const root = createIsolatedRoot("fiber-acp-cancel-framing-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -5929,7 +5929,7 @@ describe("acp: model-independent", () => {
   test(
     "running prompt rejects non-cancel requests",
     async () => {
-      const root = createIsolatedRoot("fx-acp-running-prompt-");
+      const root = createIsolatedRoot("fiber-acp-running-prompt-");
       const heldResponse = deferred<Response>();
       const gateway = startFakeGateway([() => heldResponse.promise]);
       try {
@@ -5974,7 +5974,7 @@ describe("acp: model-independent", () => {
   test(
     "stdin shutdown joins a terminal prompt worker before teardown",
     async () => {
-      const root = createIsolatedRoot("fx-acp-terminal-shutdown-");
+      const root = createIsolatedRoot("fiber-acp-terminal-shutdown-");
       const boundary = createPromptTerminalBoundary(root.root);
       const gateway = startFakeGateway([finalText("shutdown prompt complete")]);
       try {
@@ -6010,7 +6010,7 @@ describe("acp: model-independent", () => {
   test(
     "session/cancel requests receive JSON-RPC responses",
     async () => {
-      const root = createIsolatedRoot("fx-acp-cancel-framing-");
+      const root = createIsolatedRoot("fiber-acp-cancel-framing-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -6061,7 +6061,7 @@ describe("acp: model-independent", () => {
   test(
     "running prompt rejects non-cancel requests",
     async () => {
-      const root = createIsolatedRoot("fx-acp-running-prompt-");
+      const root = createIsolatedRoot("fiber-acp-running-prompt-");
       const heldResponse = deferred<Response>();
       const gateway = startFakeGateway([() => heldResponse.promise]);
       try {
@@ -6106,7 +6106,7 @@ describe("acp: model-independent", () => {
   test(
     "stdin shutdown joins a terminal prompt worker before teardown",
     async () => {
-      const root = createIsolatedRoot("fx-acp-terminal-shutdown-");
+      const root = createIsolatedRoot("fiber-acp-terminal-shutdown-");
       const boundary = createPromptTerminalBoundary(root.root);
       const gateway = startFakeGateway([finalText("shutdown prompt complete")]);
       try {
@@ -6142,7 +6142,7 @@ describe("acp: model-independent", () => {
   test(
     "session/cancel requests receive JSON-RPC responses",
     async () => {
-      const root = createIsolatedRoot("fx-acp-cancel-framing-");
+      const root = createIsolatedRoot("fiber-acp-cancel-framing-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -6193,7 +6193,7 @@ describe("acp: model-independent", () => {
   test(
     "missing Codex login returns JSON-RPC error on initialize",
     async () => {
-      const root = createIsolatedRoot("fx-acp-missing-auth-");
+      const root = createIsolatedRoot("fiber-acp-missing-auth-");
       try {
         client = await AcpClient.create({
           cwd: root.workspace,
@@ -6205,8 +6205,8 @@ describe("acp: model-independent", () => {
         });
         const resp = await client.request("initialize", { protocolVersion: 1 }, 1) as any;
         expect(resp.error).toBeDefined();
-        expect(resp.error.message).toContain("fx needs a Codex subscription login");
-        expect(resp.error.message).toContain("fx login codex");
+        expect(resp.error.message).toContain("fiber needs a Codex subscription login");
+        expect(resp.error.message).toContain("fiber login codex");
         expect(client.stderr).toBe("");
       } finally {
         await client?.close();
@@ -6299,7 +6299,7 @@ describe("acp: model-independent", () => {
   test(
     "session/list leaves an empty home unchanged",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-acp-no-create-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-acp-no-create-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -6331,7 +6331,7 @@ describe("acp: model-independent", () => {
   test(
     "session/list without cwd returns all sessions and filters by absolute cwd",
     async () => {
-      const root = createIsolatedRoot("fx-acp-workspace-session-list-");
+      const root = createIsolatedRoot("fiber-acp-workspace-session-list-");
       const gateway = startFakeGateway([]);
       try {
         writeAcpSession(root.home, root.workspace, "workspace-a-session", 20);
@@ -6387,7 +6387,7 @@ describe("acp: model-independent", () => {
   test(
     "session/list exposes bounded titled pages",
     async () => {
-      const root = createIsolatedRoot("fx-acp-paged-session-list-");
+      const root = createIsolatedRoot("fiber-acp-paged-session-list-");
       const gateway = startFakeGateway([
         finalText("ACP titled session created"),
       ]);
@@ -6462,7 +6462,7 @@ describe("acp: model-independent", () => {
   test(
     "session/list treats null cwd as omitted",
     async () => {
-      const root = createIsolatedRoot("fx-acp-null-session-list-");
+      const root = createIsolatedRoot("fiber-acp-null-session-list-");
       try {
         client = await AcpClient.create({
           cwd: root.workspace,
@@ -6497,7 +6497,7 @@ describe("acp: model-independent", () => {
   test(
     "session/list rejects relative cwd",
     async () => {
-      const root = createIsolatedRoot("fx-acp-relative-session-list-");
+      const root = createIsolatedRoot("fiber-acp-relative-session-list-");
       try {
         client = await AcpClient.create({
           cwd: root.workspace,
@@ -6530,7 +6530,7 @@ describe("acp: model-independent", () => {
   test(
     "session/list omits legacy sessions without a workspace",
     async () => {
-      const root = createIsolatedRoot("fx-acp-legacy-session-list-");
+      const root = createIsolatedRoot("fiber-acp-legacy-session-list-");
       try {
         writeAcpSession(root.home, root.workspace, "workspace-session", 20);
         writeLegacyAcpSessionWithoutWorkspace(
@@ -6568,7 +6568,7 @@ describe("acp: model-independent", () => {
   test(
     "session/load reports contention and succeeds after the owner exits",
     async () => {
-      const root = createIsolatedRoot("fx-acp-session-load-contention-");
+      const root = createIsolatedRoot("fiber-acp-session-load-contention-");
       const gateway = startFakeGateway([]);
       const sessionId = "contended-session";
       let owner: AcpClient | undefined;
@@ -6637,7 +6637,7 @@ describe("acp: model-independent", () => {
   test(
     "durable mutation sentinel terminates a writable session path",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-acp-write-sentinel-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-acp-write-sentinel-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -6689,7 +6689,7 @@ describe("acp: model-independent", () => {
   test(
     "session load addresses a special-token ID literally",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-acp-exact-id-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-acp-exact-id-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -6763,7 +6763,7 @@ describe("acp: model-independent", () => {
   test(
     "session load omits synthetic execution for summary-only turns",
     async () => {
-      const root = createIsolatedRoot("fx-acp-load-summary-only-");
+      const root = createIsolatedRoot("fiber-acp-load-summary-only-");
       const answer = "ACP summary-only load complete.";
       const promptText = "Return the prepared summary-only answer.";
       const gateway = startFakeGateway([finalText(answer)]);
@@ -6842,7 +6842,7 @@ describe("acp: model-independent", () => {
   test(
     "session load replays completed assistant execution before the final answer",
     async () => {
-      const root = createIsolatedRoot("fx-acp-load-execution-");
+      const root = createIsolatedRoot("fiber-acp-load-execution-");
       writeFileSync(
         join(root.workspace, "fixture.txt"),
         "ACP_HISTORY_EVIDENCE\n",
@@ -6928,8 +6928,8 @@ describe("acp: model-independent", () => {
   test(
     "code mode deterministically gates external missing-parent writes by rule",
     async () => {
-      const deniedRoot = createIsolatedRoot("fx-acp-deterministic-denied-");
-      const allowedRoot = createIsolatedRoot("fx-acp-deterministic-allowed-");
+      const deniedRoot = createIsolatedRoot("fiber-acp-deterministic-denied-");
+      const allowedRoot = createIsolatedRoot("fiber-acp-deterministic-allowed-");
       const deniedTarget = join(
         deniedRoot.external,
         "missing",
@@ -7016,7 +7016,7 @@ describe("acp: model-independent", () => {
   test(
     "provider length with tool calls returns max output tokens without execution",
     async () => {
-      const root = createIsolatedRoot("fx-acp-length-tool-");
+      const root = createIsolatedRoot("fiber-acp-length-tool-");
       const sentinelPath = join(root.workspace, "command-must-not-run.txt");
       const gateway = startFakeGateway([
         lengthLimitedCommandCall("printf executed > command-must-not-run.txt"),
@@ -7051,7 +7051,7 @@ describe("acp: model-independent", () => {
   test(
     "provider length after silent tools returns max output tokens without continuation",
     async () => {
-      const root = createIsolatedRoot("fx-acp-silent-tools-length-");
+      const root = createIsolatedRoot("fiber-acp-silent-tools-length-");
       writeFileSync(join(root.workspace, "a.txt"), "a\n");
       writeFileSync(join(root.workspace, "b.txt"), "b\n");
       const gateway = startFakeGateway([
@@ -7090,7 +7090,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP binds an explicitly invoked skill into the prompt",
     async () => {
-      const root = createIsolatedRoot("fx-acp-explicit-skill-");
+      const root = createIsolatedRoot("fiber-acp-explicit-skill-");
       const skillDirectory = join(root.workspace, "skills", "acp-explicit");
       const skillBody = "ACP_EXPLICIT_SKILL_BODY";
       mkdirSync(skillDirectory, { recursive: true });
@@ -7137,7 +7137,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP ranks a natural skill match before bounded catalog omission",
     async () => {
-      const root = createIsolatedRoot("fx-acp-routed-skill-");
+      const root = createIsolatedRoot("fiber-acp-routed-skill-");
       const distractorDescription =
         "Synthetic unrelated metadata repeated to consume the bounded catalog while remaining harmless. ".repeat(4);
       for (const name of ["aaa-one", "aaa-two", "aaa-three"]) {
@@ -7192,7 +7192,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP rejects an explicitly invoked skill deleted after session startup",
     async () => {
-      const root = createIsolatedRoot("fx-acp-stale-explicit-skill-");
+      const root = createIsolatedRoot("fiber-acp-stale-explicit-skill-");
       const skillDirectory = join(root.workspace, "skills", "acp-stale");
       const skillBody = "ACP_STALE_SKILL_BODY_MUST_NOT_LEAK";
       mkdirSync(skillDirectory, { recursive: true });
@@ -7239,7 +7239,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP keeps valid skills when a malformed neighbor is diagnosed",
     async () => {
-      const root = createIsolatedRoot("fx-acp-skill-diagnostics-");
+      const root = createIsolatedRoot("fiber-acp-skill-diagnostics-");
       const tracePath = join(root.root, "trace.log");
       const validDirectory = join(root.workspace, "skills", "acp-valid-skill");
       const malformedDirectory = join(
@@ -7337,7 +7337,7 @@ describe("acp: model-independent", () => {
   test(
     "session/prompt refreshes project context before each turn",
     async () => {
-      const root = createIsolatedRoot("fx-acp-context-refresh-");
+      const root = createIsolatedRoot("fiber-acp-context-refresh-");
       const firstMarker = "ACP_CONTEXT_FIRST_SENTINEL";
       const secondMarker = "ACP_CONTEXT_SECOND_SENTINEL";
       const transientMarker =
@@ -7388,7 +7388,7 @@ describe("acp: model-independent", () => {
   test(
     "session/prompt applies scoped instructions from a local resource target",
     async () => {
-      const root = createIsolatedRoot("fx-acp-resource-context-");
+      const root = createIsolatedRoot("fiber-acp-resource-context-");
       const nested = join(root.workspace, "nested scope");
       const sibling = join(root.workspace, "sibling");
       mkdirSync(nested, { recursive: true });
@@ -7456,7 +7456,7 @@ describe("acp: model-independent", () => {
   test(
     "session/prompt defers a scoped mutation until its instructions are visible",
     async () => {
-      const root = createIsolatedRoot("fx-acp-tool-context-");
+      const root = createIsolatedRoot("fiber-acp-tool-context-");
       const nested = join(root.workspace, "nested");
       const sibling = join(root.workspace, "sibling");
       mkdirSync(nested, { recursive: true });
@@ -7549,7 +7549,7 @@ describe("acp: model-independent", () => {
   test(
     "permission requests reuse tool ids and session grants",
     async () => {
-      const root = createIsolatedRoot("fx-acp-permission-parity-");
+      const root = createIsolatedRoot("fiber-acp-permission-parity-");
       const target = join(root.external, "approved.txt");
       writeFileSync(
         join(root.home, ".fiber", "settings.json"),
@@ -7627,7 +7627,7 @@ describe("acp: model-independent", () => {
   test(
     "explicit rejection blocks execution with a failed terminal status",
     async () => {
-      const root = createIsolatedRoot("fx-acp-permission-reject-");
+      const root = createIsolatedRoot("fiber-acp-permission-reject-");
       const target = join(root.external, "rejected.txt");
       writeFileSync(
         join(root.home, ".fiber", "settings.json"),
@@ -7667,7 +7667,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP executes one direct subagent result with inherited tools",
     async () => {
-      const root = createIsolatedRoot("fx-acp-direct-subagent-");
+      const root = createIsolatedRoot("fiber-acp-direct-subagent-");
       const childPrompt = "Inspect the workspace without making changes.";
       const createId = "acp_direct_child";
       const route = (body: string) => {
@@ -7708,7 +7708,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP cancellation interrupts terminal subagent waiting and keeps the server usable",
     async () => {
-      const root = createIsolatedRoot("fx-acp-subagent-cancel-");
+      const root = createIsolatedRoot("fiber-acp-subagent-cancel-");
       const childPrompt = "Remain active until the parent ACP prompt is cancelled.";
       const heldChild = deferred<Response>();
       const gateway = startFakeGateway([
@@ -7781,7 +7781,7 @@ describe("acp: model-independent", () => {
   test(
     "ACP allow-once command approval executes with shared authority",
     async () => {
-      const root = createIsolatedRoot("fx-acp-command-approval-");
+      const root = createIsolatedRoot("fiber-acp-command-approval-");
       const marker = join(root.workspace, "approved-command.txt");
       writeFileSync(
         join(root.home, ".fiber", "settings.json"),
@@ -7824,7 +7824,7 @@ describe("acp: model-independent", () => {
   test(
     "mode changes during a prompt apply to the next prompt",
     async () => {
-      const root = createIsolatedRoot("fx-acp-active-mode-");
+      const root = createIsolatedRoot("fiber-acp-active-mode-");
       const heldResponse = deferred<Response>();
       const probePath = join(root.workspace, "mode-probe.txt");
       const gateway = startFakeGateway([
@@ -7879,7 +7879,7 @@ describe("acp: model-independent", () => {
   test(
     "protocol request cancellation aborts held automatic review and keeps server usable",
     async () => {
-      const root = createIsolatedRoot("fx-acp-auto-review-cancel-");
+      const root = createIsolatedRoot("fiber-acp-auto-review-cancel-");
       const marker = join(root.workspace, "cancelled-review-must-not-run.txt");
       const heldReview = deferred<Response>();
       const gateway = startFakeGateway(
@@ -7948,7 +7948,7 @@ describe("acp: model-independent", () => {
   test(
     "stdin shutdown cancels a pending permission request",
     async () => {
-      const root = createIsolatedRoot("fx-acp-permission-shutdown-");
+      const root = createIsolatedRoot("fiber-acp-permission-shutdown-");
       const target = join(root.external, "never-written.txt");
       writeFileSync(
         join(root.home, ".fiber", "settings.json"),
@@ -7991,7 +7991,7 @@ describe("acp: model catalog authentication", () => {
   test(
     "session/new includes model options from the authenticated Codex catalog",
     async () => {
-      const root = createIsolatedRoot("fx-acp-codex-model-options-");
+      const root = createIsolatedRoot("fiber-acp-codex-model-options-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -8024,7 +8024,7 @@ describe("acp: model catalog authentication", () => {
   test(
     "--model flag overrides the selected catalog model",
     async () => {
-      const root = createIsolatedRoot("fx-acp-model-override-");
+      const root = createIsolatedRoot("fiber-acp-model-override-");
       const gateway = startFakeGateway([finalText("override complete")]);
       try {
         client = await AcpClient.create({
@@ -8101,7 +8101,7 @@ describe("acp: model-backed protocol", () => {
   test(
     "session/new returns sessionId and configOptions",
     async () => {
-      const root = createIsolatedRoot("fx-acp-session-new-");
+      const root = createIsolatedRoot("fiber-acp-session-new-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -8138,7 +8138,7 @@ describe("acp: model-backed protocol", () => {
   test(
     "session/list returns sessions array",
     async () => {
-      const root = createIsolatedRoot("fx-acp-session-list-");
+      const root = createIsolatedRoot("fiber-acp-session-list-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -8161,7 +8161,7 @@ describe("acp: model-backed protocol", () => {
   test(
     "session/set_mode updates mode",
     async () => {
-      const root = createIsolatedRoot("fx-acp-set-mode-");
+      const root = createIsolatedRoot("fiber-acp-set-mode-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -8185,7 +8185,7 @@ describe("acp: model-backed protocol", () => {
   test(
     "session/load returns configOptions for a known session",
     async () => {
-      const root = createIsolatedRoot("fx-acp-session-load-");
+      const root = createIsolatedRoot("fiber-acp-session-load-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -8218,7 +8218,7 @@ describe("acp: model-backed protocol", () => {
   test(
     "session/set_config_option updates model and returns configOptions",
     async () => {
-      const root = createIsolatedRoot("fx-acp-set-config-");
+      const root = createIsolatedRoot("fiber-acp-set-config-");
       const gateway = startFakeGateway([], );
       try {
         client = await AcpClient.create({
@@ -8251,7 +8251,7 @@ describe("acp: model-backed protocol", () => {
   test(
     "ACP session prompts refresh Codex credentials without crossing origins",
     async () => {
-      const root = createIsolatedRoot("fx-acp-chatgpt-route-");
+      const root = createIsolatedRoot("fiber-acp-chatgpt-route-");
       const gateway = startFakeGateway([]);
       const codex = startAcpFakeCodex({ unauthorizedResponses: 1 });
       try {
@@ -8295,7 +8295,7 @@ describe("acp: model-backed protocol", () => {
   test(
     "session/prompt returns response with stopReason",
     async () => {
-      const root = createIsolatedRoot("fx-acp-session-prompt-");
+      const root = createIsolatedRoot("fiber-acp-session-prompt-");
       const gateway = startFakeGateway([finalText("pong")]);
       try {
         client = await AcpClient.create({
@@ -8340,7 +8340,7 @@ describe("acp: model-backed protocol", () => {
   test(
     "session/cancel does not crash the server",
     async () => {
-      const root = createIsolatedRoot("fx-acp-session-cancel-");
+      const root = createIsolatedRoot("fiber-acp-session-cancel-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({
@@ -8369,7 +8369,7 @@ describe("acp: model-backed protocol", () => {
   test(
     "session/new model configOptions has multiple options",
     async () => {
-      const root = createIsolatedRoot("fx-acp-model-options-");
+      const root = createIsolatedRoot("fiber-acp-model-options-");
       const gateway = startFakeGateway([], );
       try {
         client = await AcpClient.create({
@@ -8393,7 +8393,7 @@ describe("acp: model-backed protocol", () => {
   test(
     "no stderr output during normal ACP operation",
     async () => {
-      const root = createIsolatedRoot("fx-acp-no-stderr-");
+      const root = createIsolatedRoot("fiber-acp-no-stderr-");
       const gateway = startFakeGateway([]);
       try {
         client = await AcpClient.create({

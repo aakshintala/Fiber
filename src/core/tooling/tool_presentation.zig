@@ -809,7 +809,7 @@ test "tool presentation formats permission labels" {
     const cwd = try formatPermissionLabel(alloc, test_tool_registry, .{
         .id = "command",
         .name = "run_command",
-        .arguments_json = "{\"command\":\"npm test\",\"cwd\":\"/tmp/fx\"}",
+        .arguments_json = "{\"command\":\"npm test\",\"cwd\":\"/tmp/fiber\"}",
     });
     defer alloc.free(cwd);
     try std.testing.expectEqualStrings("shell.run npm test", cwd);

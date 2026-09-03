@@ -1928,7 +1928,7 @@ fn writeTraceReportFile(alloc: std.mem.Allocator, contents: []const u8) ![]u8 {
         var random_bytes: [6]u8 = undefined;
         io_mod.getIo().random(&random_bytes);
         const random_hex = std.fmt.bytesToHex(random_bytes, .lower);
-        const path = try std.fmt.allocPrint(alloc, "{s}/fx-trace-{d}-{d:0>2}-{d:0>2}-{d:0>2}{d:0>2}{d:0>2}-{s}.md", .{
+        const path = try std.fmt.allocPrint(alloc, "{s}/fiber-trace-{d}-{d:0>2}-{d:0>2}-{d:0>2}{d:0>2}{d:0>2}-{s}.md", .{
             trimmed,
             year_day.year,
             month_day.month.numeric(),
@@ -3879,7 +3879,7 @@ test "trace report file uses private randomized markdown path" {
     defer alloc.free(path);
     defer std.Io.Dir.deleteFileAbsolute(std.testing.io, path) catch {};
 
-    try std.testing.expect(std.mem.find(u8, path, "fx-trace-") != null);
+    try std.testing.expect(std.mem.find(u8, path, "fiber-trace-") != null);
     try std.testing.expect(std.mem.endsWith(u8, path, ".md"));
 
     var file = try std.Io.Dir.openFileAbsolute(std.testing.io, path, .{});
@@ -4025,7 +4025,7 @@ test "trace web search calls hide provider names and payloads" {
             .id = "call_local",
             .name = "read_file",
             .arguments_json = "{}",
-            .provenance = .fx_local,
+            .provenance = .fiber_local,
         },
     };
     var results = [_]types.PersistedToolResult{
@@ -4428,7 +4428,7 @@ test "skills list opens menu without transcript inventory" {
             .name = "managed",
             .description = "managed skill",
             .path = "/tmp/managed/SKILL.md",
-            .source = .global_fx,
+            .source = .global_fiber,
         },
         .{
             .name = "workspace",
@@ -4490,7 +4490,7 @@ test "skills show focuses matching menu row without transcript body" {
             .name = "managed",
             .description = "managed skill",
             .path = "/tmp/managed/SKILL.md",
-            .source = .global_fx,
+            .source = .global_fiber,
         },
         .{
             .name = "workspace",
@@ -4520,7 +4520,7 @@ test "skills show exposes duplicate rows without focusing a precedence winner" {
             .name = "review",
             .description = "managed review",
             .path = "/tmp/managed/review",
-            .source = .global_fx,
+            .source = .global_fiber,
         },
         .{
             .name = "review",
@@ -4571,7 +4571,7 @@ test "skills remove prefers a managed match after a workspace duplicate" {
             .name = "review",
             .description = "managed review",
             .path = managed_skill,
-            .source = .global_fx,
+            .source = .global_fiber,
         },
     };
     var app = SkillsInstallReplayApp{
@@ -4599,7 +4599,7 @@ test "skills show missing name keeps not found notice" {
         .name = "managed",
         .description = "managed skill",
         .path = "/tmp/managed/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     var app = SkillsInstallReplayApp{ .alloc = alloc, .skills = .{ .items = @constCast(&skills) } };
     defer app.deinit();

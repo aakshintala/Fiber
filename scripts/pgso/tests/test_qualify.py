@@ -36,7 +36,7 @@ from scripts.pgso.runner import CommandResult
 class PgsoQualificationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory(
-            prefix="fx-pgso-qualify-"
+            prefix="fiber-pgso-qualify-"
         )
         self.root = pathlib.Path(self.temporary_directory.name)
 

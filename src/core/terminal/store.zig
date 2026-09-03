@@ -503,13 +503,13 @@ pub const ProfileStore = struct {
             }),
         };
         defer home_dir.close();
-        var fx_dir = try io_mod.openOrCreateVerifiedPrivateDir(
+        var fiber_dir = try io_mod.openOrCreateVerifiedPrivateDir(
             &home_dir,
             profile_paths.root_dir_name,
         );
-        defer fx_dir.close();
+        defer fiber_dir.close();
         var sessions_dir = try io_mod.openOrCreateVerifiedPrivateDir(
-            &fx_dir,
+            &fiber_dir,
             profile_paths.sessions_dir_name,
         );
         errdefer sessions_dir.close();
@@ -5848,9 +5848,9 @@ const TestStoreFixture = struct {
             .{ .iterate = true, .follow_symlinks = false },
         ) };
         defer root.close();
-        var fx = try io_mod.openOrCreateVerifiedPrivateDir(&root, ".fiber");
-        defer fx.close();
-        var sessions = try io_mod.openOrCreateVerifiedPrivateDir(&fx, "sessions");
+        var fiber = try io_mod.openOrCreateVerifiedPrivateDir(&root, ".fiber");
+        defer fiber.close();
+        var sessions = try io_mod.openOrCreateVerifiedPrivateDir(&fiber, "sessions");
         defer sessions.close();
         var owner = try io_mod.openOrCreateVerifiedPrivateDir(
             &sessions,

@@ -575,7 +575,7 @@ pub const FinalToolIdentity = enum {
 };
 
 pub const ToolExecutionProvenance = enum {
-    fx_local,
+    fiber_local,
     provider_executed,
 };
 
@@ -620,7 +620,7 @@ pub const ToolCall = struct {
     provisional_id: ?[]const u8 = null,
     provider_result: ?[]const u8 = null,
     final_identity: FinalToolIdentity = .valid,
-    provenance: ToolExecutionProvenance = .fx_local,
+    provenance: ToolExecutionProvenance = .fiber_local,
 };
 
 pub const WebSearchProgress = union(enum) {
@@ -2658,10 +2658,10 @@ test "HistoryTurn helpers duplicate and free owned turns" {
         } },
         .cancelled_command = .{
             .output_replay = .{ .available = .{
-                .handle = try alloc.dupe(u8, "fx-command-replay.bin"),
+                .handle = try alloc.dupe(u8, "fiber-command-replay.bin"),
                 .framed_bytes = 42,
             } },
-            .command_artifact_handle = try alloc.dupe(u8, "fx-command.log"),
+            .command_artifact_handle = try alloc.dupe(u8, "fiber-command.log"),
         },
         .terminal_reason = .failed,
     } };
@@ -2671,7 +2671,7 @@ test "HistoryTurn helpers duplicate and free owned turns" {
     const copied_presentation = interrupted_copy.interrupted.cancelled_command.?;
     const original_presentation = interrupted_original.interrupted.cancelled_command.?;
     try std.testing.expectEqualStrings(
-        "fx-command-replay.bin",
+        "fiber-command-replay.bin",
         copied_presentation.output_replay.?.available.handle,
     );
     try std.testing.expect(

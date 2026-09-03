@@ -42,8 +42,8 @@ pub const CallbackProjection = enum {
     raw,
 };
 
-const command_artifact_file_prefix = "fx-command-";
-const command_artifact_fallback_dir_name = "fx-command-output";
+const command_artifact_file_prefix = "fiber-command-";
+const command_artifact_fallback_dir_name = "fiber-command-output";
 const command_artifact_log_suffix = ".log";
 const command_artifact_stdout_suffix = ".stdout.log";
 const command_artifact_stderr_suffix = ".stderr.log";
@@ -54,7 +54,7 @@ const supports_foreground_session = builtin.link_libc and
     std.process.can_replace and
     builtin.os.tag != .windows and
     builtin.os.tag != .wasi;
-const foreground_session_token = "__fx_foreground_session__";
+const foreground_session_token = "__fiber_foreground_session__";
 const foreground_session_ready_byte: u8 = 0x1e;
 const foreground_session_release_byte: u8 = 0x06;
 const foreground_session_setup_timeout_ms: i64 = 5000;
@@ -3164,7 +3164,7 @@ test "detached session preserves replacement failure with a zero output budget" 
 
     var scratch_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer scratch_state.deinit();
-    const argv = [_][]const u8{"/definitely/missing/fx-command-target"};
+    const argv = [_][]const u8{"/definitely/missing/fiber-command-target"};
 
     try std.testing.expectError(
         error.FileNotFound,

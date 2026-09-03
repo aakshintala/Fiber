@@ -1238,13 +1238,13 @@ test "saving MCP config replaces the file durably" {
     const path = try tmpDirPath(alloc, tmp.dir, "home/.fiber/mcp.json");
     defer alloc.free(path);
 
-    var fx_dir = try tmp.dir.openDir(io_mod.getIo(), "home/.fiber", .{ .iterate = true });
-    defer fx_dir.close(io_mod.getIo());
+    var fiber_dir = try tmp.dir.openDir(io_mod.getIo(), "home/.fiber", .{ .iterate = true });
+    defer fiber_dir.close(io_mod.getIo());
 
     // Seed a group-readable mode so the 0600 assertion below cannot pass just
     // because the developer's umask already produced it.
     {
-        var seed = try fx_dir.openFile(io_mod.getIo(), "mcp.json", .{ .mode = .read_write });
+        var seed = try fiber_dir.openFile(io_mod.getIo(), "mcp.json", .{ .mode = .read_write });
         defer seed.close(io_mod.getIo());
         try seed.setPermissions(io_mod.getIo(), std.Io.File.Permissions.fromMode(0o644));
     }
@@ -1252,7 +1252,7 @@ test "saving MCP config replaces the file durably" {
     // Hold the pre-save file open. A rename-over leaves this descriptor on the
     // old, unlinked inode; an in-place truncate would empty it instead, which
     // is the failure this save must not have.
-    var held = try fx_dir.openFile(io_mod.getIo(), "mcp.json", .{});
+    var held = try fiber_dir.openFile(io_mod.getIo(), "mcp.json", .{});
     defer held.close(io_mod.getIo());
 
     try saveConfigsToPath(alloc, path, &.{});
@@ -1267,10 +1267,10 @@ test "saving MCP config replaces the file durably" {
     defer alloc.free(written);
     try std.testing.expect(std.mem.find(u8, written, "stale") == null);
 
-    const stat = try fx_dir.statFile(io_mod.getIo(), "mcp.json", .{ .follow_symlinks = false });
+    const stat = try fiber_dir.statFile(io_mod.getIo(), "mcp.json", .{ .follow_symlinks = false });
     try std.testing.expectEqual(@as(u32, 0o600), stat.permissions.toMode() & 0o777);
 
-    var it = fx_dir.iterate();
+    var it = fiber_dir.iterate();
     var entries: usize = 0;
     while (try it.next(io_mod.getIo())) |entry| {
         entries += 1;
@@ -2192,7 +2192,7 @@ test "loadConfigFromJson preserves HTTP identity headers and timeouts" {
 test "remote config keeps credential references and OAuth policy without secrets" {
     const alloc = std.testing.allocator;
     const json =
-        \\{"mcp":{"api":{"type":"http","url":"https://api.example.com/mcp","header_env":{"X-Workspace":"MCP_WORKSPACE"},"bearer_token_env":"MCP_TOKEN","oauth":{"resource":"https://api.example.com/mcp","issuer":"https://login.example.com","client_id":"fx-client","client_secret_env":"MCP_CLIENT_SECRET","client_metadata_url":"https://client.example/fx.json","scopes":["tools.read","tools.call"]}}}}
+        \\{"mcp":{"api":{"type":"http","url":"https://api.example.com/mcp","header_env":{"X-Workspace":"MCP_WORKSPACE"},"bearer_token_env":"MCP_TOKEN","oauth":{"resource":"https://api.example.com/mcp","issuer":"https://login.example.com","client_id":"fiber-client","client_secret_env":"MCP_CLIENT_SECRET","client_metadata_url":"https://client.example/fiber.json","scopes":["tools.read","tools.call"]}}}}
     ;
     var configs = try loadConfigFromJson(alloc, json);
     defer freeConfigs(alloc, &configs);
@@ -2209,14 +2209,14 @@ test "remote config keeps credential references and OAuth policy without secrets
         auth.resource.?,
     );
     try std.testing.expectEqualStrings("https://login.example.com", auth.issuer.?);
-    try std.testing.expectEqualStrings("fx-client", auth.client_id.?);
+    try std.testing.expectEqualStrings("fiber-client", auth.client_id.?);
     try std.testing.expectEqualStrings("MCP_CLIENT_SECRET", auth.client_secret_env.?);
     try std.testing.expectEqual(@as(usize, 2), auth.scopes.len);
 }
 
 test "profile config rejects a mixed set containing invalid client metadata URLs" {
     const json =
-        \\{"mcp":{"loopback":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"http://127.0.0.1:4321/client.json"}},"pathless":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example"}},"root":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example/"}},"valid":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example/fx.json"}}}}
+        \\{"mcp":{"loopback":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"http://127.0.0.1:4321/client.json"}},"pathless":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example"}},"root":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example/"}},"valid":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example/fiber.json"}}}}
     ;
     try std.testing.expectError(
         error.McpConfigInvalidOAuth,

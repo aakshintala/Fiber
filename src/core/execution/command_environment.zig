@@ -33,7 +33,7 @@ pub const Environment = union(enum) {
 };
 
 const permission_identity_prefix = "@fiber-terminal-env:";
-const tty_permission_identity_prefix = "@fx-shell-mode:tty:";
+const tty_permission_identity_prefix = "@fiber-shell-mode:tty:";
 
 pub fn isExplicitPermissionCommandIdentity(value: []const u8) bool {
     return std.mem.startsWith(u8, value, permission_identity_prefix) or

@@ -136,13 +136,13 @@ test "setLatestVersion stores normalized version" {
 
 test "relaunch request owns the executable path and is consumed once" {
     var au = AutoUpgrade{};
-    var source = [_]u8{ '/', 't', 'm', 'p', '/', 'f', 'x' };
+    var source = [_]u8{ '/', 't', 'm', 'p', '/', 'f', 'i', 'b', 'e', 'r' };
     try au.requestRelaunch(&source);
     source[1] = 'x';
 
     const request = au.takeRelaunchRequest() orelse
         return error.TestExpectedRelaunchRequest;
-    try std.testing.expectEqualStrings("/tmp/fx", request.executablePath());
+    try std.testing.expectEqualStrings("/tmp/fiber", request.executablePath());
     try std.testing.expect(au.takeRelaunchRequest() == null);
 }
 

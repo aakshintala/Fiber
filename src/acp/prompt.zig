@@ -308,7 +308,7 @@ const AcpContext = struct {
     fn toolContext(self: *AcpContext) tool_runtime.Context {
         const session = if (self.state.active_session) |*active| active else unreachable;
         const provider_capabilities = self.state.cfg.provider_set.select(session.provider).capabilities;
-        if (provider_capabilities.fx_search) {
+        if (provider_capabilities.fiber_search) {
             self.state.web_search_runtime.configure(.{
                 .api_key = session.api_key,
                 .credential_source = session.credential_source,
@@ -378,7 +378,7 @@ const AcpContext = struct {
             .web_fetch_artifact_store = session.session_rt.webFetchArtifactStore(),
             .web_fetch_artifact_error = session.session_rt.webFetchArtifactError(),
             .web_search_runtime_ready = false,
-            .web_search_backend = if (provider_capabilities.fx_search) self.state.web_search_runtime.dispatchBackend() else null,
+            .web_search_backend = if (provider_capabilities.fiber_search) self.state.web_search_runtime.dispatchBackend() else null,
             .model_capability_resolver = .{
                 .ctx = @ptrCast(self),
                 .resolve_fn = resolveModelCapabilities,
@@ -983,9 +983,9 @@ fn parsePromptInputWithFirstImageId(
     const continue_recovery = blk: {
         const meta = parsed.value.object.get("_meta") orelse break :blk false;
         if (meta != .object) break :blk false;
-        const fx = meta.object.get("fx") orelse break :blk false;
-        if (fx != .object) break :blk false;
-        const value = fx.object.get("continueRecovery") orelse break :blk false;
+        const fiber = meta.object.get("fiber") orelse break :blk false;
+        if (fiber != .object) break :blk false;
+        const value = fiber.object.get("continueRecovery") orelse break :blk false;
         break :blk value == .bool and value.bool;
     };
 
@@ -2303,7 +2303,7 @@ fn requestAcpElicitation(
 
     var id_buffer: [48]u8 = undefined;
     const url_id = if (input_request.mode == .url)
-        try std.fmt.bufPrint(&id_buffer, "fx-{d}", .{outbound_id})
+        try std.fmt.bufPrint(&id_buffer, "fiber-{d}", .{outbound_id})
     else
         null;
     const legacy_source_id = if (origin.wire.isLegacy() and input_request.mode == .url)
@@ -3065,7 +3065,7 @@ test "parsePromptInput handles empty prompt array" {
 test "parsePromptInput accepts explicit recovery continuation metadata" {
     const alloc = std.testing.allocator;
     const params =
-        "{\"sessionId\":\"s1\",\"prompt\":[],\"_meta\":{\"fx\":{\"continueRecovery\":true}}}";
+        "{\"sessionId\":\"s1\",\"prompt\":[],\"_meta\":{\"fiber\":{\"continueRecovery\":true}}}";
     var result = try parsePromptInput(alloc, params);
     defer result.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 0), result.text.len);
@@ -3402,7 +3402,7 @@ test "ACP stream adapter forwards raw Markdown and suppresses rendered duplicate
     };
     const operational_span =
         "\x1b[1mstatus\x1b[22m\n" ++
-        "\x1b]8;id=fx-1;https://example.com\x1b\\docs\x1b]8;;\x1b\\\n";
+        "\x1b]8;id=fiber-1;https://example.com\x1b\\docs\x1b]8;;\x1b\\\n";
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -3552,7 +3552,7 @@ test "ACP tool updates preserve typed permission failures without truncation" {
 
 test "ACP plan mode validates registered tools against mode policy" {
     const alloc = std.testing.allocator;
-    var state = try initTestAcpState(alloc, "/tmp/fx-acp-plan-mode", .ask);
+    var state = try initTestAcpState(alloc, "/tmp/fiber-acp-plan-mode", .ask);
     defer state.deinit();
     state.active_session.?.mode = "plan";
     var ctx = AcpContext{
@@ -3726,7 +3726,7 @@ test "stripAnsiAlloc returns the original slice for clean text and strips escape
 
 test "stripAnsiAlloc converts OSC-8 hyperlinks with params and BEL terminators" {
     const alloc = std.testing.allocator;
-    const with_params = try stripAnsiAlloc(alloc, "\x1b]8;id=fx-1;https://ziglang.org/download/\x1b\\Zig downloads\x1b]8;;\x1b\\ ready");
+    const with_params = try stripAnsiAlloc(alloc, "\x1b]8;id=fiber-1;https://ziglang.org/download/\x1b\\Zig downloads\x1b]8;;\x1b\\ ready");
     defer alloc.free(with_params);
     try std.testing.expectEqualStrings("[Zig downloads](https://ziglang.org/download/) ready", with_params);
 

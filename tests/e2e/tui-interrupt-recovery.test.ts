@@ -64,7 +64,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
   test(
     "submitted status text queues behind an active response",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-text-queues-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-text-queues-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
@@ -156,7 +156,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
   test(
     "partial output survives cancellation and the next prompt completes",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-interrupt-recovery-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-interrupt-recovery-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
@@ -300,7 +300,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
   test(
     "workspace mutation waits for cancelled worker unwind",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-workspace-cancel-unwind-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-workspace-cancel-unwind-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const observed = join(root, "observed");
@@ -401,7 +401,7 @@ while :; do sleep 1; done
 
       await waitForTrace(tracePath, "finish processing queued=0", TIMEOUT);
       await session.waitForText(
-        "Cancelled ./hold-workspace-cancel.sh · What can fx do differently?",
+        "Cancelled ./hold-workspace-cancel.sh · What can fiber do differently?",
         TIMEOUT,
       );
       await session.sendText("/workspace list");

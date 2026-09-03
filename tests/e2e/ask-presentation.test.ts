@@ -58,7 +58,7 @@ async function waitForTerminalHostExit(root: string): Promise<void> {
 }
 
 function createRoot() {
-  const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-presentation-"));
+  const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-presentation-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(home);
@@ -68,7 +68,7 @@ function createRoot() {
 }
 
 function createShortRoot() {
-  const root = realpathSync(mkdtempSync("/tmp/fx-ask-terminal-"));
+  const root = realpathSync(mkdtempSync("/tmp/fiber-ask-terminal-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(home);
@@ -100,8 +100,8 @@ function shellQuote(value: string): string {
 }
 
 function terminalCommand(args: string[]): string {
-  const fx = [FIBER_BIN, ...args].map(shellQuote).join(" ");
-  const script = `${fx}; code=$?; printf '\\n__FX_EXIT_%s__\\n' "$code"; exit "$code"`;
+  const fiber_cmd = [FIBER_BIN, ...args].map(shellQuote).join(" ");
+  const script = `${fiber_cmd}; code=$?; printf '\\n__FIBER_EXIT_%s__\\n' "$code"; exit "$code"`;
   return `/bin/sh -c ${shellQuote(script)}`;
 }
 
@@ -137,7 +137,7 @@ function fakeGatewayStreamingText(lines: string[], delayMs: number) {
   );
 }
 
-describe("fx ask presentation", () => {
+describe("fiber ask presentation", () => {
   test("redirected command output separates the next tool header", async () => {
     const root = createRoot();
     const gateway = startFakeGateway([
@@ -190,8 +190,8 @@ describe("fx ask presentation", () => {
       );
       writeFileSync(
         join(root.home, ".zshrc"),
-        "export FIBER_PROFILE_RC=rc\nalias fx_profile_alias='printf alias-user'\n" +
-          "fx_profile_function() { printf function-user; }\n",
+        "export FIBER_PROFILE_RC=rc\nalias fiber_profile_alias='printf alias-user'\n" +
+          "fiber_profile_function() { printf function-user; }\n",
       );
     } else {
       writeFileSync(
@@ -201,16 +201,16 @@ describe("fx ask presentation", () => {
       );
       writeFileSync(
         join(root.home, ".bashrc"),
-        "export FIBER_PROFILE_RC=rc\nalias fx_profile_alias='printf alias-user'\n" +
-          "fx_profile_function() { printf function-user; }\n",
+        "export FIBER_PROFILE_RC=rc\nalias fiber_profile_alias='printf alias-user'\n" +
+          "fiber_profile_function() { printf function-user; }\n",
       );
     }
 
     const profileCommand =
       "printf 'mode=%s:%s:' \"${FIBER_PROFILE_LOGIN-unset}\" \"${FIBER_PROFILE_RC-unset}\"; " +
       "case :\"$PATH\": in *:\"$HOME/profile-bin\":*) printf 'path-user:';; *) printf 'path-clean:';; esac; " +
-      "if alias fx_profile_alias >/dev/null 2>&1; then fx_profile_alias; else printf no-alias; fi; printf ':'; " +
-      "if command -v fx_profile_function >/dev/null; then fx_profile_function; else printf no-function; fi";
+      "if alias fiber_profile_alias >/dev/null 2>&1; then fiber_profile_alias; else printf no-alias; fi; printf ':'; " +
+      "if command -v fiber_profile_function >/dev/null; then fiber_profile_function; else printf no-function; fi";
     const nestedExecMarker = join(root.workspace, "nested-no-save-ran");
     const gateway = startFakeGateway([
       fakeGatewayToolCall("shell-omitted", "shell", {
@@ -426,7 +426,7 @@ describe("fx ask presentation", () => {
       await session.waitForText("Between groups.", TIMEOUT);
       await session.resizeWindow(104, 36);
       releaseFinal!();
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const pane = await session.capturePane();
       const scrollback = await session.captureFullScrollback();
       const escaped = await session.captureFullScrollbackEscapes();
@@ -472,7 +472,7 @@ describe("fx ask presentation", () => {
       });
       sessions.push(session);
 
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const pane = await session.captureFullScrollback();
       const escaped = await session.captureFullScrollbackEscapes();
       expect(pane).toContain("Render the no-color fixture.");
@@ -514,7 +514,7 @@ describe("fx ask presentation", () => {
       });
       sessions.push(session);
 
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const escaped = await session.captureFullScrollbackEscapes();
       expect(escaped).toContain("\x1b[38;5;238mconst\x1b[39m");
       expect(escaped).not.toContain("\x1b[38;5;252mconst\x1b[39m");
@@ -569,7 +569,7 @@ describe("fx ask presentation", () => {
       });
       sessions.push(session);
 
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const scrollback = await session.captureFullScrollback();
       let previousIndex = -1;
       for (const line of answerLines) {
@@ -689,7 +689,7 @@ describe("fx ask presentation", () => {
         releaseResponse();
       }
 
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const finalScrollback = await session.captureFullScrollback();
       expect(finalScrollback.split("Run /help for commands")).toHaveLength(2);
       for (const line of answerLines) {
@@ -733,9 +733,9 @@ describe("fx ask presentation", () => {
       });
       sessions.push(session);
 
-      await session.waitForText(/__FX_EXIT_[0-9]+__/, TIMEOUT);
+      await session.waitForText(/__FIBER_EXIT_[0-9]+__/, TIMEOUT);
       const scrollback = await session.captureFullScrollback();
-      expect(scrollback).toContain("__FX_EXIT_0__");
+      expect(scrollback).toContain("__FIBER_EXIT_0__");
       let previousIndex = -1;
       for (const line of answerLines) {
         const marker = line.slice(0, "WRAPPED_LINE_00".length);
@@ -783,7 +783,7 @@ describe("fx ask presentation", () => {
       });
       sessions.push(session);
 
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const scrollback = await session.captureFullScrollback();
       expect(scrollback).toContain("Run the notice filtering fixture.");
       expect(scrollback).toContain("Notice filtering complete.");

@@ -133,7 +133,7 @@ export function loadAbConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AbCon
 
   const outputDir =
     env.FIBER_AB_OUTPUT_DIR ??
-    mkdtempSync(join(tmpdir(), `fx-agent-quality-ab-${Date.now()}-`));
+    mkdtempSync(join(tmpdir(), `fiber-agent-quality-ab-${Date.now()}-`));
 
   return {
     baselineBin,
@@ -279,7 +279,7 @@ export async function runAbTrial(
   orderIndex: number,
 ): Promise<AbRunResult> {
   const binaryPath = sideBinary(config, side);
-  const trialHome = mkdtempSync(join(tmpdir(), `fx-ab-${row.id}-${trialIndex}-${side}-`));
+  const trialHome = mkdtempSync(join(tmpdir(), `fiber-ab-${row.id}-${trialIndex}-${side}-`));
   const env: Record<string, string | undefined> = {
     PATH: process.env.PATH ?? "",
     HOME: trialHome,

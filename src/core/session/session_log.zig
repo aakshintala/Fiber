@@ -4706,8 +4706,8 @@ test "root init rejects symlinked durable and sessions roots" {
 fn testState(alloc: Allocator, id: []const u8, updated_at_ms: i64) !session_codec.DurableSessionState {
     return .{
         .id = try alloc.dupe(u8, id),
-        .origin_workspace_root = try alloc.dupe(u8, "/tmp/fx-plan-03"),
-        .workspace_root = try alloc.dupe(u8, "/tmp/fx-plan-03"),
+        .origin_workspace_root = try alloc.dupe(u8, "/tmp/fiber-plan-03"),
+        .workspace_root = try alloc.dupe(u8, "/tmp/fiber-plan-03"),
         .created_at_ms = 10,
         .updated_at_ms = updated_at_ms,
         .conversation_language = session.ConversationLanguage.literal("en"),

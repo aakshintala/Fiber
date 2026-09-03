@@ -120,7 +120,7 @@ pub fn configureFromEnv(
     alloc: Allocator,
     initial_cols: u16,
     initial_rows: u16,
-    fx_version: []const u8,
+    fiber_version: []const u8,
 ) !void {
     const policy = resolve_startup_policy(.{
         .debug_record = io_mod.getenv("FIBER_DEBUG_RECORD"),
@@ -134,7 +134,7 @@ pub fn configureFromEnv(
             alloc,
             initial_cols,
             initial_rows,
-            fx_version,
+            fiber_version,
             policy.show_inline_notice,
         ),
         .explicit => |path| configureWithOptions(
@@ -142,7 +142,7 @@ pub fn configureFromEnv(
             path,
             initial_cols,
             initial_rows,
-            fx_version,
+            fiber_version,
             false,
             false,
             policy.show_inline_notice,
@@ -165,16 +165,16 @@ pub fn configure(
     path: []const u8,
     initial_cols: u16,
     initial_rows: u16,
-    fx_version: []const u8,
+    fiber_version: []const u8,
 ) !void {
-    try configureWithOptions(alloc, path, initial_cols, initial_rows, fx_version, false, false, true);
+    try configureWithOptions(alloc, path, initial_cols, initial_rows, fiber_version, false, false, true);
 }
 
 fn configureAutomatic(
     alloc: Allocator,
     initial_cols: u16,
     initial_rows: u16,
-    fx_version: []const u8,
+    fiber_version: []const u8,
     show_inline_notice: bool,
 ) !void {
     const home = if (io_mod.getenv("HOME")) |value| blk: {
@@ -184,7 +184,7 @@ fn configureAutomatic(
     const root = if (home) |value|
         try profile_paths.recordingsDir(alloc, value)
     else
-        try std.fs.path.join(alloc, &.{ io_mod.getenv("TMPDIR") orelse "/tmp", "fx-recordings" });
+        try std.fs.path.join(alloc, &.{ io_mod.getenv("TMPDIR") orelse "/tmp", "fiber-recordings" });
     defer alloc.free(root);
     try io_mod.makeDirRecursive(root);
 
@@ -193,10 +193,10 @@ fn configureAutomatic(
         var random_bytes: [6]u8 = undefined;
         io_mod.getIo().random(&random_bytes);
         const random_hex = std.fmt.bytesToHex(random_bytes, .lower);
-        const path = try std.fmt.allocPrint(alloc, "{s}/fx-record-{d}-{s}.fxtape", .{ root, nowMs(), random_hex });
+        const path = try std.fmt.allocPrint(alloc, "{s}/fiber-record-{d}-{s}.fibertape", .{ root, nowMs(), random_hex });
         defer alloc.free(path);
 
-        configureWithOptions(alloc, path, initial_cols, initial_rows, fx_version, true, true, show_inline_notice) catch |err| switch (err) {
+        configureWithOptions(alloc, path, initial_cols, initial_rows, fiber_version, true, true, show_inline_notice) catch |err| switch (err) {
             error.PathAlreadyExists => continue,
             else => return err,
         };
@@ -210,7 +210,7 @@ fn configureWithOptions(
     path: []const u8,
     initial_cols: u16,
     initial_rows: u16,
-    fx_version: []const u8,
+    fiber_version: []const u8,
     exclusive: bool,
     private: bool,
     show_inline_notice: bool,
@@ -229,7 +229,7 @@ fn configureWithOptions(
     const owned_path = try alloc.dupe(u8, path);
     errdefer alloc.free(owned_path);
 
-    const header = buildHeader(initial_cols, initial_rows, fx_version);
+    const header = buildHeader(initial_cols, initial_rows, fiber_version);
     try file.writeStreamingAll(zio, &header.fixed);
     if (header.version_tail.len > 0) {
         try file.writeStreamingAll(zio, header.version_tail);
@@ -274,10 +274,10 @@ const Header = struct {
     version_tail: []const u8,
 };
 
-fn buildHeader(initial_cols: u16, initial_rows: u16, fx_version: []const u8) Header {
+fn buildHeader(initial_cols: u16, initial_rows: u16, fiber_version: []const u8) Header {
     var header: Header = .{
         .fixed = undefined,
-        .version_tail = fx_version,
+        .version_tail = fiber_version,
     };
     @memcpy(header.fixed[0..magic.len], magic);
     var idx: usize = magic.len;
@@ -287,7 +287,7 @@ fn buildHeader(initial_cols: u16, initial_rows: u16, fx_version: []const u8) Hea
     idx += 2;
     std.mem.writeInt(i64, header.fixed[idx..][0..8], nowMs(), .little);
     idx += 8;
-    header.fixed[idx] = @intCast(@min(fx_version.len, @as(usize, 255)));
+    header.fixed[idx] = @intCast(@min(fiber_version.len, @as(usize, 255)));
     return header;
 }
 
@@ -511,7 +511,7 @@ test "header construction round-trips" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const path = try tapePath(alloc, tmp.dir, "header.fxtape");
+    const path = try tapePath(alloc, tmp.dir, "header.fibertape");
     defer alloc.free(path);
 
     shutdown();
@@ -535,7 +535,7 @@ test "writer helper frames parse back through Parser" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const path = try tapePath(alloc, tmp.dir, "frames.fxtape");
+    const path = try tapePath(alloc, tmp.dir, "frames.fibertape");
     defer alloc.free(path);
 
     shutdown();
@@ -604,7 +604,7 @@ test "missing writer disables capture" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const path = try tapePath(alloc, tmp.dir, "write-failure.fxtape");
+    const path = try tapePath(alloc, tmp.dir, "write-failure.fibertape");
     defer alloc.free(path);
 
     shutdown();
@@ -705,7 +705,7 @@ test "recordStdin suppresses input by default" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const path = try tapePath(alloc, tmp.dir, "stdin-default.fxtape");
+    const path = try tapePath(alloc, tmp.dir, "stdin-default.fibertape");
     defer alloc.free(path);
 
     shutdown();
@@ -784,32 +784,32 @@ test "startup policy resolves recording environment without effects" {
         },
         .{
             .input = .{
-                .configured_path = " /tmp/recording.fxtape ",
+                .configured_path = " /tmp/recording.fibertape ",
                 .record_input = "true",
                 .silent_banner = "yes",
             },
             .destination = .explicit,
-            .explicit_path = "/tmp/recording.fxtape",
+            .explicit_path = "/tmp/recording.fibertape",
             .record_stdin = true,
         },
         .{
             .input = .{
                 .debug_record = "ON",
-                .configured_path = "/tmp/explicit.fxtape",
+                .configured_path = "/tmp/explicit.fibertape",
                 .silent_banner = "false",
             },
             .destination = .explicit,
-            .explicit_path = "/tmp/explicit.fxtape",
+            .explicit_path = "/tmp/explicit.fibertape",
             .strict_start = true,
             .show_inline_notice = true,
         },
         .{
             .input = .{
-                .configured_path = "/tmp/input-yes.fxtape",
+                .configured_path = "/tmp/input-yes.fibertape",
                 .record_input = "yes",
             },
             .destination = .explicit,
-            .explicit_path = "/tmp/input-yes.fxtape",
+            .explicit_path = "/tmp/input-yes.fibertape",
             .show_inline_notice = true,
         },
     };
@@ -849,7 +849,7 @@ test "debug recording request uses the temporary fallback when HOME is empty" {
     defer status.deinit(alloc);
     switch (status) {
         .active => |active| {
-            try testing.expect(std.mem.startsWith(u8, active.path, "/tmp/fx-recordings/"));
+            try testing.expect(std.mem.startsWith(u8, active.path, "/tmp/fiber-recordings/"));
             shutdown();
             if (std.fs.path.isAbsolute(active.path)) {
                 std.Io.Dir.deleteFileAbsolute(io_mod.getIo(), active.path) catch {};
@@ -871,7 +871,7 @@ test "configureFromEnv enables stdin for the accepted truthy values only" {
 
     const truthy_values = [_][]const u8{ "1", "TrUe", " ON " };
     for (truthy_values, 0..) |value, idx| {
-        const name = try std.fmt.allocPrint(alloc, "stdin-{d}.fxtape", .{idx});
+        const name = try std.fmt.allocPrint(alloc, "stdin-{d}.fibertape", .{idx});
         defer alloc.free(name);
         const path = try tapePath(alloc, tmp.dir, name);
         defer alloc.free(path);
@@ -899,7 +899,7 @@ test "configureFromEnv enables stdin for the accepted truthy values only" {
         resetEnvForTest();
     }
 
-    const path = try tapePath(alloc, tmp.dir, "stdin-yes.fxtape");
+    const path = try tapePath(alloc, tmp.dir, "stdin-yes.fibertape");
     defer alloc.free(path);
     var env = std.process.Environ.Map.init(alloc);
     defer env.deinit();
@@ -922,9 +922,9 @@ test "configure is idempotent while enabled and shutdown is idempotent" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const first = try tapePath(alloc, tmp.dir, "first.fxtape");
+    const first = try tapePath(alloc, tmp.dir, "first.fibertape");
     defer alloc.free(first);
-    const second = try tapePath(alloc, tmp.dir, "second.fxtape");
+    const second = try tapePath(alloc, tmp.dir, "second.fibertape");
     defer alloc.free(second);
 
     shutdown();
@@ -949,7 +949,7 @@ test "long versions keep the full written tail while declaring length 255" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const path = try tapePath(alloc, tmp.dir, "long-version.fxtape");
+    const path = try tapePath(alloc, tmp.dir, "long-version.fibertape");
     defer alloc.free(path);
 
     var version: [300]u8 = undefined;

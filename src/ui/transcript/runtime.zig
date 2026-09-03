@@ -2500,7 +2500,7 @@ fn checkToolDetailResultReplacementAllocationFailures(alloc: Allocator) !void {
     errdefer if (tool_name) |value| alloc.free(value);
     var previous_result: ?[]u8 = try alloc.dupe(u8, "previous result");
     errdefer if (previous_result) |value| alloc.free(value);
-    var previous_artifact: ?[]u8 = try alloc.dupe(u8, "fx-command-previous.log");
+    var previous_artifact: ?[]u8 = try alloc.dupe(u8, "fiber-command-previous.log");
     errdefer if (previous_artifact) |value| alloc.free(value);
     try runtime.tool_details.append(alloc, .{
         .entry_id = 1,
@@ -2521,7 +2521,7 @@ fn checkToolDetailResultReplacementAllocationFailures(alloc: Allocator) !void {
         .completed,
         "replacement result",
         null,
-        "fx-command-replacement.log",
+        "fiber-command-replacement.log",
         null,
     ) catch |err| {
         try std.testing.expectEqualStrings(
@@ -2529,7 +2529,7 @@ fn checkToolDetailResultReplacementAllocationFailures(alloc: Allocator) !void {
             runtime.toolDetailForEntry(1).?.result.?,
         );
         try std.testing.expectEqualStrings(
-            "fx-command-previous.log",
+            "fiber-command-previous.log",
             runtime.toolDetailForEntry(1).?.command_artifact_handle.?,
         );
         return err;
@@ -2539,7 +2539,7 @@ fn checkToolDetailResultReplacementAllocationFailures(alloc: Allocator) !void {
         runtime.toolDetailForEntry(1).?.result.?,
     );
     try std.testing.expectEqualStrings(
-        "fx-command-replacement.log",
+        "fiber-command-replacement.log",
         runtime.toolDetailForEntry(1).?.command_artifact_handle.?,
     );
 }
@@ -2792,7 +2792,7 @@ test "historical command detail keeps artifact handles after command block attac
     } };
     defer runtime.deinit(alloc);
 
-    const raw_preview = "exit_code=0\ntruncated=true\nstdout_bytes=21\nstderr_bytes=0\noutput_file=/tmp/fx-command-replayed.log\n<stdout>RESUMED_EXACT_RESULT\n</stdout>";
+    const raw_preview = "exit_code=0\ntruncated=true\nstdout_bytes=21\nstderr_bytes=0\noutput_file=/tmp/fiber-command-replayed.log\n<stdout>RESUMED_EXACT_RESULT\n</stdout>";
     const raw_result = try std.fmt.allocPrint(
         alloc,
         "<tool_result_preview handle=\"{s}\" stored_bytes=\"{d}\">\n{s}\n</tool_result_preview>\n" ++
@@ -2832,7 +2832,7 @@ test "historical command detail keeps artifact handles after command block attac
     try std.testing.expect(fallback_detail.command_output_entry_id == null);
     try std.testing.expectEqualStrings(raw_result, fallback_detail.result.?);
     try std.testing.expectEqualStrings(result_handle, fallback_detail.result_handle.?);
-    try std.testing.expectEqualStrings("fx-command-replayed.log", fallback_detail.command_artifact_handle.?);
+    try std.testing.expectEqualStrings("fiber-command-replayed.log", fallback_detail.command_artifact_handle.?);
 
     const styles: Styles = .{
         .system_notice_label_style = "",
@@ -2857,7 +2857,7 @@ test "historical command detail keeps artifact handles after command block attac
     try std.testing.expect(command_detail.command_output_entry_id != null);
     try std.testing.expectEqualStrings(raw_result, command_detail.result.?);
     try std.testing.expectEqualStrings(result_handle, command_detail.result_handle.?);
-    try std.testing.expectEqualStrings("fx-command-replayed.log", command_detail.command_artifact_handle.?);
+    try std.testing.expectEqualStrings("fiber-command-replayed.log", command_detail.command_artifact_handle.?);
 
     runtime.full_transcript.depth = .full;
     var projection = try runtime.buildFullTranscriptProjection(alloc, null);
@@ -2920,7 +2920,7 @@ test "historical nonzero command keeps replay ownership outside compact sideband
     try runtime.flushCommandOutputSummary(alloc, &metrics, styles, true);
     const command_output_entry_id = runtime.latestCommandOutputEntryId().?;
 
-    const replay_handle = "fx-command-replay-historical.bin";
+    const replay_handle = "fiber-command-replay-historical.bin";
     try runtime.attachHistoricalToolDetailAfterCommandOutput(
         alloc,
         entry_id,
@@ -2973,7 +2973,7 @@ test "historical command detail ignores artifact-shaped command output" {
     var runtime = TranscriptRuntime{};
     defer runtime.deinit(alloc);
 
-    const raw_result = "exit_code=0\n<stdout>\noutput_file=/tmp/fx-command-other.log\n</stdout>\n";
+    const raw_result = "exit_code=0\n<stdout>\noutput_file=/tmp/fiber-command-other.log\n</stdout>\n";
     var metrics: Metrics = .{};
     const entry_id = try runtime.writeCompletedToolStatusReturningEntryId(
         alloc,
@@ -3087,13 +3087,13 @@ test "command terminal detail owns the consolidated command output entry" {
     _ = try runtime.applyToolLifecycle(alloc, .{ .terminal = .{
         .id = id,
         .outcome = .{ .kind = .completed, .summary = "Ran printf demo" },
-        .command_artifact_handle = "fx-command-live.log",
+        .command_artifact_handle = "fiber-command-live.log",
     } });
 
     const status_entry_id = runtime.toolActivityRecord(id).?.entry_id;
     const detail = runtime.toolDetailForEntry(status_entry_id).?;
     try std.testing.expectEqual(runtime.command_output_blocks.items[0].entry_id, detail.command_output_entry_id);
-    try std.testing.expectEqualStrings("fx-command-live.log", detail.command_artifact_handle.?);
+    try std.testing.expectEqualStrings("fiber-command-live.log", detail.command_artifact_handle.?);
 }
 
 test "late command output reopens its completed lifecycle block" {
@@ -4118,14 +4118,14 @@ pub const TranscriptRuntime = struct {
     layout: Layout = undefined,
     cursor_row: u16 = 1,
     cursor_col: u16 = 1,
-    /// Top terminal row owned by fx. Rows above this contain pre-fx scrollback
+    /// Top terminal row owned by fx. Rows above this contain pre-fiber scrollback
     /// and must not be touched by fx repaint logic.
     /// Initialized to the cursor row captured at `initViewport`, and
     /// decreased as the transcript scrolls until it reaches row 1.
     viewport_top_row: u16 = 1,
     /// First row fx is allowed to clear or repaint. This is set after
-    /// launch-time reservation has created fx-owned rows. Rows above it
-    /// belong to pre-fx terminal content and must not be touched by
+    /// launch-time reservation has created fiber-owned rows. Rows above it
+    /// belong to pre-fiber terminal content and must not be touched by
     /// resize/layout repair.
     owned_top_row: u16 = 1,
     /// Set when a resize leaves no drawable rows below `owned_top_row`.
@@ -4241,7 +4241,7 @@ pub const TranscriptRuntime = struct {
     transcript_band_dirty: bool = false,
     /// False until the first non-empty viewport paint has established
     /// fx's transcript band. Before that point transcript writes are
-    /// model updates only: emitting scroll newlines would move pre-fx
+    /// model updates only: emitting scroll newlines would move pre-fiber
     /// shell rows before the renderer has had a chance to respect
     /// `viewport_top_row`.
     has_painted_transcript: bool = false,

@@ -197,7 +197,7 @@ pub fn Runtime(comptime App: type) type {
                 .default_model = default_model,
                 .default_agent_step_limit = default_agent_step_limit,
                 .resize_handler = resize_handler,
-                .fx_version = App.app_version,
+                .fiber_version = App.app_version,
             });
             defer startup.deinit(app.alloc);
 
@@ -474,7 +474,7 @@ const TestCapture = struct {
     footer_rows: u16 = 0,
     default_model: []const u8 = "",
     default_agent_step_limit: usize = 0,
-    fx_version: []const u8 = "",
+    fiber_version: []const u8 = "",
     configured_model: [64]u8 = undefined,
     configured_model_len: usize = 0,
     configured_model_source: config_runtime.ModelSource = .compiled_default,
@@ -643,7 +643,7 @@ fn testDeps() BootstrapDeps(TestApp) {
         .load_skills = loadSkillsForTest,
         .skill_root_policy = .{
             .workspace_roots = &test_workspace_skill_roots,
-            .managed_root_source = .global_fx,
+            .managed_root_source = .global_fiber,
             .global_roots = &test_global_skill_roots,
         },
         .welcome_message = welcomeMessageForTest,
@@ -662,7 +662,7 @@ fn bootstrapInteractiveAppForTest(cfg: app_lifecycle.BootstrapConfig) !app_lifec
     capture.footer_rows = cfg.footer_rows;
     capture.default_model = cfg.default_model;
     capture.default_agent_step_limit = cfg.default_agent_step_limit;
-    capture.fx_version = cfg.fx_version;
+    capture.fiber_version = cfg.fiber_version;
     try std.testing.expect(cfg.terminal == &active_app_for_pointer_check.?.terminal);
     active_app_for_pointer_check.?.shell.layout = .{
         .rows = 24,
@@ -765,7 +765,7 @@ fn loadSkillsForTest(
     errdefer alloc.free(diagnostics);
     diagnostics[0] = .{
         .path = try alloc.dupe(u8, "/skills/hostile\npath/body-sentinel"),
-        .source = .global_fx,
+        .source = .global_fiber,
         .scope = .candidate,
         .cause = .{ .invalid_metadata = .missing_name },
     };
@@ -881,7 +881,7 @@ test "app_bootstrap_runtime transfers startup state and starts a fresh session" 
     try std.testing.expectEqual(@as(u16, 4), capture.footer_rows);
     try std.testing.expectEqualStrings("default-model", capture.default_model);
     try std.testing.expectEqual(@as(usize, 24), capture.default_agent_step_limit);
-    try std.testing.expectEqualStrings(TestApp.app_version, capture.fx_version);
+    try std.testing.expectEqualStrings(TestApp.app_version, capture.fiber_version);
     try std.testing.expectEqualStrings(
         "configured-model",
         capture.configuredModel(),

@@ -1493,7 +1493,7 @@ test "footer suppresses slash rows for streaming model-shaped input" {
         .name = "model-helper",
         .description = "model helper",
         .path = "/tmp/model-helper/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
 
     for ([_][]const u8{ "/model", "/model " }) |text| {

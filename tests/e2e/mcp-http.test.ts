@@ -67,7 +67,7 @@ function createRoot(
   operationTimeoutMs = 5_000,
   required = false,
 ) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), `fx-mcp-http-${label}-`)));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), `fiber-mcp-http-${label}-`)));
   cleanupRoot = root;
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -92,11 +92,11 @@ function createRoot(
       },
     }),
   );
-  return { root, home, workspace, traceLogPath: join(root, "fx-trace.log") };
+  return { root, home, workspace, traceLogPath: join(root, "fiber-trace.log") };
 }
 
 function createEmptyRoot(label: string) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), `fx-mcp-http-${label}-`)));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), `fiber-mcp-http-${label}-`)));
   cleanupRoot = root;
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -104,7 +104,7 @@ function createEmptyRoot(label: string) {
   mkdirSync(workspace, { recursive: true });
   writeFileSync(join(home, ".fiber", "settings.json"), JSON.stringify({}));
   writeFileSync(join(home, ".fiber", "mcp.json"), JSON.stringify({ mcp: {} }));
-  return { root, home, workspace, traceLogPath: join(root, "fx-trace.log") };
+  return { root, home, workspace, traceLogPath: join(root, "fiber-trace.log") };
 }
 
 function fixtureEnv(
@@ -166,8 +166,8 @@ function preserveHttpFailure(
 ): void {
   if (result.code === 0 && !force) return;
   cleanupRoot = null;
-  writeFileSync(join(root.root, "fx-stdout.log"), result.stdout);
-  writeFileSync(join(root.root, "fx-stderr.log"), result.stderr);
+  writeFileSync(join(root.root, "fiber-stdout.log"), result.stdout);
+  writeFileSync(join(root.root, "fiber-stderr.log"), result.stderr);
   writeFileSync(
     join(root.root, "failure.json"),
     JSON.stringify({
@@ -177,7 +177,7 @@ function preserveHttpFailure(
       gatewayRequests: activeGateway.requests.map((request) => request.body),
     }, null, 2),
   );
-  throw new Error(`fx ${label} failed; retained artifacts: ${root.root}`);
+  throw new Error(`fiber ${label} failed; retained artifacts: ${root.root}`);
 }
 
 function assertModernWire(
@@ -280,7 +280,7 @@ describe("modern MCP Streamable HTTP", () => {
     ]);
   }, 25_000);
 
-  test("plain-text discovery auth rejection fails closed without aborting fx", async () => {
+  test("plain-text discovery auth rejection fails closed without aborting fiber", async () => {
     fixture = startModernMcpHttpFixture("legacy_plaintext_auth_rejection");
     const root = createRoot("plaintext-auth-rejection", fixture);
 
@@ -1295,7 +1295,7 @@ describe("modern MCP Streamable HTTP", () => {
   }, 30_000);
 
   for (const mode of ["json", "sse"] as ModernHttpMode[]) {
-    test(`fresh fx ask calls the request-scoped ${mode.toUpperCase()} fixture`, async () => {
+    test(`fresh fiber ask calls the request-scoped ${mode.toUpperCase()} fixture`, async () => {
       fixture = startModernMcpHttpFixture(mode);
       const root = createRoot(`ask-${mode}`, fixture);
       gateway = startToolGateway(`${mode} MCP HTTP complete.`);
@@ -1320,7 +1320,7 @@ describe("modern MCP Streamable HTTP", () => {
     }, 30_000);
   }
 
-  test("fresh fx ask delegates unsupported input and output schema assertions", async () => {
+  test("fresh fiber ask delegates unsupported input and output schema assertions", async () => {
     fixture = startModernMcpHttpFixture("server_authoritative_schema");
     const root = createRoot("server-authoritative-schema", fixture, 5_000, true);
     gateway = startToolGateway("Server-authoritative schema complete.");

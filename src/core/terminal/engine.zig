@@ -3799,13 +3799,13 @@ test "presentation boundary resumes and steadies strikethrough" {
 test "presentation resume preserves OSC 8 parameters and close clears them" {
     var source = try Grid.init(testing.allocator, 4, 1);
     defer source.deinit();
-    try source.feed("\x1b]8;id=fx-42;https://example.com\x1b\\x");
+    try source.feed("\x1b]8;id=fiber-42;https://example.com\x1b\\x");
 
     var resume_writer: std.Io.Writer.Allocating = .init(testing.allocator);
     defer resume_writer.deinit();
     try source.writePresentationResume(&resume_writer.writer);
     try testing.expectEqualStrings(
-        "\x1b]8;id=fx-42;https://example.com\x1b\\",
+        "\x1b]8;id=fiber-42;https://example.com\x1b\\",
         resume_writer.written(),
     );
 
@@ -3826,13 +3826,13 @@ test "OSC 8 parameter replacement is atomic on allocation failure" {
     const alloc = failing.allocator();
     var source = try Grid.init(alloc, 4, 1);
     defer source.deinit();
-    try source.feed("\x1b]8;id=fx-old;https://example.com\x1b\\");
+    try source.feed("\x1b]8;id=fiber-old;https://example.com\x1b\\");
     try source.osc_buffer.ensureTotalCapacity(alloc, 128);
 
     failing.fail_index = failing.alloc_index;
     try testing.expectError(
         error.OutOfMemory,
-        source.feed("\x1b]8;id=fx-new;https://example.com\x1b\\"),
+        source.feed("\x1b]8;id=fiber-new;https://example.com\x1b\\"),
     );
     try testing.expect(source.atControlSequenceBoundary());
 
@@ -3840,19 +3840,19 @@ test "OSC 8 parameter replacement is atomic on allocation failure" {
     var old_resume: std.Io.Writer = .fixed(&old_resume_buf);
     try source.writePresentationResume(&old_resume);
     try testing.expectEqualStrings(
-        "\x1b]8;id=fx-old;https://example.com\x1b\\",
+        "\x1b]8;id=fiber-old;https://example.com\x1b\\",
         old_resume.buffered(),
     );
 
     failing.fail_index = std.math.maxInt(usize);
-    try source.feed("\x1b]8;id=fx-new;https://example.com\x1b\\");
+    try source.feed("\x1b]8;id=fiber-new;https://example.com\x1b\\");
     try testing.expectEqual(@as(usize, 1), source.hyperlink_pool.items.len);
 
     var new_resume_buf: [128]u8 = undefined;
     var new_resume: std.Io.Writer = .fixed(&new_resume_buf);
     try source.writePresentationResume(&new_resume);
     try testing.expectEqualStrings(
-        "\x1b]8;id=fx-new;https://example.com\x1b\\",
+        "\x1b]8;id=fiber-new;https://example.com\x1b\\",
         new_resume.buffered(),
     );
 }

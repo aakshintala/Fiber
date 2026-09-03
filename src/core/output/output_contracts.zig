@@ -1636,7 +1636,7 @@ test "core status snapshot text and json stay stable" {
         .model = "alpha",
         .auth_help = "fiber needs a Codex subscription login for this model. Run fiber login codex.",
         .permission_mode = .ask,
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .history_turns = 3,
         .session_permission_grants = 1,
         .agent_step_limit = 24,
@@ -1645,14 +1645,14 @@ test "core status snapshot text and json stay stable" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=missing\n[status] connected_providers=none\n[status] auth_refreshable=false\n[status] auth_help=fiber needs a Codex subscription login for this model. Run fiber login codex.\n[status] permission_mode=ask\n[status] workspace=/tmp/fx\n[status] history_turns=3\n[status] session_permission_grants=1\n[status] agent_step_limit=24\n",
+        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=missing\n[status] connected_providers=none\n[status] auth_refreshable=false\n[status] auth_help=fiber needs a Codex subscription login for this model. Run fiber login codex.\n[status] permission_mode=ask\n[status] workspace=/tmp/fiber\n[status] history_turns=3\n[status] session_permission_grants=1\n[status] agent_step_limit=24\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}",
+        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}",
         json,
     );
 }
@@ -1662,7 +1662,7 @@ test "core status snapshot renders codex auth without team state" {
         .model = "alpha",
         .auth = .{ .active_source = .chatgpt_subscription },
         .permission_mode = .ask,
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = 24,
@@ -1671,14 +1671,14 @@ test "core status snapshot renders codex auth without team state" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=Codex subscription\n[status] connected_providers=Codex\n[status] auth_refreshable=true\n[status] permission_mode=ask\n[status] workspace=/tmp/fx\n[status] history_turns=0\n[status] session_permission_grants=0\n[status] agent_step_limit=24\n",
+        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=Codex subscription\n[status] connected_providers=Codex\n[status] auth_refreshable=true\n[status] permission_mode=ask\n[status] workspace=/tmp/fiber\n[status] history_turns=0\n[status] session_permission_grants=0\n[status] agent_step_limit=24\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"Codex subscription\",\"connected_providers\":[\"codex\"],\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}",
+        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"Codex subscription\",\"connected_providers\":[\"codex\"],\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}",
         json,
     );
 }
@@ -1692,7 +1692,7 @@ test "status distinguishes the selected model route from connected providers" {
             .chatgpt_connected = true,
         },
         .permission_mode = .auto,
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = 24,
@@ -1712,7 +1712,7 @@ test "MCP config diagnostic renders in status text and JSON but not interactive 
     const snapshot = StatusSnapshot{
         .model = "alpha",
         .permission_mode = .ask,
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = 24,
@@ -1787,7 +1787,7 @@ test "status and doctor share a side-effect-free MCP inspection contract" {
     const status = StatusSnapshot{
         .model = "alpha",
         .permission_mode = .auto,
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = 24,
@@ -1811,7 +1811,7 @@ test "status and doctor share a side-effect-free MCP inspection contract" {
     try std.testing.expect(std.mem.find(u8, status_json, "broken entry was ignored") != null);
 
     const doctor = DoctorSnapshot{
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .model = "alpha",
         .permission_mode = .auto,
         .agent_step_limit = 24,
@@ -2160,7 +2160,7 @@ test "core empty session detail snapshot text and json stay stable" {
     const detail = session_store.ReadOnlyDetail{
         .summary = .{
             .id = @constCast("sess-empty"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("en"),
@@ -2168,8 +2168,8 @@ test "core empty session detail snapshot text and json stay stable" {
         },
         .state = .{
             .id = @constCast("sess-empty"),
-            .origin_workspace_root = @constCast("/tmp/fx"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .origin_workspace_root = @constCast("/tmp/fiber"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("en"),
@@ -2235,7 +2235,7 @@ test "core session detail snapshot preserves history variant shapes" {
     const detail = session_store.ReadOnlyDetail{
         .summary = .{
             .id = @constCast("sess-history"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("es"),
@@ -2243,8 +2243,8 @@ test "core session detail snapshot preserves history variant shapes" {
         },
         .state = .{
             .id = @constCast("sess-history"),
-            .origin_workspace_root = @constCast("/tmp/fx"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .origin_workspace_root = @constCast("/tmp/fiber"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("es"),
@@ -2293,7 +2293,7 @@ test "core session detail JSON includes assistant execution memory" {
         .output_bytes = 48,
         .stored_output_bytes = 48,
         .command_output_replay = .{ .available = .{
-            .handle = "fx-command-replay-private-sentinel.bin",
+            .handle = "fiber-command-replay-private-sentinel.bin",
             .framed_bytes = 77,
         } },
         .command_process_presentation = .{ .exit_code = 9 },
@@ -2320,7 +2320,7 @@ test "core session detail JSON includes assistant execution memory" {
     const detail = session_store.ReadOnlyDetail{
         .summary = .{
             .id = @constCast("sess-exec"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("en"),
@@ -2328,8 +2328,8 @@ test "core session detail JSON includes assistant execution memory" {
         },
         .state = .{
             .id = @constCast("sess-exec"),
-            .origin_workspace_root = @constCast("/tmp/fx"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .origin_workspace_root = @constCast("/tmp/fiber"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("en"),
@@ -2353,7 +2353,7 @@ test "core session detail JSON includes assistant execution memory" {
     try std.testing.expect(std.mem.find(u8, json, "artifact-file.pdf") != null);
     try std.testing.expect(std.mem.find(u8, json, "command_output_replay") == null);
     try std.testing.expect(std.mem.find(u8, json, "command_process_presentation") == null);
-    try std.testing.expect(std.mem.find(u8, json, "fx-command-replay-private-sentinel.bin") == null);
+    try std.testing.expect(std.mem.find(u8, json, "fiber-command-replay-private-sentinel.bin") == null);
 
     const text = try (SessionDetailSnapshot{ .detail = detail }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
@@ -2431,7 +2431,7 @@ test "core doctor snapshot text and json stay stable" {
         .{ .name = @constCast("gh"), .status = .warn, .detail = @constCast("GitHub CLI not found in PATH") },
     };
     const snapshot = DoctorSnapshot{
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .model = "alpha",
         .auth = .{ .active_source = .chatgpt_subscription },
         .permission_mode = .ask,
@@ -2442,14 +2442,14 @@ test "core doctor snapshot text and json stay stable" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[doctor] ok=1 warn=1 fail=0\n[doctor] workspace=/tmp/fx\n[doctor] model=alpha\n[doctor] auth=Codex subscription\n[doctor] auth_refreshable=true\n[doctor] permission_mode=ask\n[doctor] agent_step_limit=24\n[ok] auth: AI_GATEWAY_API_KEY is configured\n[warn] gh: GitHub CLI not found in PATH\n",
+        "[doctor] ok=1 warn=1 fail=0\n[doctor] workspace=/tmp/fiber\n[doctor] model=alpha\n[doctor] auth=Codex subscription\n[doctor] auth_refreshable=true\n[doctor] permission_mode=ask\n[doctor] agent_step_limit=24\n[ok] auth: AI_GATEWAY_API_KEY is configured\n[warn] gh: GitHub CLI not found in PATH\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"alpha\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"agent_step_limit\":24,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}",
+        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fiber\",\"model\":\"alpha\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"agent_step_limit\":24,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}",
         json,
     );
 }
@@ -2461,7 +2461,7 @@ test "doctor text escapes hostile check details while json preserves data" {
         .detail = "warning key=bad\n\x1b]0;pwn\x07",
     }};
     const snapshot = DoctorSnapshot{
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .model = "alpha",
         .permission_mode = .ask,
         .agent_step_limit = 24,

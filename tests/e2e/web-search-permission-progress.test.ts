@@ -12,7 +12,7 @@ const NO_GATEWAY_AUTH = {
 };
 
 async function runWithoutGatewayAuth(args: string[]) {
-  const root = mkdtempSync(join(tmpdir(), "fx-web-search-no-auth-"));
+  const root = mkdtempSync(join(tmpdir(), "fiber-web-search-no-auth-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(home);
@@ -43,7 +43,7 @@ describe("web_search permission progress", () => {
       ]);
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain("fx needs a Codex subscription login for this model. Run fx login codex.");
+      expect(result.stderr).toContain("fiber needs a Codex subscription login for this model. Run fiber login codex.");
       expectNoSearchProgress(result.stderr);
     },
     TIMEOUT,

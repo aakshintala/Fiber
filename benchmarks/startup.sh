@@ -17,7 +17,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIBER_BIN="${REPO_ROOT}/zig-out/bin/fiber"
 RESULTS_DIR="${REPO_ROOT}/benchmarks/results"
-SESSION_FIXTURE_ROOT="${TMPDIR:-/tmp}/fx-session-list-benchmark-$$"
+SESSION_FIXTURE_ROOT="${TMPDIR:-/tmp}/fiber-session-list-benchmark-$$"
 SESSION_FIXTURE_HOME="${SESSION_FIXTURE_ROOT}/home"
 SESSION_FIXTURE_WORKSPACE="${SESSION_FIXTURE_ROOT}/workspace"
 GENERAL_FIXTURE_HOME="${SESSION_FIXTURE_ROOT}/general-home"

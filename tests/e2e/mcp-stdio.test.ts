@@ -135,7 +135,7 @@ function createRoot(
   scriptPath: string,
   options: RootOptions = {},
 ): FixtureRoot {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), `fx-mcp-${label}-`)));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), `fiber-mcp-${label}-`)));
   cleanupRoot = root;
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -219,7 +219,7 @@ function createRoot(
     workspace,
     wireLogPath,
     launchLogPath,
-    traceLogPath: join(root, "fx-trace.log"),
+    traceLogPath: join(root, "fiber-trace.log"),
     invalidationReleasePath,
     environmentCapturePath,
   };
@@ -317,8 +317,8 @@ function preserveStdioFailure(
 ): void {
   if (result.code === 0) return;
   cleanupRoot = null;
-  writeFileSync(join(root.root, "fx-stdout.log"), result.stdout);
-  writeFileSync(join(root.root, "fx-stderr.log"), result.stderr);
+  writeFileSync(join(root.root, "fiber-stdout.log"), result.stdout);
+  writeFileSync(join(root.root, "fiber-stderr.log"), result.stderr);
   writeFileSync(
     join(root.root, "failure.json"),
     JSON.stringify({
@@ -328,7 +328,7 @@ function preserveStdioFailure(
       gatewayRequests: activeGateway.requests.map((request) => request.body),
     }, null, 2),
   );
-  throw new Error(`fx ${label} failed; retained artifacts: ${root.root}`);
+  throw new Error(`fiber ${label} failed; retained artifacts: ${root.root}`);
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -370,7 +370,7 @@ async function waitForTtyAskExit(
     await Bun.sleep(25);
   }
   throw new Error(
-    `Timed out waiting for terminal fx ask to exit.\n${await session.captureFullScrollback()}`,
+    `Timed out waiting for terminal fiber ask to exit.\n${await session.captureFullScrollback()}`,
   );
 }
 
@@ -435,7 +435,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       "rm -f 0123456789abcdef",
     );
     expect(readdirSync(root.root).some((name) =>
-      name.startsWith("fx-mcp-") && name.endsWith(".cid")
+      name.startsWith("fiber-mcp-") && name.endsWith(".cid")
     )).toBe(false);
     expect(readFileSync(root.traceLogPath, "utf8")).toContain(
       "docker MCP container cleanup complete",
@@ -470,7 +470,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       expect(existsSync(cleanupLog)).toBe(false);
     }
     expect(readdirSync(root.root).some((name) =>
-      name.startsWith("fx-mcp-") && name.endsWith(".cid")
+      name.startsWith("fiber-mcp-") && name.endsWith(".cid")
     )).toBe(false);
     await expectProcessesExited(readAttemptedPids(dockerLaunchLog));
   }, 30_000);
@@ -514,7 +514,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       expect(approval).toContain("Allow this MCP tool call?");
       expect(approval).toContain(TOOL_NAME);
       expect(approval).toContain(
-        "This MCP tool needs approval before fx can send the request.",
+        "This MCP tool needs approval before fiber can send the request.",
       );
       expect(approval).toContain("3. Deny");
       expect(
@@ -540,7 +540,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   );
 
   test("repository-local MCP configuration never launches a process or network request", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-mcp-project-trust-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-mcp-project-trust-")));
     cleanupRoot = root;
     const home = join(root, "home");
     const workspace = join(root, "workspace");
@@ -611,7 +611,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     }
   }, 20_000);
 
-  test("fx ask skips pending workspace MCP and uses it after explicit trust", async () => {
+  test("fiber ask skips pending workspace MCP and uses it after explicit trust", async () => {
     const root = createRoot("workspace-ask", MODERN_FIXTURE);
     moveProfileFixtureToWorkspace(root);
     const projectPath = join(root.workspace, ".mcp.json");
@@ -682,7 +682,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     await expectFixtureProcessesExited(readWire(root.wireLogPath));
   }, 35_000);
 
-  test("fx ask reports rejected workspace MCP entries on stderr", async () => {
+  test("fiber ask reports rejected workspace MCP entries on stderr", async () => {
     const root = createRoot("workspace-invalid-entry", MODERN_FIXTURE);
     moveProfileFixtureToWorkspace(root);
     const projectPath = join(root.workspace, ".mcp.json");
@@ -832,7 +832,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     await expectFixtureProcessesExited(readWire(root.wireLogPath));
   }, 30_000);
 
-  test("fx ask skips workspace MCP when profile choices are unreadable", async () => {
+  test("fiber ask skips workspace MCP when profile choices are unreadable", async () => {
     const root = createRoot("workspace-choice-failure", MODERN_FIXTURE, {
       recordLaunchAttempts: true,
     });
@@ -1463,7 +1463,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     await expectFixtureProcessesExited(wire);
   }, 30_000);
 
-  test("fx ask uses typed Resources Prompts and Completion flows", async () => {
+  test("fiber ask uses typed Resources Prompts and Completion flows", async () => {
     const root = createRoot("ask-features", MODERN_FIXTURE, {
       mode: "features",
     });
@@ -1604,7 +1604,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     await expectFixtureProcessesExited(wire);
   }, 30_000);
 
-  test("fx ask cancels a bounded stalled resource read", async () => {
+  test("fiber ask cancels a bounded stalled resource read", async () => {
     const root = createRoot("ask-feature-cancel", MODERN_FIXTURE, {
       mode: "features",
       operationTimeoutMs: 200,
@@ -2032,7 +2032,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   }, 15_000);
 
   test("a blocked write recovers before the next unsent runtime call", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-mcp-runtime-recovery-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-mcp-runtime-recovery-")));
     cleanupRoot = root;
     const proc = Bun.spawn(
       [
@@ -2079,7 +2079,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   test("catalog waits preserve operation timeout and cancellation", async () => {
     for (const control of ["timeout", "cancel"] as const) {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), `fx-mcp-catalog-${control}-`)),
+        mkdtempSync(join(tmpdir(), `fiber-mcp-catalog-${control}-`)),
       );
       cleanupRoot = root;
       const proc = Bun.spawn(
@@ -2127,7 +2127,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   test("stalled recovery preserves startup timeout and local cancellation", async () => {
     for (const control of ["timeout", "cancel"] as const) {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), `fx-mcp-recovery-${control}-`)),
+        mkdtempSync(join(tmpdir(), `fiber-mcp-recovery-${control}-`)),
       );
       cleanupRoot = root;
       const proc = Bun.spawn(
@@ -2172,7 +2172,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   }, 30_000);
 
   test("concurrent server recovery preserves whole-runtime tool-name uniqueness", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-mcp-recovery-collision-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-mcp-recovery-collision-")));
     cleanupRoot = root;
     const proc = Bun.spawn(
       [
@@ -2218,7 +2218,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   }, 30_000);
 
   test("a failed reconnect leaves the remaining restart budget reachable", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-mcp-recovery-budget-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-mcp-recovery-budget-")));
     cleanupRoot = root;
     const proc = Bun.spawn(
       [
@@ -2261,7 +2261,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   }, 30_000);
 
   test("a queued stale tool cannot cross a recovered connection generation", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-mcp-stale-recovery-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-mcp-stale-recovery-")));
     cleanupRoot = root;
     const proc = Bun.spawn(
       [
@@ -2335,7 +2335,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       },
     ] as const
   ) {
-    test(`fx ask calls the ${fixture.label} stdio fixture`, async () => {
+    test(`fiber ask calls the ${fixture.label} stdio fixture`, async () => {
       const root = createRoot(`ask-${fixture.label}`, fixture.path, {
         recordLaunchAttempts: true,
       });
@@ -2424,7 +2424,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     await expectFixtureProcessesExited(readWire(root.wireLogPath));
   }, 30_000);
 
-  test("fx ask does not start an unused optional MCP server", async () => {
+  test("fiber ask does not start an unused optional MCP server", async () => {
     const root = createRoot("ask-unused-optional", MODERN_FIXTURE, {
       recordLaunchAttempts: true,
     });
@@ -2452,7 +2452,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   }, 15_000);
 
   test.skipIf(!tmuxAvailable())(
-    "terminal fx ask starts an unused optional MCP server before its model request",
+    "terminal fiber ask starts an unused optional MCP server before its model request",
     async () => {
       const root = createRoot("ask-terminal-eager-optional", MODERN_FIXTURE, {
         recordLaunchAttempts: true,
@@ -2463,7 +2463,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
         models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
       });
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       tui = await TmuxSession.create({
         isolated: true,
         cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Answer without using MCP.")}`,
@@ -2496,7 +2496,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   );
 
   test.skipIf(process.platform === "win32" || !tmuxAvailable())(
-    "terminal fx ask cancels stalled optional MCP startup before its model request",
+    "terminal fiber ask cancels stalled optional MCP startup before its model request",
     async () => {
       const root = createRoot("ask-terminal-cancel-startup", MODERN_FIXTURE, {
         mode: "stall_startup",
@@ -2510,7 +2510,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
         models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
       });
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       tui = await TmuxSession.create({
         isolated: true,
         cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Cancel optional MCP startup.")}`,
@@ -2546,7 +2546,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     20_000,
   );
 
-  test("fx ask accepts the official legacy SDK Draft 7 tool schema", async () => {
+  test("fiber ask accepts the official legacy SDK Draft 7 tool schema", async () => {
     const root = createRoot("ask-legacy-draft7", LEGACY_FIXTURE, {
       mode: "draft7_schema",
     });
@@ -2577,7 +2577,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     await expectFixtureProcessesExited(wire);
   });
 
-  test("fx ask rejects invalid legacy Draft 7 arguments before transport", async () => {
+  test("fiber ask rejects invalid legacy Draft 7 arguments before transport", async () => {
     const root = createRoot("ask-legacy-draft7-invalid", LEGACY_FIXTURE, {
       mode: "draft7_schema",
       draft7Pattern: "^\\S+$",
@@ -2608,7 +2608,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     await expectFixtureProcessesExited(wire);
   });
 
-  test("fx ask routes legacy stdio progress", async () => {
+  test("fiber ask routes legacy stdio progress", async () => {
     const root = createRoot("ask-legacy-progress", LEGACY_FIXTURE, {
       mode: "progress",
     });
@@ -2633,7 +2633,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     await expectFixtureProcessesExited(wire);
   }, 30_000);
 
-  test("noninteractive fx ask returns typed input-required without fabricating a continuation", async () => {
+  test("noninteractive fiber ask returns typed input-required without fabricating a continuation", async () => {
     const root = createRoot("ask-mrtr", MODERN_FIXTURE, {
       mode: "mrtr_input_required",
     });
@@ -2917,7 +2917,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
         const activeGateway = startToolGateway(`${surface} terminal-safe elicitation complete.`);
         gateway = activeGateway;
         const stderrPath = join(root.root, "stderr.log");
-        const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+        const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
         tui = await TmuxSession.create({
           isolated: true,
           ...(surface === "Ask"
@@ -2994,7 +2994,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
         const activeGateway = startToolGateway(`${surface} collision form complete.`);
         gateway = activeGateway;
         const stderrPath = join(root.root, "stderr.log");
-        const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+        const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
         tui = await TmuxSession.create({
           isolated: true,
           ...(surface === "Ask"
@@ -3274,7 +3274,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   }, 30_000);
 
   test.skipIf(!tmuxAvailable())(
-    "interactive fx ask validates and submits a modern MCP form elicitation",
+    "interactive fiber ask validates and submits a modern MCP form elicitation",
     async () => {
       const root = createRoot("ask-interactive-mrtr", MODERN_FIXTURE, {
         mode: "mrtr_input_required",
@@ -3282,7 +3282,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       });
       const activeGateway = startToolGateway("Interactive Ask elicitation complete.");
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       const prompt = "Call the MRTR MCP fixture interactively.";
       tui = await TmuxSession.create({
         isolated: true,
@@ -3327,7 +3327,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
 
   for (const legacyVersion of ["2025-06-18", "2025-11-25"] as const) {
     test.skipIf(!tmuxAvailable())(
-      `interactive fx ask handles negotiated ${legacyVersion} direct elicitation/create`,
+      `interactive fiber ask handles negotiated ${legacyVersion} direct elicitation/create`,
       async () => {
         const root = createRoot(`ask-legacy-direct-${legacyVersion}`, LEGACY_FIXTURE, {
           mode: "direct_form",
@@ -3337,7 +3337,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
         });
         const activeGateway = startToolGateway(`Legacy ${legacyVersion} elicitation complete.`);
         gateway = activeGateway;
-        const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+        const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
         tui = await TmuxSession.create({
           isolated: true,
           cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the direct legacy elicitation fixture.")}`,
@@ -3408,7 +3408,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       );
       const activeGateway = startToolGateway("Legacy URL-required complete.");
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       try {
         tui = await TmuxSession.create({
           isolated: true,
@@ -3471,7 +3471,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       );
       const activeGateway = startToolGateway("Legacy multiple URL completion complete.");
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       tui = await TmuxSession.create({
         isolated: true,
         cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the multiple legacy URL fixture.")}`,
@@ -3540,7 +3540,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       );
       const activeGateway = startToolGateway("Legacy malformed completion complete.");
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       tui = await TmuxSession.create({
         isolated: true,
         cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the malformed completion fixture.")}`,
@@ -3593,7 +3593,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       });
       const activeGateway = startToolGateway("must not complete");
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       const fakeBin = join(root.root, "fake-bin");
       mkdirSync(fakeBin);
       writeFakeUrlOpeners(fakeBin, "#!/bin/sh\nexit 0\n");
@@ -3635,7 +3635,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       });
       const activeGateway = startToolGateway("Legacy URL timeout handled.");
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       const fakeBin = join(root.root, "fake-bin");
       mkdirSync(fakeBin);
       writeFakeUrlOpeners(fakeBin, "#!/bin/sh\nexit 0\n");
@@ -3713,7 +3713,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
         ], {
           models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
         });
-        const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+        const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
         tui = await TmuxSession.create({
           isolated: true,
           cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify(`Use the legacy ${operation} URL-required fixture.`)}`,
@@ -3755,7 +3755,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   }
 
   test.skipIf(!tmuxAvailable())(
-    "interactive fx ask validates Unicode patterns, edits, and submits every form field kind",
+    "interactive fiber ask validates Unicode patterns, edits, and submits every form field kind",
     async () => {
       const root = createRoot("ask-interactive-full-form", MODERN_FIXTURE, {
         mode: "mrtr_full_form",
@@ -3763,7 +3763,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       });
       const activeGateway = startToolGateway("Interactive Ask full form complete.");
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       tui = await TmuxSession.create({
         isolated: true,
         cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Complete the full MCP form.")}`,
@@ -3869,7 +3869,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   );
 
   test.skipIf(!tmuxAvailable())(
-    "interactive fx ask retries a URL browser failure without prefetching",
+    "interactive fiber ask retries a URL browser failure without prefetching",
     async () => {
       let targetRequests = 0;
       const target = Bun.serve({
@@ -3896,7 +3896,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       );
       const activeGateway = startToolGateway("Interactive Ask URL elicitation complete.");
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       try {
         tui = await TmuxSession.create({
           isolated: true,
@@ -3952,7 +3952,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
   );
 
   test.skipIf(!tmuxAvailable())(
-    "interactive fx ask can refuse a URL without launching a browser",
+    "interactive fiber ask can refuse a URL without launching a browser",
     async () => {
       let targetRequests = 0;
       const target = Bun.serve({
@@ -3977,7 +3977,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       );
       const activeGateway = startToolGateway("Interactive Ask URL refusal complete.");
       gateway = activeGateway;
-      const binary = join(REPO_ROOT, "zig-out", "bin", "fx");
+      const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       try {
         tui = await TmuxSession.create({
           isolated: true,
@@ -4017,7 +4017,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     35_000,
   );
 
-  test("fx ask routes progress and times out a stalled operation without leaking its child", async () => {
+  test("fiber ask routes progress and times out a stalled operation without leaking its child", async () => {
     const progressRoot = createRoot("ask-progress", MODERN_FIXTURE, {
       mode: "progress",
     });
@@ -4072,7 +4072,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     await expectFixtureProcessesExited(timeoutWire);
   }, 45_000);
 
-  test("fx ask bounds startup timeouts and reaps every attempted child", async () => {
+  test("fiber ask bounds startup timeouts and reaps every attempted child", async () => {
     const root = createRoot("ask-startup-timeout", MODERN_FIXTURE, {
       mode: "stall_startup",
       startupTimeoutMs: 50,
@@ -4161,7 +4161,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     25_000,
   );
 
-  test("required profile startup failure blocks fx ask before any Gateway request", async () => {
+  test("required profile startup failure blocks fiber ask before any Gateway request", async () => {
     const root = createRoot("ask-required-startup-timeout", MODERN_FIXTURE, {
       mode: "stall_startup",
       startupTimeoutMs: 50,
@@ -4890,7 +4890,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     45_000,
   );
 
-  test("fx ask performs one fresh-discovery restart without replaying the failed call", async () => {
+  test("fiber ask performs one fresh-discovery restart without replaying the failed call", async () => {
     const root = createRoot("ask-restart", MODERN_FIXTURE, {
       mode: "crash_once",
       restartLimit: 1,
@@ -4935,7 +4935,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
 
   for (const childMode of ["persistent"] as const) {
     test(`revoked ${childMode} authority prevents stdio recovery effects`, async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), `fx-mcp-${childMode}-recovery-`)));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), `fiber-mcp-${childMode}-recovery-`)));
       cleanupRoot = root;
       const proc = Bun.spawn(
         [
@@ -5009,7 +5009,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     }, 30_000);
   }
 
-  test("fx ask stops restarting after the configured stdio budget", async () => {
+  test("fiber ask stops restarting after the configured stdio budget", async () => {
     const root = createRoot("ask-restart-limit", MODERN_FIXTURE, {
       mode: "crash_always",
       restartLimit: 1,

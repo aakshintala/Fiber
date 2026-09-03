@@ -1045,12 +1045,12 @@ test "model cache refetches effective access across auth and team changes" {
     const public_access: credentials.CatalogAccess = .{ .public_only = .no_credential };
     const team_a_access = authenticatedCatalogAccess("team-key");
     const team_b_access = authenticatedCatalogAccess("team-key");
-    const fx_login_access = credentials.catalogAccessForCredential(.chatgpt_subscription, "login-token");
+    const fiber_login_access = credentials.catalogAccessForCredential(.chatgpt_subscription, "login-token");
     const cases = [_]struct { access: credentials.CatalogAccess, model_id: []const u8 }{
         .{ .access = public_access, .model_id = "public/original" },
         .{ .access = team_a_access, .model_id = "private/team-a" },
         .{ .access = team_b_access, .model_id = "private/team-b" },
-        .{ .access = fx_login_access, .model_id = "public/login" },
+        .{ .access = fiber_login_access, .model_id = "public/login" },
     };
 
     var provider = AuthChangeCatalog{};

@@ -15,7 +15,7 @@ pub const Bundle = struct {
         chatgpt,
     };
     pub const Capabilities = struct {
-        fx_search: bool = false,
+        fiber_search: bool = false,
         vision_fallback: bool = false,
     };
 
@@ -27,7 +27,7 @@ pub const Bundle = struct {
     cli_model_catalog: ?gateway_provider.CliModelCatalogProvider = null,
     model_catalog: ?model_catalog.Provider = null,
     permission_reviewer: ?auto_classifier.Provider = null,
-    fx_search: ?web_search_provider.Provider = null,
+    fiber_search: ?web_search_provider.Provider = null,
 
     pub fn agent_stream_or_unavailable(self: Bundle) stream_provider.Provider {
         return self.agent_stream orelse stream_provider.unavailable_provider;
@@ -97,7 +97,7 @@ test "provider set selects the codex route" {
     var providers = Set{ .codex = codex };
 
     try std.testing.expect(providers.select(.codex).agent_stream.?.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
-    try std.testing.expect(!providers.select(.codex).capabilities.fx_search);
+    try std.testing.expect(!providers.select(.codex).capabilities.fiber_search);
     try std.testing.expect(providers.select(.codex).model_catalog.?.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
     try std.testing.expect(providers.select(.codex).agent_stream_or_unavailable().context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
 

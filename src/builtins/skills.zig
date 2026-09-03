@@ -14,7 +14,7 @@ const RootSpec = skill_contract.RootSpec;
 /// home, in precedence order. `.fiber/skills` and `skills/` belong to the product;
 /// the rest are compatibility roots for other agent installs.
 const workspace_roots = [_]RootSpec{
-    .{ .source = .workspace_fx, .path = ".fiber/skills" },
+    .{ .source = .workspace_fiber, .path = ".fiber/skills" },
     .{ .source = .workspace_shared, .path = "skills" },
     .{ .source = .workspace_opencode, .path = ".opencode/skills" },
     .{ .source = .workspace_codex, .path = ".codex/skills" },
@@ -34,7 +34,7 @@ const global_roots = [_]RootSpec{
 
 pub const root_policy: skill_contract.RootPolicy = .{
     .workspace_roots = &workspace_roots,
-    .managed_root_source = .global_fx,
+    .managed_root_source = .global_fiber,
     .global_roots = &global_roots,
 };
 
@@ -265,7 +265,7 @@ pub fn createSkillTemplate(alloc: Allocator, skills_dir: []const u8, name: []con
 fn installFromGitHub(alloc: Allocator, skills_dir: []const u8, url: []const u8, filter: ?[]const u8) !InstallResult {
     try ensureDir(skills_dir);
 
-    const tmp_dir = try std.fmt.allocPrint(alloc, "/tmp/fx-skill-install-{d}", .{io_mod.milliTimestamp()});
+    const tmp_dir = try std.fmt.allocPrint(alloc, "/tmp/fiber-skill-install-{d}", .{io_mod.milliTimestamp()});
     defer alloc.free(tmp_dir);
     defer std.Io.Dir.cwd().deleteTree(io_mod.getIo(), tmp_dir) catch {};
 
@@ -1172,7 +1172,7 @@ test "copySkillDir preserves the installed skill across allocation failures" {
 
 test "workspace skill roots scan the product root before compatibility roots" {
     const expected = [_]RootSpec{
-        .{ .source = .workspace_fx, .path = ".fiber/skills" },
+        .{ .source = .workspace_fiber, .path = ".fiber/skills" },
         .{ .source = .workspace_shared, .path = "skills" },
         .{ .source = .workspace_opencode, .path = ".opencode/skills" },
         .{ .source = .workspace_codex, .path = ".codex/skills" },
@@ -1188,7 +1188,7 @@ test "workspace skill roots scan the product root before compatibility roots" {
     }
 
     for (workspace_roots) |spec| {
-        try std.testing.expect(spec.source != .global_fx);
+        try std.testing.expect(spec.source != .global_fiber);
     }
 }
 
@@ -1208,7 +1208,7 @@ test "global skill roots cover compatibility installs only" {
     }
 
     for (global_roots) |spec| {
-        try std.testing.expect(spec.source != .global_fx);
+        try std.testing.expect(spec.source != .global_fiber);
     }
 }
 

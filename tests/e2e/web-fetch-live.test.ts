@@ -113,7 +113,7 @@ async function startFakeGateway(responses: Response[]) {
 }
 
 function createIsolatedRoot(domains = ["example.com"]) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-web-fetch-live-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-web-fetch-live-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -176,7 +176,7 @@ describe.skipIf(process.env.FIBER_WEB_FETCH_LIVE !== "1")("live web_fetch public
 
           if (result.code !== 0) {
             throw new Error(
-              `fx exited ${result.code}\nstdout: ${result.stdout.slice(-4000)}\nstderr: ${result.stderr.slice(-4000)}`,
+              `fiber exited ${result.code}\nstdout: ${result.stdout.slice(-4000)}\nstderr: ${result.stderr.slice(-4000)}`,
             );
           }
           const json = JSON.parse(result.stdout.trim()) as {
@@ -247,7 +247,7 @@ describe.skipIf(process.env.FIBER_WEB_FETCH_LIVE !== "1")("live web_fetch public
 
         if (result.code !== 0) {
           throw new Error(
-            `fx exited ${result.code}\nstdout: ${result.stdout.slice(-4000)}\nstderr: ${result.stderr.slice(-4000)}`,
+            `fiber exited ${result.code}\nstdout: ${result.stdout.slice(-4000)}\nstderr: ${result.stderr.slice(-4000)}`,
           );
         }
         const json = JSON.parse(result.stdout.trim()) as {
@@ -313,7 +313,7 @@ describe.skipIf(process.env.FIBER_WEB_FETCH_LIVE !== "1")("live web_fetch public
 
         if (result.code !== 0) {
           throw new Error(
-            `fx exited ${result.code}\nstdout: ${result.stdout.slice(-4000)}\nstderr: ${result.stderr.slice(-4000)}`,
+            `fiber exited ${result.code}\nstdout: ${result.stdout.slice(-4000)}\nstderr: ${result.stderr.slice(-4000)}`,
           );
         }
         const json = JSON.parse(result.stdout.trim()) as {

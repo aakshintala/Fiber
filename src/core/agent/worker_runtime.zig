@@ -4801,7 +4801,7 @@ test "typed lifecycle worker events duplicate and free every payload variant" {
         .{ .terminal = .{
             .id = .{ .turn_id = 1, .call_id = "final" },
             .outcome = .{ .kind = .completed, .summary = "Listed files" },
-            .command_artifact_handle = "fx-command-final.log",
+            .command_artifact_handle = "fiber-command-final.log",
         } },
         .{ .turn_finished = .{ .turn_id = 1, .outcome = .completed } },
     };

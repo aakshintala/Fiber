@@ -125,7 +125,7 @@ test "on-disk probe rejects a replaced binary so the peer path falls back" {
     defer tmp.cleanup();
     const dir_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
     defer alloc.free(dir_path);
-    const victim = try std.fs.path.join(alloc, &.{ dir_path, "fx-probe" });
+    const victim = try std.fs.path.join(alloc, &.{ dir_path, "fiber-probe" });
     defer alloc.free(victim);
 
     {
@@ -138,5 +138,5 @@ test "on-disk probe rejects a replaced binary so the peer path falls back" {
     try std.testing.expect(!onDiskPathIsExecutable(victim));
 
     // Peer paths must be absolute.
-    try std.testing.expect(!onDiskPathIsExecutable("fx"));
+    try std.testing.expect(!onDiskPathIsExecutable("fiber"));
 }

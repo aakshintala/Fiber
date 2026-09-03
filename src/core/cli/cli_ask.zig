@@ -311,7 +311,7 @@ test "prompt result failure writer preserves exact error type and identity" {
     try std.testing.expectError(error.NoPendingRecovery, failure);
 }
 
-/// Resume selector parsed from fx ask --resume-id.
+/// Resume selector parsed from fiber ask --resume-id.
 const ResumeTarget = session_store.ResumeTarget;
 
 const AskOptions = struct {
@@ -908,7 +908,7 @@ const AskContext = struct {
 
     fn toolContext(self: *AskContext) tool_runtime.Context {
         const provider_capabilities = self.cfg.provider_set.select(self.provider).capabilities;
-        if (provider_capabilities.fx_search) {
+        if (provider_capabilities.fiber_search) {
             self.web_search_runtime.configure(.{
                 .api_key = self.api_key,
                 .credential_source = self.credential_source,
@@ -975,7 +975,7 @@ const AskContext = struct {
             .web_fetch_progress_ctx = @ptrCast(self),
             .on_web_fetch_progress = onWebFetchProgress,
             .web_search_runtime_ready = false,
-            .web_search_backend = if (provider_capabilities.fx_search) self.web_search_runtime.dispatchBackend() else null,
+            .web_search_backend = if (provider_capabilities.fiber_search) self.web_search_runtime.dispatchBackend() else null,
             .web_search_progress_ctx = @ptrCast(self),
             .on_web_search_progress = onWebSearchProgress,
             .model_capability_resolver = .{
@@ -3781,7 +3781,7 @@ fn testConfig() Config {
             .system_prompt = "system",
             .model_prompt_overlay_fn = testModelPromptOverlay,
         },
-        .skill_root_policy = .{ .managed_root_source = .global_fx },
+        .skill_root_policy = .{ .managed_root_source = .global_fiber },
         .ignored_list_entries = &.{},
         .max_list_entries = 10,
         .max_read_file_bytes = 1024,
@@ -3798,7 +3798,7 @@ fn testConfig() Config {
 fn testMissingKeyStartup(alloc: Allocator, _: oauth_transport.Provider, default_model: []const u8, default_agent_step_limit: usize) !app_lifecycle.StartupState {
     var state = app_lifecycle.StartupState{ .agent_step_limit = default_agent_step_limit };
     errdefer state.deinit(alloc);
-    state.workspace_root = try alloc.dupe(u8, "/tmp/fx-test");
+    state.workspace_root = try alloc.dupe(u8, "/tmp/fiber-test");
     state.selected_model = try alloc.dupe(u8, default_model);
     state.context_enabled = false;
     return state;
@@ -3807,7 +3807,7 @@ fn testMissingKeyStartup(alloc: Allocator, _: oauth_transport.Provider, default_
 fn testPresentKeyStartup(alloc: Allocator, _: oauth_transport.Provider, default_model: []const u8, default_agent_step_limit: usize) !app_lifecycle.StartupState {
     var state = app_lifecycle.StartupState{ .agent_step_limit = default_agent_step_limit };
     errdefer state.deinit(alloc);
-    state.workspace_root = try alloc.dupe(u8, "/tmp/fx-test");
+    state.workspace_root = try alloc.dupe(u8, "/tmp/fiber-test");
     state.credential = .{
         .token = try alloc.dupe(u8, "key"),
         .source = .chatgpt_subscription,
@@ -3849,7 +3849,7 @@ fn testPushAssistantText(deps: *const agent_runtime.AgentRuntimeDeps, text: []co
 fn testProcessQueuedPrompt(_: *agent_runtime.Agent, deps: *const agent_runtime.AgentRuntimeDeps, semantic_presentation: ?agent_runtime.SemanticPresentationSink, lifecycle: agent_runtime.LifecycleContext, _: agent_runtime.Config, _: worker_runtime.QueuedPrompt) !void {
     try std.testing.expect(semantic_presentation == null);
     try std.testing.expectEqual(hooks.ScopeKind.ask, lifecycle.scope.kind);
-    try std.testing.expectEqualStrings("/tmp/fx-test", lifecycle.scope.workspace_root);
+    try std.testing.expectEqualStrings("/tmp/fiber-test", lifecycle.scope.workspace_root);
     try testPushAssistantText(deps, "assistant text");
 }
 
@@ -4955,7 +4955,7 @@ test "runWithDeps reports a missing image before startup after cleaning prior at
     defer alloc.free(valid_path);
     const valid_path_z = try alloc.dupeZ(u8, valid_path);
     defer alloc.free(valid_path_z);
-    const missing_path_z = try alloc.dupeZ(u8, "/tmp/fx-ask-missing-image.png");
+    const missing_path_z = try alloc.dupeZ(u8, "/tmp/fiber-ask-missing-image.png");
     defer alloc.free(missing_path_z);
 
     var stdout_capture: TestCapture = .{};
@@ -7628,7 +7628,7 @@ test "saved API key 401 discards the fresh pristine session" {
     try std.testing.expectEqual(@as(usize, 0), parsed.value.object.get("tool_calls").?.array.items.len);
     try std.testing.expect(parsed.value.object.get("auth_failure") != null);
 
-    var store = try session_store.Store.initFromHome(alloc, home, "/tmp/fx-test");
+    var store = try session_store.Store.initFromHome(alloc, home, "/tmp/fiber-test");
     defer store.deinit(alloc);
     var sessions = try store.list(alloc);
     defer {
@@ -7638,7 +7638,7 @@ test "saved API key 401 discards the fresh pristine session" {
     try std.testing.expectEqual(@as(usize, 0), sessions.items.len);
     try std.testing.expectError(
         error.NoSavedSessions,
-        store.resumeTargetForWrite(alloc, .last, "/tmp/fx-test", .{}),
+        store.resumeTargetForWrite(alloc, .last, "/tmp/fiber-test", .{}),
     );
 }
 
@@ -7690,12 +7690,12 @@ test "saved failures retain ineligible session lifecycles" {
             var seed_store = try session_store.Store.initFromHome(
                 alloc,
                 home,
-                "/tmp/fx-test",
+                "/tmp/fiber-test",
             );
             defer seed_store.deinit(alloc);
             var seed_state = try testAskDurableState(
                 alloc,
-                "/tmp/fx-test",
+                "/tmp/fiber-test",
                 "cli-protected-resume",
             );
             defer seed_state.deinit(alloc);
@@ -7742,7 +7742,7 @@ test "saved failures retain ineligible session lifecycles" {
         var store = try session_store.Store.initFromHome(
             alloc,
             home,
-            "/tmp/fx-test",
+            "/tmp/fiber-test",
         );
         defer store.deinit(alloc);
         var loaded = try store.loadReadOnly(alloc, session_id);
@@ -7781,7 +7781,7 @@ test "saved auth fact followed by a prompt error retains the session" {
         runWithDeps(alloc, &.{"hello"}, testConfig(), deps),
     );
     try std.testing.expectEqual(@as(usize, 0), probe.calls);
-    var store = try session_store.Store.initFromHome(alloc, home, "/tmp/fx-test");
+    var store = try session_store.Store.initFromHome(alloc, home, "/tmp/fiber-test");
     defer store.deinit(alloc);
     var sessions = try store.list(alloc);
     defer {
@@ -7845,7 +7845,7 @@ test "indeterminate saved auth cleanup keeps the primary result and session id" 
     const session_id = parsed.value.object.get("session_id").?.string;
     try std.testing.expect(session_id.len > 0);
 
-    var store = try session_store.Store.initFromHome(alloc, home, "/tmp/fx-test");
+    var store = try session_store.Store.initFromHome(alloc, home, "/tmp/fiber-test");
     defer store.deinit(alloc);
     var loaded = try store.loadReadOnly(alloc, session_id);
     defer loaded.deinit(alloc);
@@ -8155,9 +8155,9 @@ test "recovery continuation checks local checkpoint before credentials" {
     defer test_home.deinit();
 
     const session_id = "completed-session";
-    var store = try session_store.Store.initFromHome(alloc, home, "/tmp/fx-test");
+    var store = try session_store.Store.initFromHome(alloc, home, "/tmp/fiber-test");
     defer store.deinit(alloc);
-    var state = try testAskDurableState(alloc, "/tmp/fx-test", session_id);
+    var state = try testAskDurableState(alloc, "/tmp/fiber-test", session_id);
     defer state.deinit(alloc);
     var writable = try store.startWritableSession(alloc, state);
     writable.deinit(alloc);

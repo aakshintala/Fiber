@@ -249,7 +249,7 @@ function rememberPrivateTmuxIdentities(resource: PrivateTmuxResource): void {
       },
     );
     for (const name of names.trim().split("\n")) {
-      if (name.startsWith("fx-") && name.length === 35) {
+      if (name.startsWith("fiber-") && name.length === 35) {
         resource.identities.add(name.slice(3));
       }
     }
@@ -337,8 +337,8 @@ function privateTmuxProcessPids(
 function tmuxPeerArtifacts(): string[] {
   return readdirSync("/tmp")
     .filter((name) =>
-      name.startsWith("fx-tmux-capture-") ||
-      name.startsWith("fx-tmux-marker-")
+      name.startsWith("fiber-tmux-capture-") ||
+      name.startsWith("fiber-tmux-marker-")
     )
     .sort();
 }
@@ -428,8 +428,8 @@ async function cleanupPrivateTmuxServer(
       privateTmuxProcessPids(socket, identities, remainingMs).length === 0;
   }, PRIVATE_TMUX_SETTLE_TIMEOUT_MS);
   for (const identity of identities) {
-    rmSync(`/tmp/fx-tmux-capture-${identity}.sock`, { force: true });
-    rmSync(`/tmp/fx-tmux-marker-${identity}.sock`, { force: true });
+    rmSync(`/tmp/fiber-tmux-capture-${identity}.sock`, { force: true });
+    rmSync(`/tmp/fiber-tmux-marker-${identity}.sock`, { force: true });
   }
   rmSync(socket, { force: true });
   return { identities, panePids, processPids };
@@ -2307,9 +2307,9 @@ test.skipIf(!tmuxAvailable())(
           readdirSync(paths.dir).filter((name) => name.startsWith("tmux-")),
           `${fixture.name}:${pass}`,
         ).toEqual([]);
-        expect(existsSync(`/tmp/fx-tmux-capture-${record.backend_identity}.sock`))
+        expect(existsSync(`/tmp/fiber-tmux-capture-${record.backend_identity}.sock`))
           .toBe(false);
-        expect(existsSync(`/tmp/fx-tmux-marker-${record.backend_identity}.sock`))
+        expect(existsSync(`/tmp/fiber-tmux-marker-${record.backend_identity}.sock`))
           .toBe(false);
         expect(processFdCount(host.pid!)).toBeLessThanOrEqual(baselineFds + 2);
         connected.client.close();
@@ -2419,9 +2419,9 @@ test.skipIf(!tmuxAvailable())(
     expect(
       readdirSync(paths.dir).filter((name) => name.startsWith("tmux-")),
     ).toEqual([]);
-    expect(existsSync(`/tmp/fx-tmux-capture-${record.backend_identity}.sock`))
+    expect(existsSync(`/tmp/fiber-tmux-capture-${record.backend_identity}.sock`))
       .toBe(false);
-    expect(existsSync(`/tmp/fx-tmux-marker-${record.backend_identity}.sock`))
+    expect(existsSync(`/tmp/fiber-tmux-marker-${record.backend_identity}.sock`))
       .toBe(false);
     expect(processFdCount(host.pid!)).toBeLessThanOrEqual(hostFds + 2);
     rmSync(stoppedProof, { force: true });
@@ -2711,8 +2711,8 @@ exec /bin/bash "$@"
       readdirSync(paths.dir).filter((name) => name.startsWith("tmux-")),
     ).toEqual([]);
     for (const identity of [record.backend_identity, laterRecord.backend_identity]) {
-      expect(existsSync(`/tmp/fx-tmux-capture-${identity}.sock`)).toBe(false);
-      expect(existsSync(`/tmp/fx-tmux-marker-${identity}.sock`)).toBe(false);
+      expect(existsSync(`/tmp/fiber-tmux-capture-${identity}.sock`)).toBe(false);
+      expect(existsSync(`/tmp/fiber-tmux-marker-${identity}.sock`)).toBe(false);
     }
     expect(processFdCount(host.pid!)).toBeLessThanOrEqual(hostFds + 2);
     for (const path of [
@@ -2955,7 +2955,7 @@ test.skipIf(!tmuxAvailable() || process.platform !== "linux")(
     if (!existsSync("/bin/zsh")) return;
     const home = makeHome();
     const paths = hostPaths(home);
-    const liveBin = join(home, "fx");
+    const liveBin = join(home, "fiber");
     copyFileSync(FIBER_BIN, liveBin);
     chmodSync(liveBin, 0o755);
 
@@ -3192,7 +3192,7 @@ test.skipIf(!tmuxAvailable())(
         backend_identity: string;
       };
       const tmuxSocket = terminalTransportPaths(home).tmuxSocket;
-      const sessionName = `fx-${record.backend_identity}`;
+      const sessionName = `fiber-${record.backend_identity}`;
       const panePid = Number(execFileSync(
         "tmux",
         ["-S", tmuxSocket, "display-message", "-p", "-t", sessionName, "#{pane_pid}"],
@@ -3209,7 +3209,7 @@ test.skipIf(!tmuxAvailable())(
       expect(await waitForExit(failed), `release:${pass}`).not.toBe(0);
       expect(processExists(panePid), `release:${pass}`).toBe(true);
       execFileSync("tmux", ["-S", tmuxSocket, "has-session", "-t", sessionName]);
-      expect(existsSync(`/tmp/fx-tmux-capture-${record.backend_identity}.sock`))
+      expect(existsSync(`/tmp/fiber-tmux-capture-${record.backend_identity}.sock`))
         .toBe(false);
 
       const replacement = startHost(home, undefined, 500);
@@ -3296,8 +3296,8 @@ test.skipIf(!tmuxAvailable())("transient tmux recovery failures preserve the pan
     const siblingIdentity = (durableTerminalRecordFor(home, siblingId) as {
       backend_identity: string;
     }).backend_identity;
-    const sessionName = `fx-${backendIdentity}`;
-    const siblingName = `fx-${siblingIdentity}`;
+    const sessionName = `fiber-${backendIdentity}`;
+    const siblingName = `fiber-${siblingIdentity}`;
     const panePid = Number(execFileSync(
       "tmux",
       ["-S", tmuxSocket, "display-message", "-p", "-t", sessionName, "#{pane_pid}"],
@@ -3322,12 +3322,12 @@ test.skipIf(!tmuxAvailable())("transient tmux recovery failures preserve the pan
     execFileSync("tmux", ["-S", tmuxSocket, "has-session", "-t", sessionName]);
     execFileSync("tmux", ["-S", tmuxSocket, "has-session", "-t", siblingName]);
     await waitFor(
-      () => !existsSync(`/tmp/fx-tmux-capture-${backendIdentity}.sock`),
+      () => !existsSync(`/tmp/fiber-tmux-capture-${backendIdentity}.sock`),
       5_000,
     ).catch(() => {
       throw new Error(`${failurePoint}: target capture socket retained`);
     });
-    expect(existsSync(`/tmp/fx-tmux-capture-${backendIdentity}.sock`), failurePoint)
+    expect(existsSync(`/tmp/fiber-tmux-capture-${backendIdentity}.sock`), failurePoint)
       .toBe(false);
 
     const failedIdentity = existsSync(paths.identity)
@@ -3438,13 +3438,13 @@ test.skipIf(!tmuxAvailable())("transient tmux recovery failures preserve the pan
     expect(await waitForExit(replacement)).toBe(0);
     expect(processExists(panePid), failurePoint).toBe(false);
     expect(processExists(siblingPanePid), failurePoint).toBe(false);
-    expect(existsSync(`/tmp/fx-tmux-capture-${backendIdentity}.sock`), failurePoint)
+    expect(existsSync(`/tmp/fiber-tmux-capture-${backendIdentity}.sock`), failurePoint)
       .toBe(false);
-    expect(existsSync(`/tmp/fx-tmux-capture-${siblingIdentity}.sock`), failurePoint)
+    expect(existsSync(`/tmp/fiber-tmux-capture-${siblingIdentity}.sock`), failurePoint)
       .toBe(false);
-    expect(existsSync(`/tmp/fx-tmux-marker-${backendIdentity}.sock`), failurePoint)
+    expect(existsSync(`/tmp/fiber-tmux-marker-${backendIdentity}.sock`), failurePoint)
       .toBe(false);
-    expect(existsSync(`/tmp/fx-tmux-marker-${siblingIdentity}.sock`), failurePoint)
+    expect(existsSync(`/tmp/fiber-tmux-marker-${siblingIdentity}.sock`), failurePoint)
       .toBe(false);
   }
 }, 180_000);
@@ -3495,8 +3495,8 @@ test.skipIf(!tmuxAvailable())("private tmux teardown owns partial recovery resou
   expect(proof.processPids.every((pid) => !processExists(pid))).toBe(true);
   expect(privateTmuxProcessPids(tmuxSocket, [backendIdentity])).toEqual([]);
   expect(existsSync(tmuxSocket)).toBe(false);
-  expect(existsSync(`/tmp/fx-tmux-capture-${backendIdentity}.sock`)).toBe(false);
-  expect(existsSync(`/tmp/fx-tmux-marker-${backendIdentity}.sock`)).toBe(false);
+  expect(existsSync(`/tmp/fiber-tmux-capture-${backendIdentity}.sock`)).toBe(false);
+  expect(existsSync(`/tmp/fiber-tmux-marker-${backendIdentity}.sock`)).toBe(false);
   expect(() =>
     execFileSync("tmux", ["-S", tmuxSocket, "has-session", "-t", sessionName], {
       stdio: "pipe",
@@ -3794,7 +3794,7 @@ test.skipIf(!tmuxAvailable())("tmux recovery rejects a replaced pane without sig
     tmuxSocket,
     "set-option",
     "-g",
-    "@fx_terminal_namespace",
+    "@fiber_terminal_namespace",
     "1",
   ]);
   execFileSync("tmux", [
@@ -3803,7 +3803,7 @@ test.skipIf(!tmuxAvailable())("tmux recovery rejects a replaced pane without sig
     "set-option",
     "-t",
     sessionName,
-    "@fx_terminal_namespace",
+    "@fiber_terminal_namespace",
     backendIdentity,
   ]);
 
@@ -4682,8 +4682,8 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
         `printf '${shell.marker}\\n'`,
         `printf '${boundaryMatch}\\n'`,
         `: > '${profileReady}'`,
-        `alias fx_profile_alias="printf '${shell.name}-alias\\\\n'"`,
-        `fx_profile_function() { printf '${shell.name}-function\\\\n'; }`,
+        `alias fiber_profile_alias="printf '${shell.name}-alias\\\\n'"`,
+        `fiber_profile_function() { printf '${shell.name}-function\\\\n'; }`,
         "",
       ].join("\n"),
     );
@@ -4699,8 +4699,8 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
       {
         cwd: home,
         command: [
-          "fx_profile_alias",
-          "fx_profile_function",
+          "fiber_profile_alias",
+          "fiber_profile_function",
           `printf '${shell.name}-command\\n'`,
           "(exit 19)",
         ].join("; "),
@@ -4807,9 +4807,9 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
       {
         cwd: home,
         command:
-          "alias fx_profile_alias >/dev/null 2>&1 && " +
+          "alias fiber_profile_alias >/dev/null 2>&1 && " +
           "printf 'alias-leaked\\n' || printf 'alias-absent\\n'; " +
-          "type fx_profile_function >/dev/null 2>&1 && " +
+          "type fiber_profile_function >/dev/null 2>&1 && " +
           "printf 'function-leaked\\n' || printf 'function-absent\\n'; " +
           `printf '${shell.name}-clean\\n'; exit 0`,
         shell: {
@@ -4873,7 +4873,7 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
     writeFileSync(
       join(home, ".zprofile"),
       "sleep 0.2\n" +
-        "fx_delayed_function() { printf 'delayed-function\\n'; }\n" +
+        "fiber_delayed_function() { printf 'delayed-function\\n'; }\n" +
         "printf 'delayed-profile\\n'\n",
     );
     const delayedAt = Date.now();
@@ -4908,7 +4908,7 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
       "write",
       {
         session_id: delayedId,
-        payload: { text: "fx_delayed_function\r" },
+        payload: { text: "fiber_delayed_function\r" },
       },
     );
     const delayedMatch = await requestAction(
@@ -5680,7 +5680,7 @@ test.skipIf(!tmuxAvailable())(
         "display-message",
         "-p",
         "-t",
-        `fx-${identity}`,
+        `fiber-${identity}`,
         "#{pane_pid}",
       ],
       { encoding: "utf8" },
@@ -5729,11 +5729,11 @@ test.skipIf(!tmuxAvailable())(
       ["-S", tmuxSocket, "list-sessions", "-F", "#{session_name}"],
       { encoding: "utf8" },
     ).trim().split("\n");
-    expect(sessionNames).toEqual([`fx-${validIdentity}`]);
-    expect(existsSync(`/tmp/fx-tmux-capture-${invalidIdentity}.sock`)).toBe(
+    expect(sessionNames).toEqual([`fiber-${validIdentity}`]);
+    expect(existsSync(`/tmp/fiber-tmux-capture-${invalidIdentity}.sock`)).toBe(
       false,
     );
-    expect(existsSync(`/tmp/fx-tmux-marker-${invalidIdentity}.sock`)).toBe(
+    expect(existsSync(`/tmp/fiber-tmux-marker-${invalidIdentity}.sock`)).toBe(
       false,
     );
     expect(readdirSync(stateDir)).not.toContain(
@@ -5876,7 +5876,7 @@ test.skipIf(!tmuxAvailable())(
         "display-message",
         "-p",
         "-t",
-        `fx-${closingIdentity}`,
+        `fiber-${closingIdentity}`,
         "#{pane_id}|#{pane_dead}",
       ],
       { encoding: "utf8" },
@@ -5884,7 +5884,7 @@ test.skipIf(!tmuxAvailable())(
     expect(retainedPane).toMatch(/^%\d+\|[01]$/);
     execFileSync(
       "tmux",
-      ["-S", tmuxSocket, "has-session", "-t", `fx-${siblingIdentity}`],
+      ["-S", tmuxSocket, "has-session", "-t", `fiber-${siblingIdentity}`],
     );
     success(await requestAction(
       first.client,
@@ -5935,7 +5935,7 @@ test.skipIf(!tmuxAvailable())(
       ["-S", tmuxSocket, "list-sessions", "-F", "#{session_name}"],
       { encoding: "utf8" },
     ).trim().split("\n");
-    expect(names).toEqual([`fx-${siblingIdentity}`]);
+    expect(names).toEqual([`fiber-${siblingIdentity}`]);
     const afterRestart = success(await requestAction(
       recovered.client,
       recovered.revision!,
@@ -6019,7 +6019,7 @@ test.skipIf(!tmuxAvailable())(
         "display-message",
         "-p",
         "-t",
-        `fx-${identity}`,
+        `fiber-${identity}`,
         "#{pane_pid}",
       ],
       { encoding: "utf8" },
@@ -6064,11 +6064,11 @@ test.skipIf(!tmuxAvailable())(
     expect(processExists(siblingPanePid)).toBe(true);
     execFileSync(
       "tmux",
-      ["-S", tmuxSocket, "has-session", "-t", `fx-${closingIdentity}`],
+      ["-S", tmuxSocket, "has-session", "-t", `fiber-${closingIdentity}`],
     );
     execFileSync(
       "tmux",
-      ["-S", tmuxSocket, "has-session", "-t", `fx-${siblingIdentity}`],
+      ["-S", tmuxSocket, "has-session", "-t", `fiber-${siblingIdentity}`],
     );
 
     const replacement = startHost(home, undefined, 500);
@@ -6088,14 +6088,14 @@ test.skipIf(!tmuxAvailable())(
     expect(readdirSync(stateDir)).not.toContain(transactionName);
     execFileSync(
       "tmux",
-      ["-S", tmuxSocket, "has-session", "-t", `fx-${siblingIdentity}`],
+      ["-S", tmuxSocket, "has-session", "-t", `fiber-${siblingIdentity}`],
     );
     const names = execFileSync(
       "tmux",
       ["-S", tmuxSocket, "list-sessions", "-F", "#{session_name}"],
       { encoding: "utf8" },
     ).trim().split("\n");
-    expect(names).toEqual([`fx-${siblingIdentity}`]);
+    expect(names).toEqual([`fiber-${siblingIdentity}`]);
 
     const waited = success(await requestAction(
       recovered.client,
@@ -7594,7 +7594,7 @@ test("protocol fixtures advertise exact evidence and interoperate in both direct
     expect(await waitForExit(host), direction).toBe(0);
     directionEvidence.push({
       direction,
-      client: "active_FX_BIN",
+      client: "active_FIBER_BIN",
       host: "previous_contract",
       result: "safe_request_passed",
     });
@@ -7649,7 +7649,7 @@ test("protocol fixtures advertise exact evidence and interoperate in both direct
     directionEvidence.push({
       direction,
       client: "previous_contract",
-      host: "active_FX_BIN",
+      host: "active_FIBER_BIN",
       result: "passed",
     });
   }

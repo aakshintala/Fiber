@@ -317,7 +317,7 @@ pub fn runControlMarker(raw_args: []const [*:0]const u8) !void {
     const tmux_failure = if (std.mem.startsWith(
         u8,
         control_path,
-        "/tmp/fx-tmux-marker-",
+        "/tmp/fiber-tmux-marker-",
     ))
         io_mod.getenv("FIBER_TERMINAL_TEST_TMUX_MARKER_FAILURE")
     else
@@ -4770,9 +4770,9 @@ const TestDurableFixture = struct {
             .{ .iterate = true, .follow_symlinks = false },
         ) };
         defer root.close();
-        var fx = try io_mod.openOrCreateVerifiedPrivateDir(&root, ".fiber");
-        defer fx.close();
-        var sessions = try io_mod.openOrCreateVerifiedPrivateDir(&fx, "sessions");
+        var fiber = try io_mod.openOrCreateVerifiedPrivateDir(&root, ".fiber");
+        defer fiber.close();
+        var sessions = try io_mod.openOrCreateVerifiedPrivateDir(&fiber, "sessions");
         defer sessions.close();
         var owner = try io_mod.openOrCreateVerifiedPrivateDir(
             &sessions,

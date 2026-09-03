@@ -62,7 +62,7 @@ function selectedSlashRowIndex(escapes: string): number {
 }
 
 test("slash menu selection index ignores the welcome header help hint", () => {
-  const header = `${SELECTED_COMPLETION_SGR}𝒇x\x1b[0m${DIM_SGR} v0.3.27 · Run /help for commands`;
+  const header = `${SELECTED_COMPLETION_SGR}fiber\x1b[0m${DIM_SGR} v0.3.27 · Run /help for commands`;
   const unselected = "\x1b[38;5;245m/help show available slash commands";
   const selected = `${SELECTED_COMPLETION_SGR}  /clear\x1b[38;5;245m start a fresh session and keep background processes`;
 
@@ -327,7 +327,7 @@ function fileMarkerCount(path: string, marker: string): number {
 }
 
 function createSkillsMenuFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-skills-menu-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-skills-menu-")));
   workDirs.push(root);
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -357,7 +357,7 @@ function createSkillsMenuFixture() {
 }
 
 function createSkillRankingFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-skill-rank-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-skill-rank-")));
   workDirs.push(root);
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -378,7 +378,7 @@ function createSkillRankingFixture() {
 }
 
 function createLinkedSkillsMenuFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-linked-skills-menu-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-linked-skills-menu-")));
   workDirs.push(root);
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -403,7 +403,7 @@ function createLinkedSkillsMenuFixture() {
 }
 
 function createLinkedMetadataSkillsMenuFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-linked-skill-metadata-menu-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-linked-skill-metadata-menu-")));
   workDirs.push(root);
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -428,7 +428,7 @@ function createLinkedMetadataSkillsMenuFixture() {
 }
 
 function createUnavailableLinkedSkillFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-unavailable-linked-skill-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-unavailable-linked-skill-")));
   workDirs.push(root);
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -447,12 +447,12 @@ function createUnavailableLinkedSkillFixture() {
 }
 
 function createModelsMenuFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-models-menu-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-models-menu-")));
   workDirs.push(root);
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   const settingsPath = join(home, ".fiber", "settings.json");
-  const tapePath = join(root, "models-menu.fxtape");
+  const tapePath = join(root, "models-menu.fibertape");
   const stderrPath = join(root, "stderr.log");
   mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
@@ -465,7 +465,7 @@ function createModelsMenuFixture() {
 // not contain the substring "home": a "home" path segment would make the
 // query HOME match every installed skill.
 function createMentionGuardFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-mention-guard-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-mention-guard-")));
   workDirs.push(root);
   const home = join(root, "hq");
   const workspace = join(root, "workspace");
@@ -482,7 +482,7 @@ function createMentionGuardFixture() {
 }
 
 function createExactSkillsMenuFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-exact-skills-menu-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-exact-skills-menu-")));
   workDirs.push(root);
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -521,7 +521,7 @@ function createExactSkillsMenuFixture() {
 }
 
 function createManySkillsMenuFixture(count: number) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-skills-menu-many-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-skills-menu-many-")));
   workDirs.push(root);
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -540,7 +540,7 @@ function createManySkillsMenuFixture(count: number) {
 
 function visibleFxSkillNames(grid: string[]): string[] {
   return grid
-    .filter((line) => line.includes("skill-") && line.includes("fx · Global"))
+    .filter((line) => line.includes("skill-") && line.includes("fiber · Global"))
     .map((line) => line.match(/skill-\d+/)?.[0])
     .filter((name): name is string => name !== undefined);
 }
@@ -793,7 +793,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "terminal tab title follows the session name across rename and resume",
     async () => {
-      const workDir = mkdtempSync(join(tmpdir(), "fx-title-rename-e2e-"));
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-title-rename-e2e-"));
       workDirs.push(workDir);
       const home = join(workDir, "home");
       const workspace = join(workDir, "workspace");
@@ -832,16 +832,16 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
 
       // Before the first turn names the session, the workspace distinguishes
       // parallel tabs while the model remains visible.
-      expect(await session.paneTitle()).toBe(`fx · workspace · ${model}`);
+      expect(await session.paneTitle()).toBe(`fiber · workspace · ${model}`);
 
       // The first prompt names the session, and the tab follows it.
       await session.sendText("generate the release notes");
       await session.waitForText("TITLE_RENAME_COMPLETE", 30_000);
-      await waitForPaneTitle(session, `fx · generate the release notes · ${model}`, 5_000);
+      await waitForPaneTitle(session, `fiber · generate the release notes · ${model}`, 5_000);
 
       await session.sendText("/rename deploy pipeline fix");
       await session.waitForText("renamed: deploy pipeline fix", 10_000);
-      await waitForPaneTitle(session, `fx · deploy pipeline fix · ${model}`, 5_000);
+      await waitForPaneTitle(session, `fiber · deploy pipeline fix · ${model}`, 5_000);
 
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd(10_000)).toBe(true);
@@ -873,7 +873,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
         isolated: true,
       });
       await session.waitForComposer(10_000);
-      await waitForPaneTitle(session, `fx · deploy pipeline fix · ${model}`, 5_000);
+      await waitForPaneTitle(session, `fiber · deploy pipeline fix · ${model}`, 5_000);
 
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd(10_000)).toBe(true);
@@ -887,7 +887,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "slash picker growth preserves displaced transcript history",
     async () => {
-      const workDir = mkdtempSync(join(tmpdir(), "fx-slash-footer-e2e-"));
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-slash-footer-e2e-"));
       workDirs.push(workDir);
       const home = join(workDir, "home");
       const workspace = join(workDir, "workspace");
@@ -896,7 +896,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       writeFileSync(join(home, ".fiber", "settings.json"), JSON.stringify({ sandbox: "none", permission: {} }));
 
       const tracePath = join(workDir, "trace.log");
-      const tapePath = join(workDir, "resumed.fxtape");
+      const tapePath = join(workDir, "resumed.fibertape");
       const stderrPath = join(workDir, "stderr.log");
       const resumedStderrPath = join(workDir, "resumed-stderr.log");
       gateway = startFakeGateway([fakeGatewayFinalText(longAssistantResponse())]);
@@ -1017,7 +1017,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.waitForPane(
         (pane) =>
           composerContains(pane, "/feedback") &&
-          !pane.includes("open the fx feedback form"),
+          !pane.includes("open the fiber feedback form"),
         5_000,
       );
       const afterDismiss = await capture("after-dismiss");
@@ -1028,7 +1028,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.waitForPane(
         (pane) =>
           composerContains(pane, "/feedbackx") &&
-          !pane.includes("open the fx feedback form"),
+          !pane.includes("open the fiber feedback form"),
         5_000,
       );
       const afterDismissEdit = await capture("after-dismiss-edit");
@@ -1152,7 +1152,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "slash menu renders its header described rows categories and controls",
     async () => {
-      const workDir = mkdtempSync(join(tmpdir(), "fx-slash-main-menu-e2e-"));
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-slash-main-menu-e2e-"));
       workDirs.push(workDir);
       const home = join(workDir, "home");
       const workspace = join(workDir, "workspace");
@@ -1301,7 +1301,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "Escape closes slash picker until the slash trigger restarts",
     async () => {
-      const workDir = mkdtempSync(join(tmpdir(), "fx-slash-escape-e2e-"));
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-slash-escape-e2e-"));
       workDirs.push(workDir);
       const home = join(workDir, "home");
       const workspace = join(workDir, "workspace");
@@ -1359,7 +1359,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "slash query lifecycle keeps eligibility projection and submission aligned",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-slash-lifecycle-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-slash-lifecycle-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -1436,7 +1436,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
 
       await session.sendKeys("Escape");
       await session.waitForPane(
-        (current) => hasEmptyComposer(current) && current.includes("𝒇x") && !current.includes("Commands"),
+        (current) => hasEmptyComposer(current) && current.includes("fiber") && !current.includes("Commands"),
         5_000,
       );
       await session.sendLiteralText("/resume ");
@@ -1453,7 +1453,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
 
       await session.sendKeys("Escape");
       await session.waitForPane(
-        (current) => hasEmptyComposer(current) && current.includes("𝒇x") && !current.includes("Sessions"),
+        (current) => hasEmptyComposer(current) && current.includes("fiber") && !current.includes("Sessions"),
         5_000,
       );
       for (const retired of ["/appearance", "/input", "/maxxing"]) {
@@ -1482,7 +1482,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
         (current) =>
           current.includes("resume-helper") &&
           !current.includes("Enter Use") &&
-          !current.includes("fx needs access to Vercel AI Gateway"),
+          !current.includes("fiber needs access to Vercel AI Gateway"),
         5_000,
       );
       expect(composerContains(pane, "resume-helper")).toBe(true);
@@ -1499,7 +1499,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "help command filters the catalog and opens selected commands",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-help-menu-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-help-menu-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -1521,7 +1521,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendText("/help");
       let grid = await waitForHelpMenu(session, 35);
       let pane = grid.join("\n");
-      expect(pane).toContain("𝒇x");
+      expect(pane).toContain("fiber");
       expect(pane).toContain("Run /help for commands");
       expect(pane).toContain("[All]");
       expect(pane).toContain("/help");
@@ -1568,7 +1568,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
           composerContains(current, "/workspace") &&
           current.includes("list") &&
           current.includes("add") &&
-          current.includes("𝒇x"),
+          current.includes("fiber"),
         5_000,
       );
       expect(pane).not.toContain("Commands 1");
@@ -1581,7 +1581,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.waitForText("No commands found.", 5_000);
       await session.sendKeys("Escape");
       await session.waitForPane(
-        (current) => hasEmptyComposer(current) && current.includes("𝒇x") && !current.includes("Enter Open"),
+        (current) => hasEmptyComposer(current) && current.includes("fiber") && !current.includes("Enter Open"),
         5_000,
       );
 
@@ -1595,7 +1595,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "settings command opens the inline list and saves selected values",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-settings-menu-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-settings-menu-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace-statusline-visible");
@@ -1624,7 +1624,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendText("/settings");
       const grid = await waitForSettingsMenu(session);
       let pane = grid.join("\n");
-      expect(pane).toContain("𝒇x");
+      expect(pane).toContain("fiber");
       expect(pane).toContain("Run /help for commands");
       expect(pane).toContain("Settings");
       expect(pane).toContain("Interface");
@@ -1652,7 +1652,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       pane = await session.waitForPane(
         (current) =>
           hasEmptyComposer(current) &&
-          current.includes("𝒇x") &&
+          current.includes("fiber") &&
           current.includes("workspace-statusline-visible") &&
           !current.includes("←→ Change"),
         5_000,
@@ -1669,7 +1669,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "compact catalogs keep their actionable rows visible",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-compact-catalogs-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-compact-catalogs-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -1720,7 +1720,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "statusline command toggles independent items from a compact inline panel",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-statusline-menu-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-statusline-menu-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "compact-statusline-workspace");
@@ -1782,7 +1782,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.waitForPane(
         (current) =>
           hasEmptyComposer(current) &&
-          current.includes("𝒇x") &&
+          current.includes("fiber") &&
           current.includes("compact-statusline-workspace") &&
           !current.includes("←→ Change"),
         5_000,
@@ -1807,7 +1807,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "usage and cost commands open one compact inline dashboard",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-cost-menu-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-cost-menu-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -1851,7 +1851,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "usage dashboard preserves ledger totals when recovery storage is unsafe",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-usage-recovery-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-usage-recovery-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -1902,7 +1902,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "usage dashboard reopen discovers usage created after its initial snapshot",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-usage-late-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-usage-late-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -1971,7 +1971,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "usage dashboard retry recovers after profile initialization becomes safe",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-usage-retry-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-usage-retry-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -2046,7 +2046,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "usage dashboard reaches Session when every rolling scope is unavailable",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-usage-corrupt-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-usage-corrupt-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -2099,7 +2099,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "usage dashboard changes scope, selects and expands models, and refreshes",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-usage-menu-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-usage-menu-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -2252,7 +2252,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "workspace command opens a compact inline manager and prepares existing commands",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-workspace-menu-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-workspace-menu-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -2332,7 +2332,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
     "command and completion menus stay inline with the composer",
     async () => {
       const fixture = createSkillsMenuFixture();
-      const tapePath = join(fixture.home, "dollar-inline.fxtape");
+      const tapePath = join(fixture.home, "dollar-inline.fibertape");
       session = await TmuxSession.create({
         cwd: fixture.workspace,
         env: {
@@ -2354,26 +2354,26 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendKeys("-l '/sk'");
       await session.waitForText("browse and manage skills", 5_000);
       let grid = await session.capturePaneGrid();
-      expect(grid.join("\n")).toContain("𝒇x");
+      expect(grid.join("\n")).toContain("fiber");
       expect(grid.join("\n")).not.toContain("Skills 4");
       await session.sendKeys("Enter");
       grid = await waitForSkillsMenu(session, 4);
       const pane = grid.join("\n");
-      expect(pane).toContain("𝒇x");
+      expect(pane).toContain("fiber");
       expect(pane).toContain("Run /help for commands");
       expect(alternateCount("\x1b[?1049h")).toBe(entersBeforeSkills);
       expect(alternateCount("\x1b[?1049l")).toBe(leavesBeforeSkills);
       expect(pane).toContain("[All]");
-      expect(pane).toContain("fx");
-      expect(pane).not.toContain("[Fx]");
+      expect(pane).toContain("fiber");
+      expect(pane).not.toContain("[fiber]");
       expect(pane).toContain("Workspace");
       expect(pane).toContain("Claude");
       expect(pane).toContain("Codex");
       expect(pane).toContain("Agents");
       expect(pane).toContain("managed-menu");
-      expect(pane).toContain("fx · Global");
+      expect(pane).toContain("fiber · Global");
       expect(pane).toContain("workspace-menu");
-      expect(pane).toContain("fx · Workspace");
+      expect(pane).toContain("fiber · Workspace");
       expect(pane).toContain("↑↓ Navigate");
       expect(pane).toContain("Enter Use");
 
@@ -2382,9 +2382,9 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(deep_history).not.toContain("Visible skills (");
       expect(deep_history).not.toContain("skill discovery warning:");
       expect(leadingBlankLineCount(tail_history)).toBeLessThan(3);
-      expect(tail_history).not.toContain("𝒇x v0.3.7");
+      expect(tail_history).not.toContain("fiber v0.3.7");
       const escapes = await session.capturePaneEscapes();
-      expect(escapes).not.toContain(`${DIM_SGR}fx-review`);
+      expect(escapes).not.toContain(`${DIM_SGR}fiber-review`);
       expect(deep_history).not.toMatch(/┃ \/sk/);
 
       await session.sendLiteralText("work");
@@ -2397,7 +2397,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.waitForPane(
         (current) =>
           hasEmptyComposer(current) &&
-          current.includes("𝒇x") &&
+          current.includes("fiber") &&
           !current.includes("↑↓ Navigate"),
         5_000,
       );
@@ -2408,14 +2408,14 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendLiteralText("$work");
       grid = await waitForSkillsMenu(session, 1);
       expect(composerContains(grid.join("\n"), "$work")).toBe(true);
-      expect(grid.join("\n")).toContain("𝒇x");
+      expect(grid.join("\n")).toContain("fiber");
       expect(alternateCount("\x1b[?1049h")).toBe(entersBeforeDollar);
       expect(alternateCount("\x1b[?1049l")).toBe(leavesBeforeDollar);
       await session.sendKeys("C-[");
       await session.waitForPane(
         (current) =>
           composerContains(current, "$work") &&
-          current.includes("𝒇x") &&
+          current.includes("fiber") &&
           !current.includes("↑↓ Navigate"),
         5_000,
       );
@@ -2440,7 +2440,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.waitForPane(
         (current) =>
           composerContains(current, "hello $") &&
-          current.includes("𝒇x") &&
+          current.includes("fiber") &&
           !current.includes("Skills 4"),
         5_000,
       );
@@ -2562,7 +2562,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendText("/skills");
       await waitForSkillsMenu(session, 4);
       await session.sendKeys("Tab");
-      await session.waitForText("[fx]", 5_000);
+      await session.waitForText("[Fiber]", 5_000);
       await session.sendKeys("BTab");
       await session.waitForText("[All]", 5_000);
       await session.sendLiteralText("workspace");
@@ -2570,7 +2570,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendKeys("Enter");
       grid = await session.capturePaneGrid();
       expect(composerContains(grid.join("\n"), "workspace-menu")).toBe(true);
-      expect(grid.join("\n")).toContain("𝒇x");
+      expect(grid.join("\n")).toContain("fiber");
       expect(grid.join("\n")).not.toContain("↑↓ Navigate");
       expect(capturePaneHistory(session, -1000)).not.toContain("Unknown command");
       expect(session.isAlive()).toBe(true);
@@ -2765,7 +2765,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
         height: 32,
       });
       await session.waitForComposer(10_000);
-      expect(await session.paneTitle()).toBe(`fx · workspace · ${currentModel}`);
+      expect(await session.paneTitle()).toBe(`fiber · workspace · ${currentModel}`);
 
       const alternateCount = (sequence: string) =>
         countOccurrences(readFileSync(fixture.tapePath).toString("latin1"), sequence);
@@ -2801,7 +2801,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendText("/model");
       let grid = await waitForModelsMenu(session, 4);
       let pane = grid.join("\n");
-      expect(pane).toContain("𝒇x");
+      expect(pane).toContain("fiber");
       expect(pane).toContain("Run /help for commands");
       expect(alternateCount("\x1b[?1049h")).toBe(entersBeforeModelMenu);
       expect(alternateCount("\x1b[?1049l")).toBe(leavesBeforeModelMenu);
@@ -2854,7 +2854,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
 
       await session.sendKeys("C-[");
       await session.waitForPane(
-        (current) => hasEmptyComposer(current) && current.includes("𝒇x") && !current.includes("Tab Provider"),
+        (current) => hasEmptyComposer(current) && current.includes("fiber") && !current.includes("Tab Provider"),
         5_000,
       );
 
@@ -2880,7 +2880,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
 
       const settings = JSON.parse(readFileSync(fixture.settingsPath, "utf8")) as { models?: { gateway?: string } };
       expect(settings.models?.gateway).toBe(selectedModel);
-      expect(await session.paneTitle()).toBe(`fx · workspace · ${selectedModel}`);
+      expect(await session.paneTitle()).toBe(`fiber · workspace · ${selectedModel}`);
       expect(session.isAlive()).toBe(true);
 
       await session.sendText("/quit");
@@ -2992,7 +2992,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(pane).not.toContain("Reasoning effort");
       expect(pane).not.toContain("default");
       expect(JSON.parse(readFileSync(fixture.settingsPath, "utf8")).models.gateway).toBe(selectedModel);
-      expect(await session.paneTitle()).toBe(`fx · workspace · ${selectedModel}`);
+      expect(await session.paneTitle()).toBe(`fiber · workspace · ${selectedModel}`);
       expect(session.isAlive()).toBe(true);
       expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");
 
@@ -3291,7 +3291,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
         await session.waitForPane(
           (pane) =>
             composerContains(pane, "Explain echo $HOME") &&
-            pane.includes("𝒇x") &&
+            pane.includes("fiber") &&
             !pane.includes("No skills found."),
           5_000,
         );
@@ -3453,7 +3453,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "slash menu highlight reaches bottom before the list scrolls",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-slash-highlight-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-slash-highlight-")));
       workDirs.push(root);
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -3519,7 +3519,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
   test(
     "slash menu remains alive when descriptions clip in a narrow terminal",
     async () => {
-      const workDir = mkdtempSync(join(tmpdir(), "fx-slash-narrow-menu-e2e-"));
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-slash-narrow-menu-e2e-"));
       workDirs.push(workDir);
       const home = join(workDir, "home");
       const workspace = join(workDir, "workspace");

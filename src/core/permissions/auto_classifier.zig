@@ -915,7 +915,7 @@ test "review view selection uses only normalized action and origin facts" {
     for ([_][]const u8{
         "vercel deploy --prod",
         "rm -rf dist",
-        "gh pr create --body \"$(cat .fx-pr-body.md)\"",
+        "gh pr create --body \"$(cat .fiber-pr-body.md)\"",
         "./cleanup --all",
         "find generated -delete",
         "git restore .",

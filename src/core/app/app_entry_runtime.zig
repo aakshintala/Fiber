@@ -500,7 +500,7 @@ fn testConfig() Config {
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
         .prompt_policy = .{ .system_prompt = "system" },
-        .skill_root_policy = .{ .managed_root_source = .global_fx },
+        .skill_root_policy = .{ .managed_root_source = .global_fiber },
         .ignored_list_entries = &.{ ".git", "zig-out" },
         .max_list_entries = 100,
         .max_read_file_bytes = 1024,
@@ -916,7 +916,7 @@ test "app entry relaunches only after teardown with the validated handoff" {
     var capture = TestCapture.init(.{ .interactive = .{} });
     defer capture.deinit();
     capture.resume_handoff_id = "session-123";
-    capture.upgrade_relaunch_path = "/tmp/fx-upgraded";
+    capture.upgrade_relaunch_path = "/tmp/fiber-upgraded";
     capture.record_stderr_event = true;
 
     const outcome = try runWithDeps(
@@ -930,7 +930,7 @@ test "app entry relaunches only after teardown with the validated handoff" {
     try std.testing.expectEqual(@as(u8, 1), outcome.exit);
     try std.testing.expectEqual(@as(usize, 1), capture.replace_calls);
     try std.testing.expectEqual(@as(usize, 4), capture.replace_arg_count);
-    try std.testing.expectEqualStrings("/tmp/fx-upgraded", capture.replaceArg(0));
+    try std.testing.expectEqualStrings("/tmp/fiber-upgraded", capture.replaceArg(0));
     try std.testing.expectEqualStrings("resume", capture.replaceArg(1));
     try std.testing.expectEqualStrings("session-123", capture.replaceArg(2));
     try std.testing.expectEqualStrings("--upgrade-relaunch", capture.replaceArg(3));
@@ -963,7 +963,7 @@ test "app entry never relaunches without a validated handoff" {
     const alloc = std.testing.allocator;
     var capture = TestCapture.init(.{ .interactive = .{} });
     defer capture.deinit();
-    capture.upgrade_relaunch_path = "/tmp/fx-upgraded";
+    capture.upgrade_relaunch_path = "/tmp/fiber-upgraded";
 
     const outcome = try runWithDeps(
         TestApp,

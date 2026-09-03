@@ -64,7 +64,7 @@ async function createResizeSession(
   const env = { ...opts.env };
   let home = env.HOME;
   if (!home) {
-    const root = mkdtempSync(join(tmpdir(), "fx-resize-home-"));
+    const root = mkdtempSync(join(tmpdir(), "fiber-resize-home-"));
     tempDirs.push(root);
     home = join(root, "home");
     env.HOME = home;
@@ -102,7 +102,7 @@ async function launchAt(
 }
 
 function createStderrPath(label: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `fx-resize-${label}-`));
+  const dir = mkdtempSync(join(tmpdir(), `fiber-resize-${label}-`));
   tempDirs.push(dir);
   return join(dir, "stderr.txt");
 }
@@ -117,7 +117,7 @@ async function launchRecordedSurfaceSession(
   stderrPath: string;
 }> {
   const root = realpathSync(
-    mkdtempSync(join(tmpdir(), `fx-footer-surface-${label}-`)),
+    mkdtempSync(join(tmpdir(), `fiber-footer-surface-${label}-`)),
   );
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -135,7 +135,7 @@ async function launchRecordedSurfaceSession(
       HOME: home,
       AI_GATEWAY_API_KEY: undefined,
       VERCEL_OIDC_TOKEN: undefined,
-      FIBER_RECORD: join(root, "session.fxtape"),
+      FIBER_RECORD: join(root, "session.fibertape"),
       FIBER_RECORD_INPUT: "1",
       NO_COLOR: "1",
       ...extraEnv,
@@ -295,7 +295,7 @@ function selectedSlashRow(escapes: string): string | null {
 }
 
 test("selected slash row ignores the welcome header help hint", () => {
-  const header = `${SELECTED_COMPLETION_SGR}𝒇x\x1b[0m\x1b[38;5;245m v0.3.27 · Run /help for commands`;
+  const header = `${SELECTED_COMPLETION_SGR}fiber\x1b[0m\x1b[38;5;245m v0.3.27 · Run /help for commands`;
   const command = `${SELECTED_COMPLETION_SGR}  /clear\x1b[38;5;245m start a fresh session and keep background processes`;
 
   expect(selectedSlashRow(`${header}\n${command}`)).toBe(command);
@@ -576,7 +576,7 @@ async function waitForLiveScrollbackText(
     const status = s.paneStatus();
     if (status.dead) {
       throw new Error(
-        `fx exited with status ${status.status} while waiting for ${JSON.stringify(needle)}.\nScrollback:\n${last}`,
+        `fiber exited with status ${status.status} while waiting for ${JSON.stringify(needle)}.\nScrollback:\n${last}`,
       );
     }
     last = await s.captureFullScrollback();
@@ -649,11 +649,11 @@ function expectSkillsMenuGrid(
   const text = grid.join("\n");
   expect(text).toContain(`Skills ${count}`);
   expect(text).toContain("[All]");
-  expect(text).toContain("fx");
-  expect(text).not.toContain("[Fx]");
+  expect(text).toContain("fiber");
+  expect(text).not.toContain("[fiber]");
   expect(text).toContain("Workspace");
   expect(text).toContain("Codex");
-  expect(text).toContain("fx · Global");
+  expect(text).toContain("fiber · Global");
   expect(names.some((name) => text.includes(name))).toBe(true);
   expect(text).not.toContain("Visible skills (");
   expect(findInlineSkillsPicker(grid)).not.toBeNull();
@@ -678,7 +678,7 @@ function globalTmuxOptions(): { server: string; window: string } {
 }
 
 function matchingTestSessions(): string[] {
-  const prefix = `fx-test-${process.pid}-`;
+  const prefix = `fiber-test-${process.pid}-`;
   try {
     return execFileSync(
       "tmux",
@@ -711,7 +711,7 @@ function createSkillFixture(
   descriptionPaddingRows = 0,
 ): LargeSkillFixture {
   const root = realpathSync(
-    mkdtempSync(join(tmpdir(), `fx-resize-${rootLabel}-${attempt}-`)),
+    mkdtempSync(join(tmpdir(), `fiber-resize-${rootLabel}-${attempt}-`)),
   );
   const home = join(root, "home");
   const workspace = join(root, "workspace");
@@ -725,7 +725,7 @@ function createSkillFixture(
     const attemptSuffix = String(attempt).padStart(3, "0");
     const attemptName = `head-a${attemptSuffix}`;
     const name = `gauntlet-${attemptName}-skill-${suffix}`;
-    const marker = `fx-gauntlet-${attemptName}-${suffix}`;
+    const marker = `fiber-gauntlet-${attemptName}-${suffix}`;
     const padding = Array.from(
       { length: descriptionPaddingRows },
       (_, row) => String.fromCharCode("a".charCodeAt(0) + row).repeat(120),
@@ -995,7 +995,7 @@ function startFileApprovalGateway() {
 }
 
 function createFileApprovalRoot() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-resize-file-approval-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-resize-file-approval-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -1102,7 +1102,7 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
   const shrinkRows = attempt === 1 ? 24 : 16;
   const tracePath = join(fixture.root, "trace.log");
   const stderrPath = join(fixture.root, "stderr.log");
-  const tapePath = join(fixture.root, "session.fxtape");
+  const tapePath = join(fixture.root, "session.fibertape");
   const paneBeforeShrinkPath = join(fixture.root, "pane-before-shrink.txt");
   const paneAfterShrinkPath = join(fixture.root, "pane-after-shrink.txt");
   const scrollbackBeforeShrinkPath = join(
@@ -1232,7 +1232,7 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
     const restoredPane = await s.waitForPane((pane) => {
       const grid = pane.split("\n");
       return (
-        pane.includes("𝒇x") &&
+        pane.includes("fiber") &&
         !pane.includes("↑↓ Navigate") &&
         findFooter(grid) !== null
       );
@@ -1313,7 +1313,7 @@ async function runRapidSkillResizeAttempt(
   );
   const tracePath = join(fixture.root, "trace.log");
   const stderrPath = join(fixture.root, "stderr.log");
-  const tapePath = join(fixture.root, "session.fxtape");
+  const tapePath = join(fixture.root, "session.fibertape");
   const panePath = join(fixture.root, "pane-final.txt");
   const scrollbackPath = join(fixture.root, "scrollback-final.txt");
   const classificationPath = join(fixture.root, "classification.json");
@@ -1408,7 +1408,7 @@ async function runRapidSkillResizeAttempt(
     const dismissed = await s.waitForPane(
       (pane) => {
         const grid = pane.replace(/\n$/, "").split("\n");
-        return pane.includes("𝒇x") &&
+        return pane.includes("fiber") &&
           !pane.includes("↑↓ Navigate") &&
           findFooter(grid) !== null;
       },
@@ -1486,7 +1486,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       session = await launchAt(120, 40);
 
       const grid = await session.capturePaneGrid();
-      const headerRow = grid.findIndex((line) => line.includes("𝒇x v"));
+      const headerRow = grid.findIndex((line) => line.includes("fiber v"));
       expect(headerRow).toBe(0);
     },
     TIMEOUT,
@@ -1523,7 +1523,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "gated tmux setup failure cleans the session before releasing the command",
     async () => {
       session = await createResizeSession({ cmd: "sleep 120" });
-      const dir = mkdtempSync(join(tmpdir(), "fx-tmux-gate-failure-"));
+      const dir = mkdtempSync(join(tmpdir(), "fiber-tmux-gate-failure-"));
       tempDirs.push(dir);
       const markerPath = join(dir, "command-ran");
       const before = matchingTestSessions();
@@ -1546,7 +1546,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "settled resize replays a long assistant transcript from the header",
     async () => {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-resize-long-transcript-")),
+        mkdtempSync(join(tmpdir(), "fiber-resize-long-transcript-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -1607,7 +1607,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         session,
         "PRE_FX_MARKER_",
       );
-      expect(scrollback.match(/𝒇x v\d+\.\d+\.\d+\b/g)).toHaveLength(1);
+      expect(scrollback.match(/fiber v\d+\.\d+\.\d+\b/g)).toHaveLength(1);
       expect(scrollback.match(/Run \/help for commands/g)).toHaveLength(1);
       expectOrderedMarkersWithoutBlankHole(scrollback, markers);
       const grid = await waitForSettledFooter(session);
@@ -1622,13 +1622,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "live command resize preserves current grouped scrollback while output is folded",
     async () => {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-resize-live-command-scrollback-")),
+        mkdtempSync(join(tmpdir(), "fiber-resize-live-command-scrollback-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
       const tracePath = join(root, "trace.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       const preFxMarker = "PRE_FX_RESIZE_STREAM_MARKER";
       const finalResponse = "RESIZE_STREAM_FINAL_RESPONSE";
       tempDirs.push(root);
@@ -1683,7 +1683,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await waitForLiveScrollbackText(session, finalResponse, TIMEOUT);
 
       const scrollback = await session.captureFullScrollback();
-      expect(scrollback.match(/𝒇x v\d+\.\d+\.\d+\b/g)).toHaveLength(1);
+      expect(scrollback.match(/fiber v\d+\.\d+\.\d+\b/g)).toHaveLength(1);
       expect(scrollback.match(/Run \/help for commands/g)).toHaveLength(1);
       expect(scrollback).toContain("stream the resize marker command");
       expect(scrollback).not.toContain(preFxMarker);
@@ -1707,7 +1707,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "structured retention keeps native scrollback complete before resize",
     async () => {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-retention-native-scrollback-")),
+        mkdtempSync(join(tmpdir(), "fiber-retention-native-scrollback-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -1838,13 +1838,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const testDeadline = Date.now() + TIMEOUT - TEST_TEARDOWN_HEADROOM_MS;
       const remainingTimeout = () => Math.max(0, testDeadline - Date.now());
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-resize-cancel-command-approval-")),
+        mkdtempSync(join(tmpdir(), "fiber-resize-cancel-command-approval-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
       const tracePath = join(root, "trace.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       const markerPath = join(workspace, "approval-cancel-ran.txt");
       const command = "touch approval-cancel-ran.txt";
       const seedMarker = "APPROVAL_CANCEL_RESIZE_SCROLLBACK_SEED";
@@ -1973,7 +1973,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const afterCancelScrollback = await captureScrollback("after-cancel");
 
       const transcriptCopyCounts = (scrollback: string) => ({
-        startup: scrollback.match(/𝒇x v\d+\.\d+\.\d+\b/g)?.length ?? 0,
+        startup: scrollback.match(/fiber v\d+\.\d+\.\d+\b/g)?.length ?? 0,
         help: countOccurrences(scrollback, "Run /help for commands"),
         recording: countOccurrences(
           scrollback,
@@ -2018,7 +2018,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "semantic thematic rule reflows across a live tmux shrink and grow",
     async () => {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-resize-thematic-rule-")),
+        mkdtempSync(join(tmpdir(), "fiber-resize-thematic-rule-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -2102,7 +2102,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "nested Markdown blockquote reflows across a live tmux shrink and grow",
     async () => {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-resize-nested-blockquote-")),
+        mkdtempSync(join(tmpdir(), "fiber-resize-nested-blockquote-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -2193,7 +2193,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         roots.push(await runLargeSkillResizeAttempt(attempt));
       }
       if (KEEP_LARGE_SKILL_ARTIFACTS) {
-        console.log(`fx resize artifacts:\n${roots.join("\n")}`);
+        console.log(`fiber resize artifacts:\n${roots.join("\n")}`);
         console.log(
           `Cleanup: rm -rf ${roots.map(quoteShellPath).join(" ")}`,
         );
@@ -2213,7 +2213,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       results.push(await runRapidSkillResizeAttempt(125, 1));
       if (KEEP_LARGE_SKILL_ARTIFACTS) {
         console.log(
-          `fx rapid resize artifacts:\n${results.map(({ root }) => root).join("\n")}`,
+          `fiber rapid resize artifacts:\n${results.map(({ root }) => root).join("\n")}`,
         );
       }
     },
@@ -2224,13 +2224,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "gated assistant chunks remain ordered across shrink and grow",
     async () => {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-resize-gated-stream-")),
+        mkdtempSync(join(tmpdir(), "fiber-resize-gated-stream-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const tracePath = join(root, "trace.log");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
       writeFileSync(join(home, ".fiber", "settings.json"), "{}");
@@ -2356,7 +2356,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         )}\n`,
       );
       if (KEEP_LARGE_SKILL_ARTIFACTS) {
-        console.log(`fx gated stream resize artifact:\n${root}`);
+        console.log(`fiber gated stream resize artifact:\n${root}`);
       }
     },
     60_000,
@@ -2366,13 +2366,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "visibly open slash picker adapts across shrink and grow without losing transcript state",
     async () => {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-resize-open-picker-")),
+        mkdtempSync(join(tmpdir(), "fiber-resize-open-picker-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const tracePath = join(root, "trace.log");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
       writeFileSync(join(home, ".fiber", "settings.json"), "{}");
@@ -2504,7 +2504,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         )}\n`,
       );
       if (KEEP_LARGE_SKILL_ARTIFACTS) {
-        console.log(`fx open picker resize artifact:\n${root}`);
+        console.log(`fiber open picker resize artifact:\n${root}`);
       }
     },
     60_000,
@@ -2514,7 +2514,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "slash picker dismissal restores the resized short transcript boundary",
     async () => {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-resize-short-picker-dismissal-")),
+        mkdtempSync(join(tmpdir(), "fiber-resize-short-picker-dismissal-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -2776,13 +2776,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "wide user card survives resize without splitting a terminal cell",
     async () => {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-resize-wide-user-")),
+        mkdtempSync(join(tmpdir(), "fiber-resize-wide-user-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
       const tracePath = join(root, "trace.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       const panePath = join(root, "pane-final.txt");
       const scrollbackPath = join(root, "scrollback-final.txt");
       const statusPath = join(root, "pane-status.json");
@@ -2868,7 +2868,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       expect(existsSync(tapePath)).toBe(true);
       expect(readFileSync(tapePath).byteLength).toBeGreaterThan(0);
       if (KEEP_LARGE_SKILL_ARTIFACTS) {
-        console.log(`fx wide-user resize artifact:\n${root}`);
+        console.log(`fiber wide-user resize artifact:\n${root}`);
       }
     },
     TIMEOUT,
@@ -3020,7 +3020,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const root = createFileApprovalRoot();
       const gateway = startFileApprovalGateway();
       const stderrPath = join(root.root, "stderr.txt");
-      const tapePath = join(root.root, "active-file-approval.fxtape");
+      const tapePath = join(root.root, "active-file-approval.fibertape");
       writeFileSync(stderrPath, "");
       session = await createResizeSession({
         cmd: FIBER_BIN,
@@ -3453,7 +3453,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         5_000,
       );
       const restored = captureScrollback();
-      expect(restored.match(/𝒇x v\d+\.\d+\.\d+\b/g)).toHaveLength(1);
+      expect(restored.match(/fiber v\d+\.\d+\.\d+\b/g)).toHaveLength(1);
       expect(restored.match(/Run \/help for commands/g)).toHaveLength(1);
       expect(restored).not.toContain("Commands 35");
       expect(findFooter(await session.capturePaneGrid())).not.toBeNull();
@@ -3465,13 +3465,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "grow with immediate input retains pre-paint resize reconciliation",
     async () => {
       const root = realpathSync(
-        mkdtempSync(join(tmpdir(), "fx-resize-prepaint-input-")),
+        mkdtempSync(join(tmpdir(), "fiber-resize-prepaint-input-")),
       );
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
       const tracePath = join(root, "trace.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       const replayDir = join(root, "replay");
       const preFxMarker = "PRE_FX_RESIZE_PREPAINT_7319";
       const firstMarker = "RESIZE_PREPAINT_TURN_A_COMPLETE";
@@ -3643,7 +3643,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
   test(
     "settled resize preserves a multi-megabyte bracketed paste byte-for-byte",
     async () => {
-      const dir = mkdtempSync(join(tmpdir(), "fx-resize-large-paste-"));
+      const dir = mkdtempSync(join(tmpdir(), "fiber-resize-large-paste-"));
       tempDirs.push(dir);
       const tracePath = join(dir, "trace.log");
       const stderrPath = join(dir, "stderr.log");
@@ -3703,7 +3703,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
   test(
     "tmux resize preserves column-one CPR-shaped paste bytes in the submitted prompt",
     async () => {
-      const dir = mkdtempSync(join(tmpdir(), "fx-resize-cpr-paste-"));
+      const dir = mkdtempSync(join(tmpdir(), "fiber-resize-cpr-paste-"));
       tempDirs.push(dir);
       const tracePath = join(dir, "trace.log");
       const stderrPath = join(dir, "stderr.log");
@@ -3785,7 +3785,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
   test(
     "probe-first resize keeps a terminal reply paste-owned",
     async () => {
-      const dir = mkdtempSync(join(tmpdir(), "fx-resize-cpr-paste-late-"));
+      const dir = mkdtempSync(join(tmpdir(), "fiber-resize-cpr-paste-late-"));
       tempDirs.push(dir);
       const tracePath = join(dir, "trace.log");
       const stderrPath = join(dir, "stderr.log");
@@ -3896,7 +3896,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
   test(
     "timed-out cursor probe does not leak a partial private CSI into later paste",
     async () => {
-      const dir = mkdtempSync(join(tmpdir(), "fx-resize-probe-timeout-"));
+      const dir = mkdtempSync(join(tmpdir(), "fiber-resize-probe-timeout-"));
       tempDirs.push(dir);
       const tracePath = join(dir, "trace.log");
       const stderrPath = join(dir, "stderr.log");
@@ -3943,10 +3943,10 @@ describe.skipIf(SKIP)("tui: resize", () => {
   );
 
   test(
-    "settled resize clears pre-fx scrollback in both startup modes",
+    "settled resize clears pre-fiber scrollback in both startup modes",
     async () => {
       for (const startupScrollback of [true, false]) {
-        const root = mkdtempSync(join(tmpdir(), "fx-resize-history-reset-"));
+        const root = mkdtempSync(join(tmpdir(), "fiber-resize-history-reset-"));
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const marker = `PRE_FX_MARKER_${startupScrollback ? "ON" : "OFF"}_6179`;
@@ -3996,12 +3996,12 @@ describe.skipIf(SKIP)("tui: resize", () => {
   test(
     "idle theme monitoring stays silent and notifications retint the transcript once",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-theme-reset-replay-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-theme-reset-replay-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const tracePath = join(root, "trace.log");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "theme-reset.fxtape");
+      const tapePath = join(root, "theme-reset.fibertape");
       tempDirs.push(root);
       mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace, { recursive: true });

@@ -59,7 +59,7 @@ type FixtureRoot = {
 type GatewayFixture = ReturnType<typeof startDynamicFakeGateway>;
 
 function createFixtureRoot(label: string): FixtureRoot {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), `fx-gateway-lifecycle-${label}-`)));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), `fiber-gateway-lifecycle-${label}-`)));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -837,7 +837,7 @@ describe("gateway stream lifecycle", () => {
     }
   }, 30_000);
 
-  test("fx ask projects explicit permission mode on initial and continuing requests", async () => {
+  test("fiber ask projects explicit permission mode on initial and continuing requests", async () => {
     for (const mode of ["ask", "auto"] as const) {
       const root = createFixtureRoot(`permission-mode-${mode}`);
       const tracePath = join(root.root, "trace.log");
@@ -1102,7 +1102,7 @@ describe("gateway stream lifecycle", () => {
       writeFileSync(settingsPath, JSON.stringify(settings));
       const tracePath = join(root.root, "trace.log");
       const stderrPath = join(root.root, "stderr.log");
-      const tapePath = join(root.root, "session.fxtape");
+      const tapePath = join(root.root, "session.fibertape");
       let responseIndex = 0;
       const gateway = startGateway(() => {
         responseIndex += 1;
@@ -1526,7 +1526,7 @@ describe("gateway stream lifecycle", () => {
         gateway.requests[1]!.body,
         installCallId,
       );
-      expect(installOutput).toContain("Installed 1 skill(s) into fx.");
+      expect(installOutput).toContain("Installed 1 skill(s) into fiber.");
       expect(installOutput).toContain(`- ${skillName}\n`);
       expect(installOutput).not.toContain(bodySentinel);
       expect(installOutput).not.toContain(companionSentinel);
@@ -2626,7 +2626,7 @@ describe("gateway stream lifecycle", () => {
       expect(output).toContain("AccessDenied");
       expect(output).toContain("Do not retry");
       expect(output).toContain("symlink");
-      expect(output).toContain("fx permissions");
+      expect(output).toContain("fiber permissions");
     } finally {
       gateway.stop();
       chmodSync(blockedPath, 0o700);
@@ -3432,7 +3432,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           ? readFileSync(tracePath, "utf8").slice(-4_000)
           : "(trace missing)";
         throw new Error(
-          `fx ask exited ${result.code}; signal=${result.signal}; timed_out=${result.timedOut}; kill_sent=${result.killSent}; elapsed_ms=${result.elapsedMs}; pid=${result.pid}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}\nprocess_at_timeout:\n${result.processStateAtTimeout}\nprocess_after_close:\n${result.processStateAfterClose}\ntrace:\n${trace}`,
+          `fiber ask exited ${result.code}; signal=${result.signal}; timed_out=${result.timedOut}; kill_sent=${result.killSent}; elapsed_ms=${result.elapsedMs}; pid=${result.pid}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}\nprocess_at_timeout:\n${result.processStateAtTimeout}\nprocess_after_close:\n${result.processStateAfterClose}\ntrace:\n${trace}`,
         );
       }
       const json = parseAskJson(result.stdout);
@@ -3602,7 +3602,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const tracePath = join(root.root, "trace.log");
     const before = new Set(
       readdirSync("/tmp").filter((name) =>
-        name.startsWith(".fx-command-replay-")
+        name.startsWith(".fiber-command-replay-")
       ),
     );
     const gateway = startGateway(() =>
@@ -3648,7 +3648,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       await proc.exited;
       await Bun.sleep(50);
       const after = readdirSync("/tmp").filter((name) =>
-        name.startsWith(".fx-command-replay-") && !before.has(name)
+        name.startsWith(".fiber-command-replay-") && !before.has(name)
       );
       expect(after).toEqual([]);
       expect(existsSync(join(root.home, ".fiber", "sessions"))).toBe(false);
@@ -3664,8 +3664,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     async () => {
       const root = createFixtureRoot("headless-reexec-after-rebuild");
       const tracePath = join(root.root, "trace.log");
-      const liveBin = join(root.root, "fx");
-      const replacementBin = join(root.root, "fx.next");
+      const liveBin = join(root.root, "fiber");
+      const replacementBin = join(root.root, "fiber.next");
       const parentExePath = join(root.root, "parent-exe.txt");
       const firstHelperPidPath = join(root.root, "first-helper.pid");
       const secondHelperPidPath = join(root.root, "second-helper.pid");
@@ -3683,7 +3683,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         switch (responseIndex++) {
           case 0:
             if (fxPid === null) {
-              return new Response("fx pid unavailable", { status: 500 });
+              return new Response("fiber pid unavailable", { status: 500 });
             }
             return fakeShellRun(
               firstCallId,
@@ -4336,7 +4336,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     90_000,
   );
 
-  test("default fx ask recovers malformed serialized tool arguments", async () => {
+  test("default fiber ask recovers malformed serialized tool arguments", async () => {
     const root = createFixtureRoot("malformed-arguments-turn");
     const tracePath = join(root.root, "trace.log");
     const responses = [
@@ -4379,7 +4379,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     }
   });
 
-  test("default fx ask retries replay-safe provider errors before success", async () => {
+  test("default fiber ask retries replay-safe provider errors before success", async () => {
     const root = createFixtureRoot("provider-error-retry-turn");
     const tracePath = join(root.root, "trace.log");
     const responses = [
@@ -4421,7 +4421,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     }
   }, 30_000);
 
-  test("default fx ask recovers after an immediate peer reset", async () => {
+  test("default fiber ask recovers after an immediate peer reset", async () => {
     const expectedOutput = "Recovered after immediate peer reset.";
     const responseBody = await fakeGatewayFinalText(expectedOutput).text();
 
@@ -4539,7 +4539,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     }
   }, 60_000);
 
-  test("default fx ask starts fresh network pacing after explicitly timed provider retries", async () => {
+  test("default fiber ask starts fresh network pacing after explicitly timed provider retries", async () => {
     const root = createFixtureRoot("mixed-provider-network-pacing");
     const tracePath = join(root.root, "trace.log");
     const expectedOutput = "Recovered after mixed provider and network failures.";
@@ -4658,7 +4658,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     }
   }, 20_000);
 
-  test("default fx ask regenerates an unstarted streamed tool after provider failure", async () => {
+  test("default fiber ask regenerates an unstarted streamed tool after provider failure", async () => {
     const root = createFixtureRoot("provider-error-tool-start-turn");
     const tracePath = join(root.root, "trace.log");
     const responses = [
@@ -6226,7 +6226,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     }
   });
 
-  test("default fx ask returns output-limit failure without committing completed history", async () => {
+  test("default fiber ask returns output-limit failure without committing completed history", async () => {
     const root = createFixtureRoot("gated-length-tool");
     const tracePath = join(root.root, "trace.log");
     const sentinelPath = join(root.workspace, "command-must-not-run.txt");

@@ -976,11 +976,11 @@ test "buildHintLine omits the session segment when no title is cached" {
 test "buildHintLine shows the workspace and Git branch" {
     var buf: [256]u8 = undefined;
     const line = buildHintLine(false, false, true, "openai/gpt-5", .ask, 0, null, false, .auto, false, .{
-        .workspace_label = "/workspace/code/fx",
+        .workspace_label = "/workspace/code/fiber",
         .git_branch = "feature/statusline",
     }, 100, &buf);
     try std.testing.expectEqualStrings(
-        "ask · gpt-5 · /workspace/code/fx (feature/statusline)",
+        "ask · gpt-5 · /workspace/code/fiber (feature/statusline)",
         line,
     );
 }
@@ -988,14 +988,11 @@ test "buildHintLine shows the workspace and Git branch" {
 test "buildHintLine keeps workspace and branch readable at narrow widths" {
     var buf: [256]u8 = undefined;
     const line = buildHintLine(false, false, true, "openai/gpt-5", .ask, 0, null, false, .auto, false, .{
-        .workspace_label = "/a/very/long/path/to/fx-repo",
-        .git_branch = "feature/statusline",
+        .workspace_label = "/a/very/long/path/fiber-repo",
+        .git_branch = "feat/statusline",
     }, 36, &buf);
     try std.testing.expectEqual(@as(usize, 36), display_width.visibleWidthIgnoringAnsi(line));
-    try std.testing.expect(std.mem.startsWith(u8, line, "ask · gpt-5 · "));
-    try std.testing.expect(std.mem.find(u8, line, "fx-repo") != null);
-    try std.testing.expect(std.mem.find(u8, line, "feature/") != null);
-    try std.testing.expect(std.mem.endsWith(u8, line, "…)"));
+    try std.testing.expectEqualStrings("ask · gpt-5 · …er-repo (feat/statu…)", line);
 }
 
 test "buildHintLine workspace identity does not displace existing status segments" {
@@ -1025,11 +1022,11 @@ test "buildHintLine shows a non-Git workspace without branch punctuation" {
 test "buildHintLine labels detached HEAD" {
     var buf: [128]u8 = undefined;
     const line = buildHintLine(false, false, true, "openai/gpt-5", .ask, 0, null, false, .auto, false, .{
-        .workspace_label = "/tmp/fx",
+        .workspace_label = "/tmp/fiber",
         .git_branch = "detached:0123456789ab",
     }, 80, &buf);
     try std.testing.expectEqualStrings(
-        "ask · gpt-5 · /tmp/fx (detached:0123456789ab)",
+        "ask · gpt-5 · /tmp/fiber (detached:0123456789ab)",
         line,
     );
 }

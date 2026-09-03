@@ -1820,7 +1820,7 @@ const test_tool_registry = tool_dispatch.Registry{ .tools = &.{
 } };
 
 fn matchesTestRunCommandCompatibility(command: []const u8) bool {
-    return std.mem.startsWith(u8, command, "fx-compatibility-probe");
+    return std.mem.startsWith(u8, command, "fiber-compatibility-probe");
 }
 
 fn executeTestRunCommandCompatibility(
@@ -2158,7 +2158,7 @@ test "captured command compatibility bypasses compound commands" {
     const arena = arena_state.allocator();
 
     try std.testing.expect((try tool_dispatch.dispatchRunCommandCompatibility(typedDispatchContext(rt.context(), arena), rt.tool_registry, .{
-        .command = "fx-compatibility-probe; printf shell-fallback",
+        .command = "fiber-compatibility-probe; printf shell-fallback",
         .resolved_cwd = "/tmp",
         .environment = .legacy,
         .timeout_ms = 600_000,
@@ -2172,7 +2172,7 @@ test "captured command compatibility bypasses compound commands" {
             typedDispatchContext(rt.context(), arena),
             rt.tool_registry,
             .{
-                .command = "fx-compatibility-probe",
+                .command = "fiber-compatibility-probe",
                 .resolved_cwd = "/tmp",
                 .environment = environment,
                 .timeout_ms = 600_000,
@@ -2194,7 +2194,7 @@ test "run command compatibility returns installer failure without shell fallback
         typedDispatchContext(rt.context(), arena_state.allocator()),
         rt.tool_registry,
         .{
-            .command = "fx-compatibility-probe",
+            .command = "fiber-compatibility-probe",
             .resolved_cwd = "/tmp",
             .environment = .legacy,
             .timeout_ms = 600_000,
@@ -3266,7 +3266,7 @@ test "request tool permission keeps safe defaults while local writes bypass revi
     try std.testing.expectEqual(ToolPermissionDecision.once, (try tool_admission.requestPermissionOutcome(rt.context().admissionInput(), arena, .{
         .id = "1",
         .name = "write_file",
-        .arguments_json = "{\"path\":\"fx-permission-test.txt\",\"content\":\"hello\"}",
+        .arguments_json = "{\"path\":\"fiber-permission-test.txt\",\"content\":\"hello\"}",
     }, .auto, &.{})).decision);
 
     try std.testing.expectEqual(ToolPermissionDecision.once, (try tool_admission.requestPermissionOutcome(rt.context().admissionInput(), arena, .{
@@ -4766,7 +4766,7 @@ test "required replay spill failure returns recoverable capture failure" {
     const alloc = std.testing.allocator;
     var store = command_replay_store.EphemeralStore.initForTesting(
         alloc,
-        "/definitely/missing/fx-replay-dir",
+        "/definitely/missing/fiber-replay-dir",
     );
     defer store.deinit();
     var rt = TestRuntime{

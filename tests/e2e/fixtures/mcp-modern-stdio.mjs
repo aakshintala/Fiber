@@ -85,7 +85,7 @@ function hasModernMetadata(message) {
         ? { elicitation: { form: {}, url: {} } }
         : {};
   return meta?.["io.modelcontextprotocol/protocolVersion"] === protocolVersion &&
-    meta?.["io.modelcontextprotocol/clientInfo"]?.name === "fx" &&
+    meta?.["io.modelcontextprotocol/clientInfo"]?.name === "fiber" &&
     typeof meta?.["io.modelcontextprotocol/clientInfo"]?.version === "string" &&
     JSON.stringify(capabilities) === JSON.stringify(expectedCapabilities);
 }

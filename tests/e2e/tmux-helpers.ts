@@ -472,9 +472,9 @@ export class TmuxSession {
     }
 
     const sequence = ++sessionCounter;
-    const name = `fx-test-${process.pid}-${sequence}`;
+    const name = `fiber-test-${process.pid}-${sequence}`;
     const resolvedSocketName = socketName ?? (isolated
-      ? `fx-e2e-${process.pid}-${sequence}-${Date.now()}`
+      ? `fiber-e2e-${process.pid}-${sequence}-${Date.now()}`
       : undefined);
     const startGate = `${name}-start`;
     const exitStatusPath = join(tmpdir(), `${name}.exit-status`);

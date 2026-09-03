@@ -16,7 +16,7 @@ const custom_status_max = 32;
 const response_timeout = std.posix.timeval{ .sec = 0, .usec = 250_000 };
 
 // Third-party reporters use the `custom:` source prefix.
-const source = "custom:fx";
+const source = "custom:fiber";
 const agent_name = "fiber";
 
 const Request = union(enum) {
@@ -38,11 +38,11 @@ pub const Client = struct {
     next_id: u64 = 1,
 
     pub fn shouldEnable(
-        fx_herdr: ?[]const u8,
+        fiber_herdr: ?[]const u8,
         socket_path: ?[]const u8,
         pane_id: ?[]const u8,
     ) bool {
-        if (fx_herdr) |val| {
+        if (fiber_herdr) |val| {
             if (std.mem.eql(u8, val, "0") or std.ascii.eqlIgnoreCase(val, "false"))
                 return false;
         }
@@ -55,7 +55,7 @@ pub const Client = struct {
         const socket_path = io_mod.getenv("HERDR_SOCKET_PATH");
         const pane_id = io_mod.getenv("HERDR_PANE_ID");
         if (!shouldEnable(io_mod.getenv("FIBER_HERDR"), socket_path, pane_id)) {
-            debug_trace.logf("herdr", "disabled socket={s} pane={s} fx_herdr={s}", .{
+            debug_trace.logf("herdr", "disabled socket={s} pane={s} fiber_herdr={s}", .{
                 socket_path orelse "(unset)",
                 pane_id orelse "(unset)",
                 io_mod.getenv("FIBER_HERDR") orelse "(unset)",
@@ -304,7 +304,7 @@ test "report_agent serializes a single newline-delimited json line" {
     try writeReportAgent(&out.writer, 7, "w1:p1", .working, "editing");
     try std.testing.expectEqualStrings(
         "{\"id\":\"7\",\"method\":\"pane.report_agent\",\"params\":{\"pane_id\":\"w1:p1\"," ++
-            "\"source\":\"custom:fx\",\"agent\":\"fiber\",\"state\":\"working\"," ++
+            "\"source\":\"custom:fiber\",\"agent\":\"fiber\",\"state\":\"working\"," ++
             "\"custom_status\":\"editing\"}}\n",
         out.written(),
     );
@@ -316,7 +316,7 @@ test "report_agent omits custom_status when null" {
     try writeReportAgent(&out.writer, 1, "w1:p1", .idle, null);
     try std.testing.expectEqualStrings(
         "{\"id\":\"1\",\"method\":\"pane.report_agent\",\"params\":{\"pane_id\":\"w1:p1\"," ++
-            "\"source\":\"custom:fx\",\"agent\":\"fiber\",\"state\":\"idle\"}}\n",
+            "\"source\":\"custom:fiber\",\"agent\":\"fiber\",\"state\":\"idle\"}}\n",
         out.written(),
     );
 }
@@ -327,7 +327,7 @@ test "report_agent escapes pane id" {
     try writeReportAgent(&out.writer, 2, "pane\"x", .blocked, null);
     try std.testing.expectEqualStrings(
         "{\"id\":\"2\",\"method\":\"pane.report_agent\",\"params\":{\"pane_id\":\"pane\\\"x\"," ++
-            "\"source\":\"custom:fx\",\"agent\":\"fiber\",\"state\":\"blocked\"}}\n",
+            "\"source\":\"custom:fiber\",\"agent\":\"fiber\",\"state\":\"blocked\"}}\n",
         out.written(),
     );
 }
@@ -367,7 +367,7 @@ test "clear_agent_authority removes fiber from the pane" {
     defer out.deinit();
     try writeClearAuthority(&out.writer, 7, "w1:p1");
     try std.testing.expectEqualStrings(
-        "{\"id\":\"7\",\"method\":\"pane.clear_agent_authority\",\"params\":{\"pane_id\":\"w1:p1\",\"source\":\"custom:fx\"}}\n",
+        "{\"id\":\"7\",\"method\":\"pane.clear_agent_authority\",\"params\":{\"pane_id\":\"w1:p1\",\"source\":\"custom:fiber\"}}\n",
         out.written(),
     );
 }
@@ -378,7 +378,7 @@ test "report_agent_session serializes session identity" {
     try writeReportAgentSession(&out.writer, 3, "w1:p1", "session-42");
     try std.testing.expectEqualStrings(
         "{\"id\":\"3\",\"method\":\"pane.report_agent_session\",\"params\":{\"pane_id\":\"w1:p1\"," ++
-            "\"source\":\"custom:fx\",\"agent\":\"fiber\",\"agent_session_id\":\"session-42\"}}\n",
+            "\"source\":\"custom:fiber\",\"agent\":\"fiber\",\"agent_session_id\":\"session-42\"}}\n",
         out.written(),
     );
 }

@@ -231,7 +231,7 @@ function sessionIdFromHome(root: IsolatedRoot): string {
 
 function latestTraceReportPath(root: IsolatedRoot): string {
   const reports = readdirSync(root.root)
-    .filter((entry) => entry.startsWith("fx-trace-") && entry.endsWith(".md"))
+    .filter((entry) => entry.startsWith("fiber-trace-") && entry.endsWith(".md"))
     .map((entry) => {
       const path = join(root.root, entry);
       return { path, mtimeMs: statSync(path).mtimeMs };
@@ -557,7 +557,7 @@ function foregroundFxRow(
 ): TerminalProcessRow & { sid: number } {
   const row = terminalProcessRows(ttyPath).find((entry) =>
     entry.command.includes(binary) &&
-    !entry.command.includes("__fx_foreground_session__")
+    !entry.command.includes("__fiber_foreground_session__")
   );
   expect(row).toBeDefined();
   expect(row!.pgid).toBe(row!.tpgid);
@@ -595,7 +595,7 @@ function expectTraceOrder(trace: string, markers: string[]) {
 }
 
 function createIsolatedRoot(baseDir = tmpdir()): IsolatedRoot {
-  const root = realpathSync(mkdtempSync(join(baseDir, "fx-command-permissions-e2e-")));
+  const root = realpathSync(mkdtempSync(join(baseDir, "fiber-command-permissions-e2e-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   const hostileBin = join(root, "hostile-bin");
@@ -755,7 +755,7 @@ function commandReplayFiles(root: IsolatedRoot): string[] {
   const sessions = join(root.home, ".fiber", "sessions");
   if (!existsSync(sessions)) return [];
   const result = Bun.spawnSync(
-    ["find", sessions, "-type", "f", "-name", "fx-command-replay-*"],
+    ["find", sessions, "-type", "f", "-name", "fiber-command-replay-*"],
     { stdout: "pipe", stderr: "pipe" },
   );
   expect(result.exitCode).toBe(0);
@@ -815,7 +815,7 @@ function normalizeVolatileStatusRows(grid: string[]): string[] {
     /^• Streaming \([^)]*\)$/.test(line) ||
       isVolatileTokenStatusRow(line)
       ? "<status>"
-      : line.replace(/\s+YOLO enabled: fx permission checks disabled$/, "")
+      : line.replace(/\s+YOLO enabled: fiber permission checks disabled$/, "")
   );
 }
 
@@ -823,7 +823,7 @@ test("volatile token status rows normalize before transcript grid comparison", (
   expect(normalizeVolatileStatusRows(["  (↑10 ↓5)"])).toEqual(["<status>"]);
   expect(normalizeVolatileStatusRows(["  0s (↑10 ↓5)"])).toEqual(["<status>"]);
   expect(normalizeVolatileStatusRows([
-    "YOLO · gpt-5                 YOLO enabled: fx permission checks disabled",
+    "YOLO · gpt-5                 YOLO enabled: fiber permission checks disabled",
   ])).toEqual(["YOLO · gpt-5"]);
 });
 
@@ -835,7 +835,7 @@ describe("effect-aware command permissions", () => {
       const feedback = "first command feedback marker";
       const firstCommand = "touch history-feedback-first.txt && printf 'first command completed\\n'";
       const secondCommand = "touch history-feedback-second.txt && printf 'second command completed\\n'";
-      const tapePath = join(root.root, "history-feedback.fxtape");
+      const tapePath = join(root.root, "history-feedback.fibertape");
       const tracePath = join(root.root, "trace.log");
       const stderrPath = join(root.root, "stderr.log");
       const gateway = startFakeGateway([
@@ -862,7 +862,7 @@ describe("effect-aware command permissions", () => {
       await activeSession.sendText("Run the prepared two-command history fixture.");
       await activeSession.waitForText(COMMAND_APPROVAL_PROMPT, TIMEOUT);
       await activeSession.sendKeys("Tab");
-      await activeSession.waitForText("Yes, and tell fx what to do next", TIMEOUT);
+      await activeSession.waitForText("Yes, and tell fiber what to do next", TIMEOUT);
       await activeSession.sendLiteralText(feedback);
       await activeSession.waitForText(`Yes, ${feedback}`, TIMEOUT);
       await activeSession.sendKeys("Enter");
@@ -1439,7 +1439,7 @@ describe("effect-aware command permissions", () => {
       expect(publicSession.stdout).not.toContain("command_process_presentation");
       expect(publicSession.stdout).not.toContain("process_presentation");
       expect(publicSession.stdout).toContain("full_output_handle");
-      expect(publicSession.stdout).toContain("fx-command-replay-");
+      expect(publicSession.stdout).toContain("fiber-command-replay-");
 
       await activeSession.sendText("/quit");
       expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
@@ -1726,7 +1726,7 @@ describe("effect-aware command permissions", () => {
       expect(escapes).not.toContain("github.com");
       const reportPath = latestTraceReportPath(root);
       const report = readFileSync(reportPath, "utf8");
-      expect(report).toContain("# fx trace");
+      expect(report).toContain("# fiber trace");
       expect(report).toContain("## Summary");
       expect(report).toContain(root.workspace);
       expect(statSync(reportPath).mode & 0o077).toBe(0);
@@ -1783,7 +1783,7 @@ describe("effect-aware command permissions", () => {
       expect(readFileSync(openerPath, "utf8")).toBe("https://fx.sh/feedback");
       expect(existsSync(clipboardMarker)).toBe(false);
       expect(
-        readdirSync(root.root).filter((entry) => entry.startsWith("fx-trace-")),
+        readdirSync(root.root).filter((entry) => entry.startsWith("fiber-trace-")),
       ).toHaveLength(0);
       const escapes = await activeSession.capturePaneEscapes();
       expect(escapes).not.toContain("Feedback:");
@@ -1865,7 +1865,7 @@ describe("effect-aware command permissions", () => {
     async () => {
       const root = createIsolatedRoot();
       const stderrPath = join(root.root, "auto-command-scrollback-stderr.log");
-      const tapePath = join(root.root, "auto-command-scrollback.fxtape");
+      const tapePath = join(root.root, "auto-command-scrollback.fibertape");
       const markerPrefix = "AUTO_COMMAND_SCROLLBACK_LINE_";
       const expectedMarkers = Array.from(
         { length: 40 },
@@ -2012,7 +2012,7 @@ describe("effect-aware command permissions", () => {
         const outerReturnPath = join(root.root, `terminal-session-${sandbox}-outer-returned`);
         const stderrPath = join(root.root, `terminal-session-${sandbox}-stderr.log`);
         const tracePath = join(root.root, `terminal-session-${sandbox}-trace.log`);
-        const tapePath = join(root.root, `terminal-session-${sandbox}.fxtape`);
+        const tapePath = join(root.root, `terminal-session-${sandbox}.fibertape`);
         const command = [
           "exec python3",
           shellQuote(fixturePath),
@@ -2119,7 +2119,7 @@ describe("effect-aware command permissions", () => {
         expect(commandSnapshot.output_delta).toContain("TTY_SESSION_STDOUT_BEGIN");
         expect(commandSnapshot.output_delta).toContain("TTY_SESSION_STDOUT_END");
         expect(commandSnapshot.output_delta).toContain("TTY_SESSION_STDERR");
-        expect(commandSnapshot.full_output_handle).toMatch(/^fx-command-replay-.+\.bin$/);
+        expect(commandSnapshot.full_output_handle).toMatch(/^fiber-command-replay-.+\.bin$/);
         expect(gateway.requests[1]!.body).not.toContain("\\u001e");
         expect(gateway.requests[1]!.body).not.toContain("\\u0006");
         expect(gateway.requests[1]!.body).not.toContain("\\u0000");
@@ -2470,7 +2470,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "default fx ask defaults missing permission mode to auto",
+    "default fiber ask defaults missing permission mode to auto",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "ask-turn-default-auto.txt");
@@ -2497,7 +2497,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask yolo returns repeated user-profile command results to the model",
+    "fiber ask yolo returns repeated user-profile command results to the model",
     async () => {
       const root = createIsolatedRoot();
       const callIds = ["direct_1", "direct_2", "direct_3"];
@@ -2528,7 +2528,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask yolo completes more than ten serial user-profile commands when unlimited",
+    "fiber ask yolo completes more than ten serial user-profile commands when unlimited",
     async () => {
       const root = createIsolatedRoot();
       const gateway = startFakeGateway([
@@ -2988,7 +2988,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask yolo executes pwd through the default user profile with process-scoped replay",
+    "fiber ask yolo executes pwd through the default user profile with process-scoped replay",
     async () => {
       const root = createIsolatedRoot();
       const gateway = startFakeGateway([toolCall("pwd"), finalText("ask direct complete")]);
@@ -3021,7 +3021,7 @@ describe("effect-aware command permissions", () => {
       expect(json.tool_calls[0].command_result.command).toBe("pwd");
       expect(json.tool_calls[0].command_result.cwd).toBe(root.workspace);
       expect(json.tool_calls[0].command_result.output_file).toMatch(
-        /^fx-command-replay-[a-f0-9-]+\.bin$/,
+        /^fiber-command-replay-[a-f0-9-]+\.bin$/,
       );
       expectUserProfileTrace(tracePath);
       expect(existsSync(root.profileMarker)).toBe(true);
@@ -3032,7 +3032,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask defaults missing permission mode to auto through the classifier",
+    "fiber ask defaults missing permission mode to auto through the classifier",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-accepted.txt");
@@ -3101,7 +3101,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask does not retry a malformed classifier completion and safely replans",
+    "fiber ask does not retry a malformed classifier completion and safely replans",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-malformed-must-not-run.txt");
@@ -3148,7 +3148,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask returns one malformed classifier completion to the agent without execution",
+    "fiber ask returns one malformed classifier completion to the agent without execution",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-fallback-must-not-exist.txt");
@@ -3193,7 +3193,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask provider failure never executes or enters malformed recovery",
+    "fiber ask provider failure never executes or enters malformed recovery",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-provider-must-not-exist.txt");
@@ -3242,7 +3242,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask SIGINT during classifier wait terminates before decision or execution",
+    "fiber ask SIGINT during classifier wait terminates before decision or execution",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-cancel-must-not-exist.txt");
@@ -3288,7 +3288,7 @@ describe("effect-aware command permissions", () => {
         const result = await Promise.race([
           closed,
           Bun.sleep(2_000).then(() => {
-            throw new Error("fx did not exit on SIGINT while the classifier remained blocked");
+            throw new Error("fiber did not exit on SIGINT while the classifier remained blocked");
           }),
         ]);
         expect(result).toEqual({ code: null, signal: "SIGINT" });
@@ -3319,7 +3319,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask automatic review receives the exact delegated command",
+    "fiber ask automatic review receives the exact delegated command",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "delegated-agent-ran.txt");
@@ -3376,15 +3376,15 @@ describe("effect-aware command permissions", () => {
   );
 
   test.skipIf(!tmuxAvailable())(
-    "fx ask terminal automatic caution returns advice without prompting",
+    "fiber ask terminal automatic caution returns advice without prompting",
     async () => {
       const root = createIsolatedRoot();
-      const marker = join(root.workspace, "fx-ask-prompt-approved.txt");
+      const marker = join(root.workspace, "fiber-ask-prompt-approved.txt");
       const command = `printf approved > ${JSON.stringify(marker)}`;
       const gateway = startFakeGateway(
         [
           toolCall(command),
-          finalText("fx ask prompt complete"),
+          finalText("fiber ask prompt complete"),
         ],
         { classifierDecision: "caution" },
       );
@@ -3402,7 +3402,7 @@ describe("effect-aware command permissions", () => {
         height: 40,
         remainOnExit: true,
       });
-      const finalPane = await activeSession.waitForText("fx ask prompt complete", TIMEOUT);
+      const finalPane = await activeSession.waitForText("fiber ask prompt complete", TIMEOUT);
       expect(finalPane).not.toContain("Approve? [y/N]");
       expect(finalPane).not.toContain("Auto agent denied");
       expect(existsSync(marker)).toBe(false);
@@ -3422,7 +3422,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask and ACP send large automatic review packets before execution",
+    "fiber ask and ACP send large automatic review packets before execution",
     async () => {
       const cliRoot = createIsolatedRoot();
       const cliMarker = "large-cli-marker";
@@ -3498,7 +3498,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask projects hostile ls filenames through the default user profile",
+    "fiber ask projects hostile ls filenames through the default user profile",
     async () => {
       const root = createIsolatedRoot();
       const gateway = startFakeGateway([toolCall("ls"), finalText("ask ls complete")]);
@@ -3531,7 +3531,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask preserves quoted shell metacharacters through the user profile",
+    "fiber ask preserves quoted shell metacharacters through the user profile",
     async () => {
       const root = createIsolatedRoot();
       const gateway = startFakeGateway([
@@ -3569,7 +3569,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask keeps parser hardening cases approval-bearing",
+    "fiber ask keeps parser hardening cases approval-bearing",
     async () => {
       const commands = [
         "wc -c < input.txt",
@@ -3606,7 +3606,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask blocks approval-bearing commands before side effects",
+    "fiber ask blocks approval-bearing commands before side effects",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "must-not-exist");
@@ -3634,7 +3634,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask blocks hostile git before any executable or repository access",
+    "fiber ask blocks hostile git before any executable or repository access",
     async () => {
       const root = createIsolatedRoot();
       const gateway = startFakeGateway([

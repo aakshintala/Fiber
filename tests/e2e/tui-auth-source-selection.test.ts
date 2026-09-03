@@ -130,7 +130,7 @@ async function completeDisplayedCodexLogin(
 tmuxTest(
   "missing login reports missing auth and blocks prompts with recovery guidance",
   async () => {
-    home = mkdtempSync(join(tmpdir(), "fx-tui-codex-missing-login-"));
+    home = mkdtempSync(join(tmpdir(), "fiber-tui-codex-missing-login-"));
     stderrPath = join(home, "stderr.log");
     writeFileSync(stderrPath, "");
     codex = startFakeCodex();
@@ -157,7 +157,7 @@ tmuxTest(
 tmuxTest(
   "interactive Codex login activates the subscription and sends subscription headers",
   async () => {
-    home = mkdtempSync(join(tmpdir(), "fx-tui-codex-login-"));
+    home = mkdtempSync(join(tmpdir(), "fiber-tui-codex-login-"));
     stderrPath = join(home, "stderr.log");
     writeFileSync(stderrPath, "");
     codex = startFakeCodex({
@@ -209,7 +209,7 @@ tmuxTest(
 tmuxTest(
   "expired login refreshes at startup and the prompt uses the rotated credential",
   async () => {
-    home = mkdtempSync(join(tmpdir(), "fx-tui-codex-expired-"));
+    home = mkdtempSync(join(tmpdir(), "fiber-tui-codex-expired-"));
     stderrPath = join(home, "stderr.log");
     writeFileSync(stderrPath, "");
     codex = startFakeCodex({
@@ -271,7 +271,7 @@ tmuxTest(
 tmuxTest(
   "logout deletes the local credential and later prompts report the missing login",
   async () => {
-    home = mkdtempSync(join(tmpdir(), "fx-tui-codex-logout-"));
+    home = mkdtempSync(join(tmpdir(), "fiber-tui-codex-logout-"));
     stderrPath = join(home, "stderr.log");
     writeFileSync(stderrPath, "");
     codex = startFakeCodex({

@@ -3459,7 +3459,7 @@ test "core.app_render_runtime projects only the visible inline completion suffix
         .name = "managed-menu",
         .description = "",
         .path = "/tmp/managed-menu/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     app.skills.items = @constCast(&skills);
     try app.input_runtime.textReplacementState().replace(alloc, "explain $man");
@@ -3743,7 +3743,7 @@ test "core.app_render_runtime main skill menu origins share the inline footer" {
         .name = "pure-core",
         .description = "Keep data transformations pure.",
         .path = "/skills/pure-core/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     var app = CoordinatorTestApp{
         .alloc = alloc,
@@ -4006,13 +4006,13 @@ test "core.app_render_runtime inline menus survive the VT size and resize matrix
     defer file.close(io_mod.getIo());
 
     const skills = [_]skill_runtime.Skill{
-        .{ .name = "one", .description = "", .path = "/skills/one/SKILL.md", .source = .global_fx },
-        .{ .name = "two", .description = "", .path = "/skills/two/SKILL.md", .source = .global_fx },
-        .{ .name = "three", .description = "", .path = "/skills/three/SKILL.md", .source = .global_fx },
-        .{ .name = "four", .description = "", .path = "/skills/four/SKILL.md", .source = .global_fx },
-        .{ .name = "five", .description = "", .path = "/skills/five/SKILL.md", .source = .global_fx },
-        .{ .name = "six", .description = "", .path = "/skills/six/SKILL.md", .source = .global_fx },
-        .{ .name = "seven", .description = "", .path = "/skills/seven/SKILL.md", .source = .global_fx },
+        .{ .name = "one", .description = "", .path = "/skills/one/SKILL.md", .source = .global_fiber },
+        .{ .name = "two", .description = "", .path = "/skills/two/SKILL.md", .source = .global_fiber },
+        .{ .name = "three", .description = "", .path = "/skills/three/SKILL.md", .source = .global_fiber },
+        .{ .name = "four", .description = "", .path = "/skills/four/SKILL.md", .source = .global_fiber },
+        .{ .name = "five", .description = "", .path = "/skills/five/SKILL.md", .source = .global_fiber },
+        .{ .name = "six", .description = "", .path = "/skills/six/SKILL.md", .source = .global_fiber },
+        .{ .name = "seven", .description = "", .path = "/skills/seven/SKILL.md", .source = .global_fiber },
     };
     var summaries: [25]@import("../session/session_store.zig").SessionSummary = undefined;
     for (&summaries) |*summary| {
@@ -4154,13 +4154,13 @@ test "core.app_render_runtime width-changed queued editor keeps mention navigati
     defer file.close(io_mod.getIo());
 
     const skills = [_]skill_runtime.Skill{
-        .{ .name = "one", .description = "", .path = "/tmp/one", .source = .global_fx },
-        .{ .name = "two", .description = "", .path = "/tmp/two", .source = .global_fx },
-        .{ .name = "three", .description = "", .path = "/tmp/three", .source = .global_fx },
-        .{ .name = "four", .description = "", .path = "/tmp/four", .source = .global_fx },
-        .{ .name = "five", .description = "", .path = "/tmp/five", .source = .global_fx },
-        .{ .name = "six", .description = "", .path = "/tmp/six", .source = .global_fx },
-        .{ .name = "seven", .description = "", .path = "/tmp/seven", .source = .global_fx },
+        .{ .name = "one", .description = "", .path = "/tmp/one", .source = .global_fiber },
+        .{ .name = "two", .description = "", .path = "/tmp/two", .source = .global_fiber },
+        .{ .name = "three", .description = "", .path = "/tmp/three", .source = .global_fiber },
+        .{ .name = "four", .description = "", .path = "/tmp/four", .source = .global_fiber },
+        .{ .name = "five", .description = "", .path = "/tmp/five", .source = .global_fiber },
+        .{ .name = "six", .description = "", .path = "/tmp/six", .source = .global_fiber },
+        .{ .name = "seven", .description = "", .path = "/tmp/seven", .source = .global_fiber },
     };
     var app = CoordinatorTestApp{
         .alloc = alloc,
@@ -4350,7 +4350,7 @@ test "core.app_render_runtime file approval returns to the preserved inline skil
         .name = "pure-core",
         .description = "Keep data transformations pure.",
         .path = "/skills/pure-core/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     const preview_lines = [_]diff_mod.PreviewLine{
         .{ .op = .addition, .new_line = 1, .text = "after" },
@@ -5335,7 +5335,7 @@ test "core.app_render_runtime coordinator physically scrolls preserved shell row
 
     var terminal = try vt_emulator.Grid.init(alloc, layout.cols, layout.rows);
     defer terminal.deinit();
-    const shell_markers = "\x1b[1;1HSHELL01\nSHELL02\nSHELL03\nSHELL04\nSHELL05\nSHELL06\nSHELL07\n$ fx";
+    const shell_markers = "\x1b[1;1HSHELL01\nSHELL02\nSHELL03\nSHELL04\nSHELL05\nSHELL06\nSHELL07\n$ fiber";
     try terminal.feed(shell_markers);
     try app.shell.shadow_vt.?.feed(shell_markers);
 

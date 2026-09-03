@@ -21,7 +21,7 @@ import {
 } from "./tmux-helpers";
 import { expectPermissionModeContext } from "./permission-mode-context";
 
-const WARNING = "YOLO enabled: fx permission checks disabled";
+const WARNING = "YOLO enabled: fiber permission checks disabled";
 const COMPACT_WARNING = "YOLO: unrestricted";
 const QUIT_HINT = "press ctrl+c again to exit";
 const COMMAND_APPROVAL_PROMPT = "Would you like to run the following command?";
@@ -77,7 +77,7 @@ describe("yolo permission mode", () => {
   test(
     "headless mode warns once, bypasses configured denial, and keeps stdout clean",
     async () => {
-      const fixture = createFixture("fx-yolo-headless-");
+      const fixture = createFixture("fiber-yolo-headless-");
       const markerPath = join(fixture.workspace, "yolo-command.txt");
       const tracePath = join(fixture.root, "permission-trace.log");
       writeFileSync(
@@ -152,7 +152,7 @@ describe("yolo permission mode", () => {
   test(
     "status omits sandbox while preserving the legacy configured value",
     async () => {
-      const fixture = createFixture("fx-yolo-status-");
+      const fixture = createFixture("fiber-yolo-status-");
       writeFileSync(
         fixture.settingsPath,
         JSON.stringify({
@@ -186,7 +186,7 @@ describe("yolo permission mode", () => {
   test(
     "legacy sandbox config is inert and ps executes once",
     async () => {
-      const fixture = createFixture("fx-legacy-sandbox-ps-");
+      const fixture = createFixture("fiber-legacy-sandbox-ps-");
       const psPath = join(fixture.workspace, "ps.txt");
       const attemptsPath = join(fixture.workspace, "attempts.txt");
       writeFileSync(
@@ -238,7 +238,7 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
   test(
     "Shift+Tab cycles through yolo and warning time pauses behind menus",
     async () => {
-      const fixture = createFixture("fx-yolo-tui-");
+      const fixture = createFixture("fiber-yolo-tui-");
       const stderrPath = join(fixture.root, "stderr.log");
       writeFileSync(
         fixture.settingsPath,
@@ -306,7 +306,7 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
   test(
     "Shift+Tab applies auto to a later tool call in the active turn",
     async () => {
-      const fixture = createFixture("fx-live-permission-auto-");
+      const fixture = createFixture("fiber-live-permission-auto-");
       const markerPath = join(fixture.workspace, "auto-marker.txt");
       const stderrPath = join(fixture.root, "stderr.log");
       const tracePath = join(fixture.root, "trace.log");
@@ -384,7 +384,7 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
   test(
     "Shift+Tab tightening to ask gates a later tool call in the active turn",
     async () => {
-      const fixture = createFixture("fx-live-permission-ask-");
+      const fixture = createFixture("fiber-live-permission-ask-");
       const markerPath = join(fixture.workspace, "ask-marker.txt");
       const stderrPath = join(fixture.root, "stderr.log");
       const tracePath = join(fixture.root, "trace.log");
@@ -468,7 +468,7 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
   test(
     "a pending ctrl+c keeps its quit hint intact and pauses the warning at 60 columns",
     async () => {
-      const fixture = createFixture("fx-yolo-ctrl-c-");
+      const fixture = createFixture("fiber-yolo-ctrl-c-");
       const stderrPath = join(fixture.root, "stderr.log");
       writeFileSync(
         fixture.settingsPath,

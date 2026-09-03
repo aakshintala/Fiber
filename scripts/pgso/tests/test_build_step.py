@@ -11,7 +11,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 class PgsoBuildStepTests(unittest.TestCase):
     def assert_emits_bitcode(self, selector: str, output_name: str) -> None:
-        with tempfile.TemporaryDirectory(prefix="fx-pgso-build-step-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-pgso-build-step-") as tmp:
             result = subprocess.run(
                 [
                     "zig",

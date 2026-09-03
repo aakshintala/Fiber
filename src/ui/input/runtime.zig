@@ -38,7 +38,7 @@ pub const DeferredTerminalInputSource = enum {
 pub const TerminalInputOwner = enum {
     theme_monitor,
     paste,
-    fx_input,
+    fiber_input,
 };
 
 pub fn terminalInputOwner(
@@ -48,7 +48,7 @@ pub fn terminalInputOwner(
     if (monitor.ownsInput()) return .theme_monitor;
     if (paste_active) return .paste;
     if (monitor.enabled) return .theme_monitor;
-    return .fx_input;
+    return .fiber_input;
 }
 
 const InputEscapeAction = input_action.Action;

@@ -2719,7 +2719,7 @@ fn loadTestReloadRuntime(
     const command = try alloc.dupe(
         u8,
         switch (test_reload_mode) {
-            .optional_failed => "__fx_missing_mcp_executable__",
+            .optional_failed => "__fiber_missing_mcp_executable__",
             .stalled_candidate => "awk",
             else => "disabled",
         },

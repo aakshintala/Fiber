@@ -147,7 +147,7 @@ function isScenarioName(value: string | undefined): value is ScenarioName {
 }
 
 function createFixtureRoot(autoPermissions = false) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-ui-observer-fixture-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-ui-observer-fixture-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -169,7 +169,7 @@ function createArtifactDir(keep: boolean): string {
     mkdirSync(configured, { recursive: true });
     return realpathSync(configured);
   }
-  const root = mkdtempSync(join(tmpdir(), "fx-ui-observer-"));
+  const root = mkdtempSync(join(tmpdir(), "fiber-ui-observer-"));
   if (keep) return realpathSync(root);
   return root;
 }
@@ -666,7 +666,7 @@ async function run() {
   if (!args.scenario) throw new Error("--scenario is required");
   if (!tmuxAvailable()) throw new Error("tmux is required");
   if (!existsSync(FIBER_BIN)) {
-    throw new Error(`fresh fx binary is missing: ${FIBER_BIN}\nRun: zig build`);
+    throw new Error(`fresh fiber binary is missing: ${FIBER_BIN}\nRun: zig build`);
   }
 
   const fixture = createFixtureRoot(

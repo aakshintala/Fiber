@@ -41,7 +41,7 @@ const NO_GATEWAY_AUTH = {
   VERCEL_OIDC_TOKEN: undefined,
 };
 const MISSING_AUTH_MESSAGE =
-  "fx needs a Codex subscription login for this model. Run fx login codex.";
+  "fiber needs a Codex subscription login for this model. Run fiber login codex.";
 const MODERN_MCP_FIXTURE = join(
   import.meta.dirname,
   "fixtures",
@@ -142,10 +142,10 @@ describe("cli: help", () => {
       expect(stdout).not.toContain("\x1b[");
       expect(stdout).not.toContain("\x1b]2;");
       expect(stdout).toStartWith(
-        `𝒇x v${sourceVersion()}\nFast, native coding agent for the terminal.\n`,
+        `fiber v${sourceVersion()}\nFast, native coding agent for the terminal.\n`,
       );
-      expect(stdout.match(/𝒇x/g) ?? []).toHaveLength(1);
-      expect(stdout).toContain("fx starts an interactive session by default.");
+      expect(stdout.match(/fiber/g) ?? []).toHaveLength(1);
+      expect(stdout).toContain("fiber starts an interactive session by default.");
       expect(stdout).toContain("Commands:\n");
       expect(stdout).toContain("Run one noninteractive request");
       expect(stdout).toContain("Sign in to Codex");
@@ -173,37 +173,36 @@ describe("cli: help", () => {
       expect(stdout).toContain("--resume-last");
       expect(stdout).toContain("session resume [last|id]");
       expect(stdout).toContain("-v, --version");
-      expect(stdout).toContain("Print the fx version and exit");
+      expect(stdout).toContain("Print the fiber version and exit");
       expect(stdout).not.toContain("Must appear before the command");
       expect(stdout).toContain("Examples:\n");
-      expect(stdout).toContain("https://fx.sh/docs");
       expect(stdout).toContain(
-        "Run `fx <command> --help` for command-specific usage and options.",
+        "Run `fiber <command> --help` for command-specific usage and options.",
       );
       expect(stdout).not.toContain("command-specific options and examples");
       expect(stdout).not.toContain("  Work      ");
-      expect(stdout).not.toContain("\n\n\nRun `fx <command> --help`");
+      expect(stdout).not.toContain("\n\n\nRun `fiber <command> --help`");
     },
     TIMEOUT,
   );
 
   test(
-    "fx ask help renders documented options through both aliases",
+    "fiber ask help renders documented options through both aliases",
     async () => {
       const env = {
         ...NO_GATEWAY_AUTH,
         FIBER_DISABLE_KEYCHAIN: "1",
       };
-      const expected = `fx ask
+      const expected = `fiber ask
 
 Run one noninteractive request
 
 Usage:
-  fx ask [--auto|--yolo] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume <last|id>|--resume-id <id>] [--continue-recovery] [--] <prompt>
+  fiber ask [--auto|--yolo] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume <last|id>|--resume-id <id>] [--continue-recovery] [--] <prompt>
 
 Options:
   --auto                Automatically review unresolved permission requests
-  --yolo                Disable fx permission checks
+  --yolo                Disable fiber permission checks
   --image PATH          Attach an image file; repeat for multiple images
   --system TEXT         Replace the built-in system prompt for this request
   --json                Emit machine-readable JSON instead of text
@@ -234,7 +233,7 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
   );
 
   test(
-    "fx session help documents inspect resume migrate and recover",
+    "fiber session help documents inspect resume migrate and recover",
     async () => {
       for (const args of [
         ["session", "--help"],
@@ -254,14 +253,14 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
   );
 
   test(
-    "fx acp help documents accepted options",
+    "fiber acp help documents accepted options",
     async () => {
       for (const alias of ["--help", "-h"]) {
         const r = await runFx(["acp", alias]);
         expect(r.code).toBe(0);
         expect(r.stderr).toBe("");
         expect(r.stdout).toContain(
-          "Usage:\n  fx acp [--model <id>] [--log-file <path>]",
+          "Usage:\n  fiber acp [--model <id>] [--log-file <path>]",
         );
         expect(r.stdout).toContain("--model <id>");
         expect(r.stdout).toContain("--log-file <path>");
@@ -271,7 +270,7 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
   );
 
   test(
-    "fx replay help describes golden output",
+    "fiber replay help describes golden output",
     async () => {
       const r = await runFx(["replay", "--help"]);
       expect(r.code).toBe(0);
@@ -284,14 +283,14 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
   );
 
   test(
-    "fx acp rejects unknown options and missing option values",
+    "fiber acp rejects unknown options and missing option values",
     async () => {
       for (const args of [["--bogus"], ["--model"], ["--log-file"]]) {
         const result = await runFx(["acp", ...args]);
         expect(result.code).toBe(1);
         expect(result.stdout).toBe("");
         expect(result.stderr).toBe(
-          "usage: fx acp [--model <id>] [--log-file <path>]\n",
+          "usage: fiber acp [--model <id>] [--log-file <path>]\n",
         );
       }
     },
@@ -300,7 +299,7 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
 
   for (const alias of ["help", "--help", "-h"]) {
     test(
-      `fx ${alias} respects COLUMNS=60`,
+      `fiber ${alias} respects COLUMNS=60`,
       async () => {
         const r = await runFx([alias], { env: { COLUMNS: "60" } });
         expect(r.code).toBe(0);
@@ -317,7 +316,7 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
 
   for (const alias of ["help", "--help", "-h"]) {
     test(
-      `fx ${alias} hides developer recording surfaces`,
+      `fiber ${alias} hides developer recording surfaces`,
       async () => {
         const r = await runFx([alias]);
         expect(r.code).toBe(0);
@@ -330,11 +329,11 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
   }
 
   test(
-    "fx rejects the removed record flag as unknown input",
+    "fiber rejects the removed record flag as unknown input",
     async () => {
       const r = await runFx(["--record"]);
       expect(r.code).not.toBe(0);
-      expect(r.stderr).toContain("fx: unknown subcommand: --record");
+      expect(r.stderr).toContain("fiber: unknown subcommand: --record");
       expect(r.stderr).not.toContain("visual terminal capture:");
     },
     TIMEOUT,
@@ -344,7 +343,7 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
 describe("cli: version", () => {
   for (const alias of ["--version", "-v"]) {
     test(
-      `fx ${alias} prints the source version`,
+      `fiber ${alias} prints the source version`,
       async () => {
         const r = await runFx([alias]);
         expect(r.code).toBe(0);
@@ -360,7 +359,7 @@ describe("cli: status", () => {
   test(
     "status and doctor expose the MCP profile error that blocks ask startup",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-mcp-config-diagnostic-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-mcp-config-diagnostic-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const fxDir = join(home, ".fiber");
@@ -468,7 +467,7 @@ describe("cli: status", () => {
   test(
     "status and doctor share the missing auth snapshot",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-status-noauth-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-status-noauth-"));
       try {
         const env = {
           ...NO_GATEWAY_AUTH,
@@ -507,7 +506,7 @@ describe("cli: status", () => {
   test(
     "status and doctor share the Codex login snapshot",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-status-auth-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-status-auth-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -569,7 +568,7 @@ describe("cli: status", () => {
   test(
     "status and doctor inspect an expired login without refreshing it",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-status-expired-auth-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-status-expired-auth-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -610,7 +609,7 @@ describe("cli: status", () => {
   test(
     "a new status process ignores removed credential sources and reads the Codex login",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-status-precedence-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-status-precedence-"));
       try {
         writeSeededChatGptLogin(root, chatGptAccessToken());
         const envToken = "preferred-environment-token";
@@ -640,7 +639,7 @@ describe("cli: status", () => {
   );
 
   test(
-    "fx status --json returns valid status JSON",
+    "fiber status --json returns valid status JSON",
     async () => {
       const r = await runFx(["status", "--json"]);
       expect(r.code).toBe(0);
@@ -659,9 +658,9 @@ describe("cli: status", () => {
   );
 
   test(
-    "fx status reports a persisted dev update channel",
+    "fiber status reports a persisted dev update channel",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-update-channel-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-update-channel-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -691,7 +690,7 @@ describe("cli: status", () => {
   );
 
   test(
-    "fx upgrade help documents release channels",
+    "fiber upgrade help documents release channels",
     async () => {
       const result = await runFx(["upgrade", "--help"]);
       expect(result.code).toBe(0);
@@ -702,9 +701,9 @@ describe("cli: status", () => {
   );
 
   test(
-    "fx status --json defaults permission mode to auto",
+    "fiber status --json defaults permission mode to auto",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-permission-default-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-permission-default-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -732,7 +731,7 @@ describe("cli: status", () => {
   test(
     "status and doctor apply an exact FIBER_MAX_AGENT_STEPS override",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-agent-step-limit-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-agent-step-limit-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -772,7 +771,7 @@ describe("cli: status", () => {
   test(
     "project profile-only settings are ignored before parsing and profile overrides win",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-profile-config-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-profile-config-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -817,16 +816,16 @@ describe("cli: status", () => {
         expect(first.permission_mode).toBe("auto");
         expect(first.agent_step_limit).toBe(7);
         expect(status.stderr).toContain(
-          "fx: config project: ignored_project_user_only_setting; key=model",
+          "fiber: config project: ignored_project_user_only_setting; key=model",
         );
         expect(status.stderr).toContain(
-          "fx: config project: ignored_project_user_only_setting; key=permission_mode",
+          "fiber: config project: ignored_project_user_only_setting; key=permission_mode",
         );
         expect(status.stderr).toContain(
-          "fx: config project: ignored_project_user_only_setting; key=permission",
+          "fiber: config project: ignored_project_user_only_setting; key=permission",
         );
         expect(status.stderr).toContain(
-          "fx: config project: ignored_project_user_only_setting; key=statusLine",
+          "fiber: config project: ignored_project_user_only_setting; key=statusLine",
         );
         expect(status.stderr).not.toContain("danger");
 
@@ -864,7 +863,7 @@ describe("cli: status", () => {
     "special settings files fail closed without blocking CLI startup",
     async () => {
       if (platform() === "win32") return;
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-config-special-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-config-special-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -891,7 +890,7 @@ describe("cli: status", () => {
         expect(Date.now() - userStartedAt).toBeLessThan(3_000);
         expect(user.code).toBe(0);
         expect(JSON.parse(user.stdout)).toMatchObject({ kind: "status" });
-        expect(user.stderr).toContain("fx: config user: durable_path_unsafe");
+        expect(user.stderr).toContain("fiber: config user: durable_path_unsafe");
 
         rmSync(join(fxDir, "settings.json"));
         expect(spawnSync("mkfifo", [join(workspace, ".fiber.json")]).status).toBe(0);
@@ -904,7 +903,7 @@ describe("cli: status", () => {
         expect(Date.now() - projectStartedAt).toBeLessThan(3_000);
         expect(project.code).toBe(0);
         expect(JSON.parse(project.stdout)).toMatchObject({ kind: "status" });
-        expect(project.stderr).toContain("fx: config project: durable_path_unsafe");
+        expect(project.stderr).toContain("fiber: config project: durable_path_unsafe");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -915,9 +914,9 @@ describe("cli: status", () => {
 
 describe("cli: usage", () => {
   test(
-    "fx usage reads rolling local facts without credentials or profile mutation",
+    "fiber usage reads rolling local facts without credentials or profile mutation",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-usage-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-usage-"));
       try {
         const home = join(root, "home");
         const fxDir = join(home, ".fiber");
@@ -1016,9 +1015,9 @@ describe("cli: usage", () => {
   );
 
   test(
-    "fx usage preserves known totals when the ledger is incomplete",
+    "fiber usage preserves known totals when the ledger is incomplete",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-usage-incomplete-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-usage-incomplete-"));
       try {
         const home = join(root, "home");
         const fxDir = join(home, ".fiber");
@@ -1083,9 +1082,9 @@ describe("cli: usage", () => {
   );
 
   test(
-    "fx usage distinguishes empty, invalid, corrupt, and unsafe local state",
+    "fiber usage distinguishes empty, invalid, corrupt, and unsafe local state",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-usage-states-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-usage-states-"));
       try {
         const home = realpathSync(root);
         const env = { ...NO_GATEWAY_AUTH, HOME: home, FIBER_DISABLE_KEYCHAIN: "1" };
@@ -1183,9 +1182,9 @@ describe("cli: usage", () => {
   );
 
   test(
-    "fx usage preserves known totals but fails closed when recovery storage is unsafe",
+    "fiber usage preserves known totals but fails closed when recovery storage is unsafe",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-usage-recovery-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-usage-recovery-"));
       try {
         const home = join(root, "home");
         const fxDir = join(home, ".fiber");
@@ -1247,7 +1246,7 @@ describe("cli: usage", () => {
 
 describe("cli: permissions", () => {
   test(
-    "fx permissions --json returns valid permissions JSON",
+    "fiber permissions --json returns valid permissions JSON",
     async () => {
       const r = await runFx(["permissions", "--json"]);
       expect(r.code).toBe(0);
@@ -1267,9 +1266,9 @@ describe("cli: permissions", () => {
 
 describe("cli: doctor", () => {
   test(
-    "fx doctor --json returns valid doctor JSON",
+    "fiber doctor --json returns valid doctor JSON",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-doctor-json-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-doctor-json-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -1310,9 +1309,9 @@ describe("cli: doctor", () => {
   );
 
   test(
-    "fx doctor --json leaves an empty home unchanged",
+    "fiber doctor --json leaves an empty home unchanged",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-doctor-no-create-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-doctor-no-create-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -1339,9 +1338,9 @@ describe("cli: doctor", () => {
   );
 
   test(
-    "fx doctor --json bounds session diagnostics without summary cache",
+    "fiber doctor --json bounds session diagnostics without summary cache",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-doctor-bounded-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-doctor-bounded-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -1409,9 +1408,9 @@ describe("cli: doctor", () => {
 
 describe("cli: logout", () => {
   test(
-    "fx logout deletes the saved Codex login",
+    "fiber logout deletes the saved Codex login",
     async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-codex-"));
+      const home = mkdtempSync(join(tmpdir(), "fiber-e2e-logout-codex-"));
       const authPath = join(home, ".fiber", "chatgpt-auth.json");
       try {
         writeSeededChatGptLogin(home, chatGptAccessToken());
@@ -1452,9 +1451,9 @@ describe("cli: logout", () => {
   );
 
   test(
-    "fx logout removes a saved login rejected for unsafe permissions",
+    "fiber logout removes a saved login rejected for unsafe permissions",
     async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-rejected-login-"));
+      const home = mkdtempSync(join(tmpdir(), "fiber-e2e-logout-rejected-login-"));
       const authPath = join(home, ".fiber", "chatgpt-auth.json");
       try {
         writeSeededChatGptLogin(home, chatGptAccessToken());
@@ -1480,9 +1479,9 @@ describe("cli: logout", () => {
   );
 
   test(
-    "fx logout fails when the saved login cannot be deleted",
+    "fiber logout fails when the saved login cannot be deleted",
     async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-delete-failure-"));
+      const home = mkdtempSync(join(tmpdir(), "fiber-e2e-logout-delete-failure-"));
       const fxDir = join(home, ".fiber");
       const authPath = join(fxDir, "chatgpt-auth.json");
       try {
@@ -1500,7 +1499,7 @@ describe("cli: logout", () => {
         expect(logout.code).toBe(1);
         expect(logout.stdout).toBe("");
         expect(logout.stderr).toBe(
-          "fx logout: failed to durably remove saved Codex login\n",
+          "fiber logout: failed to durably remove saved Codex login\n",
         );
         expect(existsSync(authPath)).toBe(true);
         expect(JSON.parse(status.stdout).auth).toBe("Codex subscription");
@@ -1513,9 +1512,9 @@ describe("cli: logout", () => {
   );
 
   test(
-    "fx logout with no saved Codex login reports absence and keeps missing auth",
+    "fiber logout with no saved Codex login reports absence and keeps missing auth",
     async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-logout-no-login-"));
+      const home = mkdtempSync(join(tmpdir(), "fiber-e2e-logout-no-login-"));
       try {
         const env = {
           HOME: realpathSync(home),
@@ -1548,7 +1547,7 @@ describe("cli: stored key file backend", () => {
   test.skipIf(platform() === "darwin")(
     "a 0600 key file resolves, and a loosened one is refused rather than reported absent",
     async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-stored-key-file-"));
+      const home = mkdtempSync(join(tmpdir(), "fiber-stored-key-file-"));
       const fxDir = join(home, ".fiber");
       mkdirSync(fxDir, { recursive: true, mode: 0o700 });
       chmodSync(fxDir, 0o700);
@@ -1600,7 +1599,7 @@ describe("cli: read-only no-create matrix", () => {
     test(
       `${probe.args.join(" ")} leaves an empty home unchanged`,
       async () => {
-        const root = mkdtempSync(join(tmpdir(), "fx-e2e-no-create-"));
+        const root = mkdtempSync(join(tmpdir(), "fiber-e2e-no-create-"));
         try {
           const home = join(root, "home");
           const workspace = join(root, "workspace");
@@ -1643,7 +1642,7 @@ describe("cli: missing durable home", () => {
   test(
     "read-only commands tolerate a nonexistent HOME and saved ask bootstraps it",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-missing-home-path-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-missing-home-path-"));
       const home = join(root, "missing-home");
       const workspace = join(root, "workspace");
       const codex = startFakeCodex();
@@ -1707,7 +1706,7 @@ describe("cli: missing durable home", () => {
   test(
     "session commands fail precisely while doctor remains available without HOME",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-no-home-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-no-home-"));
       try {
         const workspace = join(root, "workspace");
         mkdirSync(workspace);
@@ -1757,9 +1756,9 @@ describe("cli: missing durable home", () => {
 
 describe("cli: sessions", () => {
   test(
-    "fx sessions --json returns valid sessions JSON",
+    "fiber sessions --json returns valid sessions JSON",
     async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-sessions-empty-"));
+      const home = mkdtempSync(join(tmpdir(), "fiber-e2e-sessions-empty-"));
       try {
         const r = await runFx(["sessions", "--json"], { env: { HOME: home } });
         expect(r.code).toBe(0);
@@ -1775,9 +1774,9 @@ describe("cli: sessions", () => {
   );
 
   test(
-    "fx sessions text shows named, unnamed, and renamed sessions",
+    "fiber sessions text shows named, unnamed, and renamed sessions",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-session-names-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-session-names-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -1890,7 +1889,7 @@ describe("cli: sessions", () => {
   test(
     "session listing pages a 9001-entry index without scanning session directories",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-session-pages-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-session-pages-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -1990,7 +1989,7 @@ describe("cli: sessions", () => {
   test(
     "session lists use projections without opening unreadable event logs",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-session-projections-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-session-projections-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -2093,7 +2092,7 @@ describe("cli: sessions", () => {
   test(
     "workspace-scoped session discovery filters list and last by cwd",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-workspace-sessions-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-workspace-sessions-"));
       try {
         const home = join(root, "home");
         const workspaceA = join(root, "workspace-a");
@@ -2165,7 +2164,7 @@ describe("cli: sessions", () => {
   test(
     "session discovery reports corrupt records and distinguishes an unreadable latest session",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-corrupt-sessions-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-corrupt-sessions-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -2223,7 +2222,7 @@ describe("cli: sessions", () => {
   test(
     "profile-wide session discovery recovers sessions after a workspace rename",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-renamed-workspace-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-renamed-workspace-"));
       try {
         const home = join(root, "home");
         const original = join(root, "workspace-before");
@@ -2267,10 +2266,10 @@ describe("cli: sessions", () => {
   );
 
   test(
-    "fx sessions --json ignores malformed and oversized list caches",
+    "fiber sessions --json ignores malformed and oversized list caches",
     async () => {
       for (const cached of ["{", "x".repeat(4 * 1024 * 1024 + 1)]) {
-        const root = mkdtempSync(join(tmpdir(), "fx-e2e-sessions-cache-"));
+        const root = mkdtempSync(join(tmpdir(), "fiber-e2e-sessions-cache-"));
         try {
           const home = join(root, "home");
           const workspace = join(root, "workspace");
@@ -2300,7 +2299,7 @@ describe("cli: sessions", () => {
   test(
     "exact session flags address special-token and 255-byte IDs literally",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-session-exact-ids-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-session-exact-ids-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -2338,7 +2337,7 @@ describe("cli: sessions", () => {
   test(
     "expected json failures emit machine-readable stdout",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-json-errors-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-json-errors-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -2386,7 +2385,7 @@ describe("cli: sessions", () => {
 
 describe("cli: removed task and background commands", () => {
   test(
-    "fx task, fx tasks, and fx background are unknown commands",
+    "fiber task, fiber tasks, and fiber background are unknown commands",
     async () => {
       for (const command of ["task", "tasks", "background"]) {
         const result = await runFx([command], { env: NO_GATEWAY_AUTH });
@@ -2400,7 +2399,7 @@ describe("cli: removed task and background commands", () => {
   test(
     "legacy tasks files are ignored by ordinary session loading",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-legacy-tasks-ignored-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-legacy-tasks-ignored-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -2465,7 +2464,7 @@ function startCodexModelsServer(response: () => Response) {
 
 describe("cli: models", () => {
   test(
-    "fx models renders the authenticated Codex catalog and sends subscription identity",
+    "fiber models renders the authenticated Codex catalog and sends subscription identity",
     async () => {
       const home = createIsolatedTestHome();
       writeSeededChatGptLogin(home, chatGptAccessToken());
@@ -2520,7 +2519,7 @@ describe("cli: models", () => {
             `Bearer ${chatGptAccessToken()}`,
           );
           expect(request.headers.get("chatgpt-account-id")).toBe("acct_e2e");
-          expect(request.headers.get("originator")).toBe("fx");
+          expect(request.headers.get("originator")).toBe("fiber");
         }
       } finally {
         server.stop();
@@ -2531,7 +2530,7 @@ describe("cli: models", () => {
   );
 
   test(
-    "fx models rejects redirects without contacting the target",
+    "fiber models rejects redirects without contacting the target",
     async () => {
       const home = createIsolatedTestHome();
       writeSeededChatGptLogin(home, chatGptAccessToken());
@@ -2575,7 +2574,7 @@ describe("cli: models", () => {
   );
 
   test(
-    "fx models preserves transport and server failures without anonymous retry",
+    "fiber models preserves transport and server failures without anonymous retry",
     async () => {
       for (const scenario of [
         {
@@ -2650,7 +2649,7 @@ describe("cli: models", () => {
   );
 
   test(
-    "fx models preserves connection failures without anonymous retry",
+    "fiber models preserves connection failures without anonymous retry",
     async () => {
       const home = createIsolatedTestHome();
       writeSeededChatGptLogin(home, chatGptAccessToken());
@@ -2682,7 +2681,7 @@ describe("cli: models", () => {
   );
 
   test(
-    "cancelling fx models does not retry",
+    "cancelling fiber models does not retry",
     async () => {
       const home = createIsolatedTestHome();
       writeSeededChatGptLogin(home, chatGptAccessToken());
@@ -2722,11 +2721,11 @@ describe("cli: models", () => {
 
 describe("cli: replay failures", () => {
   test(
-    "fx replay --json preserves structured failures for missing and malformed tapes",
+    "fiber replay --json preserves structured failures for missing and malformed tapes",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-replay-json-errors-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-replay-json-errors-"));
       try {
-        const missing = await runFx(["replay", join(root, "missing.fxtape"), "--json"]);
+        const missing = await runFx(["replay", join(root, "missing.fibertape"), "--json"]);
         expect(missing.code).toBe(1);
         expect(missing.stderr).toBe("");
         expect(JSON.parse(missing.stdout.trim())).toMatchObject({
@@ -2734,7 +2733,7 @@ describe("cli: replay failures", () => {
           code: "FileNotFound",
         });
 
-        const malformedPath = join(root, "malformed.fxtape");
+        const malformedPath = join(root, "malformed.fibertape");
         writeFileSync(malformedPath, "not a tape");
         const malformed = await runFx(["replay", malformedPath, "--json"]);
         expect(malformed.code).toBe(1);
@@ -2752,9 +2751,9 @@ describe("cli: replay failures", () => {
 
 describe("cli: ask input validation", () => {
   test(
-    "fx ask rejects invalid UTF-8 stdin before Gateway or session effects",
+    "fiber ask rejects invalid UTF-8 stdin before Gateway or session effects",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-invalid-utf8-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-invalid-utf8-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       mkdirSync(home);
@@ -2802,7 +2801,7 @@ describe("cli: ask input validation", () => {
 
 describe("cli: session", () => {
   test(
-    "fx session with no id exits non-zero or shows usage",
+    "fiber session with no id exits non-zero or shows usage",
     async () => {
       const r = await runFx(["session"]);
       expect(r.code).not.toBe(0);
@@ -2811,9 +2810,9 @@ describe("cli: session", () => {
   );
 
   test(
-    "fx session exact id hides managed child detail",
+    "fiber session exact id hides managed child detail",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-private-child-detail-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-private-child-detail-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -2891,12 +2890,12 @@ describe("cli: interactive startup", () => {
       ];
 
       for (const args of cases) {
-        const home = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-no-tty-")));
+        const home = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-no-tty-")));
         try {
           const r = await runFx(args, { env: { HOME: home } });
           expect(r.code).toBe(1);
           expect(r.stdout).toBe("");
-          expect(r.stderr).toBe("fx requires an interactive terminal (TTY).\n");
+          expect(r.stderr).toBe("fiber requires an interactive terminal (TTY).\n");
           expect(readdirSync(home)).toEqual([]);
         } finally {
           rmSync(home, { recursive: true, force: true });
@@ -2909,9 +2908,9 @@ describe("cli: interactive startup", () => {
 
 describe("cli: pr", () => {
   test(
-    "fx pr without a Codex login exits non-zero",
+    "fiber pr without a Codex login exits non-zero",
     async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-noauth-"));
+      const home = mkdtempSync(join(tmpdir(), "fiber-e2e-noauth-"));
       try {
         const r = await runFx(["pr"], {
           env: { ...NO_GATEWAY_AUTH, HOME: home, FIBER_DISABLE_KEYCHAIN: "1" },
@@ -2928,9 +2927,9 @@ describe("cli: pr", () => {
 
 describe("cli: issue", () => {
   test(
-    "fx issue without a Codex login exits non-zero",
+    "fiber issue without a Codex login exits non-zero",
     async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-e2e-noauth-"));
+      const home = mkdtempSync(join(tmpdir(), "fiber-e2e-noauth-"));
       try {
         const r = await runFx(["issue"], {
           env: { ...NO_GATEWAY_AUTH, HOME: home, FIBER_DISABLE_KEYCHAIN: "1" },
@@ -2947,9 +2946,9 @@ describe("cli: issue", () => {
 
 describe("cli: ask success", () => {
   test(
-    "fx ask binds an explicitly invoked skill into the prompt",
+    "fiber ask binds an explicitly invoked skill into the prompt",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-explicit-skill-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-explicit-skill-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const skillDirectory = join(home, ".fiber", "skills", "cli-explicit");
@@ -3001,9 +3000,9 @@ describe("cli: ask success", () => {
   );
 
   test(
-    "fx ask stdin prompts above the old 1 MiB limit reach Codex byte-for-byte",
+    "fiber ask stdin prompts above the old 1 MiB limit reach Codex byte-for-byte",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-large-stdin-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-large-stdin-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const sizes = [1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1, 3 * 1024 * 1024];
@@ -3043,7 +3042,7 @@ describe("cli: ask success", () => {
   );
 
   test(
-    "fx ask stdin resource overflow has distinct text and JSON errors",
+    "fiber ask stdin resource overflow has distinct text and JSON errors",
     async () => {
       const oversized = Buffer.alloc(8 * 1024 * 1024 + 1, 0x78);
 
@@ -3055,7 +3054,7 @@ describe("cli: ask success", () => {
       expect(textResult.code).toBe(1);
       expect(textResult.stdout).toBe("");
       expect(textResult.stderr).toBe(
-        "fx ask: prompt exceeds the local input safety limit\n",
+        "fiber ask: prompt exceeds the local input safety limit\n",
       );
 
       const jsonResult = await runFx(["ask", "--json", "--auto", "--no-save"], {
@@ -3073,9 +3072,9 @@ describe("cli: ask success", () => {
   );
 
   test(
-    "fx ask sends catalog-backed portable reasoning",
+    "fiber ask sends catalog-backed portable reasoning",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-portable-reasoning-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-portable-reasoning-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const codex = startFakeCodex();
@@ -3113,7 +3112,7 @@ describe("cli: ask success", () => {
   test(
     "saved ask resumes the exact session while no-save creates no durable state",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-persistence-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-persistence-"));
       const replies = ["orange triangle", "blue circle", "green square"];
       const codex = startFakeCodex({
         route: () => codexFinalText(replies[askCount] ?? "unexpected"),
@@ -3235,7 +3234,7 @@ describe("cli: ask success", () => {
   test(
     "saved ask survives session cache contention and repairs after release",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-session-cache-contention-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-session-cache-contention-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const lockReady = join(root, "latest-lock-ready");
@@ -3425,9 +3424,9 @@ describe("cli: ask success", () => {
 
 describe("cli: error handling", () => {
   test(
-    "fx ask rejects unknown options before a model turn and -- preserves literal prompt text",
+    "fiber ask rejects unknown options before a model turn and -- preserves literal prompt text",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-options-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-options-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const codex = startFakeCodex();
@@ -3443,7 +3442,7 @@ describe("cli: error handling", () => {
           timeoutMs: TIMEOUT,
         });
         expect(rejected.code).toBe(1);
-        expect(rejected.stderr).toContain("usage: fx ask");
+        expect(rejected.stderr).toContain("usage: fiber ask");
         expect(codex.requests).toHaveLength(0);
 
         const literal = await runFx(
@@ -3478,7 +3477,7 @@ describe("cli: error handling", () => {
   );
 
   test(
-    "fx ask with no prompt exits 1",
+    "fiber ask with no prompt exits 1",
     async () => {
       const r = await runFx(["ask"]);
       expect(r.code).toBe(1);
@@ -3488,7 +3487,7 @@ describe("cli: error handling", () => {
   );
 
   test(
-    "fx unknown-command exits 1",
+    "fiber unknown-command exits 1",
     async () => {
       const r = await runFx(["unknown-command"]);
       expect(r.code).toBe(1);
@@ -3497,9 +3496,9 @@ describe("cli: error handling", () => {
   );
 
   test(
-    "fx ask explains no-save resume conflicts before a model turn",
+    "fiber ask explains no-save resume conflicts before a model turn",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-resume-no-save-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-resume-no-save-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const gateway = startFakeGateway([]);
@@ -3524,10 +3523,10 @@ describe("cli: error handling", () => {
           expect(rejected.code).toBe(1);
           expect(rejected.stdout).toBe("");
           expect(rejected.stderr).toContain(
-            "fx ask: --no-save cannot be used with --resume or --resume-id",
+            "fiber ask: --no-save cannot be used with --resume or --resume-id",
           );
           expect(rejected.stderr).toContain(
-            "usage: fx ask [--auto|--yolo] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save]",
+            "usage: fiber ask [--auto|--yolo] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save]",
           );
         }
         expect(gateway.requests).toHaveLength(0);
@@ -3553,7 +3552,7 @@ describe("cli: workspace access", () => {
         { env: enabled },
       );
       expect(help.code).toBe(0);
-      expect(help.stdout.startsWith("fx ask\n\n")).toBe(true);
+      expect(help.stdout.startsWith("fiber ask\n\n")).toBe(true);
       expect(help.stderr).toBe("");
 
       const missing = await runFx(["--add-dir"], { env: enabled });
@@ -3579,7 +3578,7 @@ describe("cli: workspace access", () => {
   test(
     "workspace commands persist per-primary roots and track availability",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-access-cli-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-access-cli-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -3735,7 +3734,7 @@ describe("cli: workspace access", () => {
   test(
     "workspace commands mutate persisted aliases by workspace identity",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-alias-cli-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-alias-cli-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -3867,7 +3866,7 @@ describe("cli: workspace access", () => {
 
 describe("cli: MCP profile add", () => {
   test("status and doctor inspect MCP without transport while list --connect discovers it", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-cli-mcp-inspect-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-cli-mcp-inspect-")));
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const pidPath = join(root, "mcp.pid");
@@ -3929,7 +3928,7 @@ describe("cli: MCP profile add", () => {
   }, 30_000);
 
   test("lists paths and removes profile servers without launching MCP transport", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-cli-mcp-manage-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-cli-mcp-manage-")));
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     const profileMarker = join(root, "profile-launched");
@@ -4012,7 +4011,7 @@ describe("cli: MCP profile add", () => {
   });
 
   test("adds local and HTTP servers without launching either server", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-cli-mcp-add-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-cli-mcp-add-")));
     const home = join(root, "home");
     const marker = join(root, "launched");
     mkdirSync(home, { recursive: true });
@@ -4022,14 +4021,14 @@ describe("cli: MCP profile add", () => {
       });
       expect(help.code).toBe(0);
       for (const command of [
-        "fx mcp add NAME COMMAND [ARGS...]",
-        "fx mcp auth NAME",
-        "fx mcp list",
-        "fx mcp logout NAME",
-        "fx mcp path",
-        "fx mcp remove NAME",
-        "fx mcp trust approve|reject NAME",
-        "fx mcp trust approve-all|reset",
+        "fiber mcp add NAME COMMAND [ARGS...]",
+        "fiber mcp auth NAME",
+        "fiber mcp list",
+        "fiber mcp logout NAME",
+        "fiber mcp path",
+        "fiber mcp remove NAME",
+        "fiber mcp trust approve|reject NAME",
+        "fiber mcp trust approve-all|reset",
       ]) expect(help.stdout).toContain(command);
 
       const local = await runFx(
@@ -4074,7 +4073,7 @@ describe("cli: MCP profile add", () => {
   });
 
   test("canonicalizes alias input and refuses ambiguous server-like keys", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-cli-mcp-alias-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-cli-mcp-alias-")));
     const home = join(root, "home");
     const fxDir = join(home, ".fiber");
     mkdirSync(fxDir, { recursive: true, mode: 0o700 });
@@ -4113,7 +4112,7 @@ describe("cli: MCP profile add", () => {
   });
 
   test("serializes concurrent different-name additions", async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-cli-mcp-race-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-cli-mcp-race-")));
     const home = join(root, "home");
     mkdirSync(home, { recursive: true });
     try {

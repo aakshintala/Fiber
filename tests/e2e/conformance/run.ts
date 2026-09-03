@@ -27,10 +27,10 @@ const baseline = resolve(packageRoot, "expected-failures.yml");
 const fxBin = resolve(packageRoot, "../../../zig-out/bin/fiber");
 if (!existsSync(fxBin)) {
   throw new Error(
-    `missing freshly built fx binary at ${fxBin}; run FIBER_SOUND=0 zig build from the repository root`,
+    `missing freshly built fiber binary at ${fxBin}; run FIBER_SOUND=0 zig build from the repository root`,
   );
 }
-const resultRoot = mkdtempSync(join(tmpdir(), "fx-mcp-conformance-results-"));
+const resultRoot = mkdtempSync(join(tmpdir(), "fiber-mcp-conformance-results-"));
 console.log(
   `MCP conformance ${protocolVersion}, runner ${runnerVersion} (${runnerRevision})`,
 );

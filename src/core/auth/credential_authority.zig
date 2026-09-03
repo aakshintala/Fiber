@@ -18,7 +18,7 @@ pub fn derive(
     account_id: ?[]const u8,
 ) ?Identity {
     var hash = Sha256.init(.{});
-    hash.update("fx-credential-authority-v1\x00");
+    hash.update("fiber-credential-authority-v1\x00");
     hash.update(@tagName(source));
     switch (source) {
         .chatgpt_subscription => {
