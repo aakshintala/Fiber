@@ -176,7 +176,6 @@ const RawEnviron = io_mod.RawEnviron;
 const footer_rows: u16 = 4;
 const active_poll_timeout_ms: i32 = 8;
 const focused_ui_worker_poll_timeout_ms: i32 = 1;
-const idle_wasm_poll_timeout_ms: i32 = 16;
 const resize_debounce_ms: i64 = 100;
 const max_transcript_bytes: usize = 256 * 1024;
 const default_max_agent_steps: usize = agent_steps.default_max_agent_steps;
@@ -553,14 +552,6 @@ const App = struct {
 
     stream: StreamState = .{},
     metrics: Metrics = .{},
-    fn loadNoMcpRuntime(
-        _: Allocator,
-        _: []const u8,
-        _: @import("core/mcp/elicitation.zig").Capabilities,
-    ) !?*mcp_runtime_mod.McpRuntime {
-        return null;
-    }
-
     pub fn init(alloc: Allocator, launch: *cli_surface.InteractiveLaunch) !Self {
         var app = Self{
             .alloc = alloc,
@@ -924,15 +915,12 @@ const App = struct {
 
     pub fn loopPollTimeoutMs(ctx: *anyopaque, default_timeout_ms: i32) i32 {
         const self: *App = @ptrCast(@alignCast(ctx));
-        if (comptime !host_target.is_wasm) {
-            return nativeLoopPollTimeoutMs(
-                default_timeout_ms,
-                self.auth.sourceInventoryRefreshActive(),
-                self.skills.refreshActive(),
-                self.fullTranscriptFocusedWorkActive(),
-            );
-        }
-        return if (self.pacer.hasPending()) default_timeout_ms else idle_wasm_poll_timeout_ms;
+        return nativeLoopPollTimeoutMs(
+            default_timeout_ms,
+            self.auth.sourceInventoryRefreshActive(),
+            self.skills.refreshActive(),
+            self.fullTranscriptFocusedWorkActive(),
+        );
     }
 
     fn fullTranscriptFocusedWorkActive(self: *App) bool {
@@ -1448,7 +1436,7 @@ const App = struct {
             self.alloc,
             self.workspace_root,
             .{ .form = true, .url = true },
-            if (comptime host_target.is_wasm) loadNoMcpRuntime else builtin_mcp.loadRuntime,
+            builtin_mcp.loadRuntime,
             builtin_mcp.previewNativeWorkspaceAuthority,
             self.toolRegistry(),
             @intCast(@max(io_mod.milliTimestamp(), 0)),
@@ -1460,7 +1448,7 @@ const App = struct {
             self.alloc,
             self.workspace_root,
             .{ .form = true, .url = true },
-            if (comptime host_target.is_wasm) loadNoMcpRuntime else builtin_mcp.loadRuntime,
+            builtin_mcp.loadRuntime,
             builtin_mcp.previewNativeWorkspaceAuthority,
             self.toolRegistry(),
             @intCast(@max(io_mod.milliTimestamp(), 0)),
@@ -1473,7 +1461,7 @@ const App = struct {
             self.alloc,
             self.workspace_root,
             .{ .form = true, .url = true },
-            if (comptime host_target.is_wasm) loadNoMcpRuntime else builtin_mcp.loadRuntime,
+            builtin_mcp.loadRuntime,
             self.toolRegistry(),
             @intCast(@max(io_mod.milliTimestamp(), 0)),
             rebuild,
@@ -1492,7 +1480,7 @@ const App = struct {
             self.alloc,
             self.workspace_root,
             .{ .form = true, .url = true },
-            if (comptime host_target.is_wasm) loadNoMcpRuntime else builtin_mcp.loadRuntime,
+            builtin_mcp.loadRuntime,
             self.toolRegistry(),
             @intCast(@max(io_mod.milliTimestamp(), 0)),
             rebuild,
@@ -1810,7 +1798,6 @@ const App = struct {
         self: *App,
         pending: *input_submit_runtime.PendingSubmission,
     ) !input_submit_runtime.PendingSkillRefresh {
-        if (comptime host_target.is_wasm) return .current;
         const generation = pending.skill_refresh_generation orelse blk: {
             const requested = try self.requestSkillsRefresh();
             pending.skill_refresh_generation = requested;
@@ -2701,23 +2688,19 @@ const App = struct {
         const self: *App = @ptrCast(@alignCast(ctx));
         if (!try WorkerAppRuntime.authorizeInteractiveAdmission(self)) return;
 
-        if (comptime !host_target.is_wasm) {
-            if (self.file_index.joinThreadIfDone(std.heap.c_allocator)) {
-                self.shell.render_requests.request(.footer);
-            }
-            switch (try self.pollSkillsRefresh()) {
-                .none, .unchanged => {},
-                .adopted, .failed => self.shell.render_requests.request(.footer),
-            }
-            try app_commands.Handlers(App).collectSkillsRefreshFacts(self);
+        if (self.file_index.joinThreadIfDone(std.heap.c_allocator)) {
+            self.shell.render_requests.request(.footer);
         }
+        switch (try self.pollSkillsRefresh()) {
+            .none, .unchanged => {},
+            .adopted, .failed => self.shell.render_requests.request(.footer),
+        }
+        try app_commands.Handlers(App).collectSkillsRefreshFacts(self);
         InputSubmitRuntime.collectPendingSubmissionFacts(self);
 
         try self.collectThemeFacts();
 
-        if (comptime !host_target.is_wasm) {
-            UpgradeAppRuntime.collectUpgradeFacts(self);
-        }
+        UpgradeAppRuntime.collectUpgradeFacts(self);
         app_permission_runtime.Runtime(App).tick(
             self,
             app_permission_runtime.monotonicMillis(),
@@ -2780,9 +2763,7 @@ const App = struct {
             self.input_runtime.vertical_navigation.reset();
         }
 
-        if (comptime !host_target.is_wasm) {
-            try SessionAppRuntime.pollSessionPicker(self);
-        }
+        try SessionAppRuntime.pollSessionPicker(self);
         try self.shell.prewarmFullTranscriptPage(
             self.fullTranscriptSidecarCapability(),
             self.fullTranscriptDiffResolver(),
