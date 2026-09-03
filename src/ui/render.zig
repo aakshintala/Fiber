@@ -165,10 +165,8 @@ pub fn buildInputLineForRow(input: []const u8, cursor: usize, line_index: usize,
     };
 }
 
-const build_channel = update_target.Channel.parse(build_options.update_channel) orelse .stable;
+const build_channel: update_target.Channel = .stable;
 const welcome_build_label_bytes: usize = 96;
-const dev_revision_bytes: usize = 7;
-
 /// Dev builds ship on every merged PR, so the version alone cannot identify the
 /// binary: the header carries the commit and a brighter `[dev]` tag.
 fn writeBuildLabel(
@@ -177,16 +175,9 @@ fn writeBuildLabel(
     version_text: []const u8,
     revision: []const u8,
 ) ![]const u8 {
-    if (channel != .dev) return std.fmt.bufPrint(out, "v{s}", .{version_text});
-    if (revision.len < dev_revision_bytes or std.mem.eql(u8, revision, "unknown")) {
-        return std.fmt.bufPrint(out, "v{s} {s}[dev]{s}", .{ version_text, hint_style, dim_style });
-    }
-    return std.fmt.bufPrint(out, "v{s}-{s} {s}[dev]{s}", .{
-        version_text,
-        revision[0..dev_revision_bytes],
-        hint_style,
-        dim_style,
-    });
+    _ = channel;
+    _ = revision;
+    return std.fmt.bufPrint(out, "v{s}", .{version_text});
 }
 
 pub fn welcomeMessage(alloc: std.mem.Allocator) ![]u8 {
@@ -906,38 +897,6 @@ test "build label stays bare on the stable channel" {
     var buf: [welcome_build_label_bytes]u8 = undefined;
     const label = try writeBuildLabel(&buf, .stable, "0.0.4", "abcdef123456");
     try std.testing.expectEqualStrings("v0.0.4", label);
-}
-
-test "dev build label carries the commit and restores the dim run after the tag" {
-    initTheme(false, null);
-
-    var buf: [welcome_build_label_bytes]u8 = undefined;
-    const label = try writeBuildLabel(&buf, .dev, "0.0.5", "abcdef123456");
-
-    const expected = try std.fmt.allocPrint(
-        std.testing.allocator,
-        "v0.0.5-abcdef1 {s}[dev]{s}",
-        .{ hint_style, dim_style },
-    );
-    defer std.testing.allocator.free(expected);
-
-    try std.testing.expectEqualStrings(expected, label);
-}
-
-test "dev build label drops an unresolved revision" {
-    initTheme(false, null);
-
-    var buf: [welcome_build_label_bytes]u8 = undefined;
-    const label = try writeBuildLabel(&buf, .dev, "0.0.5", "unknown");
-
-    const expected = try std.fmt.allocPrint(
-        std.testing.allocator,
-        "v0.0.5 {s}[dev]{s}",
-        .{ hint_style, dim_style },
-    );
-    defer std.testing.allocator.free(expected);
-
-    try std.testing.expectEqualStrings(expected, label);
 }
 
 test "buildHintLine advertises queue without persistent steering hint while streaming" {

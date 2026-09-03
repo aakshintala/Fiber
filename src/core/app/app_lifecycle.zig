@@ -11,7 +11,6 @@ const model_provider = @import("../config/model_provider.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const record_tape = @import("../workspace/record_tape.zig");
 const workspace_access = @import("../workspace/workspace_access.zig");
-const update_target = @import("../upgrade/update_target.zig");
 const notification_sound = @import("../notifications/sound.zig");
 const tool_result_limits = @import("../tooling/tool_result_limits.zig");
 const types = @import("../shared/types.zig");
@@ -133,7 +132,6 @@ pub const StartupState = struct {
     slash_menu_categories: bool = true,
     collapse_tool_calls: bool = false,
     auto_upgrade: bool = true,
-    update_channel: update_target.Channel = .stable,
     startup_scrollback: bool = true,
     prompt_history_enabled: bool = true,
     prompt_history_store_allowed: bool = true,
@@ -211,7 +209,6 @@ pub const StartupStatus = struct {
     auth: auth_runtime.StatusSnapshot = .{},
     permission_mode: PermissionMode,
     agent_step_limit: usize,
-    update_channel: update_target.Channel = .stable,
     config_diagnostics: []config_runtime.ConfigDiagnostic = &.{},
 
     pub fn deinit(self: *StartupStatus, alloc: Allocator) void {
@@ -319,7 +316,6 @@ pub fn loadStartupStatus(
         .auth = auth_status,
         .permission_mode = loadPermissionMode(settings.permission_mode),
         .agent_step_limit = loadAgentStepLimit(default_agent_step_limit, settings.max_agent_steps),
-        .update_channel = settings.update_channel orelse .stable,
         .config_diagnostics = detailed.diagnostics,
     };
     detailed.diagnostics = &.{};
@@ -408,7 +404,6 @@ fn loadStartupStateFromOwnedWorkspace(
     state.slash_menu_categories = settings.slash_menu_categories orelse true;
     state.collapse_tool_calls = settings.collapse_tool_calls orelse false;
     state.auto_upgrade = settings.auto_upgrade orelse true;
-    state.update_channel = settings.update_channel orelse .stable;
     state.startup_scrollback = settings.startup_scrollback orelse true;
     state.effort = settings.effort orelse .auto;
     state.first_call_tool_choice = settings.first_call_tool_choice orelse .auto;

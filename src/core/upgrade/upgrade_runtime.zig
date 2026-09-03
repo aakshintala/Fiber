@@ -177,7 +177,10 @@ fn upgradeWorkerInner(
     progress: *ProgressState,
     show_progress: bool,
 ) !void {
-    const cdn_base = helpers.resolveCdnBase();
+    const cdn_base = helpers.resolveCdnBase() orelse {
+        result.err = .fetch_failed;
+        return;
+    };
     const fetched_target = helpers.fetchTarget(alloc, channel, cdn_base) catch {
         result.err = .fetch_failed;
         return;

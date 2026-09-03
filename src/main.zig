@@ -98,8 +98,7 @@ const assistant_presentation = @import("core/agent/assistant_presentation.zig");
 const auto_upgrade = @import("core/upgrade/auto_upgrade.zig");
 const update_target = @import("core/upgrade/update_target.zig");
 
-const compiled_update_channel = update_target.Channel.parse(build_options.update_channel) orelse
-    @compileError("invalid compiled update channel");
+const compiled_update_channel: update_target.Channel = .stable;
 const shell_process_provider = @import("tools/shell/process_provider.zig");
 const process_provider = @import("core/execution/process_provider.zig");
 const terminal_client_runtime = @import("core/terminal/client.zig");
@@ -578,14 +577,6 @@ const App = struct {
         if (comptime host_profile.durable_sessions) {
             SessionAppRuntime.primeSessionPicker(&app);
         }
-        const env_disabled = if (io_mod.getenv("FX_AUTO_UPGRADE")) |val|
-            std.mem.eql(u8, val, "0") or std.ascii.eqlIgnoreCase(val, "false")
-        else
-            false;
-        if (env_disabled or !auto_upgrade.shouldEnableForCurrentExecutable()) {
-            app.auto_upgrade_enabled = false;
-        }
-        if (comptime !host_profile.auto_upgrade) app.auto_upgrade_enabled = false;
         SessionAppRuntime.syncTerminalTitle(&app);
         return app;
     }
@@ -665,14 +656,6 @@ const App = struct {
         NotificationAppRuntime.dispatchAttentionRequired(self, turn_id, kind);
     }
 
-    /// Must be called after init() returns so the AutoUpgrade thread
-    /// captures a pointer to the final App location (not a temporary).
-    pub fn startAutoUpgrade(self: *App) void {
-        if (self.auto_upgrade_enabled) {
-            self.upgrader.start(self.alloc, currentBuild());
-        }
-    }
-
     pub fn applyReadyUpgradeShortcut(self: *App) !void {
         try UpgradeAppRuntime.applyReadyUpgrade(self);
     }
@@ -726,7 +709,6 @@ const App = struct {
 
         self.worker.requestShutdown();
         self.managed_executions.shutdown();
-        self.upgrader.stop();
         self.file_index.requestStop();
 
         self.releaseTerminal();

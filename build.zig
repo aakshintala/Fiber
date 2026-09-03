@@ -1,7 +1,5 @@
 const std = @import("std");
 
-const UpdateChannel = enum { stable, dev };
-
 const PgsoArtifact = enum {
     fx,
     file_index,
@@ -19,12 +17,11 @@ pub fn build(b: *std.Build) void {
     );
     const git_commit = readGitCommit(b);
     const app_version = readAppVersion(b);
-    const update_channel = b.option(UpdateChannel, "update-channel", "Build update channel (stable or dev)") orelse .stable;
 
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "git_commit", git_commit);
     build_options.addOption([]const u8, "app_version", app_version);
-    build_options.addOption([]const u8, "update_channel", @tagName(update_channel));
+    build_options.addOption([]const u8, "update_channel", "stable");
 
     const exe = b.addExecutable(.{
         .name = "fx",

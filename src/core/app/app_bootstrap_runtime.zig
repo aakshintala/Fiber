@@ -22,7 +22,6 @@ const skill_runtime = @import("../skills/skill_runtime.zig");
 const types = @import("../shared/types.zig");
 const worker_runtime = @import("../agent/worker_runtime.zig");
 const auto_upgrade = @import("../upgrade/auto_upgrade.zig");
-const update_target = @import("../upgrade/update_target.zig");
 const core_input_runtime = @import("../input/runtime.zig");
 const ui_render = @import("../../ui/render.zig");
 const ui_input = @import("../../ui/input/runtime.zig");
@@ -287,7 +286,6 @@ pub fn Runtime(comptime App: type) type {
             app.input_runtime.slash_menu_categories = startup.slash_menu_categories;
             app.shell.collapse_tool_calls = startup.collapse_tool_calls;
             app.auto_upgrade_enabled = startup.auto_upgrade;
-            app.upgrader.configure_channel(startup.update_channel);
             app.effort = startup.effort;
             app.shell.setCommandOutputRenderPolicy(
                 app_render_runtime.Runtime(App).shellStyles(),
@@ -711,7 +709,6 @@ fn makeStartupState(alloc: Allocator) !app_lifecycle.StartupState {
     state.fast_mode = true;
     state.fast_mode_model_bound = true;
     state.auto_upgrade = false;
-    state.update_channel = .dev;
     state.effort = types.ReasoningEffort.literal("high");
     state.statusline_workspace = true;
     if (active_capture.?.emit_config_diagnostics) {
@@ -900,10 +897,6 @@ test "app_bootstrap_runtime transfers startup state and starts a fresh session" 
     );
     try std.testing.expect(capture.configured_fast_mode);
     try std.testing.expect(capture.configured_fast_mode_model_bound);
-    try std.testing.expectEqual(
-        update_target.Channel.dev,
-        app.upgrader.channel(),
-    );
     try std.testing.expect(!capture.initialize_required);
     try std.testing.expectEqualStrings("/workspace", capture.load_skills_workspace);
     try std.testing.expectEqual(@as(usize, 1), capture.load_skills_workspace_root_count);

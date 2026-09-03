@@ -192,7 +192,6 @@ fn selectCatalogModel(
 
 const UpgradeOptions = struct {
     format: output_contracts.OutputFormat = .text,
-    channel: ?update_target.Channel = null,
 };
 
 const SessionListOptions = struct {
@@ -1191,24 +1190,11 @@ fn runNonInteractiveWithDeps(
             defer startup.deinit(alloc);
             try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
 
-            const channel = opts.channel orelse startup.update_channel;
-            if (opts.channel) |selected| {
-                var outcome = config_runtime.setUserPreferences(alloc, .{ .update_channel = selected }) catch |err| {
-                    if (opts.format == .json) {
-                        try writeJsonCommandFailure(alloc, deps, "upgrade", err, "failed to save update channel");
-                    } else {
-                        try writeStderr(deps, "fx upgrade: failed to save update channel\n");
-                    }
-                    return .handled_failure;
-                };
-                defer outcome.deinit(alloc);
-            }
-
             var result = upgrade_runtime.run(alloc, .{
                 .channel = cfg.build_channel,
                 .version = cfg.version,
                 .revision = cfg.revision,
-            }, channel, switch (opts.format) {
+            }, .stable, switch (opts.format) {
                 .text => .text,
                 .json => .json,
             });
@@ -1363,7 +1349,7 @@ fn statusSnapshotFromStartupWithBuild(
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = startup.agent_step_limit,
-        .update_channel = startup.update_channel.label(),
+        .update_channel = update_target.Channel.stable.label(),
         .build_channel = build.channel.label(),
         .build_revision = build.revision,
         .mcp_config_error = switch (mcp_config_diagnostic) {
@@ -2439,7 +2425,6 @@ fn parseLocalSurfaceArgs(args: []const [:0]const u8) !LocalSurfaceOptions {
 fn parseUpgradeArgs(args: []const [:0]const u8) !UpgradeOptions {
     var options = UpgradeOptions{};
     var format_seen = false;
-    var channel_seen = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
@@ -2447,21 +2432,6 @@ fn parseUpgradeArgs(args: []const [:0]const u8) !UpgradeOptions {
             if (format_seen) return error.InvalidUpgradeArgs;
             format_seen = true;
             options.format = .json;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--channel")) {
-            if (channel_seen or index + 1 >= args.len) return error.InvalidUpgradeArgs;
-            channel_seen = true;
-            index += 1;
-            options.channel = update_target.Channel.parse(args[index]) orelse
-                return error.InvalidUpgradeArgs;
-            continue;
-        }
-        if (std.mem.startsWith(u8, arg, "--channel=")) {
-            if (channel_seen) return error.InvalidUpgradeArgs;
-            channel_seen = true;
-            options.channel = update_target.Channel.parse(arg["--channel=".len..]) orelse
-                return error.InvalidUpgradeArgs;
             continue;
         }
         return error.InvalidUpgradeArgs;
@@ -2975,32 +2945,6 @@ test "parse local surface args accepts only json" {
     try std.testing.expectEqual(output_contracts.OutputFormat.json, opts.format);
 
     try std.testing.expectError(error.InvalidLocalSurfaceArgs, parseLocalSurfaceArgs(&.{@constCast("--wat")}));
-}
-
-test "parse upgrade args accepts a remembered release channel" {
-    const defaults = try parseUpgradeArgs(&.{});
-    try std.testing.expectEqual(output_contracts.OutputFormat.text, defaults.format);
-    try std.testing.expect(defaults.channel == null);
-
-    const selected = try parseUpgradeArgs(&.{
-        @constCast("--channel"),
-        @constCast("dev"),
-        @constCast("--json"),
-    });
-    try std.testing.expectEqual(output_contracts.OutputFormat.json, selected.format);
-    try std.testing.expectEqual(update_target.Channel.dev, selected.channel.?);
-
-    const stable = try parseUpgradeArgs(&.{@constCast("--channel=stable")});
-    try std.testing.expectEqual(update_target.Channel.stable, stable.channel.?);
-
-    try std.testing.expectError(
-        error.InvalidUpgradeArgs,
-        parseUpgradeArgs(&.{ @constCast("--channel"), @constCast("nightly") }),
-    );
-    try std.testing.expectError(
-        error.InvalidUpgradeArgs,
-        parseUpgradeArgs(&.{ @constCast("--channel=dev"), @constCast("--channel=stable") }),
-    );
 }
 
 test "parse session list args supports bounded canonical pagination" {

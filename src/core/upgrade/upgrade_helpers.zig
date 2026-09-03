@@ -18,13 +18,11 @@ fn setRecvTimeout(conn: *std.http.Client.Connection) void {
     std.posix.setsockopt(sock, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&timeout)) catch {};
 }
 
-pub const cdn_base = "https://releases.fx.sh";
-
-pub fn resolveCdnBase() []const u8 {
+pub fn resolveCdnBase() ?[]const u8 {
     if (io_mod.getenv("FX_E2E_UPGRADE_BASE_URL")) |url| {
         if (isLoopbackE2eUpgradeBase(url)) return url;
     }
-    return cdn_base;
+    return null;
 }
 
 fn isLoopbackE2eUpgradeBase(url: []const u8) bool {
@@ -74,20 +72,6 @@ pub fn fetchTarget(alloc: Allocator, channel: Channel, base_url: []const u8) !Ta
             const latest = try fetchLatestVersion(alloc, base_url);
             defer alloc.free(latest);
             break :blk Target.initStable(alloc, latest) catch return error.FetchFailed;
-        },
-        .dev => blk: {
-            var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
-            defer client.deinit();
-            const url = try std.fmt.allocPrint(alloc, "{s}/dev.json", .{base_url});
-            defer alloc.free(url);
-            const manifest = try fetchTextBounded(
-                &client,
-                alloc,
-                url,
-                update_target.max_manifest_bytes,
-            );
-            defer alloc.free(manifest);
-            break :blk Target.parseDevManifest(alloc, manifest) catch return error.FetchFailed;
         },
     };
 }
@@ -329,8 +313,8 @@ test "E2E upgrade base accepts only explicit IPv4 loopback origins" {
     try std.testing.expect(!isLoopbackE2eUpgradeBase("http://localhost:1234"));
 }
 
-test "production upgrade base uses the fx release domain" {
-    try std.testing.expectEqualStrings("https://releases.fx.sh", resolveCdnBase());
+test "production upgrade base returns null without E2E override" {
+    try std.testing.expect(resolveCdnBase() == null);
 }
 
 test "extractChecksumHex parses sha256sum format" {
