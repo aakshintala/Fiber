@@ -2,6 +2,18 @@
 
 Instructions for AI coding agents working with this codebase.
 
+## Temporary Fiber transition process
+
+When implementing [`docs/ideas/fiber-product-transition.md`](docs/ideas/fiber-product-transition.md), follow [`.scratch/fiber-transition-plan.md`](.scratch/fiber-transition-plan.md). This section overrides conflicting fx-era process, CI, release, platform, naming, authentication, and completion guidance elsewhere in this file or in `CONTRIBUTING.md` until the final documentation phase replaces it.
+
+During demolition, work in one subsystem or about 15 files at a time. Define the removal surface, retained invariants, exact searches, and stop conditions before editing. Use compilation and unit tests as the interim gate; defer routine E2E, live-model, editor, and exhaustive product verification to the repair phase.
+
+For each demolition slice, run `zig fmt --check src/`, `zig build -Doptimize=ReleaseSafe`, `zig build test -Doptimize=ReleaseSafe`, exact searches for removed references, and `./scripts/smoke.sh`. The smoke script finds `fiber` or `fx` on its own, so it needs no change at the identity cutover. Report every command and exit status. Classify tests that exclusively cover removed behavior for deletion; preserve failures covering retained behavior as repair evidence.
+
+Review each slice for accidental additions, compatibility paths, and resurrection of removed code. Keep slices independently reviewable.
+
+Commit exactly one commit per slice, on `main`, after that slice's gate passes. Name the slice in the subject (`Slice 7: remove remaining WASI target branches`). A slice that hits a stop condition is not committed; return to the orchestrator with the evidence instead. Do not merge, push, open a pull request, publish, or tag unless the orchestrator explicitly requests it. The inherited feature-branch, Full CI, ship-gate, release, and macOS Intel requirements do not apply during the transition.
+
 ## Declaring Work Ready
 
 Do not say the work is "ready", "done", "good to go", "complete", or similar until you have personally run the binary and exercised the change on its happy path. A passing test suite is necessary, not sufficient — tests in this repo do not always construct the full runtime, attach a TTY, or spawn background threads, so they will not catch startup crashes, render regressions, or thread-lifetime bugs.
