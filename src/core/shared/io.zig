@@ -965,9 +965,6 @@ pub fn dirRealpathAlloc(alloc: std.mem.Allocator, dir: std.Io.Dir, sub_path: []c
         const joined = try std.fs.path.join(alloc, &.{ dir_path, sub_path });
         defer alloc.free(joined);
         return realpathAlloc(alloc, joined);
-    } else if (comptime builtin.os.tag == .wasi) {
-        if (std.fs.path.isAbsolute(sub_path)) return alloc.dupe(u8, sub_path);
-        return std.fs.path.resolve(alloc, &.{sub_path});
     } else {
         @compileError("dirRealpathAlloc not implemented for this OS");
     }

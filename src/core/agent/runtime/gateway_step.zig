@@ -83,15 +83,13 @@ pub fn streamModelCompletion(
                 completed.completion,
                 completed.usage,
             );
-            if (comptime @import("builtin").os.tag != .wasi) {
-                if (std.meta.activeTag(completed.usage) == .deferred) if (usage) |ledger| {
-                    ledger.startDeferredReconciliation(
-                        usage_allocator,
-                        completed.usage.deferred,
-                        request.credential.secret,
-                    );
-                };
-            }
+            if (std.meta.activeTag(completed.usage) == .deferred) if (usage) |ledger| {
+                ledger.startDeferredReconciliation(
+                    usage_allocator,
+                    completed.usage.deferred,
+                    request.credential.secret,
+                );
+            };
         },
     }
     return result;

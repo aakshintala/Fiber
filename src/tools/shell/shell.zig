@@ -1936,7 +1936,6 @@ test "running shell snapshot leaves continuation intent to the caller" {
 }
 
 test "registered shell run yields and waits through one managed execution" {
-    if (comptime @import("builtin").os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = managed_execution.Runtime.init(alloc);
     defer runtime.deinit();
@@ -2073,7 +2072,6 @@ test "registered shell run yields and waits through one managed execution" {
 }
 
 test "shell delivery advances only after result commit" {
-    if (comptime @import("builtin").os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = managed_execution.Runtime.init(alloc);
     defer runtime.deinit();

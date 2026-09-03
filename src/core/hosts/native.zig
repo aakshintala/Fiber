@@ -255,7 +255,6 @@ test "native clipboard selects the platform command" {
         clipboardCommand(.linux).?,
     );
     try std.testing.expect(clipboardCommand(.windows) == null);
-    try std.testing.expect(clipboardCommand(.wasi) == null);
 }
 
 test "native clipboard accepts only a successful exit" {

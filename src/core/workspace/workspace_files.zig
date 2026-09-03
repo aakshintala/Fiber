@@ -928,8 +928,6 @@ test "workspace file provider walks a Git worktree when no trusted Git executabl
 }
 
 test "workspace file provider does not recurse after a selected Git executable fails" {
-    if (comptime builtin.os.tag == .wasi) return error.SkipZigTest;
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try writeTestFile(tmp.dir, ".git", "gitdir: /missing\n");

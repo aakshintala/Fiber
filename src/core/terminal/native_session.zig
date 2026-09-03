@@ -267,7 +267,6 @@ test "native terminal backend selection follows canonical platform support" {
         .macos,
         .linux,
         .windows,
-        .wasi,
         .freebsd,
         .emscripten,
     };

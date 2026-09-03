@@ -1544,7 +1544,6 @@ test "terminal tool capability facts follow the host support matrix" {
         .macos,
         .linux,
         .windows,
-        .wasi,
         .freebsd,
         .emscripten,
     };

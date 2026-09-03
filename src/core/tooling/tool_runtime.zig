@@ -386,15 +386,7 @@ pub fn executeToolCallAuthorized(
         spec.take_file_mutation_input_fn != null
     else
         false;
-    const result = (if (comptime builtin.os.tag == .wasi)
-        executeWorkspaceToolCallInner(
-            execution_ctx,
-            request.result_allocator,
-            request.call,
-            request.authority,
-            request.classification_complete,
-        )
-    else if (uses_file_mutation_contract)
+    const result = (if (uses_file_mutation_contract)
         file_mutation_execution.execute(.{
             .call_allocator = request.call_allocator,
             .result_allocator = request.result_allocator,
@@ -438,37 +430,6 @@ pub fn executeToolCallAuthorized(
     if (request.command_replay_capture) |continued| {
         replay_continuation_transferred = result.command_replay_capture == continued;
     }
-    return result;
-}
-
-pub fn executeHostToolCallAuthorized(
-    ctx: Context,
-    request: tool_contracts.ToolExecutionRequest,
-) !ToolExecutionResult {
-    const spec = ctx.tool_registry.lookup(request.call.name) orelse
-        return error.InvalidToolArguments;
-    if (spec.executor_kind != .host) return error.InvalidToolArguments;
-
-    var execution_ctx = ctx;
-    if (request.permission_mode) |permission_mode| {
-        execution_ctx.permission_mode = permission_mode;
-    }
-    execution_ctx.max_tool_result_bytes = request.max_tool_result_bytes;
-    var dispatch_ctx = typedDispatchContextForCall(
-        execution_ctx,
-        request.result_allocator,
-        request.call,
-    );
-    dispatch_ctx.execution_authority = request.authority;
-    var status_detail: ?[]u8 = null;
-    const dispatched = try tool_dispatch.dispatchAuthorizedToolCall(
-        dispatch_ctx,
-        execution_ctx.tool_registry,
-        request.call,
-        &status_detail,
-    );
-    var result = toolExecutionResultFromDispatch(dispatched, .{});
-    result.status_detail = status_detail;
     return result;
 }
 
@@ -552,55 +513,6 @@ fn executeToolCallInner(
             );
         },
     };
-}
-
-fn executeWorkspaceToolCallInner(
-    ctx: Context,
-    arena: Allocator,
-    call: ToolCall,
-    authority: command_admission.ToolExecutionAuthority,
-    classification_complete: bool,
-) !ToolExecutionResult {
-    if (!classification_complete) {
-        if (try checkToolAvailability(ctx, arena, call)) |reason| {
-            return semanticFailure(reason);
-        }
-    }
-    const spec = registeredToolSpec(ctx, call.name) orelse
-        return semanticFailure(try std.fmt.allocPrint(arena, "Unsupported tool: {s}", .{call.name}));
-    if (ctx.tool_registry.tools.len != 1 or
-        !std.mem.eql(u8, spec.name, "shell") or
-        spec.executor_kind != .run_command or
-        spec.runtime_provider != .run_command)
-    {
-        return semanticFailure(try std.fmt.allocPrint(arena, "Unsupported tool: {s}", .{call.name}));
-    }
-
-    var command_backend = RunCommandBackendState{ .runtime = ctx };
-    var dispatch_metadata: DispatchMetadata = .{};
-    var dispatch_ctx = typedDispatchContextForCall(ctx, arena, call);
-    dispatch_metadata.attach(&dispatch_ctx);
-    dispatch_ctx.execution_authority = authority;
-    dispatch_ctx.captured_command_host = spec.captured_command_host;
-    dispatch_ctx.run_command_backend = .{
-        .ctx = &command_backend,
-        .execute_fn = executeRunCommandBackend,
-    };
-    const dispatched = try tool_dispatch.dispatchAuthorizedToolCall(
-        dispatch_ctx,
-        ctx.tool_registry,
-        call,
-        &dispatch_metadata.status_detail,
-    );
-    if (command_backend.execution_error) |err| {
-        dispatched.deinit(arena);
-        return err;
-    }
-    var execution = command_backend.completion orelse
-        toolExecutionResultFromDispatch(dispatched, dispatch_metadata);
-    execution.model_output = dispatched.body;
-    if (dispatch_metadata.status_detail) |detail| execution.status_detail = detail;
-    return execution;
 }
 
 fn resolveToolDispatchPrelude(

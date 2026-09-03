@@ -1527,16 +1527,14 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
         api_key,
         null,
     );
-    if (comptime @import("builtin").os.tag != .wasi) {
-        if (ctx.cfg.provider_set.select(ctx.provider).deferred_usage != null) {
-            ctx.session.usage.replaceProviderReconciliationCredential(
-                alloc,
-                ctx.provider,
-                credential.source,
-                credential.accountId(),
-                credential.token,
-            );
-        }
+    if (ctx.cfg.provider_set.select(ctx.provider).deferred_usage != null) {
+        ctx.session.usage.replaceProviderReconciliationCredential(
+            alloc,
+            ctx.provider,
+            credential.source,
+            credential.accountId(),
+            credential.token,
+        );
     }
 
     const restored_image_catalog = try ctx.session.snapshotImageCatalog(alloc, &.{});

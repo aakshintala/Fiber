@@ -333,12 +333,6 @@ test "native host capabilities expose process and URL support" {
     try std.testing.expect(!windows.native_url_open);
     try std.testing.expectEqual(TerminalSupport.unsupported, windows.terminal);
 
-    const wasi = nativeForOs(.wasi);
-    try std.testing.expect(!wasi.process_control);
-    try std.testing.expect(!wasi.url_open);
-    try std.testing.expect(!wasi.native_url_open);
-    try std.testing.expectEqual(TerminalSupport.unsupported, wasi.terminal);
-
     try std.testing.expectEqual(
         TerminalSupport.unsupported,
         terminalSupportForOs(.freebsd),

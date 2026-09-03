@@ -1570,7 +1570,6 @@ test "terminal host selection follows canonical platform support" {
         .macos,
         .linux,
         .windows,
-        .wasi,
         .freebsd,
         .emscripten,
     };

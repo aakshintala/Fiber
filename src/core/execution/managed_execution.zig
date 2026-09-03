@@ -1472,7 +1472,6 @@ fn testAuthority(input: StartCapturedInput) command_admission.CommandExecutionAu
 }
 
 test "captured managed execution yields one handle and delivers ordered output once" {
-    if (comptime builtin.os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1511,7 +1510,6 @@ test "captured managed execution yields one handle and delivers ordered output o
 }
 
 test "generated captured execution identities do not depend on provider call ids" {
-    if (comptime builtin.os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1547,7 +1545,6 @@ test "generated captured execution identities do not depend on provider call ids
 }
 
 test "captured managed execution capacity rejects before spawn" {
-    if (comptime builtin.os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1579,7 +1576,6 @@ test "captured managed execution capacity rejects before spawn" {
 }
 
 test "captured managed execution exposes full output only by opaque replay handle" {
-    if (comptime builtin.os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
