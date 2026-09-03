@@ -1351,10 +1351,6 @@ pub fn Runtime(comptime App: type) type {
             try resetSessionWithBackgroundPolicy(app, .carry_forward);
         }
 
-        pub fn resetSession(app: *App) !void {
-            try resetSessionWithBackgroundPolicy(app, .stop_forget);
-        }
-
         fn resetSessionWithBackgroundPolicy(
             app: *App,
             background_policy: BackgroundSessionPolicy,

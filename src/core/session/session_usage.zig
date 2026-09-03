@@ -23,7 +23,7 @@ const max_identifier_bytes: usize = 8 * 1024;
 const max_active_invocations: usize = 64;
 pub const max_snapshot_bytes: usize = 256 * 1024;
 
-/// Completeness of the saved billing window rendered by `/cost`.
+/// Completeness of the saved billing window rendered by `/usage`.
 pub const Availability = enum {
     /// Every billable invocation has an authoritative generation record.
     complete,

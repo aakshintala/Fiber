@@ -346,7 +346,6 @@ pub fn Handlers(comptime App: type) type {
                 .quit = commandQuit,
                 .clear_screen = commandClearScreen,
                 .new_session = commandNewSession,
-                .reset_session = commandResetSession,
                 .resume_session = commandResumeSession,
                 .continue_recovery = commandContinueRecovery,
                 .show_help = commandShowHelp,
@@ -358,7 +357,6 @@ pub fn Handlers(comptime App: type) type {
                 .handle_model = commandHandleModel,
                 .handle_permissions = commandHandlePermissions,
                 .handle_allowlist = commandHandleAllowlist,
-                .show_stats = commandShowStats,
                 .show_usage = commandShowUsage,
                 .undo_last = commandUndoLast,
                 .handle_mcp = commandHandleMcp,
@@ -367,14 +365,12 @@ pub fn Handlers(comptime App: type) type {
                 .create_trace = commandCreateTrace,
                 .compact_history = commandCompactHistory,
                 .handle_settings = commandHandleSettings,
-                .handle_alias = commandHandleAlias,
                 .paste_clipboard = commandPasteClipboard,
                 .toggle_fast = commandToggleFast,
                 .handle_statusline = commandHandleStatusline,
                 .rename_session = commandRenameSession,
                 .handle_notifications = commandHandleNotifications,
                 .handle_workspace = commandHandleWorkspace,
-                .show_version = commandShowVersion,
                 .unknown = commandUnknown,
             };
         }
@@ -601,11 +597,6 @@ pub fn Handlers(comptime App: type) type {
         fn commandClearScreen(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try clearSessionForClearCommand(app);
-        }
-
-        fn commandResetSession(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try app.resetSession();
         }
 
         fn commandNewSession(ctx: *anyopaque) !void {
@@ -945,21 +936,6 @@ pub fn Handlers(comptime App: type) type {
         fn commandHandleAllowlist(ctx: *anyopaque, rest: []const u8) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try session_commands.Commands(App).handleAllowlist(app, rest);
-        }
-
-        fn commandShowStats(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            var buf: [256]u8 = undefined;
-            const body = try std.fmt.bufPrint(
-                &buf,
-                "ansi_bytes={d}, redraws={d}, debounced_resizes={d}, footer_updates={d}, stream_chunks={d}",
-                .{ app.metrics.ansi_bytes, app.metrics.full_redraws, app.metrics.debounced_resizes, app.metrics.footer_line_updates, app.metrics.stream_chunks },
-            );
-            try app.writeDomainNotice(.{
-                .topic = "stats",
-                .tone = .neutral,
-                .body = body,
-            }, true);
         }
 
         fn commandShowUsage(ctx: *anyopaque) !void {
@@ -1933,15 +1909,6 @@ pub fn Handlers(comptime App: type) type {
             try session_commands.Commands(App).handleSettings(app, rest);
         }
 
-        fn commandHandleAlias(ctx: *anyopaque, _: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try app.writeDomainNotice(.{
-                .topic = "aliases",
-                .tone = .neutral,
-                .body = "Aliases are not yet configurable.",
-            }, true);
-        }
-
         fn commandPasteClipboard(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try image_commands.Commands(App).attachClipboard(app);
@@ -2004,15 +1971,6 @@ pub fn Handlers(comptime App: type) type {
                 return;
             }
             try handleWorkspaceCommand(app, rest);
-        }
-
-        fn commandShowVersion(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try app.writeDomainNotice(.{
-                .topic = "version",
-                .tone = .neutral,
-                .body = App.app_version,
-            }, true);
         }
 
         fn commandUnknown(ctx: *anyopaque, _: []const u8) !void {

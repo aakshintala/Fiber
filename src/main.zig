@@ -1123,10 +1123,6 @@ const App = struct {
         try SessionAppRuntime.newSession(self);
     }
 
-    pub fn resetSession(self: *App) !void {
-        try SessionAppRuntime.resetSession(self);
-    }
-
     pub fn prepareLiveSessionResume(
         self: *App,
         log_options: session_log.Options,
@@ -3727,37 +3723,6 @@ test "prompt card wraps image badges in OSC 8 hyperlinks" {
     const reconstructed = try transcript_runtime.renderEntriesToBytes(std.testing.allocator, app.shell.entries.items, app.shell.layout.cols, .{});
     defer std.testing.allocator.free(reconstructed);
     try std.testing.expect(std.mem.find(u8, reconstructed, "\x1b]8;;file:///tmp/a.png\x1b\\[Image 1]\x1b]8;;\x1b\\") != null);
-}
-
-test "/version command writes version to transcript" {
-    var sink = try std.Io.Dir.openFileAbsolute(std.testing.io, "/dev/null", .{ .mode = .write_only });
-    defer sink.close(io_mod.getIo());
-
-    var app = App{
-        .alloc = std.testing.allocator,
-        .shell = .{
-            .stdout_file = sink,
-            .layout = .{
-                .rows = 24,
-                .cols = 80,
-                .content_bottom = 21,
-                .divider_top_row = 22,
-                .input_row = 23,
-                .divider_bottom_row = 24,
-                .hint_row = 22,
-            },
-        },
-    };
-    defer app.shell.deinit(std.testing.allocator);
-
-    try app.handleCommand("/version");
-
-    try std.testing.expectEqual(@as(usize, 1), app.shell.entries.items.len);
-    try std.testing.expect(app.shell.entries.items[0] == .semantic_notice);
-    const notice = app.shell.entries.items[0].semantic_notice;
-    try std.testing.expectEqualStrings("version", notice.topic);
-    try std.testing.expectEqual(types.NoticeTone.neutral, notice.tone);
-    try std.testing.expect(std.mem.find(u8, notice.body, version) != null);
 }
 
 test "normalize assistant text removes markdown emphasis and leading blank lines" {

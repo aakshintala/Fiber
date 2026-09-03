@@ -29,7 +29,6 @@ pub const SlashKind = enum {
     quit,
     clear_screen,
     new_session,
-    reset_session,
     resume_session,
     continue_recovery,
     rename_session,
@@ -42,7 +41,6 @@ pub const SlashKind = enum {
     model,
     permissions,
     allowlist,
-    stats,
     usage,
     undo,
     mcp,
@@ -51,13 +49,11 @@ pub const SlashKind = enum {
     trace,
     compact,
     settings,
-    alias,
     paste,
     fast,
     statusline,
     notifications,
     workspace,
-    version,
 };
 
 pub const OptionDoc = struct {
@@ -1725,7 +1721,7 @@ test "hidden top-level commands do not reserve help usage width" {
 test "slash completion matches prefix and aliases" {
     try std.testing.expectEqualStrings("/help", firstSlashCompletion(testSlashRegistry(), "/he").?);
     try std.testing.expectEqualStrings("/clear", firstSlashCompletion(testSlashRegistry(), "/cl").?);
-    try std.testing.expectEqualStrings("/reset", firstSlashCompletion(testSlashRegistry(), "/res").?);
+    try std.testing.expectEqualStrings("/resume", firstSlashCompletion(testSlashRegistry(), "/res").?);
     try std.testing.expect(firstSlashCompletion(testSlashRegistry(), "/help") == null);
     try std.testing.expect(firstSlashCompletion(testSlashRegistry(), "hello") == null);
     try std.testing.expect(firstSlashCompletion(testSlashRegistry(), "") == null);
@@ -1778,9 +1774,9 @@ test "slash completion categories follow canonical entries" {
 test "help catalog groups visible commands and searches all command metadata" {
     const registry = testSlashRegistry();
 
-    try std.testing.expectEqual(@as(usize, 32), helpCatalogCount(registry, ""));
+    try std.testing.expectEqual(@as(usize, 28), helpCatalogCount(registry, ""));
     try std.testing.expectEqualStrings("/help", helpCatalogSpecAt(registry, "", 0).?.command);
-    try std.testing.expectEqual(@as(usize, 5), helpCatalogCategoryCount(registry, "", .general));
+    try std.testing.expectEqual(@as(usize, 4), helpCatalogCategoryCount(registry, "", .general));
     try std.testing.expectEqual(@as(usize, 3), helpCatalogCount(registry, "appearance"));
     try std.testing.expectEqualStrings("/paste", helpCatalogSpecAt(registry, "clipboard", 0).?.command);
 }
@@ -2095,7 +2091,7 @@ test "slash completion descriptions follow completion matches" {
     try std.testing.expectEqualStrings("undo the latest tracked file operation", nthSlashCompletionDescription(testSlashRegistry(), "/un", 0).?);
     try std.testing.expectEqualStrings("copy a private diagnostic trace", nthSlashCompletionDescription(testSlashRegistry(), "/tr", 0).?);
     try std.testing.expectEqualStrings("compact older conversation turns", nthSlashCompletionDescription(testSlashRegistry(), "/comp", 0).?);
-    try std.testing.expectEqualStrings("show alias availability", nthSlashCompletionDescription(testSlashRegistry(), "/ali", 0).?);
+    try std.testing.expectEqualStrings("show local fx tokens, models, and spend", nthSlashCompletionDescription(testSlashRegistry(), "/us", 0).?);
     try std.testing.expectEqualStrings("toggle Fast mode when supported", nthSlashCompletionDescription(testSlashRegistry(), "/fa", 0).?);
 }
 

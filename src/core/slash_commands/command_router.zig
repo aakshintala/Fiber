@@ -8,7 +8,6 @@ pub const ParsedCommand = union(enum) {
     quit,
     clear_screen,
     new_session,
-    reset_session,
     resume_session,
     continue_recovery,
     rename_session: []const u8,
@@ -21,7 +20,6 @@ pub const ParsedCommand = union(enum) {
     model: []const u8,
     permissions: []const u8,
     allowlist: []const u8,
-    stats,
     usage,
     undo,
     mcp: []const u8,
@@ -30,13 +28,11 @@ pub const ParsedCommand = union(enum) {
     trace,
     compact,
     settings: []const u8,
-    alias: []const u8,
     paste,
     fast,
     statusline: []const u8,
     notifications: []const u8,
     workspace: []const u8,
-    version,
     unknown,
 };
 
@@ -45,7 +41,6 @@ pub const CommandHandlers = struct {
     quit: *const fn (ctx: *anyopaque) anyerror!void,
     clear_screen: *const fn (ctx: *anyopaque) anyerror!void,
     new_session: *const fn (ctx: *anyopaque) anyerror!void,
-    reset_session: *const fn (ctx: *anyopaque) anyerror!void,
     resume_session: *const fn (ctx: *anyopaque) anyerror!void,
     continue_recovery: *const fn (ctx: *anyopaque) anyerror!void,
     show_help: *const fn (ctx: *anyopaque) anyerror!void,
@@ -57,7 +52,6 @@ pub const CommandHandlers = struct {
     handle_model: *const fn (ctx: *anyopaque, query: []const u8) anyerror!void,
     handle_permissions: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_allowlist: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
-    show_stats: *const fn (ctx: *anyopaque) anyerror!void,
     show_usage: *const fn (ctx: *anyopaque) anyerror!void,
     undo_last: *const fn (ctx: *anyopaque) anyerror!void,
     handle_mcp: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
@@ -66,14 +60,12 @@ pub const CommandHandlers = struct {
     create_trace: *const fn (ctx: *anyopaque) anyerror!void,
     compact_history: *const fn (ctx: *anyopaque) anyerror!void,
     handle_settings: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
-    handle_alias: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     paste_clipboard: *const fn (ctx: *anyopaque) anyerror!void,
     toggle_fast: *const fn (ctx: *anyopaque) anyerror!void,
     handle_statusline: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     rename_session: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_notifications: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_workspace: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
-    show_version: *const fn (ctx: *anyopaque) anyerror!void,
     unknown: *const fn (ctx: *anyopaque, cmd: []const u8) anyerror!void,
 };
 
@@ -86,7 +78,6 @@ fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
         .quit => .quit,
         .clear_screen => .clear_screen,
         .new_session => .new_session,
-        .reset_session => .reset_session,
         .resume_session => .resume_session,
         .continue_recovery => .continue_recovery,
         .rename_session => .{ .rename_session = payload },
@@ -99,7 +90,6 @@ fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
         .model => .{ .model = payload },
         .permissions => .{ .permissions = payload },
         .allowlist => .{ .allowlist = payload },
-        .stats => .stats,
         .usage => .usage,
         .undo => .undo,
         .mcp => .{ .mcp = payload },
@@ -108,13 +98,11 @@ fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
         .trace => .trace,
         .compact => .compact,
         .settings => .{ .settings = payload },
-        .alias => .{ .alias = payload },
         .paste => .paste,
         .fast => .fast,
         .statusline => .{ .statusline = payload },
         .notifications => .{ .notifications = payload },
         .workspace => .{ .workspace = payload },
-        .version => .version,
     };
 }
 
@@ -136,7 +124,6 @@ pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []c
         .quit => try handlers.quit(handlers.ctx),
         .clear_screen => try handlers.clear_screen(handlers.ctx),
         .new_session => try handlers.new_session(handlers.ctx),
-        .reset_session => try handlers.reset_session(handlers.ctx),
         .resume_session => try handlers.resume_session(handlers.ctx),
         .continue_recovery => try handlers.continue_recovery(handlers.ctx),
         .rename_session => |rest| try handlers.rename_session(handlers.ctx, rest),
@@ -149,7 +136,6 @@ pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []c
         .model => |query| try handlers.handle_model(handlers.ctx, query),
         .permissions => |rest| try handlers.handle_permissions(handlers.ctx, rest),
         .allowlist => |rest| try handlers.handle_allowlist(handlers.ctx, rest),
-        .stats => try handlers.show_stats(handlers.ctx),
         .usage => try handlers.show_usage(handlers.ctx),
         .undo => try handlers.undo_last(handlers.ctx),
         .mcp => |rest| try handlers.handle_mcp(handlers.ctx, rest),
@@ -158,13 +144,11 @@ pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []c
         .trace => try handlers.create_trace(handlers.ctx),
         .compact => try handlers.compact_history(handlers.ctx),
         .settings => |rest| try handlers.handle_settings(handlers.ctx, rest),
-        .alias => |rest| try handlers.handle_alias(handlers.ctx, rest),
         .paste => try handlers.paste_clipboard(handlers.ctx),
         .fast => try handlers.toggle_fast(handlers.ctx),
         .statusline => |rest| try handlers.handle_statusline(handlers.ctx, rest),
         .notifications => |rest| try handlers.handle_notifications(handlers.ctx, rest),
         .workspace => |rest| try handlers.handle_workspace(handlers.ctx, rest),
-        .version => try handlers.show_version(handlers.ctx),
         .unknown => try handlers.unknown(handlers.ctx, cmd),
     }
 }
@@ -215,9 +199,8 @@ test "parse extracts sound command payload" {
     }
 }
 
-test "parse distinguishes new and reset lifecycle commands" {
+test "parse recognizes new session lifecycle command" {
     try std.testing.expectEqual(ParsedCommand.new_session, parse(testSlashRegistry(), "/new"));
-    try std.testing.expectEqual(ParsedCommand.reset_session, parse(testSlashRegistry(), "/reset"));
 }
 
 test "parse recognizes interactive resume" {
@@ -243,6 +226,11 @@ test "parse rejects removed slash commands" {
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/history"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/rules"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/background"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/reset"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/stats"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/alias build zig build"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/version"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/cost"));
 }
 
 test "parse extracts image commands" {
@@ -280,7 +268,6 @@ test "parse recognizes exact no-payload commands" {
     try std.testing.expectEqual(ParsedCommand.compact, parse(testSlashRegistry(), "/compact"));
     try std.testing.expectEqual(ParsedCommand.paste, parse(testSlashRegistry(), "/paste"));
     try std.testing.expectEqual(ParsedCommand.fast, parse(testSlashRegistry(), "/fast"));
-    try std.testing.expectEqual(ParsedCommand.version, parse(testSlashRegistry(), "/version"));
 }
 
 test "parse extracts settings command payload" {
@@ -294,13 +281,6 @@ test "parse extracts settings command payload" {
     }
     switch (parse(testSlashRegistry(), "/settings startup-scrollback off")) {
         .settings => |rest| try std.testing.expectEqualStrings("startup-scrollback off", rest),
-        else => return error.TestExpectedEqual,
-    }
-}
-
-test "parse extracts alias payload" {
-    switch (parse(testSlashRegistry(), "/alias build zig build")) {
-        .alias => |rest| try std.testing.expectEqualStrings("build zig build", rest),
         else => return error.TestExpectedEqual,
     }
 }
@@ -454,7 +434,6 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
         .quit = unexpectedNoPayload,
         .clear_screen = unexpectedNoPayload,
         .new_session = unexpectedNoPayload,
-        .reset_session = unexpectedNoPayload,
         .resume_session = unexpectedNoPayload,
         .continue_recovery = unexpectedNoPayload,
         .show_help = unexpectedNoPayload,
@@ -466,7 +445,6 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
         .handle_model = unexpectedPayload,
         .handle_permissions = unexpectedPayload,
         .handle_allowlist = unexpectedPayload,
-        .show_stats = unexpectedNoPayload,
         .show_usage = unexpectedNoPayload,
         .undo_last = unexpectedNoPayload,
         .handle_mcp = unexpectedPayload,
@@ -475,14 +453,12 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
         .create_trace = unexpectedNoPayload,
         .compact_history = unexpectedNoPayload,
         .handle_settings = unexpectedPayload,
-        .handle_alias = unexpectedPayload,
         .paste_clipboard = unexpectedNoPayload,
         .toggle_fast = unexpectedNoPayload,
         .handle_statusline = unexpectedPayload,
         .rename_session = unexpectedPayload,
         .handle_notifications = unexpectedPayload,
         .handle_workspace = unexpectedPayload,
-        .show_version = unexpectedNoPayload,
         .unknown = unexpectedPayload,
     };
 }
