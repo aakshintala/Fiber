@@ -1191,9 +1191,9 @@ test "ACP help documents accepted options" {
     defer std.testing.allocator.free(text);
 
     try std.testing.expect(std.mem.find(u8, text, "fx acp\n") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Usage:\n  fx acp [--model <id>] [--log-file <path>]") != null);
-    try std.testing.expect(std.mem.find(u8, text, "--model <id>") != null);
-    try std.testing.expect(std.mem.find(u8, text, "--log-file <path>") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Usage:\n  fx acp\n") != null);
+    try std.testing.expect(std.mem.find(u8, text, "--model <id>") == null);
+    try std.testing.expect(std.mem.find(u8, text, "--log-file <path>") == null);
 }
 
 test "hidden top-level commands do not reserve help usage width" {

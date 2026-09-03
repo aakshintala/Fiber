@@ -245,11 +245,6 @@ const SessionRecoveryOptions = struct {
     }
 };
 
-const AcpOptions = struct {
-    model: ?[]const u8 = null,
-    log_file: ?[]const u8 = null,
-};
-
 const WriteFn = *const fn (?*anyopaque, []const u8) anyerror!void;
 const LoadStartupStateFn = *const fn (Allocator, oauth_transport.Provider, []const u8, usize) anyerror!app_lifecycle.StartupState;
 const LoadCatalogStartupStateFn = *const fn (Allocator, []const u8, usize) anyerror!app_lifecycle.StartupState;
@@ -685,10 +680,10 @@ fn runNonInteractiveWithDeps(
             return if (exit_code == 0) .handled_success else .handled_failure;
         },
         .acp => |rest| {
-            const acp_opts = parseAcpArgs(rest) catch {
-                try writeStderr(deps, "usage: fx acp [--model <id>] [--log-file <path>]\n");
+            if (rest.len != 0) {
+                try writeStderr(deps, "usage: fx acp\n");
                 return .handled_failure;
-            };
+            }
             try cfg.acp_runner.run(alloc, .{
                 .default_model = cfg.default_model,
                 .default_agent_step_limit = cfg.default_agent_step_limit,
@@ -711,8 +706,6 @@ fn runNonInteractiveWithDeps(
                 .context_limit_overrides = global_args.modifiers.context_limit_overrides,
                 .additional_directories = global_args.modifiers.additional_directories,
                 .saved_directories_suppressed = global_args.modifiers.saved_directories_suppressed,
-                .model_override = acp_opts.model,
-                .log_file = acp_opts.log_file,
             });
             return .handled_success;
         },
@@ -1609,8 +1602,7 @@ fn runTopLevelMcp(
         return .handled_success;
     }
     if (std.mem.eql(u8, operation, "list")) {
-        const connect = rest.len == 2 and std.mem.eql(u8, rest[1], "--connect");
-        if (rest.len != 1 and !connect) {
+        if (rest.len != 1) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
             return .handled_failure;
         }
@@ -1621,11 +1613,7 @@ fn runTopLevelMcp(
         defer loaded.deinit(alloc);
         try writeConfigDiagnostics(alloc, deps, loaded.startup.config_diagnostics);
         const listing = if (loaded.runtime) |runtime| listing: {
-            if (connect) {
-                runtime.connectAll(cfg.tool_set.registry);
-            } else {
-                try runtime.loadStoredCredentialsForHealthSnapshot();
-            }
+            try runtime.loadStoredCredentialsForHealthSnapshot();
             break :listing try runtime.listServersAndTools(alloc);
         } else try alloc.dupe(u8, "No MCP servers configured.\n");
         defer alloc.free(listing);
@@ -2436,25 +2424,6 @@ fn globalLaunchErrorMessage(err: anyerror) ?[]const u8 {
     };
 }
 
-fn parseAcpArgs(args: []const [:0]const u8) !AcpOptions {
-    var opts = AcpOptions{};
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--model")) {
-            if (opts.model != null or i + 1 >= args.len) return error.InvalidAcpArgs;
-            i += 1;
-            opts.model = args[i];
-        } else if (std.mem.eql(u8, args[i], "--log-file")) {
-            if (opts.log_file != null or i + 1 >= args.len) return error.InvalidAcpArgs;
-            i += 1;
-            opts.log_file = args[i];
-        } else {
-            return error.InvalidAcpArgs;
-        }
-    }
-    return opts;
-}
-
 fn parseLocalSurfaceArgs(args: []const [:0]const u8) !LocalSurfaceOptions {
     var options = LocalSurfaceOptions{};
     for (args) |arg| {
@@ -2912,25 +2881,6 @@ test "additional directory flags fail closed when malformed" {
     );
 }
 
-test "parse acp args extracts known flags and rejects invalid arguments" {
-    const opts = try parseAcpArgs(&.{
-        @constCast("--model"),
-        @constCast("openai/gpt-4o"),
-        @constCast("--log-file"),
-        @constCast("/tmp/fx.log"),
-    });
-    try std.testing.expectEqualStrings("openai/gpt-4o", opts.model.?);
-    try std.testing.expectEqualStrings("/tmp/fx.log", opts.log_file.?);
-
-    try std.testing.expectError(error.InvalidAcpArgs, parseAcpArgs(&.{@constCast("--unknown")}));
-    try std.testing.expectError(error.InvalidAcpArgs, parseAcpArgs(&.{@constCast("--model")}));
-    try std.testing.expectError(error.InvalidAcpArgs, parseAcpArgs(&.{@constCast("--log-file")}));
-    try std.testing.expectError(
-        error.InvalidAcpArgs,
-        parseAcpArgs(&.{ @constCast("--model"), @constCast("first"), @constCast("--model"), @constCast("second") }),
-    );
-}
-
 test "ACP command routes parsed options and launch config through the injected runner" {
     const Capture = struct {
         expected: Config,
@@ -2974,9 +2924,7 @@ test "ACP command routes parsed options and launch config through the injected r
                 limit_matches and
                 cfg.additional_directories.len == 1 and
                 std.mem.eql(u8, cfg.additional_directories[0], "/tmp/acp-extra") and
-                cfg.saved_directories_suppressed and
-                std.mem.eql(u8, cfg.model_override.?, "model-override") and
-                std.mem.eql(u8, cfg.log_file.?, "/tmp/acp.log");
+                cfg.saved_directories_suppressed;
         }
     };
 
@@ -2993,10 +2941,6 @@ test "ACP command routes parsed options and launch config through the injected r
             @constCast("/tmp/acp-extra"),
             @constCast("--no-additional-dirs"),
             @constCast("acp"),
-            @constCast("--model"),
-            @constCast("model-override"),
-            @constCast("--log-file"),
-            @constCast("/tmp/acp.log"),
         },
         cfg,
         .{},

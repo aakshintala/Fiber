@@ -609,10 +609,6 @@ pub fn runWithTransport(
     reader_value: jsonrpc.Reader,
     writer_value: jsonrpc.Writer,
 ) !void {
-    if (cfg.log_file) |path| {
-        try debug_trace.configure(.{ .file_path = path });
-    }
-
     var lifecycle_runtime = hooks.Runtime.init(alloc);
     const lifecycle_view = lifecycle_runtime.freeze();
     var state = ServerState{
@@ -1428,14 +1424,8 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
     state.workspace_root = startup.takeWorkspaceRoot();
     state.workspace_access = startup.takeWorkspaceAccess();
 
-    if (state.cfg.model_override) |override| {
-        state.selected_model = try alloc.dupe(u8, override);
-        alloc.free(startup.takeSelectedModel());
-        state.process_model_override = true;
-    } else {
-        state.selected_model = startup.takeSelectedModel();
-        state.process_model_override = startup.model_source == .process_override;
-    }
+    state.selected_model = startup.takeSelectedModel();
+    state.process_model_override = startup.model_source == .process_override;
     state.provider = startup.provider;
     state.configured_model = try alloc.dupe(u8, startup.configured_model);
 

@@ -57,12 +57,8 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .acp,
         .token = "acp",
-        .usage = "acp [--model <id>] [--log-file <path>]",
+        .usage = "acp",
         .summary = "Start an ACP server over stdio",
-        .options = &.{
-            .{ .flag = "--model <id>", .description = "Override the default model" },
-            .{ .flag = "--log-file <path>", .description = "Write ACP logs to a file" },
-        },
     },
     .{
         .kind = .login,
@@ -108,7 +104,7 @@ pub const top_level_specs = [_]TopLevelSpec{
             "  fx mcp add NAME COMMAND [ARGS...]",
             "  fx mcp add --transport http NAME URL",
             "  fx mcp auth NAME",
-            "  fx mcp list [--connect]",
+            "  fx mcp list",
             "  fx mcp logout NAME",
             "  fx mcp path",
             "  fx mcp remove NAME",
@@ -116,7 +112,6 @@ pub const top_level_specs = [_]TopLevelSpec{
             "  fx mcp trust approve-all|reset",
             "",
             "By default, list reads configuration without opening MCP transports.",
-            "Use --connect to connect and discover servers before rendering health.",
         },
     },
     .{
