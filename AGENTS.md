@@ -4,7 +4,7 @@ Instructions for AI coding agents working with this codebase.
 
 ## Temporary Fiber transition process
 
-When implementing [`docs/ideas/fiber-product-transition.md`](docs/ideas/fiber-product-transition.md), follow [`.scratch/fiber-transition-plan.md`](.scratch/fiber-transition-plan.md). This section overrides conflicting fx-era process, CI, release, platform, naming, authentication, and completion guidance elsewhere in this file or in `CONTRIBUTING.md` until the final documentation phase replaces it.
+When implementing [`docs/ideas/fiber-product-transition.md`](docs/ideas/fiber-product-transition.md), follow [`docs/transition/plan.md`](docs/transition/plan.md) and the ordered slices in [`docs/transition/demolition-inventory.md`](docs/transition/demolition-inventory.md). This section overrides conflicting fx-era process, CI, release, platform, naming, authentication, and completion guidance elsewhere in this file or in `CONTRIBUTING.md` until the final documentation phase replaces it.
 
 During demolition, work in one subsystem or about 15 files at a time. Define the removal surface, retained invariants, exact searches, and stop conditions before editing. Use compilation and unit tests as the interim gate; defer routine E2E, live-model, editor, and exhaustive product verification to the repair phase.
 
