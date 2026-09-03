@@ -103,7 +103,6 @@ test "native network failure evidence covers setup send read and resume failures
 
 test "native network failure evidence excludes opaque and configuration failures" {
     const excluded = [_]anyerror{
-        error.JsHostStreamFailed,
         error.OutOfMemory,
         error.AccessDenied,
         error.UnsupportedUriScheme,

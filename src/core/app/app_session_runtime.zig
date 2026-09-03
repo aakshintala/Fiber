@@ -28,7 +28,6 @@ const session_codec = @import("../session/session_codec.zig");
 const session_event = @import("../session/session_event.zig");
 const session_usage = @import("../session/session_usage.zig");
 const session_child_store = @import("../session/session_child_store.zig");
-const legacy_background_migration = @import("../session/legacy_background_migration.zig");
 const result_store = @import("../session/result_store.zig");
 const command_replay_store = @import("../session/command_replay_store.zig");
 const command_output_content = @import("../tooling/command_output_content.zig");
@@ -1314,44 +1313,9 @@ pub fn Runtime(comptime App: type) type {
         pub fn enableSessionStores(app: *App) void {
             if (comptime !runtime_profile.allows(App, .durable_sessions)) return;
             const loaded = if (app.session_persistence.writable) |*value| value else return;
-            const capability = loaded.childCapability() catch |err| {
-                debug_trace.logf(
-                    "session",
-                    "interactive child capability unavailable session={s} err={s}",
-                    .{ loaded.active_id, @errorName(err) },
-                );
-                return;
-            };
 
             configureWebFetchArtifacts(app, loaded);
             enableSubagentHost(app, loaded);
-            if (comptime @hasField(App, "legacy_process_provider")) {
-                const migrated = legacy_background_migration.migrate(
-                    app.alloc,
-                    capability,
-                    app.legacy_process_provider,
-                ) catch |err| {
-                    debug_trace.logf(
-                        "session",
-                        "legacy process migration deferred session={s} err={s}",
-                        .{ loaded.active_id, @errorName(err) },
-                    );
-                    return;
-                };
-                if (migrated.records_removed != 0 or migrated.logs_removed != 0) {
-                    debug_trace.logf(
-                        "session",
-                        "legacy process migration committed session={s} records={d} logs={d} signaled={d} unavailable={d}",
-                        .{
-                            loaded.active_id,
-                            migrated.records_removed,
-                            migrated.logs_removed,
-                            migrated.processes_signaled,
-                            migrated.identities_unavailable,
-                        },
-                    );
-                }
-            }
         }
 
         pub fn beginFreshPersistedSession(app: *App) !void {

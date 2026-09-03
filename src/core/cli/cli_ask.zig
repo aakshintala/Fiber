@@ -48,7 +48,6 @@ const session_codec = @import("../session/session_codec.zig");
 const session_usage = @import("../session/session_usage.zig");
 const usage_report = @import("../session/usage_report.zig");
 const session_store = @import("../session/session_store.zig");
-const legacy_background_migration = @import("../session/legacy_background_migration.zig");
 const skill_contract = @import("../skills/skill_contract.zig");
 const skill_runtime = @import("../skills/skill_runtime.zig");
 const subagent_agent_adapter = @import("../subagent/agent_adapter.zig");
@@ -909,32 +908,6 @@ const AskContext = struct {
                     .{ self.subagent_host.?.root_id, @errorName(err) },
                 );
             };
-        }
-        const capability = try self.writable.?.childCapability();
-        if (legacy_background_migration.migrate(
-            self.alloc,
-            capability,
-            self.cfg.process_provider,
-        )) |migrated| {
-            if (migrated.records_removed != 0 or migrated.logs_removed != 0) {
-                debug_trace.logf(
-                    "session",
-                    "legacy process migration committed session={s} records={d} logs={d} signaled={d} unavailable={d}",
-                    .{
-                        self.writable.?.active_id,
-                        migrated.records_removed,
-                        migrated.logs_removed,
-                        migrated.processes_signaled,
-                        migrated.identities_unavailable,
-                    },
-                );
-            }
-        } else |err| {
-            debug_trace.logf(
-                "session",
-                "legacy process migration deferred session={s} err={s}",
-                .{ self.writable.?.active_id, @errorName(err) },
-            );
         }
     }
 

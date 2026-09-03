@@ -10,7 +10,6 @@ const session_test_controls = @import("session_test_controls.zig");
 const session_codec = @import("../core/session/session_codec.zig");
 const session_display_metadata = @import("../core/session/session_display_metadata.zig");
 const session_store = @import("../core/session/session_store.zig");
-const legacy_background_migration = @import("../core/session/legacy_background_migration.zig");
 const session_runtime = @import("../core/session/session.zig");
 const mcp_runtime = @import("../core/mcp/mcp_runtime.zig");
 const mcp_contract = @import("../core/mcp/mcp_contract.zig");
@@ -680,27 +679,6 @@ fn activateSession(
         );
     } else {
         state.active_session.?.session_rt.usage.clearReconciliationCredential();
-    }
-    if (state.active_session.?.writable) |*writable| {
-        if (writable.childCapability()) |capability| {
-            _ = legacy_background_migration.migrate(
-                state.alloc,
-                capability,
-                state.cfg.process_provider,
-            ) catch |err| {
-                debug_trace.logf(
-                    "session",
-                    "legacy process migration deferred session={s} err={s}",
-                    .{ writable.active_id, @errorName(err) },
-                );
-            };
-        } else |err| {
-            debug_trace.logf(
-                "session",
-                "legacy process migration unavailable session={s} err={s}",
-                .{ writable.active_id, @errorName(err) },
-            );
-        }
     }
 }
 
