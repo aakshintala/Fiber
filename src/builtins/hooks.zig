@@ -30,12 +30,12 @@ pub fn Runtime(comptime App: type) type {
 
         fn register(app: *App) !void {
             try app.lifecycle_runtime.registerPostTurnEnd(.{
-                .name = "fx.herdr.turn_end",
+                .name = "fiber.herdr.turn_end",
                 .ctx = app,
                 .run = postTurnEndHandler,
             });
             try app.lifecycle_runtime.registerAttentionRequired(.{
-                .name = "fx.herdr.attention_required",
+                .name = "fiber.herdr.attention_required",
                 .ctx = app,
                 .run = attentionRequiredHandler,
             });

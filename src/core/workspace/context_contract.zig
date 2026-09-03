@@ -92,7 +92,7 @@ pub const ContextOmissionSummaryBuilder = struct {
     pub fn add(self: *ContextOmissionSummaryBuilder, source: []const u8, reason: OmissionReason) void {
         self.omitted_count += 1;
         self.reason_counts[@intFromEnum(reason)] += 1;
-        self.hasher.update("fx.context.omission-record\x00");
+        self.hasher.update("fiber.context.omission-record\x00");
         self.hasher.update(&.{@intFromEnum(reason)});
         hashUsize(&self.hasher, source.len);
         self.hasher.update(source);
@@ -102,7 +102,7 @@ pub const ContextOmissionSummaryBuilder = struct {
         if (summary.omitted_count == 0) return;
         self.omitted_count += summary.omitted_count;
         for (&self.reason_counts, summary.reason_counts) |*count, additional| count.* += additional;
-        self.hasher.update("fx.context.omission-summary\x00");
+        self.hasher.update("fiber.context.omission-summary\x00");
         hashUsize(&self.hasher, summary.omitted_count);
         for (summary.reason_counts) |count| hashUsize(&self.hasher, count);
         self.hasher.update(&summary.digest);

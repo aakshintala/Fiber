@@ -616,14 +616,14 @@ const AskContext = struct {
         });
         if (turn_end) {
             try self.lifecycle_runtime.registerPostTurnEnd(.{
-                .name = "fx.sound.turn_end",
+                .name = "fiber.sound.turn_end",
                 .ctx = self,
                 .run = postTurnEndNotification,
             });
         }
         if (attention_required) {
             try self.lifecycle_runtime.registerAttentionRequired(.{
-                .name = "fx.sound.attention_required",
+                .name = "fiber.sound.attention_required",
                 .ctx = self,
                 .run = attentionRequiredNotification,
             });

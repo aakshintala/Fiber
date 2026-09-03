@@ -1847,7 +1847,7 @@ fn proof_verifier(
     direct_human_model_read_only: bool,
 ) contracts.CheckpointChecksum {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    hash.update("fx.terminal.holder-proof.v2\x00");
+    hash.update("fiber.terminal.holder-proof.v2\x00");
     hash.update(&proof.bytes);
     hash_u64(&hash, grant.generation.value);
     hash.update(@tagName(grant.actor));
@@ -1877,7 +1877,7 @@ fn close_initiator_verifier(
     claim: contracts.AuthorityClaim,
 ) contracts.CheckpointChecksum {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    hash.update("fx.terminal.close-initiator.v2\x00");
+    hash.update("fiber.terminal.close-initiator.v2\x00");
     hash.update(&claim.proof.bytes);
     hash_u64(&hash, claim.generation.value);
     hash_text(&hash, @tagName(claim.actor));
@@ -1905,7 +1905,7 @@ fn owner_catalog_key(
     actor: contracts.ActorRole,
 ) [64]u8 {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    hash.update("fx.terminal.owner-catalog-key.v2\x00");
+    hash.update("fiber.terminal.owner-catalog-key.v2\x00");
     hash.update(@tagName(actor));
     hash.update(@tagName(principal.transport_role));
     hash_text(&hash, principal.profile_user);
@@ -1920,7 +1920,7 @@ fn owner_catalog_verifier(
     claim: contracts.OwnerCatalogAuthorityClaim,
 ) contracts.CheckpointChecksum {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    hash.update("fx.terminal.owner-catalog-proof.v2\x00");
+    hash.update("fiber.terminal.owner-catalog-proof.v2\x00");
     hash.update(&claim.proof.bytes);
     hash.update(@tagName(claim.actor));
     hash.update(@tagName(claim.principal.transport_role));

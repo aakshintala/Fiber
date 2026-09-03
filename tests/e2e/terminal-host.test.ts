@@ -598,7 +598,7 @@ function terminalTransportPaths(home: string) {
     };
   }
   const digest = createHash("sha256")
-    .update("fx.terminal.transport.v3\0")
+    .update("fiber.terminal.transport.v3\0")
     .update(home)
     .digest("hex")
     .slice(0, 32);
@@ -1119,12 +1119,12 @@ function ownerCatalogAuthorityForSession(
   const proof = { bytes: Array(32).fill(11) };
   const claim = { principal: ownerPrincipal, actor, proof };
   const key = ownerCatalogDigest(
-    "fx.terminal.owner-catalog-key.v2\0",
+    "fiber.terminal.owner-catalog-key.v2\0",
     ownerPrincipal,
     actor,
   ).toString("hex");
   const verifier = ownerCatalogDigest(
-    "fx.terminal.owner-catalog-proof.v2\0",
+    "fiber.terminal.owner-catalog-proof.v2\0",
     ownerPrincipal,
     actor,
     Buffer.from(proof.bytes),

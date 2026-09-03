@@ -1092,7 +1092,7 @@ test "rendered top-level help is a complete CLI navigation page" {
     try std.testing.expect(std.mem.find(u8, text, "Run `fiber <command> --help` for command-specific usage and options.") != null);
     try std.testing.expect(std.mem.find(u8, text, "command-specific options and examples") == null);
     try std.testing.expect(std.mem.find(u8, text, "Run `/help` inside an interactive session for slash commands.") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Learn more about fiber:  https://fx.sh/docs") != null);
+    try std.testing.expect(std.mem.find(u8, text, "fx.sh") == null);
     try std.testing.expect(std.mem.find(u8, text, "Report a problem") == null);
     try std.testing.expect(std.mem.find(u8, text, "\n\n\nRun `fiber <command> --help`") == null);
     try std.testing.expect(std.mem.find(u8, text, "Start:") == null);
@@ -1123,7 +1123,7 @@ test "terminal top-level help adds styling without changing visible content" {
     try std.testing.expect(std.mem.find(u8, terminal, "\x1b[1mUsage:\x1b[0m") != null);
     try std.testing.expect(std.mem.find(u8, terminal, "\x1b[39mask <prompt>\x1b[0m") != null);
     try std.testing.expect(std.mem.find(u8, terminal, "\x1b[38;5;243mFast, native coding agent") != null);
-    try std.testing.expect(std.mem.find(u8, terminal, "\x1b[4mhttps://fx.sh/docs\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, terminal, "fx.sh") == null);
     try std.testing.expect(std.mem.find(u8, terminal, "run `/feedback` inside fiber") == null);
     try std.testing.expect(std.mem.find(u8, terminal, "\x1b[38;5;252m") == null);
     try std.testing.expect(std.mem.find(u8, terminal, "\x1b[38;5;245m") == null);

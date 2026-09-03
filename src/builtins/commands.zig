@@ -287,9 +287,7 @@ pub const top_level_notes = [_][]const u8{
     "Run `/help` inside an interactive session for slash commands.",
 };
 
-pub const top_level_resources = [_]TopLevelResource{
-    .{ .label = "Learn more about fiber:", .value = "https://fx.sh/docs", .link = true },
-};
+pub const top_level_resources = [_]TopLevelResource{};
 
 pub const top_level_registry = TopLevelRegistry{
     .specs = top_level_specs[0..],

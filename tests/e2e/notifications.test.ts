@@ -186,7 +186,7 @@ test.skipIf(!tmuxAvailable())(
       );
 
       expect(handlerStartCount(trace, "PostTurnEnd")).toBe(1);
-      expect(trace).toContain("handler=fx.sound.turn_end");
+      expect(trace).toContain("handler=fiber.sound.turn_end");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     } finally {
       if (session) await session.kill();
@@ -224,7 +224,7 @@ test.skipIf(!tmuxAvailable())(
       );
 
       expect(handlerStartCount(trace, "PostTurnEnd")).toBe(1);
-      expect(trace).toContain("handler=fx.sound.turn_end");
+      expect(trace).toContain("handler=fiber.sound.turn_end");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     } finally {
       if (session) await session.kill();
@@ -354,7 +354,7 @@ test.skipIf(!tmuxAvailable())(
       );
 
       expect(handlerStartCount(waitingTrace, "AttentionRequired")).toBe(1);
-      expect(waitingTrace).toContain("handler=fx.sound.attention_required");
+      expect(waitingTrace).toContain("handler=fiber.sound.attention_required");
       expect(existsSync(marker)).toBe(false);
       await waitForBellCount(paneOutputPath, 1);
       await Bun.sleep(250);
