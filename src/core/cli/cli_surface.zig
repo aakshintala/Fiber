@@ -247,17 +247,6 @@ const SessionDetailOptions = struct {
     }
 };
 
-const SessionMigrationOptions = struct {
-    format: output_contracts.OutputFormat = .text,
-    session_id: []u8,
-    allow_large: bool = false,
-
-    fn deinit(self: *SessionMigrationOptions, alloc: Allocator) void {
-        alloc.free(self.session_id);
-        self.* = undefined;
-    }
-};
-
 const SessionRecoveryOptions = struct {
     format: output_contracts.OutputFormat = .text,
     session_id: []u8,
@@ -1039,39 +1028,6 @@ fn runNonInteractiveWithDeps(
                     .handled_success
                 else
                     .handled_failure;
-            }
-
-            if (rest.len > 0 and std.mem.eql(u8, rest[0], "migrate")) {
-                var migration = parseSessionMigrationArgs(alloc, rest[1..]) catch |err| {
-                    try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, "session", err, rest[1..]);
-                    return .handled_failure;
-                };
-                defer migration.deinit(alloc);
-
-                const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-                defer alloc.free(workspace_root);
-
-                var store = session_store.Store.init(alloc, workspace_root) catch |err| {
-                    try writeLookupFailure(alloc, deps, "session", err, migration.format);
-                    return .handled_failure;
-                };
-                defer store.deinit(alloc);
-                var result = store.migrateLegacyStorageOnly(
-                    alloc,
-                    migration.session_id,
-                    .{ .allow_large = migration.allow_large },
-                ) catch |err| {
-                    try writeLookupFailure(alloc, deps, "session", err, migration.format);
-                    return .handled_failure;
-                };
-                defer result.deinit(alloc);
-
-                const text = try (output_contracts.SessionMigrationSnapshot{
-                    .result = result,
-                }).render(alloc, migration.format);
-                defer alloc.free(text);
-                try writeFormattedOutput(deps, text, migration.format);
-                return .handled_success;
             }
 
             var opts = parseSessionDetailArgs(alloc, rest) catch |err| {
@@ -2283,36 +2239,6 @@ fn writeLookupFailure(
         error.InvalidSessionId => {
             try writeStderr(deps, "fx session: invalid session id\n");
         },
-        error.LegacySessionTooLarge => {
-            try writeStderr(
-                deps,
-                "fx session: legacy session is too large for automatic loading; run `fx session migrate <id> --allow-large`\n",
-            );
-        },
-        error.LegacySessionReadResourceExhausted => {
-            try writeStderr(
-                deps,
-                "fx session: legacy session could not be loaded with available resources\n",
-            );
-        },
-        error.LegacySessionMigrationResourceExhausted => {
-            try writeStderr(
-                deps,
-                "fx session: migration did not complete because resources were exhausted; the original session remains authoritative\n",
-            );
-        },
-        error.LegacySessionMigrationFailed, error.LegacySessionChanged => {
-            try writeStderr(
-                deps,
-                "fx session: migration did not complete; the original session remains authoritative\n",
-            );
-        },
-        error.LegacySessionMigrationIndeterminate => {
-            try writeStderr(
-                deps,
-                "fx session: migration outcome is indeterminate and will be resolved by the next exact writable load\n",
-            );
-        },
         error.SessionRecoveryNotNeeded => {
             try writeStderr(
                 deps,
@@ -2322,7 +2248,7 @@ fn writeLookupFailure(
         error.SessionRecoveryRequiresCurrentSchema => {
             try writeStderr(
                 deps,
-                "fx session: recovery only applies to current schema-v3 sessions; migrate legacy sessions first\n",
+                "fx session: recovery only applies to current schema-v3 sessions\n",
             );
         },
         error.SessionRecoveryUnsupportedSchema => {
@@ -2431,7 +2357,6 @@ fn commandFailureMessage(err: anyerror) ?[]const u8 {
         error.InvalidLocalSurfaceArgs,
         error.InvalidUsageArgs,
         error.InvalidSessionDetailArgs,
-        error.InvalidSessionMigrationArgs,
         error.InvalidSessionRecoveryArgs,
         error.InvalidResumeArgs,
         => "invalid arguments",
@@ -2447,13 +2372,8 @@ fn lookupFailureMessage(err: anyerror) ?[]const u8 {
         error.InvalidSessionFormat => "record is corrupt; run `fx doctor` for recovery guidance",
         error.UnsupportedSessionSchema => "record uses an unsupported session version",
         error.InvalidSessionId => "invalid session id",
-        error.LegacySessionTooLarge => "legacy session is too large for automatic loading; run `fx session migrate <id> --allow-large`",
-        error.LegacySessionReadResourceExhausted => "legacy session could not be loaded with available resources",
-        error.LegacySessionMigrationResourceExhausted => "migration did not complete because resources were exhausted; the original session remains authoritative",
-        error.LegacySessionMigrationFailed, error.LegacySessionChanged => "migration did not complete; the original session remains authoritative",
-        error.LegacySessionMigrationIndeterminate => "migration outcome is indeterminate and will be resolved by the next exact writable load",
         error.SessionRecoveryNotNeeded => "recovery was refused because the session has a valid commit boundary; resume it normally",
-        error.SessionRecoveryRequiresCurrentSchema => "recovery only applies to current schema-v3 sessions; migrate legacy sessions first",
+        error.SessionRecoveryRequiresCurrentSchema => "recovery only applies to current schema-v3 sessions",
         error.SessionRecoveryUnsupportedSchema => "recovery is unavailable for this unsupported session version",
         error.SessionRecoveryBoundaryInvalid => "no exact trustworthy recovery boundary was found; the source was left unchanged",
         error.SessionRecoveryIndeterminate => "the recovery copy could not be confirmed; the source was left unchanged",
@@ -2872,42 +2792,6 @@ fn parseSessionDetailArgs(
         options.target = .{ .id = try alloc.dupe(u8, trimmed) };
     }
     return options;
-}
-
-fn parseSessionMigrationArgs(
-    alloc: Allocator,
-    args: []const [:0]const u8,
-) !SessionMigrationOptions {
-    var format: output_contracts.OutputFormat = .text;
-    var allow_large = false;
-    var session_id: ?[]u8 = null;
-    errdefer if (session_id) |id| alloc.free(id);
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
-        if (std.mem.eql(u8, arg, "--json")) {
-            format = .json;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--allow-large")) {
-            allow_large = true;
-            continue;
-        }
-        if (session_id != null) return error.InvalidSessionMigrationArgs;
-        const exact_id = std.mem.eql(u8, arg, "--id");
-        if (exact_id) {
-            i += 1;
-            if (i >= args.len) return error.InvalidSessionMigrationArgs;
-        }
-        const trimmed = std.mem.trim(u8, args[i], " \t\r\n");
-        if (trimmed.len == 0) return error.InvalidSessionMigrationArgs;
-        session_id = try alloc.dupe(u8, trimmed);
-    }
-    return .{
-        .format = format,
-        .session_id = session_id orelse return error.InvalidSessionMigrationArgs,
-        .allow_large = allow_large,
-    };
 }
 
 fn parseSessionRecoveryArgs(
@@ -3461,50 +3345,6 @@ test "parse session detail args treats last after id flag as exact id" {
         .last => return error.TestExpectedExactResumeId,
         .id => |id| try std.testing.expectEqualStrings("last", id),
     }
-}
-
-test "parse session migration args accepts positional and exact ids" {
-    var positional = try parseSessionMigrationArgs(std.testing.allocator, &.{
-        @constCast("session.v2"),
-        @constCast("--allow-large"),
-        @constCast("--json"),
-    });
-    defer positional.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("session.v2", positional.session_id);
-    try std.testing.expect(positional.allow_large);
-    try std.testing.expectEqual(output_contracts.OutputFormat.json, positional.format);
-
-    var exact = try parseSessionMigrationArgs(std.testing.allocator, &.{
-        @constCast("--id"),
-        @constCast("--allow-large"),
-        @constCast("--json"),
-    });
-    defer exact.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("--allow-large", exact.session_id);
-    try std.testing.expect(!exact.allow_large);
-    try std.testing.expectEqual(output_contracts.OutputFormat.json, exact.format);
-}
-
-test "parse session migration args rejects missing repeated and mixed targets" {
-    try std.testing.expectError(
-        error.InvalidSessionMigrationArgs,
-        parseSessionMigrationArgs(std.testing.allocator, &.{@constCast("--id")}),
-    );
-    try std.testing.expectError(
-        error.InvalidSessionMigrationArgs,
-        parseSessionMigrationArgs(std.testing.allocator, &.{
-            @constCast("session.v2"),
-            @constCast("--id"),
-            @constCast("session.v3"),
-        }),
-    );
-    try std.testing.expectError(
-        error.InvalidSessionMigrationArgs,
-        parseSessionMigrationArgs(std.testing.allocator, &.{
-            @constCast("session.v2"),
-            @constCast("session.v3"),
-        }),
-    );
 }
 
 test "parse session recovery args accepts exact ids and rejects ambiguity" {

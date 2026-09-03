@@ -325,19 +325,12 @@ fn handleRestoreSession(
     var store_owned = true;
     defer if (store_owned) store.deinit(alloc);
 
-    const seed_preferences = session_codec.DurableSessionPreferences{
-        .provider = state.provider,
-        .model = state.configured_model,
-        .effort = state.effort,
-        .fast_mode = state.fast_mode,
-    };
     var writable = subagent_resume_admission.resumeForExternalPrompt(
         store,
         alloc,
         .{ .id = session_id },
         state.workspace_root,
         .{
-            .seed_preferences = seed_preferences,
             .log = session_test_controls.logOptions(),
         },
     ) catch |err| return handleLoadFailure(state, alloc, msg, err);
@@ -727,8 +720,6 @@ fn handleLoadFailure(
     }
     if (err == error.InvalidSessionFormat or
         err == error.UnsupportedSessionSchema or
-        err == error.LegacySessionTooLarge or
-        err == error.LegacySessionReadResourceExhausted or
         err == error.SessionAuthorityBoundaryUnavailable or
         err == error.SessionAuthorityIntentCleanupPending or
         err == error.SessionPathUnsafe or

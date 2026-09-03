@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const session = @import("session.zig");
 const session_event = @import("session_event.zig");
-const session_json = @import("session_json.zig");
 const session_log = @import("session_log.zig");
 const session_projection = @import("session_projection.zig");
 const Allocator = std.mem.Allocator;
@@ -11,11 +10,6 @@ const Allocator = std.mem.Allocator;
 const paths = @import("session_store_paths.zig");
 
 const validateSessionId = paths.validateSessionId;
-
-const AuthorityClassification = enum {
-    schema_v3,
-    legacy,
-};
 
 const AuthoritySource = enum {
     native_create,
@@ -33,8 +27,13 @@ const AuthorityMarker = struct {
     }
 };
 
+const LegacySnapshotSchema = enum(u8) {
+    v1 = 1,
+    v2 = 2,
+};
+
 const LegacyFingerprint = struct {
-    schema: session_json.LegacySchemaVersion,
+    schema: LegacySnapshotSchema,
     primary_bytes: u64,
     primary_sha256: session_projection.Digest,
 };
@@ -57,15 +56,14 @@ pub const AuthorityTransition = struct {
     }
 };
 
-/// Shared front half of the two `classifyAuthority*` entry points: rejects a
-/// pending authority fence, then returns `.schema_v3` when a valid marker is
-/// present, or `null` when none is (caller decides legacy vs. orphan).
-/// Returns `error.InvalidSessionFormat` if the marker names a different session.
+/// Rejects a pending authority fence, then succeeds when a valid marker is
+/// present. Returns `null` when none is. Returns `error.InvalidSessionFormat`
+/// if the marker names a different session.
 fn classifyMarker(
     alloc: Allocator,
     session_dir: *io_mod.VerifiedDir,
     session_id: []const u8,
-) !?AuthorityClassification {
+) !bool {
     try requireAuthorityFenceAbsent(alloc, session_dir, session_id);
     const marker = try loadAuthorityMarkerOptional(alloc, session_dir);
     if (marker) |marker_value| {
@@ -74,40 +72,21 @@ fn classifyMarker(
         if (!std.mem.eql(u8, owned.session_id, session_id)) {
             return error.InvalidSessionFormat;
         }
-        return .schema_v3;
+        return true;
     }
-    return null;
+    return false;
 }
 
-/// Classifies a session as schema-v3 or legacy. A directory with no marker but
-/// a complete prepared schema-v3 manifest is a creation orphan and reported as
-/// `error.SessionNotFound` (it must not be read as legacy).
+/// Succeeds only for a current schema-v3 session. A directory with no marker
+/// (creation orphan or leftover snapshot) is `error.SessionNotFound`.
 pub fn classifyAuthority(
     alloc: Allocator,
     session_dir: *io_mod.VerifiedDir,
     session_id: []const u8,
-) !AuthorityClassification {
-    if (try classifyMarker(alloc, session_dir, session_id)) |classification| {
-        return classification;
-    }
-    if (try isPreparedCreationOrphan(alloc, session_dir, session_id)) {
-        return error.SessionNotFound;
-    }
-    return .legacy;
-}
-
-/// Like `classifyAuthority` but treats a marker-less directory as legacy without
-/// the creation-orphan check, so an oversized legacy snapshot can still be
-/// migrated under an explicit `allow_large` request.
-pub fn classifyAuthorityAllowingLargeLegacy(
-    alloc: Allocator,
-    session_dir: *io_mod.VerifiedDir,
-    session_id: []const u8,
-) !AuthorityClassification {
-    if (try classifyMarker(alloc, session_dir, session_id)) |classification| {
-        return classification;
-    }
-    return .legacy;
+) !void {
+    if (try classifyMarker(alloc, session_dir, session_id)) return;
+    _ = try isPreparedCreationOrphan(alloc, session_dir, session_id);
+    return error.SessionNotFound;
 }
 
 fn isPreparedCreationOrphan(
@@ -288,7 +267,7 @@ fn parseLegacyFingerprint(value: std.json.Value) error{InvalidSessionFormat}!Leg
     };
     const object = try exactJsonObject(value, &expected_keys);
     const storage = try objectString(object, "storage_format");
-    const schema: session_json.LegacySchemaVersion =
+    const schema: LegacySnapshotSchema =
         if (std.mem.eql(u8, storage, "legacy_snapshot_v1"))
             .v1
         else if (std.mem.eql(u8, storage, "legacy_snapshot_v2"))
@@ -372,21 +351,6 @@ fn parseDigest(raw: []const u8) error{InvalidSessionFormat}!session_projection.D
     return result;
 }
 
-fn legacyFingerprintMatches(
-    alloc: Allocator,
-    bytes: []const u8,
-    expected: LegacyFingerprint,
-) !bool {
-    if (bytes.len != expected.primary_bytes) return false;
-    const schema = session_json.parseLegacySchemaVersion(
-        alloc,
-        bytes,
-    ) catch return false;
-    if (schema != expected.schema) return false;
-    const digest = session_projection.sha256(bytes);
-    return std.mem.eql(u8, &digest, &expected.primary_sha256);
-}
-
 /// Asserts a parsed transition names `session_id`; otherwise `error.InvalidSessionFormat`.
 pub fn requireAuthorityTransitionSession(
     transition: AuthorityTransition,
@@ -395,92 +359,6 @@ pub fn requireAuthorityTransitionSession(
     if (!std.mem.eql(u8, transition.session_id, session_id)) {
         return error.InvalidSessionFormat;
     }
-}
-
-fn legacyPrimaryBytes(
-    alloc: Allocator,
-    session_dir: *io_mod.VerifiedDir,
-    name: []const u8,
-    expected: LegacyFingerprint,
-) !?[]u8 {
-    const max_bytes = std.math.cast(
-        usize,
-        std.math.add(u64, expected.primary_bytes, 1) catch
-            return error.LegacySessionMigrationResourceExhausted,
-    ) orelse return error.LegacySessionMigrationResourceExhausted;
-    const bytes = try readOptionalSessionFile(
-        alloc,
-        session_dir,
-        name,
-        max_bytes,
-    ) orelse return null;
-    errdefer alloc.free(bytes);
-    if (!try legacyFingerprintMatches(alloc, bytes, expected)) {
-        alloc.free(bytes);
-        return null;
-    }
-    return bytes;
-}
-
-fn removeSessionEntryIfPresent(
-    session_dir: *io_mod.VerifiedDir,
-    name: []const u8,
-) !void {
-    session_dir.dir.deleteFile(io_mod.getIo(), name) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return err,
-    };
-}
-
-/// Rolls an interrupted migration back to its legacy snapshot: restores the
-/// fingerprint-matched primary from the stable copy, removes the v3 marker, and
-/// clears the intent. Inconsistent on-disk state yields
-/// `error.LegacySessionMigrationIndeterminate`.
-pub fn restoreLegacyAuthority(
-    alloc: Allocator,
-    writable: *session_log.WritableSessionDir,
-    transition: AuthorityTransition,
-) !void {
-    const prior = transition.prior orelse return error.InvalidSessionFormat;
-    const current = try legacyPrimaryBytes(
-        alloc,
-        &writable.dir,
-        "session.json",
-        prior,
-    );
-    if (current) |bytes| {
-        alloc.free(bytes);
-    } else {
-        const stable = try legacyPrimaryBytes(
-            alloc,
-            &writable.dir,
-            "session.legacy.json",
-            prior,
-        ) orelse return error.LegacySessionMigrationIndeterminate;
-        defer alloc.free(stable);
-        io_mod.durableReplaceVerified(
-            alloc,
-            &writable.dir,
-            "session.json",
-            stable,
-        ) catch return error.LegacySessionMigrationIndeterminate;
-    }
-    removeSessionEntryIfPresent(&writable.dir, "authority.json") catch
-        return error.LegacySessionMigrationIndeterminate;
-    io_mod.syncVerifiedDir(writable.dir.dir) catch
-        return error.LegacySessionMigrationIndeterminate;
-    const confirmed = try legacyPrimaryBytes(
-        alloc,
-        &writable.dir,
-        "session.json",
-        prior,
-    ) orelse return error.LegacySessionMigrationIndeterminate;
-    alloc.free(confirmed);
-    if (try entryExistsRelative(&writable.dir, "authority.json")) {
-        return error.LegacySessionMigrationIndeterminate;
-    }
-    deleteSessionEntry(&writable.dir, "authority.pending.json") catch
-        return error.SessionAuthorityIntentCleanupPending;
 }
 
 /// Reads an in-session file fully, capped at `max_bytes`. Returns null if the

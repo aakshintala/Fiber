@@ -365,7 +365,6 @@ fn appendSessionDiagnosticChecks(
             .authority_less_creation_orphan,
             .authority_transition_pending,
             .commit_intent_pending,
-            .oversized_legacy_snapshot,
             .projection_missing,
             .projection_stale,
             .canonical_log_large,
@@ -447,9 +446,6 @@ fn recoveryActionForSessionDiagnostic(
 
         .canonical_log_compaction_failed,
         => "inspect the failed compaction artifact; keep it until no writer is active",
-
-        .oversized_legacy_snapshot,
-        => "rerun migration with --allow-large only after verifying the legacy snapshot",
 
         .projection_missing,
         .projection_stale,

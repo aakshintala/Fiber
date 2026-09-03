@@ -161,15 +161,13 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .session,
         .token = "session",
-        .usage = "session <last|id>|--id <id> [--json] | session resume [last|<id>] | session resume --id <id> | session migrate <id>|--id <id> [--allow-large] [--json] | session recover <id>|--id <id> [--json]",
-        .summary = "Inspect, resume, migrate, or recover saved sessions",
+        .usage = "session <last|id>|--id <id> [--json] | session resume [last|<id>] | session resume --id <id> | session recover <id>|--id <id> [--json]",
+        .summary = "Inspect, resume, or recover saved sessions",
         .options = &.{
             .{ .flag = "last", .description = "Inspect the current workspace session" },
             .{ .flag = "--id <id>", .description = "Inspect a saved session by exact id" },
             .{ .flag = "resume [last|<id>]", .description = "Resume the latest workspace session or a session by id" },
-            .{ .flag = "migrate <id>", .description = "Migrate a saved session to the current format" },
             .{ .flag = "recover <id>", .description = "Copy a recoverable corrupt session into a new session" },
-            .{ .flag = "--allow-large", .description = "Permit migrating an oversized session" },
             json_option,
         },
     },
@@ -269,7 +267,6 @@ pub const top_level_help_groups = [_]TopLevelHelpGroup{
         .{ .kind = .sessions, .usage = "sessions" },
         .{ .kind = .session, .usage = "session <last|id>" },
         .{ .usage = "session resume [last|id]", .summary = "Resume the latest workspace session or a session by id" },
-        .{ .usage = "session migrate <id>", .summary = "Migrate a saved session to the current format" },
         .{ .usage = "session recover <id>", .summary = "Copy a recoverable corrupt session" },
     } },
     .{ .entries = &.{

@@ -840,7 +840,7 @@ const AskContext = struct {
                 self.alloc,
                 target,
                 self.workspace_root,
-                .{ .seed_preferences = seed_preferences },
+                .{},
             )
         else blk: {
             var state = try freshAskState(self, seed_preferences);

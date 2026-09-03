@@ -1542,7 +1542,7 @@ pub fn Runtime(comptime App: type) type {
                     &admission,
                     session_id,
                     app.workspace_root,
-                    .{ .seed_preferences = app.session_persistence.workspace_preferences },
+                    .{},
                 );
             } else try loadResumeTargetForWrite(app, resume_target, .{});
             var loaded_owned = true;
@@ -1607,7 +1607,6 @@ pub fn Runtime(comptime App: type) type {
                 target,
                 app.workspace_root,
                 .{
-                    .seed_preferences = app.session_persistence.workspace_preferences,
                     .log = log_options,
                 },
             );

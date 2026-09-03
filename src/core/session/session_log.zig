@@ -544,8 +544,6 @@ pub const LoadedWritableSession = struct {
     namespace_confirmation_required: bool = false,
     degraded_tail: ?FailedTail = null,
     compaction_warning_active: bool = false,
-    migration_source_schema_version: ?u8 = null,
-    migration_source_bytes: ?u64 = null,
     usage_sidecar_reseal_pending: bool = false,
     resume_view_stale: bool = false,
     /// Runtime-only provenance installed by subagent resume admission. These
