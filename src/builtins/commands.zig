@@ -30,7 +30,7 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .ask,
         .token = "ask",
-        .usage = "ask [--auto|--yolo] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume <last|id>|--resume-id <id>] [--continue-recovery] [--] <prompt>",
+        .usage = "ask [--auto|--yolo] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume-id <id>] [--continue-recovery] [--] <prompt>",
         .summary = "Run one noninteractive request",
         .options = &.{
             .{ .flag = "--auto", .description = "Automatically review unresolved permission requests" },
@@ -40,9 +40,8 @@ pub const top_level_specs = [_]TopLevelSpec{
             json_option,
             .{ .flag = "--quiet", .description = "Suppress assistant output" },
             .{ .flag = "--prompt-permissions", .description = "Prompt for Y/N permission approval when stdin is a TTY" },
-            .{ .flag = "--no-save", .description = "Do not save the session; incompatible with --resume and --resume-id" },
+            .{ .flag = "--no-save", .description = "Do not save the session; incompatible with --resume-id" },
             .{ .flag = "--no-color", .description = "Render TTY output without colors or hyperlinks" },
-            .{ .flag = "--resume <last|id>", .description = "Continue the last session or a session by id" },
             .{ .flag = "--resume-id <id>", .description = "Continue a session by exact id" },
             .{ .flag = "--continue-recovery", .description = "Resume the paused model response in the selected session" },
             .{ .flag = "--", .description = "Treat every following argument as prompt text" },
@@ -163,12 +162,10 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .@"resume",
         .token = "resume",
-        .aliases = &.{ "--resume", "--resume-last", "--continue", "-c", "-r" },
         .hidden_from_top_level_help = true,
-        .usage = "session resume [last|<id>] | session resume --id <id> | --resume [last|<id>] | resume [last|<id>] | resume --id <id> | --resume-last | --continue | -c | -r | --resume-<id>",
+        .usage = "session resume [last|<id>] | session resume --id <id> | resume [last|<id>] | resume --id <id>",
         .summary = "Continue a saved interactive session",
         .options = &.{
-            .{ .flag = "-r", .description = "Choose the session to resume from a picker" },
             .{ .flag = "last", .description = "Resume the most recent session" },
             .{ .flag = "<id>", .description = "Resume a session by id" },
             .{ .flag = "--id <id>", .description = "Resume a session by exact id" },
@@ -274,26 +271,6 @@ pub const top_level_flags = [_]TopLevelFlag{
     .{
         .usage = "--no-additional-dirs",
         .description = "Ignore saved additional directories",
-    },
-    .{
-        .usage = "-c, --continue",
-        .description = "Resume the latest workspace session",
-    },
-    .{
-        .usage = "-r",
-        .description = "Open the saved-session picker",
-    },
-    .{
-        .usage = "--resume [last|<id>]",
-        .description = "Resume the latest workspace session or an exact ID",
-    },
-    .{
-        .usage = "--resume-last",
-        .description = "Resume the latest workspace session",
-    },
-    .{
-        .usage = "--resume-<id>",
-        .description = "Resume a session by exact ID",
     },
     .{
         .usage = "-h, --help",

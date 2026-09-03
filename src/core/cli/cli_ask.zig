@@ -311,7 +311,7 @@ test "prompt result failure writer preserves exact error type and identity" {
     try std.testing.expectError(error.NoPendingRecovery, failure);
 }
 
-/// Resume selector parsed from fx ask --resume.
+/// Resume selector parsed from fx ask --resume-id.
 const ResumeTarget = session_store.ResumeTarget;
 
 const AskOptions = struct {
@@ -1159,7 +1159,7 @@ fn runWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Config, deps: 
                 try deps.write_stdout(deps.stdout_ctx, json);
                 return 1;
             }
-            try deps.write_stderr(deps.stderr_ctx, "fx ask: --no-save cannot be used with --resume or --resume-id\n");
+            try deps.write_stderr(deps.stderr_ctx, "fx ask: --no-save cannot be used with --resume-id\n");
             try writeAskUsage(deps, cfg.command_usage);
             return 1;
         },
@@ -3294,17 +3294,13 @@ fn parseOptionsWithStdin(alloc: Allocator, args: []const [:0]const u8, stdin: St
         } else if (std.mem.eql(u8, arg, "--yolo")) {
             if (opts.permission_override != null) return error.InvalidAskArgs;
             opts.permission_override = .yolo;
-        } else if (std.mem.eql(u8, arg, "--resume") or std.mem.eql(u8, arg, "--resume-id")) {
+        } else if (std.mem.eql(u8, arg, "--resume-id")) {
             if (opts.resume_target != null) return error.InvalidAskArgs;
-            const exact_id = std.mem.eql(u8, arg, "--resume-id");
             i += 1;
             if (i >= args.len) return error.InvalidAskArgs;
             const target = std.mem.trim(u8, args[i], " \t\r\n");
             if (target.len == 0) return error.InvalidAskArgs;
-            opts.resume_target = if (!exact_id and std.mem.eql(u8, target, "last"))
-                .last
-            else
-                .{ .id = target };
+            opts.resume_target = .{ .id = target };
         } else if (std.mem.eql(u8, arg, "--image")) {
             i += 1;
             if (i >= args.len) return error.MissingPrompt;
@@ -3774,7 +3770,7 @@ fn testModelPromptOverlay(model: []const u8) ?[]const u8 {
 
 fn testConfig() Config {
     return .{
-        .command_usage = "ask [--auto|--yolo] [--image PATH] [--json] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume <last|id>|--resume-id <id>] [--] <prompt>",
+        .command_usage = "ask [--auto|--yolo] [--image PATH] [--json] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume-id <id>] [--] <prompt>",
         .default_model = "model",
         .default_agent_step_limit = 4,
         .gateway_retry_count = 1,
@@ -7345,7 +7341,7 @@ test "parse options requires an explicit saved session for recovery continuation
         error.InvalidAskArgs,
         parseOptionsWithStdin(
             std.testing.allocator,
-            &.{ "--resume", "last", "--continue-recovery", "new prompt" },
+            &.{ "--resume-id", "last", "--continue-recovery", "new prompt" },
             .tty,
         ),
     );
@@ -7356,7 +7352,7 @@ test "parse options rejects repeated resume targets and no-save resume" {
         error.InvalidAskArgs,
         parseOptionsWithStdin(
             std.testing.allocator,
-            &.{ "--resume", "last", "--resume-id", "session.v3", "continue" },
+            &.{ "--resume-id", "last", "--resume-id", "session.v3", "continue" },
             .tty,
         ),
     );
@@ -7364,7 +7360,7 @@ test "parse options rejects repeated resume targets and no-save resume" {
         error.NoSaveResumeConflict,
         parseOptionsWithStdin(
             std.testing.allocator,
-            &.{ "--no-save", "--resume", "last", "continue" },
+            &.{ "--no-save", "--resume-id", "last", "continue" },
             .tty,
         ),
     );

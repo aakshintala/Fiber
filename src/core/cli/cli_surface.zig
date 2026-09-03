@@ -75,15 +75,9 @@ pub const Command = union(enum) {
 
 const ResumeInvocation = struct {
     args: []const [:0]const u8,
-    top_level_alias: bool = false,
 };
 
-const resume_id_alias_prefix = "--resume-";
 pub const upgrade_relaunch_arg = "--upgrade-relaunch";
-
-// The one resume alias that asks which session to open. Every other spelling
-// names its target, so it resumes without a prompt.
-const resume_picker_alias = "-r";
 
 pub const ResumeTarget = union(enum) {
     pick,
@@ -383,14 +377,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
     switch (command[0]) {
         '-', 'h' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .help)) return .help;
-            if (command_specs.matchesTopLevel(command_catalog, command, .@"resume") or
-                std.mem.startsWith(u8, command, resume_id_alias_prefix))
-            {
-                return .{ .resume_session = .{
-                    .args = args,
-                    .top_level_alias = true,
-                } };
-            }
         },
         'a' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .ask)) return .{ .ask = args[1..] };
@@ -481,19 +467,13 @@ pub fn parseInteractiveLaunch(
         } },
         .resume_session => |invocation| {
             const resume_args = invocation.args;
-            const upgrade_relaunch = !invocation.top_level_alias and
-                resume_args.len == 2 and
+            const upgrade_relaunch = resume_args.len == 2 and
                 std.mem.eql(u8, resume_args[1], upgrade_relaunch_arg);
             const target_args = if (upgrade_relaunch)
                 resume_args[0..1]
             else
                 resume_args;
-            const target = try parseResumeArgs(
-                alloc,
-                command_catalog,
-                target_args,
-                invocation.top_level_alias,
-            );
+            const target = try parseResumeArgs(alloc, target_args);
             return .{ .interactive = .{
                 .requested_resume = target,
                 .upgrade_relaunch = upgrade_relaunch,
@@ -2732,34 +2712,9 @@ fn parseSessionRecoveryArgs(
 
 fn parseResumeArgs(
     alloc: Allocator,
-    command_catalog: CommandCatalog,
     args: []const [:0]const u8,
-    top_level_alias: bool,
 ) !ResumeTarget {
     if (args.len == 0) return .last;
-
-    if (top_level_alias) {
-        if (std.mem.eql(u8, args[0], "--resume")) {
-            if (args.len == 1) return .last;
-            if (args.len != 2) return error.InvalidResumeArgs;
-            const id = std.mem.trim(u8, args[1], " \t\r\n");
-            if (id.len == 0) return error.InvalidResumeArgs;
-            if (std.mem.eql(u8, id, "last")) return .last;
-            return .{ .id = try alloc.dupe(u8, id) };
-        }
-        if (args.len != 1) return error.InvalidResumeArgs;
-        if (std.mem.eql(u8, args[0], resume_picker_alias)) return .pick;
-        if (command_specs.matchesTopLevel(command_catalog, args[0], .@"resume")) return .last;
-        if (!std.mem.startsWith(u8, args[0], resume_id_alias_prefix)) return error.InvalidResumeArgs;
-        const id = args[0][resume_id_alias_prefix.len..];
-        if (id.len == 0) return error.InvalidResumeArgs;
-        return .{ .id = try alloc.dupe(u8, id) };
-    }
-
-    if (std.mem.eql(u8, args[0], "--resume")) {
-        if (args.len == 2 and std.mem.eql(u8, args[1], "--last")) return .last;
-        return error.InvalidResumeArgs;
-    }
 
     const exact_id = std.mem.eql(u8, args[0], "--id");
     const operand_index: usize = if (exact_id) 1 else 0;
@@ -3248,30 +3203,28 @@ test "parse session recovery args accepts exact ids and rejects ambiguity" {
 }
 
 test "parse resume args defaults to last owns ids and rejects invalid input" {
-    const command_catalog = testCommandCatalog();
-    const implicit = try parseResumeArgs(std.testing.allocator, command_catalog, &.{}, false);
+    const implicit = try parseResumeArgs(std.testing.allocator, &.{});
     try std.testing.expectEqual(ResumeTarget.last, implicit);
 
-    const explicit = try parseResumeArgs(std.testing.allocator, command_catalog, &.{@constCast("last")}, false);
+    const explicit = try parseResumeArgs(std.testing.allocator, &.{@constCast("last")});
     try std.testing.expectEqual(ResumeTarget.last, explicit);
 
-    var target = try parseResumeArgs(std.testing.allocator, command_catalog, &.{@constCast(" session-123 ")}, false);
+    var target = try parseResumeArgs(std.testing.allocator, &.{@constCast(" session-123 ")});
     defer target.deinit(std.testing.allocator);
     switch (target) {
         .id => |value| try std.testing.expectEqualStrings("session-123", value),
         else => return error.TestExpectedEqual,
     }
 
-    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, command_catalog, &.{ @constCast("a"), @constCast("b") }, false));
-    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, command_catalog, &.{@constCast("   ")}, false));
+    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{ @constCast("a"), @constCast("b") }));
+    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{@constCast("   ")}));
 }
 
 test "parse resume args accepts explicit id flag" {
-    const command_catalog = testCommandCatalog();
-    var target = try parseResumeArgs(std.testing.allocator, command_catalog, &.{
+    var target = try parseResumeArgs(std.testing.allocator, &.{
         @constCast("--id"),
         @constCast("release.2026.06"),
-    }, false);
+    });
     defer target.deinit(std.testing.allocator);
 
     switch (target) {
@@ -3280,32 +3233,11 @@ test "parse resume args accepts explicit id flag" {
     }
 }
 
-test "parse resume args accepts an operand on the top-level resume flag" {
-    const command_catalog = testCommandCatalog();
-    var target = try parseResumeArgs(std.testing.allocator, command_catalog, &.{
-        @constCast("--resume"),
-        @constCast("session-123"),
-    }, true);
-    defer target.deinit(std.testing.allocator);
-
-    switch (target) {
-        .pick, .last => return error.TestExpectedExactResumeId,
-        .id => |id| try std.testing.expectEqualStrings("session-123", id),
-    }
-
-    const latest = try parseResumeArgs(std.testing.allocator, command_catalog, &.{
-        @constCast("--resume"),
-        @constCast("last"),
-    }, true);
-    try std.testing.expectEqual(ResumeTarget.last, latest);
-}
-
 test "parse resume args treats last after id flag as exact id" {
-    const command_catalog = testCommandCatalog();
-    var target = try parseResumeArgs(std.testing.allocator, command_catalog, &.{
+    var target = try parseResumeArgs(std.testing.allocator, &.{
         @constCast("--id"),
         @constCast("last"),
-    }, false);
+    });
     defer target.deinit(std.testing.allocator);
 
     switch (target) {
@@ -3321,9 +3253,6 @@ test "parseInteractiveLaunch shares native resume grammar" {
         args: []const [:0]const u8,
         expected_id: ?[]const u8,
     }{
-        .{ .args = &.{@constCast("--resume")}, .expected_id = null },
-        .{ .args = &.{ @constCast("--resume"), @constCast("last") }, .expected_id = null },
-        .{ .args = &.{ @constCast("--resume"), @constCast("session-123") }, .expected_id = "session-123" },
         .{ .args = &.{ @constCast("session"), @constCast("resume"), @constCast("last") }, .expected_id = null },
         .{ .args = &.{ @constCast("session"), @constCast("resume"), @constCast("--id"), @constCast("session.v3") }, .expected_id = "session.v3" },
     };
@@ -3347,14 +3276,6 @@ test "parseInteractiveLaunch shares native resume grammar" {
         }
     }
 
-    try std.testing.expectError(
-        error.InvalidResumeArgs,
-        parseInteractiveLaunch(
-            alloc,
-            &.{ @constCast("--resume"), @constCast("one"), @constCast("two") },
-            command_catalog,
-        ),
-    );
     try std.testing.expectError(
         error.MissingAddDirectoryValue,
         parseInteractiveLaunch(alloc, &.{@constCast("--add-dir")}, command_catalog),
@@ -3799,139 +3720,6 @@ test "runIfRequested resume no args returns last target" {
     try std.testing.expectEqualStrings("", capture.stderr.written());
 }
 
-test "runIfRequested -r asks which session to resume" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("-r")},
-        testConfig(),
-        capture.deps(),
-    );
-    switch (result) {
-        .interactive => |launch| try std.testing.expectEqual(ResumeTarget.pick, launch.requested_resume.?),
-        else => return error.TestExpectedEqual,
-    }
-    try std.testing.expectEqualStrings("", capture.stdout.written());
-    try std.testing.expectEqualStrings("", capture.stderr.written());
-
-    var extra_capture = CaptureOutput.init(std.testing.allocator);
-    defer extra_capture.deinit();
-    const extra = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{ @constCast("-r"), @constCast("session.123") },
-        testConfig(),
-        extra_capture.deps(),
-    );
-    try std.testing.expectEqual(RunResult.handled_failure, extra);
-}
-
-test "runIfRequested top-level resume aliases return the existing target" {
-    const aliases = [_][]const [:0]const u8{
-        &.{@constCast("--resume")},
-        &.{@constCast("--resume-last")},
-        &.{@constCast("--continue")},
-        &.{@constCast("-c")},
-    };
-    for (aliases) |args| {
-        var capture = CaptureOutput.init(std.testing.allocator);
-        defer capture.deinit();
-
-        const result = try runIfRequestedWithDeps(
-            std.testing.allocator,
-            args,
-            testConfig(),
-            capture.deps(),
-        );
-        switch (result) {
-            .interactive => |launch| try std.testing.expectEqual(ResumeTarget.last, launch.requested_resume.?),
-            else => return error.TestExpectedEqual,
-        }
-        try std.testing.expectEqualStrings("", capture.stdout.written());
-        try std.testing.expectEqualStrings("", capture.stderr.written());
-    }
-
-    var operand_capture = CaptureOutput.init(std.testing.allocator);
-    defer operand_capture.deinit();
-
-    const operand = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{ @constCast("--resume"), @constCast("session.123") },
-        testConfig(),
-        operand_capture.deps(),
-    );
-    switch (operand) {
-        .interactive => |launch_value| {
-            var launch = launch_value;
-            defer launch.deinit(std.testing.allocator);
-            switch (launch.requested_resume.?) {
-                .id => |id| try std.testing.expectEqualStrings("session.123", id),
-                .pick, .last => return error.TestExpectedExactResumeId,
-            }
-        },
-        else => return error.TestExpectedEqual,
-    }
-
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-
-    const exact = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("--resume-session.123")},
-        testConfig(),
-        capture.deps(),
-    );
-    switch (exact) {
-        .interactive => |launch_value| {
-            var launch = launch_value;
-            defer launch.deinit(std.testing.allocator);
-            switch (launch.requested_resume.?) {
-                .id => |id| try std.testing.expectEqualStrings("session.123", id),
-                .pick, .last => return error.TestExpectedExactResumeId,
-            }
-        },
-        else => return error.TestExpectedEqual,
-    }
-
-    const nested = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{ @constCast("resume"), @constCast("--resume"), @constCast("--last") },
-        testConfig(),
-        capture.deps(),
-    );
-    switch (nested) {
-        .interactive => |launch| try std.testing.expectEqual(ResumeTarget.last, launch.requested_resume.?),
-        else => return error.TestExpectedEqual,
-    }
-}
-
-test "runIfRequested rejects malformed resume aliases with canonical usage" {
-    const cases = [_][]const [:0]const u8{
-        &.{@constCast("--resume-")},
-        &.{ @constCast("--resume-last"), @constCast("unexpected") },
-        &.{ @constCast("--continue"), @constCast("unexpected") },
-        &.{ @constCast("--resume"), @constCast("   ") },
-        &.{ @constCast("resume"), @constCast("--resume") },
-    };
-    for (cases) |args| {
-        var capture = CaptureOutput.init(std.testing.allocator);
-        defer capture.deinit();
-
-        const result = try runIfRequestedWithDeps(
-            std.testing.allocator,
-            args,
-            testConfig(),
-            capture.deps(),
-        );
-        try std.testing.expectEqual(RunResult.handled_failure, result);
-        try std.testing.expectEqualStrings(
-            "usage: fx session resume [last|<id>] | session resume --id <id> | --resume [last|<id>] | resume [last|<id>] | resume --id <id> | --resume-last | --continue | -c | -r | --resume-<id>\n",
-            capture.stderr.written(),
-        );
-    }
-}
-
 test "runIfRequested resume id returns owned id" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
@@ -3957,7 +3745,7 @@ test "runIfRequested invalid resume writes usage" {
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("resume"), @constCast("a"), @constCast("b") }, testConfig(), capture.deps());
     try std.testing.expectEqual(RunResult.handled_failure, result);
     try std.testing.expectEqualStrings(
-        "usage: fx session resume [last|<id>] | session resume --id <id> | --resume [last|<id>] | resume [last|<id>] | resume --id <id> | --resume-last | --continue | -c | -r | --resume-<id>\n",
+        "usage: fx session resume [last|<id>] | session resume --id <id> | resume [last|<id>] | resume --id <id>\n",
         capture.stderr.written(),
     );
 }

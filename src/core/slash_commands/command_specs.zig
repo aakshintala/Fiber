@@ -1584,11 +1584,11 @@ test "rendered top-level help is a complete CLI navigation page" {
     try std.testing.expect(std.mem.find(u8, text, "--context-limit <spec>") != null);
     try std.testing.expect(std.mem.find(u8, text, "Set name=bytes|off; repeatable") != null);
     try std.testing.expect(std.mem.find(u8, text, "--add-dir <path>") != null);
-    try std.testing.expect(std.mem.find(u8, text, "-c, --continue") != null);
-    try std.testing.expect(std.mem.find(u8, text, "-r") != null);
+    try std.testing.expect(std.mem.find(u8, text, "-c, --continue") == null);
+    try std.testing.expect(std.mem.find(u8, text, "-r") == null);
     try std.testing.expect(std.mem.find(u8, text, "-c, -r, --continue") == null);
-    try std.testing.expect(std.mem.find(u8, text, "--resume [last|<id>]") != null);
-    try std.testing.expect(std.mem.find(u8, text, "--resume-last") != null);
+    try std.testing.expect(std.mem.find(u8, text, "--resume [last|<id>]") == null);
+    try std.testing.expect(std.mem.find(u8, text, "--resume-last") == null);
     try std.testing.expect(std.mem.find(u8, text, "-v, --version") != null);
     try std.testing.expect(std.mem.find(u8, text, "Must appear before the command. Accepted names:") == null);
     try std.testing.expect(std.mem.find(u8, text, "skill_description_bytes, skill_catalog_bytes") == null);
@@ -1648,10 +1648,6 @@ test "top-level help renders flags as compact aligned rows" {
 
     try std.testing.expect(lineContainsBoth(wide, "--context-limit <spec>", "Set name=bytes|off; repeatable"));
     try std.testing.expect(lineContainsBoth(wide, "--add-dir <path>", "Add a workspace directory; repeatable"));
-    try std.testing.expect(lineContainsBoth(wide, "-c, --continue", "Resume the latest workspace session"));
-    try std.testing.expect(lineContainsBoth(wide, "-r", "Open the saved-session picker"));
-    try std.testing.expect(lineContainsBoth(wide, "--resume [last|<id>]", "Resume the latest workspace session or an exact ID"));
-    try std.testing.expect(lineContainsBoth(wide, "--resume-last", "Resume the latest workspace session"));
     try std.testing.expect(std.mem.find(u8, wide, "Print the fx version and exit\n\nExamples:") != null);
     try std.testing.expect(std.mem.find(u8, wide, "List available models\n\n  usage") != null);
     try expectAllLinesFit(narrow, 60);
@@ -1694,7 +1690,7 @@ test "per-command help preserves long resume usage without debug recording" {
     const text = try renderTopLevelCommandHelp(std.testing.allocator, testTopLevelRegistry(), .@"resume");
     defer std.testing.allocator.free(text);
 
-    try std.testing.expect(std.mem.find(u8, text, "Usage:\n  fx session resume [last|<id>] | session resume --id <id> | --resume [last|<id>] | resume [last|<id>] | resume --id <id> | --resume-last | --continue | -c | -r | --resume-<id>") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Usage:\n  fx session resume [last|<id>] | session resume --id <id> | resume [last|<id>] | resume --id <id>") != null);
     try std.testing.expect(std.mem.find(u8, text, "Options:") != null);
     try std.testing.expect(std.mem.find(u8, text, "--record") == null);
 }
