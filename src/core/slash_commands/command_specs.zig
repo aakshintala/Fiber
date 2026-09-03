@@ -45,9 +45,6 @@ pub const SlashKind = enum {
     trace,
     compact,
     settings,
-    fast,
-    statusline,
-    notifications,
     workspace,
 };
 
@@ -553,12 +550,6 @@ pub fn slashCompletionPrefix(registry: SlashRegistry, input: []const u8) ?[]cons
 }
 
 pub fn slashCompletionCount(registry: SlashRegistry, prefix: []const u8) usize {
-    if (statuslineArgCompletionPrefix(prefix)) |query| {
-        return statuslineArgCompletionCount(query);
-    }
-    if (notificationsArgCompletionPrefix(prefix)) |query| {
-        return notificationsArgCompletionCount(query);
-    }
     if (permissionsArgCompletionPrefix(prefix)) |query| {
         return permissionsArgCompletionCount(query);
     }
@@ -575,12 +566,6 @@ pub fn slashCompletionCount(registry: SlashRegistry, prefix: []const u8) usize {
 }
 
 pub fn nthSlashCompletion(registry: SlashRegistry, prefix: []const u8, n: usize) ?[]const u8 {
-    if (statuslineArgCompletionPrefix(prefix)) |query| {
-        return nthStatuslineArgCompletion(query, n);
-    }
-    if (notificationsArgCompletionPrefix(prefix)) |query| {
-        return nthNotificationsArgCompletion(query, n);
-    }
     if (permissionsArgCompletionPrefix(prefix)) |query| {
         return nthPermissionsArgCompletion(query, n);
     }
@@ -595,8 +580,6 @@ pub fn nthSlashCompletion(registry: SlashRegistry, prefix: []const u8, n: usize)
 /// known arg-completion commands. Returns 0 when
 /// the prefix is not an arg-completion command.
 pub fn argCompletionAnchor(prefix: []const u8) usize {
-    if (statuslineArgCompletionPrefix(prefix) != null) return "/statusline ".len;
-    if (notificationsArgCompletionPrefix(prefix) != null) return "/sound ".len;
     if (permissionsArgCompletionPrefix(prefix) != null) return "/permissions ".len;
     if (workspaceArgCompletionPrefix(prefix) != null) return "/workspace ".len;
     return 0;
@@ -607,12 +590,6 @@ pub fn argCompletionAnchor(prefix: []const u8) usize {
 /// shows only the argument. For everything else the
 /// full command string is returned unchanged.
 pub fn nthSlashCompletionLabel(registry: SlashRegistry, prefix: []const u8, n: usize) ?[]const u8 {
-    if (statuslineArgCompletionPrefix(prefix)) |query| {
-        return nthStatuslineArgLabel(query, n);
-    }
-    if (notificationsArgCompletionPrefix(prefix)) |query| {
-        return nthNotificationsArgLabel(query, n);
-    }
     if (permissionsArgCompletionPrefix(prefix)) |query| {
         return nthPermissionsArgLabel(query, n);
     }
@@ -623,8 +600,6 @@ pub fn nthSlashCompletionLabel(registry: SlashRegistry, prefix: []const u8, n: u
 }
 
 pub fn nthSlashCompletionDescription(registry: SlashRegistry, prefix: []const u8, n: usize) ?[]const u8 {
-    if (statuslineArgCompletionPrefix(prefix) != null) return null;
-    if (notificationsArgCompletionPrefix(prefix) != null) return null;
     if (permissionsArgCompletionPrefix(prefix) != null) return null;
     if (workspaceArgCompletionPrefix(prefix) != null) return null;
     if (prefix.len == 0 or prefix[0] != '/') return null;
@@ -648,18 +623,6 @@ pub fn slashCompletionHasArgs(registry: SlashRegistry, command: []const u8) bool
     }
     return false;
 }
-
-const statusline_arg_completions = [_][]const u8{
-    "/statusline context",
-    "/statusline session",
-    "/statusline workspace",
-};
-
-const notifications_arg_completions = [_][]const u8{
-    "/sound on",
-    "/sound off",
-    "/sound max",
-};
 
 const permissions_arg_completions = [_][]const u8{
     "/permissions ask",
@@ -685,14 +648,6 @@ fn argCompletionPrefix(prefix: []const u8, command: []const u8) ?[]const u8 {
     return std.mem.trim(u8, prefix[command.len..], " \t");
 }
 
-pub fn statuslineArgCompletionPrefix(prefix: []const u8) ?[]const u8 {
-    return argCompletionPrefix(prefix, "/statusline");
-}
-
-pub fn notificationsArgCompletionPrefix(prefix: []const u8) ?[]const u8 {
-    return argCompletionPrefix(prefix, "/sound");
-}
-
 pub fn permissionsArgCompletionPrefix(prefix: []const u8) ?[]const u8 {
     return argCompletionPrefix(prefix, "/permissions");
 }
@@ -707,14 +662,6 @@ fn argCompletionCount(completions: []const []const u8, command_with_space_len: u
         if (argCompletionMatches(completion, command_with_space_len, query)) count += 1;
     }
     return count;
-}
-
-fn statuslineArgCompletionCount(query: []const u8) usize {
-    return argCompletionCount(&statusline_arg_completions, "/statusline ".len, query);
-}
-
-fn notificationsArgCompletionCount(query: []const u8) usize {
-    return argCompletionCount(&notifications_arg_completions, "/sound ".len, query);
 }
 
 fn permissionsArgCompletionCount(query: []const u8) usize {
@@ -733,24 +680,6 @@ fn nthArgCompletion(completions: []const []const u8, command_with_space_len: usi
         idx += 1;
     }
     return null;
-}
-
-fn nthStatuslineArgCompletion(query: []const u8, n: usize) ?[]const u8 {
-    return nthArgCompletion(&statusline_arg_completions, "/statusline ".len, query, n);
-}
-
-fn nthStatuslineArgLabel(query: []const u8, n: usize) ?[]const u8 {
-    const full = nthStatuslineArgCompletion(query, n) orelse return null;
-    return full["/statusline ".len..];
-}
-
-fn nthNotificationsArgCompletion(query: []const u8, n: usize) ?[]const u8 {
-    return nthArgCompletion(&notifications_arg_completions, "/sound ".len, query, n);
-}
-
-fn nthNotificationsArgLabel(query: []const u8, n: usize) ?[]const u8 {
-    const full = nthNotificationsArgCompletion(query, n) orelse return null;
-    return full["/sound ".len..];
 }
 
 fn nthPermissionsArgCompletion(query: []const u8, n: usize) ?[]const u8 {
@@ -774,12 +703,6 @@ fn nthWorkspaceArgLabel(query: []const u8, n: usize) ?[]const u8 {
 /// Returns the index of `label` among the matching arg completions for
 /// the given prefix, or null if the label is not in the filtered set.
 pub fn argCompletionIndexForLabel(prefix: []const u8, label: []const u8) ?usize {
-    if (statuslineArgCompletionPrefix(prefix)) |query| {
-        return indexOfArgLabel(&statusline_arg_completions, "/statusline ".len, query, label);
-    }
-    if (notificationsArgCompletionPrefix(prefix)) |query| {
-        return indexOfArgLabel(&notifications_arg_completions, "/sound ".len, query, label);
-    }
     if (permissionsArgCompletionPrefix(prefix)) |query| {
         return indexOfArgLabel(&permissions_arg_completions, "/permissions ".len, query, label);
     }
@@ -1346,10 +1269,10 @@ test "slash completion categories follow canonical entries" {
 test "help catalog groups visible commands and searches all command metadata" {
     const registry = testSlashRegistry();
 
-    try std.testing.expectEqual(@as(usize, 23), helpCatalogCount(registry, ""));
+    try std.testing.expectEqual(@as(usize, 20), helpCatalogCount(registry, ""));
     try std.testing.expectEqualStrings("/help", helpCatalogSpecAt(registry, "", 0).?.command);
     try std.testing.expectEqual(@as(usize, 4), helpCatalogCategoryCount(registry, "", .general));
-    try std.testing.expectEqual(@as(usize, 3), helpCatalogCount(registry, "appearance"));
+    try std.testing.expectEqual(@as(usize, 1), helpCatalogCount(registry, "appearance"));
     try std.testing.expectEqualStrings("/trace", helpCatalogSpecAt(registry, "diagnostic", 0).?.command);
 }
 
@@ -1511,18 +1434,6 @@ test "workspace completions expose actions and keep path actions open" {
     try std.testing.expect(!slashCompletionHasArgs(testSlashRegistry(), "/workspace clear"));
 }
 
-test "slash completions include sound controls" {
-    try std.testing.expectEqual(@as(usize, 3), slashCompletionCount(testSlashRegistry(), "/sound "));
-    try std.testing.expectEqualStrings("/sound on", nthSlashCompletion(testSlashRegistry(), "/sound ", 0).?);
-    try std.testing.expectEqualStrings("/sound off", nthSlashCompletion(testSlashRegistry(), "/sound ", 1).?);
-    try std.testing.expectEqualStrings("/sound max", nthSlashCompletion(testSlashRegistry(), "/sound ", 2).?);
-    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/sound of"));
-    try std.testing.expectEqualStrings("off", nthSlashCompletionLabel(testSlashRegistry(), "/sound of", 0).?);
-    try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/sound ma"));
-    try std.testing.expectEqualStrings("max", nthSlashCompletionLabel(testSlashRegistry(), "/sound ma", 0).?);
-    try std.testing.expectEqual(@as(usize, "/sound ".len), argCompletionAnchor("/sound "));
-}
-
 test "slash completions list permission modes and rule management" {
     try std.testing.expectEqual(@as(usize, 6), slashCompletionCount(testSlashRegistry(), "/permissions "));
     try std.testing.expectEqualStrings("/permissions ask", nthSlashCompletion(testSlashRegistry(), "/permissions ", 0).?);
@@ -1564,7 +1475,6 @@ test "slash completion descriptions follow completion matches" {
     try std.testing.expectEqualStrings("copy a private diagnostic trace", nthSlashCompletionDescription(testSlashRegistry(), "/tr", 0).?);
     try std.testing.expectEqualStrings("compact older conversation turns", nthSlashCompletionDescription(testSlashRegistry(), "/comp", 0).?);
     try std.testing.expectEqualStrings("show local fx tokens, models, and spend", nthSlashCompletionDescription(testSlashRegistry(), "/us", 0).?);
-    try std.testing.expectEqualStrings("toggle Fast mode when supported", nthSlashCompletionDescription(testSlashRegistry(), "/fa", 0).?);
 }
 
 test "slash completion aliases participate in ranked order" {

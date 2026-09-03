@@ -351,9 +351,6 @@ pub const slash_specs = [_]SlashSpec{
     .{ .kind = .trace, .command = "/trace", .help_entry = "/trace", .completion_description = "copy a private diagnostic trace", .presentation_category = .product },
     .{ .kind = .compact, .command = "/compact", .help_entry = "/compact", .completion_description = "compact older conversation turns", .presentation_category = .session },
     .{ .kind = .settings, .command = "/settings", .help_entry = "/settings [startup-scrollback [on|off]]", .completion_description = "browse and update settings", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
-    .{ .kind = .fast, .command = "/fast", .help_entry = "/fast", .completion_description = "toggle Fast mode when supported", .presentation_category = .model },
-    .{ .kind = .statusline, .command = "/statusline", .help_entry = "/statusline [context|session|workspace]", .completion_description = "toggle status line segments", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
-    .{ .kind = .notifications, .command = "/sound", .help_entry = "/sound [on|off|max]", .completion_description = "toggle sounds and terminal bells", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
     .{ .kind = .workspace, .command = "/workspace", .help_entry = "/workspace [list|add PATH|remove PATH|clear]", .completion_description = "manage additional workspace directories", .presentation_category = .workspace, .show_in_welcome = true, .has_args = true, .accepts_payload = true },
     .{ .kind = .quit, .command = "/quit", .aliases = &.{"/exit"}, .help_entry = "/quit", .completion_description = "exit the interactive shell", .presentation_category = .general, .show_in_welcome = true },
 };
@@ -410,8 +407,6 @@ pub fn slashCompletionHasArgs(command: []const u8) bool {
 
 pub const argCompletionAnchor = command_specs.argCompletionAnchor;
 pub const argCompletionIndexForLabel = command_specs.argCompletionIndexForLabel;
-pub const statuslineArgCompletionPrefix = command_specs.statuslineArgCompletionPrefix;
-pub const notificationsArgCompletionPrefix = command_specs.notificationsArgCompletionPrefix;
 pub const permissionsArgCompletionPrefix = command_specs.permissionsArgCompletionPrefix;
 
 test "built-in slash commands register exact active order" {
@@ -434,9 +429,6 @@ test "built-in slash commands register exact active order" {
         "/trace",
         "/compact",
         "/settings",
-        "/fast",
-        "/statusline",
-        "/sound",
         "/workspace",
         "/quit",
     };
@@ -477,17 +469,4 @@ test "retired appearance slash commands are not registered" {
     try std.testing.expect(!isExactSlashCommand("/maxxing\t"));
     try std.testing.expect(!isExactSlashCommand("/input lines"));
     try std.testing.expect(!isExactSlashCommand("/unknown"));
-}
-
-test "built-in statusline help and completion include workspace" {
-    const help = try renderSlashHelp(std.testing.allocator);
-    defer std.testing.allocator.free(help);
-    try std.testing.expect(
-        std.mem.find(u8, help, "/statusline [context|session|workspace]") != null,
-    );
-
-    try std.testing.expectEqualStrings(
-        "/statusline workspace",
-        nthSlashCompletion("/statusline w", 0).?,
-    );
 }

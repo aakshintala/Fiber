@@ -360,10 +360,7 @@ pub fn Handlers(comptime App: type) type {
                 .create_trace = commandCreateTrace,
                 .compact_history = commandCompactHistory,
                 .handle_settings = commandHandleSettings,
-                .toggle_fast = commandToggleFast,
-                .handle_statusline = commandHandleStatusline,
                 .rename_session = commandRenameSession,
-                .handle_notifications = commandHandleNotifications,
                 .handle_workspace = commandHandleWorkspace,
                 .unknown = commandUnknown,
             };
@@ -1860,31 +1857,6 @@ pub fn Handlers(comptime App: type) type {
                 return;
             }
             try session_commands.Commands(App).handleSettings(app, rest);
-        }
-
-        fn commandToggleFast(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try session_commands.Commands(App).toggleFast(app);
-        }
-
-        fn commandHandleStatusline(ctx: *anyopaque, rest: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            if (std.mem.trim(u8, rest, " \t").len == 0) {
-                if (comptime @hasField(App, "skills")) app.skills.closeMenu();
-                if (comptime @hasField(App, "model_cache")) app.model_cache.closeMenu();
-                closeHelpMenuIfPresent(app);
-                app.input_runtime.settings_menu.close();
-                closeInlineCommandMenusIfPresent(app);
-                app.input_runtime.statusline_menu.open();
-                app.shell.render_requests.request(.footer);
-                return;
-            }
-            try handleStatuslineCommand(app, rest);
-        }
-
-        fn commandHandleNotifications(ctx: *anyopaque, rest: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try handleNotificationsCommand(app, rest);
         }
 
         fn commandHandleWorkspace(ctx: *anyopaque, rest: []const u8) !void {

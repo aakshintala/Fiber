@@ -24,9 +24,6 @@ pub const ParsedCommand = union(enum) {
     trace,
     compact,
     settings: []const u8,
-    fast,
-    statusline: []const u8,
-    notifications: []const u8,
     workspace: []const u8,
     unknown,
 };
@@ -51,10 +48,7 @@ pub const CommandHandlers = struct {
     create_trace: *const fn (ctx: *anyopaque) anyerror!void,
     compact_history: *const fn (ctx: *anyopaque) anyerror!void,
     handle_settings: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
-    toggle_fast: *const fn (ctx: *anyopaque) anyerror!void,
-    handle_statusline: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     rename_session: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
-    handle_notifications: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_workspace: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     unknown: *const fn (ctx: *anyopaque, cmd: []const u8) anyerror!void,
 };
@@ -84,9 +78,6 @@ fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
         .trace => .trace,
         .compact => .compact,
         .settings => .{ .settings = payload },
-        .fast => .fast,
-        .statusline => .{ .statusline = payload },
-        .notifications => .{ .notifications = payload },
         .workspace => .{ .workspace = payload },
     };
 }
@@ -125,9 +116,6 @@ pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []c
         .trace => try handlers.create_trace(handlers.ctx),
         .compact => try handlers.compact_history(handlers.ctx),
         .settings => |rest| try handlers.handle_settings(handlers.ctx, rest),
-        .fast => try handlers.toggle_fast(handlers.ctx),
-        .statusline => |rest| try handlers.handle_statusline(handlers.ctx, rest),
-        .notifications => |rest| try handlers.handle_notifications(handlers.ctx, rest),
         .workspace => |rest| try handlers.handle_workspace(handlers.ctx, rest),
         .unknown => try handlers.unknown(handlers.ctx, cmd),
     }
@@ -159,17 +147,6 @@ test "parse rejects removed plural model command" {
 
 test "parse rejects the removed provider command" {
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/provider codex"));
-}
-
-test "parse extracts sound command payload" {
-    switch (parse(testSlashRegistry(), "/sound off")) {
-        .notifications => |rest| try std.testing.expectEqualStrings("off", rest),
-        else => return error.TestExpectedEqual,
-    }
-    switch (parse(testSlashRegistry(), "/sound")) {
-        .notifications => |rest| try std.testing.expectEqualStrings("", rest),
-        else => return error.TestExpectedEqual,
-    }
 }
 
 test "parse recognizes new session lifecycle command" {
@@ -211,6 +188,11 @@ test "parse rejects removed slash commands" {
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/images clear"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/copy"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/paste"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/fast"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/statusline"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/statusline context"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/sound"));
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/sound off"));
 }
 
 test "parse extracts mcp command payload" {
@@ -230,7 +212,6 @@ test "parse rejects removed upstream-service slash commands" {
 test "parse recognizes exact no-payload commands" {
     try std.testing.expectEqual(ParsedCommand.trace, parse(testSlashRegistry(), "/trace"));
     try std.testing.expectEqual(ParsedCommand.compact, parse(testSlashRegistry(), "/compact"));
-    try std.testing.expectEqual(ParsedCommand.fast, parse(testSlashRegistry(), "/fast"));
 }
 
 test "parse extracts settings command payload" {
@@ -364,12 +345,6 @@ fn recordSettings(ctx: *anyopaque, value: []const u8) anyerror!void {
     test_context.payload = value;
 }
 
-fn recordNotifications(ctx: *anyopaque, value: []const u8) anyerror!void {
-    const test_context = testContext(ctx);
-    test_context.called = "notifications";
-    test_context.payload = value;
-}
-
 fn recordUnknown(ctx: *anyopaque, value: []const u8) anyerror!void {
     const test_context = testContext(ctx);
     test_context.called = "unknown";
@@ -402,10 +377,7 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
         .create_trace = unexpectedNoPayload,
         .compact_history = unexpectedNoPayload,
         .handle_settings = unexpectedPayload,
-        .toggle_fast = unexpectedNoPayload,
-        .handle_statusline = unexpectedPayload,
         .rename_session = unexpectedPayload,
-        .handle_notifications = unexpectedPayload,
         .handle_workspace = unexpectedPayload,
         .unknown = unexpectedPayload,
     };
@@ -465,18 +437,6 @@ test "route forwards settings payload" {
 
     try std.testing.expectEqualStrings("settings", ctx.called);
     try std.testing.expectEqualStrings("startup-scrollback off", ctx.payload);
-}
-
-test "route forwards notifications payload" {
-    var ctx: TestContext = .{};
-    var handlers = testHandlers(&ctx);
-    handlers.handle_notifications = recordNotifications;
-    const cmd = "/sound off";
-
-    try route(testSlashRegistry(), &handlers, cmd);
-
-    try std.testing.expectEqualStrings("notifications", ctx.called);
-    try std.testing.expectEqualStrings("off", ctx.payload);
 }
 
 test "route sends original command string to unknown handler" {
