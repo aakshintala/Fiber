@@ -2,7 +2,7 @@
 
 ## Scope
 
-`fx` is a CLI-first coding agent written in Zig.
+`fiber` is a CLI-first coding agent written in Zig.
 
 Contributions should preserve that direction:
 
@@ -24,7 +24,7 @@ Requirements:
 
 * interactive terminal for manual shell testing
 
-* a Codex/ChatGPT subscription session via `fx login codex` for model-backed flows
+* a Codex/ChatGPT subscription session via `fiber login codex` for model-backed flows
 
 Common commands:
 
@@ -37,7 +37,7 @@ zig build run
 
 ## Verification Workflow
 
-Keep the local development loop focused: run the narrowest test that covers the changed path, build fx, and exercise the change using `./zig-out/bin/fx`. The installed `fx` on `PATH` is not valid development evidence.
+Keep the local development loop focused: run the narrowest test that covers the changed path, build fiber, and exercise the change using `./zig-out/bin/fiber`. The installed `fiber` on `PATH` is not valid development evidence.
 
 Once the focused checks pass, create a clean checkpoint commit, push the non-`main` feature branch, and open a draft PR immediately. The **Full CI** workflow runs the complete deterministic suite on native Linux x86_64, Linux aarch64, macOS x86_64, and macOS aarch64 runners. The native matrix builds, tests, and smoke-tests ReleaseSafe on every platform; formatting and the public-surface audit run in those ReleaseSafe jobs. Four duration-balanced, isolated ReleaseSafe E2E shards per platform use checked-in weights to assign every Bun test file once; files inside each shard run sequentially in separate Bun processes so terminal fixtures and process state cannot leak between files. A failed file receives one bounded retry after tmux is reset.
 
@@ -85,7 +85,7 @@ If you cannot manage labels, a maintainer or repository agent will apply the lab
 
 * `src/gateway/`: AI Gateway client transport
 
-* `.fiber/skills/`: optional fx-native workspace-level skill root
+* `.fiber/skills/`: optional fiber-native workspace-level skill root
 
 * `skills/`: optional shared workspace-level skill root
 
@@ -143,9 +143,9 @@ Subagent children are internal ordinary sessions with their own `~/.fiber/sessio
 
 ## Skills
 
-There are two distinct skill categories in `fx`:
+There are two distinct skill categories in `fiber`:
 
-* `fx` roots that belong to the product itself: `.fiber/skills`, `skills/`, `~/.fiber/skills`
+* `fiber` roots that belong to the product itself: `.fiber/skills`, `skills/`, `~/.fiber/skills`
 
 * compatibility roots discovered for other agent installs: `.opencode/skills`, `.codex/skills`, `.claude/skills`, `.agents/skills`, `.claw/skills`, plus their global equivalents
 
@@ -157,7 +157,7 @@ The interactive agent can also install skills via the `install_skill` tool when 
 
 ## MCP
 
-fx negotiates MCP `2026-07-28` over local stdio and stateless Streamable HTTP.
+fiber negotiates MCP `2026-07-28` over local stdio and stateless Streamable HTTP.
 Version-scoped adapters retain legacy stdio,
 `2025-11-25`/`2025-06-18`/`2025-03-26` Streamable HTTP, and deprecated
 `2024-11-05` HTTP+SSE. Native sessions load trusted MCP configuration from the
@@ -179,7 +179,7 @@ bounded no-follow regular file. Profile entries win native name collisions;
 ACP request entries win ACP name collisions without deduplicating the request
 array. Workspace entries are always optional and never load stored credentials.
 Approved workspace `command`, `args`, `env`, and HTTP header values expand
-`${VAR}` and `${VAR:-default}` from the fx process environment. Pending and
+`${VAR}` and `${VAR:-default}` from the fiber process environment. Pending and
 rejected entries do not read environment values. Missing required variables
 leave an approved server unloaded and appear in `/mcp list` without exposing
 values.
@@ -191,8 +191,8 @@ resource, prompt, completion, and authentication commands require explicit
 Choices live only in profile `settings.json` under the canonical workspace key,
 using `enabledMcpjsonServers`, `disabledMcpjsonServers`, and
 `enableAllProjectMcpServers`. Repository files cannot persist their own
-approval. `fx ask` and ACP skip pending workspace servers. Noninteractive users
-approve them first with `fx mcp trust approve <name>`; rejected servers remain
+approval. `fiber ask` and ACP skip pending workspace servers. Noninteractive users
+approve them first with `fiber mcp trust approve <name>`; rejected servers remain
 disabled.
 
 The core feature surface is Tools, Resources and Resource Templates, Prompts,
@@ -200,7 +200,7 @@ Completion, pagination, cache-aware discovery, subscriptions, progress,
 cancellation, and form or URL elicitation. Keep modern and legacy protocol
 behavior in their existing version-scoped modules.
 
-Tool schemas without `$schema` use JSON Schema 2020-12. fx also accepts the
+Tool schemas without `$schema` use JSON Schema 2020-12. fiber also accepts the
 canonical 2020-12 declaration and the canonical Draft 7 declaration used by
 legacy SDKs, evaluates each with dialect-specific semantics, and rejects other
 dialects or references that would require network fetching before publication.
@@ -247,27 +247,27 @@ The interactive surface supports:
 
 The noninteractive MCP surface supports:
 
-* `fx mcp add <name> <command> [args...]`
+* `fiber mcp add <name> <command> [args...]`
 
-* `fx mcp add --transport http <name> <url>`
+* `fiber mcp add --transport http <name> <url>`
 
-* `fx mcp auth <name>`
+* `fiber mcp auth <name>`
 
-* `fx mcp list`
+* `fiber mcp list`
 
-* `fx mcp logout <name>`
+* `fiber mcp logout <name>`
 
-* `fx mcp path`
+* `fiber mcp path`
 
-* `fx mcp remove <name>`
+* `fiber mcp remove <name>`
 
-* `fx mcp trust approve <name>`
+* `fiber mcp trust approve <name>`
 
-* `fx mcp trust reject <name>`
+* `fiber mcp trust reject <name>`
 
-* `fx mcp trust approve-all`
+* `fiber mcp trust approve-all`
 
-* `fx mcp trust reset`
+* `fiber mcp trust reset`
 
 The local form saves a stdio command. The HTTP form saves a remote Streamable
 HTTP endpoint. List reads effective profile and workspace configuration plus
@@ -279,11 +279,11 @@ constructs the TUI or contacts the Gateway.
 
 The default MCP startup timeout is 30 seconds and remains overridable per
 server with `startup_timeout_ms`. Exact direct `docker run` stdio commands
-without `--cidfile` receive a private cidfile so fx can remove the container
+without `--cidfile` receive a private cidfile so fiber can remove the container
 after shutdown or startup failure. An explicit cidfile remains user-owned.
 
 MongoDB Atlas Managed MCP configuration service accounts use the OAuth
-client-credentials grant. fx does not implement that grant directly. Use
+client-credentials grant. fiber does not implement that grant directly. Use
 MongoDB's `mongodb-atlas-mcp-remote` stdio wrapper with inherited
 `MDB_MCP_API_CLIENT_ID` and `MDB_MCP_API_CLIENT_SECRET` environment variables.
 The Atlas App Connection browser flow is user-delegated access and must not be
@@ -299,8 +299,8 @@ under the `0700` profile directory. `FIBER_DISABLE_KEYCHAIN=1` selects that port
 backend explicitly for deterministic tests and local troubleshooting.
 
 Servers are optional by default. Required startup failures block the first TUI
-or `fx ask` model request; optional failures publish a reduced, degraded
-capability set. Terminal `fx ask` completes admitted MCP discovery before its
+or `fiber ask` model request; optional failures publish a reduced, degraded
+capability set. Terminal `fiber ask` completes admitted MCP discovery before its
 first model request. JSON and other headless asks start required servers first
 and defer optional servers until the turn performs an MCP operation or delegates
 MCP capability to a child. `/mcp list` renders a bounded, secret-free health
@@ -391,10 +391,10 @@ the tape in `tests/e2e/tapes/<name>.fxtape` and assert against the built replay
 command:
 
 ```bash
-./zig-out/bin/fx replay tests/e2e/tapes/my-bug.fxtape --golden tests/e2e/tapes/my-bug.txt
+./zig-out/bin/fiber replay tests/e2e/tapes/my-bug.fxtape --golden tests/e2e/tapes/my-bug.txt
 ```
 
-Check in the golden file and wire a regression test that re-runs `fx replay` in CI and diffs.
+Check in the golden file and wire a regression test that re-runs `fiber replay` in CI and diffs.
 
 ## What Not To Do
 
@@ -408,7 +408,7 @@ Check in the golden file and wire a regression test that re-runs `fx replay` in 
 
 * Do not commit generated state from `.fiber/`, `.zig-cache/`, or `zig-out/`
 
-* Do not add a general alternate-screen (`\x1b[?1049h/l`) render path. fx is inline by design except for the three exclusive owner classes represented by `AlternateScreenOwner`: interactive tool-approval review, the full-transcript screen, and catalog menus. Every owner must leave or explicitly hand off the alternate buffer and restore the main grid, composer, cursor, paste, mouse, focus, and keyboard modes before resolving, cancelling, or shutting down
+* Do not add a general alternate-screen (`\x1b[?1049h/l`) render path. fiber is inline by design except for the three exclusive owner classes represented by `AlternateScreenOwner`: interactive tool-approval review, the full-transcript screen, and catalog menus. Every owner must leave or explicitly hand off the alternate buffer and restore the main grid, composer, cursor, paste, mouse, focus, and keyboard modes before resolving, cancelling, or shutting down
 
 ## Releases
 
@@ -420,7 +420,7 @@ Releases are triggered automatically when the version in `src/main.zig` changes 
 
 Release binaries are attached to the GitHub Release created by the workflow.
 
-Release notes are public product copy. Describe user-visible behavior, always spell the product `fx`, and omit contributor attribution, tracker references, repository or website work, delivery infrastructure, CI and test details, branch history, and implementation-only refactors. Use commits and pull requests as research evidence only. Changelog formatting and release-marker rules live in `AGENTS.md`.
+Release notes are public product copy. Describe user-visible behavior, always spell the product `fiber`, and omit contributor attribution, tracker references, repository or website work, delivery infrastructure, CI and test details, branch history, and implementation-only refactors. Use commits and pull requests as research evidence only. Changelog formatting and release-marker rules live in `AGENTS.md`.
 
 Do not create tags manually. The workflow owns tag creation.
 
@@ -432,12 +432,12 @@ The workflow builds a ReleaseSafe binary, then uses [hyperfine](https://github.c
 
 | Command                | Budget | What it measures                                   |
 | ---------------------- | ------ | -------------------------------------------------- |
-| `fx` (startup)         | 2ms    | Binary launch through CLI dispatch (no TTY needed) |
-| `fx help`              | 2ms    | Minimal startup, pure text output                  |
-| `fx status --json`     | 2ms    | Config read + JSON serialization                   |
-| `fx background --json` | 2ms    | Background record read                             |
-| `fx doctor --json`     | 2ms    | System checks, subprocess spawns                   |
-| `fx sessions --json`   | 2ms    | Session directory read                             |
+| `fiber` (startup)         | 2ms    | Binary launch through CLI dispatch (no TTY needed) |
+| `fiber help`              | 2ms    | Minimal startup, pure text output                  |
+| `fiber status --json`     | 2ms    | Config read + JSON serialization                   |
+| `fiber background --json` | 2ms    | Background record read                             |
+| `fiber doctor --json`     | 2ms    | System checks, subprocess spawns                   |
+| `fiber sessions --json`   | 2ms    | Session directory read                             |
 
 On PRs the check **fails** if any command exceeds its budget.
 
@@ -465,7 +465,7 @@ workflow builds ReleaseSafe first. Results are written to
 Minimum checklist:
 
 1. Run `zig fmt --check src/` and the focused tests for the changed path.
-2. Run `zig build`, then exercise the change with `./zig-out/bin/fx`.
+2. Run `zig build`, then exercise the change with `./zig-out/bin/fiber`.
 3. Push the feature branch and open a draft PR immediately.
 4. Require all four **Full CI** jobs and the final ship gate to pass for the exact current commit before marking the PR ready.
 5. Update `README.md` if user-facing behavior changed.

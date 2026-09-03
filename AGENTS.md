@@ -4,7 +4,7 @@ Instructions for AI coding agents working with this codebase.
 
 ## Temporary Fiber transition process
 
-When implementing [`docs/ideas/fiber-product-transition.md`](docs/ideas/fiber-product-transition.md), follow [`docs/transition/plan.md`](docs/transition/plan.md) and the ordered slices in [`docs/transition/demolition-inventory.md`](docs/transition/demolition-inventory.md). This section overrides conflicting fx-era process, CI, release, platform, naming, authentication, and completion guidance elsewhere in this file or in `CONTRIBUTING.md` until the final documentation phase replaces it.
+When implementing [`docs/ideas/fiber-product-transition.md`](docs/ideas/fiber-product-transition.md), follow [`docs/transition/plan.md`](docs/transition/plan.md) and the ordered slices in [`docs/transition/demolition-inventory.md`](docs/transition/demolition-inventory.md). This section overrides conflicting fiber-era process, CI, release, platform, naming, authentication, and completion guidance elsewhere in this file or in `CONTRIBUTING.md` until the final documentation phase replaces it.
 
 Run one slice at a time, start to finish, on `main`. No parallel slices, no
 concurrent worktrees, no fanning slices out to multiple agents. The slices share
@@ -14,7 +14,7 @@ a slice reviewable.
 
 During demolition, work in one subsystem or about 15 files at a time. Define the removal surface, retained invariants, exact searches, and stop conditions before editing. Use compilation and unit tests as the interim gate; defer routine E2E, live-model, editor, and exhaustive product verification to the repair phase.
 
-For each demolition slice, run `zig fmt --check src/`, `zig build -Doptimize=ReleaseSafe`, `zig build test -Doptimize=ReleaseSafe`, exact searches for removed references, and `./scripts/smoke.sh`. The smoke script finds `fiber` or `fx` on its own, so it needs no change at the identity cutover. Report every command and exit status. Classify tests that exclusively cover removed behavior for deletion; preserve failures covering retained behavior as repair evidence.
+For each demolition slice, run `zig fmt --check src/`, `zig build -Doptimize=ReleaseSafe`, `zig build test -Doptimize=ReleaseSafe`, exact searches for removed references, and `./scripts/smoke.sh`. The smoke script finds `fiber` or `fiber` on its own, so it needs no change at the identity cutover. Report every command and exit status. Classify tests that exclusively cover removed behavior for deletion; preserve failures covering retained behavior as repair evidence.
 
 Review each slice for accidental additions, compatibility paths, and resurrection of removed code. Keep slices independently reviewable.
 
@@ -36,15 +36,15 @@ If you cannot run the binary in your environment, say so explicitly and ask the 
 
 ### Always use the built binary in this repo
 
-When running fx for verification, **always use the freshly-built binary at** **`./zig-out/bin/fiber`** from this checkout. Never run `fx` from `PATH`, never rely on whatever is at `~/.fiber/bin/fx`, and never assume an installed copy reflects your change.
+When running fiber for verification, **always use the freshly-built binary at** **`./zig-out/bin/fiber`** from this checkout. Never run `fiber` from `PATH`, never rely on whatever is at `~/.fiber/bin/fiber`, and never assume an installed copy reflects your change.
 
-* The user may have an older `fx` on their PATH (e.g. installed via `fx upgrade` or the CDN install script). Running that one will not exercise your edits.
+* The user may have an older `fiber` on their PATH (e.g. installed via `fiber upgrade` or the CDN install script). Running that one will not exercise your edits.
 
 * `zig build` writes to `zig-out/bin/fiber`. That is the only binary that contains your latest change.
 
 * When a user reports "still not working" after you believe you fixed something, do not assume they are running the wrong binary. Assume your fix is incomplete and investigate further. If you genuinely suspect a PATH mismatch, ask — do not silently copy binaries into `~/.fiber/bin/`.
 
-* In any shell invocation — tmux, direct run, scripts — reference fiber as `/Users/<you>/path/to/repo/zig-out/bin/fiber` (absolute) or `./zig-out/bin/fiber` (when cwd is the repo root). Bare `fx` is always wrong for dev verification.
+* In any shell invocation — tmux, direct run, scripts — reference fiber as `/Users/<you>/path/to/repo/zig-out/bin/fiber` (absolute) or `./zig-out/bin/fiber` (when cwd is the repo root). Bare `fiber` is always wrong for dev verification.
 
 ## Language and Toolchain
 
@@ -152,7 +152,7 @@ Runtime state lives under `~/.fiber/sessions/<session-id>/` (`session.json`, `ba
 
 Security is permission-first. All sensitive tool behavior must integrate with `src/core/permissions/permissions.zig`.
 
-* `permission_mode` controls baseline (`ask`, `auto`, or `yolo`). Yolo bypasses fx permission policy and uses an effective sandbox of `none` without rewriting saved sandbox configuration
+* `permission_mode` controls baseline (`ask`, `auto`, or `yolo`). Yolo bypasses fiber permission policy and uses an effective sandbox of `none` without rewriting saved sandbox configuration
 
 * Configured denies are evaluated before saved-session rules; an exact saved-session deny can narrow a configured allow, while an exact saved-session allow can satisfy an unresolved configured ask
 
@@ -242,7 +242,7 @@ Two test suites live under `tests/`, both using Bun:
 
 ### `tests/evals/` — LLM Evals
 
-Eval scenarios that exercise the agent through `fx ask --json`. Require `AI_GATEWAY_API_KEY`.
+Eval scenarios that exercise the agent through `fiber ask --json`. Require `AI_GATEWAY_API_KEY`.
 
 ```bash
 cd tests/evals && bun install && bun test           # run all evals
@@ -301,7 +301,7 @@ A Full CI result is valid only when it belongs to the exact current commit and a
 
 ## Reproducing Render Bugs
 
-fx's rendering is inline by default and deliberately emits a small ANSI subset. Three owner classes are the narrow exceptions, and each takes the alternate buffer exclusively through `AlternateScreenOwner` in `src/ui/shell_runtime.zig`: interactive permission review, the full-transcript screen, and catalog menus. Only one class may own the buffer at a time, and each must leave it and restore the main grid, composer, cursor, paste, mouse, focus, and keyboard modes when it closes. Transcript rendering, question prompts, command-output expansion, and subagent delegation remain inline. Three tools exist for reproducing and regression-proofing render bugs:
+fiber's rendering is inline by default and deliberately emits a small ANSI subset. Three owner classes are the narrow exceptions, and each takes the alternate buffer exclusively through `AlternateScreenOwner` in `src/ui/shell_runtime.zig`: interactive permission review, the full-transcript screen, and catalog menus. Only one class may own the buffer at a time, and each must leave it and restore the main grid, composer, cursor, paste, mouse, focus, and keyboard modes when it closes. Transcript rendering, question prompts, command-output expansion, and subagent delegation remain inline. Three tools exist for reproducing and regression-proofing render bugs:
 
 ### tmux (live TTY repros)
 
@@ -318,7 +318,7 @@ Set `FIBER_DEBUG_RECORD=1` to create an automatic private tape under
 developer-only recording notice must stay out of the inline transcript during
 a screen share. The notice remains available in the Ctrl+O full transcript.
 Use `FIBER_RECORD=<path>` when a test or investigation needs an exact destination.
-Recording dumps every byte fx writes and every resize into a framed binary tape.
+Recording dumps every byte fiber writes and every resize into a framed binary tape.
 Replay the tape through the built-in virtual terminal:
 
 ```bash
@@ -361,11 +361,11 @@ Current raw wall-clock contract:
 * Non-Linux local runs: informational raw means
 
 The Linux CI runner is the authoritative product budget. Local macOS process
-and dynamic-loader floors vary enough to exceed 2ms independently of fx, so
+and dynamic-loader floors vary enough to exceed 2ms independently of fiber, so
 local runs report raw means without assigning a substitute product budget. The
 process baseline is diagnostic only and is never subtracted.
 
-When adding features, consider their impact on startup latency. The `fx help` path is the baseline cold-start benchmark.
+When adding features, consider their impact on startup latency. The `fiber help` path is the baseline cold-start benchmark.
 
 ## Binary Size Observability
 
@@ -424,7 +424,7 @@ Whether automated or manual, the changelog is public product copy. Describe obse
 
 Public changelog entries must:
 
-* Spell the product name `fx`. Preserve different casing only when it is part of an exact code identifier such as `FIBER_MODEL`.
+* Spell the product name `fiber`. Preserve different casing only when it is part of an exact code identifier such as `FIBER_MODEL`.
 * Use only relevant sections from `### Breaking Changes`, `### New Features`, `### Improvements`, `### Bug Fixes`, and `### Security`. Omit empty sections.
 * Bold a short feature or fix name, then describe the user-visible change after a colon.
 * Omit pull request numbers, issue numbers, commit hashes, contributor names, and author attribution.
@@ -455,7 +455,7 @@ Do not create version tags manually. Do not change `build.zig.zon` version (it i
 
 ## Repository and License
 
-The canonical repository is `vercel-labs/fx` on GitHub. All URLs, links, and references to the repo must use `vercel-labs/fx` (not `vercel/fx`, `user/fx`, or any other org/owner). Licensed under Apache-2.0.
+The canonical repository is `aakshintala/Fiber` on GitHub. All URLs, links, and references to this repo must use `aakshintala/Fiber`. `vercel-labs/fx` is the upstream project Fiber was forked from; reference it only for attribution and history, never as this repository. Licensed under Apache-2.0.
 
 ## What Not To Do
 
