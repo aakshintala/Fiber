@@ -11,8 +11,8 @@ const process_provider_mod = @import(
 
 const Allocator = std.mem.Allocator;
 
-pub const launcher_mode = "--fx-internal-terminal-tmux-launcher";
-pub const capture_mode = "--fx-internal-terminal-tmux-capture";
+pub const launcher_mode = "--fiber-internal-terminal-tmux-launcher";
+pub const capture_mode = "--fiber-internal-terminal-tmux-capture";
 
 const namespace_option = "@fx_terminal_namespace";
 const namespace_value = "1";
@@ -2691,7 +2691,7 @@ test "tmux backend identity and shell quoting remain deterministic" {
 test "tmux paths keep artifacts durable and place only the server socket in transport" {
     const alloc = std.testing.allocator;
     const durable_root = "/profiles/example/.fiber/terminal-host";
-    const transport_root = "/tmp/fx-terminal-501-profile";
+    const transport_root = "/tmp/fiber-terminal-501-profile";
     const identity = "0123456789abcdef0123456789abcdef";
     var paths = try Paths.init(
         alloc,
@@ -2702,7 +2702,7 @@ test "tmux paths keep artifacts durable and place only the server socket in tran
     defer paths.deinit(alloc);
 
     try std.testing.expectEqualStrings(
-        "/tmp/fx-terminal-501-profile/tmux.sock",
+        "/tmp/fiber-terminal-501-profile/tmux.sock",
         paths.socket,
     );
     for ([_][]const u8{

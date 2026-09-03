@@ -108,7 +108,7 @@ const agent_request_body = @import("../gateway/agent_request_body.zig");
 const model_tool_schema = @import("../core/tooling/model_tool_schema.zig");
 const model_capabilities = @import("../core/config/model_capabilities.zig");
 
-/// Shapes an agent request body for the fx-internal transport fixtures.
+/// Shapes an agent request body for the fiber-internal transport fixtures.
 pub fn buildAgentRequest(
     alloc: Allocator,
     request: agent_stream_provider_contract.RequestData,

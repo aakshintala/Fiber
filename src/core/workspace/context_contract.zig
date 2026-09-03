@@ -366,7 +366,7 @@ fn appendDupedStrings(alloc: Allocator, destination: *std.ArrayList([]u8), strin
     }
 }
 
-pub const contract_name = "fx.shared_model_context.v1";
+pub const contract_name = "fiber.shared_model_context.v1";
 
 pub const Fragment = enum {
     workspace_identity,
@@ -624,7 +624,7 @@ test "minimum shared model context contract snapshot" {
     defer std.testing.allocator.free(snapshot);
 
     try std.testing.expectEqualStrings(
-        \\contract: fx.shared_model_context.v1
+        \\contract: fiber.shared_model_context.v1
         \\required_fragments:
         \\- workspace_identity: workspace root and current directory
         \\- repo_identity: git branch, worktree state, and sanitized GitHub origin when known
@@ -644,7 +644,7 @@ test "entrypoint context inventory snapshot documents current deltas" {
     defer std.testing.allocator.free(snapshot);
 
     try std.testing.expectEqualStrings(
-        \\contract: fx.shared_model_context.v1
+        \\contract: fiber.shared_model_context.v1
         \\entrypoints:
         \\- entrypoint: interactive
         \\  assembly_path: main.App.enqueuePrompt -> app_agent_runtime.processQueuedPrompt -> agent_runtime dependencies
@@ -693,7 +693,7 @@ test "entrypoint model-visible layout snapshot covers major entrypoints" {
     defer std.testing.allocator.free(snapshot);
 
     try std.testing.expectEqualStrings(
-        \\contract: fx.shared_model_context.v1
+        \\contract: fiber.shared_model_context.v1
         \\model_visible_layout:
         \\- entrypoint: interactive
         \\  static_context_refresh: one applicable snapshot before enqueue; scoped deltas attach before affected tool execution

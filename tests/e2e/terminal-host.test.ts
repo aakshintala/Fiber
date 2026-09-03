@@ -30,7 +30,7 @@ import {
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const INTERNAL_MODE = "--fx-internal-terminal-host";
+const INTERNAL_MODE = "--fiber-internal-terminal-host";
 const HEADER_BYTES = 28;
 const TERMINAL_FIXTURE_SHELL = terminalFixtureShell();
 const CLEANUP_CHILD_EXIT_TIMEOUT_MS = 5_000;
@@ -194,7 +194,7 @@ async function cleanupOwnedTestResources(
 }
 
 function makeHome(): string {
-  const home = mkdtempSync(join(tmpdir(), "fx-terminal-host-"));
+  const home = mkdtempSync(join(tmpdir(), "fiber-terminal-host-"));
   chmodSync(home, 0o700);
   const owner = join(home, ".fiber", "sessions", TERMINAL_OWNER_SESSION);
   mkdirSync(owner, { recursive: true, mode: 0o700 });
@@ -357,7 +357,7 @@ function tmuxCaptureHelperPids(): number[] {
     .filter((entry): entry is { pid: number; command: string } => entry !== null)
     .filter((entry) =>
       entry.command.includes(FIBER_BIN) &&
-      entry.command.includes("--fx-internal-terminal-tmux-capture")
+      entry.command.includes("--fiber-internal-terminal-tmux-capture")
     )
     .map((entry) => entry.pid)
     .sort((left, right) => left - right);
@@ -443,7 +443,7 @@ async function runClientFixture(
 ) {
   const current = binary === FIBER_BIN;
   const executable = current ? buildCurrentClientFixture() : binary;
-  const args = current ? [] : ["--fx-internal-terminal-client-fixture"];
+  const args = current ? [] : ["--fiber-internal-terminal-client-fixture"];
   const child = spawn(executable, args, {
     env: {
       ...process.env,
@@ -464,7 +464,7 @@ async function runClientFixture(
 function buildCurrentClientFixture(): string {
   if (currentClientFixtureBinary !== null) return currentClientFixtureBinary;
   const repoRoot = join(import.meta.dir, "../..");
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "fx-terminal-client-fixture-"));
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "fiber-terminal-client-fixture-"));
   const binary = join(fixtureRoot, "terminal-client-fixture");
   fixtureArtifacts.push(fixtureRoot);
   execFileSync(
@@ -487,7 +487,7 @@ function buildThreadForkFixture(): string {
     return currentThreadForkFixtureBinary;
   }
   const repoRoot = join(import.meta.dir, "../..");
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "fx-terminal-thread-fork-"));
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "fiber-terminal-thread-fork-"));
   const source = join(fixtureRoot, "thread-fork.c");
   const binary = join(fixtureRoot, "thread-fork");
   fixtureArtifacts.push(fixtureRoot);
@@ -605,7 +605,7 @@ function terminalTransportPaths(home: string) {
   const uid = process.getuid?.();
   if (uid === undefined) throw new Error("missing Unix uid");
   const base = process.platform === "darwin" ? "/private/tmp" : "/tmp";
-  const dir = join(base, `fx-terminal-${uid}-${digest}`);
+  const dir = join(base, `fiber-terminal-${uid}-${digest}`);
   return {
     dir,
     socket: join(dir, "host.sock"),
@@ -614,7 +614,7 @@ function terminalTransportPaths(home: string) {
 }
 
 function makeLongHome(endpointBytes = 141): string {
-  const root = mkdtempSync(join(tmpdir(), "fx-terminal-long-home-"));
+  const root = mkdtempSync(join(tmpdir(), "fiber-terminal-long-home-"));
   const endpointSuffix = join(".fiber", "terminal-host-v7", "host.sock");
   const componentBytes = endpointBytes -
     Buffer.byteLength(root) -
@@ -2471,7 +2471,7 @@ static int launcher_process(void) {
   if (fd < 0) return 0;
   ssize_t count = read(fd, bytes, sizeof(bytes));
   close(fd);
-  const char needle[] = "--fx-internal-terminal-tmux-launcher";
+  const char needle[] = "--fiber-internal-terminal-tmux-launcher";
   if (count < (ssize_t)(sizeof(needle) - 1)) return 0;
   for (ssize_t i = 0; i <= count - (ssize_t)(sizeof(needle) - 1); i++) {
     if (memcmp(bytes + i, needle, sizeof(needle) - 1) == 0) return 1;
@@ -2626,7 +2626,7 @@ exec /bin/bash "$@"
       "do_signal_stop",
     ]);
     expect(processLines.some((line) =>
-      line.includes("--fx-internal-terminal-control")
+      line.includes("--fiber-internal-terminal-control")
     )).toBe(false);
     expect(existsSync(resumedProof)).toBe(false);
     const record = durableTerminalRecord(home).value as unknown as {
@@ -3509,7 +3509,7 @@ test.skipIf(!tmuxAvailable())("private tmux teardown owns partial recovery resou
     identities: new Set(),
   };
   privateTmuxServers.set(retryProbe.socket, retryProbe);
-  const transportRoot = mkdtempSync(join(tmpdir(), "fx-terminal-cleanup-root-"));
+  const transportRoot = mkdtempSync(join(tmpdir(), "fiber-terminal-cleanup-root-"));
   transportRoots.add(transportRoot);
   const attempts: string[] = [];
   const cleanupFailure = new Error("cleanup failure");
@@ -7225,7 +7225,7 @@ test("long profile homes use distinct private transport roots and retain durable
 test("long-home transport roots reject symlink and non-private components without mutation", async () => {
   const symlinkHome = makeLongHome(141);
   const symlinkTransport = terminalTransportPaths(symlinkHome);
-  const outside = mkdtempSync(join(tmpdir(), "fx-terminal-foreign-runtime-"));
+  const outside = mkdtempSync(join(tmpdir(), "fiber-terminal-foreign-runtime-"));
   homes.push(outside);
   writeFileSync(join(outside, "host.sock"), "foreign");
   symlinkSync(outside, symlinkTransport.dir);

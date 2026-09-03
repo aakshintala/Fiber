@@ -919,7 +919,7 @@ test "gateway request serializes an optional structured response format" {
         null,
         null,
         .{
-            .name = "fx_vision_evidence",
+            .name = "fiber_vision_evidence",
             .description = "Evidence \"only\"",
             .schema = schema.value,
         },
@@ -931,7 +931,7 @@ test "gateway request serializes an optional structured response format" {
     defer parsed.deinit();
     const format = parsed.value.object.get("responseFormat").?;
     try std.testing.expectEqualStrings("json", format.object.get("type").?.string);
-    try std.testing.expectEqualStrings("fx_vision_evidence", format.object.get("name").?.string);
+    try std.testing.expectEqualStrings("fiber_vision_evidence", format.object.get("name").?.string);
     try std.testing.expectEqualStrings("Evidence \"only\"", format.object.get("description").?.string);
     try std.testing.expectEqualStrings("object", format.object.get("schema").?.object.get("type").?.string);
 

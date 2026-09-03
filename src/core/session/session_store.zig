@@ -5213,7 +5213,7 @@ fn writeWritableManagedHistoryFixture(
     defer alloc.free(output_handle);
     const replay_payload = "recovered command replay";
     var replay_bytes: [8 + 9 + replay_payload.len]u8 = undefined;
-    @memcpy(replay_bytes[0..8], "FXRPLY01");
+    @memcpy(replay_bytes[0..8], "FBRPLY01");
     replay_bytes[8] = 0;
     std.mem.writeInt(
         u64,
@@ -9885,7 +9885,7 @@ test "recovery reports legacy artifact mutations as unverified" {
             .replay => {
                 const payload = "recovered command replaX";
                 var replay: [8 + 9 + payload.len]u8 = undefined;
-                @memcpy(replay[0..8], "FXRPLY01");
+                @memcpy(replay[0..8], "FBRPLY01");
                 replay[8] = 0;
                 std.mem.writeInt(
                     u64,
@@ -10024,7 +10024,7 @@ test "recovery rejects corrupt managed children without leaking a target" {
             .replay_content => {
                 const replay_payload = "recovered command replaX";
                 var replay_bytes: [8 + 9 + replay_payload.len]u8 = undefined;
-                @memcpy(replay_bytes[0..8], "FXRPLY01");
+                @memcpy(replay_bytes[0..8], "FBRPLY01");
                 replay_bytes[8] = 0;
                 std.mem.writeInt(
                     u64,

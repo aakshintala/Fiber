@@ -152,7 +152,7 @@ function expectVisionResponseFormat(body: string, imageCount: number) {
   };
   expect(request.responseFormat).toMatchObject({
     type: "json",
-    name: "fx_vision_evidence",
+    name: "fiber_vision_evidence",
     schema: {
       type: "object",
       required: ["images"],

@@ -24,8 +24,8 @@ const workspace_pathing = @import("../workspace/pathing.zig");
 
 const Allocator = std.mem.Allocator;
 
-const launcher_mode = "--fx-internal-terminal-launcher";
-const control_mode = "--fx-internal-terminal-control";
+const launcher_mode = "--fiber-internal-terminal-launcher";
+const control_mode = "--fiber-internal-terminal-control";
 
 const max_sessions = managed_execution_contract.max_live_entries;
 
@@ -2180,20 +2180,20 @@ const Session = struct {
         const path_suffix = std.fmt.bytesToHex(path_bytes, .lower);
         const control_path = try std.fmt.allocPrint(
             self.alloc,
-            "/tmp/fx-terminal-{s}.sock",
+            "/tmp/fiber-terminal-{s}.sock",
             .{path_suffix},
         );
         defer self.alloc.free(control_path);
         const bootstrap_path = try std.fmt.allocPrint(
             self.alloc,
-            "/tmp/fx-terminal-{s}.bootstrap",
+            "/tmp/fiber-terminal-{s}.bootstrap",
             .{path_suffix},
         );
         defer self.alloc.free(bootstrap_path);
         const command_path = if (request.command != null)
             try std.fmt.allocPrint(
                 self.alloc,
-                "/tmp/fx-terminal-{s}.command",
+                "/tmp/fiber-terminal-{s}.command",
                 .{path_suffix},
             )
         else

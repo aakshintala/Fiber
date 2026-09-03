@@ -32,7 +32,7 @@ pub const Environment = union(enum) {
     }
 };
 
-const permission_identity_prefix = "@fx-terminal-env:";
+const permission_identity_prefix = "@fiber-terminal-env:";
 const tty_permission_identity_prefix = "@fx-shell-mode:tty:";
 
 pub fn isExplicitPermissionCommandIdentity(value: []const u8) bool {

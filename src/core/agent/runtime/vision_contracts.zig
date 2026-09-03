@@ -8,7 +8,7 @@ const Allocator = std.mem.Allocator;
 const max_focus_bytes: usize = 4096;
 const max_provider_images_per_batch: usize = 8;
 pub const native_route_unavailable_message = "Vision is unavailable for this request.";
-pub const provider_response_format_name = "fx_vision_evidence";
+pub const provider_response_format_name = "fiber_vision_evidence";
 pub const provider_response_format_description = "Factual evidence extracted from the requested images.";
 
 pub const VisionRequestError = error{

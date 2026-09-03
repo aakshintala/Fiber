@@ -296,7 +296,7 @@ fn appendMarker(
 ) Allocator.Error!void {
     try appendShellWord(output, alloc, executable);
     inline for (.{
-        "--fx-internal-terminal-control",
+        "--fiber-internal-terminal-control",
         control_path,
         nonce,
         event,
@@ -525,7 +525,7 @@ test "bootstrap quotes private paths and separates command completion" {
     );
     defer std.testing.allocator.free(commandless);
     try std.testing.expectEqualStrings(
-        "set +x; '/tmp/fx'\"'\"'bin' '--fx-internal-terminal-control' " ++
+        "set +x; '/tmp/fx'\"'\"'bin' '--fiber-internal-terminal-control' " ++
             "'/tmp/control' 'nonce' 'shell-ready' || exit 125\n",
         commandless,
     );

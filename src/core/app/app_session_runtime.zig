@@ -6042,8 +6042,8 @@ test "resume falls back to saved command output when replay contains an empty fr
         "exit_code=0\n<stdout>\nFALLBACK_STDOUT_MARKER\n</stdout>\n" ++
         "<stderr>\n</stderr>\n";
     const replay_handle = "fx-command-replay-empty-frame.bin";
-    var empty_replay = [_]u8{0} ** ("FXRPLY01".len + 9);
-    @memcpy(empty_replay[0.."FXRPLY01".len], "FXRPLY01");
+    var empty_replay = [_]u8{0} ** ("FBRPLY01".len + 9);
+    @memcpy(empty_replay[0.."FBRPLY01".len], "FBRPLY01");
 
     var calls = [_]types.ToolCall{.{
         .id = "call_empty_replay",

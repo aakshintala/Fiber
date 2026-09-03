@@ -17,7 +17,7 @@ const process_identity = @import("../execution/process_identity.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const internal_mode = "--fx-internal-terminal-host";
+pub const internal_mode = "--fiber-internal-terminal-host";
 pub const endpoint_name = "host.sock";
 pub const lock_name = "host.lock";
 const identity_name = "host.json";
@@ -136,7 +136,7 @@ fn resolveEndpointSelection(
     );
     const runtime_name = try std.fmt.allocPrint(
         alloc,
-        "fx-terminal-{d}-{s}",
+        "fiber-terminal-{d}-{s}",
         .{ uid, digest_hex },
     );
     defer alloc.free(runtime_name);
