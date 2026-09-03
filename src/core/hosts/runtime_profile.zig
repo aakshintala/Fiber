@@ -1,7 +1,6 @@
 const std = @import("std");
 
 pub const Profile = struct {
-    cooperative_agent: bool,
     durable_sessions: bool,
     profile_usage: bool,
     native_auth: bool,
@@ -25,7 +24,6 @@ pub fn allows(comptime App: type, comptime capability: Capability) bool {
 }
 
 pub const native = Profile{
-    .cooperative_agent = false,
     .durable_sessions = true,
     .profile_usage = true,
     .native_auth = true,

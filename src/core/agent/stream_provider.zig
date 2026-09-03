@@ -99,17 +99,6 @@ pub const AttemptEvidence = struct {
     network_failure: ?NetworkFailureEvidence = null,
 };
 
-/// Gives a cooperative single-threaded host a chance to publish UI and runtime
-/// state while provider transport remains pending.
-pub const CooperativePulse = struct {
-    ctx: *anyopaque,
-    run: *const fn (ctx: *anyopaque) anyerror!void,
-
-    pub fn pulse(self: CooperativePulse) anyerror!void {
-        try self.run(self.ctx);
-    }
-};
-
 pub const VisionMode = enum {
     unavailable,
     optional,
@@ -191,7 +180,6 @@ pub const ModelRequest = struct {
     /// Optional absolute provider deadline. Transports that support bounded
     /// execution must stop in-flight I/O before returning `error.Timeout`.
     deadline: ?std.Io.Clock.Timestamp = null,
-    cooperative_pulse: ?CooperativePulse = null,
     delivery: *DeliveryCertainty,
     attempt_evidence: *AttemptEvidence,
     events: EventSink,

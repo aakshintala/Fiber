@@ -1362,7 +1362,7 @@ pub fn Runtime(comptime App: type) type {
         ) !void {
             const previous_policy = app.session_persistence.pending_live_session_policy;
             const decision = decideLiveSessionTransition(
-                runtime_profile.allows(App, .cooperative_agent),
+                false,
                 app.worker.isProcessing(),
                 previous_policy,
                 .{ .request = background_policy },
@@ -1389,7 +1389,7 @@ pub fn Runtime(comptime App: type) type {
 
         pub fn settlePendingLiveSessionTransition(app: *App) !void {
             const decision = decideLiveSessionTransition(
-                runtime_profile.allows(App, .cooperative_agent),
+                false,
                 app.worker.isProcessing(),
                 app.session_persistence.pending_live_session_policy,
                 .settle,

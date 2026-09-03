@@ -327,55 +327,6 @@ pub const Runtime = struct {
         };
     }
 
-    /// Loads the catalog inline for cooperative single-threaded hosts.
-    pub fn loadCooperative(
-        self: *Self,
-        provider: model_catalog.Provider,
-        access: credentials.CatalogAccess,
-    ) void {
-        if (!self.beginLoad(access)) return;
-
-        const result = model_catalog.fetchWithPublicFallback(provider, self.alloc, .{
-            .access = access,
-            .endpoint = self.models_path,
-            .cancel_flag = &self.cancel_requested,
-            .view = .picker,
-        });
-        var loaded = switch (result) {
-            .loaded => |loaded| loaded,
-            .failed => |failure| {
-                self.markFailed(failure);
-                self.mutex.lockUncancelable(io_mod.getIo());
-                self.completion_pending = true;
-                self.mutex.unlock(io_mod.getIo());
-                return;
-            },
-        };
-
-        self.mutex.lockUncancelable(io_mod.getIo());
-        if (loaded.catalog.items.len == 0 and self.outcome.loaded != null and self.catalog.items.len > 0) {
-            model_catalog.freeModelCatalog(self.alloc, &loaded.catalog);
-            self.outcome.last_failure = if (loaded.provenance.fallback_failure) |failure|
-                .{
-                    .access = loaded.provenance.access,
-                    .anonymous_fallback_used = loaded.provenance.anonymous_fallback_used,
-                    .failure = failure,
-                }
-            else
-                null;
-            self.state = .ready;
-            self.completion_pending = true;
-            self.mutex.unlock(io_mod.getIo());
-            return;
-        }
-        model_catalog.freeModelCatalog(self.alloc, &self.catalog);
-        self.catalog = loaded.catalog;
-        self.outcome = .{ .loaded = loaded.provenance };
-        self.state = .ready;
-        self.completion_pending = true;
-        self.mutex.unlock(io_mod.getIo());
-    }
-
     fn beginLoad(self: *Self, access: credentials.CatalogAccess) bool {
         self.finishThreadIfDone();
 
@@ -1002,30 +953,6 @@ test "model cache clears an old failure after a clean empty refresh" {
     var snapshot = (try runtime.snapshotCachedModelIds(std.testing.allocator)).?;
     defer collections.freeStringList(std.testing.allocator, &snapshot);
     try std.testing.expectEqualStrings("public/original", snapshot.items[0]);
-}
-
-test "cooperative model cache retries a ready catalog after a retryable fallback failure" {
-    var runtime = Runtime.init(std.testing.allocator, "/v1/models");
-    defer runtime.deinit();
-    runtime.catalog = try testCatalog(std.testing.allocator, "public/original");
-    runtime.outcome = .{
-        .loaded = .{ .access = .init(.{ .public_only = .no_credential }) },
-        .last_failure = .{
-            .access = .init(.{ .public_only = .no_credential }),
-            .anonymous_fallback_used = false,
-            .failure = .{ .category = .transport, .retryable = true },
-        },
-    };
-    runtime.state = .ready;
-    runtime.requested_access = .init(.{ .public_only = .no_credential });
-    runtime.last_attempt_ms = io_mod.milliTimestamp() - 1000;
-
-    var provider = AuthChangeCatalog{ .model_id = "public/refreshed" };
-    runtime.loadCooperative(provider.provider(), .{ .public_only = .no_credential });
-
-    try std.testing.expectEqual(@as(usize, 1), provider.calls);
-    try std.testing.expect(runtime.outcome.last_failure == null);
-    try std.testing.expectEqualStrings("public/refreshed", runtime.catalog.items[0].id);
 }
 
 test "model cache projects rejected credential provenance for 401 and 403" {

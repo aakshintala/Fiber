@@ -72,7 +72,6 @@ const builtin_modes = @import("builtins/modes.zig");
 const builtin_skills = @import("builtins/skills.zig");
 const host = @import("core/hosts/host.zig");
 const host_runtime_profile = @import("core/hosts/runtime_profile.zig");
-const host_target = @import("core/hosts/target.zig");
 const native_host = @import("core/hosts/native.zig");
 const debug_trace = @import("core/shared/debug_trace.zig");
 const display_width = @import("core/shared/display_width.zig");
@@ -441,23 +440,6 @@ const App = struct {
             .cancel_flag = &self.worker.worker_cancel_requested,
             .view = .picker,
         });
-    }
-
-    pub fn cooperativeTransportPulse(self: *Self) !void {
-        if (comptime !host_target.is_wasm) return;
-        if (try event_loop.pump_ready_input(
-            self.terminal,
-            &self.should_exit,
-            RenderAppRuntime.eventLoopCallbacks(self),
-        )) |exit_cause| {
-            if (exit_cause == .input_closed) self.should_exit = true;
-            return;
-        }
-        try WorkerAppRuntime.tick(
-            self,
-            app_callbacks.Bindings(App).workerEventHandlers(self),
-        );
-        try self.flushRequestedFrame();
     }
 
     pub fn secretStore(self: *const Self) host.SecretStore {
@@ -925,16 +907,6 @@ const App = struct {
 
     fn fullTranscriptFocusedWorkActive(self: *App) bool {
         return self.shell.fullTranscriptFocusedWorkActive();
-    }
-
-    fn processNextCooperativePrompt(self: *App) !void {
-        if (comptime !host_target.is_wasm) return;
-        try app_process_runtime.Runtime(App).processNextCooperativePrompt(
-            self,
-            app_callbacks.Bindings(App).workerEventHandlers(self),
-            flushRequestedFrame,
-        );
-        try SessionAppRuntime.settlePendingLiveSessionTransition(self);
     }
 
     fn flushRequestedFrame(self: *App) !void {
@@ -1933,21 +1905,10 @@ const App = struct {
     }
 
     pub fn startModelCacheWarmup(self: *App) void {
-        if (comptime host_profile.cooperative_agent) {
-            if (self.auth.credentialNeedsRefresh()) {
-                debug_trace.logf("auth", "model_cache_warmup_deferred reason=credential_refresh_required", .{});
-                return;
-            }
-            self.model_cache.loadCooperative(
-                self.providerSet().select(self.provider_selection.selection().provider).model_catalog orelse unreachable,
-                self.auth.modelCatalogAccess(),
-            );
-        } else {
-            self.model_cache.startWarmup(
-                self.providerSet().select(self.provider_selection.selection().provider).model_catalog orelse unreachable,
-                self.auth.modelCatalogAccess(),
-            );
-        }
+        self.model_cache.startWarmup(
+            self.providerSet().select(self.provider_selection.selection().provider).model_catalog orelse unreachable,
+            self.auth.modelCatalogAccess(),
+        );
     }
 
     pub fn ensureModelCache(self: *App) void {
@@ -2056,10 +2017,6 @@ const App = struct {
         try self.worker.pushEvent(std.heap.c_allocator, .{ .assistant_presentation = .{
             .text = @constCast(text),
         } });
-        if (comptime host_profile.cooperative_agent) {
-            try WorkerAppRuntime.tick(self, app_callbacks.Bindings(App).workerEventHandlers(self));
-            try self.flushRequestedFrame();
-        }
     }
 
     pub fn processQueuedPrompt(self: *App, job: QueuedPrompt) !void {
@@ -2731,7 +2688,6 @@ const App = struct {
         if (comptime host_profile.native_auth) {
             try app_terminal_runtime.Runtime(App).collectFacts(self);
         }
-        try self.processNextCooperativePrompt();
 
         const cols_before_resize = self.shell.layout.cols;
         if (self.terminal_input_runtime.native_clear_probe.active() or

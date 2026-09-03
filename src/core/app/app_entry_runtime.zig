@@ -150,7 +150,7 @@ fn runWithDeps(comptime App: type, alloc: Allocator, args: []const [:0]const u8,
         .exit => |code| return .{ .exit = code },
     }
 
-    return runInteractiveWithDeps(App, false, alloc, &launch, deps);
+    return runInteractiveWithDeps(App, alloc, &launch, deps);
 }
 
 pub fn runBeforeInteractive(alloc: Allocator, args: []const [:0]const u8, cfg: Config) !BeforeInteractiveResult {
@@ -210,16 +210,10 @@ fn benchEnabled() bool {
 }
 
 pub fn runInteractive(comptime App: type, alloc: Allocator, launch: *cli_surface.InteractiveLaunch) !RunOutcome {
-    return runInteractiveWithDeps(App, false, alloc, launch, .{});
+    return runInteractiveWithDeps(App, alloc, launch, .{});
 }
 
-/// Runs the interactive product without native CLI dispatch, process replacement,
-/// or a worker thread. Single-threaded hosts must arrange cooperative prompt work.
-pub fn runInteractiveCooperative(comptime App: type, alloc: Allocator, launch: *cli_surface.InteractiveLaunch) !RunOutcome {
-    return runInteractiveWithDeps(App, true, alloc, launch, .{});
-}
-
-fn runInteractiveWithDeps(comptime App: type, comptime cooperative: bool, alloc: Allocator, launch: *cli_surface.InteractiveLaunch, deps: RunDeps) !RunOutcome {
+fn runInteractiveWithDeps(comptime App: type, alloc: Allocator, launch: *cli_surface.InteractiveLaunch, deps: RunDeps) !RunOutcome {
     const resume_requested = launch.requested_resume != null;
     var app = App.init(alloc, launch) catch |err| {
         switch (err) {
@@ -275,30 +269,26 @@ fn runInteractiveWithDeps(comptime App: type, comptime cooperative: bool, alloc:
             },
         }
     };
-    if (comptime !cooperative) {
-        if (@hasDecl(App, "startMcpDiscovery")) app.startMcpDiscovery();
-        if (@hasDecl(App, "rebindAfterInit")) app.rebindAfterInit();
-    }
+    if (@hasDecl(App, "startMcpDiscovery")) app.startMcpDiscovery();
+    if (@hasDecl(App, "rebindAfterInit")) app.rebindAfterInit();
     var app_needs_deinit = true;
     defer if (app_needs_deinit) app.deinit();
-    if (comptime !cooperative and @hasField(App, "session") and
+    if (comptime @hasField(App, "session") and
         @hasDecl(@TypeOf(app.session), "attachProfileUsagePublisher"))
     {
         app.session.attachProfileUsagePublisher(app.alloc);
     }
-    if (comptime !cooperative) {
-        if (resume_requested) app.startResumedSessionReconciliation();
-        if (@hasDecl(App, "configureNotifications")) try app.configureNotifications();
-        if (@hasDecl(App, "playStartupSound")) app.playStartupSound();
-        if (@hasDecl(App, "startAutoUpgrade")) app.startAutoUpgrade();
-        if (@hasDecl(App, "startFileIndex")) app.startFileIndex();
-        startWorkerThread(App, &app, deps) catch |err| {
-            app.releaseTerminal();
-            reportUnexpectedInteractiveError(deps, err);
-            return err;
-        };
-        app.startModelCacheWarmup();
-    }
+    if (resume_requested) app.startResumedSessionReconciliation();
+    if (@hasDecl(App, "configureNotifications")) try app.configureNotifications();
+    if (@hasDecl(App, "playStartupSound")) app.playStartupSound();
+    if (@hasDecl(App, "startAutoUpgrade")) app.startAutoUpgrade();
+    if (@hasDecl(App, "startFileIndex")) app.startFileIndex();
+    startWorkerThread(App, &app, deps) catch |err| {
+        app.releaseTerminal();
+        reportUnexpectedInteractiveError(deps, err);
+        return err;
+    };
+    app.startModelCacheWarmup();
 
     app.run() catch |err| {
         app.releaseTerminal();
@@ -306,27 +296,18 @@ fn runInteractiveWithDeps(comptime App: type, comptime cooperative: bool, alloc:
         reportUnexpectedInteractiveError(deps, err);
         return err;
     };
-    const relaunch_request: ?auto_upgrade.RelaunchRequest = if (comptime cooperative)
-        null
-    else if (comptime @hasDecl(App, "takeUpgradeRelaunchRequest"))
+    const relaunch_request: ?auto_upgrade.RelaunchRequest = if (comptime @hasDecl(App, "takeUpgradeRelaunchRequest"))
         app.takeUpgradeRelaunchRequest()
     else
         null;
-    const resume_handoff_columns: u16 = if (comptime cooperative)
-        0
-    else if (comptime @hasDecl(App, "resumeHandoffColumns"))
+    const resume_handoff_columns: u16 = if (comptime @hasDecl(App, "resumeHandoffColumns"))
         app.resumeHandoffColumns()
     else
         0;
-    var graceful_exit_sigint_guard = GracefulExitSigintGuard.install(
-        !cooperative and relaunch_request == null,
-    );
+    var graceful_exit_sigint_guard = GracefulExitSigintGuard.install(relaunch_request == null);
     defer graceful_exit_sigint_guard.deinit();
     app_needs_deinit = false;
-    const handoff_value = if (comptime cooperative) blk: {
-        app.deinit();
-        break :blk null;
-    } else app.deinitWithResumeHandoff();
+    const handoff_value = app.deinitWithResumeHandoff();
     if (relaunch_request) |request| {
         if (handoff_value) |value| {
             var handoff = value;
