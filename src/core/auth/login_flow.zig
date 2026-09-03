@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const chatgpt_session = @import("chatgpt_session.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const host = @import("../hosts/host.zig");
-const host_target = @import("../hosts/target.zig");
 const io_mod = @import("../shared/io.zig");
 const oauth = @import("oauth.zig");
 const oauth_transport = @import("oauth_transport.zig");
@@ -134,7 +133,7 @@ pub const SignInRuntime = struct {
         prepared: PreparedLogin,
         deps: SignInRuntimeDeps,
     ) !bool {
-        return self.startPreparedWithMode(alloc, prepared, deps, host_target.is_wasm);
+        return self.startPreparedWithMode(alloc, prepared, deps, false);
     }
 
     fn startPreparedCooperative(
@@ -196,9 +195,7 @@ pub const SignInRuntime = struct {
         self.thread = null;
         self.mutex.unlock(io_mod.getIo());
 
-        if (comptime !host_target.is_wasm) {
-            if (thread) |handle| handle.join();
-        }
+        if (thread) |handle| handle.join();
         self.clearFlow(alloc);
         return cancelled;
     }
@@ -253,9 +250,7 @@ pub const SignInRuntime = struct {
         self.mutex.unlock(io_mod.getIo());
         if (!terminal) return .none;
 
-        if (comptime !host_target.is_wasm) {
-            if (thread) |handle| handle.join();
-        }
+        if (thread) |handle| handle.join();
 
         self.mutex.lockUncancelable(io_mod.getIo());
         defer self.mutex.unlock(io_mod.getIo());
@@ -308,7 +303,6 @@ pub const SignInRuntime = struct {
     }
 
     pub fn pulse(self: *Self, alloc: Allocator) void {
-        if (comptime host_target.is_wasm) return;
         self.pulseCooperative(alloc);
     }
 
@@ -438,10 +432,7 @@ pub const LoginPollDeps = struct {
         std.Io.Clock.Timestamp,
     ) anyerror!oauth.PollResult = realPollDeviceToken,
     sleep_ms: *const fn (?*anyopaque, u64) void = realSleepMs,
-    wait_for_enter: *const fn (?*anyopaque, u64) bool = if (host_target.is_wasm)
-        unavailableWaitForEnter
-    else
-        realWaitForEnter,
+    wait_for_enter: *const fn (?*anyopaque, u64) bool = realWaitForEnter,
     url_opener: host.UrlOpener = host.unavailable_url_opener,
     is_cancelled: *const fn (?*anyopaque) bool = neverCancelled,
     cancel_flag: ?*std.atomic.Value(bool) = null,
@@ -647,10 +638,6 @@ fn neverCancelled(_: ?*anyopaque) bool {
 
 fn realSleepMs(_: ?*anyopaque, ms: u64) void {
     io_mod.sleep(ms *| std.time.ns_per_ms);
-}
-
-fn unavailableWaitForEnter(_: ?*anyopaque, _: u64) bool {
-    return false;
 }
 
 fn realWaitForEnter(_: ?*anyopaque, timeout_ms: u64) bool {

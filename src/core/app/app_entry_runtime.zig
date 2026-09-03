@@ -9,7 +9,6 @@ const process_provider = @import("../execution/process_provider.zig");
 const gateway_provider = @import("../gateway/gateway_provider.zig");
 const provider_set = @import("../gateway/provider_set.zig");
 const host = @import("../hosts/host.zig");
-const host_target = @import("../hosts/target.zig");
 const io_mod = @import("../shared/io.zig");
 const prompt_policy = @import("../config/prompt_policy.zig");
 const skill_contract = @import("../skills/skill_contract.zig");
@@ -33,13 +32,7 @@ else
 
 const Allocator = std.mem.Allocator;
 
-const GracefulExitSigintGuard = if (host_target.is_wasm) struct {
-    fn install(_: bool) @This() {
-        return .{};
-    }
-
-    fn deinit(_: *@This()) void {}
-} else struct {
+const GracefulExitSigintGuard = struct {
     saved_action: ?std.posix.Sigaction = null,
 
     fn install(enabled: bool) @This() {
@@ -132,10 +125,7 @@ const ReplaceProcessFn = *const fn (
 ) std.process.ReplaceError;
 const RunDeps = struct {
     cli_ctx: ?*anyopaque = null,
-    run_if_requested: RunIfRequestedFn = if (host_target.is_wasm)
-        unavailableCliDispatch
-    else
-        runIfRequestedDefault,
+    run_if_requested: RunIfRequestedFn = runIfRequestedDefault,
     env_ctx: ?*anyopaque = null,
     getenv: GetenvFn = getenvDefault,
     stderr_ctx: ?*anyopaque = null,
@@ -227,10 +217,6 @@ pub fn runInteractive(comptime App: type, alloc: Allocator, launch: *cli_surface
 /// or a worker thread. Single-threaded hosts must arrange cooperative prompt work.
 pub fn runInteractiveCooperative(comptime App: type, alloc: Allocator, launch: *cli_surface.InteractiveLaunch) !RunOutcome {
     return runInteractiveWithDeps(App, true, alloc, launch, .{});
-}
-
-fn unavailableCliDispatch(_: ?*anyopaque, _: Allocator, _: []const [:0]const u8, _: cli_surface.Config) anyerror!cli_surface.RunResult {
-    return error.UnknownCliCommand;
 }
 
 fn runInteractiveWithDeps(comptime App: type, comptime cooperative: bool, alloc: Allocator, launch: *cli_surface.InteractiveLaunch, deps: RunDeps) !RunOutcome {

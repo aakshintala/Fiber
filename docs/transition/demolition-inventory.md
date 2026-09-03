@@ -183,6 +183,8 @@ Every slice is limited to one subsystem or about 15 files. A stop condition mean
 - Exact post-deletion searches: `host_target`, `is_wasm`, `\.wasi`, `loadNoMcpRuntime`, `idle_wasm_poll_timeout_ms`.
 - Dependencies: Slices 5 and 6 before deleting `target.zig`.
 - Stop if: any direct `.wasi` branch belongs to generic standard-library portability rather than the removed product target.
+- Rescope (2026-09-03): a read-only classification pass found the slice far larger than the path list above. Roughly 40 removable sites span 23 files, and 21 further files carry `.wasi` lines that are genuine per-OS portability guards and must survive. Files the original list omits entirely: `src/core/shared/debug_trace.zig`, `src/core/agent/runtime/gateway_step.zig`, `src/core/shared/io.zig` (line 968 only), `src/core/execution/managed_execution.zig`, `src/core/terminal/native_session.zig`, `src/core/terminal/host.zig`, `src/core/hosts/native.zig`, `src/core/workspace/workspace_files.zig` (line 931 only), `src/core/tooling/tool_dispatch.zig`, and `src/tools/shell/shell.zig`. Slice 7 is therefore split into 7a (removable sites outside `main.zig`) and 7b (`main.zig` plus `target.zig` deletion) to stay under the file cap.
+- Classification rule: `host_target.is_wasm` is always removable. A direct `builtin.os.tag` test is removable only when `.wasi` stands alone; when it appears beside `.windows` (or `.freestanding`) it is a portability guard and stays. Two exceptions found by inspection: `src/core/tooling/tool_runtime.zig:389` is a bare `.wasi` test that is removable, and `src/core/cli/cli_ask.zig:100` is a `.windows, .wasi, .freestanding` matrix arm that stays.
 
 ### Slice 8: cooperative threadless host mode
 
