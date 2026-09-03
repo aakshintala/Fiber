@@ -17,8 +17,6 @@ const gateway_provider = @import("../gateway/gateway_provider.zig");
 const model_catalog = @import("../gateway/model_catalog.zig");
 const provider_set = @import("../gateway/provider_set.zig");
 const execution_process_provider = @import("../execution/process_provider.zig");
-const github_publish = @import("../github/github_publish.zig");
-const github_workflows = @import("../github/github_workflows.zig");
 const host = @import("../hosts/host.zig");
 const oauth_transport = @import("../auth/oauth_transport.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
@@ -58,8 +56,6 @@ pub const Command = union(enum) {
     help,
     ask: []const [:0]const u8,
     acp: []const [:0]const u8,
-    pr: []const [:0]const u8,
-    issue: []const [:0]const u8,
     login: []const [:0]const u8,
     logout: []const [:0]const u8,
     status: []const [:0]const u8,
@@ -260,16 +256,6 @@ const AcpOptions = struct {
     log_file: ?[]const u8 = null,
 };
 
-const WorkflowOptions = struct {
-    auto_permission: bool,
-    create: bool,
-    context: []u8,
-
-    fn deinit(self: WorkflowOptions, alloc: Allocator) void {
-        alloc.free(self.context);
-    }
-};
-
 const WriteFn = *const fn (?*anyopaque, []const u8) anyerror!void;
 const LoadStartupStateFn = *const fn (Allocator, oauth_transport.Provider, []const u8, usize) anyerror!app_lifecycle.StartupState;
 const LoadCatalogStartupStateFn = *const fn (Allocator, []const u8, usize) anyerror!app_lifecycle.StartupState;
@@ -413,9 +399,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
         'd' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .doctor)) return .{ .doctor = args[1..] };
         },
-        'i' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .issue)) return .{ .issue = args[1..] };
-        },
         'l' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .login)) return .{ .login = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .logout)) return .{ .logout = args[1..] };
@@ -425,7 +408,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
             if (command_specs.matchesTopLevel(command_catalog, command, .models)) return .{ .models = args[1..] };
         },
         'p' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .pr)) return .{ .pr = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .permissions)) return .{ .permissions = args[1..] };
         },
         'r' => {
@@ -754,8 +736,6 @@ fn runNonInteractiveWithDeps(
             });
             return .handled_success;
         },
-        .pr => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .pull_request),
-        .issue => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .issue),
         .login => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
                 try writeStderr(deps, "usage: fx login [codex]\n");
@@ -1306,67 +1286,6 @@ fn writeTopLevelHelp(
         .stdout => try writeStdout(deps, text),
         .stderr => try writeStderr(deps, text),
     }
-}
-
-fn runGithubWorkflow(
-    alloc: Allocator,
-    args: []const [:0]const u8,
-    cfg: Config,
-    launch_modifiers: LaunchModifiers,
-    deps: RunDeps,
-    workflow: github_workflows.Workflow,
-) !RunResult {
-    const opts = try parseWorkflowArgs(alloc, args);
-    defer opts.deinit(alloc);
-
-    const prompt = switch (workflow) {
-        .pull_request => github_workflows.buildPrompt(alloc, workflow, workflowLanguagePlaceholder(), opts.context) catch |err| switch (err) {
-            error.NotGitRepository => {
-                try writeStderr(deps, "fx pr: requires running inside a git repository\n");
-                return .handled_failure;
-            },
-            else => return err,
-        },
-        .issue => try github_workflows.buildPrompt(alloc, workflow, workflowLanguagePlaceholder(), opts.context),
-    };
-    defer alloc.free(prompt);
-
-    const workflow_cfg = workflowConfigWithLaunchModifiers(cfg, launch_modifiers);
-    if (!opts.create) {
-        const exit_code = try cli_ask.runPrompt(alloc, prompt, opts.auto_permission, workflow_cfg, cfg.context_registry, cfg.tool_set);
-        return if (exit_code == 0) .handled_success else .handled_failure;
-    }
-
-    const run_result = try cli_ask.runPromptCapture(alloc, prompt, opts.auto_permission, workflow_cfg, cfg.context_registry, cfg.tool_set);
-    defer run_result.deinit(alloc);
-    if (run_result.exit_code != 0) return .handled_failure;
-
-    const draft = github_publish.parseDraft(alloc, run_result.assistant_output) catch {
-        try writeStderr(deps, switch (workflow) {
-            .pull_request => "fx pr: failed to parse drafted PR title/body\n",
-            .issue => "fx issue: failed to parse drafted issue title/body\n",
-        });
-        return .handled_failure;
-    };
-    defer draft.deinit(alloc);
-
-    const published = try github_publish.publish(alloc, switch (workflow) {
-        .pull_request => .pull_request,
-        .issue => .issue,
-    }, draft);
-    defer published.deinit(alloc);
-    if (!published.ok) {
-        try writeStderr(deps, switch (workflow) {
-            .pull_request => "fx pr: ",
-            .issue => "fx issue: ",
-        });
-        try writeStderr(deps, published.text);
-        try writeStderr(deps, "\n");
-        return .handled_failure;
-    }
-    try writeStdout(deps, published.text);
-    try writeStdout(deps, "\n");
-    return .handled_success;
 }
 
 fn writeStdout(deps: RunDeps, text: []const u8) !void {
@@ -2088,10 +2007,6 @@ fn argsContainJson(args: anytype) bool {
     return false;
 }
 
-fn workflowLanguagePlaceholder() types.ConversationLanguage {
-    return types.ConversationLanguage.default();
-}
-
 fn permissionModeForSnapshot(mode: anytype) types.PermissionMode {
     return switch (mode) {
         .ask => .ask,
@@ -2521,7 +2436,7 @@ fn workflowConfigWithLaunchModifiers(
 
 fn commandSupportsWorkspaceModifiers(command: Command) bool {
     return switch (command) {
-        .interactive, .ask, .acp, .pr, .issue, .resume_session => true,
+        .interactive, .ask, .acp, .resume_session => true,
         else => false,
     };
 }
@@ -2529,7 +2444,7 @@ fn commandSupportsWorkspaceModifiers(command: Command) bool {
 fn writeWorkspaceModifierUsage(deps: RunDeps) !void {
     try writeStderr(
         deps,
-        "fx: --add-dir and --no-additional-dirs are only supported for interactive, resume, ask, ACP, PR, and issue launches\n",
+        "fx: --add-dir and --no-additional-dirs are only supported for interactive, resume, ask, and ACP launches\n",
     );
 }
 
@@ -2856,41 +2771,6 @@ fn parseResumeArgs(
     return .{ .id = try alloc.dupe(u8, trimmed) };
 }
 
-fn parseWorkflowArgs(alloc: Allocator, args: []const [:0]const u8) !WorkflowOptions {
-    var auto_permission = false;
-    var create = false;
-    var start_index: usize = 0;
-    while (start_index < args.len) : (start_index += 1) {
-        if (std.mem.eql(u8, args[start_index], "--auto")) {
-            auto_permission = true;
-            continue;
-        }
-        if (std.mem.eql(u8, args[start_index], "--create")) {
-            create = true;
-            continue;
-        }
-        break;
-    }
-
-    return .{
-        .auto_permission = auto_permission,
-        .create = create,
-        .context = try joinArgs(alloc, args[start_index..]),
-    };
-}
-
-fn joinArgs(alloc: Allocator, args: []const [:0]const u8) ![]u8 {
-    if (args.len == 0) return alloc.dupe(u8, "");
-
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    defer out.deinit();
-    for (args, 0..) |arg, i| {
-        if (i > 0) try out.writer.writeByte(' ');
-        try out.writer.writeAll(arg);
-    }
-    return try out.toOwnedSlice();
-}
-
 fn isVersionFlag(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--version") or std.mem.eql(u8, arg, "-v");
 }
@@ -2911,14 +2791,6 @@ test "parse recognizes every top-level command and preserves unknown commands" {
     }
     switch (parse(command_catalog, &.{ @constCast("acp"), @constCast("--model"), @constCast("m") })) {
         .acp => |rest| try std.testing.expectEqual(@as(usize, 2), rest.len),
-        else => return error.TestExpectedEqual,
-    }
-    switch (parse(command_catalog, &.{ @constCast("pr"), @constCast("ready") })) {
-        .pr => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
-        else => return error.TestExpectedEqual,
-    }
-    switch (parse(command_catalog, &.{ @constCast("issue"), @constCast("flaky") })) {
-        .issue => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{ @constCast("status"), @constCast("--json") })) {
@@ -3489,33 +3361,6 @@ test "parseInteractiveLaunch shares native resume grammar" {
     );
 }
 
-test "parse workflow args consumes leading flags and joins remaining context exactly" {
-    var opts = try parseWorkflowArgs(std.testing.allocator, &.{
-        @constCast("--auto"),
-        @constCast("--create"),
-        @constCast("ready"),
-        @constCast("for"),
-        @constCast("review"),
-    });
-    defer opts.deinit(std.testing.allocator);
-    try std.testing.expect(opts.auto_permission);
-    try std.testing.expect(opts.create);
-    try std.testing.expectEqualStrings("ready for review", opts.context);
-
-    var later_flag = try parseWorkflowArgs(std.testing.allocator, &.{
-        @constCast("context"),
-        @constCast("--auto"),
-    });
-    defer later_flag.deinit(std.testing.allocator);
-    try std.testing.expect(!later_flag.auto_permission);
-    try std.testing.expect(!later_flag.create);
-    try std.testing.expectEqualStrings("context --auto", later_flag.context);
-
-    var empty = try parseWorkflowArgs(std.testing.allocator, &.{});
-    defer empty.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("", empty.context);
-}
-
 test "runIfRequested help writes top-level help" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
@@ -3683,7 +3528,7 @@ test "workspace launch modifiers still reject unsupported local command help" {
     );
     try std.testing.expectEqual(RunResult.handled_failure, result);
     try std.testing.expectEqualStrings("", capture.stdout.written());
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "only supported for interactive, resume, ask, ACP, PR, and issue launches") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "only supported for interactive, resume, ask, and ACP launches") != null);
 }
 
 test "global workspace launch option errors use user-facing copy" {

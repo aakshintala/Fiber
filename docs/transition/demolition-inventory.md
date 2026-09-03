@@ -252,6 +252,7 @@ Every slice is limited to one subsystem or about 15 files. A stop condition mean
 - Exact post-deletion searches: top-level kinds `.pr` and `.issue`, `runGithubWorkflow`, `github_publish`, `github_workflows`, CLI help tokens `pr <` and `issue <`.
 - Dependencies: none.
 - Stop if: a `src/core/github/` module has a caller outside these wrappers; retain that module.
+- Correction (2026-09-03, pre-verified in the prior session's handoff, confirmed again here): the "retained invariant" of "generic git context used elsewhere" is stale. `src/core/github/git_context.zig` has zero callers anywhere in the tree except `github_workflows.zig` (itself deleted by this slice) and a test-import line in `main.zig`. Delete `git_context.zig` too — all three files under `src/core/github/` are removable, and the directory goes if it ends up empty. `tests/e2e/cli.test.ts` is left untouched, consistent with every prior slice — e2e is deferred to a later phase project-wide, not owned per-slice despite what this row's "Paths and symbols" says.
 
 ### Slice 14: session migrate and resume aliases
 

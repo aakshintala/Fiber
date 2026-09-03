@@ -84,7 +84,6 @@ const skill_commands = @import("core/skills/skill_commands.zig");
 const skill_runtime = @import("core/skills/skill_runtime.zig");
 const cli_surface = @import("core/cli/cli_surface.zig");
 const hooks = @import("core/hooks/hooks.zig");
-const github_publish = @import("core/github/github_publish.zig");
 const subagent_domain = @import("core/subagent/domain.zig");
 const subagent_execution = @import("core/subagent/execution.zig");
 const types = @import("core/shared/types.zig");
@@ -3896,9 +3895,6 @@ test {
     _ = @import("core/auth/oauth.zig");
     _ = @import("core/workspace/file_index.zig");
     _ = @import("core/gateway/provider_set.zig");
-    _ = @import("core/github/git_context.zig");
-    _ = @import("core/github/github_publish.zig");
-    _ = @import("core/github/github_workflows.zig");
     _ = @import("core/hosts/host.zig");
     _ = @import("core/hooks/common.zig");
     _ = @import("core/hooks/definitions.zig");

@@ -66,29 +66,6 @@ pub const top_level_specs = [_]TopLevelSpec{
         },
     },
     .{
-        .kind = .pr,
-        .token = "pr",
-        .usage = "pr [--auto] [--create] [context]",
-        .summary = "Draft or publish a pull request",
-        .options = &.{
-            .{ .flag = "--auto", .description = "Automatically review unresolved permission requests" },
-            .{ .flag = "--create", .description = "Publish the drafted pull request via the GitHub CLI" },
-        },
-        .details = &.{
-            "Must run inside a git repository. Without --create, the drafted PR is printed only.",
-        },
-    },
-    .{
-        .kind = .issue,
-        .token = "issue",
-        .usage = "issue [--auto] [--create] [context]",
-        .summary = "Draft or publish a GitHub issue",
-        .options = &.{
-            .{ .flag = "--auto", .description = "Automatically review unresolved permission requests" },
-            .{ .flag = "--create", .description = "Publish the drafted issue via the GitHub CLI" },
-        },
-    },
-    .{
         .kind = .login,
         .token = "login",
         .usage = "login [codex]",
@@ -258,10 +235,6 @@ pub const top_level_help_fast_buffer_bytes: usize = 32 * 1024;
 pub const top_level_help_groups = [_]TopLevelHelpGroup{
     .{ .entries = &.{
         .{ .kind = .ask, .usage = "ask <prompt>" },
-    } },
-    .{ .entries = &.{
-        .{ .kind = .pr, .usage = "pr [context]" },
-        .{ .kind = .issue, .usage = "issue [context]" },
     } },
     .{ .entries = &.{
         .{ .kind = .sessions, .usage = "sessions" },

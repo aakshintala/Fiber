@@ -9,8 +9,6 @@ pub const TopLevelKind = enum {
     help,
     ask,
     acp,
-    pr,
-    issue,
     login,
     logout,
     status,
@@ -1577,7 +1575,7 @@ test "rendered top-level help is a complete CLI navigation page" {
     try std.testing.expect(std.mem.find(u8, text, "Commands:") != null);
     try std.testing.expect(std.mem.find(u8, text, "ask <prompt>") != null);
     try std.testing.expect(std.mem.find(u8, text, "Run one noninteractive request") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Draft or publish a GitHub issue") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Draft or publish a GitHub issue") == null);
     try std.testing.expect(std.mem.find(u8, text, "Sign in to Codex") != null);
     try std.testing.expect(std.mem.find(u8, text, "Sign out of the Codex session") != null);
     try std.testing.expect(std.mem.find(u8, text, "Sign in to Vercel or a selected provider") == null);
