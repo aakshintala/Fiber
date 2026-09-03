@@ -1028,7 +1028,6 @@ const AskContext = struct {
         return permission_auto_classifier.Classifier.withProvider(provider, .{
             .credential = self.api_key,
             .account_id = self.account_id,
-            .tenant = null,
             .endpoint = self.cfg.gateway_chat_url,
             .cancel_flag = self.cancelFlag(),
             .usage = &self.session.usage,
@@ -1523,7 +1522,6 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     ctx.model_catalog_access = credentials.catalogAccessForCredential(
         credential.source,
         api_key,
-        null,
     );
 
     const restored_image_catalog = try ctx.session.snapshotImageCatalog(alloc, &.{});

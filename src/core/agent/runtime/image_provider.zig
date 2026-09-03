@@ -61,7 +61,6 @@ pub fn inspect(
             .credential = .{
                 .secret = request.api_key,
                 .source = request.credential_source,
-                .tenant = null,
             },
             .session_id = request.session_id,
             .model = model,

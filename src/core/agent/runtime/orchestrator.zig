@@ -4633,7 +4633,6 @@ fn processQueuedPromptLoop(
                     .secret = active_api_key,
                     .source = job.credential_source,
                     .account_id = job.account_id,
-                    .tenant = null,
                 },
                 .session_id = lifecycle.scope.session_id,
                 .model = gateway_model,

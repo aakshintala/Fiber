@@ -345,7 +345,7 @@ test "capability resolver uses provider catalog metadata" {
         std.testing.allocator,
         fake.provider(),
         .{
-            .access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key", "team_123"),
+            .access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key"),
             .endpoint = "/v1/models",
             .cancel_flag = &cancel_flag,
         },
@@ -383,7 +383,7 @@ test "capability resolver keeps a rejected authenticated catalog access terminal
         std.testing.allocator,
         fake.provider(),
         .{
-            .access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key", "team_123"),
+            .access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key"),
             .endpoint = "/v1/models",
         },
         "provider/model",

@@ -185,12 +185,6 @@ pub const StartupState = struct {
         return credentials.catalogAccessAt(self.credential, io_mod.milliTimestamp());
     }
 
-    pub fn gatewayTeam(self: *const StartupState) ?[]const u8 {
-        const credential = self.credential orelse return null;
-        if (credential.needsRefreshAt(io_mod.milliTimestamp())) return null;
-        return credential.gatewayTeam();
-    }
-
     pub fn takeCredential(self: *StartupState) ?credentials.Credential {
         const value = self.credential;
         self.credential = null;

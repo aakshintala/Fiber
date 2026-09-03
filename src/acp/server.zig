@@ -1509,7 +1509,6 @@ fn handleInitialize(state: *ServerState, alloc: Allocator, msg: *jsonrpc.Message
             .access = credentials.catalogAccessForCredential(
                 state.credential_source,
                 state.api_key,
-                null,
             ),
             .endpoint = state.cfg.gateway_models_path,
             .cancel_flag = &catalog_cancel_flag,

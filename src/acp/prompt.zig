@@ -1326,7 +1326,6 @@ fn resolveModelCapabilities(
             .access = credentials.catalogAccessForCredential(
                 session.credential_source,
                 session.api_key,
-                null,
             ),
             .endpoint = ctx.state.cfg.gateway_models_path,
             .cancel_flag = &session.cancel_flag,

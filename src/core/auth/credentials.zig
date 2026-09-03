@@ -86,7 +86,7 @@ pub const CatalogAccess = union(enum) {
 pub fn catalogAccessAt(credential: ?Credential, now_ms: i64) CatalogAccess {
     _ = now_ms;
     const selected = credential orelse return .{ .public_only = .no_credential };
-    return catalogAccessForCredential(selected.source, selected.token, null);
+    return catalogAccessForCredential(selected.source, selected.token);
 }
 
 pub fn catalogAccessAfterRefreshFailure(source: Source) CatalogAccess {
@@ -100,9 +100,7 @@ pub fn catalogAccessAfterRefreshFailure(source: Source) CatalogAccess {
 pub fn catalogAccessForCredential(
     source: ?Source,
     credential: []const u8,
-    team_context: ?[]const u8,
 ) CatalogAccess {
-    _ = team_context;
     const selected_source = source orelse return .{ .public_only = .no_credential };
     const authenticated_source: CatalogAuthenticatedSource = switch (selected_source) {
         .chatgpt_subscription => .chatgpt_subscription,
@@ -241,7 +239,6 @@ test "catalog access isolates public and authenticated provider credentials" {
     const chatgpt = catalogAccessForCredential(
         .chatgpt_subscription,
         "chatgpt-secret",
-        null,
     );
     try std.testing.expectEqual(Source.chatgpt_subscription, chatgpt.credentialSource().?);
     try std.testing.expectEqualStrings("chatgpt-secret", chatgpt.authorizationCredential().?);

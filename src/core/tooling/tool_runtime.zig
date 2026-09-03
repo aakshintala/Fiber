@@ -264,9 +264,6 @@ pub const Context = struct {
         return permission_auto_classifier.Classifier.withProvider(provider, .{
             .credential = self.api_key,
             .account_id = self.account_id,
-            // ponytail: tenant is now always null here; collapse the remaining
-            // tenant plumbing in ticket 11b.
-            .tenant = null,
             .endpoint = self.gateway_chat_url,
             .cancel_flag = self.cancel_flag,
             .usage = &self.session.usage,
@@ -6300,7 +6297,7 @@ const VisionGatewayFixture = struct {
         defer self.alloc.free(payload);
         try self.payloads.append(self.alloc, try self.alloc.dupe(u8, payload));
         self.last_api_key = request.credential.secret;
-        self.last_team = request.credential.tenant;
+        self.last_team = null;
         self.last_model = request.model;
         self.last_retry_count = request.retry_count;
         if (self.cancel_after_call == self.call_count) request.cancel_flag.store(true, .seq_cst);

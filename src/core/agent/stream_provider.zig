@@ -140,7 +140,6 @@ pub const CredentialLease = struct {
     secret: []const u8,
     source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
-    tenant: ?[]const u8 = null,
 };
 
 /// Pure provider input used by request serializers and permission reviewers.

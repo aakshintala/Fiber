@@ -214,7 +214,6 @@ fn sendReview(
             .secret = runtime.input.credential,
             .source = runtime.adapter.source,
             .account_id = runtime.input.account_id,
-            .tenant = runtime.input.tenant,
         },
         .model = model,
         .retry_count = 1,

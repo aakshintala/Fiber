@@ -671,7 +671,7 @@ test "rejected authenticated catalog access stays bounded and traced" {
     defer debug_trace.resetForTest();
     try debug_trace.configureForTestWithScopes(alloc, trace_path, "catalog");
 
-    const access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key", "team_123");
+    const access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key");
     const rejection = Failure{ .category = .authentication, .http_status = .unauthorized };
     for ([_]Failure{
         .{ .category = .authentication },
@@ -715,7 +715,6 @@ test "catalog fallback classification stays bounded across repeated cycles" {
     const access = credentials.catalogAccessForCredential(
         .chatgpt_subscription,
         "repeated-test-key",
-        "repeated-team",
     );
     const terminal_failures = [_]Failure{
         .{ .category = .authentication },
