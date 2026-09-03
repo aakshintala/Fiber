@@ -18,6 +18,8 @@ Phase exit: every deletion required by the product design is either absent from 
 
 Rename the retained executable, product text, state paths, environment variables, internal formats, credentials, artifacts, tests, fixtures, and developer tooling. Add no fx compatibility readers, aliases, imports, migrations, or fallbacks.
 
+Current step: execute the ordered slices in [`identity-inventory.md`](identity-inventory.md). That document measures the rename surface, separates silent renames that change runtime or on-disk behavior from inert ones, and holds the per-slice stop conditions.
+
 Phase exit: the repository builds `fiber`; exact searches find no unexplained product-level fx identity or compatibility reads.
 
 ## Phase 3: Contract implementation
