@@ -17,7 +17,7 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, REPO_ROOT, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, REPO_ROOT, runFx } from "../evals/eval-helpers";
 import { hasEmptyComposer, TmuxSession, tmuxAvailable } from "./tmux-helpers";
 
 const TIMEOUT = 15_000;
@@ -369,7 +369,7 @@ function fakeGatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: model,
+    FIBER_MODEL: model,
   };
 }
 
@@ -391,12 +391,11 @@ async function expectNonRegularVisionPathFailure(
   let session: TmuxSession | null = null;
   try {
     session = await TmuxSession.create({
-      cmd: FX_BIN,
+      cmd: FIBER_BIN,
       cwd: root.workspace,
       env: {
         ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-        FX_PERMISSION_MODE: "ask",
-        FX_AUTO_UPGRADE: "0",
+        FIBER_PERMISSION_MODE: "ask",
         NO_COLOR: "1",
       },
       stderrPath,
@@ -452,12 +451,11 @@ async function expectChangedCanonicalVisionPathFailure(
   let session: TmuxSession | null = null;
   try {
     session = await TmuxSession.create({
-      cmd: FX_BIN,
+      cmd: FIBER_BIN,
       cwd: root.workspace,
       env: {
         ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-        FX_PERMISSION_MODE: "ask",
-        FX_AUTO_UPGRADE: "0",
+        FIBER_PERMISSION_MODE: "ask",
         NO_COLOR: "1",
       },
       stderrPath,
@@ -634,11 +632,10 @@ describe("Vision route fake Gateway", () => {
         expect(gateway.chatRequests).toHaveLength(0);
 
         session = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-            FX_AUTO_UPGRADE: "0",
             NO_COLOR: "1",
           },
           stderrPath,
@@ -819,8 +816,8 @@ describe("Vision route fake Gateway", () => {
             cwd: root.workspace,
             env: {
               ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-              FX_TRACE_LOG: tracePath,
-              FX_TRACE_SCOPES: "images",
+              FIBER_TRACE_LOG: tracePath,
+              FIBER_TRACE_SCOPES: "images",
             },
             timeoutMs: TIMEOUT,
           },
@@ -2484,12 +2481,11 @@ describe("Vision route fake Gateway", () => {
       let session: TmuxSession | null = null;
       try {
         session = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-            FX_PERMISSION_MODE: "ask",
-            FX_AUTO_UPGRADE: "0",
+            FIBER_PERMISSION_MODE: "ask",
             NO_COLOR: "1",
           },
           stderrPath,
@@ -2542,11 +2538,10 @@ describe("Vision route fake Gateway", () => {
       let session: TmuxSession | null = null;
       try {
         session = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-            FX_AUTO_UPGRADE: "0",
             NO_COLOR: "1",
           },
           stderrPath,
@@ -2603,12 +2598,11 @@ describe("Vision route fake Gateway", () => {
       let session: TmuxSession | null = null;
       try {
         session = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-            FX_PERMISSION_MODE: "ask",
-            FX_AUTO_UPGRADE: "0",
+            FIBER_PERMISSION_MODE: "ask",
             NO_COLOR: "1",
           },
           stderrPath,
@@ -2672,12 +2666,11 @@ describe("Vision route fake Gateway", () => {
       let session: TmuxSession | null = null;
       try {
         session = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-            FX_PERMISSION_MODE: "ask",
-            FX_AUTO_UPGRADE: "0",
+            FIBER_PERMISSION_MODE: "ask",
             NO_COLOR: "1",
           },
           stderrPath,
@@ -2743,12 +2736,11 @@ describe("Vision route fake Gateway", () => {
       let session: TmuxSession | null = null;
       try {
         session = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-            FX_PERMISSION_MODE: "ask",
-            FX_AUTO_UPGRADE: "0",
+            FIBER_PERMISSION_MODE: "ask",
             NO_COLOR: "1",
           },
           stderrPath,
@@ -2941,12 +2933,11 @@ describe("Vision route fake Gateway", () => {
       let session: TmuxSession | null = null;
       try {
         session = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-            FX_PERMISSION_MODE: "ask",
-            FX_AUTO_UPGRADE: "0",
+            FIBER_PERMISSION_MODE: "ask",
             NO_COLOR: "1",
           },
           stderrPath,
@@ -3022,12 +3013,11 @@ describe("Vision route fake Gateway", () => {
       let session: TmuxSession | null = null;
       try {
         session = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway, GLM_MODEL),
-            FX_PERMISSION_MODE: "ask",
-            FX_AUTO_UPGRADE: "0",
+            FIBER_PERMISSION_MODE: "ask",
             NO_COLOR: "1",
           },
           stderrPath,

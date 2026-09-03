@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 env:
-  FX_SOUND: "0"
+  FIBER_SOUND: "0"
 
 jobs:
   seed:

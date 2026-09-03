@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   chatGptAccessToken,
   hasEmptyComposer,
@@ -87,9 +87,8 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
           cwd: workspace,
           env: {
             HOME: home,
-            FX_AUTO_UPGRADE: "0",
-            FX_DISABLE_KEYCHAIN: "1",
-            FX_SKIP_ONBOARDING: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
+            FIBER_SKIP_ONBOARDING: "1",
           },
           stderrPath,
           width: 100,
@@ -125,7 +124,6 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
           cwd: root,
           env: {
             HOME: home,
-            FX_AUTO_UPGRADE: "0",
           },
           stderrPath,
           width: 160,
@@ -194,9 +192,8 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
           cwd: workspace,
           env: {
             HOME: home,
-            FX_AUTO_UPGRADE: "0",
-            FX_DISABLE_KEYCHAIN: "1",
-            FX_SKIP_ONBOARDING: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
+            FIBER_SKIP_ONBOARDING: "1",
           },
           stderrPath,
           width: 100,
@@ -250,7 +247,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
       mkdirSync(home, { recursive: true });
       writeFileSync(stderrPath, "");
 
-      const version = execFileSync(FX_BIN, ["--version"], { encoding: "utf8" }).trim();
+      const version = execFileSync(FIBER_BIN, ["--version"], { encoding: "utf8" }).trim();
       const banner = `𝒇x v${version} · Run /help for commands`;
 
       try {
@@ -258,7 +255,6 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
           cwd: root,
           env: {
             HOME: home,
-            FX_AUTO_UPGRADE: "0",
           },
           stderrPath,
           width: 120,
@@ -338,7 +334,6 @@ describe.skipIf(SKIP_TMUX)("tui: MCP startup", () => {
           cwd: root,
           env: {
             HOME: home,
-            FX_AUTO_UPGRADE: "0",
           },
         });
         const pane = await session.waitForComposer(5_000);
@@ -382,10 +377,9 @@ describe.skipIf(SKIP_TMUX)("tui: credential onboarding", () => {
       const env = {
         HOME: home,
         USER: "fx-e2e-login-onboarding",
-        FX_AUTO_UPGRADE: "0",
-        FX_DISABLE_KEYCHAIN: "1",
-        FX_NO_OPEN_BROWSER: "1",
-        FX_SKIP_ONBOARDING: "0",
+        FIBER_DISABLE_KEYCHAIN: "1",
+        FIBER_NO_OPEN_BROWSER: "1",
+        FIBER_SKIP_ONBOARDING: "0",
       };
 
       session = await TmuxSession.create({ env });

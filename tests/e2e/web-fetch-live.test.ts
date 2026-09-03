@@ -138,14 +138,13 @@ function fakeGatewayEnv(
     HOME: root.home,
     AI_GATEWAY_API_KEY: "fake-live-web-fetch-key",
     VERCEL_OIDC_TOKEN: undefined,
-    FX_AUTO_UPGRADE: "0",
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: OUTER_MODEL,
+    FIBER_MODEL: OUTER_MODEL,
   };
 }
 
-describe.skipIf(process.env.FX_WEB_FETCH_LIVE !== "1")("live web_fetch public URL", () => {
+describe.skipIf(process.env.FIBER_WEB_FETCH_LIVE !== "1")("live web_fetch public URL", () => {
   // These mutable endpoints are operational probes, not deterministic HTTP
   // framing proof. The transport/framing contract is covered by Zig fixtures.
   for (const probe of [
@@ -168,8 +167,8 @@ describe.skipIf(process.env.FX_WEB_FETCH_LIVE !== "1")("live web_fetch public UR
               cwd: root.workspace,
               env: {
                 ...fakeGatewayEnv(root, gateway),
-                FX_TRACE_LOG: traceLog,
-                FX_TRACE_SCOPES: "tool",
+                FIBER_TRACE_LOG: traceLog,
+                FIBER_TRACE_SCOPES: "tool",
               },
               timeoutMs: TIMEOUT,
             },

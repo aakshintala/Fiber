@@ -8,7 +8,7 @@ const TIMEOUT = 15_000;
 const NO_GATEWAY_AUTH = {
   AI_GATEWAY_API_KEY: undefined,
   VERCEL_OIDC_TOKEN: undefined,
-  FX_DISABLE_KEYCHAIN: "1",
+  FIBER_DISABLE_KEYCHAIN: "1",
 };
 
 async function runWithoutGatewayAuth(args: string[]) {

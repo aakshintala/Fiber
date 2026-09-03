@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -67,7 +67,7 @@ function createFixture(prefix: string) {
 async function launch(
   fixture: ReturnType<typeof createFixture>,
   gateway: ReturnType<typeof startFakeGateway>,
-  cmd = FX_BIN,
+  cmd = FIBER_BIN,
 ) {
   const session = await TmuxSession.create({
     isolated: true,
@@ -78,14 +78,13 @@ async function launch(
       SHELL: terminalFixtureShell(),
       AI_GATEWAY_API_KEY: "fake-shell-tool-key",
       VERCEL_OIDC_TOKEN: undefined,
-      FX_AUTO_UPGRADE: "0",
-      FX_PERMISSION_MODE: "yolo",
-      FX_MODEL: FAKE_GATEWAY_MODEL,
+      FIBER_PERMISSION_MODE: "yolo",
+      FIBER_MODEL: FAKE_GATEWAY_MODEL,
       FX_GATEWAY_BASE_URL: gateway.baseUrl,
       FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-      FX_TRACE_LOG: fixture.tracePath,
-      FX_TRACE_SCOPES: "shell,terminal,terminal_client,terminal_host,tool,agent",
-      FX_TERMINAL_HOST_IDLE_MS: "500",
+      FIBER_TRACE_LOG: fixture.tracePath,
+      FIBER_TRACE_SCOPES: "shell,terminal,terminal_client,terminal_host,tool,agent",
+      FIBER_TERMINAL_HOST_IDLE_MS: "500",
     },
     width: 120,
     height: 32,
@@ -687,7 +686,7 @@ test.skipIf(!tmuxAvailable())(
     const resumed = await launch(
       fixture,
       gateway,
-      `${FX_BIN} --resume-last`,
+      `${FIBER_BIN} --resume-last`,
     );
     await resumed.sendText("Force-stop the exact retained managed TTY.");
     await resumed.waitForText("SHELL_TTY_RESUME_OK", TIMEOUT);

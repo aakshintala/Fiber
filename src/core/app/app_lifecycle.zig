@@ -976,7 +976,7 @@ fn shutdownCleanupRow(shell: *const TranscriptRuntime) u16 {
 
 fn loadPermissionMode(configured: ?PermissionMode) PermissionMode {
     const fallback = configured orelse default_permission_mode;
-    const mode = io_mod.getenv("FX_PERMISSION_MODE") orelse return fallback;
+    const mode = io_mod.getenv("FIBER_PERMISSION_MODE") orelse return fallback;
     return config_runtime.parsePermissionMode(mode) orelse fallback;
 }
 
@@ -984,7 +984,7 @@ fn loadAgentStepLimit(fallback: usize, configured: ?usize) usize {
     return agent_steps.resolveMaxAgentStepsWithOverride(
         configured,
         fallback,
-        io_mod.getenv("FX_MAX_AGENT_STEPS"),
+        io_mod.getenv("FIBER_MAX_AGENT_STEPS"),
     );
 }
 
@@ -998,7 +998,7 @@ fn configuredProviderSelection(
 }
 
 fn initialModelId(default_model: []const u8, configured: ?[]const u8) []const u8 {
-    const model = io_mod.getenv("FX_MODEL") orelse return configured orelse default_model;
+    const model = io_mod.getenv("FIBER_MODEL") orelse return configured orelse default_model;
     const trimmed = std.mem.trim(u8, model, " \t\r\n");
     return if (trimmed.len > 0) trimmed else configured orelse default_model;
 }
@@ -1021,7 +1021,7 @@ fn loadInitialModel(alloc: Allocator, default_model: []const u8, configured: ?[]
 }
 
 fn hasProcessModelOverride() bool {
-    const model = io_mod.getenv("FX_MODEL") orelse return false;
+    const model = io_mod.getenv("FIBER_MODEL") orelse return false;
     return std.mem.trim(u8, model, " \t\r\n").len > 0;
 }
 
@@ -1031,7 +1031,7 @@ fn loadStartupStatusModel(alloc: Allocator, default_model: []const u8, configure
 }
 
 fn credentialOnboardingDisabled() bool {
-    const value = io_mod.getenv("FX_SKIP_ONBOARDING") orelse return false;
+    const value = io_mod.getenv("FIBER_SKIP_ONBOARDING") orelse return false;
     const trimmed = std.mem.trim(u8, value, " \t\r\n");
     if (trimmed.len == 0) return false;
     return !std.mem.eql(u8, trimmed, "0") and !std.ascii.eqlIgnoreCase(trimmed, "false");
@@ -1040,7 +1040,7 @@ fn credentialOnboardingDisabled() bool {
 const SoundEnvLevel = enum { off, on, max };
 
 fn soundEnvOverride() ?SoundEnvLevel {
-    const value = io_mod.getenv("FX_SOUND") orelse return null;
+    const value = io_mod.getenv("FIBER_SOUND") orelse return null;
     const trimmed = std.mem.trim(u8, value, " \t\r\n");
     if (trimmed.len == 0) return null;
     if (std.ascii.eqlIgnoreCase(trimmed, "max")) return .max;
@@ -1118,7 +1118,7 @@ test "permission mode loader defaults to auto" {
 
 test "permission mode environment accepts yolo without changing fallback" {
     var env = try TestEnv.install(std.testing.allocator, &.{
-        .{ .key = "FX_PERMISSION_MODE", .value = "yolo" },
+        .{ .key = "FIBER_PERMISSION_MODE", .value = "yolo" },
     });
     defer env.deinit();
 
@@ -1779,9 +1779,9 @@ test "loadStartupState applies core env overrides" {
 
     var env = try TestEnv.install(std.testing.allocator, &.{
         .{ .key = "HOME", .value = home },
-        .{ .key = "FX_MODEL", .value = "  env-model  " },
-        .{ .key = "FX_PERMISSION_MODE", .value = "auto" },
-        .{ .key = "FX_MAX_AGENT_STEPS", .value = "37" },
+        .{ .key = "FIBER_MODEL", .value = "  env-model  " },
+        .{ .key = "FIBER_PERMISSION_MODE", .value = "auto" },
+        .{ .key = "FIBER_MAX_AGENT_STEPS", .value = "37" },
     });
     defer env.deinit();
 
@@ -1964,8 +1964,8 @@ test "loadStartupState diagnoses the retired fuzzy skill setting" {
 
 test "credential onboarding can be skipped independently from Keychain" {
     var env = try TestEnv.install(std.testing.allocator, &.{
-        .{ .key = "FX_SKIP_ONBOARDING", .value = "1" },
-        .{ .key = "FX_DISABLE_KEYCHAIN", .value = "1" },
+        .{ .key = "FIBER_SKIP_ONBOARDING", .value = "1" },
+        .{ .key = "FIBER_DISABLE_KEYCHAIN", .value = "1" },
     });
     defer env.deinit();
 

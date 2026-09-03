@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 
 const TIMEOUT = 20_000;
 const FETCH_URL = "https://example.com/docs";
@@ -133,7 +133,7 @@ function fakeGatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: gateway.model,
+    FIBER_MODEL: gateway.model,
     ...extra,
   };
 }
@@ -225,7 +225,7 @@ class AcpClient {
         (entry): entry is [string, string] => entry[1] !== undefined,
       ),
     );
-    return new AcpClient(nodeSpawn(FX_BIN, ["acp"], {
+    return new AcpClient(nodeSpawn(FIBER_BIN, ["acp"], {
       cwd,
       env: definedEnv,
       stdio: ["pipe", "pipe", "pipe"],

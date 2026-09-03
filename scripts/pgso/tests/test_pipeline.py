@@ -9,7 +9,7 @@ import unittest
 from scripts.pgso.model import PgsoError, sha256_file
 from scripts.pgso.pipeline import (
     BENCHMARK_USE_FLAGS,
-    FX_MACHINE_OUTLINER_FLAGS,
+    FIBER_MACHINE_OUTLINER_FLAGS,
     GENERATION_FLAGS,
     PROFILE_SECTION_ALIGNMENTS,
     USE_FLAGS,
@@ -125,7 +125,7 @@ class PgsoPipelineTests(unittest.TestCase):
             (
                 "-machine-outliner-reruns=1",
             ),
-            FX_MACHINE_OUTLINER_FLAGS,
+            FIBER_MACHINE_OUTLINER_FLAGS,
         )
         self.assertEqual(
             (
@@ -287,7 +287,7 @@ class PgsoPipelineTests(unittest.TestCase):
             ),
             candidate,
         )
-        for flag in FX_MACHINE_OUTLINER_FLAGS:
+        for flag in FIBER_MACHINE_OUTLINER_FLAGS:
             self.assertIn(flag, candidate_object)
             self.assertNotIn(flag, benchmark_object)
 

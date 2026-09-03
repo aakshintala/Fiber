@@ -172,16 +172,16 @@ pub const Config = struct {
         process_provider: process_provider_mod.Provider,
     ) !Config {
         var config: Config = .{ .process_provider = process_provider };
-        if (io_mod.getenv("FX_TERMINAL_HOST_PROTOCOL_MIN")) |value| {
+        if (io_mod.getenv("FIBER_TERMINAL_HOST_PROTOCOL_MIN")) |value| {
             config.hello.range.minimum = try std.fmt.parseInt(u16, value, 10);
         }
-        if (io_mod.getenv("FX_TERMINAL_HOST_PROTOCOL_CURRENT")) |value| {
+        if (io_mod.getenv("FIBER_TERMINAL_HOST_PROTOCOL_CURRENT")) |value| {
             config.hello.range.current = try std.fmt.parseInt(u16, value, 10);
         }
-        if (io_mod.getenv("FX_TERMINAL_HOST_PROTOCOL_CAPABILITIES")) |value| {
+        if (io_mod.getenv("FIBER_TERMINAL_HOST_PROTOCOL_CAPABILITIES")) |value| {
             config.hello.capabilities = try std.fmt.parseInt(u64, value, 10);
         }
-        if (io_mod.getenv("FX_TERMINAL_HOST_IDLE_MS")) |value| {
+        if (io_mod.getenv("FIBER_TERMINAL_HOST_IDLE_MS")) |value| {
             config.idle_grace_ms = try std.fmt.parseInt(u64, value, 10);
         }
         try config.hello.validate();
@@ -511,8 +511,8 @@ fn runSupported(alloc: Allocator, config: Config) !void {
         "host listening pid={d} protocol={d}-{d}",
         .{ std.c.getpid(), config.hello.range.minimum, config.hello.range.current },
     );
-    maybeDelayForTest("FX_TERMINAL_TEST_STARTUP_RECOVERY_DELAY_MS");
-    if (io_mod.getenv("FX_TERMINAL_TEST_STARTUP_RECOVERY_FAILURE") != null) {
+    maybeDelayForTest("FIBER_TERMINAL_TEST_STARTUP_RECOVERY_DELAY_MS");
+    if (io_mod.getenv("FIBER_TERMINAL_TEST_STARTUP_RECOVERY_FAILURE") != null) {
         return error.TerminalHostStartupRecoveryFailed;
     }
     var persistent_store = try terminal_store.ProfileStore.init(
@@ -574,7 +574,7 @@ fn runSupported(alloc: Allocator, config: Config) !void {
     }
 
     debug_trace.logf("terminal_host", "host retiring idle=true", .{});
-    maybeDelayForTest("FX_TERMINAL_TEST_IDLE_EXIT_DELAY_MS");
+    maybeDelayForTest("FIBER_TERMINAL_TEST_IDLE_EXIT_DELAY_MS");
     identity_created = false;
     cleanupIdentity(&paths.host_dir);
     endpoint_created = false;
@@ -1252,11 +1252,11 @@ fn testRequestFailureRequested(
     point: []const u8,
     correlation_id: contracts.CorrelationId,
 ) bool {
-    const requested_point = io_mod.getenv("FX_TERMINAL_TEST_HOST_FAILURE_POINT") orelse
+    const requested_point = io_mod.getenv("FIBER_TERMINAL_TEST_HOST_FAILURE_POINT") orelse
         return false;
     if (!std.mem.eql(u8, requested_point, point)) return false;
     const requested_correlation = io_mod.getenv(
-        "FX_TERMINAL_TEST_HOST_FAILURE_CORRELATION",
+        "FIBER_TERMINAL_TEST_HOST_FAILURE_CORRELATION",
     ) orelse return false;
     const value = std.fmt.parseInt(u64, requested_correlation, 10) catch return false;
     return value == correlation_id.value;
@@ -1274,14 +1274,14 @@ fn maybeDelayForTest(name: []const u8) void {
 }
 
 fn testAcceptFailureRequested() bool {
-    const path = io_mod.getenv("FX_TERMINAL_TEST_ACCEPT_FAILURE_PATH") orelse
+    const path = io_mod.getenv("FIBER_TERMINAL_TEST_ACCEPT_FAILURE_PATH") orelse
         return false;
     std.Io.Dir.accessAbsolute(io_mod.getIo(), path, .{}) catch return false;
     return true;
 }
 
 fn noteTestOrderedAdmission(correlation_id: contracts.CorrelationId) !void {
-    const prefix = io_mod.getenv("FX_TERMINAL_TEST_ORDER_BARRIER") orelse return;
+    const prefix = io_mod.getenv("FIBER_TERMINAL_TEST_ORDER_BARRIER") orelse return;
     var path_buffer: [4096]u8 = undefined;
     const path = try std.fmt.bufPrint(
         &path_buffer,
@@ -1296,12 +1296,12 @@ fn awaitTestOrderedBoundary(
     correlation_id: contracts.CorrelationId,
     cancelled: *const std.atomic.Value(bool),
 ) !void {
-    const prefix = io_mod.getenv("FX_TERMINAL_TEST_ORDER_BARRIER") orelse return;
+    const prefix = io_mod.getenv("FIBER_TERMINAL_TEST_ORDER_BARRIER") orelse return;
     const first_target = testCorrelationFromEnvironment(
-        "FX_TERMINAL_TEST_ORDER_HOLD_CORRELATION",
+        "FIBER_TERMINAL_TEST_ORDER_HOLD_CORRELATION",
     );
     const second_target = testCorrelationFromEnvironment(
-        "FX_TERMINAL_TEST_ORDER_HOLD_CORRELATION_2",
+        "FIBER_TERMINAL_TEST_ORDER_HOLD_CORRELATION_2",
     );
     if ((first_target == null or first_target.? != correlation_id.value) and
         (second_target == null or second_target.? != correlation_id.value))

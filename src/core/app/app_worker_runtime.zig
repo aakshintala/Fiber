@@ -1983,7 +1983,7 @@ test "core.app_worker_runtime assistant chunk trace is metadata only" {
 
     var app = FakeApp.init(alloc);
     defer app.deinit();
-    const secret = "FX_ASSISTANT_CHUNK_SECRET";
+    const secret = "FIBER_ASSISTANT_CHUNK_SECRET";
     try Runtime(FakeApp).pushText(&app, secret);
     try tickNoop(&app);
     debug_trace.shutdown();
@@ -2006,7 +2006,13 @@ test "core.app_worker_runtime assistant chunk trace is metadata only" {
         trace,
         "event=assistant_chunk_applied",
     ) != null);
-    try std.testing.expect(std.mem.find(u8, trace, "chunk_bytes=25") != null);
+    const expected_chunk_bytes = try std.fmt.allocPrint(
+        alloc,
+        "chunk_bytes={d}",
+        .{secret.len},
+    );
+    defer alloc.free(expected_chunk_bytes);
+    try std.testing.expect(std.mem.find(u8, trace, expected_chunk_bytes) != null);
     try std.testing.expect(std.mem.find(u8, trace, secret) == null);
 }
 

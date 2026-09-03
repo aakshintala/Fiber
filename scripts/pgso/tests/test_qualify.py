@@ -405,9 +405,9 @@ class PgsoQualificationTests(unittest.TestCase):
             mock.patch.dict(
                 os.environ,
                 {
-                    "FX_DISABLE_KEYCHAIN": "0",
+                    "FIBER_DISABLE_KEYCHAIN": "0",
                     "AI_GATEWAY_API_KEY": "must-not-leak",
-                    "FX_E2E_REAL_API": "1",
+                    "FIBER_E2E_REAL_API": "1",
                 },
             ),
             mock.patch("scripts.pgso.qualify.run_checked", side_effect=fake_run),
@@ -424,13 +424,13 @@ class PgsoQualificationTests(unittest.TestCase):
 
         self.assertTrue(environments)
         self.assertTrue(
-            all(environment["FX_DISABLE_KEYCHAIN"] == "1" for environment in environments)
+            all(environment["FIBER_DISABLE_KEYCHAIN"] == "1" for environment in environments)
         )
         self.assertTrue(
             all("AI_GATEWAY_API_KEY" not in environment for environment in environments)
         )
         self.assertTrue(
-            all("FX_E2E_REAL_API" not in environment for environment in environments)
+            all("FIBER_E2E_REAL_API" not in environment for environment in environments)
         )
 
     def test_startup_measurement_rejects_a_truncated_hyperfine_round(self) -> None:

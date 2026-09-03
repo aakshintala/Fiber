@@ -23,14 +23,14 @@ const compact_chrome_rows: usize = 8;
 const separator_rows: usize = 2;
 const max_runs: usize = 1_000;
 
-const transcript_head = "FX_TRANSCRIPT_HEAD_SENTINEL";
-const transcript_middle = "FX_TRANSCRIPT_MIDDLE_SENTINEL";
-const transcript_tail = "FX_TRANSCRIPT_TAIL_SENTINEL";
-const diff_head = "FX_DIFF_HEAD_SENTINEL";
-const diff_middle = "FX_DIFF_MIDDLE_SENTINEL";
-const diff_tail = "FX_DIFF_TAIL_SENTINEL";
-const payload_head = "FX_LARGE_PAYLOAD_HEAD_SENTINEL";
-const payload_tail = "FX_LARGE_PAYLOAD_TAIL_SENTINEL";
+const transcript_head = "FIBER_TRANSCRIPT_HEAD_SENTINEL";
+const transcript_middle = "FIBER_TRANSCRIPT_MIDDLE_SENTINEL";
+const transcript_tail = "FIBER_TRANSCRIPT_TAIL_SENTINEL";
+const diff_head = "FIBER_DIFF_HEAD_SENTINEL";
+const diff_middle = "FIBER_DIFF_MIDDLE_SENTINEL";
+const diff_tail = "FIBER_DIFF_TAIL_SENTINEL";
+const payload_head = "FIBER_LARGE_PAYLOAD_HEAD_SENTINEL";
+const payload_tail = "FIBER_LARGE_PAYLOAD_TAIL_SENTINEL";
 
 const Scenario = enum {
     transcript,

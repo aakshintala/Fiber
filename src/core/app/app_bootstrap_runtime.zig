@@ -225,7 +225,7 @@ pub fn Runtime(comptime App: type) type {
                 app.auth.openOnboardingPicker();
             }
             if (comptime @hasField(App, "terminal_input_runtime") and @hasField(App, "terminal")) {
-                // Own theme protocol bytes even under FX_THEME; probing stays gated.
+                // Own theme protocol bytes even under FIBER_THEME; probing stays gated.
                 app.terminal_input_runtime.terminal_theme_monitor.start();
                 if (startup.theme_monitor_enabled) {
                     app.terminal.enableThemeNotifications() catch |err| {

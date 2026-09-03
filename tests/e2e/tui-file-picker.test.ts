@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, HAS_API_KEY, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, HAS_API_KEY, runFx } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -26,7 +26,7 @@ import {
 const HAS_TMUX = tmuxAvailable();
 const tmuxTest = test.skipIf(!HAS_TMUX);
 const liveTmuxTest = test.skipIf(
-  !HAS_TMUX || !HAS_API_KEY || process.env.FX_E2E_REAL_API !== "1",
+  !HAS_TMUX || !HAS_API_KEY || process.env.FIBER_E2E_REAL_API !== "1",
 );
 const TIMEOUT = 60_000;
 const LIFECYCLE_FILE_COUNT = 12_024;
@@ -36,13 +36,13 @@ const LIFECYCLE_CANDIDATE_COUNT = PART4_STRESS
   ? PART4_STRESS_CANDIDATE_COUNT
   : LIFECYCLE_FILE_COUNT + 1;
 const LIFECYCLE_CYCLES = boundedEnvInt(
-  "FX_FILE_PICKER_LIFECYCLE_CYCLES",
+  "FIBER_FILE_PICKER_LIFECYCLE_CYCLES",
   PART4_STRESS ? 100 : 25,
   PART4_STRESS ? 100 : 2,
   10_000,
 );
 const LIFECYCLE_MEASURED_CYCLES = boundedEnvInt(
-  "FX_FILE_PICKER_MEASURED_CYCLES",
+  "FIBER_FILE_PICKER_MEASURED_CYCLES",
   PART4_STRESS ? 120 : 12,
   PART4_STRESS ? 100 : 2,
   1_000,
@@ -55,12 +55,12 @@ const PROVISIONAL_STRESS_P95_MS = 500;
 const PROVISIONAL_STRESS_MAX_MS = 1_000;
 
 function stressCandidateCount(): number {
-  const raw = process.env.FX_FILE_PICKER_PART4_CANDIDATE_COUNT;
+  const raw = process.env.FIBER_FILE_PICKER_PART4_CANDIDATE_COUNT;
   if (raw === undefined || raw === "0") return 0;
   const value = Number.parseInt(raw, 10);
   if (!Number.isSafeInteger(value) || value < 50_000 || value > 100_000) {
     throw new Error(
-      "FX_FILE_PICKER_PART4_CANDIDATE_COUNT must be 0 or an integer in [50000, 100000]",
+      "FIBER_FILE_PICKER_PART4_CANDIDATE_COUNT must be 0 or an integer in [50000, 100000]",
     );
   }
   return value;
@@ -199,7 +199,7 @@ async function startMockFx(
 ): Promise<TmuxSession> {
   gateway = startFakeGateway(responses);
   session = await TmuxSession.create({
-    cmd: FX_BIN,
+    cmd: FIBER_BIN,
     cwd: current.workspace,
     env: mockFxEnvironment(current, gateway, extraEnv),
     width: 112,
@@ -222,12 +222,11 @@ function mockFxEnvironment(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
     FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
-    FX_TRACE_LOG: current.tracePath,
-    FX_TRACE_SCOPES: "input,core,prompt,gateway,resize",
-    FX_RECORD: current.tapePath,
-    FX_RECORD_INPUT: "1",
+    FIBER_MODEL: FAKE_GATEWAY_MODEL,
+    FIBER_TRACE_LOG: current.tracePath,
+    FIBER_TRACE_SCOPES: "input,core,prompt,gateway,resize",
+    FIBER_RECORD: current.tapePath,
+    FIBER_RECORD_INPUT: "1",
     ...extraEnv,
   };
 }
@@ -430,7 +429,7 @@ describe("@ file picker", () => {
     "keeps the completed result visible through rapid large-index refreshes",
     async () => {
       const current = createFixture("fx-file-picker-stable-refresh-");
-      const artifactDir = process.env.FX_FILE_PICKER_LIFECYCLE_ARTIFACT_DIR;
+      const artifactDir = process.env.FIBER_FILE_PICKER_LIFECYCLE_ARTIFACT_DIR;
       const fixtureStartedAt = performance.now();
       let fixtureFileCount = 0;
       let fixtureFileBytes = 0;
@@ -599,8 +598,8 @@ describe("@ file picker", () => {
         }
       };
       stressSamplerCleanup = () => stopSamplers(true);
-      const profileReadyPath = process.env.FX_FILE_PICKER_PROFILE_READY;
-      const profileGoPath = process.env.FX_FILE_PICKER_PROFILE_GO;
+      const profileReadyPath = process.env.FIBER_FILE_PICKER_PROFILE_READY;
+      const profileGoPath = process.env.FIBER_FILE_PICKER_PROFILE_GO;
       if (profileReadyPath && profileGoPath) {
         writeFileSync(profileReadyPath, `${targetPid}\n`);
         await waitForFile(profileGoPath);
@@ -1793,10 +1792,10 @@ describe("@ file picker", () => {
         writeFileSync(current.stderrPath, "");
         const activeGateway = gateway!;
         session = await TmuxSession.create({
-          cmd: `${FX_BIN} --resume-last`,
+          cmd: `${FIBER_BIN} --resume-last`,
           cwd: current.workspace,
           env: mockFxEnvironment(current, activeGateway, {
-            FX_RECORD: join(current.root, `resume-${cycle}.fxtape`),
+            FIBER_RECORD: join(current.root, `resume-${cycle}.fxtape`),
           }),
           width: cycle === 1 ? 48 : 160,
           height: cycle === 1 ? 12 : 50,
@@ -1849,16 +1848,15 @@ describe("@ file picker", () => {
       );
 
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: current.workspace,
         env: {
           HOME: current.home,
           AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY,
           VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN,
-          FX_AUTO_UPGRADE: "0",
-          FX_MODEL: process.env.FX_FILE_PICKER_LIVE_MODEL ?? "anthropic/claude-sonnet-4.6",
-          FX_TRACE_LOG: current.tracePath,
-          FX_TRACE_SCOPES: "input,prompt,gateway",
+          FIBER_MODEL: process.env.FIBER_FILE_PICKER_LIVE_MODEL ?? "anthropic/claude-sonnet-4.6",
+          FIBER_TRACE_LOG: current.tracePath,
+          FIBER_TRACE_SCOPES: "input,prompt,gateway",
         },
         width: 112,
         height: 32,

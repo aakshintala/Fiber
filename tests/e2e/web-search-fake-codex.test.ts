@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   chatGptAccessToken,
   codexFinalText,
@@ -88,7 +88,7 @@ class AcpClient {
         (entry): entry is [string, string] => entry[1] !== undefined,
       ),
     );
-    return new AcpClient(nodeSpawn(FX_BIN, ["acp"], {
+    return new AcpClient(nodeSpawn(FIBER_BIN, ["acp"], {
       cwd,
       env: definedEnv,
       stdio: ["pipe", "pipe", "pipe"],
@@ -285,8 +285,8 @@ describe("web_search Codex fixture", () => {
           {
             cwd: root.workspace,
             env: fakeCodexEnv(root.home, codex, {
-              FX_PERMISSION_MODE: "auto",
-              FX_MAX_AGENT_STEPS: "1",
+              FIBER_PERMISSION_MODE: "auto",
+              FIBER_MAX_AGENT_STEPS: "1",
             }),
             timeoutMs: TIMEOUT,
           },

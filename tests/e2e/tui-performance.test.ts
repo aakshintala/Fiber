@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import { readTapeFrames, type TapeFrame } from "./render-lab/tape";
 import {
   composerContains,
@@ -26,8 +26,8 @@ import {
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const ENABLED = process.env.FX_TUI_PERFORMANCE === "1";
-const LIVE_ENABLED = process.env.FX_E2E_REAL_API === "1" &&
+const ENABLED = process.env.FIBER_TUI_PERFORMANCE === "1";
+const LIVE_ENABLED = process.env.FIBER_E2E_REAL_API === "1" &&
   typeof process.env.AI_GATEWAY_API_KEY === "string" &&
   process.env.AI_GATEWAY_API_KEY.length > 0;
 const WARMUPS = 5;
@@ -443,14 +443,13 @@ test.skipIf(!tmuxAvailable())(
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: {
           HOME: fixture.home,
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_SOUND: "0",
+          FIBER_SOUND: "0",
           NO_COLOR: "1",
         },
         stderrPath: fixture.stderrPath,
@@ -486,7 +485,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: {
           HOME: undefined,
@@ -494,11 +493,10 @@ test.skipIf(!tmuxAvailable())(
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: noHomeGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: noHomeGateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_SKIP_ONBOARDING: "1",
-          FX_SOUND: "0",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_DISABLE_KEYCHAIN: "1",
+          FIBER_SKIP_ONBOARDING: "1",
+          FIBER_SOUND: "0",
           NO_COLOR: "1",
         },
         stderrPath: fixture.stderrPath,
@@ -534,14 +532,13 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: {
           HOME: fixture.home,
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_SOUND: "0",
+          FIBER_SOUND: "0",
           NO_COLOR: "1",
         },
         stderrPath: fixture.stderrPath,
@@ -592,7 +589,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: {
           HOME: linkedHome,
@@ -600,11 +597,10 @@ test.skipIf(!tmuxAvailable())(
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: linkedHomeGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: linkedHomeGateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_SKIP_ONBOARDING: "1",
-          FX_SOUND: "0",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_DISABLE_KEYCHAIN: "1",
+          FIBER_SKIP_ONBOARDING: "1",
+          FIBER_SOUND: "0",
           NO_COLOR: "1",
         },
         stderrPath: fixture.stderrPath,
@@ -696,7 +692,7 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: {
           HOME: fixture.home,
@@ -704,13 +700,12 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_PERMISSION_MODE: "ask",
-          FX_AUTO_UPGRADE: "0",
-          FX_SOUND: "0",
-          FX_RECORD: fixture.tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TERMINAL_HOST_IDLE_MS: "250",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_PERMISSION_MODE: "ask",
+          FIBER_SOUND: "0",
+          FIBER_RECORD: fixture.tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TERMINAL_HOST_IDLE_MS: "250",
           NO_COLOR: "1",
         },
         stderrPath: fixture.stderrPath,
@@ -1014,7 +1009,7 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
           after: resourcesAfter,
         },
       };
-      const reportPath = process.env.FX_TUI_PERFORMANCE_REPORT;
+      const reportPath = process.env.FIBER_TUI_PERFORMANCE_REPORT;
       if (reportPath) writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 
       for (const [name, values] of Object.entries(samples)) {
@@ -1058,7 +1053,7 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
     } finally {
       await session?.kill();
       gateway.stop();
-      if (process.env.FX_TUI_PERFORMANCE_KEEP !== "1") {
+      if (process.env.FIBER_TUI_PERFORMANCE_KEEP !== "1") {
         rmSync(fixture.root, { recursive: true, force: true });
       } else {
         console.error(`retained TUI performance fixture at ${fixture.root}`);
@@ -1075,14 +1070,13 @@ test.skipIf(!LIVE_ENABLED || !tmuxAvailable())(
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: {
           HOME: fixture.home,
           AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY,
           VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN,
-          FX_AUTO_UPGRADE: "0",
-          FX_SOUND: "0",
+          FIBER_SOUND: "0",
           NO_COLOR: "1",
         },
         stderrPath: fixture.stderrPath,

@@ -2664,7 +2664,7 @@ test "user patch traces metadata without settings content" {
     try writeStoreFixture(
         tmp.dir,
         "home/.fx/settings.json",
-        "{\"sentinel_secret\":\"FX_SETTINGS_SECRET\",\"workspaces\":{}}\n",
+        "{\"sentinel_secret\":\"FIBER_SETTINGS_SECRET\",\"workspaces\":{}}\n",
     );
 
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
@@ -2681,7 +2681,7 @@ test "user patch traces metadata without settings content" {
     var store = try Store.initFromHome(alloc, home, .writable);
     defer store.deinit(alloc);
     var outcome = try store.applyUserPatch(alloc, .{
-        .model_preference = .{ .provider = .codex, .model = "FX_MODEL_SECRET" },
+        .model_preference = .{ .provider = .codex, .model = "FIBER_MODEL_SECRET" },
     });
     defer outcome.deinit(alloc);
     debug_trace.shutdown();
@@ -2695,8 +2695,8 @@ test "user patch traces metadata without settings content" {
     try std.testing.expect(std.mem.find(u8, trace, "path_category=user_settings") != null);
     try std.testing.expect(std.mem.find(u8, trace, "mutation_mode=runtime_first") != null);
     try std.testing.expect(std.mem.find(u8, trace, "outcome=committed") != null);
-    try std.testing.expect(std.mem.find(u8, trace, "FX_SETTINGS_SECRET") == null);
-    try std.testing.expect(std.mem.find(u8, trace, "FX_MODEL_SECRET") == null);
+    try std.testing.expect(std.mem.find(u8, trace, "FIBER_SETTINGS_SECRET") == null);
+    try std.testing.expect(std.mem.find(u8, trace, "FIBER_MODEL_SECRET") == null);
     try std.testing.expect(std.mem.find(u8, trace, workspace) == null);
 }
 

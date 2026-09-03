@@ -46,7 +46,7 @@ const PeerDeadline = struct {
 
     fn init(default_ms: i64) PeerDeadline {
         const duration_ms = if (io_mod.getenv(
-            "FX_TERMINAL_TEST_TMUX_DEADLINE_MS",
+            "FIBER_TERMINAL_TEST_TMUX_DEADLINE_MS",
         )) |text|
             @min(
                 std.fmt.parseInt(i64, text, 10) catch default_ms,
@@ -888,7 +888,7 @@ fn cleanupOwnedNamespaceWithEvidence(
             logCleanupFailure(backend_identity, "pane", err);
             return err;
         };
-        if (io_mod.getenv("FX_TERMINAL_TEST_FAIL_TMUX_CLOSE_CLEANUP") != null) {
+        if (io_mod.getenv("FIBER_TERMINAL_TEST_FAIL_TMUX_CLOSE_CLEANUP") != null) {
             return error.InjectedTmuxCloseCleanupFailure;
         }
         runTmuxNoOutput(alloc, paths.socket, &.{
@@ -1147,7 +1147,7 @@ pub fn runCapture(raw_args: []const [*:0]const u8) !void {
     {
         return error.InvalidTmuxCapture;
     }
-    const test_failure = io_mod.getenv("FX_TERMINAL_TEST_TMUX_CAPTURE_FAILURE");
+    const test_failure = io_mod.getenv("FIBER_TERMINAL_TEST_TMUX_CAPTURE_FAILURE");
     if (test_failure) |failure| {
         if (std.mem.eql(u8, failure, "child-exit")) return;
         if (std.mem.eql(u8, failure, "no-peer")) {
@@ -2255,7 +2255,7 @@ fn receiveBeforeDeadline(
 }
 
 fn assignForegroundProcessGroup(fd: c_int, pgrp: std.posix.pid_t) bool {
-    if (io_mod.getenv("FX_TERMINAL_TEST_TMUX_TCSETPGRP_FAILURE") != null) {
+    if (io_mod.getenv("FIBER_TERMINAL_TEST_TMUX_TCSETPGRP_FAILURE") != null) {
         return false;
     }
     return tcsetpgrp(fd, pgrp) == 0;
@@ -2323,7 +2323,7 @@ fn waitLauncherChild(child: *std.process.Child) !std.process.Child.Term {
 
 fn requestChildTermination(child_pid: std.posix.pid_t) void {
     const group_kill_succeeded =
-        io_mod.getenv("FX_TERMINAL_TEST_TMUX_GROUP_KILL_FAILURE") == null and
+        io_mod.getenv("FIBER_TERMINAL_TEST_TMUX_GROUP_KILL_FAILURE") == null and
         std.c.kill(-child_pid, std.c.SIG.KILL) == 0;
     if (group_kill_succeeded) return;
 

@@ -23,7 +23,7 @@ import {
 import { createConnection, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   terminalFixtureShell,
   TmuxSession,
@@ -356,7 +356,7 @@ function tmuxCaptureHelperPids(): number[] {
     })
     .filter((entry): entry is { pid: number; command: string } => entry !== null)
     .filter((entry) =>
-      entry.command.includes(FX_BIN) &&
+      entry.command.includes(FIBER_BIN) &&
       entry.command.includes("--fx-internal-terminal-tmux-capture")
     )
     .map((entry) => entry.pid)
@@ -439,9 +439,9 @@ async function runClientFixture(
   home: string,
   idleMs = 500,
   extraEnv: NodeJS.ProcessEnv = {},
-  binary = FX_BIN,
+  binary = FIBER_BIN,
 ) {
-  const current = binary === FX_BIN;
+  const current = binary === FIBER_BIN;
   const executable = current ? buildCurrentClientFixture() : binary;
   const args = current ? [] : ["--fx-internal-terminal-client-fixture"];
   const child = spawn(executable, args, {
@@ -449,7 +449,7 @@ async function runClientFixture(
       ...process.env,
       HOME: home,
       SHELL: TERMINAL_FIXTURE_SHELL,
-      FX_TERMINAL_HOST_IDLE_MS: String(idleMs),
+      FIBER_TERMINAL_HOST_IDLE_MS: String(idleMs),
       ...extraEnv,
     },
     stdio: ["pipe", "pipe", "pipe"],
@@ -712,16 +712,16 @@ function startHost(
   range: Range = { minimum: 4, current: 5 },
   idleMs = 350,
   extraEnv: NodeJS.ProcessEnv = {},
-  binary = FX_BIN,
+  binary = FIBER_BIN,
 ): ChildProcessWithoutNullStreams {
   const child = spawn(binary, [INTERNAL_MODE], {
     env: {
       ...process.env,
       HOME: home,
       SHELL: TERMINAL_FIXTURE_SHELL,
-      FX_TERMINAL_HOST_IDLE_MS: String(idleMs),
-      FX_TERMINAL_HOST_PROTOCOL_MIN: String(range.minimum),
-      FX_TERMINAL_HOST_PROTOCOL_CURRENT: String(range.current),
+      FIBER_TERMINAL_HOST_IDLE_MS: String(idleMs),
+      FIBER_TERMINAL_HOST_PROTOCOL_MIN: String(range.minimum),
+      FIBER_TERMINAL_HOST_PROTOCOL_CURRENT: String(range.current),
       ...extraEnv,
     },
     stdio: ["pipe", "pipe", "pipe"],
@@ -734,14 +734,14 @@ function startHostWithAdvertisedProtocol(
   home: string,
   idleMs = 350,
   extraEnv: NodeJS.ProcessEnv = {},
-  binary = FX_BIN,
+  binary = FIBER_BIN,
 ): ChildProcessWithoutNullStreams {
   const child = spawn(binary, [INTERNAL_MODE], {
     env: {
       ...process.env,
       HOME: home,
       SHELL: TERMINAL_FIXTURE_SHELL,
-      FX_TERMINAL_HOST_IDLE_MS: String(idleMs),
+      FIBER_TERMINAL_HOST_IDLE_MS: String(idleMs),
       ...extraEnv,
     },
     stdio: ["pipe", "pipe", "pipe"],
@@ -773,9 +773,9 @@ function protocolFixtureEnv(
   fixture: (typeof protocolFixtureDefinitions)[keyof typeof protocolFixtureDefinitions],
 ): NodeJS.ProcessEnv {
   return {
-    FX_TERMINAL_HOST_PROTOCOL_MIN: String(fixture.range.minimum),
-    FX_TERMINAL_HOST_PROTOCOL_CURRENT: String(fixture.range.current),
-    FX_TERMINAL_HOST_PROTOCOL_CAPABILITIES: String(fixture.capabilities),
+    FIBER_TERMINAL_HOST_PROTOCOL_MIN: String(fixture.range.minimum),
+    FIBER_TERMINAL_HOST_PROTOCOL_CURRENT: String(fixture.range.current),
+    FIBER_TERMINAL_HOST_PROTOCOL_CAPABILITIES: String(fixture.capabilities),
   };
 }
 
@@ -1654,7 +1654,7 @@ test("host handshake is ready before slow durable recovery", async () => {
   const home = makeHome();
   const paths = hostPaths(home);
   const child = startHost(home, { minimum: 4, current: 5 }, 350, {
-    FX_TERMINAL_TEST_STARTUP_RECOVERY_DELAY_MS: "5500",
+    FIBER_TERMINAL_TEST_STARTUP_RECOVERY_DELAY_MS: "5500",
   });
   await waitFor(() => existsSync(paths.socket) && existsSync(paths.identity));
 
@@ -1696,7 +1696,7 @@ test("fatal host drain timeout exits before shared-state teardown", async () => 
   const paths = hostPaths(home);
   const failAccept = join(home, "fail-next-accept");
   const host = startHost(home, undefined, 10_000, {
-    FX_TERMINAL_TEST_ACCEPT_FAILURE_PATH: failAccept,
+    FIBER_TERMINAL_TEST_ACCEPT_FAILURE_PATH: failAccept,
   });
   await waitFor(() => existsSync(paths.socket) && existsSync(paths.identity));
 
@@ -1727,8 +1727,8 @@ test("startup recovery failure exits before stalled client teardown", async () =
   const home = makeHome();
   const paths = hostPaths(home);
   const host = startHost(home, undefined, 10_000, {
-    FX_TERMINAL_TEST_STARTUP_RECOVERY_DELAY_MS: "1000",
-    FX_TERMINAL_TEST_STARTUP_RECOVERY_FAILURE: "1",
+    FIBER_TERMINAL_TEST_STARTUP_RECOVERY_DELAY_MS: "1000",
+    FIBER_TERMINAL_TEST_STARTUP_RECOVERY_FAILURE: "1",
   });
   await waitFor(() => existsSync(paths.socket) && existsSync(paths.identity));
 
@@ -1746,9 +1746,9 @@ test("client reconciles an idle-retiring host before admitting a request", async
   const paths = hostPaths(home);
   const trace = join(home, "idle-retirement.trace");
   const retiring = startHost(home, undefined, 50, {
-    FX_TRACE_LOG: trace,
-    FX_TRACE_SCOPES: "terminal_host",
-    FX_TERMINAL_TEST_IDLE_EXIT_DELAY_MS: "3000",
+    FIBER_TRACE_LOG: trace,
+    FIBER_TRACE_SCOPES: "terminal_host",
+    FIBER_TERMINAL_TEST_IDLE_EXIT_DELAY_MS: "3000",
   }, buildCurrentClientFixture());
 
   await waitFor(() =>
@@ -2065,7 +2065,7 @@ test.skipIf(!tmuxAvailable())(
     const home = makeHome();
     const paths = hostPaths(home);
     const host = startHost(home, undefined, 10_000, {
-      FX_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS: "5000",
+      FIBER_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS: "5000",
     });
     await waitFor(() => existsSync(paths.socket));
     const connected = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -2122,12 +2122,12 @@ test.skipIf(!tmuxAvailable())(
         const transport = terminalTransportPaths(home);
         const trace = join(home, `${fixture.owner}-${fixture.point}-${pass}.log`);
         const host = startHost(home, undefined, 2_000, {
-          FX_TRACE_LOG: trace,
-          FX_TRACE_SCOPES: "terminal_host",
-          FX_TERMINAL_TEST_TMUX_DEADLINE_MS: "150",
+          FIBER_TRACE_LOG: trace,
+          FIBER_TRACE_SCOPES: "terminal_host",
+          FIBER_TERMINAL_TEST_TMUX_DEADLINE_MS: "150",
           ...(fixture.owner === "marker"
-            ? { FX_TERMINAL_TEST_TMUX_MARKER_FAILURE: fixture.point }
-            : { FX_TERMINAL_TEST_TMUX_CAPTURE_FAILURE: fixture.point }),
+            ? { FIBER_TERMINAL_TEST_TMUX_MARKER_FAILURE: fixture.point }
+            : { FIBER_TERMINAL_TEST_TMUX_CAPTURE_FAILURE: fixture.point }),
         });
         const stderr = streamText(host.stderr);
         await waitFor(() => existsSync(paths.socket));
@@ -2212,11 +2212,11 @@ test.skipIf(!tmuxAvailable())(
         const transport = terminalTransportPaths(home);
         const trace = join(home, `foreground-${fixture.name}-${pass}.log`);
         const host = startHost(home, undefined, 2_000, {
-          FX_TRACE_LOG: trace,
-          FX_TRACE_SCOPES: "terminal_host",
-          FX_TERMINAL_TEST_TMUX_TCSETPGRP_FAILURE: "1",
+          FIBER_TRACE_LOG: trace,
+          FIBER_TRACE_SCOPES: "terminal_host",
+          FIBER_TERMINAL_TEST_TMUX_TCSETPGRP_FAILURE: "1",
           ...(fixture.injectGroupKillFailure
-            ? { FX_TERMINAL_TEST_TMUX_GROUP_KILL_FAILURE: "1" }
+            ? { FIBER_TERMINAL_TEST_TMUX_GROUP_KILL_FAILURE: "1" }
             : {}),
         });
         const stderr = streamText(host.stderr);
@@ -2345,9 +2345,9 @@ test.skipIf(!tmuxAvailable())(
     const baselineCaptureHelpers = tmuxCaptureHelperPids();
     const trace = join(home, "tmux-sigttin-trace.log");
     const host = startHost(home, undefined, 250, {
-      FX_TRACE_LOG: trace,
-      FX_TRACE_SCOPES: "terminal_host",
-      FX_TERMINAL_TEST_TMUX_DEADLINE_MS: "2000",
+      FIBER_TRACE_LOG: trace,
+      FIBER_TRACE_SCOPES: "terminal_host",
+      FIBER_TERMINAL_TEST_TMUX_DEADLINE_MS: "2000",
     });
     const stderr = streamText(host.stderr);
     await waitFor(() => existsSync(paths.socket));
@@ -2491,13 +2491,13 @@ int tcsetpgrp(int fd, pid_t pgrp) {
     *(void **)(&real_tcsetpgrp) = dlsym(RTLD_NEXT, "tcsetpgrp");
   }
   if (!launcher_process()) return real_tcsetpgrp(fd, pgrp);
-  const char *ready = getenv("FX_E2E_TMUX_DESCENDANT_READY");
+  const char *ready = getenv("FIBER_E2E_TMUX_DESCENDANT_READY");
   for (int i = 0; ready != NULL && access(ready, F_OK) != 0 && i < 1000; i++) {
     usleep(5000);
   }
   int result = real_tcsetpgrp(fd, pgrp);
-  touch_path(getenv("FX_E2E_TMUX_HANDOFF_ASSIGNED"));
-  const char *release = getenv("FX_E2E_TMUX_HANDOFF_RELEASE");
+  touch_path(getenv("FIBER_E2E_TMUX_HANDOFF_ASSIGNED"));
+  const char *release = getenv("FIBER_E2E_TMUX_HANDOFF_RELEASE");
   for (int i = 0; release != NULL && access(release, F_OK) != 0 && i < 1000; i++) {
     usleep(5000);
   }
@@ -2546,10 +2546,10 @@ exec /bin/bash "$@"
     const baselineCaptureHelpers = tmuxCaptureHelperPids();
     const host = startHost(home, undefined, 250, {
       LD_PRELOAD: interposer,
-      FX_E2E_TMUX_DESCENDANT_READY: descendantReady,
-      FX_E2E_TMUX_HANDOFF_ASSIGNED: handoffAssigned,
-      FX_E2E_TMUX_HANDOFF_RELEASE: handoffRelease,
-      FX_TERMINAL_TEST_TMUX_DEADLINE_MS: "2000",
+      FIBER_E2E_TMUX_DESCENDANT_READY: descendantReady,
+      FIBER_E2E_TMUX_HANDOFF_ASSIGNED: handoffAssigned,
+      FIBER_E2E_TMUX_HANDOFF_RELEASE: handoffRelease,
+      FIBER_TERMINAL_TEST_TMUX_DEADLINE_MS: "2000",
     });
     const stderr = streamText(host.stderr);
     await waitFor(() => existsSync(paths.socket));
@@ -2826,7 +2826,7 @@ test.skipIf(!tmuxAvailable())("tmux resize checkpoint failures roll back without
     const releasePath = join(home, "resize-release");
     const paths = hostPaths(home);
     const host = startHost(home, undefined, 30_000, {
-      FX_TERMINAL_TEST_TMUX_RESIZE_CHECKPOINT_FAILURE: failurePoint,
+      FIBER_TERMINAL_TEST_TMUX_RESIZE_CHECKPOINT_FAILURE: failurePoint,
     });
     await waitFor(() => existsSync(paths.socket));
     const connected = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -2956,7 +2956,7 @@ test.skipIf(!tmuxAvailable() || process.platform !== "linux")(
     const home = makeHome();
     const paths = hostPaths(home);
     const liveBin = join(home, "fx");
-    copyFileSync(FX_BIN, liveBin);
+    copyFileSync(FIBER_BIN, liveBin);
     chmodSync(liveBin, 0o755);
 
     const host = startHost(home, undefined, 30_000, {}, liveBin);
@@ -3019,19 +3019,19 @@ test.skipIf(!tmuxAvailable())("tmux recovers every durable starting boundary", a
       name: "prepared",
       lifecycleKind: 1,
       commandless: false,
-      env: { FX_TERMINAL_TEST_TMUX_PREPARED_RELEASE_DELAY_MS: "5000" },
+      env: { FIBER_TERMINAL_TEST_TMUX_PREPARED_RELEASE_DELAY_MS: "5000" },
     },
     {
       name: "shell-ready",
       lifecycleKind: 2,
       commandless: true,
-      env: { FX_TERMINAL_TEST_TMUX_SHELL_READY_HOST_DELAY_MS: "5000" },
+      env: { FIBER_TERMINAL_TEST_TMUX_SHELL_READY_HOST_DELAY_MS: "5000" },
     },
     {
       name: "command-started",
       lifecycleKind: 3,
       commandless: false,
-      env: { FX_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS: "5000" },
+      env: { FIBER_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS: "5000" },
     },
   ];
 
@@ -3075,8 +3075,8 @@ test.skipIf(!tmuxAvailable())("tmux recovers every durable starting boundary", a
 
     const recoveryTrace = join(home, `starting-${fixture.name}.log`);
     const replacement = startHost(home, undefined, 30_000, {
-      FX_TRACE_LOG: recoveryTrace,
-      FX_TRACE_SCOPES: "terminal_host",
+      FIBER_TRACE_LOG: recoveryTrace,
+      FIBER_TRACE_SCOPES: "terminal_host",
     });
     await waitFor(
       () => existsSync(paths.socket) && existsSync(paths.identity) &&
@@ -3167,7 +3167,7 @@ test.skipIf(!tmuxAvailable())(
       const home = makeHome();
       const paths = hostPaths(home);
       const firstHost = startHost(home, undefined, 30_000, {
-        FX_TERMINAL_TEST_TMUX_PREPARED_RELEASE_DELAY_MS:
+        FIBER_TERMINAL_TEST_TMUX_PREPARED_RELEASE_DELAY_MS:
           String(preparedReleaseDelayMs),
       });
       await waitFor(() => existsSync(paths.socket));
@@ -3204,7 +3204,7 @@ test.skipIf(!tmuxAvailable())(
       await pending;
 
       const failed = startHost(home, undefined, 30_000, {
-        FX_TERMINAL_TEST_TMUX_RECOVERY_FAILURE: "release",
+        FIBER_TERMINAL_TEST_TMUX_RECOVERY_FAILURE: "release",
       });
       expect(await waitForExit(failed), `release:${pass}`).not.toBe(0);
       expect(processExists(panePid), `release:${pass}`).toBe(true);
@@ -3313,8 +3313,8 @@ test.skipIf(!tmuxAvailable())("transient tmux recovery failures preserve the pan
     await waitForExit(firstHost);
 
     const failedRecovery = startHost(home, undefined, 30_000, {
-      FX_TERMINAL_TEST_TMUX_RECOVERY_FAILURE: failurePoint,
-      FX_TERMINAL_TEST_TMUX_RECOVERY_SESSION_ID: sessionId,
+      FIBER_TERMINAL_TEST_TMUX_RECOVERY_FAILURE: failurePoint,
+      FIBER_TERMINAL_TEST_TMUX_RECOVERY_SESSION_ID: sessionId,
     });
     expect(await waitForExit(failedRecovery), failurePoint).not.toBe(0);
     expect(() => process.kill(panePid, 0), failurePoint).not.toThrow();
@@ -3482,7 +3482,7 @@ test.skipIf(!tmuxAvailable())("private tmux teardown owns partial recovery resou
   await waitForExit(firstHost);
 
   const failedRecovery = startHost(home, undefined, 30_000, {
-    FX_TERMINAL_TEST_TMUX_RECOVERY_FAILURE: "after-gap",
+    FIBER_TERMINAL_TEST_TMUX_RECOVERY_FAILURE: "after-gap",
   });
   expect(await waitForExit(failedRecovery)).not.toBe(0);
   const proof = await cleanupPrivateTmuxServer(
@@ -4202,8 +4202,8 @@ test("revoke and close quiesce writes already queued under stale authority", asy
   const paths = hostPaths(home);
   const writeBarrier = join(home, "write-barrier");
   const host = startHost(home, undefined, 10_000, {
-    FX_TERMINAL_TEST_WRITE_DELAY_MS: "180",
-    FX_TERMINAL_TEST_WRITE_BARRIER_PATH: writeBarrier,
+    FIBER_TERMINAL_TEST_WRITE_DELAY_MS: "180",
+    FIBER_TERMINAL_TEST_WRITE_BARRIER_PATH: writeBarrier,
   });
   await waitFor(() => existsSync(paths.socket));
   const connected = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -4648,7 +4648,7 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
   if (existsSync("/bin/zsh")) isolateZshStartupFixture(home);
   const paths = hostPaths(home);
   const host = startHost(home, undefined, 10_000, {
-    FX_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS: "2500",
+    FIBER_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS: "2500",
   });
   await waitFor(() => existsSync(paths.socket));
   const connected = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -5408,7 +5408,7 @@ test("force close reports incomplete refresh descendant and shell delivery", asy
     const home = makeHome();
     const paths = hostPaths(home);
     const host = startHost(home, undefined, TMUX_INITIAL_STARTUP_OBSERVATION_BUDGET_MS, {
-      FX_TERMINAL_TEST_FAIL_SIGNAL_STAGE: stage,
+      FIBER_TERMINAL_TEST_FAIL_SIGNAL_STAGE: stage,
     });
     await waitFor(() => existsSync(paths.socket));
     const control = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -5799,8 +5799,8 @@ test.skipIf(!tmuxAvailable())(
     const home = makeHome();
     const paths = hostPaths(home);
     const firstHost = startHost(home, undefined, 30_000, {
-      FX_TERMINAL_TEST_FAIL_TMUX_CLOSE_CLEANUP: "1",
-      FX_TERMINAL_TEST_FAIL_SIGNAL_STAGE: "outside_group",
+      FIBER_TERMINAL_TEST_FAIL_TMUX_CLOSE_CLEANUP: "1",
+      FIBER_TERMINAL_TEST_FAIL_SIGNAL_STAGE: "outside_group",
     });
     const firstStdout = streamText(firstHost.stdout);
     const firstStderr = streamText(firstHost.stderr);
@@ -5971,7 +5971,7 @@ test.skipIf(!tmuxAvailable())(
     const home = makeHome();
     const paths = hostPaths(home);
     const firstHost = startHost(home, undefined, 30_000, {
-      FX_TERMINAL_TEST_INTERRUPT_CLOSE_AFTER_COMMIT: "1",
+      FIBER_TERMINAL_TEST_INTERRUPT_CLOSE_AFTER_COMMIT: "1",
     });
     const firstStdout = streamText(firstHost.stdout);
     const firstStderr = streamText(firstHost.stderr);
@@ -6051,7 +6051,7 @@ test.skipIf(!tmuxAvailable())(
     expect(await firstStderr).toBe("");
 
     const failedRecovery = startHost(home, undefined, 30_000, {
-      FX_TERMINAL_TEST_FAIL_TMUX_CLOSE_CLEANUP: "1",
+      FIBER_TERMINAL_TEST_FAIL_TMUX_CLOSE_CLEANUP: "1",
     });
     const failedStdout = streamText(failedRecovery.stdout);
     const failedStderr = streamText(failedRecovery.stderr);
@@ -6149,11 +6149,11 @@ test(
     const trace = join(home, `reopened-cancellation-${error}.log`);
     const barrier = join(home, `reopened-cancellation-${error}`);
     const replacement = startHost(home, undefined, 300, {
-      FX_TRACE_LOG: trace,
-      FX_TRACE_SCOPES: "terminal_host",
-      FX_TERMINAL_TEST_ORDER_BARRIER: barrier,
-      FX_TERMINAL_TEST_ORDER_HOLD_CORRELATION: "335",
-      FX_TERMINAL_TEST_FAIL_CANCELLATION_OPEN: "1",
+      FIBER_TRACE_LOG: trace,
+      FIBER_TRACE_SCOPES: "terminal_host",
+      FIBER_TERMINAL_TEST_ORDER_BARRIER: barrier,
+      FIBER_TERMINAL_TEST_ORDER_HOLD_CORRELATION: "335",
+      FIBER_TERMINAL_TEST_FAIL_CANCELLATION_OPEN: "1",
     });
     await waitFor(() =>
       existsSync(paths.socket) && existsSync(paths.identity) &&
@@ -6494,7 +6494,7 @@ test("host remains authoritative until natural backend cleanup finishes", async 
   const home = makeHome();
   const paths = hostPaths(home);
   const host = startHost(home, undefined, 40, {
-    FX_TERMINAL_TEST_BACKEND_CLEANUP_DELAY_MS: "500",
+    FIBER_TERMINAL_TEST_BACKEND_CLEANUP_DELAY_MS: "500",
   });
   await waitFor(() => existsSync(paths.socket));
   const connected = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -6546,7 +6546,7 @@ test("process-token capture failure kills and reaps before returning failure", a
     home,
     undefined,
     NATIVE_STARTUP_OBSERVATION_BUDGET_MS * 4,
-    { FX_TERMINAL_FIXTURE_FAIL_PROCESS_TOKEN: "1" },
+    { FIBER_TERMINAL_FIXTURE_FAIL_PROCESS_TOKEN: "1" },
     buildCurrentClientFixture(),
   );
   await waitFor(() => existsSync(paths.socket));
@@ -7118,7 +7118,7 @@ test("official client retains every reserved outcome through the exact capacity 
   const home = makeHome();
   const paths = hostPaths(home);
   const result = await runClientFixture(home, 300, {
-    FX_TERMINAL_OUTCOME_FIXTURE: "retention",
+    FIBER_TERMINAL_OUTCOME_FIXTURE: "retention",
   });
 
   expect(result).toEqual({
@@ -7144,9 +7144,9 @@ test.each([
   const home = makeHome();
   const paths = hostPaths(home);
   const result = await runClientFixture(home, 300, {
-    FX_TERMINAL_OUTCOME_FIXTURE: "failure",
-    FX_TERMINAL_TEST_HOST_FAILURE_POINT: point,
-    FX_TERMINAL_TEST_HOST_FAILURE_CORRELATION: "1",
+    FIBER_TERMINAL_OUTCOME_FIXTURE: "failure",
+    FIBER_TERMINAL_TEST_HOST_FAILURE_POINT: point,
+    FIBER_TERMINAL_TEST_HOST_FAILURE_CORRELATION: "1",
   });
 
   expect(result).toEqual({
@@ -7370,7 +7370,7 @@ test("fresh private client reloads owner-scoped authority without retaining proo
   const home = makeHome();
   const paths = hostPaths(home);
   const started = await runClientFixture(home, 700, {
-    FX_TERMINAL_AUTHORITY_FIXTURE: "start",
+    FIBER_TERMINAL_AUTHORITY_FIXTURE: "start",
   });
   expect(started.exitCode).toBe(0);
   expect(started.stderr).toBe("");
@@ -7396,8 +7396,8 @@ test("fresh private client reloads owner-scoped authority without retaining proo
   writeLeaseSessions.clear();
 
   const reloaded = await runClientFixture(home, 700, {
-    FX_TERMINAL_AUTHORITY_FIXTURE: "reload",
-    FX_TERMINAL_AUTHORITY_SESSION_ID: startValue.session_id,
+    FIBER_TERMINAL_AUTHORITY_FIXTURE: "reload",
+    FIBER_TERMINAL_AUTHORITY_SESSION_ID: startValue.session_id,
   });
   expect(reloaded).toEqual({
     exitCode: 0,
@@ -7454,7 +7454,7 @@ test("current client rejects same revision host without complete signal capabili
   const identityBefore = readFileSync(paths.identity, "utf8");
 
   const rejected = await runClientFixture(home, 700, {
-    FX_TERMINAL_CAPABILITY_FIXTURE: "start",
+    FIBER_TERMINAL_CAPABILITY_FIXTURE: "start",
   });
   expect(rejected).toEqual({
     exitCode: 0,
@@ -7516,9 +7516,9 @@ test("current client permits graceful close and rejects force close on signal li
   previousClient.client.close();
 
   const forceRejected = await runClientFixture(home, 1_500, {
-    FX_TERMINAL_CAPABILITY_FIXTURE: "force_close",
-    FX_TERMINAL_AUTHORITY_FIXTURE_COMPAT: "1",
-    FX_TERMINAL_AUTHORITY_SESSION_ID: sessionId,
+    FIBER_TERMINAL_CAPABILITY_FIXTURE: "force_close",
+    FIBER_TERMINAL_AUTHORITY_FIXTURE_COMPAT: "1",
+    FIBER_TERMINAL_AUTHORITY_SESSION_ID: sessionId,
   });
   expect(forceRejected).toEqual({
     exitCode: 0,
@@ -7531,9 +7531,9 @@ test("current client permits graceful close and rejects force close on signal li
   expect(readFileSync(paths.identity, "utf8")).toBe(identityBefore);
 
   const gracefulClosed = await runClientFixture(home, 1_500, {
-    FX_TERMINAL_AUTHORITY_FIXTURE: "reload",
-    FX_TERMINAL_AUTHORITY_FIXTURE_COMPAT: "1",
-    FX_TERMINAL_AUTHORITY_SESSION_ID: sessionId,
+    FIBER_TERMINAL_AUTHORITY_FIXTURE: "reload",
+    FIBER_TERMINAL_AUTHORITY_FIXTURE_COMPAT: "1",
+    FIBER_TERMINAL_AUTHORITY_SESSION_ID: sessionId,
   });
   expect(gracefulClosed).toEqual({
     exitCode: 0,
@@ -7716,12 +7716,12 @@ test("protocol fixtures advertise exact evidence and interoperate in both direct
     });
   }
 
-  console.log("FX_TERMINAL_COMPATIBILITY_EVIDENCE " + JSON.stringify({
+  console.log("FIBER_TERMINAL_COMPATIBILITY_EVIDENCE " + JSON.stringify({
     fixtures: advertised,
     directions: directionEvidence,
     active_current: {
-      source: "FX_BIN",
-      digest: createHash("sha256").update(readFileSync(FX_BIN)).digest("hex"),
+      source: "FIBER_BIN",
+      digest: createHash("sha256").update(readFileSync(FIBER_BIN)).digest("hex"),
     },
   }));
 }, 360_000);

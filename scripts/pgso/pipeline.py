@@ -41,7 +41,7 @@ BENCHMARK_USE_FLAGS = (
     "-passes=default<O2>,mergefunc,iroutliner",
 )
 
-FX_MACHINE_OUTLINER_FLAGS = (
+FIBER_MACHINE_OUTLINER_FLAGS = (
     "-machine-outliner-reruns=1",
 )
 
@@ -253,9 +253,8 @@ def _runtime_environment(paths: PipelinePaths) -> dict[str, str]:
     environment = hermetic_environment(paths.runtime_home)
     environment.update(
         {
-            "FX_AUTO_UPGRADE": "0",
-            "FX_SKIP_ONBOARDING": "1",
-            "FX_SOUND": "0",
+            "FIBER_SKIP_ONBOARDING": "1",
+            "FIBER_SOUND": "0",
             "HOME": str(paths.runtime_home),
             "NO_COLOR": "1",
         }
@@ -383,7 +382,7 @@ def candidate_object_argv(
 ) -> tuple[str, ...]:
     # A second AArch64 outliner pass can fold sequences exposed by the first.
     # Keep benchmark artifacts on their established code-generation contract.
-    outliner_flags = FX_MACHINE_OUTLINER_FLAGS if paths.selector == "fiber" else ()
+    outliner_flags = FIBER_MACHINE_OUTLINER_FLAGS if paths.selector == "fiber" else ()
     return (
         str(toolchain.llc),
         "-filetype=obj",

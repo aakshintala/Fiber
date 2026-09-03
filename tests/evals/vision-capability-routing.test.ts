@@ -56,12 +56,11 @@ function createRoot(name: string): Root {
 function liveEnv(root: Root, model: string) {
   return {
     HOME: root.home,
-    FX_MODEL: model,
-    FX_AUTO_UPGRADE: "0",
-    FX_DISABLE_KEYCHAIN: "1",
-    FX_SKIP_ONBOARDING: "1",
-    FX_TRACE_LOG: root.tracePath,
-    FX_TRACE_SCOPES: "agent,gateway,catalog,tool",
+    FIBER_MODEL: model,
+    FIBER_DISABLE_KEYCHAIN: "1",
+    FIBER_SKIP_ONBOARDING: "1",
+    FIBER_TRACE_LOG: root.tracePath,
+    FIBER_TRACE_SCOPES: "agent,gateway,catalog,tool",
   };
 }
 

@@ -72,10 +72,10 @@ import pathlib
 import sys
 
 args = sys.argv[1:]
-event_log = pathlib.Path(os.environ["FX_SIGNING_TEST_LOG"])
+event_log = pathlib.Path(os.environ["FIBER_SIGNING_TEST_LOG"])
 with event_log.open("a") as log:
     log.write("security " + " ".join(args) + "\\n")
-if args and args[0] == os.environ.get("FX_SIGNING_TEST_SECURITY_FAIL_COMMAND"):
+if args and args[0] == os.environ.get("FIBER_SIGNING_TEST_SECURITY_FAIL_COMMAND"):
     print("injected security failure", file=sys.stderr)
     raise SystemExit(1)
 if args and args[0] == "set-key-partition-list":
@@ -114,17 +114,17 @@ import pathlib
 import sys
 
 args = sys.argv[1:]
-with pathlib.Path(os.environ["FX_SIGNING_TEST_LOG"]).open("a") as log:
+with pathlib.Path(os.environ["FIBER_SIGNING_TEST_LOG"]).open("a") as log:
     log.write("codesign " + " ".join(args) + "\\n")
-if os.environ.get("FX_SIGNING_TEST_CODESIGN_FAIL_STAGE") == "sign" and "--force" in args:
+if os.environ.get("FIBER_SIGNING_TEST_CODESIGN_FAIL_STAGE") == "sign" and "--force" in args:
     print("injected codesign failure", file=sys.stderr)
     raise SystemExit(1)
 if "--force" in args:
     binary = pathlib.Path(args[-1])
     binary.write_bytes(binary.read_bytes() + b"signed\\n")
 if "--display" in args:
-    identifier = os.environ.get("FX_SIGNING_TEST_IDENTIFIER", "com.vercel.fx")
-    team_id = os.environ.get("FX_SIGNING_TEST_TEAM_ID", "JW6Y669B67")
+    identifier = os.environ.get("FIBER_SIGNING_TEST_IDENTIFIER", "com.vercel.fx")
+    team_id = os.environ.get("FIBER_SIGNING_TEST_TEAM_ID", "JW6Y669B67")
     print(f"Identifier={{identifier}}", file=sys.stderr)
     print(f"TeamIdentifier={{team_id}}", file=sys.stderr)
     print("CDHash={TEST_CDHASH}", file=sys.stderr)
@@ -139,7 +139,7 @@ import pathlib
 import sys
 
 args = sys.argv[1:]
-with pathlib.Path(os.environ["FX_SIGNING_TEST_LOG"]).open("a") as log:
+with pathlib.Path(os.environ["FIBER_SIGNING_TEST_LOG"]).open("a") as log:
     log.write("ditto " + " ".join(args) + "\n")
 pathlib.Path(args[-1]).write_bytes(b"notary archive")
 ''',
@@ -154,17 +154,17 @@ import pathlib
 import sys
 
 args = sys.argv[1:]
-with pathlib.Path(os.environ["FX_SIGNING_TEST_LOG"]).open("a") as log:
+with pathlib.Path(os.environ["FIBER_SIGNING_TEST_LOG"]).open("a") as log:
     log.write("xcrun " + " ".join(args[:2]) + "\\n")
-if len(args) > 1 and args[1] == os.environ.get("FX_SIGNING_TEST_XCRUN_FAIL_COMMAND"):
+if len(args) > 1 and args[1] == os.environ.get("FIBER_SIGNING_TEST_XCRUN_FAIL_COMMAND"):
     print("injected xcrun failure", file=sys.stderr)
     raise SystemExit(1)
 if args[:2] == ["notarytool", "submit"]:
-    status = os.environ.get("FX_SIGNING_TEST_SUBMISSION_STATUS", "Accepted")
+    status = os.environ.get("FIBER_SIGNING_TEST_SUBMISSION_STATUS", "Accepted")
     print(json.dumps({{"id": "test-submission", "status": status}}))
 elif args[:2] == ["notarytool", "log"]:
-    issues = json.loads(os.environ.get("FX_SIGNING_TEST_NOTARY_ISSUES", "null"))
-    ticket_cdhash = os.environ.get("FX_SIGNING_TEST_TICKET_CDHASH", "{TEST_CDHASH}")
+    issues = json.loads(os.environ.get("FIBER_SIGNING_TEST_NOTARY_ISSUES", "null"))
+    ticket_cdhash = os.environ.get("FIBER_SIGNING_TEST_TICKET_CDHASH", "{TEST_CDHASH}")
     pathlib.Path(args[-1]).write_text(json.dumps({{
         "status": "Accepted",
         "statusSummary": "Ready for distribution",
@@ -177,11 +177,11 @@ else:
 ''',
         )
         return {
-            "FX_SIGNING_OPENSSL_BIN": openssl,
-            "FX_SIGNING_SECURITY_BIN": security,
-            "FX_SIGNING_CODESIGN_BIN": codesign,
-            "FX_SIGNING_DITTO_BIN": ditto,
-            "FX_SIGNING_XCRUN_BIN": xcrun,
+            "FIBER_SIGNING_OPENSSL_BIN": openssl,
+            "FIBER_SIGNING_SECURITY_BIN": security,
+            "FIBER_SIGNING_CODESIGN_BIN": codesign,
+            "FIBER_SIGNING_DITTO_BIN": ditto,
+            "FIBER_SIGNING_XCRUN_BIN": xcrun,
         }
 
     def run_script(
@@ -200,7 +200,7 @@ else:
         env.update(
             {
                 "RUNNER_TEMP": str(runner_temp),
-                "FX_SIGNING_TEST_LOG": str(event_log),
+                "FIBER_SIGNING_TEST_LOG": str(event_log),
                 "APPLE_DEVELOPER_ID_P12_BASE64": base64.b64encode(
                     b"p12-private-material"
                 ).decode(),
@@ -301,27 +301,27 @@ else:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
         cases = (
             (
-                {"FX_SIGNING_TEST_SECURITY_FAIL_COMMAND": "import"},
+                {"FIBER_SIGNING_TEST_SECURITY_FAIL_COMMAND": "import"},
                 "PKCS#12 import",
             ),
             (
-                {"FX_SIGNING_TEST_SECURITY_FAIL_COMMAND": "list-keychains"},
+                {"FIBER_SIGNING_TEST_SECURITY_FAIL_COMMAND": "list-keychains"},
                 "keychain search configuration",
             ),
             (
-                {"FX_SIGNING_TEST_SECURITY_FAIL_COMMAND": "set-key-partition-list"},
+                {"FIBER_SIGNING_TEST_SECURITY_FAIL_COMMAND": "set-key-partition-list"},
                 "private-key ACL configuration",
             ),
             (
-                {"FX_SIGNING_TEST_SECURITY_FAIL_COMMAND": "find-identity"},
+                {"FIBER_SIGNING_TEST_SECURITY_FAIL_COMMAND": "find-identity"},
                 "signing identity lookup",
             ),
             (
-                {"FX_SIGNING_TEST_CODESIGN_FAIL_STAGE": "sign"},
+                {"FIBER_SIGNING_TEST_CODESIGN_FAIL_STAGE": "sign"},
                 "code signing",
             ),
             (
-                {"FX_SIGNING_TEST_XCRUN_FAIL_COMMAND": "submit"},
+                {"FIBER_SIGNING_TEST_XCRUN_FAIL_COMMAND": "submit"},
                 "notarization submission",
             ),
         )
@@ -354,7 +354,7 @@ else:
 
             result, _, runner_temp, event_log = self.run_script(
                 root,
-                {"FX_SIGNING_TEST_NOTARY_ISSUES": issues},
+                {"FIBER_SIGNING_TEST_NOTARY_ISSUES": issues},
             )
 
             output = result.stdout + result.stderr
@@ -394,7 +394,7 @@ else:
 
             result, _, runner_temp, _ = self.run_script(
                 root,
-                {"FX_SIGNING_TEST_TEAM_ID": "WRONGTEAM1"},
+                {"FIBER_SIGNING_TEST_TEAM_ID": "WRONGTEAM1"},
             )
 
             output = result.stdout + result.stderr
@@ -409,7 +409,7 @@ else:
 
             result, _, runner_temp, _ = self.run_script(
                 root,
-                {"FX_SIGNING_TEST_IDENTIFIER": "com.example.fx"},
+                {"FIBER_SIGNING_TEST_IDENTIFIER": "com.example.fx"},
             )
 
             output = result.stdout + result.stderr
@@ -425,7 +425,7 @@ else:
             result, _, runner_temp, _ = self.run_script(
                 root,
                 {
-                    "FX_SIGNING_TEST_TICKET_CDHASH":
+                    "FIBER_SIGNING_TEST_TICKET_CDHASH":
                         "ffffffffffffffffffffffffffffffffffffffff"
                 },
             )
@@ -442,7 +442,7 @@ else:
 
             result, _, runner_temp, event_log = self.run_script(
                 root,
-                {"FX_SIGNING_TEST_SUBMISSION_STATUS": "Invalid"},
+                {"FIBER_SIGNING_TEST_SUBMISSION_STATUS": "Invalid"},
             )
 
             output = result.stdout + result.stderr

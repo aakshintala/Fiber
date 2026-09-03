@@ -181,7 +181,7 @@ fn runBeforeInteractiveWithDeps(alloc: Allocator, args: []const [:0]const u8, cf
         },
     };
 
-    return beforeInteractiveResultFromRunResult(alloc, run_result, deps.getenv(deps.env_ctx, "FX_BENCH") != null);
+    return beforeInteractiveResultFromRunResult(alloc, run_result, deps.getenv(deps.env_ctx, "FIBER_BENCH") != null);
 }
 
 fn beforeInteractiveResultFromRunResult(alloc: Allocator, run_result: cli_surface.RunResult, bench: bool) BeforeInteractiveResult {
@@ -202,9 +202,9 @@ fn beforeInteractiveResultFromRunResult(alloc: Allocator, run_result: cli_surfac
 
 fn benchEnabled() bool {
     if (comptime builtin.link_libc) {
-        return std.c.getenv("FX_BENCH") != null;
+        return std.c.getenv("FIBER_BENCH") != null;
     }
-    return io_mod.getenv("FX_BENCH") != null;
+    return io_mod.getenv("FIBER_BENCH") != null;
 }
 
 pub fn runInteractive(comptime App: type, alloc: Allocator, launch: *cli_surface.InteractiveLaunch) !RunOutcome {
@@ -637,7 +637,7 @@ fn runIfRequestedForTest(ctx: ?*anyopaque, _: Allocator, _: []const [:0]const u8
 
 fn getenvForTest(ctx: ?*anyopaque, key: []const u8) ?[]const u8 {
     const capture: *TestCapture = @ptrCast(@alignCast(ctx.?));
-    if (std.mem.eql(u8, key, "FX_BENCH")) return capture.bench_value;
+    if (std.mem.eql(u8, key, "FIBER_BENCH")) return capture.bench_value;
     return null;
 }
 
@@ -827,7 +827,7 @@ test "app entry returns after handled zero exit without initializing app" {
     try std.testing.expectEqual(@as(usize, 0), test_event_count);
 }
 
-test "app entry honors FX_BENCH before app initialization" {
+test "app entry honors FIBER_BENCH before app initialization" {
     const alloc = std.testing.allocator;
     var capture = TestCapture.init(.{ .interactive = .{} });
     defer capture.deinit();

@@ -20,10 +20,10 @@ rejects unsupported engines, and disables dependency lifecycle scripts.
 From the repository root:
 
 ```sh
-FX_SOUND=0 zig build
+FIBER_SOUND=0 zig build
 cd tests/e2e/conformance
 npm ci
-FX_SOUND=0 npm test
+FIBER_SOUND=0 npm test
 ```
 
 `npm ci` must leave `package-lock.json` unchanged. Update the lock only when the

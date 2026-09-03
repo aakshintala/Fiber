@@ -1437,7 +1437,7 @@ test "active hard-newline footer survives every valid tiny height" {
 }
 
 test "active soft-wrapped footer survives every valid tiny height" {
-    const input = "FX_SOFT_START " ++ ("filler " ** 16) ++ "FX_SOFT_END";
+    const input = "FIBER_SOFT_START " ++ ("filler " ** 16) ++ "FIBER_SOFT_END";
     for ([_]u16{ 5, 6, 7, 8 }) |target_height| {
         try expectActiveInputSurvivesResize(input, target_height, 1);
     }

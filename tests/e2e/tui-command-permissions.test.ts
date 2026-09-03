@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   canonicalSubagentIdForStore,
   classifierEvidenceFromRequest,
@@ -664,9 +664,8 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: MODEL,
-    FX_AUTO_UPGRADE: "0",
-    FX_DIRECT_SECRET: "must-not-be-inherited",
+    FIBER_MODEL: MODEL,
+    FIBER_DIRECT_SECRET: "must-not-be-inherited",
     NO_COLOR: "1",
     ...extra,
   };
@@ -689,9 +688,9 @@ async function launchPermissionResumeHarness(initialResponses: Response[]) {
 
   const initialGateway = startFakeGateway(initialResponses);
   const initialSession = await TmuxSession.create({
-    cmd: FX_BIN,
+    cmd: FIBER_BIN,
     cwd: root.workspace,
-    env: gatewayEnv(root, initialGateway, { FX_PERMISSION_MODE: undefined }),
+    env: gatewayEnv(root, initialGateway, { FIBER_PERMISSION_MODE: undefined }),
     stderrPath: initialStderrPath,
     width: 120,
     height: 40,
@@ -716,9 +715,9 @@ async function launchPermissionResumeHarness(initialResponses: Response[]) {
 
       const gateway = startFakeGateway(responses);
       const session = await TmuxSession.create({
-        cmd: `${FX_BIN} resume last`,
+        cmd: `${FIBER_BIN} resume last`,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, { FX_PERMISSION_MODE: undefined }),
+        env: gatewayEnv(root, gateway, { FIBER_PERMISSION_MODE: undefined }),
         stderrPath: resumedStderrPath,
         width: 120,
         height: 40,
@@ -775,7 +774,7 @@ function largeEffectfulCommand(marker: string) {
       { length: 84 },
       (_, index) => `# large lifecycle ${index.toString().padStart(3, "0")} ${"x".repeat(720)}`,
     ),
-    `printf '%s\\n' FX_LARGE_RUN_COMMAND_DONE > ${marker}`,
+    `printf '%s\\n' FIBER_LARGE_RUN_COMMAND_DONE > ${marker}`,
   ].join("\n");
   expect(Buffer.byteLength(command)).toBeGreaterThan(57 * 1024);
   return command;
@@ -846,14 +845,14 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "gateway,permission,session,tool",
+          FIBER_PERMISSION_MODE: "ask",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "gateway,permission,session,tool",
         }),
         stderrPath,
         width: 100,
@@ -928,7 +927,7 @@ describe("effect-aware command permissions", () => {
       ]);
       writeFileSync(stderrPath, "");
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, pickerGateway),
         stderrPath,
@@ -984,10 +983,10 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath,
         width: 100,
@@ -1023,13 +1022,13 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           PATH: hostilePath(root),
-          FX_PERMISSION_MODE: "yolo",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "core",
+          FIBER_PERMISSION_MODE: "yolo",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "core",
         }),
         stderrPath,
         width: 120,
@@ -1085,13 +1084,13 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           PATH: hostilePath(root),
-          FX_PERMISSION_MODE: "yolo",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "core,permission,tool",
+          FIBER_PERMISSION_MODE: "yolo",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "core,permission,tool",
         }),
         stderrPath,
         width: 120,
@@ -1206,12 +1205,12 @@ describe("effect-aware command permissions", () => {
       };
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_TRACE_LOG: join(root.root, "minimal-command-output-trace.log"),
-          FX_TRACE_SCOPES: "core,agent,tool,session,command_output",
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_TRACE_LOG: join(root.root, "minimal-command-output-trace.log"),
+          FIBER_TRACE_SCOPES: "core,agent,tool,session,command_output",
         }),
         stderrPath,
         width: 120,
@@ -1250,10 +1249,10 @@ describe("effect-aware command permissions", () => {
       await activeSession.kill();
       activeSession = null;
       activeSession = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
+          FIBER_PERMISSION_MODE: "auto",
         }),
         stderrPath: resumedStderrPath,
         width: 88,
@@ -1335,13 +1334,13 @@ describe("effect-aware command permissions", () => {
       };
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           PATH: hostilePath(root),
-          FX_PERMISSION_MODE: "yolo",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "core,tool,session,command_output",
+          FIBER_PERMISSION_MODE: "yolo",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "core,tool,session,command_output",
         }),
         stderrPath,
         width: 72,
@@ -1449,7 +1448,7 @@ describe("effect-aware command permissions", () => {
 
       const resumedGateway = startFakeGateway([]);
       activeSession = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: root.workspace,
         env: gatewayEnv(root, resumedGateway),
         stderrPath: resumedStderrPath,
@@ -1512,9 +1511,9 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, { FX_PERMISSION_MODE: "yolo" }),
+        env: gatewayEnv(root, gateway, { FIBER_PERMISSION_MODE: "yolo" }),
         stderrPath,
         width: 90,
         height: 30,
@@ -1590,11 +1589,11 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           PATH: hostilePath(root),
-          FX_PERMISSION_MODE: "yolo",
+          FIBER_PERMISSION_MODE: "yolo",
         }),
         stderrPath,
         width: 120,
@@ -1642,7 +1641,7 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           PATH: hostilePath(root),
@@ -1695,17 +1694,17 @@ describe("effect-aware command permissions", () => {
       const clipboardPath = join(root.root, "trace-clipboard-path.txt");
       installClipboardFixture(
         root,
-        '#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nprintf "%s" "$last" > "$FX_TRACE_CLIPBOARD_OUTPUT"\n',
+        '#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nprintf "%s" "$last" > "$FIBER_TRACE_CLIPBOARD_OUTPUT"\n',
       );
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           PATH: hostilePath(root),
           TMPDIR: root.root,
-          FX_TRACE_CLIPBOARD_OUTPUT: clipboardPath,
+          FIBER_TRACE_CLIPBOARD_OUTPUT: clipboardPath,
         }),
         stderrPath,
         width: 120,
@@ -1756,22 +1755,22 @@ describe("effect-aware command permissions", () => {
       const clipboardMarker = join(root.root, "feedback-clipboard-used.txt");
       installUrlOpenerFixture(
         root,
-        '#!/bin/sh\nprintf "%s" "$1" > "$FX_FEEDBACK_OPEN_OUTPUT"\n',
+        '#!/bin/sh\nprintf "%s" "$1" > "$FIBER_FEEDBACK_OPEN_OUTPUT"\n',
       );
       installClipboardFixture(
         root,
-        '#!/bin/sh\nprintf used > "$FX_FEEDBACK_CLIPBOARD_MARKER"\n',
+        '#!/bin/sh\nprintf used > "$FIBER_FEEDBACK_CLIPBOARD_MARKER"\n',
       );
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           PATH: hostilePath(root),
           TMPDIR: root.root,
-          FX_FEEDBACK_OPEN_OUTPUT: openerPath,
-          FX_FEEDBACK_CLIPBOARD_MARKER: clipboardMarker,
+          FIBER_FEEDBACK_OPEN_OUTPUT: openerPath,
+          FIBER_FEEDBACK_CLIPBOARD_MARKER: clipboardMarker,
         }),
         stderrPath,
         width: 120,
@@ -1814,12 +1813,12 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "permission,tool",
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "permission,tool",
         }),
         stderrPath,
         width: 120,
@@ -1915,11 +1914,11 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_RECORD: tapePath,
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_RECORD: tapePath,
         }),
         stderrPath,
         width: 120,
@@ -2002,7 +2001,7 @@ describe("effect-aware command permissions", () => {
   test.skipIf(!tmuxAvailable())(
     "TUI isolates approved foreground commands from terminal ownership",
     async () => {
-      const binary = process.env.FX_COMMAND_SESSION_TEST_BIN ?? FX_BIN;
+      const binary = process.env.FIBER_COMMAND_SESSION_TEST_BIN ?? FIBER_BIN;
       const sandboxModes = ["legacy-sandbox-key"] as const;
 
       for (const sandbox of sandboxModes) {
@@ -2049,20 +2048,20 @@ describe("effect-aware command permissions", () => {
             DEVELOPER_DIR: process.platform === "darwin"
               ? "/Library/Developer/CommandLineTools"
               : undefined,
-            FX_PERMISSION_MODE: "auto",
-            FX_RECORD: tapePath,
-            FX_RECORD_INPUT: "1",
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "agent,core,gateway,permission,session,tool,worker",
+            FIBER_PERMISSION_MODE: "auto",
+            FIBER_RECORD: tapePath,
+            FIBER_RECORD_INPUT: "1",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "agent,core,gateway,permission,session,tool,worker",
           }),
           width: 120,
           height: 40,
           minimumHistoryLines: 1_000,
         });
         await activeSession.sendText(
-          "export PS1='FX_OUTER_PROMPT> '; printf 'FX_OUTER_SHELL_READY\\n'",
+          "export PS1='FIBER_OUTER_PROMPT> '; printf 'FIBER_OUTER_SHELL_READY\\n'",
         );
-        await activeSession.waitForText("FX_OUTER_SHELL_READY", TIMEOUT);
+        await activeSession.waitForText("FIBER_OUTER_SHELL_READY", TIMEOUT);
         await activeSession.sendText(
           `${shellQuote(binary)} 2>${shellQuote(stderrPath)}; ` +
             `printf '%s' "$?" > ${shellQuote(outerReturnPath)}`,
@@ -2124,7 +2123,7 @@ describe("effect-aware command permissions", () => {
         expect(gateway.requests[1]!.body).not.toContain("\\u001e");
         expect(gateway.requests[1]!.body).not.toContain("\\u0006");
         expect(gateway.requests[1]!.body).not.toContain("\\u0000");
-        expect(gateway.requests[1]!.body).not.toContain("FX_FOREGROUND_EXEC_FAILED");
+        expect(gateway.requests[1]!.body).not.toContain("FIBER_FOREGROUND_EXEC_FAILED");
         const pwdResult = toolResultValue(
           gateway.requests[3]!.body,
           "terminal_session_pwd",
@@ -2143,7 +2142,7 @@ describe("effect-aware command permissions", () => {
         expect(followupIndex).toBeGreaterThan(finalIndex);
         expect(pwdFinalIndex).toBeGreaterThan(followupIndex);
         expect(scrollback).not.toContain("suspended (tty input)");
-        expect(scrollback).not.toContain("FX_FOREGROUND_EXEC_FAILED");
+        expect(scrollback).not.toContain("FIBER_FOREGROUND_EXEC_FAILED");
 
         await activeSession.sendKeys("C-o");
         await activeSession.waitForText("Full detail · ctrl o close", TIMEOUT);
@@ -2194,7 +2193,7 @@ describe("effect-aware command permissions", () => {
         expect(replay.stdout).toContain("TTY_SESSION_STDOUT_BEGIN");
         expect(replay.stdout).toContain("TTY_SESSION_STDOUT_END");
         expect(replay.stdout).toContain(`TTY_SESSION_PWD_FINAL_${sandbox}`);
-        expect(replay.stdout).not.toContain("FX_FOREGROUND_EXEC_FAILED");
+        expect(replay.stdout).not.toContain("FIBER_FOREGROUND_EXEC_FAILED");
       }
     },
     90_000,
@@ -2218,12 +2217,12 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "permission",
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "permission",
           TMPDIR: root.root,
         }),
         stderrPath,
@@ -2264,7 +2263,7 @@ describe("effect-aware command permissions", () => {
         { force: true },
       );
       activeSession = await TmuxSession.create({
-        cmd: `${FX_BIN} resume ${sessionId}`,
+        cmd: `${FIBER_BIN} resume ${sessionId}`,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, { TMPDIR: root.root }),
         stderrPath,
@@ -2317,12 +2316,12 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "permission",
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "permission",
           TMPDIR: root.root,
         }),
         stderrPath,
@@ -2369,13 +2368,13 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           PATH: hostilePath(root),
-          FX_PERMISSION_MODE: "yolo",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "core",
+          FIBER_PERMISSION_MODE: "yolo",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "core",
         }),
         stderrPath,
         width: 120,
@@ -2420,12 +2419,12 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "permission,interrupt",
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "permission,interrupt",
         }),
         stderrPath,
         width: 120,
@@ -2574,12 +2573,12 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: undefined,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "scroll,frame_commit",
+          FIBER_PERMISSION_MODE: undefined,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "scroll,frame_commit",
         }),
         stderrPath,
         width: 120,
@@ -2715,10 +2714,10 @@ describe("effect-aware command permissions", () => {
       gateways.push(gateway);
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath,
         width: 120,
@@ -2805,10 +2804,10 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath,
         width: 120,
@@ -2849,10 +2848,10 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath,
         width: 120,
@@ -2889,10 +2888,10 @@ describe("effect-aware command permissions", () => {
       writeFileSync(foregroundStderr, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: foregroundRoot.workspace,
         env: gatewayEnv(foregroundRoot, foregroundGateway, {
-          FX_PERMISSION_MODE: "ask",
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath: foregroundStderr,
         width: 120,
@@ -2945,10 +2944,10 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath,
         width: 120,
@@ -3000,8 +2999,8 @@ describe("effect-aware command permissions", () => {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
             PATH: hostilePath(root),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "core",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "core",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3049,8 +3048,8 @@ describe("effect-aware command permissions", () => {
         {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3127,8 +3126,8 @@ describe("effect-aware command permissions", () => {
         {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3171,8 +3170,8 @@ describe("effect-aware command permissions", () => {
         {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3221,8 +3220,8 @@ describe("effect-aware command permissions", () => {
         {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3258,13 +3257,13 @@ describe("effect-aware command permissions", () => {
       );
       const tracePath = join(root.root, "trace.log");
       const child = nodeSpawn(
-        FX_BIN,
+        FIBER_BIN,
         ["ask", "--quiet", "--json", "--no-save", "Run the classifier cancellation fixture."],
         {
           cwd: root.workspace,
           env: definedEnv(gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission,stream",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission,stream",
           })),
           stdio: ["pipe", "pipe", "pipe"],
         },
@@ -3344,8 +3343,8 @@ describe("effect-aware command permissions", () => {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
             PATH: hostilePath(root),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3392,11 +3391,11 @@ describe("effect-aware command permissions", () => {
       const tracePath = join(root.root, "trace.log");
 
       activeSession = await TmuxSession.create({
-        cmd: `${shellQuote(FX_BIN)} ask --auto --no-save ${shellQuote("Run the one-shot prompt fixture.")}`,
+        cmd: `${shellQuote(FIBER_BIN)} ask --auto --no-save ${shellQuote("Run the one-shot prompt fixture.")}`,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "permission",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "permission",
           TMPDIR: root.root,
         }),
         width: 120,
@@ -3509,8 +3508,8 @@ describe("effect-aware command permissions", () => {
         {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "core",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "core",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3546,8 +3545,8 @@ describe("effect-aware command permissions", () => {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
             PATH: hostilePath(root),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "core",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "core",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3588,7 +3587,7 @@ describe("effect-aware command permissions", () => {
             cwd: root.workspace,
             env: gatewayEnv(root, gateway, {
               PATH: hostilePath(root),
-              FX_PERMISSION_MODE: "ask",
+              FIBER_PERMISSION_MODE: "ask",
             }),
             timeoutMs: TIMEOUT,
           },
@@ -3618,7 +3617,7 @@ describe("effect-aware command permissions", () => {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
             PATH: hostilePath(root),
-            FX_PERMISSION_MODE: "ask",
+            FIBER_PERMISSION_MODE: "ask",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3648,7 +3647,7 @@ describe("effect-aware command permissions", () => {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
             PATH: hostilePath(root),
-            FX_PERMISSION_MODE: "ask",
+            FIBER_PERMISSION_MODE: "ask",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3756,7 +3755,7 @@ class AcpClient {
   }
 
   static create(cwd: string, env: Record<string, string | undefined>) {
-    return new AcpClient(nodeSpawn(FX_BIN, ["acp"], {
+    return new AcpClient(nodeSpawn(FIBER_BIN, ["acp"], {
       cwd,
       env: definedEnv({ ...process.env, ...env, NO_COLOR: "1" }),
       stdio: ["pipe", "pipe", "pipe"],

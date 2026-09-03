@@ -15,7 +15,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FX_BIN="${REPO_ROOT}/zig-out/bin/fiber"
+FIBER_BIN="${REPO_ROOT}/zig-out/bin/fiber"
 RESULTS_DIR="${REPO_ROOT}/benchmarks/results"
 SESSION_FIXTURE_ROOT="${TMPDIR:-/tmp}/fx-session-list-benchmark-$$"
 SESSION_FIXTURE_HOME="${SESSION_FIXTURE_ROOT}/home"
@@ -49,8 +49,8 @@ if [ "$SKIP_BUILD" = false ]; then
   (cd "$REPO_ROOT" && zig build -Doptimize=ReleaseSafe)
 fi
 
-if [ ! -x "$FX_BIN" ]; then
-  echo "error: fiber binary not found at $FX_BIN"
+if [ ! -x "$FIBER_BIN" ]; then
+  echo "error: fiber binary not found at $FIBER_BIN"
   exit 1
 fi
 
@@ -76,7 +76,7 @@ else
 fi
 
 echo "=== fiber startup benchmarks ==="
-echo "binary: $FX_BIN"
+echo "binary: $FIBER_BIN"
 echo "runs:   $RUNS (warmup: $WARMUP)"
 echo ""
 
@@ -95,13 +95,13 @@ echo ""
 
 # Benchmark 0: fiber startup (CLI dispatch, no TTY needed)
 echo "--- fiber (startup) ---"
-HOME="$GENERAL_FIXTURE_HOME" FX_BENCH=1 hyperfine \
+HOME="$GENERAL_FIXTURE_HOME" FIBER_BENCH=1 hyperfine \
   "${SHELL_OPTS[@]}" \
   --runs "$RUNS" \
   --warmup "$WARMUP" \
   --export-json "${RESULTS_DIR}/startup.json" \
   --command-name "fiber (startup)" \
-  "$FX_BIN"
+  "$FIBER_BIN"
 
 echo ""
 
@@ -113,7 +113,7 @@ HOME="$GENERAL_FIXTURE_HOME" hyperfine \
   --warmup "$WARMUP" \
   --export-json "${RESULTS_DIR}/help.json" \
   --command-name "fiber help" \
-  "$FX_BIN help"
+  "$FIBER_BIN help"
 
 echo ""
 
@@ -125,7 +125,7 @@ HOME="$GENERAL_FIXTURE_HOME" hyperfine \
   --warmup "$WARMUP" \
   --export-json "${RESULTS_DIR}/status.json" \
   --command-name "fiber status --json" \
-  "$FX_BIN status --json"
+  "$FIBER_BIN status --json"
 
 echo ""
 
@@ -137,7 +137,7 @@ HOME="$GENERAL_FIXTURE_HOME" hyperfine \
   --warmup "$WARMUP" \
   --export-json "${RESULTS_DIR}/doctor.json" \
   --command-name "fiber doctor --json" \
-  "$FX_BIN doctor --json"
+  "$FIBER_BIN doctor --json"
 
 echo ""
 
@@ -149,7 +149,7 @@ HOME="$SESSION_FIXTURE_HOME" hyperfine \
   --warmup "$WARMUP" \
   --export-json "${RESULTS_DIR}/sessions.json" \
   --command-name "fiber sessions --json" \
-  "$FX_BIN sessions --json"
+  "$FIBER_BIN sessions --json"
 
 echo ""
 

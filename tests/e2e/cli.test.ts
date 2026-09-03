@@ -20,7 +20,7 @@ import { join, sep } from "node:path";
 import {
   cleanupIsolatedTestHome,
   createIsolatedTestHome,
-  FX_BIN,
+  FIBER_BIN,
   REPO_ROOT,
   runFx,
 } from "../evals/eval-helpers";
@@ -192,7 +192,7 @@ describe("cli: help", () => {
     async () => {
       const env = {
         ...NO_GATEWAY_AUTH,
-        FX_DISABLE_KEYCHAIN: "1",
+        FIBER_DISABLE_KEYCHAIN: "1",
       };
       const expected = `fx ask
 
@@ -374,8 +374,7 @@ describe("cli: status", () => {
           HOME: realpathSync(home),
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_AUTO_UPGRADE: "0",
+          FIBER_DISABLE_KEYCHAIN: "1",
         };
         const cwd = realpathSync(workspace);
         const before = snapshotTree(home);
@@ -474,7 +473,7 @@ describe("cli: status", () => {
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(root),
-          FX_DISABLE_KEYCHAIN: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
         };
         const status = await runFx(["status", "--json"], { env });
         const doctor = await runFx(["doctor", "--json"], { env });
@@ -518,7 +517,7 @@ describe("cli: status", () => {
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
-          FX_DISABLE_KEYCHAIN: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
         };
         const cwd = realpathSync(workspace);
 
@@ -582,7 +581,7 @@ describe("cli: status", () => {
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
-          FX_DISABLE_KEYCHAIN: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
         };
         const cwd = realpathSync(workspace);
         const authPath = join(home, ".fx", "chatgpt-auth.json");
@@ -619,7 +618,7 @@ describe("cli: status", () => {
           HOME: realpathSync(root),
           VERCEL_OIDC_TOKEN: undefined,
           AI_GATEWAY_API_KEY: envToken,
-          FX_DISABLE_KEYCHAIN: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
         };
 
         const status = await runFx(["status", "--json"], { env });
@@ -717,7 +716,7 @@ describe("cli: status", () => {
           env: {
             ...NO_GATEWAY_AUTH,
             HOME: realpathSync(home),
-            FX_PERMISSION_MODE: undefined,
+            FIBER_PERMISSION_MODE: undefined,
           },
         });
         expect(r.code).toBe(0);
@@ -731,7 +730,7 @@ describe("cli: status", () => {
   );
 
   test(
-    "status and doctor apply an exact FX_MAX_AGENT_STEPS override",
+    "status and doctor apply an exact FIBER_MAX_AGENT_STEPS override",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-agent-step-limit-"));
       try {
@@ -742,7 +741,7 @@ describe("cli: status", () => {
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
-          FX_MAX_AGENT_STEPS: "3",
+          FIBER_MAX_AGENT_STEPS: "3",
         };
 
         const status = await runFx(["status", "--json"], {
@@ -784,9 +783,9 @@ describe("cli: status", () => {
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: homeRoot,
-          FX_MODEL: undefined,
-          FX_PERMISSION_MODE: undefined,
-          FX_MAX_AGENT_STEPS: undefined,
+          FIBER_MODEL: undefined,
+          FIBER_PERMISSION_MODE: undefined,
+          FIBER_MAX_AGENT_STEPS: undefined,
         };
 
         writeFileSync(
@@ -877,9 +876,9 @@ describe("cli: status", () => {
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: home,
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_SKIP_ONBOARDING: "1",
-          FX_SOUND: "0",
+          FIBER_DISABLE_KEYCHAIN: "1",
+          FIBER_SKIP_ONBOARDING: "1",
+          FIBER_SOUND: "0",
         };
 
         expect(spawnSync("mkfifo", [join(fxDir, "settings.json")]).status).toBe(0);
@@ -974,7 +973,7 @@ describe("cli: usage", () => {
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
-          FX_DISABLE_KEYCHAIN: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
         };
 
         const text = await runFx(["usage"], { env });
@@ -1062,7 +1061,7 @@ describe("cli: usage", () => {
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
-          FX_DISABLE_KEYCHAIN: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
         };
 
         const text = await runFx(["usage"], { env });
@@ -1089,7 +1088,7 @@ describe("cli: usage", () => {
       const root = mkdtempSync(join(tmpdir(), "fx-e2e-usage-states-"));
       try {
         const home = realpathSync(root);
-        const env = { ...NO_GATEWAY_AUTH, HOME: home, FX_DISABLE_KEYCHAIN: "1" };
+        const env = { ...NO_GATEWAY_AUTH, HOME: home, FIBER_DISABLE_KEYCHAIN: "1" };
         const empty = await runFx(["usage", "--json"], { env });
         expect(empty.code).toBe(0);
         expect(JSON.parse(empty.stdout)).toMatchObject({
@@ -1227,7 +1226,7 @@ describe("cli: usage", () => {
           env: {
             ...NO_GATEWAY_AUTH,
             HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
           },
         });
         expect(result.code).toBe(0);
@@ -1421,7 +1420,7 @@ describe("cli: logout", () => {
           env: {
             ...NO_GATEWAY_AUTH,
             HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
           },
         });
 
@@ -1434,7 +1433,7 @@ describe("cli: logout", () => {
           env: {
             ...NO_GATEWAY_AUTH,
             HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
           },
         });
         expect(JSON.parse(status.stdout)).toMatchObject({
@@ -1465,7 +1464,7 @@ describe("cli: logout", () => {
           env: {
             ...NO_GATEWAY_AUTH,
             HOME: realpathSync(home),
-            FX_DISABLE_KEYCHAIN: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
           },
         });
 
@@ -1493,7 +1492,7 @@ describe("cli: logout", () => {
         const env = {
           ...NO_GATEWAY_AUTH,
           HOME: realpathSync(home),
-          FX_DISABLE_KEYCHAIN: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
         };
         const logout = await runFx(["logout"], { env });
         const status = await runFx(["status", "--json"], { env });
@@ -1522,7 +1521,7 @@ describe("cli: logout", () => {
           HOME: realpathSync(home),
           AI_GATEWAY_API_KEY: "logout-existing-api-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_DISABLE_KEYCHAIN: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
         };
         const logout = await runFx(["logout"], { env });
         const status = await runFx(["status", "--json"], { env });
@@ -1614,7 +1613,7 @@ describe("cli: read-only no-create matrix", () => {
             env: {
               ...NO_GATEWAY_AUTH,
               HOME: realpathSync(home),
-              FX_E2E_FAIL_ON_DURABLE_MUTATION: "1",
+              FIBER_E2E_FAIL_ON_DURABLE_MUTATION: "1",
             },
             timeoutMs: TIMEOUT,
           });
@@ -1654,8 +1653,7 @@ describe("cli: missing durable home", () => {
         const baseEnv = {
           HOME: home,
           ...NO_GATEWAY_AUTH,
-          FX_AUTO_UPGRADE: "0",
-          FX_DISABLE_KEYCHAIN: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
         };
 
         const status = await runFx(["status", "--json"], {
@@ -2438,9 +2436,8 @@ function codexModelsEnv(home: string, modelsUrl: string) {
     AI_GATEWAY_API_KEY: undefined,
     VERCEL_OIDC_TOKEN: undefined,
     HOME: home,
-    FX_DISABLE_KEYCHAIN: "1",
-    FX_AUTO_UPGRADE: "0",
-    FX_E2E_OPENAI_CODEX_MODELS_URL: modelsUrl,
+    FIBER_DISABLE_KEYCHAIN: "1",
+    FIBER_E2E_OPENAI_CODEX_MODELS_URL: modelsUrl,
   };
 }
 
@@ -2690,7 +2687,7 @@ describe("cli: models", () => {
       const home = createIsolatedTestHome();
       writeSeededChatGptLogin(home, chatGptAccessToken());
       const server = startCodexModelsServer(() => new Promise<Response>(() => {}));
-      const proc = Bun.spawn([FX_BIN, "models", "--json"], {
+      const proc = Bun.spawn([FIBER_BIN, "models", "--json"], {
         cwd: REPO_ROOT,
         env: {
           ...process.env,
@@ -2779,7 +2776,7 @@ describe("cli: ask input validation", () => {
             ...NO_GATEWAY_AUTH,
             HOME: realpathSync(home),
             AI_GATEWAY_API_KEY: "invalid-utf8-proof-key",
-            FX_DISABLE_KEYCHAIN: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
             FX_E2E_GATEWAY_CHAT_URL: `http://127.0.0.1:${server.port}/ai/v1/chat/completions`,
           },
           stdin: Uint8Array.from([0xff, 0xfe, 0x80, 0x68, 0x69]),
@@ -2849,7 +2846,7 @@ describe("cli: session", () => {
           ["session", "--id", parentId, "--json"],
           {
             cwd: workspaceRoot,
-            env: { HOME: home, FX_DISABLE_KEYCHAIN: "1" },
+            env: { HOME: home, FIBER_DISABLE_KEYCHAIN: "1" },
           },
         );
         expect(parent).toMatchObject({ code: 0, stderr: "" });
@@ -2862,7 +2859,7 @@ describe("cli: session", () => {
           ["session", "--id", childId, "--json"],
           {
             cwd: workspaceRoot,
-            env: { HOME: home, FX_DISABLE_KEYCHAIN: "1" },
+            env: { HOME: home, FIBER_DISABLE_KEYCHAIN: "1" },
           },
         );
         expect(child.code).toBe(1);
@@ -2917,7 +2914,7 @@ describe("cli: pr", () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-noauth-"));
       try {
         const r = await runFx(["pr"], {
-          env: { ...NO_GATEWAY_AUTH, HOME: home, FX_DISABLE_KEYCHAIN: "1" },
+          env: { ...NO_GATEWAY_AUTH, HOME: home, FIBER_DISABLE_KEYCHAIN: "1" },
         });
         expect(r.code).not.toBe(0);
         expect(r.stderr).toContain(MISSING_AUTH_MESSAGE);
@@ -2936,7 +2933,7 @@ describe("cli: issue", () => {
       const home = mkdtempSync(join(tmpdir(), "fx-e2e-noauth-"));
       try {
         const r = await runFx(["issue"], {
-          env: { ...NO_GATEWAY_AUTH, HOME: home, FX_DISABLE_KEYCHAIN: "1" },
+          env: { ...NO_GATEWAY_AUTH, HOME: home, FIBER_DISABLE_KEYCHAIN: "1" },
         });
         expect(r.code).not.toBe(0);
         expect(r.stderr).toContain(MISSING_AUTH_MESSAGE);
@@ -2977,7 +2974,7 @@ describe("cli: ask success", () => {
           ],
           {
             cwd: realpathSync(workspace),
-            env: fakeCodexEnv(home, codex, { FX_AUTO_UPGRADE: "0" }),
+            env: fakeCodexEnv(home, codex, {}),
             timeoutMs: TIMEOUT,
           },
         );
@@ -3051,7 +3048,7 @@ describe("cli: ask success", () => {
       const oversized = Buffer.alloc(8 * 1024 * 1024 + 1, 0x78);
 
       const textResult = await runFx(["ask", "--auto", "--no-save"], {
-        env: { ...NO_GATEWAY_AUTH, FX_DISABLE_KEYCHAIN: "1" },
+        env: { ...NO_GATEWAY_AUTH, FIBER_DISABLE_KEYCHAIN: "1" },
         stdin: oversized,
         timeoutMs: 60_000,
       });
@@ -3062,7 +3059,7 @@ describe("cli: ask success", () => {
       );
 
       const jsonResult = await runFx(["ask", "--json", "--auto", "--no-save"], {
-        env: { ...NO_GATEWAY_AUTH, FX_DISABLE_KEYCHAIN: "1" },
+        env: { ...NO_GATEWAY_AUTH, FIBER_DISABLE_KEYCHAIN: "1" },
         stdin: oversized,
         timeoutMs: 60_000,
       });
@@ -3884,7 +3881,7 @@ describe("cli: MCP profile add", () => {
           fixture: {
             type: "local",
             command: [process.execPath, MODERN_MCP_FIXTURE],
-            environment: { FX_MCP_PID_PATH: pidPath },
+            environment: { FIBER_MCP_PID_PATH: pidPath },
           },
         },
       }),

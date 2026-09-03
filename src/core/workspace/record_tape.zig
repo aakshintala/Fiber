@@ -1,4 +1,4 @@
-//! FX_RECORD tape writer and replay reader.
+//! FIBER_RECORD tape writer and replay reader.
 
 const std = @import("std");
 const debug_trace = @import("../shared/debug_trace.zig");
@@ -123,10 +123,10 @@ pub fn configureFromEnv(
     fx_version: []const u8,
 ) !void {
     const policy = resolve_startup_policy(.{
-        .debug_record = io_mod.getenv("FX_DEBUG_RECORD"),
-        .configured_path = io_mod.getenv("FX_RECORD"),
-        .record_input = io_mod.getenv("FX_RECORD_INPUT"),
-        .silent_banner = io_mod.getenv("FX_DEBUG_RECORD_SILENT_BANNER"),
+        .debug_record = io_mod.getenv("FIBER_DEBUG_RECORD"),
+        .configured_path = io_mod.getenv("FIBER_RECORD"),
+        .record_input = io_mod.getenv("FIBER_RECORD_INPUT"),
+        .silent_banner = io_mod.getenv("FIBER_DEBUG_RECORD_SILENT_BANNER"),
     });
     switch (policy.destination) {
         .inactive => return,
@@ -733,7 +733,7 @@ test "debug recording request creates a private tape under home" {
     var env = std.process.Environ.Map.init(alloc);
     defer env.deinit();
     try env.put("HOME", home);
-    try env.put("FX_DEBUG_RECORD", "1");
+    try env.put("FIBER_DEBUG_RECORD", "1");
 
     shutdown();
     defer shutdown();
@@ -838,7 +838,7 @@ test "debug recording request uses the temporary fallback when HOME is empty" {
     var env = std.process.Environ.Map.init(alloc);
     defer env.deinit();
     try env.put("HOME", "");
-    try env.put("FX_DEBUG_RECORD", "1");
+    try env.put("FIBER_DEBUG_RECORD", "1");
 
     shutdown();
     defer shutdown();
@@ -878,8 +878,8 @@ test "configureFromEnv enables stdin for the accepted truthy values only" {
 
         var env = std.process.Environ.Map.init(alloc);
         defer env.deinit();
-        try env.put("FX_RECORD", path);
-        try env.put("FX_RECORD_INPUT", value);
+        try env.put("FIBER_RECORD", path);
+        try env.put("FIBER_RECORD_INPUT", value);
 
         shutdown();
         io_mod.setEnvironMap(&env);
@@ -903,8 +903,8 @@ test "configureFromEnv enables stdin for the accepted truthy values only" {
     defer alloc.free(path);
     var env = std.process.Environ.Map.init(alloc);
     defer env.deinit();
-    try env.put("FX_RECORD", path);
-    try env.put("FX_RECORD_INPUT", "yes");
+    try env.put("FIBER_RECORD", path);
+    try env.put("FIBER_RECORD_INPUT", "yes");
 
     shutdown();
     io_mod.setEnvironMap(&env);

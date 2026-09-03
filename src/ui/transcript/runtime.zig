@@ -4274,7 +4274,7 @@ pub const TranscriptRuntime = struct {
     replaceable_row: u16 = 1,
     replaceable_start: usize = 0,
     /// In-process terminal shadow used as the previous state for cell diffs.
-    /// Bootstrap enables it unconditionally; FX_TRACE dumps it at synchronized
+    /// Bootstrap enables it unconditionally; FIBER_TRACE dumps it at synchronized
     /// update boundaries.
     shadow_vt: ?*vt_emulator.Grid = null,
     shadow_vt_alloc: ?Allocator = null,

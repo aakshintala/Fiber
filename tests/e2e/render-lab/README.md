@@ -48,7 +48,7 @@ Zig VT tests
 tmux Render Lab
   Deterministic real PTY coverage. Good for resize, scrollback, cursor, ANSI, relaunch.
 
-FX_RECORD tape and fx replay
+FIBER_RECORD tape and fx replay
   Byte-level recording of what Fx wrote plus replay through the built-in virtual terminal.
 
 Native Render Lab
@@ -116,20 +116,20 @@ Native scenarios are opt-in because they open and control real terminal applicat
 Common gate:
 
 ```bash
-FX_RENDER_LAB_NATIVE=1 bun run render-lab -- --scenario native-terminal-app-relaunch --runs 1 --out /private/tmp/fx-native
+FIBER_RENDER_LAB_NATIVE=1 bun run render-lab -- --scenario native-terminal-app-relaunch --runs 1 --out /private/tmp/fx-native
 ```
 
 Ghostty and Warp use clipboard-based selected-text capture, so they require an extra explicit gate:
 
 ```bash
-FX_RENDER_LAB_NATIVE=1 FX_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1 \
+FIBER_RENDER_LAB_NATIVE=1 FIBER_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1 \
   bun run render-lab -- --scenario native-ghostty-relaunch --runs 1 --out /private/tmp/fx-native-ghostty
 ```
 
 The Command-K scenario requires a second gate because it triggers real terminal clear-scrollback behavior:
 
 ```bash
-FX_RENDER_LAB_NATIVE=1 FX_RENDER_LAB_NATIVE_COMMAND_K=1 \
+FIBER_RENDER_LAB_NATIVE=1 FIBER_RENDER_LAB_NATIVE_COMMAND_K=1 \
   bun run render-lab -- --scenario native-terminal-app-command-k --runs 1 --out /private/tmp/fx-native-command-k
 ```
 
@@ -332,21 +332,21 @@ Terminal.app:
 
 - Uses AppleScript `contents` from a native Terminal window.
 - Does not require clipboard capture for the relaunch scenario.
-- Command-K requires System Events and the explicit `FX_RENDER_LAB_NATIVE_COMMAND_K=1` gate.
+- Command-K requires System Events and the explicit `FIBER_RENDER_LAB_NATIVE_COMMAND_K=1` gate.
 - Current native smoke exposed an Apple Terminal path where the first shell marker was missing by final relaunch. Keep that failure visible until the product behavior is fixed or the invariant is intentionally revised.
 
 Ghostty:
 
 - Uses real Ghostty app launch.
 - Uses selected-text clipboard capture.
-- Requires `FX_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1`.
+- Requires `FIBER_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1`.
 - Useful when Ghostty scrollback, resize, or terminal-specific behavior diverges from tmux.
 
 Warp:
 
 - Uses real Warp app launch.
 - Uses selected-text clipboard capture.
-- Requires `FX_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1`.
+- Requires `FIBER_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1`.
 - Warp private OSC/DCS behavior should be metadata only unless a future adapter can expose a stable byte/text contract for it.
 
 ## Adding A Scenario

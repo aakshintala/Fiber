@@ -116,34 +116,34 @@ export function parseRowIds(raw: string | undefined): string[] {
 
 export function loadAbConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AbConfig {
   const baselineBin = requireAbsoluteExecutableBinary(
-    env.FX_AB_BASELINE_BIN ?? "",
+    env.FIBER_AB_BASELINE_BIN ?? "",
     "baseline",
   );
   const candidateBin = requireAbsoluteExecutableBinary(
-    env.FX_AB_CANDIDATE_BIN ?? "",
+    env.FIBER_AB_CANDIDATE_BIN ?? "",
     "candidate",
   );
-  const model = env.FX_AB_MODEL;
-  if (!model) throw new Error("FX_AB_MODEL is required for A/B runs");
+  const model = env.FIBER_AB_MODEL;
+  if (!model) throw new Error("FIBER_AB_MODEL is required for A/B runs");
 
-  const trials = Number(env.FX_AB_TRIALS ?? "3");
+  const trials = Number(env.FIBER_AB_TRIALS ?? "3");
   if (!Number.isInteger(trials) || trials <= 0) {
-    throw new Error(`FX_AB_TRIALS must be a positive integer, got ${env.FX_AB_TRIALS}`);
+    throw new Error(`FIBER_AB_TRIALS must be a positive integer, got ${env.FIBER_AB_TRIALS}`);
   }
 
   const outputDir =
-    env.FX_AB_OUTPUT_DIR ??
+    env.FIBER_AB_OUTPUT_DIR ??
     mkdtempSync(join(tmpdir(), `fx-agent-quality-ab-${Date.now()}-`));
 
   return {
     baselineBin,
     candidateBin,
     model,
-    rowIds: parseRowIds(env.FX_AB_ROWS),
+    rowIds: parseRowIds(env.FIBER_AB_ROWS),
     trials,
     outputDir,
-    workspaceRoot: env.FX_AB_WORKSPACE_ROOT ?? REPO_ROOT,
-    timeoutMs: Number(env.FX_AB_TIMEOUT_MS ?? "300000"),
+    workspaceRoot: env.FIBER_AB_WORKSPACE_ROOT ?? REPO_ROOT,
+    timeoutMs: Number(env.FIBER_AB_TIMEOUT_MS ?? "300000"),
   };
 }
 
@@ -216,10 +216,10 @@ function sideBinary(config: AbConfig, side: AbSide): string {
 }
 
 function sanitizedEnvMetadata(model: string): Record<string, string> {
-  const keys = ["FX_MODEL", "AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN", "NO_COLOR"];
+  const keys = ["FIBER_MODEL", "AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN", "NO_COLOR"];
   const metadata: Record<string, string> = {};
   for (const key of keys) {
-    const value = key === "FX_MODEL" ? model : process.env[key];
+    const value = key === "FIBER_MODEL" ? model : process.env[key];
     if (value) metadata[key] = redactSensitiveValue(key, value);
   }
   return metadata;
@@ -284,7 +284,7 @@ export async function runAbTrial(
     PATH: process.env.PATH ?? "",
     HOME: trialHome,
     NO_COLOR: "1",
-    FX_MODEL: config.model,
+    FIBER_MODEL: config.model,
     AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY,
     VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN,
   };
@@ -317,7 +317,7 @@ export async function runAbTrial(
       score = {
         ...score,
         passed: false,
-        reason: `${score.reason}; json.model ${json.model} did not match FX_AB_MODEL ${config.model}`,
+        reason: `${score.reason}; json.model ${json.model} did not match FIBER_AB_MODEL ${config.model}`,
       };
     }
   } catch (err) {

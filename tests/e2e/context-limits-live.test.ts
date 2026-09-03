@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HAS_API_KEY, runFx } from "../evals/eval-helpers";
 
-const LIVE_ENABLED = process.env.FX_E2E_REAL_API === "1";
+const LIVE_ENABLED = process.env.FIBER_E2E_REAL_API === "1";
 const TIMEOUT = 180_000;
 const MODEL = "openai/gpt-5";
 
@@ -59,13 +59,12 @@ describe.skipIf(!LIVE_ENABLED || !HAS_API_KEY)("live source context limits", () 
             cwd: workspace,
             env: {
               HOME: home,
-              FX_MODEL: MODEL,
-              FX_AUTO_UPGRADE: "0",
+              FIBER_MODEL: MODEL,
               FX_GATEWAY_BASE_URL: undefined,
               FX_GATEWAY_CHAT_URL: undefined,
               FX_E2E_GATEWAY_CHAT_URL: undefined,
-              FX_TRACE_LOG: tracePath,
-              FX_TRACE_SCOPES: "agent,gateway,stream",
+              FIBER_TRACE_LOG: tracePath,
+              FIBER_TRACE_SCOPES: "agent,gateway,stream",
             },
             timeoutMs: TIMEOUT,
           },

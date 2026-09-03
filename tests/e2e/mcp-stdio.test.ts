@@ -147,7 +147,7 @@ function createRoot(
     ? [
       "/bin/sh",
       "-c",
-      `printf '%s\\n' "$$" >> "$FX_MCP_LAUNCH_LOG"; exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"`,
+      `printf '%s\\n' "$$" >> "$FIBER_MCP_LAUNCH_LOG"; exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"`,
     ]
     : [process.execPath, scriptPath];
   mkdirSync(join(home, ".fx"), { recursive: true });
@@ -166,43 +166,43 @@ function createRoot(
           enabled: true,
           required: options.required,
           environment: {
-            FX_MCP_WIRE_LOG: wireLogPath,
-            FX_MCP_LAUNCH_LOG: options.recordLaunchAttempts
+            FIBER_MCP_WIRE_LOG: wireLogPath,
+            FIBER_MCP_LAUNCH_LOG: options.recordLaunchAttempts
               ? launchLogPath
               : undefined,
-            FX_MCP_FIXTURE_RUNTIME: options.recordLaunchAttempts
+            FIBER_MCP_FIXTURE_RUNTIME: options.recordLaunchAttempts
               ? process.execPath
               : undefined,
-            FX_MCP_FIXTURE_PATH: options.recordLaunchAttempts
+            FIBER_MCP_FIXTURE_PATH: options.recordLaunchAttempts
               ? scriptPath
               : undefined,
-            FX_MCP_PID_PATH: join(root, "mcp.pid"),
-            FX_MCP_MODE: options.mode ?? "normal",
-            FX_MCP_CRASH_MARKER: join(root, "mcp-crashed"),
-            FX_MCP_RECOVERY_READY_PATH: join(root, "mcp-recovery-ready"),
-            FX_MCP_INVALIDATION_RELEASE_PATH: invalidationReleasePath,
-            FX_MCP_RECOVERED_TOOL_NAME: options.recoveredToolName,
-            FX_MCP_EXPECT_ELICITATION: options.expectedElicitation,
-            FX_MCP_ELICITATION_URL: options.elicitationUrl,
-            FX_MCP_RESOURCES_SUBSCRIBE: options.resourcesSubscribe === false
+            FIBER_MCP_PID_PATH: join(root, "mcp.pid"),
+            FIBER_MCP_MODE: options.mode ?? "normal",
+            FIBER_MCP_CRASH_MARKER: join(root, "mcp-crashed"),
+            FIBER_MCP_RECOVERY_READY_PATH: join(root, "mcp-recovery-ready"),
+            FIBER_MCP_INVALIDATION_RELEASE_PATH: invalidationReleasePath,
+            FIBER_MCP_RECOVERED_TOOL_NAME: options.recoveredToolName,
+            FIBER_MCP_EXPECT_ELICITATION: options.expectedElicitation,
+            FIBER_MCP_ELICITATION_URL: options.elicitationUrl,
+            FIBER_MCP_RESOURCES_SUBSCRIBE: options.resourcesSubscribe === false
               ? "0"
               : undefined,
-            FX_MCP_RESOURCE_TTL_MS: options.resourceTtlMs?.toString(),
-            FX_MCP_LEGACY_VERSION: options.legacyVersion,
-            FX_MCP_LEGACY_DISCOVERY_VERSIONS:
+            FIBER_MCP_RESOURCE_TTL_MS: options.resourceTtlMs?.toString(),
+            FIBER_MCP_LEGACY_VERSION: options.legacyVersion,
+            FIBER_MCP_LEGACY_DISCOVERY_VERSIONS:
               options.legacyDiscoveryVersions?.join(","),
-            FX_MCP_LEGACY_DISCOVERY_METHOD_NOT_FOUND:
+            FIBER_MCP_LEGACY_DISCOVERY_METHOD_NOT_FOUND:
               options.legacyDiscoveryMethodNotFound ? "1" : undefined,
-            FX_MCP_LEGACY_DISCOVERY_INVALID_PARAMS:
+            FIBER_MCP_LEGACY_DISCOVERY_INVALID_PARAMS:
               options.legacyDiscoveryInvalidParams ? "1" : undefined,
-            FX_MCP_LEGACY_REJECT_NEWER_INITIALIZE:
+            FIBER_MCP_LEGACY_REJECT_NEWER_INITIALIZE:
               options.legacyRejectNewerInitialize ? "1" : undefined,
-            FX_MCP_DRAFT7_PATTERN: options.draft7Pattern,
-            FX_MCP_URL_REQUIRED_OPERATION: options.urlRequiredOperation,
-            FX_MCP_ENV_CAPTURE: options.captureEnvironment
+            FIBER_MCP_DRAFT7_PATTERN: options.draft7Pattern,
+            FIBER_MCP_URL_REQUIRED_OPERATION: options.urlRequiredOperation,
+            FIBER_MCP_ENV_CAPTURE: options.captureEnvironment
               ? environmentCapturePath
               : undefined,
-            FX_MCP_ENV_SENTINEL: options.captureEnvironment
+            FIBER_MCP_ENV_SENTINEL: options.captureEnvironment
               ? "configured"
               : undefined,
           },
@@ -245,14 +245,13 @@ function fixtureEnv(root: FixtureRoot, activeGateway: ReturnType<typeof startFak
     HOME: root.home,
     AI_GATEWAY_API_KEY: "fake-mcp-stdio-key",
     VERCEL_OIDC_TOKEN: undefined,
-    FX_AUTO_UPGRADE: "0",
-    FX_PERMISSION_MODE: "auto",
+    FIBER_PERMISSION_MODE: "auto",
     FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
     FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
     FX_E2E_GATEWAY_CHAT_URL: activeGateway.chatUrl,
-    FX_MODEL: MODEL,
-    FX_TRACE_LOG: root.traceLogPath,
-    FX_TRACE_SCOPES: "mcp",
+    FIBER_MODEL: MODEL,
+    FIBER_TRACE_LOG: root.traceLogPath,
+    FIBER_TRACE_SCOPES: "mcp",
   };
 }
 
@@ -386,18 +385,18 @@ describe("modern MCP stdio compatibility", () => {
       fakeDocker,
       `#!/bin/sh
 if [ "$1" = "rm" ]; then
-  printf '%s\\n' "$*" > "$FX_DOCKER_CLEANUP_LOG"
+  printf '%s\\n' "$*" > "$FIBER_DOCKER_CLEANUP_LOG"
   exit 0
 fi
-printf '%s\\n' "$$" >> "$FX_DOCKER_LAUNCH_LOG"
+printf '%s\\n' "$$" >> "$FIBER_DOCKER_LAUNCH_LOG"
 test "$1" = "run" || exit 21
 shift
 test "$1" = "--cidfile" || exit 22
 cidfile=$2
 shift 2
 printf '%s\\n' '0123456789abcdef' > "$cidfile"
-printf '%s\\n' "$cidfile" >> "$FX_DOCKER_CIDFILE_LOG"
-exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
+printf '%s\\n' "$cidfile" >> "$FIBER_DOCKER_CIDFILE_LOG"
+exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
 `,
       { mode: 0o755 },
     );
@@ -410,11 +409,11 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
       "-i",
       "fixture-image",
     ];
-    profile.mcp.fixture.environment.FX_DOCKER_CLEANUP_LOG = cleanupLog;
-    profile.mcp.fixture.environment.FX_DOCKER_CIDFILE_LOG = cidfileLog;
-    profile.mcp.fixture.environment.FX_DOCKER_LAUNCH_LOG = dockerLaunchLog;
-    profile.mcp.fixture.environment.FX_MCP_FIXTURE_RUNTIME = process.execPath;
-    profile.mcp.fixture.environment.FX_MCP_FIXTURE_PATH = MODERN_FIXTURE;
+    profile.mcp.fixture.environment.FIBER_DOCKER_CLEANUP_LOG = cleanupLog;
+    profile.mcp.fixture.environment.FIBER_DOCKER_CIDFILE_LOG = cidfileLog;
+    profile.mcp.fixture.environment.FIBER_DOCKER_LAUNCH_LOG = dockerLaunchLog;
+    profile.mcp.fixture.environment.FIBER_MCP_FIXTURE_RUNTIME = process.execPath;
+    profile.mcp.fixture.environment.FIBER_MCP_FIXTURE_PATH = MODERN_FIXTURE;
     writeFileSync(profilePath, JSON.stringify(profile));
 
     const result = await runFx(["mcp", "list", "--connect"], {
@@ -424,9 +423,8 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
         TMPDIR: root.root,
         AI_GATEWAY_API_KEY: undefined,
         VERCEL_OIDC_TOKEN: undefined,
-        FX_AUTO_UPGRADE: "0",
-        FX_TRACE_LOG: root.traceLogPath,
-        FX_TRACE_SCOPES: "mcp",
+        FIBER_TRACE_LOG: root.traceLogPath,
+        FIBER_TRACE_SCOPES: "mcp",
       },
       timeoutMs: 20_000,
     });
@@ -446,7 +444,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
 
     rmSync(cleanupLog);
     rmSync(cidfileLog);
-    profile.mcp.fixture.environment.FX_MCP_MODE = "stall_startup";
+    profile.mcp.fixture.environment.FIBER_MCP_MODE = "stall_startup";
     profile.mcp.fixture.startup_timeout_ms = 50;
     profile.mcp.fixture.restart_limit = 0;
     writeFileSync(profilePath, JSON.stringify(profile));
@@ -457,9 +455,8 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
         TMPDIR: root.root,
         AI_GATEWAY_API_KEY: undefined,
         VERCEL_OIDC_TOKEN: undefined,
-        FX_AUTO_UPGRADE: "0",
-        FX_TRACE_LOG: root.traceLogPath,
-        FX_TRACE_SCOPES: "mcp",
+        FIBER_TRACE_LOG: root.traceLogPath,
+        FIBER_TRACE_SCOPES: "mcp",
       },
       timeoutMs: 20_000,
     });
@@ -502,7 +499,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
         stderrPath,
         env: {
           ...fixtureEnv(root, activeGateway),
-          FX_PERMISSION_MODE: "ask",
+          FIBER_PERMISSION_MODE: "ask",
         },
       });
 
@@ -622,10 +619,10 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
     project.mcpServers.fixture.command = "${WORKSPACE_MCP_COMMAND}";
     project.mcpServers.fixture.args = ["${WORKSPACE_MCP_FIXTURE}"];
     project.mcpServers.fixture.env = {
-      FX_MCP_RESULT_TEXT: "${WORKSPACE_MCP_RESULT:-MODERN_MCP_TOOL_RESULT}",
-      FX_MCP_WIRE_LOG: "${WORKSPACE_MCP_WIRE_LOG}",
-      FX_MCP_PID_PATH: "${WORKSPACE_MCP_PID_PATH}",
-      FX_MCP_MODE: "${WORKSPACE_MCP_MODE:-normal}",
+      FIBER_MCP_RESULT_TEXT: "${WORKSPACE_MCP_RESULT:-MODERN_MCP_TOOL_RESULT}",
+      FIBER_MCP_WIRE_LOG: "${WORKSPACE_MCP_WIRE_LOG}",
+      FIBER_MCP_PID_PATH: "${WORKSPACE_MCP_PID_PATH}",
+      FIBER_MCP_MODE: "${WORKSPACE_MCP_MODE:-normal}",
     };
     delete project.mcpServers.fixture.environment;
     writeFileSync(projectPath, JSON.stringify(project));
@@ -764,9 +761,9 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
     gateway = startToolGateway("TOP_LEVEL_STDIO_MCP_READY");
     const env = {
       ...fixtureEnv(root, gateway),
-      FX_MCP_WIRE_LOG: root.wireLogPath,
-      FX_MCP_PID_PATH: join(root.root, "mcp.pid"),
-      FX_MCP_MODE: "normal",
+      FIBER_MCP_WIRE_LOG: root.wireLogPath,
+      FIBER_MCP_PID_PATH: join(root.root, "mcp.pid"),
+      FIBER_MCP_MODE: "normal",
     };
     const added = await runFx(
       ["mcp", "add", "fixture", process.execPath, MODERN_FIXTURE],
@@ -993,8 +990,8 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
 
     const profilePath = join(root.home, ".fx", "mcp.json");
     const profile = JSON.parse(readFileSync(profilePath, "utf8"));
-    profile.mcp.fixture.environment.FX_MCP_INITIAL_TOOL_NAME = "sum";
-    profile.mcp.fixture.environment.FX_MCP_RESULT_TEXT = "RESUMED_PROFILE_TOOL_RESULT";
+    profile.mcp.fixture.environment.FIBER_MCP_INITIAL_TOOL_NAME = "sum";
+    profile.mcp.fixture.environment.FIBER_MCP_RESULT_TEXT = "RESUMED_PROFILE_TOOL_RESULT";
     writeFileSync(profilePath, JSON.stringify(profile));
 
     const resumedTool = "mcp_fixture_sum";
@@ -1187,7 +1184,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
         .toHaveLength(0);
       expect(wire.filter((entry) => entry.message.method === "resources/list"))
         .toHaveLength(2);
-      const evidenceDir = process.env.FX_S11_EVIDENCE_DIR;
+      const evidenceDir = process.env.FIBER_S11_EVIDENCE_DIR;
       if (evidenceDir) {
         mkdirSync(evidenceDir, { recursive: true });
         writeFileSync(
@@ -1296,20 +1293,20 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
           ...base,
           environment: {
             ...base.environment,
-            FX_MCP_WIRE_LOG: allowedWirePath,
-            FX_MCP_PID_PATH: join(root.root, "allowed.pid"),
-            FX_MCP_INITIAL_TOOL_NAME: "echo",
-            FX_MCP_RECOVERED_TOOL_NAME: "echo",
+            FIBER_MCP_WIRE_LOG: allowedWirePath,
+            FIBER_MCP_PID_PATH: join(root.root, "allowed.pid"),
+            FIBER_MCP_INITIAL_TOOL_NAME: "echo",
+            FIBER_MCP_RECOVERED_TOOL_NAME: "echo",
           },
         },
         denied: {
           ...base,
           environment: {
             ...base.environment,
-            FX_MCP_WIRE_LOG: deniedWirePath,
-            FX_MCP_PID_PATH: join(root.root, "denied.pid"),
-            FX_MCP_INITIAL_TOOL_NAME: "blocked",
-            FX_MCP_RECOVERED_TOOL_NAME: "blocked",
+            FIBER_MCP_WIRE_LOG: deniedWirePath,
+            FIBER_MCP_PID_PATH: join(root.root, "denied.pid"),
+            FIBER_MCP_INITIAL_TOOL_NAME: "blocked",
+            FIBER_MCP_RECOVERED_TOOL_NAME: "blocked",
           },
         },
       };
@@ -2401,7 +2398,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
         env: {
           ...fixtureEnv(root, activeGateway),
           PATH: parentPath,
-          FX_MCP_INHERITED_SENTINEL: inheritedSentinel,
+          FIBER_MCP_INHERITED_SENTINEL: inheritedSentinel,
           HTTPS_PROXY: proxySentinel,
         },
         timeoutMs: 20_000,
@@ -3407,7 +3404,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
       mkdirSync(fakeBin);
       writeFakeUrlOpeners(
         fakeBin,
-        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FX_E2E_OPEN_LOG\"\nexit 0\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FIBER_E2E_OPEN_LOG\"\nexit 0\n",
       );
       const activeGateway = startToolGateway("Legacy URL-required complete.");
       gateway = activeGateway;
@@ -3423,7 +3420,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
           env: {
             ...fixtureEnv(root, activeGateway),
             PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-            FX_E2E_OPEN_LOG: openLog,
+            FIBER_E2E_OPEN_LOG: openLog,
           },
         });
 
@@ -3470,7 +3467,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
       mkdirSync(fakeBin);
       writeFakeUrlOpeners(
         fakeBin,
-        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FX_E2E_OPEN_LOG\"\nexit 0\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FIBER_E2E_OPEN_LOG\"\nexit 0\n",
       );
       const activeGateway = startToolGateway("Legacy multiple URL completion complete.");
       gateway = activeGateway;
@@ -3485,7 +3482,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
         env: {
           ...fixtureEnv(root, activeGateway),
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-          FX_E2E_OPEN_LOG: openLog,
+          FIBER_E2E_OPEN_LOG: openLog,
         },
       });
 
@@ -3539,7 +3536,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
       mkdirSync(fakeBin);
       writeFakeUrlOpeners(
         fakeBin,
-        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FX_E2E_OPEN_LOG\"\nexit 0\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FIBER_E2E_OPEN_LOG\"\nexit 0\n",
       );
       const activeGateway = startToolGateway("Legacy malformed completion complete.");
       gateway = activeGateway;
@@ -3554,7 +3551,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
         env: {
           ...fixtureEnv(root, activeGateway),
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-          FX_E2E_OPEN_LOG: openLog,
+          FIBER_E2E_OPEN_LOG: openLog,
         },
       });
 
@@ -3688,7 +3685,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
         mkdirSync(fakeBin);
         writeFakeUrlOpeners(
           fakeBin,
-          "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FX_E2E_OPEN_LOG\"\nexit 0\n",
+          "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FIBER_E2E_OPEN_LOG\"\nexit 0\n",
         );
         gateway = startFakeGateway([
           operation === "resources"
@@ -3727,7 +3724,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
           env: {
             ...fixtureEnv(root, gateway),
             PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-            FX_E2E_OPEN_LOG: openLog,
+            FIBER_E2E_OPEN_LOG: openLog,
           },
         });
 
@@ -3895,7 +3892,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
       mkdirSync(fakeBin);
       writeFakeUrlOpeners(
         fakeBin,
-        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FX_E2E_OPEN_LOG\"\nif [ ! -e \"$FX_E2E_OPEN_STATE\" ]; then touch \"$FX_E2E_OPEN_STATE\"; exit 1; fi\nexit 0\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FIBER_E2E_OPEN_LOG\"\nif [ ! -e \"$FIBER_E2E_OPEN_STATE\" ]; then touch \"$FIBER_E2E_OPEN_STATE\"; exit 1; fi\nexit 0\n",
       );
       const activeGateway = startToolGateway("Interactive Ask URL elicitation complete.");
       gateway = activeGateway;
@@ -3911,10 +3908,10 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
           env: {
             ...fixtureEnv(root, activeGateway),
             PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-            FX_E2E_OPEN_LOG: openLog,
-            FX_E2E_OPEN_STATE: openState,
-            FX_TRACE_LOG: traceLog,
-            FX_TRACE_SCOPES: "core",
+            FIBER_E2E_OPEN_LOG: openLog,
+            FIBER_E2E_OPEN_STATE: openState,
+            FIBER_TRACE_LOG: traceLog,
+            FIBER_TRACE_SCOPES: "core",
           },
         });
 
@@ -3976,7 +3973,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
       mkdirSync(fakeBin);
       writeFakeUrlOpeners(
         fakeBin,
-        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FX_E2E_OPEN_LOG\"\nexit 0\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FIBER_E2E_OPEN_LOG\"\nexit 0\n",
       );
       const activeGateway = startToolGateway("Interactive Ask URL refusal complete.");
       gateway = activeGateway;
@@ -3992,7 +3989,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
           env: {
             ...fixtureEnv(root, activeGateway),
             PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-            FX_E2E_OPEN_LOG: openLog,
+            FIBER_E2E_OPEN_LOG: openLog,
           },
         });
 
@@ -4460,7 +4457,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
 
       const profilePath = join(root.home, ".fx", "mcp.json");
       const profile = JSON.parse(readFileSync(profilePath, "utf8"));
-      profile.mcp.fixture.environment.FX_MCP_MODE = "stall_startup";
+      profile.mcp.fixture.environment.FIBER_MCP_MODE = "stall_startup";
       profile.mcp.fixture.startup_timeout_ms = 60_000;
       writeFileSync(profilePath, JSON.stringify(profile));
 
@@ -4471,7 +4468,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
       await tui.waitForText("mcp.json", 1_000);
       expect(Date.now() - pathStarted).toBeLessThan(1_000);
 
-      profile.mcp.fixture.environment.FX_MCP_MODE = "normal";
+      profile.mcp.fixture.environment.FIBER_MCP_MODE = "normal";
       writeFileSync(profilePath, JSON.stringify(profile));
       const supersedeStarted = Date.now();
       await tui.sendText("/mcp reload");
@@ -4993,7 +4990,7 @@ exec "$FX_MCP_FIXTURE_RUNTIME" "$FX_MCP_FIXTURE_PATH"
         .filter((entry) => entry.message.id !== undefined)
         .map((entry) => entry.message.id);
       expect(new Set(requestIds).size).toBe(requestIds.length);
-      const evidenceDir = process.env.FX_S11_EVIDENCE_DIR;
+      const evidenceDir = process.env.FIBER_S11_EVIDENCE_DIR;
       if (evidenceDir) {
         mkdirSync(evidenceDir, { recursive: true });
         writeFileSync(

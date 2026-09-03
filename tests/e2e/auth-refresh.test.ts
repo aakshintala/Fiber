@@ -110,7 +110,7 @@ test(
               modelsUrl: `http://127.0.0.1:${server.port}/models`,
               tokenUrl: tokens.tokenUrl,
             } as ReturnType<typeof startFakeCodex>),
-            FX_DISABLE_KEYCHAIN: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
           },
           timeoutMs: TIMEOUT,
         },
@@ -167,7 +167,7 @@ test(
       HOME: home,
       AI_GATEWAY_API_KEY: undefined,
       VERCEL_OIDC_TOKEN: undefined,
-      FX_DISABLE_KEYCHAIN: "1",
+      FIBER_DISABLE_KEYCHAIN: "1",
     };
 
     try {
@@ -262,7 +262,7 @@ test(
         modelsUrl: `http://127.0.0.1:${server.port}/models`,
         tokenUrl: `http://127.0.0.1:${server.port}/token`,
       } as ReturnType<typeof startFakeCodex>),
-      FX_DISABLE_KEYCHAIN: "1",
+      FIBER_DISABLE_KEYCHAIN: "1",
     };
 
     try {

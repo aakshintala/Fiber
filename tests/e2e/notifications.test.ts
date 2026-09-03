@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -58,13 +58,12 @@ function notificationEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
-    // Sound behavior under test: skip the harness-wide FX_SOUND=0 default so
+    FIBER_MODEL: FAKE_GATEWAY_MODEL,
+    // Sound behavior under test: skip the harness-wide FIBER_SOUND=0 default so
     // the fixture settings and platform default stay authoritative.
-    FX_SOUND: undefined,
-    FX_TRACE_LOG: tracePath,
-    FX_TRACE_SCOPES: "hooks,notifications",
+    FIBER_SOUND: undefined,
+    FIBER_TRACE_LOG: tracePath,
+    FIBER_TRACE_SCOPES: "hooks,notifications",
     NO_COLOR: "1",
   };
 }
@@ -139,7 +138,7 @@ test.skipIf(!tmuxAvailable())(
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: notificationEnv(fixture.home, gateway, tracePath),
         stderrPath,
@@ -211,7 +210,7 @@ test.skipIf(!tmuxAvailable())(
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: notificationEnv(fixture.home, gateway, tracePath),
         stderrPath,
@@ -285,7 +284,7 @@ test.skipIf(!tmuxAvailable())(
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: `${FX_BIN} ask --no-save "Try the prepared command."`,
+        cmd: `${FIBER_BIN} ask --no-save "Try the prepared command."`,
         cwd: fixture.workspace,
         env: notificationEnv(fixture.home, gateway, tracePath),
         remainOnExit: true,
@@ -340,7 +339,7 @@ test.skipIf(!tmuxAvailable())(
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: notificationEnv(fixture.home, gateway, tracePath),
         stderrPath,

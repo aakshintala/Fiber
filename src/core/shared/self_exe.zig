@@ -70,7 +70,7 @@ fn sameFile(left: []const u8, right: []const u8) !bool {
 
 fn testProductExe() ?[]const u8 {
     if (comptime !builtin.is_test) return null;
-    const path_z = std.c.getenv("FX_TEST_PRODUCT_EXE") orelse return null;
+    const path_z = std.c.getenv("FIBER_TEST_PRODUCT_EXE") orelse return null;
     const path = std.mem.sliceTo(path_z, 0);
     return if (path.len == 0) null else path;
 }

@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   chatGptAccessToken,
   composerContains,
@@ -32,7 +32,7 @@ const TIMEOUT = 20_000;
 const NO_AUTH = {
   AI_GATEWAY_API_KEY: "",
   VERCEL_OIDC_TOKEN: "",
-  FX_MODEL: undefined,
+  FIBER_MODEL: undefined,
   NO_COLOR: "1",
 };
 const CODEX_MODEL = "gpt-5.4";
@@ -195,7 +195,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         );
         const catalogEnv = fakeCodexEnv(home, codex, {
           ...NO_AUTH,
-          FX_AUTO_UPGRADE: "0",
         });
 
         session = await TmuxSession.create({
@@ -311,7 +310,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           cwd: workspaceBRoot,
           env: {
             ...catalogEnv,
-            FX_MODEL: CODEX_MODEL,
+            FIBER_MODEL: CODEX_MODEL,
           },
           stderrPath: stderrBPath,
         });
@@ -553,7 +552,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           cwd: realpathSync(workspace),
           env: fakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            FX_AUTO_UPGRADE: "0",
           }),
           stderrPath,
         });
@@ -655,7 +653,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
             cwd: realpathSync(workspace),
             env: fakeCodexEnv(home, codex, {
               ...NO_AUTH,
-              FX_AUTO_UPGRADE: "0",
             }),
             stderrPath,
           });
@@ -704,7 +701,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           cwd: realpathSync(workspace),
           env: fakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            FX_AUTO_UPGRADE: "0",
           }),
           stderrPath,
         });
@@ -753,7 +749,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           cwd: realpathSync(workspace),
           env: fakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            FX_AUTO_UPGRADE: "0",
           }),
           stderrPath,
         });
@@ -825,8 +820,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         );
         const catalogEnv = fakeCodexEnv(home, codex, {
           ...NO_AUTH,
-          FX_AUTO_UPGRADE: "0",
-          FX_DISABLE_KEYCHAIN: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
         });
 
         session = await TmuxSession.create({
@@ -935,7 +929,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         );
         const catalogEnv = fakeCodexEnv(home, codex, {
           ...NO_AUTH,
-          FX_AUTO_UPGRADE: "0",
         });
 
         const staleResult = await runFx(
@@ -1025,7 +1018,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           cwd: workspaceRoot,
           env: fakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            FX_AUTO_UPGRADE: "0",
           }),
           stderrPath,
         });
@@ -1082,7 +1074,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           cwd: workspaceRoot,
           env: fakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            FX_AUTO_UPGRADE: "0",
           }),
           stderrPath,
         });
@@ -1149,7 +1140,6 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           cwd: workspaceRoot,
           env: fakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            FX_AUTO_UPGRADE: "0",
           }),
           stderrPath,
         });
@@ -1539,7 +1529,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
             stderrPath: stderrAPath,
           }),
           TmuxSession.create({
-            cmd: `${FX_BIN} --add-dir ${launchRoot}`,
+            cmd: `${FIBER_BIN} --add-dir ${launchRoot}`,
             cwd: workspaceRoot,
             env,
             stderrPath: stderrBPath,
@@ -1620,7 +1610,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         });
 
         session = await TmuxSession.create({
-          cmd: `${FX_BIN} --add-dir ${launchRoot}`,
+          cmd: `${FIBER_BIN} --add-dir ${launchRoot}`,
           cwd: workspaceRoot,
           env: {
             ...NO_AUTH,
@@ -2309,8 +2299,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           session = await TmuxSession.create({
             cwd: workspaceRoot,
             env: fakeCodexEnv(home, codex, {
-              FX_AUTO_UPGRADE: "0",
-              FX_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+              FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
             }),
             stderrPath,
           });
@@ -2375,7 +2364,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         };
 
         session = await TmuxSession.create({
-          cmd: `${FX_BIN} --add-dir ${sharedRoot}`,
+          cmd: `${FIBER_BIN} --add-dir ${sharedRoot}`,
           cwd: workspaceRoot,
           env,
           stderrPath,

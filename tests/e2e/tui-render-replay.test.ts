@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import { readTapeFrames, stdoutFrames } from "./render-lab/tape";
 import {
   assertPaneContains,
@@ -69,17 +69,17 @@ async function launch(options: {
   );
 
   const s = await TmuxSession.create({
-    cmd: `env FX_DISABLE_KEYCHAIN=1 FX_SKIP_ONBOARDING=1 ${FX_BIN}`,
+    cmd: `env FIBER_DISABLE_KEYCHAIN=1 FIBER_SKIP_ONBOARDING=1 ${FIBER_BIN}`,
     cwd: workDir,
     width: 88,
     height: 30,
     env: {
       HOME: workDir,
-      FX_RECORD: tapePath,
-      ...(options.recordInput ? { FX_RECORD_INPUT: "1" } : {}),
-      ...(options.syncUpdates ? { FX_SYNC_UPDATES: options.syncUpdates } : {}),
-      FX_TRACE_LOG: tracePath,
-      FX_TRACE_SCOPES: TRACE_SCOPES,
+      FIBER_RECORD: tapePath,
+      ...(options.recordInput ? { FIBER_RECORD_INPUT: "1" } : {}),
+      ...(options.syncUpdates ? { FIBER_SYNC_UPDATES: options.syncUpdates } : {}),
+      FIBER_TRACE_LOG: tracePath,
+      FIBER_TRACE_SCOPES: TRACE_SCOPES,
     },
   });
   session = s;
@@ -116,18 +116,18 @@ async function launchAutomaticRecording(options: {
   const goldenPath = join(workDir, "grid.txt");
   const tracePath = join(workDir, "trace.log");
   const s = await TmuxSession.create({
-    cmd: `env FX_DISABLE_KEYCHAIN=1 FX_SKIP_ONBOARDING=1 ${FX_BIN}`,
+    cmd: `env FIBER_DISABLE_KEYCHAIN=1 FIBER_SKIP_ONBOARDING=1 ${FIBER_BIN}`,
     cwd: workDir,
     width: 180,
     height: 36,
     env: {
       HOME: home,
-      FX_DEBUG_RECORD: "1",
+      FIBER_DEBUG_RECORD: "1",
       ...(options.silentBanner
-        ? { FX_DEBUG_RECORD_SILENT_BANNER: "1" }
+        ? { FIBER_DEBUG_RECORD_SILENT_BANNER: "1" }
         : {}),
-      FX_TRACE_LOG: tracePath,
-      FX_TRACE_SCOPES: TRACE_SCOPES,
+      FIBER_TRACE_LOG: tracePath,
+      FIBER_TRACE_SCOPES: TRACE_SCOPES,
     },
   });
   session = s;
@@ -165,7 +165,7 @@ describe("tui: render record/replay", () => {
       const goldenPath = join(workDir, "grid.txt");
       const tracePath = join(workDir, "trace.log");
 
-      const replayJsonOutput = execFileSync(FX_BIN, ["replay", tapePath, "--json"], {
+      const replayJsonOutput = execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
         encoding: "utf8",
       });
       const replay = parseReplayJson(replayJsonOutput);
@@ -173,11 +173,11 @@ describe("tui: render record/replay", () => {
       expect(replay.resize_count).toBe(0);
       expect(replay.stdout_bytes).toBeGreaterThan(0);
 
-      execFileSync(FX_BIN, ["replay", tapePath, "--golden", goldenPath], {
+      execFileSync(FIBER_BIN, ["replay", tapePath, "--golden", goldenPath], {
         env: {
           ...process.env,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: TRACE_SCOPES,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: TRACE_SCOPES,
         },
       });
       const trace = readTrace(tracePath);
@@ -237,7 +237,7 @@ describe("tui: render record/replay", () => {
 
       const scrollback = await session.captureFullScrollback();
       expect(scrollback).toContain("why");
-      execFileSync(FX_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
+      execFileSync(FIBER_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
       const grid = readFileSync(launched.goldenPath, "utf8");
       expect(grid).toContain("why");
 
@@ -268,7 +268,7 @@ describe("tui: render record/replay", () => {
 
       const scrollback = await session.captureFullScrollback();
       expect(scrollback).toContain("x");
-      execFileSync(FX_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
+      execFileSync(FIBER_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
       expect(readFileSync(launched.goldenPath, "utf8")).toContain("x");
 
       await session.sendKeys("C-u");
@@ -293,7 +293,7 @@ describe("tui: render record/replay", () => {
       const goldenPath = join(workDir, "grid.txt");
       const tracePath = join(workDir, "trace.log");
 
-      const replayJsonOutput = execFileSync(FX_BIN, ["replay", tapePath, "--json"], {
+      const replayJsonOutput = execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
         encoding: "utf8",
       });
       const replay = parseReplayJson(replayJsonOutput);
@@ -301,11 +301,11 @@ describe("tui: render record/replay", () => {
       expect(replay.resize_count).toBe(0);
       expect(replay.stdout_bytes).toBeGreaterThan(0);
 
-      execFileSync(FX_BIN, ["replay", tapePath, "--golden", goldenPath], {
+      execFileSync(FIBER_BIN, ["replay", tapePath, "--golden", goldenPath], {
         env: {
           ...process.env,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: TRACE_SCOPES,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: TRACE_SCOPES,
         },
       });
       const trace = readTrace(tracePath);
@@ -350,7 +350,7 @@ describe("tui: render record/replay", () => {
       expect(pasteEnd).toBeGreaterThanOrEqual(recordedPaste.length);
       expect(stdin.slice(pasteEnd)).toMatch(/^(?:\x1b\[\?[\d;]*c)*\r/);
 
-      execFileSync(FX_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
+      execFileSync(FIBER_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
       expect(
         readFileSync(launched.goldenPath, "utf8").replaceAll("|", " ").replace(/\s+/g, " "),
       ).toContain(authNotice);
@@ -384,7 +384,7 @@ describe("tui: render record/replay", () => {
       await session.resizeWindow(88, 30);
 
       const replayJsonOutput = execFileSync(
-        FX_BIN,
+        FIBER_BIN,
         ["replay", launched.tapePath, "--json"],
         { encoding: "utf8" },
       );
@@ -393,7 +393,7 @@ describe("tui: render record/replay", () => {
       if (replay.stdout_bytes <= 0) failures.push("replay reported no stdout bytes");
       if (replay.resize_count < 3) failures.push("replay reported too few resize frames");
 
-      execFileSync(FX_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
+      execFileSync(FIBER_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
       const gridText = readFileSync(launched.goldenPath, "utf8");
       const grid = gridText.replace(/\n$/, "").split("\n");
       assertPaneContains(gridText, inputTail, failures, "replay grid");
@@ -436,14 +436,14 @@ describe("tui: render record/replay", () => {
       await session.resizeWindow(120, 28);
 
       const replayJsonOutput = execFileSync(
-        FX_BIN,
+        FIBER_BIN,
         ["replay", launched.tapePath, "--json"],
         { encoding: "utf8" },
       );
       const replay = parseReplayJson(replayJsonOutput);
       if (replay.resize_count < 1) failures.push("replay reported no resize frame");
 
-      execFileSync(FX_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
+      execFileSync(FIBER_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
       const gridText = readFileSync(launched.goldenPath, "utf8");
       assertPaneContains(gridText, inputTail, failures, "automatic recording replay grid");
 
@@ -481,7 +481,7 @@ describe("tui: render record/replay", () => {
 
       await session.sendText(marker);
       await session.waitForText("● Auth: Codex needs a subscription login", 5_000);
-      execFileSync(FX_BIN, [
+      execFileSync(FIBER_BIN, [
         "replay",
         launched.tapePath,
         "--golden",

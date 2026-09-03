@@ -927,7 +927,7 @@ const StreamTraceEntry = union(enum) {
     turn_phase: types.TurnPhase,
 };
 
-const ansi_span_fixture_env = "FX_TEST_C04_STREAM_ANSI_OSC8_FIXTURE";
+const ansi_span_fixture_env = "FIBER_TEST_C04_STREAM_ANSI_OSC8_FIXTURE";
 const ansi_span_test_name = "streamed presentation preserves ANSI OSC 8 code fence and table spans";
 
 fn ansi_span_fixture_enabled() bool {

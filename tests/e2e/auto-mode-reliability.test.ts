@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
   fakeGatewayPermissionDecision,
@@ -75,9 +75,8 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: MODEL,
-    FX_PERMISSION_MODE: "auto",
-    FX_AUTO_UPGRADE: "0",
+    FIBER_MODEL: MODEL,
+    FIBER_PERMISSION_MODE: "auto",
     NO_COLOR: "1",
   };
 }
@@ -491,8 +490,8 @@ describe("lean auto mode reliability", () => {
           cwd: root.workspace,
           env: {
             ...gatewayEnv(root, gateway),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission,tool,terminal",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission,tool,terminal",
           },
           timeoutMs: TIMEOUT,
         },
@@ -557,8 +556,8 @@ describe("lean auto mode reliability", () => {
           cwd: root.workspace,
           env: {
             ...gatewayEnv(root, gateway),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "core,permission,tool,terminal",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "core,permission,tool,terminal",
           },
           timeoutMs: TIMEOUT,
         },
@@ -1034,8 +1033,8 @@ describe("lean auto mode reliability", () => {
           cwd: root.workspace,
           env: {
             ...gatewayEnv(root, gateway),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           },
           timeoutMs: TIMEOUT,
         },
@@ -1207,15 +1206,15 @@ describe("lean auto mode reliability", () => {
         ffmpeg,
         "#!/bin/sh\n" +
           "case \"$*\" in\n" +
-          "  *frame-%03d.jpg*) printf 'rebuilt frame\\n' > \"$FX_MEDIA_FRAMES/frame-001.jpg\" ;;\n" +
-          "  *) printf 'rendered media\\n' > \"$FX_MEDIA_RENDER\" ;;\n" +
+          "  *frame-%03d.jpg*) printf 'rebuilt frame\\n' > \"$FIBER_MEDIA_FRAMES/frame-001.jpg\" ;;\n" +
+          "  *) printf 'rendered media\\n' > \"$FIBER_MEDIA_RENDER\" ;;\n" +
           "esac\n",
       );
       chmodSync(ffmpeg, 0o755);
       const python = join(bin, "python3");
       writeFileSync(
         python,
-        "#!/bin/sh\ncat >/dev/null\nprintf 'python ui data\\n' > \"$FX_MEDIA_PYTHON\"\n",
+        "#!/bin/sh\ncat >/dev/null\nprintf 'python ui data\\n' > \"$FIBER_MEDIA_PYTHON\"\n",
       );
       chmodSync(python, 0o755);
 
@@ -1261,9 +1260,9 @@ describe("lean auto mode reliability", () => {
       const env = {
         ...gatewayEnv(root, successfulGateway),
         PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-        FX_MEDIA_FRAMES: frames,
-        FX_MEDIA_RENDER: renderedVideo,
-        FX_MEDIA_PYTHON: pythonMarker,
+        FIBER_MEDIA_FRAMES: frames,
+        FIBER_MEDIA_RENDER: renderedVideo,
+        FIBER_MEDIA_PYTHON: pythonMarker,
       };
       const successful = await runFx(
         [
@@ -1594,7 +1593,7 @@ describe("lean auto mode reliability", () => {
       );
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway),
         stderrPath,
@@ -1645,7 +1644,7 @@ describe("lean auto mode reliability", () => {
       const stderrPath = join(root.root, "saved-allow-stderr.log");
       writeFileSync(stderrPath, "");
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway),
         stderrPath,
@@ -1767,7 +1766,7 @@ describe("lean auto mode reliability", () => {
       const stderrPath = join(root.root, "saved-deny-stderr.log");
       writeFileSync(stderrPath, "");
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway),
         stderrPath,

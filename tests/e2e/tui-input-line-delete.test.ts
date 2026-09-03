@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   assertSingleFooter,
   findFooterBlocks,
@@ -136,7 +136,7 @@ describe.skipIf(SKIP)("tui: logical-line deletion", () => {
         writeFileSync(stderrPath, "");
 
         session = await TmuxSession.create({
-          cmd: `env -u AI_GATEWAY_API_KEY -u VERCEL_OIDC_TOKEN FX_DISABLE_KEYCHAIN=1 FX_SKIP_ONBOARDING=1 ${FX_BIN} 2>${stderrPath}`,
+          cmd: `env -u AI_GATEWAY_API_KEY -u VERCEL_OIDC_TOKEN FIBER_DISABLE_KEYCHAIN=1 FIBER_SKIP_ONBOARDING=1 ${FIBER_BIN} 2>${stderrPath}`,
           cwd: workDir,
           width: 120,
           height: 40,

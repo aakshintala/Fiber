@@ -493,7 +493,7 @@ fn loadMergedSettingsDetailedWithOptionalHome(
         }
     }
 
-    if (io_mod.getenv("FX_MODEL")) |model_override| {
+    if (io_mod.getenv("FIBER_MODEL")) |model_override| {
         if (std.mem.trim(u8, model_override, " \t\r\n").len > 0) {
             sources.models.set(.codex, .process_override);
         }
@@ -3295,7 +3295,7 @@ test "detailed settings report non-empty process model override as winning sourc
 
     const home = try TestHome.install(std.testing.allocator, home_root);
     defer home.deinit();
-    try home.map.put("FX_MODEL", "process/model");
+    try home.map.put("FIBER_MODEL", "process/model");
 
     var result = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
     defer result.deinit(std.testing.allocator);

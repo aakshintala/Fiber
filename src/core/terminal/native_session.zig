@@ -319,7 +319,7 @@ pub fn runControlMarker(raw_args: []const [*:0]const u8) !void {
         control_path,
         "/tmp/fx-tmux-marker-",
     ))
-        io_mod.getenv("FX_TERMINAL_TEST_TMUX_MARKER_FAILURE")
+        io_mod.getenv("FIBER_TERMINAL_TEST_TMUX_MARKER_FAILURE")
     else
         null;
     if (tmux_failure) |failure| {
@@ -922,7 +922,7 @@ const SupportedRegistry = struct {
             return;
         }
 
-        if (io_mod.getenv("FX_TERMINAL_TEST_FAIL_CANCELLATION_OPEN") != null) {
+        if (io_mod.getenv("FIBER_TERMINAL_TEST_FAIL_CANCELLATION_OPEN") != null) {
             return error.InjectedCancellationOpenFailure;
         }
         const durable = try self.profile.open_terminal(session_id);
@@ -1942,7 +1942,7 @@ const Session = struct {
             self.tmux_backend = null;
             return err;
         };
-        maybeDelayForTest("FX_TERMINAL_TEST_TMUX_PREPARED_RELEASE_DELAY_MS");
+        maybeDelayForTest("FIBER_TERMINAL_TEST_TMUX_PREPARED_RELEASE_DELAY_MS");
         self.tmux_backend.?.release() catch |err| {
             self.tmux_backend.?.killSession();
             return err;
@@ -3144,7 +3144,7 @@ const Session = struct {
 
     fn commitStartupBoundary(self: *Session) void {
         if (self.command != null) {
-            maybeDelayForTest("FX_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS");
+            maybeDelayForTest("FIBER_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS");
         }
         const zio = io_mod.getIo();
         self.mutex.lockUncancelable(zio);
@@ -3522,8 +3522,8 @@ fn writeAction(
     defer session.write_mutex.unlock(zio);
     if (cancelled.load(.acquire)) return error.Cancelled;
     if (request.lease == .use) {
-        signalTestBarrier("FX_TERMINAL_TEST_WRITE_BARRIER_PATH");
-        maybeDelayForTest("FX_TERMINAL_TEST_WRITE_DELAY_MS");
+        signalTestBarrier("FIBER_TERMINAL_TEST_WRITE_BARRIER_PATH");
+        maybeDelayForTest("FIBER_TERMINAL_TEST_WRITE_DELAY_MS");
     }
 
     const authorization = switch (request.lease) {
@@ -3758,7 +3758,7 @@ fn resizeAction(
 
 fn tmuxResizeCheckpointFailure() bool {
     const value = io_mod.getenv(
-        "FX_TERMINAL_TEST_TMUX_RESIZE_CHECKPOINT_FAILURE",
+        "FIBER_TERMINAL_TEST_TMUX_RESIZE_CHECKPOINT_FAILURE",
     ) orelse return false;
     return std.mem.eql(u8, value, "allocation") or
         std.mem.eql(u8, value, "storage") or
@@ -3767,11 +3767,11 @@ fn tmuxResizeCheckpointFailure() bool {
 
 fn tmuxRecoveryFailure(session_id: []const u8, point: []const u8) bool {
     const value = io_mod.getenv(
-        "FX_TERMINAL_TEST_TMUX_RECOVERY_FAILURE",
+        "FIBER_TERMINAL_TEST_TMUX_RECOVERY_FAILURE",
     ) orelse return false;
     if (!std.mem.eql(u8, value, point)) return false;
     const selected_session = io_mod.getenv(
-        "FX_TERMINAL_TEST_TMUX_RECOVERY_SESSION_ID",
+        "FIBER_TERMINAL_TEST_TMUX_RECOVERY_SESSION_ID",
     ) orelse return true;
     return std.mem.eql(u8, selected_session, session_id);
 }
@@ -3948,7 +3948,7 @@ test "terminal signaling accepts a process group that exited during descendant d
 }
 
 fn failSignalStageForTest(stage: []const u8) bool {
-    const requested = io_mod.getenv("FX_TERMINAL_TEST_FAIL_SIGNAL_STAGE") orelse
+    const requested = io_mod.getenv("FIBER_TERMINAL_TEST_FAIL_SIGNAL_STAGE") orelse
         return false;
     return std.mem.eql(u8, requested, stage);
 }
@@ -3972,7 +3972,7 @@ fn closeAction(
         return err;
     };
     if (session.durable.record.backend == .tmux and
-        io_mod.getenv("FX_TERMINAL_TEST_INTERRUPT_CLOSE_AFTER_COMMIT") != null)
+        io_mod.getenv("FIBER_TERMINAL_TEST_INTERRUPT_CLOSE_AFTER_COMMIT") != null)
     {
         session.write_mutex.unlock(zio);
         return error.InjectedTmuxCloseInterruption;
@@ -4351,7 +4351,7 @@ fn tmuxControlMain(session: *Session) void {
             }
             if (control.kind == .shell_ready) {
                 maybeDelayForTest(
-                    "FX_TERMINAL_TEST_TMUX_SHELL_READY_HOST_DELAY_MS",
+                    "FIBER_TERMINAL_TEST_TMUX_SHELL_READY_HOST_DELAY_MS",
                 );
             }
             session.handleControl(control);
@@ -4366,7 +4366,7 @@ fn tmuxControlMain(session: *Session) void {
         thread.join();
         session.output_thread = null;
     }
-    maybeDelayForTest("FX_TERMINAL_TEST_BACKEND_CLEANUP_DELAY_MS");
+    maybeDelayForTest("FIBER_TERMINAL_TEST_BACKEND_CLEANUP_DELAY_MS");
     const zio = io_mod.getIo();
     session.write_mutex.lockUncancelable(zio);
     if (session.tmux_capture) |stream| stream.close(zio);
@@ -4431,7 +4431,7 @@ fn controlMain(session: *Session) void {
         session.output_thread = null;
     }
 
-    maybeDelayForTest("FX_TERMINAL_TEST_BACKEND_CLEANUP_DELAY_MS");
+    maybeDelayForTest("FIBER_TERMINAL_TEST_BACKEND_CLEANUP_DELAY_MS");
 
     const zio = io_mod.getIo();
     session.write_mutex.lockUncancelable(zio);

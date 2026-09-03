@@ -491,7 +491,7 @@ fn appendGhCheck(checks: *std.ArrayList(Check), alloc: Allocator) !void {
 }
 
 fn resolveModel(alloc: Allocator, default_model: []const u8, configured: ?[]const u8) !ResolvedModel {
-    if (io_mod.getenv("FX_MODEL")) |model| {
+    if (io_mod.getenv("FIBER_MODEL")) |model| {
         const trimmed = std.mem.trim(u8, model, " \t\r\n");
         if (trimmed.len > 0) return .{ .value = trimmed };
     }
@@ -506,7 +506,7 @@ fn resolveModel(alloc: Allocator, default_model: []const u8, configured: ?[]cons
 
 fn resolvePermissionMode(configured: ?types.PermissionMode) !types.PermissionMode {
     const fallback = configured orelse config_runtime.default_permission_mode;
-    const raw = io_mod.getenv("FX_PERMISSION_MODE") orelse return fallback;
+    const raw = io_mod.getenv("FIBER_PERMISSION_MODE") orelse return fallback;
     return config_runtime.parsePermissionMode(raw) orelse fallback;
 }
 
@@ -514,7 +514,7 @@ fn resolveAgentStepLimit(fallback: usize, configured: ?usize) !usize {
     return agent_steps.resolveMaxAgentStepsWithOverride(
         configured,
         fallback,
-        io_mod.getenv("FX_MAX_AGENT_STEPS"),
+        io_mod.getenv("FIBER_MAX_AGENT_STEPS"),
     );
 }
 

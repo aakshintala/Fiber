@@ -10,7 +10,7 @@ import { execFileSync, execSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, REPO_ROOT } from "../evals/eval-helpers";
+import { FIBER_BIN, REPO_ROOT } from "../evals/eval-helpers";
 
 let sessionCounter = 0;
 
@@ -20,16 +20,16 @@ const TMUX_HEX_CHUNK_BYTES = 256;
 const COMPOSER_LINE = /^[ \t]*(?:┃|❯|>)(?:[ \t]|$)/;
 const DEFAULT_UNSET_ENV_KEYS = [
   "FX_E2E_GATEWAY_CHAT_URL",
-  "FX_E2E_GATEWAY_MODELS_URL",
-  "FX_E2E_GATEWAY_CREDITS_URL",
-  "FX_E2E_UPGRADE_BASE_URL",
-  "FX_PERMISSION_MODE",
+  "FIBER_E2E_GATEWAY_MODELS_URL",
+  "FIBER_E2E_GATEWAY_CREDITS_URL",
+  "FIBER_E2E_UPGRADE_BASE_URL",
+  "FIBER_PERMISSION_MODE",
 ] as const;
 const MIRRORED_ENV_KEYS = [
   "FX_GATEWAY_BASE_URL",
   "FX_GATEWAY_CHAT_URL",
-  "FX_MAX_AGENT_STEPS",
-  "FX_MODEL",
+  "FIBER_MAX_AGENT_STEPS",
+  "FIBER_MODEL",
 ] as const;
 
 export function canonicalSubagentIdForStore(childId: string): string {
@@ -449,7 +449,7 @@ export class TmuxSession {
     socketName?: string;
   }): Promise<TmuxSession> {
     const {
-      cmd = FX_BIN,
+      cmd = FIBER_BIN,
       cwd = REPO_ROOT,
       env = {},
       width = 120,
@@ -501,9 +501,9 @@ export class TmuxSession {
       value === undefined ? [] : [shellQuote(`${key}=${value}`)]
     );
     const defaultArgs = [
-      ["FX_DISABLE_KEYCHAIN", "1"],
-      ["FX_SKIP_ONBOARDING", "1"],
-      ["FX_SOUND", "0"],
+      ["FIBER_DISABLE_KEYCHAIN", "1"],
+      ["FIBER_SKIP_ONBOARDING", "1"],
+      ["FIBER_SOUND", "0"],
     ].flatMap(([key, value]) =>
       Object.prototype.hasOwnProperty.call(env, key) ? [] : [shellQuote(`${key}=${value}`)]
     );
@@ -524,9 +524,9 @@ export class TmuxSession {
     );
     const processEnv = {
       ...process.env,
-      FX_DISABLE_KEYCHAIN: "1",
-      FX_SKIP_ONBOARDING: "1",
-      FX_SOUND: process.env.FX_SOUND ?? "0",
+      FIBER_DISABLE_KEYCHAIN: "1",
+      FIBER_SKIP_ONBOARDING: "1",
+      FIBER_SOUND: process.env.FIBER_SOUND ?? "0",
     };
     for (const key of DEFAULT_UNSET_ENV_KEYS) delete processEnv[key];
 
@@ -1462,9 +1462,9 @@ export function fakeCodexEnv(
 ): Record<string, string | undefined> {
   return {
     HOME: home,
-    FX_E2E_OPENAI_CODEX_RESPONSES_URL: codex.responsesUrl,
-    FX_E2E_OPENAI_CODEX_MODELS_URL: codex.modelsUrl,
-    FX_E2E_CHATGPT_TOKEN_URL: codex.tokenUrl,
+    FIBER_E2E_OPENAI_CODEX_RESPONSES_URL: codex.responsesUrl,
+    FIBER_E2E_OPENAI_CODEX_MODELS_URL: codex.modelsUrl,
+    FIBER_E2E_CHATGPT_TOKEN_URL: codex.tokenUrl,
     ...extra,
   };
 }

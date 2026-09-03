@@ -107,14 +107,13 @@ function fixtureEnv(
     HOME: root.home,
     AI_GATEWAY_API_KEY: "fake-mcp-legacy-key",
     VERCEL_OIDC_TOKEN: undefined,
-    FX_AUTO_UPGRADE: "0",
-    FX_PERMISSION_MODE: "auto",
+    FIBER_PERMISSION_MODE: "auto",
     FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
     FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
     FX_E2E_GATEWAY_CHAT_URL: activeGateway.chatUrl,
-    FX_MODEL: MODEL,
-    FX_TRACE_LOG: root.traceLogPath,
-    FX_TRACE_SCOPES: "mcp",
+    FIBER_MODEL: MODEL,
+    FIBER_TRACE_LOG: root.traceLogPath,
+    FIBER_TRACE_SCOPES: "mcp",
   };
 }
 
@@ -621,7 +620,7 @@ describe("version-scoped legacy MCP remote transports", () => {
             const openPath = join(fakeBin, name);
             writeFileSync(
               openPath,
-              "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FX_E2E_OPEN_LOG\"\nexit 0\n",
+              "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$FIBER_E2E_OPEN_LOG\"\nexit 0\n",
             );
             chmodSync(openPath, 0o755);
           }
@@ -670,7 +669,7 @@ describe("version-scoped legacy MCP remote transports", () => {
             env: {
               ...fixtureEnv(root, gateway),
               PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-              FX_E2E_OPEN_LOG: openLog,
+              FIBER_E2E_OPEN_LOG: openLog,
             },
           });
 

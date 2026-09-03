@@ -25,7 +25,7 @@ class BudgetContractTests(unittest.TestCase):
             for index, result in enumerate(results):
                 (result_dir / f"{index}.json").write_text(json.dumps({"results": [result]}))
             env = os.environ.copy()
-            env["FX_BENCH_RESULTS_GLOB"] = str(result_dir / "*.json")
+            env["FIBER_BENCH_RESULTS_GLOB"] = str(result_dir / "*.json")
             return subprocess.run(
                 [sys.executable, str(MODULE_PATH)],
                 cwd=REPO_ROOT,

@@ -251,7 +251,7 @@ pub fn Runtime(comptime App: type) type {
                 return;
             }) {
                 app.shell.render_requests.request(.footer);
-                if (io_mod.getenv("FX_NO_OPEN_BROWSER") == null) try openSignInBrowser(app);
+                if (io_mod.getenv("FIBER_NO_OPEN_BROWSER") == null) try openSignInBrowser(app);
             }
         }
 
@@ -275,7 +275,7 @@ pub fn Runtime(comptime App: type) type {
                 try app.writeDomainNotice(.{
                     .topic = "auth",
                     .tone = .warning,
-                    .body = "Missing FX_API_KEY. Supply it through createFxTerminal().",
+                    .body = "Missing FIBER_API_KEY. Supply it through createFxTerminal().",
                 }, true);
                 return false;
             }

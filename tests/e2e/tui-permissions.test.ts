@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText as finalText,
@@ -100,9 +100,8 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_PERMISSION_MODE: "ask",
-    FX_AUTO_UPGRADE: "0",
+    FIBER_MODEL: FAKE_GATEWAY_MODEL,
+    FIBER_PERMISSION_MODE: "ask",
     NO_COLOR: "1",
     ...overrides,
   };
@@ -117,7 +116,7 @@ async function launch(
   const stderrPath = join(root.root, "stderr.log");
   writeFileSync(stderrPath, "");
   activeSession = await TmuxSession.create({
-    cmd: FX_BIN,
+    cmd: FIBER_BIN,
     cwd: root.workspace,
     env: gatewayEnv(root, gateway, envOverrides),
     stderrPath,
@@ -435,7 +434,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         root,
         gateway,
         {},
-        { FX_RECORD: tapePath, FX_SYNC_UPDATES: "1" },
+        { FIBER_RECORD: tapePath, FIBER_SYNC_UPDATES: "1" },
       );
 
       await session.sendText("Run the file approval pacing fixture.");
@@ -498,10 +497,10 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         gateway,
         { width: 80, height: 14 },
         {
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "input,permission",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "input,permission",
         },
       );
 
@@ -714,7 +713,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         root,
         gateway,
         { width: 80, height: 30 },
-        { FX_RECORD: tapePath, FX_SYNC_UPDATES: "1" },
+        { FIBER_RECORD: tapePath, FIBER_SYNC_UPDATES: "1" },
       );
 
       await session.sendText("Create the short review fixture.");
@@ -1005,7 +1004,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         root,
         gateway,
         {},
-        { FX_RECORD: tapePath, FX_SYNC_UPDATES: "1" },
+        { FIBER_RECORD: tapePath, FIBER_SYNC_UPDATES: "1" },
       );
 
       await launched.session.sendText("Create the cancellation fixture.");
@@ -1082,7 +1081,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
           root,
           gateway,
           { width: 120, height: 40 },
-          { FX_THEME: "dark", NO_COLOR: undefined },
+          { FIBER_THEME: "dark", NO_COLOR: undefined },
         );
 
         await launched.session.sendText(`Create the ${testCase.name} marker fixture.`);
@@ -1229,7 +1228,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
           root,
           gateway,
           { width: 120, height: 40 },
-          { FX_THEME: theme, NO_COLOR: undefined },
+          { FIBER_THEME: theme, NO_COLOR: undefined },
         );
 
         await launched.session.sendText(
@@ -1336,9 +1335,9 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       const stderrPath = join(root.root, "stderr.log");
       writeFileSync(stderrPath, "");
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: { ...gatewayEnv(root, gateway), FX_DEBUG_RECORD: "1" },
+        env: { ...gatewayEnv(root, gateway), FIBER_DEBUG_RECORD: "1" },
         stderrPath,
         width: 180,
         height: 40,
@@ -1448,7 +1447,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         root,
         gateway,
         { width: 72, height: 40 },
-        { FX_RECORD: tapePath },
+        { FIBER_RECORD: tapePath },
       );
 
       await session.sendText("Replace the wrapped fixture value.");
@@ -1735,8 +1734,8 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
     "hostile path stays encoded through approval transcript changes and undo",
     async () => {
       const root = createIsolatedRoot();
-      const hostileName = "name\x1b]2;FX_PWN\x07\nfile.txt";
-      const encodedName = "name\\x1b]2;FX_PWN\\x07\\x0afile.txt";
+      const hostileName = "name\x1b]2;FIBER_PWN\x07\nfile.txt";
+      const encodedName = "name\\x1b]2;FIBER_PWN\\x07\\x0afile.txt";
       const target = join(root.workspace, hostileName);
       const gateway = startFakeGateway([
         toolCall("hostile_write", "write_file", {
@@ -1762,12 +1761,12 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
 
       expect(readFileSync(target, "utf8")).toBe("hostile\n");
       expect(settled).toContain(encodedName);
-      expect(settled).not.toContain("\x1b]2;FX_PWN\x07");
+      expect(settled).not.toContain("\x1b]2;FIBER_PWN\x07");
 
       await session.sendText("/undo");
       settled = await session.waitForText("Deleted", TIMEOUT);
       expect(settled).toContain(encodedName);
-      expect(settled).not.toContain("\x1b]2;FX_PWN\x07");
+      expect(settled).not.toContain("\x1b]2;FIBER_PWN\x07");
       expect(existsSync(target)).toBe(false);
       expectCleanStderr(stderrPath);
     },

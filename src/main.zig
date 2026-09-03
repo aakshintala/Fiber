@@ -2561,7 +2561,7 @@ const App = struct {
         const now_ms = io_mod.milliTimestamp();
         self.terminal_input_runtime.terminal_theme_monitor.poll(now_ms);
 
-        // FX_THEME forces colors via detectTheme; keep owning protocol bytes
+        // FIBER_THEME forces colors via detectTheme; keep owning protocol bytes
         // (monitor started) but never query or apply live theme updates.
         if (ui_render.explicitThemeOverride() != null) {
             _ = self.terminal_input_runtime.terminal_theme_monitor.takeSettledUpdate();
@@ -3096,9 +3096,9 @@ fn shouldRunBenchmarkNoArgRaw(raw_args: []const [*:0]const u8, raw_env: RawEnvir
 
 fn benchmarkEnvPresent(raw_env: RawEnviron) bool {
     if (comptime builtin.link_libc) {
-        if (std.c.getenv("FX_BENCH") != null) return true;
+        if (std.c.getenv("FIBER_BENCH") != null) return true;
     }
-    return rawEnvHas(raw_env, "FX_BENCH");
+    return rawEnvHas(raw_env, "FIBER_BENCH");
 }
 
 fn rawEnvHas(raw_env: RawEnviron, comptime key: []const u8) bool {
@@ -3542,10 +3542,10 @@ test "session reset traces and clears active paste state" {
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, trace, "decision prompt paste dropped bytes=4 reason=session_reset"));
 }
 
-test "raw benchmark preflight matches no-arg FX_BENCH presence" {
+test "raw benchmark preflight matches no-arg FIBER_BENCH presence" {
     const no_args = [_][*:0]const u8{"fx"};
     const help_args = [_][*:0]const u8{ "fx", "help" };
-    const bench_env = [_:null]?[*:0]const u8{"FX_BENCH=1"};
+    const bench_env = [_:null]?[*:0]const u8{"FIBER_BENCH=1"};
     const empty_env = [_:null]?[*:0]const u8{};
 
     try std.testing.expect(shouldRunBenchmarkNoArgRaw(no_args[0..], @ptrCast(&bench_env)));

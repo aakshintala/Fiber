@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-export const FX_BIN = resolve(import.meta.dirname, "../../zig-out/bin/fiber");
+export const FIBER_BIN = resolve(import.meta.dirname, "../../zig-out/bin/fiber");
 export const REPO_ROOT = resolve(import.meta.dirname, "../..");
 
 export const EVAL_MODELS = [
@@ -50,7 +50,7 @@ function loadDotEnv(): Record<string, string> {
 export function shouldLoadDotEnv(
   environment: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return environment.FX_E2E_DISABLE_DOTENV !== "1";
+  return environment.FIBER_E2E_DISABLE_DOTENV !== "1";
 }
 
 const dotEnvVars = shouldLoadDotEnv() ? loadDotEnv() : {};
@@ -153,7 +153,7 @@ export function buildEvalProcessEnv(
     NO_COLOR: "1",
     HOME: home,
     PATH: process.env.PATH ?? "",
-    FX_MODEL: model,
+    FIBER_MODEL: model,
   };
 }
 
@@ -171,9 +171,9 @@ export async function runEval(
       await setup(workDir);
     }
 
-    if (!existsSync(FX_BIN)) {
+    if (!existsSync(FIBER_BIN)) {
       throw new Error(
-        `fiber binary not found at ${FX_BIN}. Run 'zig build' first.`,
+        `fiber binary not found at ${FIBER_BIN}. Run 'zig build' first.`,
       );
     }
 
@@ -193,7 +193,7 @@ export async function runEval(
       code: number | null;
     }>((resolvePromise) => {
       const env = buildEvalProcessEnv(home, model);
-      const child = nodeSpawn(FX_BIN, args, {
+      const child = nodeSpawn(FIBER_BIN, args, {
         env,
         cwd: workDir,
         stdio: ["pipe", "pipe", "pipe"],
@@ -461,8 +461,8 @@ export async function runFx(
     timeoutMs?: number;
   } = {},
 ): Promise<FxRunResult> {
-  if (!existsSync(FX_BIN)) {
-    throw new Error(`fiber binary not found at ${FX_BIN}. Run 'zig build' first.`);
+  if (!existsSync(FIBER_BIN)) {
+    throw new Error(`fiber binary not found at ${FIBER_BIN}. Run 'zig build' first.`);
   }
 
   const { cwd, timeoutMs = 15_000 } = opts;
@@ -482,7 +482,7 @@ export async function runFx(
         env[key] = value;
       }
     }
-    const child = nodeSpawn(FX_BIN, args, {
+    const child = nodeSpawn(FIBER_BIN, args, {
       env,
       cwd: cwd ?? REPO_ROOT,
       stdio: ["pipe", "pipe", "pipe"],
@@ -526,6 +526,6 @@ export async function runFx(
 // AI_GATEWAY_API_KEY / VERCEL_OIDC_TOKEN, which the Codex-only runtime never
 // sets, so every gated suite skipped silently and reported success.
 export const HAS_API_KEY: boolean = !!(
-  process.env.FX_E2E_LIVE ||
+  process.env.FIBER_E2E_LIVE ||
   existsSync(join(process.env.HOME ?? "", ".fx", "chatgpt-auth.json"))
 );

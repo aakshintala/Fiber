@@ -57,7 +57,7 @@ pub fn build(b: *std.Build) void {
     const run_exe_tests = b.addRunArtifact(exe_tests);
     run_exe_tests.step.dependOn(b.getInstallStep());
     run_exe_tests.setEnvironmentVariable(
-        "FX_TEST_PRODUCT_EXE",
+        "FIBER_TEST_PRODUCT_EXE",
         b.getInstallPath(.bin, "fiber"),
     );
 

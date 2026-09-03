@@ -171,7 +171,7 @@ pub fn writeDiagnosticSummary(alloc: Allocator, writer: *std.Io.Writer, diagnost
     if (debug_trace.activeLogPath()) |trace_path| {
         try writer.print("; see \"{f}\" for details", .{std.zig.fmtString(trace_path)});
     } else {
-        try writer.writeAll("; relaunch with FX_TRACE=1 to write a trace log");
+        try writer.writeAll("; relaunch with FIBER_TRACE=1 to write a trace log");
     }
 }
 
@@ -616,13 +616,13 @@ fn canonicalPathHasReadAuthority(
     return pathInsideReadAuthorities(read_authority, extra_authorities, canonical_path);
 }
 
-/// Parses FX_SKILL_SYMLINK_AUTHORITIES (colon-separated absolute paths) into
+/// Parses FIBER_SKILL_SYMLINK_AUTHORITIES (colon-separated absolute paths) into
 /// owned duplicates. Returns an empty slice when the variable is unset or
 /// contains no valid absolute paths. Relative entries and entries containing
 /// `..` components are silently skipped. The caller must free each entry and
 /// the slice itself via `freeExternalAuthorities`.
 fn externalSymlinkAuthorities(alloc: Allocator) ![][]const u8 {
-    const raw = io_mod.getenv("FX_SKILL_SYMLINK_AUTHORITIES") orelse return &.{};
+    const raw = io_mod.getenv("FIBER_SKILL_SYMLINK_AUTHORITIES") orelse return &.{};
     if (raw.len == 0) return &.{};
 
     var authorities: std.ArrayList([]const u8) = .empty;
@@ -5401,7 +5401,7 @@ test "externalSymlinkAuthorities parses colon-separated absolute paths" {
 
     const env = try TestEnviron.install(alloc);
     defer env.deinit();
-    try env.put("FX_SKILL_SYMLINK_AUTHORITIES", "/nix/store:/opt/skills: relative :/bad/../path");
+    try env.put("FIBER_SKILL_SYMLINK_AUTHORITIES", "/nix/store:/opt/skills: relative :/bad/../path");
 
     const authorities = try externalSymlinkAuthorities(alloc);
     defer freeExternalAuthorities(alloc, authorities);
@@ -5448,7 +5448,7 @@ test "loadVisibleSkills discovers linked metadata through external authority" {
 
     const env = try TestEnviron.install(alloc);
     defer env.deinit();
-    try env.put("FX_SKILL_SYMLINK_AUTHORITIES", external_authority);
+    try env.put("FIBER_SKILL_SYMLINK_AUTHORITIES", external_authority);
 
     var discovery = try loadVisibleSkills(alloc, workspace_root, home_root, managed_root, test_root_policy);
     defer discovery.deinit(alloc);
@@ -5493,7 +5493,7 @@ test "loadVisibleSkills discovers a linked candidate resolved via external symli
 
     const env = try TestEnviron.install(alloc);
     defer env.deinit();
-    try env.put("FX_SKILL_SYMLINK_AUTHORITIES", external_authority);
+    try env.put("FIBER_SKILL_SYMLINK_AUTHORITIES", external_authority);
 
     var discovery = try loadVisibleSkills(alloc, workspace_root, home_root, managed_root, test_root_policy);
     defer discovery.deinit(alloc);

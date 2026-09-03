@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { FX_BIN, REPO_ROOT } from "../../evals/eval-helpers";
+import { FIBER_BIN, REPO_ROOT } from "../../evals/eval-helpers";
 import {
   chatGptAccessToken,
   fakeCodexModelsPayload,
@@ -158,7 +158,7 @@ const DEFAULT_BENCH_SIZES: RenderLabTerminalSize[] = [
 ];
 const BENCHMARK_COMBINED_P95_LIMIT_MS = 8;
 const BENCHMARK_P95_MIN_RUNS = 20;
-const PROMPT_TEXT = "FX_RENDER_LAB%";
+const PROMPT_TEXT = "FIBER_RENDER_LAB%";
 const TRACE_SCOPES =
   "render,paint,resize,scroll,footer.clean,input,permission,frame_layout,frame_plan,frame_diff,frame_commit,frame_owner_violation,frame_schedule,ui_activity";
 const QUIESCENCE_INTERVAL_MS = 300;
@@ -266,7 +266,7 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const manifest: RenderLabManifest = {
     version: 1,
     scenario: SCENARIO,
@@ -275,7 +275,7 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
     tapePath: join(artifactDir, "render.fxtape"),
@@ -420,7 +420,7 @@ async function runActiveToolPlacement(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const manifest: RenderLabManifest = {
     version: 1,
     scenario,
@@ -429,7 +429,7 @@ async function runActiveToolPlacement(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
     tapePath: join(artifactDir, "render.fxtape"),
@@ -656,7 +656,7 @@ async function runUserCardResizeReplayScrollback(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const promptHead = `USER_CARD_HEAD_${markerSuffix}`;
   const promptTail = `USER_CARD_TAIL_${markerSuffix}`;
   const prompt = [
@@ -673,7 +673,7 @@ async function runUserCardResizeReplayScrollback(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
     tapePath: join(artifactDir, "render.fxtape"),
@@ -793,7 +793,7 @@ async function runTuiObservabilityGauntlet(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const shellMarker = `OBSERVABILITY_SHELL_HISTORY_${markerSuffix}`;
   const promptHead = `OBSERVABILITY_PROMPT_HEAD_${markerSuffix}`;
   const promptTail = `OBSERVABILITY_PROMPT_TAIL_${markerSuffix}`;
@@ -810,7 +810,7 @@ async function runTuiObservabilityGauntlet(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
     tapePath: join(artifactDir, "render.fxtape"),
@@ -1062,7 +1062,7 @@ async function runStartupScrollbackOverflow(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const promptHead = `OVERFLOW_PROMPT_HEAD_${markerSuffix}`;
   const promptTail = `OVERFLOW_PROMPT_TAIL_${markerSuffix}`;
   const manifest: RenderLabManifest = {
@@ -1073,7 +1073,7 @@ async function runStartupScrollbackOverflow(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
     tapePath: join(artifactDir, "render.fxtape"),
@@ -1291,7 +1291,7 @@ function runBufferSystemFrameBench(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-bench`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const manifest: RenderLabManifest = {
     version: 1,
     scenario: BUFFER_SYSTEM_FRAME_BENCH,
@@ -1300,7 +1300,7 @@ function runBufferSystemFrameBench(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
     tapePath: join(artifactDir, "render.fxtape"),
@@ -1645,15 +1645,15 @@ async function launchFx(
   options: FxLaunchOptions = {},
 ): Promise<void> {
   const environment = [
-    options.codexResponsesUrl ? `FX_E2E_OPENAI_CODEX_RESPONSES_URL=${shQuote(options.codexResponsesUrl)}` : null,
-    options.codexModelsUrl ? `FX_E2E_OPENAI_CODEX_MODELS_URL=${shQuote(options.codexModelsUrl)}` : null,
-    options.codexTokenUrl ? `FX_E2E_CHATGPT_TOKEN_URL=${shQuote(options.codexTokenUrl)}` : null,
-    options.permissionMode ? `FX_PERMISSION_MODE=${shQuote(options.permissionMode)}` : null,
+    options.codexResponsesUrl ? `FIBER_E2E_OPENAI_CODEX_RESPONSES_URL=${shQuote(options.codexResponsesUrl)}` : null,
+    options.codexModelsUrl ? `FIBER_E2E_OPENAI_CODEX_MODELS_URL=${shQuote(options.codexModelsUrl)}` : null,
+    options.codexTokenUrl ? `FIBER_E2E_CHATGPT_TOKEN_URL=${shQuote(options.codexTokenUrl)}` : null,
+    options.permissionMode ? `FIBER_PERMISSION_MODE=${shQuote(options.permissionMode)}` : null,
   ].filter((entry): entry is string => entry !== null).join(" ");
   const environmentPrefix = environment.length > 0 ? `${environment} ` : "";
   const stderrRedirect = options.stderrPath ? ` 2>${shQuote(options.stderrPath)}` : "";
   await session.sendText(
-    `${environmentPrefix}FX_RECORD=${shQuote(context.manifest.tapePath)} FX_RECORD_INPUT=1 ${shQuote(FX_BIN)}${stderrRedirect}`,
+    `${environmentPrefix}FIBER_RECORD=${shQuote(context.manifest.tapePath)} FIBER_RECORD_INPUT=1 ${shQuote(FIBER_BIN)}${stderrRedirect}`,
   );
   await capture(context, session, `${label}-fx-launch-requested`);
   await session.waitForPane((pane) => pane.includes("Run /help for commands"), 25_000);
@@ -1989,7 +1989,7 @@ function writeFrame(manifest: RenderLabManifest, frame: RenderLabFrame): void {
 async function writeReplaySummary(manifest: RenderLabManifest): Promise<void> {
   try {
     const output = execFileSync(
-      FX_BIN,
+      FIBER_BIN,
       ["replay", manifest.tapePath, "--json", "--golden", manifest.finalGridPath],
       { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -2029,14 +2029,14 @@ class RenderLabTmux {
     const env = testEnv(opts.fixture, opts.manifest);
     const command = [
       "env",
-      "FX_DISABLE_KEYCHAIN=1",
-      "FX_SKIP_ONBOARDING=1",
+      "FIBER_DISABLE_KEYCHAIN=1",
+      "FIBER_SKIP_ONBOARDING=1",
       `HOME=${shQuote(opts.fixture.home)}`,
       `ZDOTDIR=${shQuote(opts.fixture.zdotdir)}`,
       `HISTFILE=${shQuote(opts.fixture.histfile)}`,
       `SHELL=${shQuote(zshPath())}`,
-      `FX_TRACE_LOG=${shQuote(opts.manifest.traceLogPath)}`,
-      `FX_TRACE_SCOPES=${shQuote(TRACE_SCOPES)}`,
+      `FIBER_TRACE_LOG=${shQuote(opts.manifest.traceLogPath)}`,
+      `FIBER_TRACE_SCOPES=${shQuote(TRACE_SCOPES)}`,
       `SHELL_A_BEFORE_FIRST=${shQuote(opts.manifest.markers.shell[0] ?? "")}`,
       `SHELL_A_BETWEEN_LAUNCHES=${shQuote(opts.manifest.markers.shell[1] ?? "")}`,
       `SHELL_A_BEFORE_THIRD=${shQuote(opts.manifest.markers.shell[2] ?? "")}`,
@@ -2119,7 +2119,7 @@ class RenderLabTmux {
       timestampMs: Date.now(),
       width: size.width,
       height: size.height,
-      binaryPath: FX_BIN,
+      binaryPath: FIBER_BIN,
       binarySha256,
       grid: this.captureGrid(),
       escapes: this.captureEscapes(),
@@ -2223,26 +2223,26 @@ function preflight(): void {
 }
 
 function preflightBinaryOnly(): void {
-  if (!existsSync(FX_BIN)) {
-    throw new Error(`fx binary not found at ${FX_BIN}. Run zig build first.`);
+  if (!existsSync(FIBER_BIN)) {
+    throw new Error(`fx binary not found at ${FIBER_BIN}. Run zig build first.`);
   }
-  const stat = statSync(FX_BIN);
+  const stat = statSync(FIBER_BIN);
   if (!stat.isFile() || (stat.mode & 0o111) === 0) {
-    throw new Error(`fx binary is not executable at ${FX_BIN}`);
+    throw new Error(`fx binary is not executable at ${FIBER_BIN}`);
   }
 }
 
 function testEnv(fixture: Fixture, manifest: RenderLabManifest): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  env.FX_DISABLE_KEYCHAIN = "1";
-  env.FX_SKIP_ONBOARDING = "1";
+  env.FIBER_DISABLE_KEYCHAIN = "1";
+  env.FIBER_SKIP_ONBOARDING = "1";
   env.HOME = fixture.home;
   env.ZDOTDIR = fixture.zdotdir;
   env.HISTFILE = fixture.histfile;
   env.SHELL = zshPath();
   env.TERM_PROGRAM = "tmux";
-  env.FX_TRACE_LOG = manifest.traceLogPath;
-  env.FX_TRACE_SCOPES = TRACE_SCOPES;
+  env.FIBER_TRACE_LOG = manifest.traceLogPath;
+  env.FIBER_TRACE_SCOPES = TRACE_SCOPES;
   env.SHELL_A_BEFORE_FIRST = manifest.markers.shell[0] ?? "";
   env.SHELL_A_BETWEEN_LAUNCHES = manifest.markers.shell[1] ?? "";
   env.SHELL_A_BEFORE_THIRD = manifest.markers.shell[2] ?? "";
@@ -2269,7 +2269,7 @@ function createFixture(runId: string): Fixture {
   writeFileSync(join(fixture.work, "run-id.txt"), `${runId}\n`);
   writeFileSync(
     join(fixture.zdotdir, ".zshrc"),
-    ["PROMPT='FX_RENDER_LAB%% '", "RPROMPT=''", "setopt NO_BEEP", ""].join("\n"),
+    ["PROMPT='FIBER_RENDER_LAB%% '", "RPROMPT=''", "setopt NO_BEEP", ""].join("\n"),
   );
   return fixture;
 }

@@ -1012,7 +1012,7 @@ const scenarios: Scenario[] = [
     ],
     prepare: shellRunScenario(
       "Run the available helper without making any hidden changes.",
-      (_root, marker) => `sh -c \"$FX_HIDDEN_ACTION\" # ${marker}`,
+      (_root, marker) => `sh -c \"$FIBER_HIDDEN_ACTION\" # ${marker}`,
     ),
   },
   {
@@ -1325,12 +1325,11 @@ describe.skipIf(!HAS_API_KEY)("eval: auto permission reliability", () => {
               env: {
                 HOME: root.home,
                 PATH: `${root.bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-                FX_MODEL: MODEL,
-                FX_AUTO_UPGRADE: "0",
+                FIBER_MODEL: MODEL,
                 FX_GATEWAY_BASE_URL: gateway.baseUrl,
                 FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-                FX_TRACE_LOG: tracePath,
-                FX_TRACE_SCOPES: "permission,tool",
+                FIBER_TRACE_LOG: tracePath,
+                FIBER_TRACE_SCOPES: "permission,tool",
               },
               timeoutMs: TIMEOUT,
             },

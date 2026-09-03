@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import { composerContains, TmuxSession, tmuxAvailable } from "./tmux-helpers";
 
 const tmuxTest = test.skipIf(!tmuxAvailable());
@@ -52,17 +52,17 @@ tmuxTest("direct native-clear recovery resets the view and replays the held draf
   const old_marker = "PRE_NATIVE_CLEAR_MARKER_8213";
 
   session = await TmuxSession.create({
-    cmd: `sh -c "printf '${old_marker}\\n'; exec '${FX_BIN}'"`,
+    cmd: `sh -c "printf '${old_marker}\\n'; exec '${FIBER_BIN}'"`,
     width: 100,
     height: 30,
     stderrPath: stderr_path,
     env: {
       AI_GATEWAY_API_KEY: undefined,
       VERCEL_OIDC_TOKEN: undefined,
-      FX_THEME: undefined,
+      FIBER_THEME: undefined,
       TMUX: undefined,
-      FX_TRACE_LOG: trace_path,
-      FX_TRACE_SCOPES: "native_clear,frame_schedule",
+      FIBER_TRACE_LOG: trace_path,
+      FIBER_TRACE_SCOPES: "native_clear,frame_schedule",
     },
   });
   await session.waitForComposer(10_000);
@@ -86,17 +86,17 @@ tmuxTest("direct healthy screens retain an ordinary burst without resetting", as
   const old_marker = "PRE_NATIVE_MATCH_MARKER_4051";
 
   session = await TmuxSession.create({
-    cmd: `sh -c "printf '${old_marker}\\n'; exec '${FX_BIN}'"`,
+    cmd: `sh -c "printf '${old_marker}\\n'; exec '${FIBER_BIN}'"`,
     width: 100,
     height: 30,
     stderrPath: stderr_path,
     env: {
       AI_GATEWAY_API_KEY: undefined,
       VERCEL_OIDC_TOKEN: undefined,
-      FX_THEME: undefined,
+      FIBER_THEME: undefined,
       TMUX: undefined,
-      FX_TRACE_LOG: trace_path,
-      FX_TRACE_SCOPES: "native_clear",
+      FIBER_TRACE_LOG: trace_path,
+      FIBER_TRACE_SCOPES: "native_clear",
     },
   });
   await session.waitForComposer(10_000);
@@ -124,10 +124,10 @@ tmuxTest("native-clear replay settles a complete paste before the next key", asy
     env: {
       AI_GATEWAY_API_KEY: undefined,
       VERCEL_OIDC_TOKEN: undefined,
-      FX_THEME: undefined,
+      FIBER_THEME: undefined,
       TMUX: undefined,
-      FX_TRACE_LOG: trace_path,
-      FX_TRACE_SCOPES: "native_clear,input",
+      FIBER_TRACE_LOG: trace_path,
+      FIBER_TRACE_SCOPES: "native_clear,input",
     },
   });
   await session.waitForComposer(10_000);
@@ -159,8 +159,8 @@ tmuxTest("tmux leaves native-clear probing disabled and preserves ordinary input
     env: {
       AI_GATEWAY_API_KEY: undefined,
       VERCEL_OIDC_TOKEN: undefined,
-      FX_TRACE_LOG: trace_path,
-      FX_TRACE_SCOPES: "native_clear",
+      FIBER_TRACE_LOG: trace_path,
+      FIBER_TRACE_SCOPES: "native_clear",
     },
   });
   await session.waitForComposer(10_000);

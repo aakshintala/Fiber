@@ -119,7 +119,7 @@ duplicate, stale, and unclassified files without running the full PGSO gate.
 
 Config precedence (highest wins):
 
-1. Environment variables such as `FX_MODEL`, `FX_PERMISSION_MODE`, and `FX_MAX_AGENT_STEPS`
+1. Environment variables such as `FIBER_MODEL`, `FIBER_PERMISSION_MODE`, and `FIBER_MAX_AGENT_STEPS`
 2. `~/.fx/settings.json` → `workspaces["<workspace_path>"]` (profile workspace overrides)
 3. `~/.fx/settings.json` top-level (profile global settings)
 4. `<workspace>/.fx.json` (committed project defaults)
@@ -295,7 +295,7 @@ private-cache identity changes invalidate prior private state. macOS persists
 OAuth credentials in Keychain and migrates the private profile credential file
 only after verified publication. If the user account has no default Keychain,
 macOS falls back to the same `0600` credential file used on other platforms
-under the `0700` profile directory. `FX_DISABLE_KEYCHAIN=1` selects that portable
+under the `0700` profile directory. `FIBER_DISABLE_KEYCHAIN=1` selects that portable
 backend explicitly for deterministic tests and local troubleshooting.
 
 Servers are optional by default. Required startup failures block the first TUI
@@ -384,8 +384,8 @@ test("my scenario", async () => {
 ### Tape-based test (replay a real capture)
 
 For bugs reported by a user, have them run the built binary with an exact
-`FX_RECORD=<path>`, or use `FX_DEBUG_RECORD=1` for an automatic private tape.
-`FX_DEBUG_RECORD_SILENT_BANNER=1` hides the developer-only startup notice from
+`FIBER_RECORD=<path>`, or use `FIBER_DEBUG_RECORD=1` for an automatic private tape.
+`FIBER_DEBUG_RECORD_SILENT_BANNER=1` hides the developer-only startup notice from
 the inline transcript without disabling capture; Ctrl+O still shows it. Drop
 the tape in `tests/e2e/tapes/<name>.fxtape` and assert against the built replay
 command:
@@ -446,7 +446,7 @@ raw means for comparison but do not assign a substitute product budget because
 the host process and dynamic-loader floor can independently exceed 2ms. The
 process baseline is diagnostic only and is never subtracted.
 
-The startup benchmark uses `FX_BENCH=1`, which runs through CLI dispatch and exits before TTY initialization.
+The startup benchmark uses `FIBER_BENCH=1`, which runs through CLI dispatch and exits before TTY initialization.
 
 To run locally:
 

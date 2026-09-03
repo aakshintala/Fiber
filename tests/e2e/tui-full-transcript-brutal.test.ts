@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   composerContains,
   FAKE_GATEWAY_MODEL,
@@ -199,8 +199,7 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
+    FIBER_MODEL: FAKE_GATEWAY_MODEL,
     NO_COLOR: "1",
   };
 }
@@ -597,7 +596,7 @@ function findFxProcessId(rows: readonly string[]): number | undefined {
     const match = row.trim().match(/^(\d+)\s+(.+)$/);
     if (!match) continue;
     const command = match[2]!;
-    if (command === "fiber" || command === FX_BIN || command.endsWith("/fiber")) {
+    if (command === "fiber" || command === FIBER_BIN || command.endsWith("/fiber")) {
       return Number(match[1]);
     }
   }
@@ -877,14 +876,14 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
   let passed = false;
   try {
     session = await TmuxSession.create({
-      cmd: FX_BIN,
+      cmd: FIBER_BIN,
       cwd: realpathSync(paths.workspace),
       env: {
         ...gatewayEnv(paths.home, gateway),
-        FX_RECORD: paths.tapePath,
-        FX_RECORD_INPUT: "1",
-        FX_TRACE_LOG: paths.tracePath,
-        FX_TRACE_SCOPES:
+        FIBER_RECORD: paths.tapePath,
+        FIBER_RECORD_INPUT: "1",
+        FIBER_TRACE_LOG: paths.tracePath,
+        FIBER_TRACE_SCOPES:
           "full_transcript_cache,full_transcript,scroll,frame_render,terminal_diff,frame_schedule,frame_plan",
       },
       stderrPath: paths.stderrPath,
@@ -1122,12 +1121,12 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
     if (config.resumeCycles > 0) {
       resumedGateway = startFakeGateway([]);
       session = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: realpathSync(paths.workspace),
         env: {
           ...gatewayEnv(paths.home, resumedGateway),
-          FX_TRACE_LOG: paths.resumedTracePath,
-          FX_TRACE_SCOPES:
+          FIBER_TRACE_LOG: paths.resumedTracePath,
+          FIBER_TRACE_SCOPES:
             "full_transcript_cache,full_transcript,scroll,frame_render,terminal_diff,frame_plan",
         },
         stderrPath: paths.resumedStderrPath,
@@ -1225,7 +1224,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(paths.workspace),
         env: gatewayEnv(paths.home, tallGateway),
         stderrPath: paths.stderrPath,
@@ -1274,7 +1273,7 @@ test.skipIf(!tmuxAvailable())(
   240_000,
 );
 
-test.skipIf(!tmuxAvailable() || process.env.FX_CTRL_O_BRUTAL !== "1")(
+test.skipIf(!tmuxAvailable() || process.env.FIBER_CTRL_O_BRUTAL !== "1")(
   "Ctrl-O extended brutal soak holds under four thousand chat lines and ninety six tools",
   async () => {
     await runStress({
@@ -1293,7 +1292,7 @@ test.skipIf(!tmuxAvailable() || process.env.FX_CTRL_O_BRUTAL !== "1")(
 
 test.skipIf(
   !tmuxAvailable() ||
-    process.env.FX_CTRL_O_PROFILE !== "1" ||
+    process.env.FIBER_CTRL_O_PROFILE !== "1" ||
     platform() !== "darwin" ||
     !existsSync("/usr/bin/sample"),
 )(
@@ -1316,10 +1315,10 @@ test.skipIf(
   600_000,
 );
 
-test.skipIf(!tmuxAvailable() || process.env.FX_CTRL_O_50K !== "1")(
+test.skipIf(!tmuxAvailable() || process.env.FIBER_CTRL_O_50K !== "1")(
   "Ctrl-O load test survives a realistic fifty-thousand-line session with large tool sidecars",
   async () => {
-    const profileSeconds = process.env.FX_CTRL_O_PROFILE === "1" &&
+    const profileSeconds = process.env.FIBER_CTRL_O_PROFILE === "1" &&
         platform() === "darwin" &&
         existsSync("/usr/bin/sample")
       ? 30

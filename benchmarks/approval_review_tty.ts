@@ -23,9 +23,9 @@ const SEED = "0xf17ed1ff20260805";
 // inline transcript stream used to prepare the session.
 const HISTORY_LINES = 200;
 const DIFF_LINES = (() => {
-  const value = Number(process.env.FX_APPROVAL_PROFILE_DIFF_LINES ?? "50000");
+  const value = Number(process.env.FIBER_APPROVAL_PROFILE_DIFF_LINES ?? "50000");
   if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`invalid FX_APPROVAL_PROFILE_DIFF_LINES: ${JSON.stringify(value)}`);
+    throw new Error(`invalid FIBER_APPROVAL_PROFILE_DIFF_LINES: ${JSON.stringify(value)}`);
   }
   return value;
 })();
@@ -336,9 +336,9 @@ async function waitForPaneDeath(session: TmuxSession, timeoutMs: number): Promis
   throw new Error("timed out waiting for fx process exit");
 }
 
-const binary = realpathSync(requiredEnv("FX_APPROVAL_PROFILE_BIN"));
-const outRoot = requiredEnv("FX_APPROVAL_PROFILE_OUT");
-const cycles = positiveInteger(process.env.FX_APPROVAL_PROFILE_CYCLES, DEFAULT_CYCLES);
+const binary = realpathSync(requiredEnv("FIBER_APPROVAL_PROFILE_BIN"));
+const outRoot = requiredEnv("FIBER_APPROVAL_PROFILE_OUT");
+const cycles = positiveInteger(process.env.FIBER_APPROVAL_PROFILE_CYCLES, DEFAULT_CYCLES);
 mkdirSync(outRoot, { recursive: true });
 
 const home = join(outRoot, "home");
@@ -425,14 +425,13 @@ try {
       VERCEL_OIDC_TOKEN: undefined,
       FX_GATEWAY_BASE_URL: gateway.baseUrl,
       FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-      FX_MODEL: "openai/gpt-5",
-      FX_PERMISSION_MODE: "ask",
-      FX_AUTO_UPGRADE: "0",
-      FX_RECORD: tapePath,
-      FX_RECORD_INPUT: "1",
-      FX_SYNC_UPDATES: "1",
-      FX_TRACE_LOG: tracePath,
-      FX_TRACE_SCOPES: "permission,input,frame_render,terminal_diff",
+      FIBER_MODEL: "openai/gpt-5",
+      FIBER_PERMISSION_MODE: "ask",
+      FIBER_RECORD: tapePath,
+      FIBER_RECORD_INPUT: "1",
+      FIBER_SYNC_UPDATES: "1",
+      FIBER_TRACE_LOG: tracePath,
+      FIBER_TRACE_SCOPES: "permission,input,frame_render,terminal_diff",
       NO_COLOR: "1",
     },
     stderrPath,

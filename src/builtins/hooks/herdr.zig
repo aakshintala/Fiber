@@ -54,11 +54,11 @@ pub const Client = struct {
     pub fn initFromEnv(self: *Client, alloc: std.mem.Allocator) void {
         const socket_path = io_mod.getenv("HERDR_SOCKET_PATH");
         const pane_id = io_mod.getenv("HERDR_PANE_ID");
-        if (!shouldEnable(io_mod.getenv("FX_HERDR"), socket_path, pane_id)) {
+        if (!shouldEnable(io_mod.getenv("FIBER_HERDR"), socket_path, pane_id)) {
             debug_trace.logf("herdr", "disabled socket={s} pane={s} fx_herdr={s}", .{
                 socket_path orelse "(unset)",
                 pane_id orelse "(unset)",
-                io_mod.getenv("FX_HERDR") orelse "(unset)",
+                io_mod.getenv("FIBER_HERDR") orelse "(unset)",
             });
             return;
         }
@@ -291,7 +291,7 @@ test "shouldEnable requires both socket path and pane id" {
     try std.testing.expect(!Client.shouldEnable(null, "/tmp/herdr.sock", ""));
 }
 
-test "shouldEnable honors FX_HERDR opt-out" {
+test "shouldEnable honors FIBER_HERDR opt-out" {
     try std.testing.expect(!Client.shouldEnable("0", "/tmp/herdr.sock", "w1:p1"));
     try std.testing.expect(!Client.shouldEnable("false", "/tmp/herdr.sock", "w1:p1"));
     try std.testing.expect(!Client.shouldEnable("FALSE", "/tmp/herdr.sock", "w1:p1"));

@@ -23,8 +23,8 @@ import {
 const tmuxTest = test.skipIf(!tmuxAvailable());
 const ISOLATED_KEYS = [
   "FX_E2E_GATEWAY_CHAT_URL",
-  "FX_E2E_GATEWAY_MODELS_URL",
-  "FX_E2E_GATEWAY_CREDITS_URL",
+  "FIBER_E2E_GATEWAY_MODELS_URL",
+  "FIBER_E2E_GATEWAY_CREDITS_URL",
 ] as const;
 
 test("pane exit matching requires the expected observed status", () => {
@@ -151,7 +151,7 @@ tmuxTest("tmux launch scrubs stale overrides and honors explicit env", async () 
         ISOLATED_KEYS.map((key) =>
           `  ${JSON.stringify(key)}: process.env[${JSON.stringify(key)}] ?? null,\n`
         ).join("") +
-        "  FX_PERMISSION_MODE: process.env.FX_PERMISSION_MODE ?? null,\n" +
+        "  FIBER_PERMISSION_MODE: process.env.FIBER_PERMISSION_MODE ?? null,\n" +
         "}));\nawait Bun.sleep(5_000);\n",
     );
     session = await TmuxSession.create({
@@ -159,7 +159,7 @@ tmuxTest("tmux launch scrubs stale overrides and honors explicit env", async () 
       startupWaitMs: 200,
       socketName,
       env: {
-        FX_PERMISSION_MODE: explicitPermissionMode,
+        FIBER_PERMISSION_MODE: explicitPermissionMode,
       },
     });
 
@@ -169,10 +169,10 @@ tmuxTest("tmux launch scrubs stale overrides and honors explicit env", async () 
     }
     expect(existsSync(resultPath)).toBe(true);
     const observed = JSON.parse(readFileSync(resultPath, "utf8"));
-    expect(observed.FX_PERMISSION_MODE).toBe(explicitPermissionMode);
+    expect(observed.FIBER_PERMISSION_MODE).toBe(explicitPermissionMode);
     expect(observed.FX_E2E_GATEWAY_CHAT_URL).toBeNull();
-    expect(observed.FX_E2E_GATEWAY_MODELS_URL).toBeNull();
-    expect(observed.FX_E2E_GATEWAY_CREDITS_URL).toBeNull();
+    expect(observed.FIBER_E2E_GATEWAY_MODELS_URL).toBeNull();
+    expect(observed.FIBER_E2E_GATEWAY_CREDITS_URL).toBeNull();
 
     const startCommand = execFileSync(
       "tmux",
@@ -213,17 +213,17 @@ tmuxTest("pane environment does not poison a shared tmux server", async () => {
   const probePath = join(root, "probe.mjs");
   const firstResultPath = join(root, "first.json");
   const secondResultPath = join(root, "second.json");
-  const originalRecord = process.env.FX_RECORD;
+  const originalRecord = process.env.FIBER_RECORD;
   let first: TmuxSession | undefined;
   let second: TmuxSession | undefined;
 
   try {
-    delete process.env.FX_RECORD;
+    delete process.env.FIBER_RECORD;
     writeFileSync(
       probePath,
       `await Bun.write(process.argv[2], JSON.stringify({\n` +
         `  HOME: process.env.HOME ?? null,\n` +
-        `  FX_RECORD: process.env.FX_RECORD ?? null,\n` +
+        `  FIBER_RECORD: process.env.FIBER_RECORD ?? null,\n` +
         `}));\nawait Bun.sleep(5_000);\n`,
     );
 
@@ -233,7 +233,7 @@ tmuxTest("pane environment does not poison a shared tmux server", async () => {
       startupWaitMs: 100,
       env: {
         HOME: seededHome,
-        FX_RECORD: "stale-record-path",
+        FIBER_RECORD: "stale-record-path",
       },
     });
     second = await TmuxSession.create({
@@ -253,11 +253,11 @@ tmuxTest("pane environment does not poison a shared tmux server", async () => {
     expect(existsSync(secondResultPath)).toBe(true);
     expect(JSON.parse(readFileSync(firstResultPath, "utf8"))).toEqual({
       HOME: seededHome,
-      FX_RECORD: "stale-record-path",
+      FIBER_RECORD: "stale-record-path",
     });
     expect(JSON.parse(readFileSync(secondResultPath, "utf8"))).toEqual({
       HOME: process.env.HOME ?? null,
-      FX_RECORD: null,
+      FIBER_RECORD: null,
     });
   } finally {
     await second?.kill();
@@ -267,8 +267,8 @@ tmuxTest("pane environment does not poison a shared tmux server", async () => {
         stdio: "pipe",
       });
     } catch {}
-    if (originalRecord === undefined) delete process.env.FX_RECORD;
-    else process.env.FX_RECORD = originalRecord;
+    if (originalRecord === undefined) delete process.env.FIBER_RECORD;
+    else process.env.FIBER_RECORD = originalRecord;
     rmSync(root, { recursive: true, force: true });
   }
 });

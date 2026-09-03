@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -85,13 +85,13 @@ function gatewayEnv(
     HOME: home,
     AI_GATEWAY_API_KEY: "fake-ask-presentation-key",
     VERCEL_OIDC_TOKEN: undefined,
-    FX_DISABLE_KEYCHAIN: "1",
-    FX_SKIP_ONBOARDING: "1",
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_PERMISSION_MODE: "auto",
+    FIBER_DISABLE_KEYCHAIN: "1",
+    FIBER_SKIP_ONBOARDING: "1",
+    FIBER_MODEL: FAKE_GATEWAY_MODEL,
+    FIBER_PERMISSION_MODE: "auto",
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
+    FIBER_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
   };
 }
 
@@ -100,7 +100,7 @@ function shellQuote(value: string): string {
 }
 
 function terminalCommand(args: string[]): string {
-  const fx = [FX_BIN, ...args].map(shellQuote).join(" ");
+  const fx = [FIBER_BIN, ...args].map(shellQuote).join(" ");
   const script = `${fx}; code=$?; printf '\\n__FX_EXIT_%s__\\n' "$code"; exit "$code"`;
   return `/bin/sh -c ${shellQuote(script)}`;
 }
@@ -186,28 +186,28 @@ describe("fx ask presentation", () => {
     if (configuredShell.endsWith("/zsh")) {
       writeFileSync(
         join(root.home, ".zprofile"),
-        "export FX_PROFILE_LOGIN=login\nexport PATH=\"$HOME/profile-bin:$PATH\"\n",
+        "export FIBER_PROFILE_LOGIN=login\nexport PATH=\"$HOME/profile-bin:$PATH\"\n",
       );
       writeFileSync(
         join(root.home, ".zshrc"),
-        "export FX_PROFILE_RC=rc\nalias fx_profile_alias='printf alias-user'\n" +
+        "export FIBER_PROFILE_RC=rc\nalias fx_profile_alias='printf alias-user'\n" +
           "fx_profile_function() { printf function-user; }\n",
       );
     } else {
       writeFileSync(
         join(root.home, ".bash_profile"),
-        "export FX_PROFILE_LOGIN=login\nexport PATH=\"$HOME/profile-bin:$PATH\"\n" +
+        "export FIBER_PROFILE_LOGIN=login\nexport PATH=\"$HOME/profile-bin:$PATH\"\n" +
           "source \"$HOME/.bashrc\"\n",
       );
       writeFileSync(
         join(root.home, ".bashrc"),
-        "export FX_PROFILE_RC=rc\nalias fx_profile_alias='printf alias-user'\n" +
+        "export FIBER_PROFILE_RC=rc\nalias fx_profile_alias='printf alias-user'\n" +
           "fx_profile_function() { printf function-user; }\n",
       );
     }
 
     const profileCommand =
-      "printf 'mode=%s:%s:' \"${FX_PROFILE_LOGIN-unset}\" \"${FX_PROFILE_RC-unset}\"; " +
+      "printf 'mode=%s:%s:' \"${FIBER_PROFILE_LOGIN-unset}\" \"${FIBER_PROFILE_RC-unset}\"; " +
       "case :\"$PATH\": in *:\"$HOME/profile-bin\":*) printf 'path-user:';; *) printf 'path-clean:';; esac; " +
       "if alias fx_profile_alias >/dev/null 2>&1; then fx_profile_alias; else printf no-alias; fi; printf ':'; " +
       "if command -v fx_profile_function >/dev/null; then fx_profile_function; else printf no-function; fi";
@@ -504,7 +504,7 @@ describe("fx ask presentation", () => {
         cwd: root.workspace,
         env: {
           ...gatewayEnv(root.home, gateway),
-          FX_THEME: "light",
+          FIBER_THEME: "light",
           NO_COLOR: undefined,
         },
         width: 120,

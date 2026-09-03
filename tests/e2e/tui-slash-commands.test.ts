@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, HAS_API_KEY } from "../evals/eval-helpers";
+import { FIBER_BIN, HAS_API_KEY } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -68,10 +68,9 @@ async function launchNoKeyAndWait(): Promise<{
     env: {
       HOME: home,
       AI_GATEWAY_API_KEY: undefined,
-      FX_AUTO_UPGRADE: "0",
-      FX_DISABLE_KEYCHAIN: "1",
-      FX_PERMISSION_MODE: undefined,
-      FX_SKIP_ONBOARDING: "1",
+      FIBER_DISABLE_KEYCHAIN: "1",
+      FIBER_PERMISSION_MODE: undefined,
+      FIBER_SKIP_ONBOARDING: "1",
       VERCEL_OIDC_TOKEN: undefined,
     },
   });
@@ -137,11 +136,10 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
         env: {
           HOME: home,
           AI_GATEWAY_API_KEY: "status-compact-key",
-          FX_AUTO_UPGRADE: "0",
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_PERMISSION_MODE: "auto",
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
           VERCEL_OIDC_TOKEN: undefined,
           NO_COLOR: "1",
         },
@@ -168,7 +166,7 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
       expect(await session.waitForSessionEnd(5_000)).toBe(true);
       session = null;
 
-      const replay = JSON.parse(execFileSync(FX_BIN, ["replay", tapePath, "--json"], {
+      const replay = JSON.parse(execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
         encoding: "utf8",
       }));
       expect(replay.frame_count).toBeGreaterThan(0);

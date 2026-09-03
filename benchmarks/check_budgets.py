@@ -79,7 +79,7 @@ def main():
     result_files = sorted(
         glob.glob(
             os.environ.get(
-                "FX_BENCH_RESULTS_GLOB",
+                "FIBER_BENCH_RESULTS_GLOB",
                 "benchmarks/results/*.json",
             )
         )

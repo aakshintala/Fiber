@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   fakeGatewayFinalText,
   startFakeGateway,
@@ -83,7 +83,7 @@ class LineClient {
 }
 
 function startAcp(cwd: string, home: string, extraEnv: Record<string, string> = {}): LineClient {
-  return new LineClient(spawn(FX_BIN, ["acp"], {
+  return new LineClient(spawn(FIBER_BIN, ["acp"], {
     cwd,
     env: {
       ...process.env,
@@ -146,8 +146,8 @@ describe("session recovery", () => {
           const workspaceRoot = realpathSync(workspace);
 
           const first = startAcp(workspaceRoot, home, {
-            FX_E2E_SESSION_BOUNDARY: boundary,
-            FX_E2E_SESSION_BOUNDARY_READY: ready,
+            FIBER_E2E_SESSION_BOUNDARY: boundary,
+            FIBER_E2E_SESSION_BOUNDARY_READY: ready,
           });
           first.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
           expect((await first.readResponse(1)).result).toBeDefined();
@@ -201,8 +201,8 @@ describe("session recovery", () => {
           const workspaceRoot = realpathSync(workspace);
 
           const first = startAcp(workspaceRoot, home, {
-            FX_E2E_SESSION_BOUNDARY: boundary,
-            FX_E2E_SESSION_BOUNDARY_READY: ready,
+            FIBER_E2E_SESSION_BOUNDARY: boundary,
+            FIBER_E2E_SESSION_BOUNDARY_READY: ready,
           });
           first.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
           expect((await first.readResponse(1)).result).toBeDefined();
@@ -486,8 +486,8 @@ describe("session recovery", () => {
         const workspaceRoot = realpathSync(workspace);
 
         const first = startAcp(workspaceRoot, home, {
-          FX_E2E_SESSION_BOUNDARY: "after_authority_intent_sync",
-          FX_E2E_SESSION_BOUNDARY_READY: ready,
+          FIBER_E2E_SESSION_BOUNDARY: "after_authority_intent_sync",
+          FIBER_E2E_SESSION_BOUNDARY_READY: ready,
         });
         first.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
         expect((await first.readResponse(1)).result).toBeDefined();
@@ -527,7 +527,7 @@ describe("session recovery", () => {
         });
 
         const resolver = startAcp(workspaceRoot, home, {
-          FX_TRACE_LOG: resolverTrace,
+          FIBER_TRACE_LOG: resolverTrace,
         });
         resolver.send({ jsonrpc: "2.0", id: 3, method: "initialize", params: { protocolVersion: 1 } });
         expect((await resolver.readResponse(3)).result).toBeDefined();
@@ -590,8 +590,8 @@ describe("session recovery", () => {
           const sessionId = await createSession(workspaceRoot, home);
 
           const writer = startAcp(workspaceRoot, home, {
-            FX_E2E_SESSION_BOUNDARY: boundary,
-            FX_E2E_SESSION_BOUNDARY_READY: ready,
+            FIBER_E2E_SESSION_BOUNDARY: boundary,
+            FIBER_E2E_SESSION_BOUNDARY_READY: ready,
           });
           writer.send({ jsonrpc: "2.0", id: 10, method: "initialize", params: { protocolVersion: 1 } });
           expect((await writer.readResponse(10)).result).toBeDefined();

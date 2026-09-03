@@ -117,7 +117,7 @@ class PgsoCorpusTests(unittest.TestCase):
                 "name": name,
                 "argv": ["{binary}", *arguments],
                 "cwd": ".",
-                "env_set": {"FX_SOUND": "0"},
+                "env_set": {"FIBER_SOUND": "0"},
                 "env_unset": [],
                 "timeout_seconds": 30,
                 "requires_tmux": False,
@@ -146,7 +146,7 @@ class PgsoCorpusTests(unittest.TestCase):
             "name": f"e2e-{test_file.removesuffix('.test.ts')}",
             "argv": ["bun", "test", "--max-concurrency", "1", f"./{test_file}"],
             "cwd": "tests/e2e",
-            "env_set": {"FX_SOUND": "0"},
+            "env_set": {"FIBER_SOUND": "0"},
             "env_unset": ["AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN"],
             "timeout_seconds": 60,
             "requires_tmux": True,
@@ -328,8 +328,8 @@ class PgsoCorpusTests(unittest.TestCase):
             "TMUX",
             "TMUX_TMPDIR",
             "AI_GATEWAY_API_KEY",
-            "FX_TRACE_LOG",
-            "FX_TRACE_SCOPES",
+            "FIBER_TRACE_LOG",
+            "FIBER_TRACE_SCOPES",
         ):
             with self.subTest(key=key):
                 payload = self.manifest()
@@ -474,7 +474,7 @@ class PgsoCorpusTests(unittest.TestCase):
             name=name,
             argv=("{binary}", name),
             cwd=".",
-            env_set=(("FX_SOUND", "0"),),
+            env_set=(("FIBER_SOUND", "0"),),
             env_unset=("PGSO_UNSET_ME",),
             timeout_seconds=5,
             requires_tmux=requires_tmux,
@@ -569,8 +569,8 @@ class PgsoCorpusTests(unittest.TestCase):
                 "PGSO_UNSET_ME": "remove",
                 "TMUX": "/tmp/user-tmux,1,0",
                 "TMUX_PANE": "%1",
-                "FX_TRACE_LOG": "/tmp/user-fx-trace.log",
-                "FX_TRACE_SCOPES": "user-scope",
+                "FIBER_TRACE_LOG": "/tmp/user-fx-trace.log",
+                "FIBER_TRACE_SCOPES": "user-scope",
             },
             clear=False,
         ):
@@ -587,9 +587,9 @@ class PgsoCorpusTests(unittest.TestCase):
         self.assertNotIn("PGSO_UNSET_ME", calls[0]["env"])
         self.assertNotIn("TMUX", calls[0]["env"])
         self.assertNotIn("TMUX_PANE", calls[0]["env"])
-        self.assertNotIn("FX_TRACE_LOG", calls[0]["env"])
-        self.assertNotIn("FX_TRACE_SCOPES", calls[0]["env"])
-        self.assertEqual("1", calls[0]["env"]["FX_E2E_DISABLE_DOTENV"])
+        self.assertNotIn("FIBER_TRACE_LOG", calls[0]["env"])
+        self.assertNotIn("FIBER_TRACE_SCOPES", calls[0]["env"])
+        self.assertEqual("1", calls[0]["env"]["FIBER_E2E_DISABLE_DOTENV"])
         self.assertEqual(os.environ["PATH"], calls[0]["env"]["PATH"])
         self.assertEqual(
             str(self.root / "output" / "profiles" / "home" / "first"),
@@ -945,7 +945,7 @@ class PgsoCorpusTests(unittest.TestCase):
         self.assertEqual(0, result.merged_raw_profiles)
         self.assertTrue(all(call[0][0] == str(canonical) for call in calls))
         self.assertTrue(all("LLVM_PROFILE_FILE" not in call[1] for call in calls))
-        self.assertTrue(all("FX_TRACE_SCOPES" not in call[1] for call in calls))
+        self.assertTrue(all("FIBER_TRACE_SCOPES" not in call[1] for call in calls))
         self.assertEqual(
             {
                 str(
@@ -961,7 +961,7 @@ class PgsoCorpusTests(unittest.TestCase):
                     / "second.log"
                 ),
             },
-            {call[1]["FX_TRACE_LOG"] for call in calls},
+            {call[1]["FIBER_TRACE_LOG"] for call in calls},
         )
         self.assertTrue(
             all(

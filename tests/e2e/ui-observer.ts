@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -164,7 +164,7 @@ function createFixtureRoot(autoPermissions = false) {
 }
 
 function createArtifactDir(keep: boolean): string {
-  const configured = process.env.FX_UI_OBSERVER_ARTIFACT_DIR;
+  const configured = process.env.FIBER_UI_OBSERVER_ARTIFACT_DIR;
   if (configured) {
     mkdirSync(configured, { recursive: true });
     return realpathSync(configured);
@@ -185,10 +185,9 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
-    FX_UI_OBSERVE_DIR: artifactDir,
-    FX_RECORD: join(artifactDir, "session.fxtp"),
+    FIBER_MODEL: FAKE_GATEWAY_MODEL,
+    FIBER_UI_OBSERVE_DIR: artifactDir,
+    FIBER_RECORD: join(artifactDir, "session.fxtp"),
     NO_COLOR: "1",
   };
 }
@@ -280,7 +279,7 @@ async function captureArtifacts(
   const marker = `ui-observer:${scenario}:${context.checkpoint}:frame:${sequence}`;
   const tapePath = join(context.artifactDir, "session.fxtp");
   const replayDir = join(context.artifactDir, "replay");
-  execFileSync(FX_BIN, ["replay", tapePath, "--frames-dir", replayDir], {
+  execFileSync(FIBER_BIN, ["replay", tapePath, "--frames-dir", replayDir], {
     cwd: context.artifactDir,
     stdio: "pipe",
   });
@@ -601,7 +600,7 @@ async function setupScenario(
   }
 
   const session = await TmuxSession.create({
-    cmd: FX_BIN,
+    cmd: FIBER_BIN,
     cwd: fixture.workspace,
     env: gatewayEnv(fixture, gateway, artifactDir),
     width: size.width,
@@ -666,8 +665,8 @@ async function run() {
   }
   if (!args.scenario) throw new Error("--scenario is required");
   if (!tmuxAvailable()) throw new Error("tmux is required");
-  if (!existsSync(FX_BIN)) {
-    throw new Error(`fresh fx binary is missing: ${FX_BIN}\nRun: zig build`);
+  if (!existsSync(FIBER_BIN)) {
+    throw new Error(`fresh fx binary is missing: ${FIBER_BIN}\nRun: zig build`);
   }
 
   const fixture = createFixtureRoot(
@@ -677,7 +676,7 @@ async function run() {
   );
   const artifactDir = createArtifactDir(args.keep);
   let context: ScenarioContext | null = null;
-  const preserveArtifacts = args.keep || process.env.FX_UI_OBSERVER_ARTIFACT_DIR !== undefined;
+  const preserveArtifacts = args.keep || process.env.FIBER_UI_OBSERVER_ARTIFACT_DIR !== undefined;
   try {
     context = await setupScenario(args.scenario, fixture, artifactDir, args.size);
     await waitFor(() => frameRecords(artifactDir).length > 0, "initial observer frame");

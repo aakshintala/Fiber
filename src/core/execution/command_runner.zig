@@ -1246,7 +1246,7 @@ fn executeProcessWithDetachedSession(
 
 fn foregroundSessionExecutable(scratch: Allocator) ![]const u8 {
     if (comptime builtin.is_test) {
-        const path_z = std.c.getenv("FX_TEST_PRODUCT_EXE") orelse
+        const path_z = std.c.getenv("FIBER_TEST_PRODUCT_EXE") orelse
             return error.TestProductExecutableMissing;
         return std.mem.sliceTo(path_z, 0);
     }
@@ -1709,7 +1709,7 @@ test "zsh user profile reports natural SIGTERM after alias-safe startup" {
         try zshrc.writeStreamingAll(
             io_mod.getIo(),
             "alias builtin='print -r -- INTERCEPTED'\n" ++
-                "TRAPDEBUG() { print -r -- \"$ZSH_DEBUG_CMD\" >> \"$FX_SIGTERM_DEBUG_LOG\"; }\n",
+                "TRAPDEBUG() { print -r -- \"$ZSH_DEBUG_CMD\" >> \"$FIBER_SIGTERM_DEBUG_LOG\"; }\n",
         );
     }
     {
@@ -1721,7 +1721,7 @@ test "zsh user profile reports natural SIGTERM after alias-safe startup" {
         defer wrapper.close(io_mod.getIo());
         const source = try std.fmt.allocPrint(
             arena,
-            "#!/bin/sh\nexport HOME={s}\nexport ZDOTDIR={s}\nexport FX_SIGTERM_DEBUG_LOG={s}\nexec /bin/zsh \"$@\"\n",
+            "#!/bin/sh\nexport HOME={s}\nexport ZDOTDIR={s}\nexport FIBER_SIGTERM_DEBUG_LOG={s}\nexec /bin/zsh \"$@\"\n",
             .{ quoted_home, quoted_home, quoted_debug_log },
         );
         try wrapper.writeStreamingAll(io_mod.getIo(), source);
@@ -2245,7 +2245,7 @@ const ProcessObserver = struct {
     fn statusFromTerm(
         term: std.process.Child.Term,
     ) command_contract.CommandStatus {
-        if (io_mod.getenv("FX_COMMAND_TEST_INDETERMINATE_AFTER_EXIT") != null) {
+        if (io_mod.getenv("FIBER_COMMAND_TEST_INDETERMINATE_AFTER_EXIT") != null) {
             debug_trace.logf(
                 "core",
                 "command termination became indeterminate reason=injected_after_exit",

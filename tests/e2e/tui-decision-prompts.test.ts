@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   findFooterBlocks,
   isDividerRow,
@@ -48,7 +48,7 @@ const ARGUMENT_RECOVERY_CALL_ID = "argument_recovery_question_1";
 const ARGUMENT_RECOVERY_TOOL_NAME = "ask_user_question";
 const VALID_QUESTION_PREAMBLE = "I need one detail before continuing.";
 const MALFORMED_ARGUMENTS = "{]";
-const MALFORMED_LABEL_SENTINEL = "FX_MALFORMED_LABEL_SENTINEL";
+const MALFORMED_LABEL_SENTINEL = "FIBER_MALFORMED_LABEL_SENTINEL";
 const MALFORMED_STREAMED_ARGUMENTS =
   `{"path":"${MALFORMED_LABEL_SENTINEL}",`;
 const LONG_QUESTION =
@@ -434,8 +434,7 @@ function fakeGatewayEnv(
     AI_GATEWAY_API_KEY: "fake-e2e-key",
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: OUTER_MODEL,
-    FX_AUTO_UPGRADE: "0",
+    FIBER_MODEL: OUTER_MODEL,
     NO_COLOR: "1",
     ...extra,
   };
@@ -457,11 +456,11 @@ async function launchScenario(
   writeFileSync(stderrPath, "");
 
   session = await TmuxSession.create({
-    cmd: `env -u VERCEL_OIDC_TOKEN ${FX_BIN} 2>${stderrPath}`,
+    cmd: `env -u VERCEL_OIDC_TOKEN ${FIBER_BIN} 2>${stderrPath}`,
     cwd: root.workspace,
     env: definedStringEnv(fakeGatewayEnv(root, gateway, {
-      FX_TRACE_LOG: tracePath,
-      FX_TRACE_SCOPES: traceScopes,
+      FIBER_TRACE_LOG: tracePath,
+      FIBER_TRACE_SCOPES: traceScopes,
       ...env,
     })),
     width: 120,
@@ -1071,11 +1070,11 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         "",
         `The final pre-question paragraph has **bold text**, \`inline code\`, and ${preEnd}.`,
       ].join("\n");
-      const tapeRoot = process.env.FX_RECORD
+      const tapeRoot = process.env.FIBER_RECORD
         ? null
         : mkdtempSync(join(tmpdir(), "fx-question-pacer-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FX_RECORD ?? join(tapeRoot!, "question.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "question.fxtape");
       const ctx = await launchScenario(
         [
           sse([
@@ -1114,7 +1113,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
           outerText(postAnswer),
         ],
         "input",
-        { FX_RECORD: tapePath },
+        { FIBER_RECORD: tapePath },
       );
 
       await ctx.session.sendText("Run the question pacing fixture.");
@@ -1190,13 +1189,13 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
   test(
     "generic approval stays inline through resize and denial",
     async () => {
-      const tapeRoot = process.env.FX_RECORD
+      const tapeRoot = process.env.FIBER_RECORD
         ? null
         : mkdtempSync(join(tmpdir(), "fx-inline-generic-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FX_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
       const ctx = await openApprovalPrompt("generic approval denied", {
-        FX_RECORD: tapePath,
+        FIBER_RECORD: tapePath,
       });
       let pane = await ctx.session.waitForText(APPROVAL_PROMPT, TIMEOUT);
       expect(pane).toContain("touch generic-preview-accepted.txt");
@@ -1239,20 +1238,20 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
   test(
     "long command approval renders the complete command before a decision",
     async () => {
-      const tapeRoot = process.env.FX_RECORD
+      const tapeRoot = process.env.FIBER_RECORD
         ? null
         : mkdtempSync(join(tmpdir(), "fx-long-command-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FX_RECORD ?? join(tapeRoot!, "approval.fxtape");
-      const traceEnv = process.env.FX_TRACE_LOG
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const traceEnv = process.env.FIBER_TRACE_LOG
         ? {
-            FX_TRACE_LOG: process.env.FX_TRACE_LOG,
-            FX_TRACE_SCOPES: process.env.FX_TRACE_SCOPES ?? "input,permission",
+            FIBER_TRACE_LOG: process.env.FIBER_TRACE_LOG,
+            FIBER_TRACE_SCOPES: process.env.FIBER_TRACE_SCOPES ?? "input,permission",
           }
         : {};
       const ctx = await launchScenario([outerLongCommandCall()], "input", {
-        FX_RECORD: tapePath,
-        FX_RECORD_INPUT: "1",
+        FIBER_RECORD: tapePath,
+        FIBER_RECORD_INPUT: "1",
         ...traceEnv,
       });
 
@@ -1280,17 +1279,17 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
   test(
     "long command approval keeps fragmented mouse scrolling inside the review",
     async () => {
-      const tapeRoot = process.env.FX_RECORD
+      const tapeRoot = process.env.FIBER_RECORD
         ? null
         : mkdtempSync(join(tmpdir(), "fx-fragmented-command-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FX_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
       const ctx = await launchScenario(
         [outerScrollableLongCommandCall(), outerText("long command fragmented approval complete")],
         "input,permission",
         {
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
         },
       );
       const fragmentedWheel = [
@@ -1355,15 +1354,15 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
   test(
     "wrapped command approval stays inline when its complete footer fits",
     async () => {
-      const tapeRoot = process.env.FX_RECORD
+      const tapeRoot = process.env.FIBER_RECORD
         ? null
         : mkdtempSync(join(tmpdir(), "fx-inline-command-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FX_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
       const ctx = await launchScenario([
         outerFittingCommandCall(),
         outerText("fitting command approval denied handled"),
-      ], "input", { FX_RECORD: tapePath, FX_RECORD_INPUT: "1" });
+      ], "input", { FIBER_RECORD: tapePath, FIBER_RECORD_INPUT: "1" });
 
       await ctx.session.resizeWindow(72, 40);
       await ctx.session.sendText("Request the fitting command approval fixture.");
@@ -1399,15 +1398,15 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
   test(
     "vertically overflowing command approval exits review on Escape and recovers",
     async () => {
-      const tapeRoot = process.env.FX_RECORD
+      const tapeRoot = process.env.FIBER_RECORD
         ? null
         : mkdtempSync(join(tmpdir(), "fx-overflow-command-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FX_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
       const ctx = await launchScenario([
         outerFittingCommandCall(),
         outerText("overflow command approval Escape recovered"),
-      ], "input", { FX_RECORD: tapePath });
+      ], "input", { FIBER_RECORD: tapePath });
 
       await ctx.session.resizeWindow(40, 13);
       await ctx.session.sendText("Request the overflowing command approval fixture.");
@@ -1437,13 +1436,13 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
   test(
     "command approval switches between inline and review on resize",
     async () => {
-      const tapeRoot = process.env.FX_RECORD
+      const tapeRoot = process.env.FIBER_RECORD
         ? null
         : mkdtempSync(join(tmpdir(), "fx-command-approval-resize-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FX_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
       const ctx = await launchScenario([outerFittingCommandCall()], "input", {
-        FX_RECORD: tapePath,
+        FIBER_RECORD: tapePath,
       });
 
       await ctx.session.resizeWindow(72, 20);
@@ -1477,11 +1476,11 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         (_, index) => `APPROVAL_SCROLLBACK_MARKER_${String(index + 1).padStart(2, "0")}`,
       );
       const finalMarker = "generic approval accepted handled";
-      const tapeRoot = process.env.FX_RECORD
+      const tapeRoot = process.env.FIBER_RECORD
         ? null
         : mkdtempSync(join(tmpdir(), "fx-accepted-generic-approval-"));
       if (tapeRoot) roots.push(tapeRoot);
-      const tapePath = process.env.FX_RECORD ?? join(tapeRoot!, "approval.fxtape");
+      const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "approval.fxtape");
       const ctx = await launchScenario(
         [
           outerText(markers.join("\n")),
@@ -1490,8 +1489,8 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         ],
         "input,permission,scroll,frame_diff,frame_commit",
         {
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
         },
         "ask",
         () => "clear",

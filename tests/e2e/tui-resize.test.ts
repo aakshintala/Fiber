@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -50,7 +50,7 @@ const RAPID_SKILL_COUNT = 4;
 const RAPID_SKILL_TIMEOUT = 600_000;
 const MINIMUM_RESIZE_HISTORY_LINES = 2_000;
 const KEEP_LARGE_SKILL_ARTIFACTS =
-  process.env.FX_TUI_RESIZE_KEEP_ARTIFACTS === "1";
+  process.env.FIBER_TUI_RESIZE_KEEP_ARTIFACTS === "1";
 
 let session: TmuxSession | null = null;
 const tempDirs: string[] = [];
@@ -129,15 +129,14 @@ async function launchRecordedSurfaceSession(
   tempDirs.push(root);
 
   const active = await createResizeSession({
-    cmd: FX_BIN,
+    cmd: FIBER_BIN,
     cwd: workspace,
     env: {
       HOME: home,
       AI_GATEWAY_API_KEY: undefined,
       VERCEL_OIDC_TOKEN: undefined,
-      FX_AUTO_UPGRADE: "0",
-      FX_RECORD: join(root, "session.fxtape"),
-      FX_RECORD_INPUT: "1",
+      FIBER_RECORD: join(root, "session.fxtape"),
+      FIBER_RECORD_INPUT: "1",
       NO_COLOR: "1",
       ...extraEnv,
     },
@@ -1123,7 +1122,7 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
     [
       `cwd=${fixture.workspace}`,
       `HOME=${fixture.home}`,
-      `binary=${FX_BIN}`,
+      `binary=${FIBER_BIN}`,
       "tmux_size=120x34",
       "tmux_remain_on_exit=on",
       `minimum_history_lines=${MINIMUM_RESIZE_HISTORY_LINES}`,
@@ -1139,17 +1138,16 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
   let s: TmuxSession | null = null;
   try {
     s = await createResizeSession({
-      cmd: FX_BIN,
+      cmd: FIBER_BIN,
       cwd: fixture.workspace,
       env: {
         HOME: fixture.home,
         AI_GATEWAY_API_KEY: undefined,
         VERCEL_OIDC_TOKEN: undefined,
-        FX_AUTO_UPGRADE: "0",
-        FX_RECORD: tapePath,
-        FX_RECORD_INPUT: "1",
-        FX_TRACE_LOG: tracePath,
-        FX_TRACE_SCOPES:
+        FIBER_RECORD: tapePath,
+        FIBER_RECORD_INPUT: "1",
+        FIBER_TRACE_LOG: tracePath,
+        FIBER_TRACE_SCOPES:
           "frame_schedule,frame_plan,frame_diff,frame_commit,scroll,resize,input",
         NO_COLOR: "1",
       },
@@ -1325,7 +1323,7 @@ async function runRapidSkillResizeAttempt(
     [
       `cwd=${fixture.workspace}`,
       `HOME=${fixture.home}`,
-      `binary=${FX_BIN}`,
+      `binary=${FIBER_BIN}`,
       `inter_resize_delay_ms=${delayMs}`,
       "tmux_size=120x34",
       "1. /skills list",
@@ -1340,17 +1338,16 @@ async function runRapidSkillResizeAttempt(
   let s: TmuxSession | null = null;
   try {
     s = await createResizeSession({
-      cmd: FX_BIN,
+      cmd: FIBER_BIN,
       cwd: fixture.workspace,
       env: {
         HOME: fixture.home,
         AI_GATEWAY_API_KEY: undefined,
         VERCEL_OIDC_TOKEN: undefined,
-        FX_AUTO_UPGRADE: "0",
-        FX_RECORD: tapePath,
-        FX_RECORD_INPUT: "1",
-        FX_TRACE_LOG: tracePath,
-        FX_TRACE_SCOPES:
+        FIBER_RECORD: tapePath,
+        FIBER_RECORD_INPUT: "1",
+        FIBER_TRACE_LOG: tracePath,
+        FIBER_TRACE_SCOPES:
           "frame_schedule,frame_plan,frame_diff,frame_commit,scroll,resize,input",
         NO_COLOR: "1",
       },
@@ -1574,7 +1571,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       gateways.push(gateway);
       session = await createResizeSession({
         cmd: `sh -c ${quoteShellPath(
-          `printf 'PRE_FX_MARKER_long_resize\\n'; exec ${quoteShellPath(FX_BIN)}`,
+          `printf 'PRE_FX_MARKER_long_resize\\n'; exec ${quoteShellPath(FIBER_BIN)}`,
         )}`,
         cwd: workspace,
         env: {
@@ -1583,10 +1580,9 @@ describe.skipIf(SKIP)("tui: resize", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "frame_schedule,frame_diff,frame_commit,scroll,resize",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "frame_schedule,frame_diff,frame_commit,scroll,resize",
           NO_COLOR: "1",
         },
         width: 120,
@@ -1653,22 +1649,21 @@ describe.skipIf(SKIP)("tui: resize", () => {
       gateways.push(gateway);
       session = await createResizeSession({
         cmd: `sh -c ${quoteShellPath(
-          `printf '${preFxMarker}\\n'; exec ${quoteShellPath(FX_BIN)}`,
+          `printf '${preFxMarker}\\n'; exec ${quoteShellPath(FIBER_BIN)}`,
         )}`,
         cwd: workspace,
         env: {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-resize-command-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "frame_schedule,frame_diff,frame_commit,scroll,resize",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "frame_schedule,frame_diff,frame_commit,scroll,resize",
           NO_COLOR: "1",
         },
         width: 110,
@@ -1787,7 +1782,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       gateways.push(gateway);
 
       session = await createResizeSession({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspace,
         env: {
           HOME: home,
@@ -1796,9 +1791,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_MAX_AGENT_STEPS: "4",
-          FX_AUTO_UPGRADE: "0",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MAX_AGENT_STEPS: "4",
           NO_COLOR: "1",
         },
         width: 120,
@@ -1867,7 +1861,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       writeFileSync(
         join(root, "commands.txt"),
         [
-          `binary=${FX_BIN}`,
+          `binary=${FIBER_BIN}`,
           "tmux_size=120x36",
           "1. submit seed prompt",
           "2. submit effectful command prompt",
@@ -1886,7 +1880,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       ]);
       gateways.push(gateway);
       const active = await createResizeSession({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspace,
         env: {
           HOME: home,
@@ -1894,12 +1888,11 @@ describe.skipIf(SKIP)("tui: resize", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES:
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES:
             "frame_schedule,frame_plan,frame_diff,frame_commit,scroll,resize,input,permission,interrupt,render",
           NO_COLOR: "1",
         },
@@ -2004,7 +1997,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       expect(gateway.requests).toHaveLength(2);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       const replay = JSON.parse(
-        execFileSync(FX_BIN, ["replay", tapePath, "--json"], { encoding: "utf8" }),
+        execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], { encoding: "utf8" }),
       ) as { resize_count: number };
       expect(replay.resize_count).toBe(1);
       expect(active.paneStatus()).toEqual({ dead: false, status: null });
@@ -2049,8 +2042,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
           NO_COLOR: "1",
         },
         width: 120,
@@ -2137,10 +2129,9 @@ describe.skipIf(SKIP)("tui: resize", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "resize,frame_schedule,scroll",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "resize,frame_schedule,scroll",
           NO_COLOR: "1",
         },
         width: 120,
@@ -2263,7 +2254,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         [
           `cwd=${workspace}`,
           `HOME=${home}`,
-          `binary=${FX_BIN}`,
+          `binary=${FIBER_BIN}`,
           "tmux_size=120x34",
           "1. submit gated assistant request",
           "2. wait for active stream",
@@ -2275,21 +2266,20 @@ describe.skipIf(SKIP)("tui: resize", () => {
       );
 
       session = await createResizeSession({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspace,
         env: {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-gated-resize-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES:
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES:
             "frame_schedule,frame_diff,frame_commit,scroll,resize,worker",
           NO_COLOR: "1",
         },
@@ -2393,7 +2383,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         [
           `cwd=${workspace}`,
           `HOME=${home}`,
-          `binary=${FX_BIN}`,
+          `binary=${FIBER_BIN}`,
           "tmux_size=120x34",
           "1. /permissions auto",
           "2. type / and assert /help selected",
@@ -2405,17 +2395,16 @@ describe.skipIf(SKIP)("tui: resize", () => {
       );
 
       session = await createResizeSession({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspace,
         env: {
           HOME: home,
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES:
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES:
             "frame_schedule,frame_diff,frame_commit,scroll,resize,input",
           NO_COLOR: "1",
         },
@@ -2536,13 +2525,12 @@ describe.skipIf(SKIP)("tui: resize", () => {
       tempDirs.push(root);
 
       session = await createResizeSession({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspace,
         env: {
           HOME: home,
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           NO_COLOR: "1",
         },
         width: 72,
@@ -2699,7 +2687,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
           surfaceCase.height,
           gateway
             ? {
-                FX_E2E_GATEWAY_MODELS_URL:
+                FIBER_E2E_GATEWAY_MODELS_URL:
                   `${gateway.baseUrl}/coding-agent/v1/models`,
               }
             : {},
@@ -2806,7 +2794,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         [
           `cwd=${workspace}`,
           `HOME=${home}`,
-          `binary=${FX_BIN}`,
+          `binary=${FIBER_BIN}`,
           "tmux_size=80x24",
           "resize=40x18",
           "prompt=34 ASCII cells + U+754C + U+1F642",
@@ -2822,7 +2810,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       ]);
       gateways.push(gateway);
       session = await createResizeSession({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspace,
         env: {
           HOME: home,
@@ -2830,12 +2818,11 @@ describe.skipIf(SKIP)("tui: resize", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "render,resize,transcript,input,worker",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "render,resize,transcript,input,worker",
           TMUX: undefined,
         },
         width: 80,
@@ -2951,8 +2938,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "active hard-newline input survives tiny valid resize",
     async () => {
       const stderrPath = createStderrPath("active-hard");
-      const first = "FX_HARD_ROW_ALPHA";
-      const second = "FX_HARD_ROW_BETA";
+      const first = "FIBER_HARD_ROW_ALPHA";
+      const second = "FIBER_HARD_ROW_BETA";
       session = await launchAt(80, 24, { stderrPath });
       await enterHardNewlineInput(session, first, second);
 
@@ -2970,8 +2957,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "active soft-wrapped input survives tiny valid resize",
     async () => {
       const stderrPath = createStderrPath("active-soft");
-      const first = "FX_SOFT_START";
-      const second = "FX_SOFT_END";
+      const first = "FIBER_SOFT_START";
+      const second = "FIBER_SOFT_END";
       const input = `${first} ${"filler ".repeat(16)}${second}`;
       session = await launchAt(80, 24, { stderrPath });
       await session.sendLiteral(input);
@@ -2991,8 +2978,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "active hard-newline input follows height-four recovery",
     async () => {
       const stderrPath = createStderrPath("active-height-four");
-      const first = "FX_HARD_4_ROW_ALPHA";
-      const second = "FX_HARD_4_ROW_BETA";
+      const first = "FIBER_HARD_4_ROW_ALPHA";
+      const second = "FIBER_HARD_4_ROW_BETA";
       session = await launchAt(80, 24, { stderrPath });
       await enterHardNewlineInput(session, first, second);
 
@@ -3010,8 +2997,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
     "active hard-newline input renders normally at height nine",
     async () => {
       const stderrPath = createStderrPath("active-height-nine");
-      const first = "FX_HARD_9_ROW_ALPHA";
-      const second = "FX_HARD_9_ROW_BETA";
+      const first = "FIBER_HARD_9_ROW_ALPHA";
+      const second = "FIBER_HARD_9_ROW_BETA";
       session = await launchAt(80, 24, { stderrPath });
       await enterHardNewlineInput(session, first, second);
 
@@ -3036,7 +3023,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const tapePath = join(root.root, "active-file-approval.fxtape");
       writeFileSync(stderrPath, "");
       session = await createResizeSession({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: {
           HOME: root.home,
@@ -3044,9 +3031,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_RECORD: tapePath,
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_RECORD: tapePath,
           NO_COLOR: "1",
         },
         stderrPath,
@@ -3177,7 +3163,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const stderrPath = join(root.root, "resize-gated-stderr.txt");
       writeFileSync(stderrPath, "");
       session = await createResizeSession({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: {
           HOME: root.home,
@@ -3185,8 +3171,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
           NO_COLOR: "1",
         },
         stderrPath,
@@ -3263,7 +3248,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const tracePath = join(root.root, "resize-after-approval-trace.log");
       writeFileSync(stderrPath, "");
       session = await createResizeSession({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
         env: {
           HOME: root.home,
@@ -3271,10 +3256,9 @@ describe.skipIf(SKIP)("tui: resize", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "frame_schedule",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "frame_schedule",
           NO_COLOR: "1",
         },
         stderrPath,
@@ -3328,9 +3312,9 @@ describe.skipIf(SKIP)("tui: resize", () => {
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-          FX_E2E_GATEWAY_CREDITS_URL: undefined,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
+          FIBER_E2E_GATEWAY_CREDITS_URL: undefined,
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
         },
       );
       session = launched.active;
@@ -3493,7 +3477,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const firstMarker = "RESIZE_PREPAINT_TURN_A_COMPLETE";
       const secondMarker = "RESIZE_PREPAINT_TURN_B_COMPLETE";
       const launchCommand =
-        `printf ${quoteShellPath(`${preFxMarker}\n`)}; exec ${quoteShellPath(FX_BIN)}`;
+        `printf ${quoteShellPath(`${preFxMarker}\n`)}; exec ${quoteShellPath(FIBER_BIN)}`;
       mkdirSync(join(home, ".fx"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
       tempDirs.push(root);
@@ -3517,12 +3501,11 @@ describe.skipIf(SKIP)("tui: resize", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "test-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES:
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES:
             "frame_schedule,frame_plan,frame_diff,frame_commit,scroll,resize,input,worker",
           NO_COLOR: "1",
         },
@@ -3614,7 +3597,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       expect(resizeFrameIndex).toBeGreaterThanOrEqual(0);
       expect(inputFrameIndex).toBeGreaterThanOrEqual(0);
 
-      execFileSync(FX_BIN, ["replay", tapePath, "--frames-dir", replayDir], {
+      execFileSync(FIBER_BIN, ["replay", tapePath, "--frames-dir", replayDir], {
         cwd: workspace,
         stdio: "pipe",
       });
@@ -3677,8 +3660,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
           AI_GATEWAY_API_KEY: "test-key",
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "input,worker,resize",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "input,worker,resize",
         },
       });
       await session.waitForComposer(10_000);
@@ -3737,8 +3720,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
           AI_GATEWAY_API_KEY: "test-key",
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "input,worker,resize",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "input,worker,resize",
         },
       });
       await session.waitForComposer(10_000);
@@ -3819,8 +3802,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
           AI_GATEWAY_API_KEY: "test-key",
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "input,worker,resize",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "input,worker,resize",
           TMUX: undefined,
         },
       });
@@ -3930,8 +3913,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
           AI_GATEWAY_API_KEY: "test-key",
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "input,worker,resize",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "input,worker,resize",
           TMUX: undefined,
         },
       });
@@ -3975,7 +3958,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         );
         tempDirs.push(root);
         session = await createResizeSession({
-          cmd: `sh -c ${quoteShellPath(`printf '${marker}\\n'; exec ${quoteShellPath(FX_BIN)}`)}`,
+          cmd: `sh -c ${quoteShellPath(`printf '${marker}\\n'; exec ${quoteShellPath(FIBER_BIN)}`)}`,
           cwd: workspace,
           env: { HOME: home },
           width: 120,
@@ -4038,7 +4021,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       ]);
       gateways.push(gateway);
       session = await createResizeSession({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspace,
         env: {
           HOME: home,
@@ -4046,11 +4029,10 @@ describe.skipIf(SKIP)("tui: resize", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_RECORD: tapePath,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "theme,frame_schedule,frame_commit,resize",
+          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "theme,frame_schedule,frame_commit,resize",
         },
         stderrPath,
         width: 120,

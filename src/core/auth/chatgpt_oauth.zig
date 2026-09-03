@@ -14,8 +14,8 @@ const Allocator = std.mem.Allocator;
 pub const client_id = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const token_url = "https://auth.openai.com/oauth/token";
 pub const issuer_url = "https://auth.openai.com";
-const e2e_token_url_env = "FX_E2E_CHATGPT_TOKEN_URL";
-const e2e_issuer_url_env = "FX_E2E_CHATGPT_ISSUER_URL";
+const e2e_token_url_env = "FIBER_E2E_CHATGPT_TOKEN_URL";
+const e2e_issuer_url_env = "FIBER_E2E_CHATGPT_ISSUER_URL";
 const jwt_auth_claim = "https://api.openai.com/auth";
 const browser_scope = "openid profile email offline_access api.connectors.read api.connectors.invoke";
 const browser_callback_ports = [_]u16{ 1455, 1457 };
@@ -355,7 +355,7 @@ pub fn runLogin(
     try writeStdout("Open this URL to sign in with Codex:\n");
     try writeStdout(authorization_url);
     try writeStdout("\n\nWaiting for browser authorization...\n");
-    if (io_mod.getenv("FX_NO_OPEN_BROWSER") == null) {
+    if (io_mod.getenv("FIBER_NO_OPEN_BROWSER") == null) {
         _ = url_opener.open(alloc, authorization_url) catch false;
     }
 

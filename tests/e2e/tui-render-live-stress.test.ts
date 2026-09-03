@@ -11,7 +11,7 @@ import {
 } from "./tui-render-assertions";
 import { TmuxSession, tmuxAvailable } from "./tmux-helpers";
 
-const LIVE_ENABLED = process.env.FX_LIVE_RENDER_STRESS === "1";
+const LIVE_ENABLED = process.env.FIBER_LIVE_RENDER_STRESS === "1";
 const SKIP = !LIVE_ENABLED || !tmuxAvailable() || !HAS_API_KEY;
 const TIMEOUT = 240_000;
 const TRACE_SCOPES = "paint,render,scroll,footer.clean,input,tool,gateway";
@@ -54,8 +54,8 @@ async function launch(run: number): Promise<{ session: TmuxSession; tracePath: s
     env: {
       AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY,
       VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN,
-      FX_TRACE_LOG: tracePath,
-      FX_TRACE_SCOPES: TRACE_SCOPES,
+      FIBER_TRACE_LOG: tracePath,
+      FIBER_TRACE_SCOPES: TRACE_SCOPES,
     },
   });
   await s.waitForComposer(10_000);

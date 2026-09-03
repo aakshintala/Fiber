@@ -51,8 +51,8 @@ jobs:
       - name: Run interactive terminal performance gate
         working-directory: tests/e2e
         env:
-          FX_TUI_PERFORMANCE: "1"
-          FX_TUI_PERFORMANCE_REPORT: ${{ runner.temp }}/tui-performance.json
+          FIBER_TUI_PERFORMANCE: "1"
+          FIBER_TUI_PERFORMANCE_REPORT: ${{ runner.temp }}/tui-performance.json
         run: bun test tui-performance.test.ts
 
       - name: Upload interactive terminal performance evidence

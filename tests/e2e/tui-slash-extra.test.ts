@@ -101,7 +101,7 @@ describe.skipIf(!tmuxAvailable() || CLIPBOARD_PROGRAM === null)("tui: clipboard 
       const clipboardPath = join(binDir, CLIPBOARD_PROGRAM);
       mkdirSync(homeDir);
       mkdirSync(binDir);
-      writeFileSync(clipboardPath, "#!/bin/sh\ncat > \"$FX_TEST_CLIPBOARD_CAPTURE\"\n");
+      writeFileSync(clipboardPath, "#!/bin/sh\ncat > \"$FIBER_TEST_CLIPBOARD_CAPTURE\"\n");
       chmodSync(clipboardPath, 0o755);
 
       const reply = "clipboard host sentinel\nsecond line";
@@ -113,7 +113,7 @@ describe.skipIf(!tmuxAvailable() || CLIPBOARD_PROGRAM === null)("tui: clipboard 
           stderrPath,
           env: {
             ...fakeCodexEnv(homeDir, codex),
-            FX_TEST_CLIPBOARD_CAPTURE: capturePath,
+            FIBER_TEST_CLIPBOARD_CAPTURE: capturePath,
             PATH: `${binDir}:${process.env.PATH ?? ""}`,
           },
         });
@@ -166,7 +166,6 @@ describe.skipIf(!tmuxAvailable())("tui: active session transitions", () => {
           cwd: workDir,
           stderrPath,
           env: fakeCodexEnv(homeDir, codex, {
-            FX_AUTO_UPGRADE: "0",
           }),
           width: 120,
           height: 40,
@@ -233,9 +232,8 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         session = await TmuxSession.create({
           cwd: workDir,
           env: fakeCodexEnv(homeDir, codex, {
-            FX_AUTO_UPGRADE: "0",
-            FX_TRACE_SCOPES: TRACE_SCOPES,
-            FX_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: TRACE_SCOPES,
+            FIBER_TRACE_LOG: tracePath,
           }),
           width: 120,
           height: 40,
@@ -344,7 +342,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         session = await TmuxSession.create({
           cwd: root,
           stderrPath,
-          env: { HOME: home, FX_AUTO_UPGRADE: "0" },
+          env: { HOME: home },
           width: 100,
           height: 30,
         });
@@ -413,9 +411,9 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
                 join(import.meta.dir, "fixtures", "mcp-modern-stdio.mjs"),
               ],
               environment: {
-                FX_MCP_MODE: "features",
-                FX_MCP_WIRE_LOG: wireLogPath,
-                FX_MCP_CATALOG_DELAY_MS: "25",
+                FIBER_MCP_MODE: "features",
+                FIBER_MCP_WIRE_LOG: wireLogPath,
+                FIBER_MCP_CATALOG_DELAY_MS: "25",
               },
             },
           },
@@ -426,7 +424,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         session = await TmuxSession.create({
           cwd: root,
           stderrPath,
-          env: { HOME: home, FX_AUTO_UPGRADE: "0" },
+          env: { HOME: home },
           width: 110,
           height: 32,
         });
@@ -586,7 +584,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         session = await TmuxSession.create({
           cwd: root,
           stderrPath,
-          env: { HOME: home, FX_AUTO_UPGRADE: "0" },
+          env: { HOME: home },
           width: 110,
           height: 32,
         });
@@ -659,7 +657,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         session = await TmuxSession.create({
           cwd: workspace,
           stderrPath,
-          env: { HOME: home, FX_AUTO_UPGRADE: "0" },
+          env: { HOME: home },
           width: 110,
           height: 32,
         });

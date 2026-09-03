@@ -2013,7 +2013,7 @@ fn buildTraceReport(app: anytype) ![]u8 {
         try out.writer.writeAll("\n## Transcript Timeline\n(empty)\n");
     }
 
-    const trace_path: ?[]const u8 = debug_trace.activeLogPath() orelse io_mod.getenv("FX_TRACE_LOG");
+    const trace_path: ?[]const u8 = debug_trace.activeLogPath() orelse io_mod.getenv("FIBER_TRACE_LOG");
     if (trace_path) |path| {
         try writeTraceLogTail(&out.writer, app.alloc, path);
     }
@@ -2235,8 +2235,8 @@ fn processMemorySnapshot(alloc: std.mem.Allocator, pid: std.c.pid_t) ![]u8 {
 }
 
 fn writeDebugEnvSummary(writer: *std.Io.Writer, alloc: std.mem.Allocator) !void {
-    try writer.print("FX_TRACE: {s}\n", .{if (envTruthy("FX_TRACE")) "on" else "off"});
-    if (debug_trace.activeLogPath() orelse io_mod.getenv("FX_TRACE_LOG")) |path| {
+    try writer.print("FIBER_TRACE: {s}\n", .{if (envTruthy("FIBER_TRACE")) "on" else "off"});
+    if (debug_trace.activeLogPath() orelse io_mod.getenv("FIBER_TRACE_LOG")) |path| {
         try writer.writeAll("trace_log: ");
         try writeMaskedInline(writer, alloc, path);
         try writer.writeByte('\n');

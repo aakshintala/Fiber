@@ -68,10 +68,9 @@ async function runWithFakeGateway(
         FX_GATEWAY_BASE_URL: gateway.baseUrl,
         FX_GATEWAY_CHAT_URL: gateway.chatUrl,
         FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-        FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-        FX_E2E_GATEWAY_CREDITS_URL: undefined,
-        FX_MODEL: FAKE_GATEWAY_MODEL,
-        FX_AUTO_UPGRADE: "0",
+        FIBER_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
+        FIBER_E2E_GATEWAY_CREDITS_URL: undefined,
+        FIBER_MODEL: FAKE_GATEWAY_MODEL,
       },
       timeoutMs: TIMEOUT,
     });
@@ -107,18 +106,18 @@ describe("external file permissions", () => {
             "--json",
             "--no-save",
             "--yolo",
-            `Use only the write_file tool to create ${target} with exactly this content: FX_E2E_YOLO.`,
+            `Use only the write_file tool to create ${target} with exactly this content: FIBER_E2E_YOLO.`,
           ],
           [
             fakeGatewayToolCall("yolo_write_1", "write_file", {
               path: target,
-              content: "FX_E2E_YOLO",
+              content: "FIBER_E2E_YOLO",
             }),
             fakeGatewayFinalText("yolo write complete"),
           ],
           {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           },
         );
 
@@ -131,7 +130,7 @@ describe("external file permissions", () => {
             (call) => call.name === "write_file" && call.status === "success",
           ),
         ).toBe(true);
-        expect(readFileSync(target, "utf8")).toBe("FX_E2E_YOLO");
+        expect(readFileSync(target, "utf8")).toBe("FIBER_E2E_YOLO");
         const trace = readFileSync(tracePath, "utf8");
         expect(trace).not.toContain("event=auto_review_start");
         expect(gateway.classifierRequests).toHaveLength(0);
@@ -156,7 +155,7 @@ describe("external file permissions", () => {
         const classifiedTarget = join(root.external, "classified-write.txt");
         const allowedTarget = join(root.external, "allowed-write.txt");
         const tracePath = join(root.root, "permission-trace.log");
-        writeFileSync(readTarget, "FX_E2E_EXTERNAL_READ\n");
+        writeFileSync(readTarget, "FIBER_E2E_EXTERNAL_READ\n");
         writeFileSync(classifiedTarget, "before");
         writeFileSync(join(root.home, ".fx", "settings.json"), "{}");
 
@@ -171,12 +170,12 @@ describe("external file permissions", () => {
           ],
           [
             fakeGatewayToolCall("external_read_1", "read_file", { path: readTarget }),
-            fakeGatewayFinalText("FX_E2E_EXTERNAL_READ"),
+            fakeGatewayFinalText("FIBER_E2E_EXTERNAL_READ"),
           ],
         );
         const read = parseFxJson(readResult);
         expect(read.tool_calls).toContainEqual({ name: "read_file", status: "success" });
-        expect(read.output).toContain("FX_E2E_EXTERNAL_READ");
+        expect(read.output).toContain("FIBER_E2E_EXTERNAL_READ");
 
         const { gateway: classifiedGateway, result: classifiedResult } =
           await runWithFakeGateway(
@@ -186,18 +185,18 @@ describe("external file permissions", () => {
               "--json",
               "--no-save",
               "--auto",
-              `Use only the write_file tool to overwrite ${classifiedTarget} with exactly this content: FX_E2E_EXTERNAL_CLASSIFIED.`,
+              `Use only the write_file tool to overwrite ${classifiedTarget} with exactly this content: FIBER_E2E_EXTERNAL_CLASSIFIED.`,
             ],
             [
               fakeGatewayToolCall("classified_write_1", "write_file", {
                 path: classifiedTarget,
-                content: "FX_E2E_EXTERNAL_CLASSIFIED",
+                content: "FIBER_E2E_EXTERNAL_CLASSIFIED",
               }),
               fakeGatewayFinalText("classified write complete"),
             ],
             {
-              FX_TRACE_LOG: tracePath,
-              FX_TRACE_SCOPES: "permission",
+              FIBER_TRACE_LOG: tracePath,
+              FIBER_TRACE_SCOPES: "permission",
             },
           );
         const trace = readFileSync(tracePath, "utf-8");
@@ -207,7 +206,7 @@ describe("external file permissions", () => {
         expect(classifiedGateway.classifierRequests).toHaveLength(1);
         const classified = parseFxJson(classifiedResult);
         expect(classified.tool_calls).toContainEqual({ name: "write_file", status: "success" });
-        expect(readFileSync(classifiedTarget, "utf-8")).toBe("FX_E2E_EXTERNAL_CLASSIFIED");
+        expect(readFileSync(classifiedTarget, "utf-8")).toBe("FIBER_E2E_EXTERNAL_CLASSIFIED");
 
         writeFileSync(
           join(root.home, ".fx", "settings.json"),
@@ -227,19 +226,19 @@ describe("external file permissions", () => {
             "--json",
             "--no-save",
             "--auto",
-            `Use only the write_file tool to create ${allowedTarget} with exactly this content: FX_E2E_EXTERNAL_ALLOWED.`,
+            `Use only the write_file tool to create ${allowedTarget} with exactly this content: FIBER_E2E_EXTERNAL_ALLOWED.`,
           ],
           [
             fakeGatewayToolCall("allowed_write_1", "write_file", {
               path: allowedTarget,
-              content: "FX_E2E_EXTERNAL_ALLOWED",
+              content: "FIBER_E2E_EXTERNAL_ALLOWED",
             }),
             fakeGatewayFinalText("allowed write complete"),
           ],
         );
         const allowed = parseFxJson(allowedResult);
         expect(allowed.tool_calls).toContainEqual({ name: "write_file", status: "success" });
-        expect(readFileSync(allowedTarget, "utf-8")).toBe("FX_E2E_EXTERNAL_ALLOWED");
+        expect(readFileSync(allowedTarget, "utf-8")).toBe("FIBER_E2E_EXTERNAL_ALLOWED");
         expect(allowedGateway.classifierRequests).toHaveLength(0);
       } finally {
         rmSync(root.root, { recursive: true, force: true });

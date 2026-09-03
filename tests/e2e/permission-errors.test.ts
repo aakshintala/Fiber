@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -80,8 +80,7 @@ function permissionEnv(
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
     FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
+    FIBER_MODEL: FAKE_GATEWAY_MODEL,
     NO_COLOR: "1",
   };
 }
@@ -127,7 +126,7 @@ async function runTtyPromptPermissionsCase(
   let session: TmuxSession | null = null;
   try {
     session = await TmuxSession.create({
-      cmd: `${JSON.stringify(FX_BIN)} ask --${outputMode} --prompt-permissions --no-save "Run the exact ${outputMode} fixture." > ${JSON.stringify(stdoutPath)}`,
+      cmd: `${JSON.stringify(FIBER_BIN)} ask --${outputMode} --prompt-permissions --no-save "Run the exact ${outputMode} fixture." > ${JSON.stringify(stdoutPath)}`,
       cwd: root.workspace,
       env: permissionEnv(root.home, gateway),
       remainOnExit: true,
@@ -199,8 +198,7 @@ describe("generic permission typed errors", () => {
             FX_GATEWAY_BASE_URL: gateway.baseUrl,
             FX_GATEWAY_CHAT_URL: gateway.chatUrl,
             FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
-            FX_AUTO_UPGRADE: "0",
+            FIBER_MODEL: FAKE_GATEWAY_MODEL,
           },
           timeoutMs: TIMEOUT,
         });
@@ -276,7 +274,7 @@ describe("generic permission typed errors", () => {
       let session: TmuxSession | null = null;
       try {
         session = await TmuxSession.create({
-          cmd: `${JSON.stringify(FX_BIN)} ask --auto --json --prompt-permissions --no-save "Run the advisory caution fixture." > ${JSON.stringify(stdoutPath)}`,
+          cmd: `${JSON.stringify(FIBER_BIN)} ask --auto --json --prompt-permissions --no-save "Run the advisory caution fixture." > ${JSON.stringify(stdoutPath)}`,
           cwd: root.workspace,
           env: permissionEnv(root.home, gateway),
           remainOnExit: true,

@@ -41,9 +41,9 @@ ISOLATED_ENVIRONMENT_KEYS = (
     "TMUX",
     "TMUX_PANE",
     "TMUX_TMPDIR",
-    "FX_TRACE_LOG",
-    "FX_TRACE_SCOPES",
-    "FX_E2E_DISABLE_DOTENV",
+    "FIBER_TRACE_LOG",
+    "FIBER_TRACE_SCOPES",
+    "FIBER_E2E_DISABLE_DOTENV",
 )
 
 @dataclasses.dataclass(frozen=True)
@@ -485,7 +485,7 @@ def _new_tmux_dir() -> pathlib.Path:
 
 def _scenario_environment(runtime_home: pathlib.Path) -> dict[str, str]:
     environment = hermetic_environment(runtime_home)
-    environment["FX_E2E_DISABLE_DOTENV"] = "1"
+    environment["FIBER_E2E_DISABLE_DOTENV"] = "1"
     return environment
 
 
@@ -561,7 +561,7 @@ def _execute_scenario(
         environment.pop(key, None)
     environment.update(dict(scenario.env_set))
     environment["HOME"] = str(scenario_home)
-    environment["FX_E2E_DISABLE_DOTENV"] = "1"
+    environment["FIBER_E2E_DISABLE_DOTENV"] = "1"
     tmux_dir: pathlib.Path | None = None
     if scenario.requires_tmux:
         tmux_dir = _new_tmux_dir()
@@ -616,7 +616,7 @@ def _reset_failed_tmux_e2e_attempt(
                 raise PgsoError(f"refusing to remove unsafe profile path: {profile}")
             profile.unlink()
 
-    trace_path = environment.get("FX_TRACE_LOG")
+    trace_path = environment.get("FIBER_TRACE_LOG")
     if trace_path is not None:
         pathlib.Path(trace_path).unlink(missing_ok=True)
 
@@ -792,7 +792,7 @@ def run_behavior_corpus(
     def prepare(scenario: Scenario, environment: dict[str, str]) -> object:
         trace_path = trace_dir / f"{scenario.name}.log"
         trace_path.unlink(missing_ok=True)
-        environment["FX_TRACE_LOG"] = str(trace_path)
+        environment["FIBER_TRACE_LOG"] = str(trace_path)
         return None
 
     def finish(

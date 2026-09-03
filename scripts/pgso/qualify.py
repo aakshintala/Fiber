@@ -849,10 +849,9 @@ def _measurement_environment(home: pathlib.Path) -> dict[str, str]:
     environment = hermetic_environment(home)
     environment.update(
         {
-            "FX_AUTO_UPGRADE": "0",
-            "FX_DISABLE_KEYCHAIN": "1",
-            "FX_SKIP_ONBOARDING": "1",
-            "FX_SOUND": "0",
+            "FIBER_DISABLE_KEYCHAIN": "1",
+            "FIBER_SKIP_ONBOARDING": "1",
+            "FIBER_SOUND": "0",
             "HOME": str(home),
             "NO_COLOR": "1",
         }

@@ -1106,7 +1106,7 @@ const TestHome = struct {
         };
         errdefer result.map.deinit();
         try result.map.put("HOME", home);
-        try result.map.put("FX_DISABLE_KEYCHAIN", "1");
+        try result.map.put("FIBER_DISABLE_KEYCHAIN", "1");
         return result;
     }
 

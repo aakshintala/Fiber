@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -127,8 +127,7 @@ function gatewayEnv(home: string, gateway: ReturnType<typeof startFakeGateway>) 
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
+    FIBER_MODEL: FAKE_GATEWAY_MODEL,
     NO_COLOR: "1",
   };
 }
@@ -217,7 +216,7 @@ async function seedRealSession(paths: Paths, config: Config): Promise<IndexedSum
   let session: TmuxSession | null = null;
   try {
     session = await TmuxSession.create({
-      cmd: FX_BIN,
+      cmd: FIBER_BIN,
       cwd: realpathSync(paths.workspace),
       env: gatewayEnv(paths.home, gateway),
       stderrPath: paths.stderr,
@@ -431,12 +430,12 @@ async function runStress(config: Config): Promise<Paths> {
   let passed = false;
   try {
     session = await TmuxSession.create({
-      cmd: FX_BIN,
+      cmd: FIBER_BIN,
       cwd: realpathSync(paths.workspace),
       env: {
         ...gatewayEnv(paths.home, gateway),
-        FX_TRACE_LOG: paths.trace,
-        FX_TRACE_SCOPES: "core,session",
+        FIBER_TRACE_LOG: paths.trace,
+        FIBER_TRACE_SCOPES: "core,session",
       },
       stderrPath: paths.stderr,
       width: 112,
@@ -563,7 +562,7 @@ test.skipIf(!tmuxAvailable())(
   300_000,
 );
 
-test.skipIf(!tmuxAvailable() || process.env.FX_RESUME_BRUTAL !== "1")(
+test.skipIf(!tmuxAvailable() || process.env.FIBER_RESUME_BRUTAL !== "1")(
   "/resume sustains one hundred mixed interaction cycles without resource drift",
   async () => {
     await runStress({
@@ -581,7 +580,7 @@ test.skipIf(!tmuxAvailable() || process.env.FX_RESUME_BRUTAL !== "1")(
 
 test.skipIf(
   !tmuxAvailable() ||
-    process.env.FX_RESUME_PROFILE !== "1" ||
+    process.env.FIBER_RESUME_PROFILE !== "1" ||
     platform() !== "darwin" ||
     !existsSync("/usr/bin/sample"),
 )(
@@ -603,10 +602,10 @@ test.skipIf(
   900_000,
 );
 
-test.skipIf(!tmuxAvailable() || process.env.FX_RESUME_50K !== "1")(
+test.skipIf(!tmuxAvailable() || process.env.FIBER_RESUME_50K !== "1")(
   "/resume survives a fifty-thousand-entry catalog and real fifty-thousand-line tool-heavy session",
   async () => {
-    const profileSeconds = process.env.FX_RESUME_PROFILE === "1" &&
+    const profileSeconds = process.env.FIBER_RESUME_PROFILE === "1" &&
         platform() === "darwin" &&
         existsSync("/usr/bin/sample")
       ? 30

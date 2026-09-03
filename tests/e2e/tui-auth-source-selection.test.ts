@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   chatGptAccessToken,
   codexFinalText,
@@ -22,7 +22,7 @@ import {
 } from "./tmux-helpers";
 
 const HAS_TMUX = tmuxAvailable();
-if (process.env.FX_REQUIRE_TMUX === "1" && !HAS_TMUX) {
+if (process.env.FIBER_REQUIRE_TMUX === "1" && !HAS_TMUX) {
   throw new Error("tmux is required for tui-auth-source-selection.test.ts");
 }
 
@@ -64,11 +64,10 @@ function startFx(
   width = 100,
 ): Promise<TmuxSession> {
   return TmuxSession.create({
-    cmd: FX_BIN,
+    cmd: FIBER_BIN,
     env: {
       ...fakeCodexEnv(testHome, fakeCodex),
-      FX_NO_OPEN_BROWSER: "1",
-      FX_AUTO_UPGRADE: "0",
+      FIBER_NO_OPEN_BROWSER: "1",
       ...extraEnv,
     },
     stderrPath: testStderrPath,
@@ -167,7 +166,7 @@ tmuxTest(
     issuer = startFakeIssuer();
 
     session = await startFx(home, stderrPath, codex, {
-      FX_E2E_CHATGPT_ISSUER_URL: issuer.baseUrl,
+      FIBER_E2E_CHATGPT_ISSUER_URL: issuer.baseUrl,
       // The sign-in row clips at the pane width, so the authorization URL only
       // survives in the escape stream when the window is wider than the URL.
     }, 320);

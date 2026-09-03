@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   fakeGatewaySse,
   startFakeGateway,
@@ -46,7 +46,7 @@ function gatewayEnvironment(home: string) {
     AI_GATEWAY_API_KEY: "test-key",
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
+    FIBER_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
   };
 }
 
@@ -194,7 +194,7 @@ test(
       },
     );
 
-    const proc = Bun.spawn([FX_BIN, "ask", "Reply with the sentinel."], {
+    const proc = Bun.spawn([FIBER_BIN, "ask", "Reply with the sentinel."], {
       cwd: workspace,
       env: { ...process.env, ...gatewayEnvironment(home) },
       stdout: "pipe",
@@ -263,7 +263,7 @@ test("fx ask gives immediate generation reconciliation a bounded drain", async (
     },
   );
 
-  const proc = Bun.spawn([FX_BIN, "ask", "Reply with the sentinel."], {
+  const proc = Bun.spawn([FIBER_BIN, "ask", "Reply with the sentinel."], {
     cwd: workspace,
     env: { ...process.env, ...gatewayEnvironment(home) },
     stdout: "pipe",
@@ -316,7 +316,7 @@ test("fx usage reports an unresolved delayed fallback as pending", async () => {
     },
   );
 
-  const ask = Bun.spawn([FX_BIN, "ask", "Reply with the sentinel."], {
+  const ask = Bun.spawn([FIBER_BIN, "ask", "Reply with the sentinel."], {
     cwd: workspace,
     env: { ...process.env, ...gatewayEnvironment(home) },
     stdout: "pipe",
@@ -327,7 +327,7 @@ test("fx usage reports an unresolved delayed fallback as pending", async () => {
   await waitForProfileUsage(home, GENERATION_ID);
 
   const usage = Bun.spawn(
-    [FX_BIN, "usage", "--period", "24h", "--json"],
+    [FIBER_BIN, "usage", "--period", "24h", "--json"],
     {
       cwd: workspace,
       env: { ...process.env, HOME: home },
@@ -368,7 +368,7 @@ test("fx usage reports a missing generation identity as incomplete", async () =>
     },
   );
 
-  const ask = Bun.spawn([FX_BIN, "ask", "Reply with the sentinel."], {
+  const ask = Bun.spawn([FIBER_BIN, "ask", "Reply with the sentinel."], {
     cwd: workspace,
     env: { ...process.env, ...gatewayEnvironment(home) },
     stdout: "pipe",
@@ -378,7 +378,7 @@ test("fx usage reports a missing generation identity as incomplete", async () =>
   expect(await ask.exited, askStderr).toBe(0);
 
   const usage = Bun.spawn(
-    [FX_BIN, "usage", "--period", "24h", "--json"],
+    [FIBER_BIN, "usage", "--period", "24h", "--json"],
     {
       cwd: workspace,
       env: { ...process.env, HOME: home },
@@ -457,7 +457,7 @@ describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
         );
 
         const fixture = Bun.spawn(
-          [FX_BIN, "ask", "Create pending usage for resume."],
+          [FIBER_BIN, "ask", "Create pending usage for resume."],
           {
             cwd: workspace,
             env: { ...process.env, ...gatewayEnvironment(home) },
@@ -479,7 +479,7 @@ describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
           .toEqual([GENERATION_ID]);
 
         session = await TmuxSession.create({
-          cmd: resumeMode === "startup" ? `${FX_BIN} --resume-last` : FX_BIN,
+          cmd: resumeMode === "startup" ? `${FIBER_BIN} --resume-last` : FIBER_BIN,
           cwd: workspace,
           env: gatewayEnvironment(home),
           stderrPath,
@@ -617,7 +617,7 @@ describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
       session = null;
 
       session = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: workspace,
         env: gatewayEnvironment(home),
       });

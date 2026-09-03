@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
   FAKE_GATEWAY_MODEL,
   fakeGatewayFinalText,
@@ -83,7 +83,7 @@ function startUpgradeServer(
   done
   printf '\\n'
 } >> ${shellQuote(argvLogPath)}
-exec ${shellQuote(FX_BIN)} "$@"
+exec ${shellQuote(FIBER_BIN)} "$@"
 `;
   writeFileSync(wrapperPath, script);
   chmodSync(wrapperPath, 0o755);
@@ -121,8 +121,7 @@ function gatewayEnv(
     VERCEL_OIDC_TOKEN: undefined,
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
+    FIBER_MODEL: FAKE_GATEWAY_MODEL,
     NO_COLOR: "1",
   };
 }
@@ -770,7 +769,7 @@ test.skipIf(!tmuxAvailable())(
     writeFileSync(stderrPath, "");
 
     const prompt = "Persist this fx ask metadata.";
-    const answer = "FX_ASK_METADATA_COMPLETE";
+    const answer = "FIBER_ASK_METADATA_COMPLETE";
     const askGateway = startFakeGateway([fakeGatewayFinalText(answer)]);
     let active: TmuxSession | null = null;
     try {
@@ -786,7 +785,7 @@ test.skipIf(!tmuxAvailable())(
       const resumeGateway = startFakeGateway([]);
       try {
         active = await TmuxSession.create({
-          cmd: `${FX_BIN} --resume-last`,
+          cmd: `${FIBER_BIN} --resume-last`,
           cwd: realpathSync(workspace),
           env: gatewayEnv(home, resumeGateway),
           stderrPath,
@@ -840,7 +839,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, seedGateway),
         stderrPath: seedStderrPath,
@@ -858,11 +857,11 @@ test.skipIf(!tmuxAvailable())(
       const sessionId = sessionIdFromHome(home);
       const cases = [
         {
-          command: `${FX_BIN} session resume --id ${sessionId}`,
+          command: `${FIBER_BIN} session resume --id ${sessionId}`,
           stderrPath: exactStderrPath,
         },
         {
-          command: `${FX_BIN} session resume last`,
+          command: `${FIBER_BIN} session resume last`,
           stderrPath: lastStderrPath,
         },
       ];
@@ -970,14 +969,14 @@ printf '${trailingMarker}   '
     let resumedGateway: ReturnType<typeof startFakeGateway> | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
           ...gatewayEnv(home, gateway),
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,core,tool,render,transcript,command_output,session",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,core,tool,render,transcript,command_output,session",
         },
         stderrPath,
         width: 72,
@@ -1081,7 +1080,7 @@ printf '${trailingMarker}   '
 
       resumedGateway = startFakeGateway([]);
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, resumedGateway),
         stderrPath: resumedStderrPath,
@@ -1156,9 +1155,9 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, gateway), FX_RECORD: tapePath },
+        env: { ...gatewayEnv(home, gateway), FIBER_RECORD: tapePath },
         stderrPath,
         width: 100,
         height: 32,
@@ -1297,14 +1296,14 @@ test.skipIf(!tmuxAvailable())(
     let passed = false;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
           ...gatewayEnv(home, gateway),
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,tool,worker,render,transcript,command_output",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,tool,worker,render,transcript,command_output",
         },
         stderrPath,
         width: 160,
@@ -1425,12 +1424,12 @@ printf '${tailMarker}\\n'
     let passed = false;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
           ...gatewayEnv(home, gateway),
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES:
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES:
             "agent,core,tool,worker,render,transcript,command_output,transcript_retention,session",
         },
         stderrPath,
@@ -1624,14 +1623,14 @@ while :; do :; done
     let passed = false;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
           ...gatewayEnv(home, gateway),
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES:
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES:
             "core,agent,tool,worker,interrupt,command_output,transcript,transcript_retention,render",
         },
         stderrPath,
@@ -1859,14 +1858,14 @@ while :; do :; done
     let passed = false;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
           ...gatewayEnv(home, gateway),
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES:
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES:
             "core,agent,tool,worker,interrupt,command_output,transcript,render",
         },
         stderrPath,
@@ -2014,14 +2013,14 @@ test.skipIf(!tmuxAvailable())(
     let passed = false;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspace,
         env: {
           ...gatewayEnv(home, gateway),
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,tool,render,transcript,gateway",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,tool,render,transcript,gateway",
         },
         stderrPath,
         width: 100,
@@ -2121,7 +2120,7 @@ test.skipIf(!tmuxAvailable())(
         const gateway = startFakeGateway([
           () => streamedTextResponse(response),
         ]);
-        const launch = `${stty}; exec ${shellQuote(FX_BIN)}`;
+        const launch = `${stty}; exec ${shellQuote(FIBER_BIN)}`;
         let active: TmuxSession | null = null;
         try {
           active = await TmuxSession.create({
@@ -2178,7 +2177,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(stderrPath, "");
 
-    const cmd = `zsh -lc 'for i in {1..14}; do printf "${sentinel}_%02d: pre-fx shell scrollback\\n" "$i"; done; exec ${FX_BIN}'`;
+    const cmd = `zsh -lc 'for i in {1..14}; do printf "${sentinel}_%02d: pre-fx shell scrollback\\n" "$i"; done; exec ${FIBER_BIN}'`;
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
@@ -2188,8 +2187,7 @@ test.skipIf(!tmuxAvailable())(
           HOME: home,
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_RECORD: tapePath,
+          FIBER_RECORD: tapePath,
           NO_COLOR: "1",
         },
         stderrPath,
@@ -2257,7 +2255,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -2333,7 +2331,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -2416,9 +2414,9 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, gateway), FX_RECORD: tapePath },
+        env: { ...gatewayEnv(home, gateway), FIBER_RECORD: tapePath },
         stderrPath,
         width: 100,
         height: 32,
@@ -2483,7 +2481,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -2549,14 +2547,14 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
           ...gatewayEnv(home, gateway),
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "full_transcript,full_transcript_cache,input,scroll,frame_diff,frame_commit",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "full_transcript,full_transcript_cache,input,scroll,frame_diff,frame_commit",
         },
         stderrPath,
         width: 100,
@@ -2721,7 +2719,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -2811,9 +2809,9 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, gateway), FX_RECORD: tapePath },
+        env: { ...gatewayEnv(home, gateway), FIBER_RECORD: tapePath },
         stderrPath,
         width: 100,
         height: 32,
@@ -2889,7 +2887,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -3004,7 +3002,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -3066,7 +3064,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -3129,7 +3127,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -3230,9 +3228,9 @@ test.skipIf(!tmuxAvailable())(
     let passed = false;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, gateway), FX_RECORD: tapePath },
+        env: { ...gatewayEnv(home, gateway), FIBER_RECORD: tapePath },
         stderrPath,
         width: 100,
         height: 30,
@@ -3333,7 +3331,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -3476,7 +3474,7 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -3660,12 +3658,12 @@ test.skipIf(!tmuxAvailable())(
     let passed = false;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
           ...gatewayEnv(home, gateway),
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
         },
         stderrPath,
         width: 104,
@@ -3953,7 +3951,7 @@ test.skipIf(!tmuxAvailable())(
     try {
       writeFileSync(ownerStderrPath, "");
       owner = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, ownerGateway),
         stderrPath: ownerStderrPath,
@@ -3965,12 +3963,12 @@ test.skipIf(!tmuxAvailable())(
 
       writeFileSync(contenderStderrPath, "");
       contender = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume`,
+        cmd: `${FIBER_BIN} --resume`,
         cwd: workspaceRoot,
         env: {
           ...gatewayEnv(home, ownerGateway),
-          FX_RECORD: contenderTapePath,
-          FX_RECORD_INPUT: "1",
+          FIBER_RECORD: contenderTapePath,
+          FIBER_RECORD_INPUT: "1",
         },
         stderrPath: contenderStderrPath,
         remainOnExit: true,
@@ -4014,7 +4012,7 @@ test.skipIf(!tmuxAvailable())(
 
       writeFileSync(retryStderrPath, "");
       retry = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume`,
+        cmd: `${FIBER_BIN} --resume`,
         cwd: workspaceRoot,
         env: gatewayEnv(home, retryGateway),
         stderrPath: retryStderrPath,
@@ -4079,7 +4077,7 @@ test.skipIf(!tmuxAvailable())(
     try {
       writeFileSync(ownerStderrPath, "");
       owner = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, ownerGateway),
         stderrPath: ownerStderrPath,
@@ -4092,7 +4090,7 @@ test.skipIf(!tmuxAvailable())(
 
       writeFileSync(contenderStderrPath, "");
       contender = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, contenderGateway),
         stderrPath: contenderStderrPath,
@@ -4289,7 +4287,7 @@ test.skipIf(!tmuxAvailable())(
 
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, gateway),
         stderrPath: liveStderrPath,
@@ -4316,7 +4314,7 @@ test.skipIf(!tmuxAvailable())(
       active = null;
 
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} resume last`,
+        cmd: `${FIBER_BIN} resume last`,
         cwd: workspaceRoot,
         env: gatewayEnv(home, resumeGateway),
         stderrPath: resumeStderrPath,
@@ -4398,7 +4396,7 @@ test.skipIf(!tmuxAvailable())(
 
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -4450,7 +4448,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(home);
     mkdirSync(workspace);
     mkdirSync(binDir);
-    symlinkSync(FX_BIN, join(binDir, "fx"));
+    symlinkSync(FIBER_BIN, join(binDir, "fx"));
     writeFileSync(stderrPath, "");
     writeFileSync(resumedStderrPath, "");
     const initialGateway = startFakeGateway([fakeGatewayFinalText(marker)]);
@@ -4461,13 +4459,13 @@ test.skipIf(!tmuxAvailable())(
 
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
           ...gatewayEnv(home, initialGateway),
           PATH: path,
-          FX_RECORD: tapePath,
-          FX_THEME: "dark",
+          FIBER_RECORD: tapePath,
+          FIBER_THEME: "dark",
         },
         stderrPath,
         width: 120,
@@ -4558,12 +4556,12 @@ test.skipIf(!tmuxAvailable())(
 
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspace,
         env: {
           ...gatewayEnv(home, initialGateway),
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "input,worker,gateway,session",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "input,worker,gateway,session",
         },
         stderrPath,
         width: 120,
@@ -4630,7 +4628,7 @@ test.skipIf(!tmuxAvailable())(
     try {
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} -r`,
+        cmd: `${FIBER_BIN} -r`,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -4690,7 +4688,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(initialGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, initialGateway),
         stderrPath,
@@ -4721,7 +4719,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} -r`,
+        cmd: `${FIBER_BIN} -r`,
         cwd: workspaceRoot,
         env: gatewayEnv(home, pickerGateway),
         stderrPath,
@@ -4763,13 +4761,13 @@ test.skipIf(!tmuxAvailable())(
         gateways.push(gateway);
         writeFileSync(stderrPath, "");
         active = await TmuxSession.create({
-          cmd: `${FX_BIN} ${args.join(" ")}`,
+          cmd: `${FIBER_BIN} ${args.join(" ")}`,
           cwd: workspaceRoot,
           env: {
             ...gatewayEnv(home, gateway),
-            FX_RECORD: tapePath,
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "session",
+            FIBER_RECORD: tapePath,
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "session",
           },
           stderrPath,
           width: args[0] === `--resume-${sessionId}` ? 42 : 100,
@@ -4861,9 +4859,9 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(markdownGateway);
       writeFileSync(markdownStderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(markdownWorkspace),
-        env: { ...gatewayEnv(markdownHome, markdownGateway), FX_RECORD: markdownTapePath },
+        env: { ...gatewayEnv(markdownHome, markdownGateway), FIBER_RECORD: markdownTapePath },
         stderrPath: markdownStderrPath,
         width: 72,
         height: 32,
@@ -4905,9 +4903,9 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(resumedMarkdownGateway);
       writeFileSync(markdownStderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: realpathSync(markdownWorkspace),
-        env: { ...gatewayEnv(markdownHome, resumedMarkdownGateway), FX_RECORD: resumedMarkdownTapePath },
+        env: { ...gatewayEnv(markdownHome, resumedMarkdownGateway), FIBER_RECORD: resumedMarkdownTapePath },
         stderrPath: markdownStderrPath,
         width: 42,
         height: 32,
@@ -4965,7 +4963,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(toolGateway);
       writeFileSync(toolStderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: toolWorkspaceRoot,
         env: gatewayEnv(toolHome, toolGateway),
         stderrPath: toolStderrPath,
@@ -4996,7 +4994,7 @@ test.skipIf(!tmuxAvailable())(
         gateways.push(gateway);
         writeFileSync(toolStderrPath, "");
         active = await TmuxSession.create({
-          cmd: `${FX_BIN} ${args.join(" ")}`,
+          cmd: `${FIBER_BIN} ${args.join(" ")}`,
           cwd: toolWorkspaceRoot,
           env: gatewayEnv(toolHome, gateway),
           stderrPath: toolStderrPath,
@@ -5054,7 +5052,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(installDir);
     const workspaceRoot = realpathSync(workspace);
     const installedFx = join(installDir, "fx");
-    copyFileSync(FX_BIN, installedFx);
+    copyFileSync(FIBER_BIN, installedFx);
     chmodSync(installedFx, 0o755);
 
     let active: TmuxSession | null = null;
@@ -5073,8 +5071,7 @@ test.skipIf(!tmuxAvailable())(
         cwd: workspaceRoot,
         env: {
           ...gatewayEnv(home, gateway),
-          FX_AUTO_UPGRADE: "1",
-          FX_E2E_UPGRADE_BASE_URL: release.baseUrl,
+          FIBER_E2E_UPGRADE_BASE_URL: release.baseUrl,
         },
         stderrPath,
         width: 110,
@@ -5168,7 +5165,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(installDir);
     const workspaceRoot = realpathSync(workspace);
     const installedFx = join(installDir, "fx");
-    copyFileSync(FX_BIN, installedFx);
+    copyFileSync(FIBER_BIN, installedFx);
     chmodSync(installedFx, 0o755);
 
     let active: TmuxSession | null = null;
@@ -5185,8 +5182,7 @@ test.skipIf(!tmuxAvailable())(
         cwd: workspaceRoot,
         env: {
           ...gatewayEnv(home, gateway),
-          FX_AUTO_UPGRADE: "1",
-          FX_E2E_UPGRADE_BASE_URL: release.baseUrl,
+          FIBER_E2E_UPGRADE_BASE_URL: release.baseUrl,
         },
         stderrPath,
         width: 110,
@@ -5295,7 +5291,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(initialGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, initialGateway),
         stderrPath,
@@ -5318,7 +5314,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(flagGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: workspaceRoot,
         env: gatewayEnv(home, flagGateway),
         stderrPath,
@@ -5341,7 +5337,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, pickerGateway),
         stderrPath,
@@ -5415,9 +5411,9 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, initialGateway), FX_RECORD: initialTapePath },
+        env: { ...gatewayEnv(home, initialGateway), FIBER_RECORD: initialTapePath },
         stderrPath,
         width: 120,
         height: 32,
@@ -5461,9 +5457,9 @@ test.skipIf(!tmuxAvailable())(
       expect(eventsJsonl).not.toContain("sk-abcdefghijklmnop");
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-${sessionId}`,
+        cmd: `${FIBER_BIN} --resume-${sessionId}`,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, resumedGateway), FX_RECORD: resumedTapePath },
+        env: { ...gatewayEnv(home, resumedGateway), FIBER_RECORD: resumedTapePath },
         stderrPath,
         width: 120,
         height: 32,
@@ -5633,9 +5629,9 @@ printf '${stdoutTail2}\\n'
       gateways.push(initialGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: { ...gatewayEnv(home, initialGateway), FX_PERMISSION_MODE: "ask" },
+        env: { ...gatewayEnv(home, initialGateway), FIBER_PERMISSION_MODE: "ask" },
         stderrPath,
         width: 100,
         height: 32,
@@ -5658,7 +5654,7 @@ printf '${stdoutTail2}\\n'
       gateways.push(flagGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: workspaceRoot,
         env: gatewayEnv(home, flagGateway),
         stderrPath,
@@ -5681,7 +5677,7 @@ printf '${stdoutTail2}\\n'
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, pickerGateway),
         stderrPath,
@@ -5735,7 +5731,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(workspaceAGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceARoot,
         env: gatewayEnv(home, workspaceAGateway),
         stderrPath,
@@ -5754,7 +5750,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(workspaceBGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceBRoot,
         env: gatewayEnv(home, workspaceBGateway),
         stderrPath,
@@ -5773,7 +5769,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceARoot,
         env: gatewayEnv(home, pickerGateway),
         stderrPath,
@@ -5867,7 +5863,7 @@ test.skipIf(!tmuxAvailable())(
       for (let index = 0; index < titles.length; index += 1) {
         writeFileSync(stderrPath, "");
         active = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: workspaceRoot,
           env: gatewayEnv(home, sessionGateway),
           stderrPath,
@@ -5888,7 +5884,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, pickerGateway),
         stderrPath,
@@ -5943,11 +5939,11 @@ test.skipIf(!tmuxAvailable())(
         gateways.push(gateway);
         writeFileSync(stderrPath, "");
         active = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: workspaceRoot,
           env: {
             ...gatewayEnv(home, gateway),
-            FX_THEME: "dark",
+            FIBER_THEME: "dark",
             NO_COLOR: undefined,
           },
           stderrPath,
@@ -5968,11 +5964,11 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: {
           ...gatewayEnv(home, pickerGateway),
-          FX_THEME: "dark",
+          FIBER_THEME: "dark",
           NO_COLOR: undefined,
         },
         stderrPath,
@@ -6079,7 +6075,7 @@ test.skipIf(!tmuxAvailable())(
         gateways.push(gateway);
         writeFileSync(stderrPath, "");
         active = await TmuxSession.create({
-          cmd: FX_BIN,
+          cmd: FIBER_BIN,
           cwd: workspaceRoot,
           env: gatewayEnv(home, gateway),
           stderrPath,
@@ -6100,7 +6096,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(gateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, gateway),
         stderrPath,
@@ -6208,11 +6204,11 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(initialGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: {
           ...gatewayEnv(home, initialGateway),
-          FX_RECORD: initialTapePath,
+          FIBER_RECORD: initialTapePath,
         },
         stderrPath,
         width: 80,
@@ -6235,11 +6231,11 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(resumedGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} resume ${sessionId}`,
+        cmd: `${FIBER_BIN} resume ${sessionId}`,
         cwd: workspaceRoot,
         env: {
           ...gatewayEnv(home, resumedGateway),
-          FX_RECORD: tapePath,
+          FIBER_RECORD: tapePath,
         },
         stderrPath,
         width: 80,
@@ -6287,7 +6283,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(savedGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, savedGateway),
         stderrPath,
@@ -6305,7 +6301,7 @@ test.skipIf(!tmuxAvailable())(
       gateways.push(heldGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: gatewayEnv(home, heldGateway),
         stderrPath,
@@ -6394,12 +6390,12 @@ while :; do sleep 1; done
     let passed = false;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
           ...gatewayEnv(home, initialGateway),
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "session,agent,tool,worker,interrupt,command_output,transcript",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "session,agent,tool,worker,interrupt,command_output,transcript",
         },
         stderrPath: initialStderrPath,
         width: 120,
@@ -6458,7 +6454,7 @@ while :; do sleep 1; done
       expect(readFileSync(initialStderrPath, "utf8")).toBe("");
 
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} resume last`,
+        cmd: `${FIBER_BIN} resume last`,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, resumedGateway),
         stderrPath: resumedStderrPath,
@@ -6546,12 +6542,12 @@ test.skipIf(!tmuxAvailable())(
     let passed = false;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
           ...gatewayEnv(home, initialGateway),
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "session,agent,tool,worker,interrupt,command_output,transcript",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "session,agent,tool,worker,interrupt,command_output,transcript",
         },
         stderrPath: initialStderrPath,
         width: 100,
@@ -6579,7 +6575,7 @@ test.skipIf(!tmuxAvailable())(
       expect(readFileSync(initialStderrPath, "utf8")).toBe("");
 
       active = await TmuxSession.create({
-        cmd: `${FX_BIN} resume last`,
+        cmd: `${FIBER_BIN} resume last`,
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, resumedGateway),
         stderrPath: resumedStderrPath,

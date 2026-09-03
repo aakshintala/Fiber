@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { FX_BIN, REPO_ROOT, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, REPO_ROOT, runFx } from "../evals/eval-helpers";
 import { expectPermissionModeContext } from "./permission-mode-context";
 import {
   canonicalSubagentIdForStore,
@@ -56,9 +56,9 @@ function acpStdioServer(
     command: process.execPath,
     args: [MCP_STDIO_FIXTURE],
     env: [
-      { name: "FX_MCP_RESULT_TEXT", value: resultText },
-      { name: "FX_MCP_PID_PATH", value: pidPath },
-      { name: "FX_MCP_MODE", value: mode },
+      { name: "FIBER_MCP_RESULT_TEXT", value: resultText },
+      { name: "FIBER_MCP_PID_PATH", value: pidPath },
+      { name: "FIBER_MCP_MODE", value: mode },
       ...Object.entries(extraEnv).map(([name, value]) => ({ name, value })),
     ],
   };
@@ -355,10 +355,9 @@ function fakeGatewayEnv(
     HOME: root.home,
     AI_GATEWAY_API_KEY: undefined,
     VERCEL_OIDC_TOKEN: undefined,
-    FX_E2E_OPENAI_CODEX_RESPONSES_URL: gateway.chatUrl,
-    FX_E2E_OPENAI_CODEX_MODELS_URL: `${gateway.baseUrl}/models`,
-    FX_E2E_CHATGPT_TOKEN_URL: `${gateway.baseUrl}/token`,
-    FX_AUTO_UPGRADE: "0",
+    FIBER_E2E_OPENAI_CODEX_RESPONSES_URL: gateway.chatUrl,
+    FIBER_E2E_OPENAI_CODEX_MODELS_URL: `${gateway.baseUrl}/models`,
+    FIBER_E2E_CHATGPT_TOKEN_URL: `${gateway.baseUrl}/token`,
   };
 }
 
@@ -715,7 +714,7 @@ class AcpClient {
         inheritedEnv[key] = value;
       }
     }
-    const proc = nodeSpawn(FX_BIN, args, {
+    const proc = nodeSpawn(FIBER_BIN, args, {
       env: {
         ...inheritedEnv,
         NO_COLOR: "1",
@@ -1003,9 +1002,9 @@ function createPromptTerminalBoundary(root: string) {
     reapReady,
     release,
     env: {
-      FX_E2E_ACP_PROMPT_TERMINAL_READY: terminalReady,
-      FX_E2E_ACP_PROMPT_REAP_READY: reapReady,
-      FX_E2E_ACP_PROMPT_RELEASE: release,
+      FIBER_E2E_ACP_PROMPT_TERMINAL_READY: terminalReady,
+      FIBER_E2E_ACP_PROMPT_REAP_READY: reapReady,
+      FIBER_E2E_ACP_PROMPT_RELEASE: release,
     },
   };
 }
@@ -1192,9 +1191,9 @@ describe("acp: model-independent", () => {
               type: "local",
               command: [process.execPath, MCP_STDIO_FIXTURE],
               environment: {
-                FX_MCP_MODE: "features",
-                FX_MCP_PID_PATH: profilePidPath,
-                FX_MCP_WIRE_LOG: profileWireLogPath,
+                FIBER_MCP_MODE: "features",
+                FIBER_MCP_PID_PATH: profilePidPath,
+                FIBER_MCP_WIRE_LOG: profileWireLogPath,
               },
             },
           },
@@ -1254,7 +1253,7 @@ describe("acp: model-independent", () => {
               "UNUSED",
               pidPath,
               "features",
-              { FX_MCP_WIRE_LOG: wireLogPath },
+              { FIBER_MCP_WIRE_LOG: wireLogPath },
             )],
           },
           2,
@@ -1637,7 +1636,7 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway),
-            FX_TERMINAL_HOST_IDLE_MS: "200",
+            FIBER_TERMINAL_HOST_IDLE_MS: "200",
           },
         });
         client.setPermissionOption("allow_once");
@@ -2102,9 +2101,9 @@ describe("acp: model-independent", () => {
               command: "${ACP_PROJECT_COMMAND}",
               args: ["${ACP_PROJECT_FIXTURE}"],
               env: {
-                FX_MCP_RESULT_TEXT: "${ACP_PROJECT_RESULT:-ACP_PROJECT_MCP_RESULT}",
-                FX_MCP_PID_PATH: "${ACP_PROJECT_PID}",
-                FX_MCP_WIRE_LOG: "${ACP_PROJECT_WIRE}",
+                FIBER_MCP_RESULT_TEXT: "${ACP_PROJECT_RESULT:-ACP_PROJECT_MCP_RESULT}",
+                FIBER_MCP_PID_PATH: "${ACP_PROJECT_PID}",
+                FIBER_MCP_WIRE_LOG: "${ACP_PROJECT_WIRE}",
               },
             },
           },
@@ -2194,7 +2193,7 @@ describe("acp: model-independent", () => {
             fixture: {
               command: process.execPath,
               args: [MCP_STDIO_FIXTURE],
-              env: { FX_MCP_PID_PATH: projectPid },
+              env: { FIBER_MCP_PID_PATH: projectPid },
             },
           },
         }),
@@ -2262,7 +2261,7 @@ describe("acp: model-independent", () => {
             fixture: {
               command: process.execPath,
               args: [MCP_STDIO_FIXTURE],
-              env: { FX_MCP_PID_PATH: pidPath },
+              env: { FIBER_MCP_PID_PATH: pidPath },
             },
             unavailable: {
               type: "http",
@@ -2321,9 +2320,9 @@ describe("acp: model-independent", () => {
               command: process.execPath,
               args: [MCP_STDIO_FIXTURE],
               env: {
-                FX_MCP_PID_PATH: pidPath,
-                FX_MCP_WIRE_LOG: wirePath,
-                FX_MCP_MODE: "stall_operation",
+                FIBER_MCP_PID_PATH: pidPath,
+                FIBER_MCP_WIRE_LOG: wirePath,
+                FIBER_MCP_MODE: "stall_operation",
               },
             },
           },
@@ -2415,7 +2414,7 @@ describe("acp: model-independent", () => {
             fixture: {
               command: process.execPath,
               args: [MCP_STDIO_FIXTURE],
-              env: { FX_MCP_PID_PATH: pidPath },
+              env: { FIBER_MCP_PID_PATH: pidPath },
             },
           },
         }),
@@ -3297,7 +3296,7 @@ describe("acp: model-independent", () => {
               "unused",
               pidPath,
               "mrtr_url_required",
-              { FX_MCP_EXPECT_ELICITATION: "form" },
+              { FIBER_MCP_EXPECT_ELICITATION: "form" },
             )],
           },
           2,
@@ -3394,8 +3393,8 @@ describe("acp: model-independent", () => {
                 pidPath,
                 "mrtr_input_required",
                 {
-                  FX_MCP_WIRE_LOG: wirePath,
-                  FX_MCP_EXPECT_ELICITATION: testCase.supportsForm ? "both" : "none",
+                  FIBER_MCP_WIRE_LOG: wirePath,
+                  FIBER_MCP_EXPECT_ELICITATION: testCase.supportsForm ? "both" : "none",
                 },
               )],
             },
@@ -3470,8 +3469,8 @@ describe("acp: model-independent", () => {
               pidPath,
               "mrtr_input_required",
               {
-                FX_MCP_WIRE_LOG: wirePath,
-                FX_MCP_EXPECT_ELICITATION: "form",
+                FIBER_MCP_WIRE_LOG: wirePath,
+                FIBER_MCP_EXPECT_ELICITATION: "form",
               },
             )],
           },
@@ -3578,7 +3577,7 @@ describe("acp: model-independent", () => {
               "unused",
               pidPath,
               "mrtr_input_required",
-              { FX_MCP_EXPECT_ELICITATION: "form" },
+              { FIBER_MCP_EXPECT_ELICITATION: "form" },
             )],
           },
           2,
@@ -3631,8 +3630,8 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "mcp",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "mcp",
           },
         });
         await client.request(
@@ -3652,8 +3651,8 @@ describe("acp: model-independent", () => {
               pidPath,
               "mrtr_secret_required",
               {
-                FX_MCP_WIRE_LOG: wirePath,
-                FX_MCP_EXPECT_ELICITATION: "form",
+                FIBER_MCP_WIRE_LOG: wirePath,
+                FIBER_MCP_EXPECT_ELICITATION: "form",
               },
             )],
           },
@@ -3735,9 +3734,9 @@ describe("acp: model-independent", () => {
               pidPath,
               "mrtr_url_required",
               {
-                FX_MCP_WIRE_LOG: wirePath,
-                FX_MCP_EXPECT_ELICITATION: "url",
-                FX_MCP_ELICITATION_URL: targetUrl,
+                FIBER_MCP_WIRE_LOG: wirePath,
+                FIBER_MCP_EXPECT_ELICITATION: "url",
+                FIBER_MCP_ELICITATION_URL: targetUrl,
               },
             )],
           },
@@ -4230,7 +4229,7 @@ describe("acp: model-independent", () => {
               "unused",
               pidPath,
               "mrtr_input_required",
-              { FX_MCP_EXPECT_ELICITATION: "form" },
+              { FIBER_MCP_EXPECT_ELICITATION: "form" },
             )],
           },
           2,
@@ -4386,7 +4385,7 @@ describe("acp: model-independent", () => {
             profile: {
               type: "local",
               command: [process.execPath, MCP_STDIO_FIXTURE],
-              environment: { FX_MCP_PID_PATH: profilePid },
+              environment: { FIBER_MCP_PID_PATH: profilePid },
             },
           },
         }),
@@ -4541,7 +4540,7 @@ describe("acp: model-independent", () => {
               "UNREACHABLE",
               replacementPid,
               "stall_operation",
-              { FX_MCP_WIRE_LOG: replacementWire },
+              { FIBER_MCP_WIRE_LOG: replacementWire },
             )],
           },
           2,
@@ -4585,7 +4584,7 @@ describe("acp: model-independent", () => {
               "UNREACHABLE",
               closePid,
               "stall_operation",
-              { FX_MCP_WIRE_LOG: closeWire },
+              { FIBER_MCP_WIRE_LOG: closeWire },
             )],
           },
           7,
@@ -4635,8 +4634,8 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "interrupt,mcp",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "interrupt,mcp",
           },
         });
         await client.request("initialize", { protocolVersion: 1 }, 1);
@@ -4647,7 +4646,7 @@ describe("acp: model-independent", () => {
               "UNREACHABLE",
               pidPath,
               "stall_operation",
-              { FX_MCP_WIRE_LOG: wirePath },
+              { FIBER_MCP_WIRE_LOG: wirePath },
             )],
           },
           2,
@@ -5073,9 +5072,9 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway),
-            FX_E2E_OPENAI_CODEX_RESPONSES_URL: codex.responsesUrl,
-            FX_E2E_OPENAI_CODEX_MODELS_URL: codex.modelsUrl,
-            FX_E2E_CHATGPT_TOKEN_URL: codex.tokenUrl,
+            FIBER_E2E_OPENAI_CODEX_RESPONSES_URL: codex.responsesUrl,
+            FIBER_E2E_OPENAI_CODEX_MODELS_URL: codex.modelsUrl,
+            FIBER_E2E_CHATGPT_TOKEN_URL: codex.tokenUrl,
           },
         });
         const initialized = await client.request(
@@ -5273,7 +5272,7 @@ describe("acp: model-independent", () => {
         const acceptedPrompt =
           `Use only the write_file tool to overwrite ${acceptedTarget}.`;
         const acceptedGateway = startFakeGateway([
-          fileToolCall("write_external_accepted", acceptedTarget, "FX_ACP_AUTO_ACCEPTED"),
+          fileToolCall("write_external_accepted", acceptedTarget, "FIBER_ACP_AUTO_ACCEPTED"),
           finalText("ACP external write accepted"),
         ]);
         try {
@@ -5284,7 +5283,7 @@ describe("acp: model-independent", () => {
               ...fakeGatewayEnv(acceptedRoot, acceptedGateway),
               AI_GATEWAY_API_KEY: undefined,
               VERCEL_OIDC_TOKEN: undefined,
-              FX_DISABLE_KEYCHAIN: "1",
+              FIBER_DISABLE_KEYCHAIN: "1",
             },
           });
           await startCodeSession(client);
@@ -5293,7 +5292,7 @@ describe("acp: model-independent", () => {
           expect(JSON.stringify(accepted.messages)).not.toContain(
             "Auto agent approved this request: Writing file.",
           );
-          expect(readFileSync(acceptedTarget, "utf-8")).toBe("FX_ACP_AUTO_ACCEPTED");
+          expect(readFileSync(acceptedTarget, "utf-8")).toBe("FIBER_ACP_AUTO_ACCEPTED");
           expect(acceptedGateway.classifierRequests).toHaveLength(1);
           expect(acceptedGateway.classifierRequests[0]!.headers.get("authorization")).toBe(
             `Bearer ${acpChatGptAccessToken()}`,
@@ -5308,7 +5307,7 @@ describe("acp: model-independent", () => {
             "action: prepared_file_mutation",
           );
           expect(acceptedGateway.classifierRequests[0]!.body).toContain(
-            "FX_ACP_AUTO_ACCEPTED",
+            "FIBER_ACP_AUTO_ACCEPTED",
           );
         } finally {
           acceptedGateway.stop();
@@ -5320,7 +5319,7 @@ describe("acp: model-independent", () => {
         const blockedPrompt =
           `Use only the write_file tool to overwrite ${blockedTarget}.`;
         const blockedGateway = startFakeGateway([
-          fileToolCall("write_external_blocked", blockedTarget, "FX_ACP_AUTO_BLOCKED"),
+          fileToolCall("write_external_blocked", blockedTarget, "FIBER_ACP_AUTO_BLOCKED"),
           finalText("ACP external write blocked"),
         ], { classifierDecision: "caution" });
         try {
@@ -6201,7 +6200,7 @@ describe("acp: model-independent", () => {
           env: {
             HOME: root.home,
             VERCEL_OIDC_TOKEN: "",
-            FX_DISABLE_KEYCHAIN: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
           },
         });
         const resp = await client.request("initialize", { protocolVersion: 1 }, 1) as any;
@@ -6313,7 +6312,7 @@ describe("acp: model-independent", () => {
           env: {
             HOME: realpathSync(home),
             VERCEL_OIDC_TOKEN: "",
-            FX_E2E_FAIL_ON_DURABLE_MUTATION: "1",
+            FIBER_E2E_FAIL_ON_DURABLE_MUTATION: "1",
           },
         });
         expect((await client.request("initialize", { protocolVersion: 1 }, 1) as any).result).toBeDefined();
@@ -6651,7 +6650,7 @@ describe("acp: model-independent", () => {
           env: {
             HOME: realpathSync(home),
             VERCEL_OIDC_TOKEN: "",
-            FX_E2E_FAIL_ON_DURABLE_MUTATION: "1",
+            FIBER_E2E_FAIL_ON_DURABLE_MUTATION: "1",
           },
         });
         expect((await client.request("initialize", { protocolVersion: 1 }, 1) as any).result).toBeDefined();
@@ -7268,8 +7267,8 @@ describe("acp: model-independent", () => {
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "skill,skills,acp,config",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "skill,skills,acp,config",
           },
         });
         await startCodeSession(client);
@@ -8031,7 +8030,7 @@ describe("acp: model catalog authentication", () => {
         client = await AcpClient.create({
           args: ["acp", "--model", "gpt-5.4"],
           cwd: root.workspace,
-          env: { ...fakeGatewayEnv(root, gateway), FX_MODEL: undefined },
+          env: { ...fakeGatewayEnv(root, gateway), FIBER_MODEL: undefined },
         });
         await client.request("initialize", { protocolVersion: 1 }, 1);
         const resp = await client.request("session/new", { mcpServers: [] }, 2) as any;
@@ -8260,9 +8259,9 @@ describe("acp: model-backed protocol", () => {
           cwd: root.workspace,
           env: {
             ...fakeGatewayEnv(root, gateway),
-            FX_E2E_OPENAI_CODEX_RESPONSES_URL: codex.responsesUrl,
-            FX_E2E_OPENAI_CODEX_MODELS_URL: codex.modelsUrl,
-            FX_E2E_CHATGPT_TOKEN_URL: codex.tokenUrl,
+            FIBER_E2E_OPENAI_CODEX_RESPONSES_URL: codex.responsesUrl,
+            FIBER_E2E_OPENAI_CODEX_MODELS_URL: codex.modelsUrl,
+            FIBER_E2E_CHATGPT_TOKEN_URL: codex.tokenUrl,
           },
         });
         await client.request("initialize", { protocolVersion: 1 }, 1);

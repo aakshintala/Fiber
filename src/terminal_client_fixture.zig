@@ -74,7 +74,7 @@ fn mainInner(
             .delegate = shell_process_provider.provider,
         };
         const provider = if (io_mod.getenv(
-            "FX_TERMINAL_FIXTURE_FAIL_PROCESS_TOKEN",
+            "FIBER_TERMINAL_FIXTURE_FAIL_PROCESS_TOKEN",
         ) != null)
             failure_provider.provider()
         else
@@ -147,7 +147,7 @@ fn runFixture(
     alloc: Allocator,
     process_provider_value: process_provider_mod.Provider,
 ) !void {
-    if (io_mod.getenv("FX_TERMINAL_CAPABILITY_FIXTURE")) |mode| {
+    if (io_mod.getenv("FIBER_TERMINAL_CAPABILITY_FIXTURE")) |mode| {
         if (std.mem.eql(u8, mode, "start")) {
             return runCapabilityStartFixture(alloc, process_provider_value);
         }
@@ -156,7 +156,7 @@ fn runFixture(
         }
         return error.InvalidTerminalCapabilityFixtureMode;
     }
-    if (io_mod.getenv("FX_TERMINAL_OUTCOME_FIXTURE")) |mode| {
+    if (io_mod.getenv("FIBER_TERMINAL_OUTCOME_FIXTURE")) |mode| {
         if (std.mem.eql(u8, mode, "retention")) {
             return runOutcomeRetentionFixture(alloc, process_provider_value);
         }
@@ -165,7 +165,7 @@ fn runFixture(
         }
         return error.InvalidTerminalOutcomeFixtureMode;
     }
-    if (io_mod.getenv("FX_TERMINAL_AUTHORITY_FIXTURE")) |mode| {
+    if (io_mod.getenv("FIBER_TERMINAL_AUTHORITY_FIXTURE")) |mode| {
         if (std.mem.eql(u8, mode, "start")) {
             return runAuthorityStartFixture(alloc, process_provider_value);
         }
@@ -208,7 +208,7 @@ fn runCapabilityForceCloseFixture(
 ) !void {
     const home = io_mod.getenv("HOME") orelse return error.HomeNotSet;
     const terminal_session_id = io_mod.getenv(
-        "FX_TERMINAL_AUTHORITY_SESSION_ID",
+        "FIBER_TERMINAL_AUTHORITY_SESSION_ID",
     ) orelse return error.TerminalAuthorityFixtureSessionMissing;
     var owner = try openFixtureOwnerCapability(alloc, home);
     defer owner.deinit();
@@ -262,7 +262,7 @@ fn fixturePrincipal(home: []const u8) contracts.Principal {
 
 fn authorityFixturePrincipal(home: []const u8) contracts.Principal {
     var principal = fixturePrincipal(home);
-    if (io_mod.getenv("FX_TERMINAL_AUTHORITY_FIXTURE_COMPAT")) |value| {
+    if (io_mod.getenv("FIBER_TERMINAL_AUTHORITY_FIXTURE_COMPAT")) |value| {
         if (std.mem.eql(u8, value, "1")) {
             principal.profile_user = protocol_fixture_profile_user;
         }
@@ -311,7 +311,7 @@ fn runAuthorityReloadFixture(
 ) !void {
     const home = io_mod.getenv("HOME") orelse return error.HomeNotSet;
     const terminal_session_id = io_mod.getenv(
-        "FX_TERMINAL_AUTHORITY_SESSION_ID",
+        "FIBER_TERMINAL_AUTHORITY_SESSION_ID",
     ) orelse return error.TerminalAuthorityFixtureSessionMissing;
     var owner = try openFixtureOwnerCapability(alloc, home);
     defer owner.deinit();
@@ -445,7 +445,7 @@ fn runOutcomeFailureFixture(
     alloc: Allocator,
     process_provider: process_provider_mod.Provider,
 ) !void {
-    const point = io_mod.getenv("FX_TERMINAL_TEST_HOST_FAILURE_POINT") orelse
+    const point = io_mod.getenv("FIBER_TERMINAL_TEST_HOST_FAILURE_POINT") orelse
         return error.TerminalOutcomeFixtureFailurePointMissing;
     const ordered = std.mem.eql(u8, point, "task_allocation") or
         std.mem.eql(u8, point, "worker_start");

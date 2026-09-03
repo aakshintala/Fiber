@@ -38,7 +38,7 @@ const REFRESH_INITIAL = "mcp-refresh-initial-secret";
 const REFRESH_ROTATED = "mcp-refresh-rotated-secret";
 const REPO_ROOT = realpathSync(join(import.meta.dirname, "..", ".."));
 const MCP_KEYCHAIN_SERVICE = "FX_MCP_OAUTH_CREDENTIALS_V1";
-const inheritedKeychainDisable = process.env.FX_DISABLE_KEYCHAIN;
+const inheritedKeychainDisable = process.env.FIBER_DISABLE_KEYCHAIN;
 const MCP_KEYCHAIN_PROBE_SCRIPT = `
 ObjC.import("Security");
 ObjC.import("Foundation");
@@ -112,14 +112,14 @@ function runMcpKeychainProbe(
 }
 
 beforeAll(() => {
-  process.env.FX_DISABLE_KEYCHAIN = "1";
+  process.env.FIBER_DISABLE_KEYCHAIN = "1";
 });
 
 afterAll(() => {
   if (inheritedKeychainDisable === undefined) {
-    delete process.env.FX_DISABLE_KEYCHAIN;
+    delete process.env.FIBER_DISABLE_KEYCHAIN;
   } else {
-    process.env.FX_DISABLE_KEYCHAIN = inheritedKeychainDisable;
+    process.env.FIBER_DISABLE_KEYCHAIN = inheritedKeychainDisable;
   }
 });
 
@@ -642,11 +642,10 @@ function baseEnv(root: ReturnType<typeof createRoot>) {
     PATH: `${root.bin}${delimiter}${process.env.PATH ?? ""}`,
     AI_GATEWAY_API_KEY: "fake-mcp-auth-key",
     VERCEL_OIDC_TOKEN: undefined,
-    FX_AUTO_UPGRADE: "0",
-    FX_PERMISSION_MODE: "auto",
-    FX_MODEL: MODEL,
-    FX_TRACE_LOG: root.trace,
-    FX_TRACE_SCOPES: "mcp,core",
+    FIBER_PERMISSION_MODE: "auto",
+    FIBER_MODEL: MODEL,
+    FIBER_TRACE_LOG: root.trace,
+    FIBER_TRACE_SCOPES: "mcp,core",
   };
 }
 
@@ -1082,7 +1081,7 @@ describe("MCP remote authentication lifecycle", () => {
       const env = {
         ...baseEnv(root),
         AI_GATEWAY_API_KEY: undefined,
-        FX_DISABLE_KEYCHAIN: undefined,
+        FIBER_DISABLE_KEYCHAIN: undefined,
       };
 
       const authenticated = await runFx(["mcp", "auth", "fixture"], {
@@ -1401,7 +1400,7 @@ describe("MCP remote authentication lifecycle", () => {
           ...baseEnv(root),
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_MCP_AUTH_AUTOMATE: "1",
+          FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
         },
         timeoutMs: 25_000,
       },
@@ -1750,7 +1749,7 @@ describe("MCP remote authentication lifecycle", () => {
           cwd: root.workspace,
           env: {
             ...baseEnv(root),
-            FX_E2E_MCP_AUTH_AUTOMATE: "1",
+            FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
             FX_GATEWAY_BASE_URL: gateway.baseUrl,
             FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           },
@@ -1798,7 +1797,7 @@ describe("MCP remote authentication lifecycle", () => {
         cwd: root.workspace,
         env: {
           ...baseEnv(root),
-          FX_E2E_MCP_AUTH_AUTOMATE: "1",
+          FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
           FX_GATEWAY_BASE_URL: gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: gateway.chatUrl,
         },
@@ -2037,7 +2036,7 @@ describe("MCP remote authentication lifecycle", () => {
       const keychainEnv = {
         ...baseEnv(root),
         USER: account,
-        FX_DISABLE_KEYCHAIN: undefined,
+        FIBER_DISABLE_KEYCHAIN: undefined,
       };
 
       try {
@@ -2682,7 +2681,7 @@ describe("MCP remote authentication lifecycle", () => {
             env: {
               ...process.env,
               ...baseEnv(root),
-              FX_E2E_MCP_AUTH_AUTOMATE: "1",
+              FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
             },
             stdout: "pipe",
             stderr: "pipe",
@@ -2728,7 +2727,7 @@ describe("MCP remote authentication lifecycle", () => {
           ).toHaveLength(0);
         }
 
-        const evidenceDir = process.env.FX_S11_EVIDENCE_DIR;
+        const evidenceDir = process.env.FIBER_S11_EVIDENCE_DIR;
         if (evidenceDir) {
           mkdirSync(evidenceDir, { recursive: true });
           writeFileSync(
@@ -2776,7 +2775,7 @@ describe("MCP remote authentication lifecycle", () => {
             ...baseEnv(root),
             FX_GATEWAY_BASE_URL: gateway.baseUrl,
             FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_E2E_MCP_AUTH_AUTOMATE: "1",
+            FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
           },
           timeoutMs: 20_000,
         },

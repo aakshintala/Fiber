@@ -408,10 +408,10 @@ fn appendLineToFile(zio: std.Io, path: []const u8, line: []const u8) void {
 }
 
 fn loadOptionsFromEnv(alloc: Allocator, workspace_root: []const u8) !Options {
-    const trace_log = loadOptionalEnv("FX_TRACE_LOG");
-    const trace_flag = loadOptionalEnv("FX_TRACE");
-    const trace_stderr = loadOptionalEnv("FX_TRACE_STDERR");
-    const trace_scopes = loadOptionalEnv("FX_TRACE_SCOPES");
+    const trace_log = loadOptionalEnv("FIBER_TRACE_LOG");
+    const trace_flag = loadOptionalEnv("FIBER_TRACE");
+    const trace_stderr = loadOptionalEnv("FIBER_TRACE_STDERR");
+    const trace_scopes = loadOptionalEnv("FIBER_TRACE_SCOPES");
     const stderr_enabled = isTruthy(trace_stderr);
 
     if (trace_log) |raw_path| {
@@ -605,13 +605,13 @@ test "redactedJsonPreview reports shape without values" {
 
 test "keylessJsonPreview reports shape without keys or values" {
     const alloc = std.testing.allocator;
-    const preview_text = try keylessJsonPreview(alloc, "{\"FX_DYNAMIC_PATH\":\"secret.txt\",\"FX_DYNAMIC_CONTENT\":\"very secret\",\"nested\":{\"FX_DYNAMIC_TOKEN\":\"abc\"}}");
+    const preview_text = try keylessJsonPreview(alloc, "{\"FIBER_DYNAMIC_PATH\":\"secret.txt\",\"FIBER_DYNAMIC_CONTENT\":\"very secret\",\"nested\":{\"FIBER_DYNAMIC_TOKEN\":\"abc\"}}");
     defer alloc.free(preview_text);
 
     try std.testing.expect(std.mem.find(u8, preview_text, "<object_fields=3 values=[") != null);
-    try std.testing.expect(std.mem.find(u8, preview_text, "FX_DYNAMIC_PATH") == null);
-    try std.testing.expect(std.mem.find(u8, preview_text, "FX_DYNAMIC_CONTENT") == null);
-    try std.testing.expect(std.mem.find(u8, preview_text, "FX_DYNAMIC_TOKEN") == null);
+    try std.testing.expect(std.mem.find(u8, preview_text, "FIBER_DYNAMIC_PATH") == null);
+    try std.testing.expect(std.mem.find(u8, preview_text, "FIBER_DYNAMIC_CONTENT") == null);
+    try std.testing.expect(std.mem.find(u8, preview_text, "FIBER_DYNAMIC_TOKEN") == null);
     try std.testing.expect(std.mem.find(u8, preview_text, "secret.txt") == null);
     try std.testing.expect(std.mem.find(u8, preview_text, "very secret") == null);
     try std.testing.expect(std.mem.find(u8, preview_text, "abc") == null);
@@ -721,9 +721,9 @@ test "shutdown clears state and allows reconfigure" {
 test "configureFromEnv leaves tracing disabled without env" {
     resetForTest();
     defer resetForTest();
-    try std.testing.expect(io_mod.getenv("FX_TRACE_LOG") == null);
-    try std.testing.expect(io_mod.getenv("FX_TRACE") == null);
-    try std.testing.expect(io_mod.getenv("FX_TRACE_STDERR") == null);
+    try std.testing.expect(io_mod.getenv("FIBER_TRACE_LOG") == null);
+    try std.testing.expect(io_mod.getenv("FIBER_TRACE") == null);
+    try std.testing.expect(io_mod.getenv("FIBER_TRACE_STDERR") == null);
     configureFromEnv(std.testing.allocator, "/tmp/workspace");
     try std.testing.expect(!isEnabled());
 }

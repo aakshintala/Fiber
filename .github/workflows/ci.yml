@@ -132,7 +132,7 @@ jobs:
         run: npm test
         working-directory: tests/e2e/conformance
         env:
-          FX_SOUND: "0"
+          FIBER_SOUND: "0"
 
       - name: Run persistence tests
         run: bun test config-persistence.test.ts session-recovery.test.ts prompt-history.test.ts
@@ -146,7 +146,7 @@ jobs:
         run: bun test auto-mode-reliability.test.ts
         working-directory: tests/e2e
         env:
-          FX_REQUIRE_TMUX: "1"
+          FIBER_REQUIRE_TMUX: "1"
 
       - name: Run Vision route and headless SIGINT regressions
         run: |
@@ -160,7 +160,7 @@ jobs:
           bun test tui-input-line-delete.test.ts
         working-directory: tests/e2e
         env:
-          FX_REQUIRE_TMUX: "1"
+          FIBER_REQUIRE_TMUX: "1"
 
       - name: Run multiline input navigation TUI tests
         run: |
@@ -168,7 +168,7 @@ jobs:
           bun test tui-input-navigation.test.ts
         working-directory: tests/e2e
         env:
-          FX_REQUIRE_TMUX: "1"
+          FIBER_REQUIRE_TMUX: "1"
 
       - name: Run valid question recovery TUI regression
         run: |
@@ -176,7 +176,7 @@ jobs:
           bun test ./tui-decision-prompts.test.ts --test-name-pattern "valid serialized ask control with matching identity opens the question and continues"
         working-directory: tests/e2e
         env:
-          FX_REQUIRE_TMUX: "1"
+          FIBER_REQUIRE_TMUX: "1"
 
       - name: Run streamed lifecycle, direct-write, and command scrollback regressions
         run: |
@@ -185,7 +185,7 @@ jobs:
           bun test ./tui-command-permissions.test.ts --test-name-pattern "TUI preserves completed transcript when a later auto-approved command starts|TUI isolates approved foreground commands from terminal ownership"
         working-directory: tests/e2e
         env:
-          FX_REQUIRE_TMUX: "1"
+          FIBER_REQUIRE_TMUX: "1"
 
   e2e:
     name: E2E (deterministic)

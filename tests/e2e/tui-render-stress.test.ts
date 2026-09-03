@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   assertPaneContains,
   assertSingleFooter,
@@ -56,14 +56,14 @@ async function launch(
   const tracePath = join(workDir, "trace.log");
 
   const s = await TmuxSession.create({
-    cmd: `env -u AI_GATEWAY_API_KEY -u VERCEL_OIDC_TOKEN FX_DISABLE_KEYCHAIN=1 FX_SKIP_ONBOARDING=1 ${FX_BIN}`,
+    cmd: `env -u AI_GATEWAY_API_KEY -u VERCEL_OIDC_TOKEN FIBER_DISABLE_KEYCHAIN=1 FIBER_SKIP_ONBOARDING=1 ${FIBER_BIN}`,
     cwd: workDir,
     width,
     height,
     env: {
       HOME: home,
-      FX_TRACE_LOG: tracePath,
-      FX_TRACE_SCOPES: TRACE_SCOPES,
+      FIBER_TRACE_LOG: tracePath,
+      FIBER_TRACE_SCOPES: TRACE_SCOPES,
     },
   });
   await s.waitForComposer(10_000);

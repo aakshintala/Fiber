@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   composerContains,
   FAKE_GATEWAY_MODEL,
@@ -107,7 +107,7 @@ async function startFx(
   }
 
   session = await TmuxSession.create({
-    cmd: FX_BIN,
+    cmd: FIBER_BIN,
     cwd: workspace,
     env: {
       HOME: home,
@@ -115,13 +115,12 @@ async function startFx(
       VERCEL_OIDC_TOKEN: undefined,
       FX_GATEWAY_BASE_URL: gateway?.baseUrl,
       FX_GATEWAY_CHAT_URL: gateway?.chatUrl,
-      FX_E2E_GATEWAY_MODELS_URL: gateway
+      FIBER_E2E_GATEWAY_MODELS_URL: gateway
         ? `${gateway.baseUrl}/coding-agent/v1/models`
         : undefined,
-      FX_MODEL: withGateway ? FAKE_GATEWAY_MODEL : undefined,
-      FX_AUTO_UPGRADE: "0",
-      FX_TRACE_LOG: tracePath,
-      FX_TRACE_SCOPES: traceScopes,
+      FIBER_MODEL: withGateway ? FAKE_GATEWAY_MODEL : undefined,
+      FIBER_TRACE_LOG: tracePath,
+      FIBER_TRACE_SCOPES: traceScopes,
     },
     width: 112,
     height: 32,

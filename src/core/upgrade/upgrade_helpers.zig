@@ -19,7 +19,7 @@ fn setRecvTimeout(conn: *std.http.Client.Connection) void {
 }
 
 pub fn resolveCdnBase() ?[]const u8 {
-    if (io_mod.getenv("FX_E2E_UPGRADE_BASE_URL")) |url| {
+    if (io_mod.getenv("FIBER_E2E_UPGRADE_BASE_URL")) |url| {
         if (isLoopbackE2eUpgradeBase(url)) return url;
     }
     return null;

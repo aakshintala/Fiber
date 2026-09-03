@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   analyzeRun,
   readQuiescence,
@@ -38,10 +38,10 @@ test("render-lab lists gated Plan B native scenarios", () => {
   expect(output).toContain("native-terminal-app-relaunch");
   expect(output).toContain("native-terminal-app-command-k");
   expect(output).toContain("native-warp-relaunch");
-  expect(output).toContain("FX_RENDER_LAB_NATIVE=1");
+  expect(output).toContain("FIBER_RENDER_LAB_NATIVE=1");
 });
 
-test.skipIf(!existsSync(FX_BIN))("buffer-system frame benchmark writes timing artifact", () => {
+test.skipIf(!existsSync(FIBER_BIN))("buffer-system frame benchmark writes timing artifact", () => {
   outDir = mkdtempSync(join(tmpdir(), "fx-frame-bench-test-"));
   const output = execFileSync(
     "bun",
@@ -79,7 +79,7 @@ test.skipIf(!existsSync(FX_BIN))("buffer-system frame benchmark writes timing ar
   expect(benchmark.sizes[0].allocations.instrumentation).toBe("unavailable");
 });
 
-test.skipIf(!existsSync(FX_BIN))("buffer-system p95 gate rejects undersampled runs", () => {
+test.skipIf(!existsSync(FIBER_BIN))("buffer-system p95 gate rejects undersampled runs", () => {
   outDir = mkdtempSync(join(tmpdir(), "fx-frame-bench-samples-test-"));
   const result = spawnSync(
     "bun",
@@ -110,9 +110,9 @@ test.skipIf(!existsSync(FX_BIN))("buffer-system p95 gate rejects undersampled ru
 test("native render-lab scenarios require explicit opt-in", () => {
   outDir = mkdtempSync(join(tmpdir(), "fx-render-lab-gate-test-"));
   const env = { ...process.env };
-  delete env.FX_RENDER_LAB_NATIVE;
-  delete env.FX_RENDER_LAB_NATIVE_COMMAND_K;
-  delete env.FX_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD;
+  delete env.FIBER_RENDER_LAB_NATIVE;
+  delete env.FIBER_RENDER_LAB_NATIVE_COMMAND_K;
+  delete env.FIBER_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD;
 
   const result = spawnSync(
     "bun",
@@ -136,7 +136,7 @@ test("native render-lab scenarios require explicit opt-in", () => {
   );
 
   expect(result.status).not.toBe(0);
-  expect(result.stderr).toContain("FX_RENDER_LAB_NATIVE=1");
+  expect(result.stderr).toContain("FIBER_RENDER_LAB_NATIVE=1");
 });
 
 test("render-lab analyzer flags excess gap before transient activity", () => {
@@ -672,7 +672,7 @@ describe.skipIf(SKIP)("tui: render lab", () => {
 
       expect(output).toContain("same-shell-relaunch");
       expect(output).toContain("run-");
-      expect(FX_BIN).toContain("zig-out/bin/fiber");
+      expect(FIBER_BIN).toContain("zig-out/bin/fiber");
       const runDir = output.trim().split(/\s+/).at(-1)!;
       const manifest = JSON.parse(readFileSync(join(runDir, "manifest.json"), "utf8"));
       const replay = JSON.parse(readFileSync(join(runDir, "replay-summary.json"), "utf8"));
@@ -810,7 +810,7 @@ function writeAnalyzerFixture(
     timestampMs: 0,
     width: 80,
     height: grid.length,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256: "test",
     grid,
     escapes: "",
@@ -829,7 +829,7 @@ function writeAnalyzerFixture(
     completedAt: null,
     repoRoot: import.meta.dirname,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256: "test",
     traceLogPath: join(artifactDir, "trace.log"),
     tapePath: join(artifactDir, "render.fxtape"),

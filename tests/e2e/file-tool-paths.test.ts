@@ -26,7 +26,7 @@ const REMOVED_FILESYSTEM_TOOLS = [
   "open_file",
 ] as const;
 const liveTest = test.skipIf(
-  !HAS_API_KEY || process.env.FX_E2E_REAL_API !== "1",
+  !HAS_API_KEY || process.env.FIBER_E2E_REAL_API !== "1",
 );
 
 type GatewayRequest = {
@@ -238,9 +238,8 @@ function gatewayEnv(
     FX_GATEWAY_BASE_URL: gateway.baseUrl,
     FX_GATEWAY_CHAT_URL: gateway.chatUrl,
     FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-    FX_MODEL: MODEL,
-    FX_AUTO_UPGRADE: "0",
+    FIBER_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
+    FIBER_MODEL: MODEL,
     ...extra,
   };
 }
@@ -514,8 +513,8 @@ describe("filesystem path handling", () => {
     async () => {
       const root = createIsolatedRoot();
       const target = join(root.external, "live-added-root.txt");
-      const content = `FX_LIVE_ADDED_ROOT_${Date.now()}`;
-      const instructionSentinel = "FX_LIVE_ADDED_ROOT_INSTRUCTION_MUST_NOT_APPEAR";
+      const content = `FIBER_LIVE_ADDED_ROOT_${Date.now()}`;
+      const instructionSentinel = "FIBER_LIVE_ADDED_ROOT_INSTRUCTION_MUST_NOT_APPEAR";
       writeFileSync(target, content + "\n");
       writeFileSync(
         join(root.external, "AGENTS.md"),
@@ -536,10 +535,9 @@ describe("filesystem path handling", () => {
             cwd: root.workspace,
             env: {
               HOME: root.home,
-              FX_AUTO_UPGRADE: "0",
               FX_GATEWAY_BASE_URL: undefined,
               FX_GATEWAY_CHAT_URL: undefined,
-              FX_MODEL: process.env.FX_WORKSPACE_ACCESS_LIVE_MODEL ?? EVAL_MODEL,
+              FIBER_MODEL: process.env.FIBER_WORKSPACE_ACCESS_LIVE_MODEL ?? EVAL_MODEL,
             },
             timeoutMs: 120_000,
           },
@@ -852,8 +850,8 @@ describe("filesystem path handling", () => {
           {
             cwd: root.workspace,
             env: gatewayEnv(root, gateway, root.home, {
-              FX_TRACE_LOG: tracePath,
-              FX_TRACE_SCOPES: "permission",
+              FIBER_TRACE_LOG: tracePath,
+              FIBER_TRACE_SCOPES: "permission",
             }),
             timeoutMs: TIMEOUT,
           },
@@ -978,8 +976,8 @@ describe("filesystem path handling", () => {
             {
               cwd: root.workspace,
               env: gatewayEnv(root, gateway, root.home, {
-                FX_TRACE_LOG: tracePath,
-                FX_TRACE_SCOPES: "core,tool",
+                FIBER_TRACE_LOG: tracePath,
+                FIBER_TRACE_SCOPES: "core,tool",
               }),
               timeoutMs: TIMEOUT,
             },
@@ -1300,10 +1298,9 @@ describe("filesystem path handling", () => {
             cwd: root.workspace,
             env: {
               HOME: root.home,
-              FX_AUTO_UPGRADE: "0",
               FX_GATEWAY_BASE_URL: undefined,
               FX_GATEWAY_CHAT_URL: undefined,
-              FX_MODEL: process.env.FX_WORKSPACE_ACCESS_LIVE_MODEL ?? EVAL_MODEL,
+              FIBER_MODEL: process.env.FIBER_WORKSPACE_ACCESS_LIVE_MODEL ?? EVAL_MODEL,
             },
             timeoutMs: 120_000,
           },

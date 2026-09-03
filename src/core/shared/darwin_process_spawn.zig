@@ -450,10 +450,10 @@ test "Darwin spawn resolves argv through parent PATH and replaces the child envi
     var environment = std.process.Environ.Map.init(alloc);
     defer environment.deinit();
     try environment.put("PATH", "/not/a/search/path");
-    try environment.put("FX_SPAWN_CONTRACT", "child-only");
+    try environment.put("FIBER_SPAWN_CONTRACT", "child-only");
 
     const result = try std.process.run(alloc, io, .{
-        .argv = &.{ "sh", "-c", "printf '%s:%s' \"$FX_SPAWN_CONTRACT\" \"$PATH\"" },
+        .argv = &.{ "sh", "-c", "printf '%s:%s' \"$FIBER_SPAWN_CONTRACT\" \"$PATH\"" },
         .environ_map = &environment,
     });
     defer alloc.free(result.stdout);

@@ -138,7 +138,7 @@ Profile configuration and runtime state lives under `~/.fx/`. Project `.fx.json`
 
 Config precedence (highest wins):
 
-1. Environment variables such as `FX_MODEL`, `FX_PERMISSION_MODE`, and `FX_MAX_AGENT_STEPS`
+1. Environment variables such as `FIBER_MODEL`, `FIBER_PERMISSION_MODE`, and `FIBER_MAX_AGENT_STEPS`
 2. `~/.fx/settings.json` → `workspaces["<workspace_path>"]` (profile workspace overrides)
 3. `~/.fx/settings.json` top-level (profile global settings)
 4. `<workspace>/.fx.json` (committed project defaults)
@@ -313,17 +313,17 @@ cd tests/e2e && bun test tui-resize.test.ts
 
 ### Debug terminal recording and replay
 
-Set `FX_DEBUG_RECORD=1` to create an automatic private tape under
-`~/.fx/recordings/`. Set `FX_DEBUG_RECORD_SILENT_BANNER=1` as well when the
+Set `FIBER_DEBUG_RECORD=1` to create an automatic private tape under
+`~/.fx/recordings/`. Set `FIBER_DEBUG_RECORD_SILENT_BANNER=1` as well when the
 developer-only recording notice must stay out of the inline transcript during
 a screen share. The notice remains available in the Ctrl+O full transcript.
-Use `FX_RECORD=<path>` when a test or investigation needs an exact destination.
+Use `FIBER_RECORD=<path>` when a test or investigation needs an exact destination.
 Recording dumps every byte fx writes and every resize into a framed binary tape.
 Replay the tape through the built-in virtual terminal:
 
 ```bash
-FX_DEBUG_RECORD=1 ./zig-out/bin/fiber
-FX_RECORD=/tmp/bug.fxtape ./zig-out/bin/fiber
+FIBER_DEBUG_RECORD=1 ./zig-out/bin/fiber
+FIBER_RECORD=/tmp/bug.fxtape ./zig-out/bin/fiber
 ./zig-out/bin/fiber replay /tmp/bug.fxtape
 ./zig-out/bin/fiber replay /tmp/bug.fxtape --frames
 ./zig-out/bin/fiber replay /tmp/bug.fxtape --json
@@ -353,7 +353,7 @@ Startup latency benchmarks live in `benchmarks/` and run in CI via `.github/work
 
 The CI workflow builds a ReleaseSafe binary, measures six CLI paths with hyperfine, and enforces per-command latency budgets. PRs that exceed a budget fail the check. On `main`, results are uploaded to Vercel Blob for historical tracking.
 
-The startup benchmark uses `FX_BENCH=1`, an environment variable that runs through arg parsing and CLI dispatch, then exits before TTY initialization. This lives in `src/core/app/app_entry_runtime.zig`.
+The startup benchmark uses `FIBER_BENCH=1`, an environment variable that runs through arg parsing and CLI dispatch, then exits before TTY initialization. This lives in `src/core/app/app_entry_runtime.zig`.
 
 Current raw wall-clock contract:
 
@@ -424,7 +424,7 @@ Whether automated or manual, the changelog is public product copy. Describe obse
 
 Public changelog entries must:
 
-* Spell the product name `fx`. Preserve different casing only when it is part of an exact code identifier such as `FX_MODEL`.
+* Spell the product name `fx`. Preserve different casing only when it is part of an exact code identifier such as `FIBER_MODEL`.
 * Use only relevant sections from `### Breaking Changes`, `### New Features`, `### Improvements`, `### Bug Fixes`, and `### Security`. Omit empty sections.
 * Bold a short feature or fix name, then describe the user-visible change after a colon.
 * Omit pull request numbers, issue numbers, commit hashes, contributor names, and author attribution.

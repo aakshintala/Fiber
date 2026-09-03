@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, REPO_ROOT } from "../evals/eval-helpers";
+import { FIBER_BIN, REPO_ROOT } from "../evals/eval-helpers";
 import {
   AUTO_EXA_SERIALIZED_TOOL_NAMES,
   customProviderGuidanceState,
@@ -57,10 +57,10 @@ const TIMEOUT = 30_000;
 const SPLIT_BOUNDARY_WAIT_TIMEOUT = TIMEOUT * 3;
 const SPLIT_BOUNDARY_TEST_TIMEOUT = SPLIT_BOUNDARY_WAIT_TIMEOUT + 5_000;
 const CANONICAL_PRE_TOOL_TEXT =
-  "FX_MODEL_TEXT_SENTINEL before tools must remain contiguous.";
-const CANONICAL_FINAL_TEXT = "FX_FINAL_RESPONSE_SENTINEL completed.";
-const CANONICAL_READ_PATH = "alpha-FX_PATH_SENTINEL.txt";
-const CANONICAL_GREP_PATTERN = "FX_PATTERN_SENTINEL";
+  "FIBER_MODEL_TEXT_SENTINEL before tools must remain contiguous.";
+const CANONICAL_FINAL_TEXT = "FIBER_FINAL_RESPONSE_SENTINEL completed.";
+const CANONICAL_READ_PATH = "alpha-FIBER_PATH_SENTINEL.txt";
+const CANONICAL_GREP_PATTERN = "FIBER_PATTERN_SENTINEL";
 const APPROVAL_PROMPT = "Would you like to allow this action?";
 const SPLIT_NEW_USER_PROMPT = "SPLIT_NEW_USER_PROMPT";
 const SPLIT_OLD_SENTINELS = [
@@ -86,9 +86,9 @@ const CANONICAL_A_B_SSE =
   })}\n\n` +
   'data: {"type":"text-end","id":"text_before"}\n\n' +
   'data: {"type":"tool-input-start","id":"read_a","toolName":"read_file"}\n\n' +
-  'data: {"type":"tool-input-delta","id":"read_a","delta":"{\\"path\\":\\"alpha-FX_PATH_SENTINEL"}\n\n' +
+  'data: {"type":"tool-input-delta","id":"read_a","delta":"{\\"path\\":\\"alpha-FIBER_PATH_SENTINEL"}\n\n' +
   'data: {"type":"tool-input-start","id":"grep_b","toolName":"grep_files"}\n\n' +
-  'data: {"type":"tool-input-delta","id":"grep_b","delta":"{\\"pattern\\":\\"FX_PATTERN_SENTINEL\\",\\"path\\":\\""}\n\n' +
+  'data: {"type":"tool-input-delta","id":"grep_b","delta":"{\\"pattern\\":\\"FIBER_PATTERN_SENTINEL\\",\\"path\\":\\""}\n\n' +
   'data: {"type":"tool-input-delta","id":"read_a","delta":".txt\\"}"}\n\n' +
   'data: {"type":"tool-input-end","id":"read_a"}\n\n' +
   `data: ${JSON.stringify({
@@ -736,20 +736,20 @@ async function waitForScrollback(
 }
 
 function lifecycleStage(): LifecycleStage {
-  const value = process.env.FX_LIFECYCLE_STAGE ?? "corrected";
+  const value = process.env.FIBER_LIFECYCLE_STAGE ?? "corrected";
   if (
     value !== "baseline-silent" &&
     value !== "fatal-reported" &&
     value !== "correlation-corrected" &&
     value !== "corrected"
   ) {
-    throw new Error(`invalid FX_LIFECYCLE_STAGE: ${JSON.stringify(value)}`);
+    throw new Error(`invalid FIBER_LIFECYCLE_STAGE: ${JSON.stringify(value)}`);
   }
   return value;
 }
 
 function createArtifactRoot(): string {
-  const configured = process.env.FX_LIFECYCLE_ARTIFACT_DIR;
+  const configured = process.env.FIBER_LIFECYCLE_ARTIFACT_DIR;
   if (configured) {
     mkdirSync(configured, { recursive: true });
     preserveArtifacts = true;
@@ -768,15 +768,15 @@ function writeLifecycleWrapper(
 ): string {
   const wrapperPath = join(artifacts, "run-fixture.sh");
   const fxCommand = invocation === "invalid-added-root"
-    ? '"$fx_bin" --add-dir "$FX_INVALID_ADDED_ROOT"'
+    ? '"$fx_bin" --add-dir "$FIBER_INVALID_ADDED_ROOT"'
     : '"$fx_bin"';
   writeFileSync(
     wrapperPath,
     `#!/bin/sh
 set -u
 
-artifact_dir="\${FX_LIFECYCLE_ARTIFACT_DIR:?}"
-fx_bin="\${FX_TEST_BIN:?}"
+artifact_dir="\${FIBER_LIFECYCLE_ARTIFACT_DIR:?}"
+fx_bin="\${FIBER_TEST_BIN:?}"
 
 write_atomic() {
   name="$1"
@@ -894,7 +894,7 @@ function handle(message) {
   }
   if (message.method === "tools/call") {
     appendFileSync(
-      process.env.FX_MCP_CALL_STARTED,
+      process.env.FIBER_MCP_CALL_STARTED,
       JSON.stringify({
         id: message.id,
         timestamp_ms: Date.now(),
@@ -930,7 +930,7 @@ process.stdin.on("data", (chunk) => {
           command: [process.execPath, scriptPath],
           enabled: true,
           environment: {
-            FX_MCP_CALL_STARTED: callStartedPath,
+            FIBER_MCP_CALL_STARTED: callStartedPath,
           },
         },
       },
@@ -1248,16 +1248,15 @@ async function runCanonicalLifecycleFixture(
       HOME: home,
       AI_GATEWAY_API_KEY: "fake-streamed-tool-lifecycle-key",
       VERCEL_OIDC_TOKEN: undefined,
-      FX_AUTO_UPGRADE: "0",
       FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
       FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
       FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-      FX_MODEL: MODEL,
-      FX_TRACE_LOG: tracePath,
-      FX_TRACE_SCOPES: undefined,
-      FX_TRACE_STDERR: traceStderr ? "1" : undefined,
-      FX_TEST_BIN: FX_BIN,
-      FX_LIFECYCLE_ARTIFACT_DIR: artifacts,
+      FIBER_MODEL: MODEL,
+      FIBER_TRACE_LOG: tracePath,
+      FIBER_TRACE_SCOPES: undefined,
+      FIBER_TRACE_STDERR: traceStderr ? "1" : undefined,
+      FIBER_TEST_BIN: FIBER_BIN,
+      FIBER_LIFECYCLE_ARTIFACT_DIR: artifacts,
     },
   });
 
@@ -1430,13 +1429,12 @@ async function launchRouteRecoveryTui(
       HOME: home,
       AI_GATEWAY_API_KEY: "fake-route-recovery-key",
       VERCEL_OIDC_TOKEN: undefined,
-      FX_AUTO_UPGRADE: "0",
-      FX_PERMISSION_MODE: "auto",
+      FIBER_PERMISSION_MODE: "auto",
       FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
       FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
       FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-      FX_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
-      FX_MODEL: model,
+      FIBER_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
+      FIBER_MODEL: model,
     },
   });
   await session.waitForComposer(TIMEOUT);
@@ -1493,7 +1491,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
     "live token counter includes submitted input, reasoning, and streamed text",
     async () => {
       const hold: TokenProgressHoldState = { started: false, cancelled: false };
-      const finalSentinel = "FX_LIVE_TOKEN_COUNTER_COMPLETE";
+      const finalSentinel = "FIBER_LIVE_TOKEN_COUNTER_COMPLETE";
       const streamedText = `${"streaming output\n".repeat(256)}${finalSentinel}`;
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
         "fx-tui-live-token-counter-",
@@ -1618,14 +1616,13 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-bounded-assistant-pacing-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_PERMISSION_MODE: "yolo",
+          FIBER_PERMISSION_MODE: "yolo",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
         },
       });
 
@@ -1639,7 +1636,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       hold.release?.();
       await session.waitForText(finalText, TIMEOUT);
 
-      execFileSync(FX_BIN, ["replay", tapePath, "--frames-dir", framesRoot], {
+      execFileSync(FIBER_BIN, ["replay", tapePath, "--frames-dir", framesRoot], {
         encoding: "utf8",
       });
       const grids = readdirSync(join(framesRoot, "frames"))
@@ -1684,7 +1681,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       // activity-row assertions.
       const payloadContent = "staged tool payload content\n".repeat(64);
       const assistantText = "I will write the staged payload now.";
-      const finalSentinel = "FX_TOOL_PAYLOAD_PROGRESS_COMPLETE";
+      const finalSentinel = "FIBER_TOOL_PAYLOAD_PROGRESS_COMPLETE";
       const { queuedGateway, stderrPath } = await launchRouteRecoveryTui(
         "fx-tui-tool-payload-progress-",
         [
@@ -1936,12 +1933,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-empty-assistant-history-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_PERMISSION_MODE: "auto",
+          FIBER_PERMISSION_MODE: "auto",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
+          FIBER_MODEL: MODEL,
         },
       });
 
@@ -2026,12 +2022,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-route-recovery-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_PERMISSION_MODE: "auto",
+          FIBER_PERMISSION_MODE: "auto",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
+          FIBER_MODEL: MODEL,
         },
       });
 
@@ -2306,7 +2301,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       session = null;
       const resumedStderrPath = join(root!, "resumed-stderr.log");
       session = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: join(root!, "workspace"),
         width: 72,
         height: 24,
@@ -2316,13 +2311,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: join(root!, "home"),
           AI_GATEWAY_API_KEY: "fake-route-recovery-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_PERMISSION_MODE: "auto",
+          FIBER_PERMISSION_MODE: "auto",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
-          FX_MODEL: directFastModel,
+          FIBER_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
+          FIBER_MODEL: directFastModel,
         },
       });
       await session.waitForComposer(TIMEOUT);
@@ -2564,15 +2558,14 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-read-tool-result-failure-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_PERMISSION_MODE: "auto",
+          FIBER_PERMISSION_MODE: "auto",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
         },
       });
 
@@ -2599,7 +2592,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       if (!sessionId) throw new Error("session checkpoint was not found");
 
       const readSavedSession = () =>
-        execFileSync(FX_BIN, ["session", "--id", sessionId, "--json"], {
+        execFileSync(FIBER_BIN, ["session", "--id", sessionId, "--json"], {
           cwd: workspace,
           env: { ...process.env, HOME: home },
           encoding: "utf8",
@@ -2650,13 +2643,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-tui-streaming-caret-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: streamingGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: streamingGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: streamingGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
         },
       });
 
@@ -2721,15 +2713,14 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-idle-submit-order-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: heldGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: heldGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: heldGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "input,worker",
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "input,worker",
         },
       });
 
@@ -2747,7 +2738,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       await session.sendKeys("C-c");
       const cancelledPane = await session.waitForText("cancelled", TIMEOUT);
 
-      execFileSync(FX_BIN, ["replay", tapePath, "--frames-dir", framesRoot], {
+      execFileSync(FIBER_BIN, ["replay", tapePath, "--frames-dir", framesRoot], {
         encoding: "utf8",
       });
       assertFirstPostEnterOutputShowsSubmittedPrompt(tapePath, submittedPrompt);
@@ -2806,13 +2797,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-idle-submit-multiturn-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
         },
       });
 
@@ -2831,7 +2821,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       await session.sendKeys("C-c");
       await session.waitForText("cancelled", TIMEOUT);
 
-      execFileSync(FX_BIN, ["replay", tapePath, "--frames-dir", framesRoot], {
+      execFileSync(FIBER_BIN, ["replay", tapePath, "--frames-dir", framesRoot], {
         encoding: "utf8",
       });
       assertFirstPostEnterOutputShowsSubmittedPrompt(tapePath, submittedPrompt);
@@ -2892,15 +2882,14 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-prompt-boundary-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: splitGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: splitGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: splitGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt",
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt",
         },
       });
 
@@ -2945,7 +2934,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       expect(existsSync(tapePath)).toBe(true);
       expect(existsSync(tracePath)).toBe(true);
       expect(
-        execFileSync(FX_BIN, ["replay", tapePath, "--json"], {
+        execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
           encoding: "utf8",
         }),
       ).not.toBe("");
@@ -2995,16 +2984,15 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-cancel-integrity-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_PERMISSION_MODE: "auto",
+          FIBER_PERMISSION_MODE: "auto",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,core,gateway,stream,tool,sse,worker,input,prompt",
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,core,gateway,stream,tool,sse,worker,input,prompt",
         },
       });
 
@@ -3152,16 +3140,15 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-transcript-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt",
+          FIBER_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt",
         },
       });
 
@@ -3309,12 +3296,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-active-permission-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_PERMISSION_MODE: "auto",
+          FIBER_PERMISSION_MODE: "auto",
           FX_GATEWAY_BASE_URL: heldGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: heldGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: heldGateway.chatUrl,
-          FX_MODEL: MODEL,
+          FIBER_MODEL: MODEL,
         },
       });
 
@@ -3414,13 +3400,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-review-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
+          FIBER_MODEL: MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
         },
       });
 
@@ -3543,13 +3528,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-review-escape-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
+          FIBER_MODEL: MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
         },
       });
 
@@ -3645,13 +3629,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-semantic-draft-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
+          FIBER_MODEL: MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
         },
       });
 
@@ -3769,13 +3752,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-file-picker-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
+          FIBER_MODEL: MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
         },
       });
 
@@ -3891,11 +3873,10 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-next-turn-model-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
+          FIBER_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
         },
       });
 
@@ -3988,12 +3969,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-model-picker-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
-          FX_MODEL: MODEL,
+          FIBER_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
+          FIBER_MODEL: MODEL,
         },
       });
 
@@ -4076,13 +4056,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-empty-enter-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
+          FIBER_MODEL: MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
         },
       });
 
@@ -4179,13 +4158,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-inline-delete-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
+          FIBER_MODEL: MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
         },
       });
 
@@ -4365,14 +4343,13 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-image-yank-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
-          FX_MODEL: MODEL,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
+          FIBER_E2E_GATEWAY_MODELS_URL: `${queuedGateway.baseUrl}/coding-agent/v1/models`,
+          FIBER_MODEL: MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
         },
       });
 
@@ -4498,13 +4475,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-post-cancel-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
+          FIBER_MODEL: MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
         },
       });
 
@@ -4678,16 +4654,15 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
             HOME: home,
             AI_GATEWAY_API_KEY: "fake-queue-scrollback-key",
             VERCEL_OIDC_TOKEN: undefined,
-            FX_AUTO_UPGRADE: "0",
-            FX_PERMISSION_MODE: "auto",
+            FIBER_PERMISSION_MODE: "auto",
             FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
             FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
             FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-            FX_MODEL: MODEL,
-            FX_RECORD: tapePath,
-            FX_RECORD_INPUT: "1",
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt,scroll",
+            FIBER_MODEL: MODEL,
+            FIBER_RECORD: tapePath,
+            FIBER_RECORD_INPUT: "1",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt,scroll",
           },
         });
 
@@ -4794,7 +4769,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         expect(readFileSync(stderrPath, "utf8")).toBe("");
         expect(existsSync(tapePath)).toBe(true);
         expect(
-          execFileSync(FX_BIN, ["replay", tapePath, "--json"], {
+          execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
             encoding: "utf8",
           }),
         ).not.toBe("");
@@ -4842,13 +4817,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-queued-cancel-all-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: queuedGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: queuedGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
+          FIBER_MODEL: MODEL,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt",
         },
       });
 
@@ -4938,15 +4912,14 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-active-ctrlc-exit-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: heldGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: heldGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: heldGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "gateway,app,input,interrupt,worker,sse",
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "gateway,app,input,interrupt,worker,sse",
         },
       });
 
@@ -4984,7 +4957,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(existsSync(tapePath)).toBe(true);
       expect(
-        execFileSync(FX_BIN, ["replay", tapePath, "--json"], {
+        execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
           encoding: "utf8",
         }),
       ).not.toBe("");
@@ -5025,15 +4998,14 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-ctrl-c-history-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: fakeGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: fakeGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: fakeGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt",
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt",
         },
       });
 
@@ -5116,7 +5088,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(existsSync(tapePath)).toBe(true);
       expect(
-        execFileSync(FX_BIN, ["replay", tapePath, "--json"], {
+        execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
           encoding: "utf8",
         }),
       ).not.toBe("");
@@ -5206,10 +5178,10 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         .toBe(1);
       for (
         const sentinel of [
-          "FX_MODEL_TEXT_SENTINEL",
-          "FX_FINAL_RESPONSE_SENTINEL",
-          "FX_PATH_SENTINEL",
-          "FX_PATTERN_SENTINEL",
+          "FIBER_MODEL_TEXT_SENTINEL",
+          "FIBER_FINAL_RESPONSE_SENTINEL",
+          "FIBER_PATH_SENTINEL",
+          "FIBER_PATTERN_SENTINEL",
         ]
       ) {
         expect(observed.trace).not.toContain(sentinel);
@@ -5283,12 +5255,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-status-scrollback-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_PERMISSION_MODE: "auto",
+          FIBER_PERMISSION_MODE: "auto",
           FX_GATEWAY_BASE_URL: scrollback_gateway.baseUrl,
           FX_GATEWAY_CHAT_URL: scrollback_gateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: scrollback_gateway.chatUrl,
-          FX_MODEL: MODEL,
+          FIBER_MODEL: MODEL,
         },
       });
 
@@ -5387,7 +5358,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       gateway = tableGateway;
       const launchScript = [
         `i=1; while [ "$i" -le ${prefillMarkers.length} ]; do printf "PREFILL_HISTORY_ROW_%04d\\n" "$i"; i=$((i + 1)); done`,
-        `exec ${FX_BIN}`,
+        `exec ${FIBER_BIN}`,
       ].join("; ");
       session = await TmuxSession.create({
         cmd: `/bin/sh -c '${launchScript}'`,
@@ -5400,13 +5371,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-launch-history-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
           FX_GATEWAY_BASE_URL: tableGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: tableGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: tableGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
+          FIBER_MODEL: MODEL,
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
         },
       });
 
@@ -5511,12 +5481,11 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
               HOME: home,
               AI_GATEWAY_API_KEY: "fake-mcp-approval-key",
               VERCEL_OIDC_TOKEN: undefined,
-              FX_AUTO_UPGRADE: "0",
-              FX_PERMISSION_MODE: "ask",
+              FIBER_PERMISSION_MODE: "ask",
               FX_GATEWAY_BASE_URL: mcpGateway.baseUrl,
               FX_GATEWAY_CHAT_URL: mcpGateway.chatUrl,
               FX_E2E_GATEWAY_CHAT_URL: mcpGateway.chatUrl,
-              FX_MODEL: MODEL,
+              FIBER_MODEL: MODEL,
             },
           });
 
@@ -5617,13 +5586,12 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           HOME: home,
           AI_GATEWAY_API_KEY: "fake-narrow-mcp-approval-key",
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_PERMISSION_MODE: "ask",
+          FIBER_PERMISSION_MODE: "ask",
           FX_GATEWAY_BASE_URL: mcpGateway.baseUrl,
           FX_GATEWAY_CHAT_URL: mcpGateway.chatUrl,
           FX_E2E_GATEWAY_CHAT_URL: mcpGateway.chatUrl,
-          FX_MODEL: MODEL,
-          FX_SOUND: "0",
+          FIBER_MODEL: MODEL,
+          FIBER_SOUND: "0",
         },
       });
 
@@ -5697,14 +5665,13 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         HOME: home,
         AI_GATEWAY_API_KEY: "fake-unsupported-tool-key",
         VERCEL_OIDC_TOKEN: undefined,
-        FX_AUTO_UPGRADE: "0",
-        FX_PERMISSION_MODE: "auto",
+        FIBER_PERMISSION_MODE: "auto",
         FX_GATEWAY_BASE_URL: unsupportedGateway.baseUrl,
         FX_GATEWAY_CHAT_URL: unsupportedGateway.chatUrl,
         FX_E2E_GATEWAY_CHAT_URL: unsupportedGateway.chatUrl,
-        FX_MODEL: MODEL,
-        FX_TRACE_LOG: tracePath,
-        FX_TRACE_SCOPES: "tool",
+        FIBER_MODEL: MODEL,
+        FIBER_TRACE_LOG: tracePath,
+        FIBER_TRACE_SCOPES: "tool",
       };
       session = await TmuxSession.create({
         cwd: workspace,
@@ -5713,7 +5680,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         stderrPath,
         env: {
           ...gatewayEnv,
-          FX_RECORD: tapePath,
+          FIBER_RECORD: tapePath,
         },
       });
 
@@ -5774,7 +5741,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       session = null;
 
       session = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: workspace,
         width: 100,
         height: 30,
@@ -5867,14 +5834,13 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         HOME: home,
         AI_GATEWAY_API_KEY: "fake-tool-summary-key",
         VERCEL_OIDC_TOKEN: undefined,
-        FX_AUTO_UPGRADE: "0",
-        FX_PERMISSION_MODE: "auto",
+        FIBER_PERMISSION_MODE: "auto",
         FX_GATEWAY_BASE_URL: summaryGateway.baseUrl,
         FX_GATEWAY_CHAT_URL: summaryGateway.chatUrl,
         FX_E2E_GATEWAY_CHAT_URL: summaryGateway.chatUrl,
-        FX_MODEL: MODEL,
-        FX_TRACE_LOG: tracePath,
-        FX_TRACE_SCOPES: "tool",
+        FIBER_MODEL: MODEL,
+        FIBER_TRACE_LOG: tracePath,
+        FIBER_TRACE_SCOPES: "tool",
       };
       const withoutWorkspaceStatusline = (text: string): string =>
         text.split("\n").filter((line) =>
@@ -5952,7 +5918,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       session = null;
 
       session = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} --resume-last`,
         cwd: workspace,
         width: 120,
         height: 30,
