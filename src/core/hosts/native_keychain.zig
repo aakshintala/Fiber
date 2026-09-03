@@ -5,7 +5,7 @@ const host = @import("host.zig");
 const io_mod = @import("../shared/io.zig");
 const secret = @import("../auth/secret.zig");
 
-const mcp_credentials_service_name = "FX_MCP_OAUTH_CREDENTIALS_V1";
+const mcp_credentials_service_name = "FIBER_MCP_OAUTH_CREDENTIALS_V1";
 
 /// Backing store for a resolved account name. Must outlive any argv built from it.
 pub const AccountBuffer = [256]u8;
@@ -529,7 +529,7 @@ test "MCP Keychain storage round-trips values beyond the security prompt limit" 
     if (isDisabled()) return error.SkipZigTest;
 
     const alloc = std.testing.allocator;
-    const test_mcp_service = "FX_TEST_MCP_OAUTH_CREDENTIALS_V1";
+    const test_mcp_service = "FIBER_TEST_MCP_OAUTH_CREDENTIALS_V1";
     const written = "mcp-credential-section-" ** 32;
 
     storeMcpValueMac(test_mcp_service, written) catch return error.SkipZigTest;
