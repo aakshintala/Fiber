@@ -151,7 +151,7 @@ fn runWithDeps(comptime App: type, alloc: Allocator, args: []const [:0]const u8,
 
 pub fn runBeforeInteractive(alloc: Allocator, args: []const [:0]const u8, cfg: Config) !BeforeInteractiveResult {
     const run_result = cli_surface.runIfRequested(alloc, args, cliSurfaceConfig(cfg)) catch |err| switch (err) {
-        error.UnknownCliCommand => return .{ .exit = 1 },
+        error.UnknownCliCommand => return .{ .exit = 2 },
         else => {
             tryWriteErrorMessage(.{}, err);
             return .{ .exit = 1 };
@@ -172,7 +172,7 @@ pub fn runNoConfigBeforeInteractive(
 
 fn runBeforeInteractiveWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Config, deps: RunDeps) !BeforeInteractiveResult {
     const run_result = deps.run_if_requested(deps.cli_ctx, alloc, args, cliSurfaceConfig(cfg)) catch |err| switch (err) {
-        error.UnknownCliCommand => return .{ .exit = 1 },
+        error.UnknownCliCommand => return .{ .exit = 2 },
         else => {
             tryWriteErrorMessage(deps, err);
             return .{ .exit = 1 };
@@ -817,6 +817,26 @@ test "app entry returns after handled zero exit without initializing app" {
     try std.testing.expectEqual(RunOutcome.returned, outcome);
     try std.testing.expectEqual(@as(usize, 1), capture.cli_calls);
     try std.testing.expectEqual(@as(usize, 0), test_event_count);
+}
+
+fn unknownCliCommandForTest(_: ?*anyopaque, _: Allocator, _: []const [:0]const u8, _: cli_surface.Config) !cli_surface.RunResult {
+    return error.UnknownCliCommand;
+}
+
+test "runBeforeInteractiveWithDeps maps unknown cli command to exit 2" {
+    const alloc = std.testing.allocator;
+    var capture = TestCapture.init(.handled_success);
+    defer capture.deinit();
+    var deps = capture.deps();
+    deps.run_if_requested = unknownCliCommandForTest;
+
+    const result = try runBeforeInteractiveWithDeps(
+        alloc,
+        &.{@constCast("wat")},
+        testConfig(),
+        deps,
+    );
+    try std.testing.expectEqual(@as(u8, 2), result.exit);
 }
 
 test "app entry honors FIBER_BENCH before app initialization" {

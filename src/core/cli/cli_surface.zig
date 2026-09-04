@@ -672,7 +672,7 @@ fn runNonInteractiveWithDeps(
         .ask => |rest| {
             try writeMcpProfileWarningIfPresent(alloc, cfg, deps);
             const exit_code = try cli_ask.run(alloc, rest, workflowConfigWithLaunchModifiers(cfg, global_args.modifiers), cfg.context_registry, cfg.tool_set);
-            return if (exit_code == 0) .handled_success else .handled_failure;
+            return .{ .handled_exit = exit_code };
         },
         .login => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
@@ -1179,7 +1179,7 @@ fn runNonInteractiveWithDeps(
         },
         .replay => |rest| {
             const exit_code = try cli_replay.run(alloc, rest);
-            return if (exit_code == 0) .handled_success else .handled_failure;
+            return .{ .handled_exit = exit_code };
         },
         .unknown => |command| {
             try writeStderr(deps, "fiber: unknown subcommand: ");
