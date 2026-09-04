@@ -29,6 +29,14 @@ silently applied, because two of them were in sections marked "decided":
 - Slice 3 ("fast as a model property") rested on a reading of the design that contradicted how the gateway works. Fast is a service tier, not a model identity. The design sentence was rewritten rather than the code.
 - ACP is deleted rather than reshaped, removing three slices from this phase. See `demolition-inventory.md` slices 21-23.
 
+Amended 2026-09-04 after an owner grilling pass on the envelope and exit-status
+decisions. Same convention: recorded, not silently applied.
+
+- **Exit 2 is now structural, not semantic.** Slice 3 was a hand-classification of ~64 `handled_failure` sites into usage-vs-operational, with a failure mode no gate detects. It is now a parse-layer boundary provable by grep. See "Exit status". Slice 3 shrinks accordingly.
+- **`ok` had no definition.** The envelope was specified without saying what `ok` asserts, which is undecidable for `ask` — a turn can run to completion and fail. See "What `ok` means". `doctor` on a sick host is the edge that the rule exists to settle.
+- **`ask --resume-id` was listed as absent** in Slice 9. It exists at `cli_ask.zig:3297`, is declared in the usage string at `commands.zig:33`, and has ~12 test call sites. This is the fourth error found in this document across two revisions, and the first found in a row that would have *added* scope rather than misdirected it. **A full re-audit of every matrix row precedes Slice 1** — see "Slices", step zero.
+- **Removing `--no-color` breaks 39 e2e call sites at argument parsing**, which is a different failure from the stale assertions this phase accepts. Slice 2 cleans them up. See Slice 2's row.
+
 ## Measured surface at `af6ab6de`
 
 Top-level commands before Phase 3: `help`, `ask`, `acp`, `login`, `logout`,
@@ -95,6 +103,38 @@ carry `{kind, error, code}` and successes emit a bare snapshot object.
 registry; the matrix's `JSON kind` column is its content. No slice invents a
 `kind` that is not in a matrix row.
 
+#### What `ok` means
+
+> `ok` is true when **this command's own operation** succeeded.
+
+Not "the process started," which is true of everything and therefore says
+nothing. The operation of `permissions rule add` is adding the rule; of
+`session remove`, removing it; of **`ask`, completing the turn** — so a turn
+that runs to completion and fails is `ok:false`.
+
+The edge that makes the rule worth writing down: **`doctor` on an unhealthy
+machine stays `ok:true`.** Doctor's operation is *producing the report*, and it
+produced one. Same for `status`, `models`, and the `permissions` read. Without
+this sentence someone makes `doctor --json` report `ok:false` on a sick host,
+and every consumer ends up branching on health when it meant to branch on
+"did the command work."
+
+`ok` is the single field a consumer branches on. If a payload key has to be
+ANDed with `ok` to get the answer, the envelope is not carrying its weight.
+
+Three consequences for `ask`, whose payload predates the envelope:
+
+- **`exit_code` leaves the payload.** It is only ever 0 or 1 (`cli_ask.zig:1358,1737,1747,1779`), making it exactly `!ok`.
+- **`error_code` becomes the envelope's `code`, not its `error`.** It holds machine strings — `"MissingCredentials"`, `"NonInteractivePermissionRequired"`, `@errorName(err)`.
+- **`ask` has no prose message.** Until someone writes one, `error` carries the same string as `code`. Ugly and honest; inventing a message table is scope Phase 3 did not ask for.
+
+An interrupted `ask --json` emits **no JSON at all** — `cli_ask.zig:1263` returns
+before the render — so 130 and the envelope never coexist.
+
+`CommandFailureSnapshot` (`output_contracts.zig:30`) is already
+`{kind, message, code}` with `message` serialized as `"error"`. The shared
+failure shape needs only `"ok":false` prepended.
+
 ### Exit status
 
 Three codes, plus the signal codes.
@@ -103,7 +143,7 @@ Three codes, plus the signal codes.
 | --- | --- |
 | 0 | success |
 | 1 | the operation failed |
-| 2 | usage error: unknown flag, unrecognized `--permission-mode`, missing required argument, `--json` on a non-operational command |
+| 2 | usage error, defined structurally — see below |
 | 130, 143 | SIGINT and SIGTERM |
 
 `2` for usage errors is the convention grep, diff, and ripgrep already use. It
@@ -113,6 +153,21 @@ invoking script is wrong, `1` means the world is.
 Everything finer belongs in the envelope's `code` string, which is more precise
 than a number and is what an automation consumer should branch on. A second
 numeric taxonomy alongside it would be two vocabularies for one concept.
+
+**Exit 2 is a code layer, not a per-call-site judgement.** It is returned by
+errors raised at the argument-parsing layer — unknown flag, unparseable enum
+value, missing required argument — plus unknown top-level command, plus `--json`
+on a non-operational command. Everything that fails *after* parsing succeeds is
+`1`, with no exceptions and no classification pass.
+
+Two readings were rejected on 2026-09-04:
+
+- **Classify all ~64 `handled_failure` sites into usage-vs-operational.** This was the previous revision's Slice 3. It buys precision that the envelope's `code` already carries, at the price of the phase's largest silent-error surface: a site returning `2` where it meant `1` is caught by no gate, no test, and no exact search. A structural boundary is instead provable by grep.
+- **Return `2` only where no envelope exists to carry the meaning.** This makes the code depend on an unrelated flag — `fiber ask --badflag` exits 2 while `fiber ask --badflag --json` exits 1, the same typo answered two ways.
+
+When `--json` was parsed successfully and a *later* argument fails to parse, the
+process emits the failure envelope **and** exits 2. The envelope and the exit
+code are separate channels and neither suppresses the other.
 
 `sysexits.h` was considered and rejected. Its values are portable, identical on
 macOS, glibc, and BSD, so the cross-platform concern does not apply; it is
@@ -227,6 +282,13 @@ One at a time on `main`. Everything routes through `cli_surface.zig` and both
 catalogs in `builtins/commands.zig`, so the slices cannot run in parallel. The
 per-slice gate is in `AGENTS.md`.
 
+**Step zero: re-audit every matrix row before Slice 1.** Four `Current` claims
+have been wrong across two revisions of this document, most recently one that
+would have had Slice 9 build a flag that already ships. Verify each row's
+`Current` against the tree and correct it in place; a drifted `file:line` is
+caught free at slice start, but a phantom "absent" is not, because nobody greps
+for what the document says is not there.
+
 **Prerequisite: `demolition-inventory.md` slices 21-23 (ACP removal) land
 first.** Implementing the session, permission, and model contracts while a
 second agent host exists means implementing each of them twice.
@@ -242,7 +304,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | --- | --- | --- |
 | 1 | Signal and unknown-command exit passthrough | contract-shaping |
 | 2 | Output envelope, `kind` registry, `NO_COLOR`, smoke-gate growth | contract-shaping |
-| 3 | Exit-status reclassification across 38 sites | contract-shaping |
+| 3 | Exit-status: parse-layer errors return 2 | contract-shaping |
 | 4 | `ask` flags and the fast decision | additive |
 | 5 | `auth list\|status\|login\|logout` | additive |
 | 6 | `permissions mode` and `permissions rule list\|add\|remove` | additive |
@@ -293,19 +355,26 @@ below.
 | `workspace --json` | flat (`:325`) | enveloped | `workspace` | `output_contracts.zig` | `output_contracts.zig` |
 | `ask --json` | hand-built object (`cli_ask.zig:3475`) | enveloped | `ask` | `cli_ask.zig` | `cli_ask.zig` |
 | `replay --json` | inline object (`cli_replay.zig:111`) | enveloped | `debug.replay` | `cli_replay.zig` | `cli_replay.zig` |
-| `--no-color` | flag parsed in `src/` | removed; `NO_COLOR` env only | — | `cli_surface.zig` | `cli_surface.zig` |
+| `--no-color` | flag parsed at `cli_ask.zig:3327`, declared at `commands.zig:33,44` | removed; `NO_COLOR` env only | — | `cli_ask.zig` | `cli_ask.zig` |
+| `--no-color` e2e call sites | 39 across 3 files pass it | the 38 incidental ones drop the argument; `ask-presentation.test.ts:453`, whose subject *is* the flag, is deleted. **Not an assertion rewrite** — see Testing. | — | tests | — |
 | smoke gate | exit codes only | also asserts `"ok":`/`"kind":` and one exit-2 case | — | `scripts/smoke.sh` | the gate is the test |
 
-### Slice 3 — exit-status reclassification
+### Slice 3 — parse-layer errors return 2
+
+Scoped by the structural boundary in "Exit status". Post-parse failures are not
+touched, so there is no site-by-site classification and no silent-error surface.
+The completeness check is a grep: every argument-parsing error path reaches
+`.handled_usage_error`, and nothing else does.
 
 | Item | Current | Target | Owner | Focused test |
 | --- | --- | --- | --- | --- |
-| usage-error sites in `cli_surface.zig` | 27 sites return `.handled_failure` → 1 | `.handled_usage_error` → 2 | `cli_surface.zig` | `cli_surface.zig` |
-| operational sites in `cli_surface.zig` | 37 sites return `.handled_failure` | unchanged → 1 | `cli_surface.zig` | `cli_surface.zig` |
-| `ask` parse errors | ~8 paths return 1 | return 2 | `cli_ask.zig` | `cli_ask.zig` |
+| argument-parsing error paths in `cli_surface.zig` | return `.handled_failure` → 1 | `.handled_usage_error` → 2 | `cli_surface.zig` | `cli_surface.zig` |
+| post-parse failure sites | `.handled_failure` → 1 | **unchanged**, not classified | — | — |
+| `ask` parse errors | return 1 | return 2, envelope still emitted under `--json` | `cli_ask.zig` | `cli_ask.zig` |
 | `replay` parse errors | `replyError` returns 1 | usage branch returns 2 | `cli_replay.zig` | `cli_replay.zig` |
-| ambiguous: `McpAddUsage` | `:1492`, both usage and save failure | split per branch | `cli_surface.zig` | `cli_surface.zig` |
-| ambiguous: no MCP servers configured | `:1622` → 1 | decide: operational | `cli_surface.zig` | `cli_surface.zig` |
+| `--json` on a non-operational command | varies | exit 2 | `cli_surface.zig` | `cli_surface.zig` |
+| `McpAddUsage` | `:1492`, both usage and save failure | usage branch 2, save-failure branch stays 1 | `cli_surface.zig` | `cli_surface.zig` |
+| no MCP servers configured | `:1622` → 1 | **unchanged** — post-parse, so 1 by the boundary, no judgement needed | — | — |
 
 ### Slice 4 — `ask` flags and the fast decision
 
@@ -378,7 +447,7 @@ exist.
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
 | `continue` | absent | resumes the most recent session, no picker | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
-| `ask --resume-id <id>` | absent | one-shot resumes a specific session | `ask` | `cli_ask.zig` | `cli_ask.zig` |
+| `ask --resume-id <id>` | **present**, not absent: parsed at `cli_ask.zig:3297`, declared at `commands.zig:33`, ~12 test call sites | verify the semantics match "one-shot resumes a specific session"; likely no change. Do not confuse with `--resume-<id>` in the row below, which is a different spelling and is removed. | `ask` | — | `cli_ask.zig` |
 | `-r`, `--resume`, `--resume-last`, `--continue`, `-c`, `--resume-<id>` | mixed: some parsed, some only in help | absent from parser and help | — | `cli_surface.zig` | `cli_surface.zig` |
 | `sessions --continuation` | `--cursor` (`commands.zig:147`, parsed `:2476`) | renamed | `session.list` | `commands.zig` | `cli_surface.zig` |
 | `sessions --limit` | absent from the target spec, present in usage | declared and parsed | `session.list` | `commands.zig` | `cli_surface.zig` |
@@ -421,6 +490,14 @@ exist.
 The Zig unit tests in `output_contracts.zig`, `cli_surface.zig`,
 `config_runtime.zig`, and `permissions.zig` run in the per-slice gate and are
 updated as each slice lands. They are the coverage that matters during Phase 3.
+
+**The exception: an argument a slice deletes is removed from its e2e call
+sites.** A test that dies during argument parsing emits no output at all, which
+destroys the one thing leaving e2e stale was meant to preserve — the old shapes
+as a diff against the new ones. Deleting a dead argument from a spawn array is
+the same mechanical class as the renames the slices already perform. Rewriting
+an *assertion* is not, and stays forbidden. A test whose subject is the deleted
+argument is deleted with it.
 
 **End-to-end `--json` assertions are deliberately left stale.** E2E is not
 gating until Phase 5, the envelope changes 13 payload shapes, and rewriting
