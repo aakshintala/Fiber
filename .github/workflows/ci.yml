@@ -108,10 +108,6 @@ jobs:
         run: bun test cli.test.ts
         working-directory: tests/e2e
 
-      - name: Run ACP tests (no-key subset)
-        run: bun test acp.test.ts
-        working-directory: tests/e2e
-
       - name: Run legacy stdio MCP tool lifecycle test
         run: bun test gateway-stream-lifecycle.test.ts --test-name-pattern "selected dynamic MCP review cautions with zero sends and clears exactly once"
         working-directory: tests/e2e
@@ -244,47 +240,3 @@ jobs:
           )
           bash -n "${scripts[@]}"
           shellcheck "${scripts[@]}"
-
-  e2e_acp_full_mode:
-    name: E2E ACP (full, ${{ matrix.optimize }})
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    strategy:
-      fail-fast: false
-      matrix:
-        optimize: [ReleaseSafe]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: "0.16.0"
-          cache-key: ci-acp-full-${{ matrix.optimize }}
-
-      - name: Build
-        run: zig build -Doptimize=${{ matrix.optimize }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
-
-      - name: Install e2e deps
-        run: bun install
-        working-directory: tests/e2e
-
-      - name: Run full ACP tests
-        run: bun test acp.test.ts
-        working-directory: tests/e2e
-
-  e2e-acp-full:
-    name: E2E ACP (full)
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    needs: e2e_acp_full_mode
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require ReleaseSafe
-        env:
-          MATRIX_RESULT: ${{ needs.e2e_acp_full_mode.result }}
-        run: test "$MATRIX_RESULT" = success

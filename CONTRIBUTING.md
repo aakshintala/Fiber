@@ -175,9 +175,8 @@ compatibility alias; `mcp` wins when both exist, and every write uses `mcp`.
 Suspicious server-like unsupported keys produce a bounded warning and block
 profile mutation instead of being overwritten. The workspace file reads only
 top-level `mcpServers`, accepts `command` plus `args`, and is opened as a
-bounded no-follow regular file. Profile entries win native name collisions;
-ACP request entries win ACP name collisions without deduplicating the request
-array. Workspace entries are always optional and never load stored credentials.
+bounded no-follow regular file. Profile entries win native name collisions.
+Workspace entries are always optional and never load stored credentials.
 Approved workspace `command`, `args`, `env`, and HTTP header values expand
 `${VAR}` and `${VAR:-default}` from the fiber process environment. Pending and
 rejected entries do not read environment values. Missing required variables
@@ -191,7 +190,7 @@ resource, prompt, completion, and authentication commands require explicit
 Choices live only in profile `settings.json` under the canonical workspace key,
 using `enabledMcpjsonServers`, `disabledMcpjsonServers`, and
 `enableAllProjectMcpServers`. Repository files cannot persist their own
-approval. `fiber ask` and ACP skip pending workspace servers. Noninteractive users
+approval. `fiber ask` skips pending workspace servers. Noninteractive users
 approve them first with `fiber mcp trust approve <name>`; rejected servers remain
 disabled.
 
@@ -308,9 +307,8 @@ snapshot.
 `/mcp reload` evaluates a replacement before publication, so invalid config or
 a required-server failure leaves the prior runtime callable.
 
-ACP-provided servers are isolated to their owning ACP session. One-off and
-persistent subagents receive an immutable, permission-filtered view of the
-parent or ACP session's admitted MCP tools, resources, prompts, and completion
+One-off and persistent subagents receive an immutable, permission-filtered view of the
+parent session's admitted MCP tools, resources, prompts, and completion
 capability. Missing, revoked, stale, or closed authority fails before transport.
 
 ## Permissions and Auto Mode

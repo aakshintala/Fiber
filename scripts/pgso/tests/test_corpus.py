@@ -30,12 +30,10 @@ TRAINING_E2E_TESTS = (
     "web-fetch-fake-network.test.ts",
     "web-search-fake-codex.test.ts",
     "vision-route-fake-gateway.test.ts",
-    "acp.test.ts",
     "mcp-http.test.ts",
     "mcp-legacy-remote.test.ts",
     "mcp-stdio.test.ts",
     "mcp-auth.test.ts",
-    "session-recovery.test.ts",
     "terminal-host.test.ts",
     "tui-startup.test.ts",
     "permission-errors.test.ts",
@@ -361,7 +359,7 @@ class PgsoCorpusTests(unittest.TestCase):
             EXCLUDED_E2E_TESTS,
             tuple(test_file for test_file, _ in corpus.intentional_exclusions),
         )
-        self.assertEqual(33, len(corpus.scenarios))
+        self.assertEqual(31, len(corpus.scenarios))
         self.assertEqual(49, len(corpus.candidate_scenarios))
         self.assertEqual(
             {

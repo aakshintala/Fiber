@@ -89,8 +89,6 @@ Key rules:
 
 * `src/gateway/` owns provider transport. It must not absorb product-state logic.
 
-* `src/acp/` owns the ACP (Agent Client Protocol) JSON-RPC 2.0 server.
-
 ### Adding a Feature
 
 Before implementing, answer in order:
@@ -194,7 +192,7 @@ Do not bypass the permission system for new tools.
 
 * For JSON serialization, use `std.json.Stringify.value` with an allocating writer (`std.Io.Writer.Allocating`).
 
-* For JSON string escaping (writing raw JSON), use the project's `writeJsonStr` helper in `src/acp/jsonrpc.zig` rather than assuming `std.json.encodeJsonString` exists.
+* For JSON string escaping (writing raw JSON), use `std.json.Stringify.encodeJsonString` rather than assuming `std.json.encodeJsonString` exists.
 
 * Zig 0.16 uses `std.Io.File.stdin()` / `.stdout()` / `.stderr()`, not `std.io.getStdIn()`.
 
@@ -251,12 +249,11 @@ cd tests/evals && bun run eval:matrix               # cross-model matrix run
 
 ### `tests/e2e/` — End-to-End Tests
 
-Deterministic runtime tests (CLI commands, ACP protocol, TUI via tmux). No API key needed for most.
+Deterministic runtime tests (CLI commands, TUI via tmux). No API key needed for most.
 
 ```bash
 cd tests/e2e && bun install && bun test              # run all e2e tests
 cd tests/e2e && bun test cli.test.ts                 # just CLI tests
-cd tests/e2e && bun test acp.test.ts                 # just ACP tests
 cd tests/e2e && bun test tui-*.test.ts               # just TUI tests (requires tmux)
 ```
 

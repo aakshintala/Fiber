@@ -69,7 +69,7 @@ Choose generic extensions only after a concrete use case answers these questions
 - What must users add that builtin configuration cannot express?
 - Does the code need network, filesystem, process, or credential access?
 - Must third-party code run inside Fiber rather than through MCP?
-- Why cannot an external ACP or MCP process own the behavior?
+- Why cannot an external MCP process own the behavior?
 - How will users install and trust the code?
 - What compatibility promise must Fiber make to extension authors?
 - What startup, binary-size, and memory cost is acceptable?
@@ -121,7 +121,7 @@ Do not choose from advertised minimum runtime sizes.
 ## Suggested decision sequence
 
 1. List the first concrete customization requests.
-2. Test whether builtin configuration, MCP, ACP, or skills already cover them.
+2. Test whether builtin configuration, MCP, or skills already cover them.
 3. Add the smallest builtin customization that closes a real gap.
 4. Record any requirement that still needs in-process executable code.
 5. Design one narrow extension interface only if such a requirement remains.
@@ -132,7 +132,7 @@ Do not choose from advertised minimum runtime sizes.
 This idea produces a useful decision when:
 
 - the first user need is concrete and testable
-- existing ACP, MCP, skills, and builtin configuration have been considered
+- existing MCP, skills, and builtin configuration have been considered
 - the chosen solution adds no broader execution surface than required
 - security and resource limits are part of the contract
 - any extension API starts with one demonstrated implementation

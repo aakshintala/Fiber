@@ -108,6 +108,28 @@ in-process by `session_log.zig:5868,5896,5923,5969,6659` and
 `session_store.zig:8443,8519,9172`. What is uniquely end-to-end is SIGKILL with
 no unwind, plus the `doctor` and `sessions` CLI text.
 
+### ACP-driven cases retained for conversion
+
+Slice 23 deleted the ACP-only E2E cases but kept four that prove retained
+product behaviour and merely used ACP as their transport. Each still calls
+`nodeSpawn(FIBER_BIN, ["acp"], ...)`, so each is red until converted. Convert
+the driver, keep the assertion:
+
+| Case | File | What it proves |
+| --- | --- | --- |
+| ACP explicit deny emits no web_fetch progress or target request | `tests/e2e/web-fetch-fake-network.test.ts:538` | a denied `web_fetch` returns `policy_denied` to the gateway and emits no fetch progress |
+| ACP policy denial omits web_search from the advertised tools | `tests/e2e/web-search-fake-codex.test.ts:297` | a denied `web_search` permission removes the tool from the advertised provider tool list |
+| ACP completes more than twenty-five serial terminal calls when unlimited | `tests/e2e/tui-command-permissions.test.ts:3635` | more than 25 serial `pwd` calls succeed when the permission is unlimited |
+| ACP blocks redirected output before creating a file | `tests/e2e/tui-command-permissions.test.ts:3671` | a shell redirect is permission-blocked before any file is created |
+
+The shared `AcpClient` helper and the `startAcpSession` / `startAcpCodeSession`
+wrappers in those three files exist only for these cases and go with them.
+
+Separately, `tests/e2e/terminal-host.test.ts:3949` sets
+`transport_role: "acp"` as a deliberately foreign principal value. Slice 22
+removed that arm from `TransportRole`, so the case now exercises an unparseable
+role rather than a valid-but-different one. Re-point it at a surviving role.
+
 Phase exit: the success criteria in the product design are directly exercised, with unavailable external checks recorded as unverified.
 
 ## Phase 6: Final documentation and release preparation

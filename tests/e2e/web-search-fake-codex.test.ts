@@ -181,21 +181,6 @@ async function runAcpPrompt(client: AcpClient, text: string) {
   }
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = TIMEOUT) {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error("condition timed out");
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
-async function readAcpResponse(client: AcpClient, id: number) {
-  while (true) {
-    const message = await client.readLine();
-    if (message.id === id) return message;
-  }
-}
-
 describe("web_search Codex fixture", () => {
   test(
     "web_search call with no configured backend fails without a worker retry",
@@ -301,55 +286,6 @@ describe("web_search Codex fixture", () => {
           "environment overrides applied",
         );
       } finally {
-        codex.stop();
-        rmSync(root.root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "ACP cancel interrupts an active stream and leaves the server usable",
-    async () => {
-      const root = createIsolatedRoot();
-      let closeHanging!: () => void;
-      let hangStarted = false;
-      const codex = startFakeCodex({
-        route: () => {
-          hangStarted = true;
-          return new Response(new ReadableStream({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode(": waiting\n\n"));
-              closeHanging = () => {
-                try {
-                  controller.close();
-                } catch {}
-              };
-            },
-          }), { headers: { "content-type": "text/event-stream" } });
-        },
-      });
-      const client = AcpClient.create(root.workspace, fakeCodexEnv(root.home, codex));
-      try {
-        await startAcpCodeSession(client);
-        client.send({
-          jsonrpc: "2.0",
-          id: 10,
-          method: "session/prompt",
-          params: { prompt: [{ type: "text", text: "Search the web for the latest Zig release." }] },
-        });
-        await waitFor(() => hangStarted);
-
-        client.send({ jsonrpc: "2.0", method: "session/cancel", params: {} });
-        const cancelled = await readAcpResponse(client, 10);
-        expect(cancelled.result.stopReason).toBe("cancelled");
-
-        client.send({ jsonrpc: "2.0", id: 11, method: "session/list", params: {} });
-        const list = await readAcpResponse(client, 11);
-        expect(Array.isArray(list.result.sessions)).toBe(true);
-      } finally {
-        closeHanging?.();
-        await client.close();
         codex.stop();
         rmSync(root.root, { recursive: true, force: true });
       }

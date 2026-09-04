@@ -253,23 +253,6 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
   );
 
   test(
-    "fiber acp help documents accepted options",
-    async () => {
-      for (const alias of ["--help", "-h"]) {
-        const r = await runFx(["acp", alias]);
-        expect(r.code).toBe(0);
-        expect(r.stderr).toBe("");
-        expect(r.stdout).toContain(
-          "Usage:\n  fiber acp [--model <id>] [--log-file <path>]",
-        );
-        expect(r.stdout).toContain("--model <id>");
-        expect(r.stdout).toContain("--log-file <path>");
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
     "fiber replay help describes golden output",
     async () => {
       const r = await runFx(["replay", "--help"]);
@@ -278,21 +261,6 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
       expect(r.stdout).toContain("--golden <path>");
       expect(r.stdout).toContain("Write the final rendered grid to a file");
       expect(r.stdout).not.toContain("Compare output against a golden file");
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fiber acp rejects unknown options and missing option values",
-    async () => {
-      for (const args of [["--bogus"], ["--model"], ["--log-file"]]) {
-        const result = await runFx(["acp", ...args]);
-        expect(result.code).toBe(1);
-        expect(result.stdout).toBe("");
-        expect(result.stderr).toBe(
-          "usage: fiber acp [--model <id>] [--log-file <path>]\n",
-        );
-      }
     },
     TIMEOUT,
   );

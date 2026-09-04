@@ -3422,7 +3422,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fiber ask and ACP send large automatic review packets before execution",
+    "fiber ask sends large automatic review packets before execution",
     async () => {
       const cliRoot = createIsolatedRoot();
       const cliMarker = "large-cli-marker";
@@ -3459,38 +3459,6 @@ describe("effect-aware command permissions", () => {
         cliRoot,
         cliJson.session_id,
         cliCommand,
-        "success",
-      );
-
-      const acpRoot = createIsolatedRoot();
-      const acpMarker = "large-acp-marker";
-      const acpCommand = largeEffectfulCommand(acpMarker);
-      const acpGateway = startFakeGateway([
-        toolCall(acpCommand),
-        finalText("large ACP complete"),
-      ]);
-      activeClient = AcpClient.create(acpRoot.workspace, gatewayEnv(acpRoot, acpGateway));
-      await startAcpSession(activeClient, "code");
-      const acpMessages = await runAcpPrompt(activeClient, "Run the large ACP fixture.");
-      await activeClient.close();
-      activeClient = null;
-
-      const serialized = JSON.stringify(acpMessages);
-      expect(serialized).toContain("large ACP complete");
-      expect(serialized).not.toContain("permission_required");
-      expect(serialized).not.toContain("integer does not fit in destination type");
-      expect((serialized.match(/\"status\":\"failed\"/g) ?? [])).toHaveLength(0);
-      expect((serialized.match(/\"status\":\"completed\"/g) ?? [])).toHaveLength(1);
-      expect(existsSync(join(acpRoot.workspace, acpMarker))).toBe(true);
-      expect(acpGateway.requests).toHaveLength(2);
-      expect(acpGateway.classifierRequests).toHaveLength(1);
-      expect(
-        Buffer.byteLength(acpGateway.classifierRequests[0]!.body),
-      ).toBeGreaterThan(16 * 1024);
-      await expectSavedShellRun(
-        acpRoot,
-        sessionIdFromHome(acpRoot),
-        acpCommand,
         "success",
       );
     },
