@@ -24,6 +24,7 @@ TRAINING_E2E_TESTS = (
     "ask-presentation.test.ts",
     "config-persistence.test.ts",
     "prompt-history.test.ts",
+    "auth-refresh.test.ts",
     "file-tool-paths.test.ts",
     "file-tool-permissions.test.ts",
     "gateway-stream-lifecycle.test.ts",
@@ -80,7 +81,6 @@ EXCLUDED_E2E_TESTS = (
     "tui-render-lab.test.ts",
     "tui-render-live-stress.test.ts",
     "web-fetch-live.test.ts",
-    "web-search-live.test.ts",
 )
 
 
@@ -359,8 +359,8 @@ class PgsoCorpusTests(unittest.TestCase):
             EXCLUDED_E2E_TESTS,
             tuple(test_file for test_file, _ in corpus.intentional_exclusions),
         )
-        self.assertEqual(31, len(corpus.scenarios))
-        self.assertEqual(49, len(corpus.candidate_scenarios))
+        self.assertEqual(32, len(corpus.scenarios))
+        self.assertEqual(48, len(corpus.candidate_scenarios))
         self.assertEqual(
             {
                 "direct-help": 100,
