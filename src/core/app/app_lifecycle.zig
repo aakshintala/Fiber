@@ -256,25 +256,6 @@ pub fn loadStartupStateWithoutCredentials(alloc: Allocator, default_model: []con
     return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, workspace_root, default_model, default_agent_step_limit, null, null);
 }
 
-pub fn loadEmbeddedStartupState(
-    alloc: Allocator,
-    home_dir: []const u8,
-    workspace_root: []const u8,
-    default_model: []const u8,
-    default_agent_step_limit: usize,
-) !StartupState {
-    const owned_workspace_root = try io_mod.realpathAlloc(alloc, workspace_root);
-    return loadStartupStateFromOwnedWorkspace(
-        alloc,
-        oauth_transport.unavailable_provider,
-        owned_workspace_root,
-        default_model,
-        default_agent_step_limit,
-        home_dir,
-        null,
-    );
-}
-
 pub fn loadCatalogStartupState(
     alloc: Allocator,
     default_model: []const u8,

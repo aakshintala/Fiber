@@ -6674,12 +6674,6 @@ test "authority proof is principal bound generation checked and revocable" {
         session.verify_claim(foreign, .read),
     );
     foreign = claim;
-    foreign.principal.transport_role = .acp;
-    try std.testing.expectError(
-        error.PrincipalMismatch,
-        session.verify_claim(foreign, .read),
-    );
-    foreign = claim;
     foreign.principal.backend = .tmux;
     try std.testing.expectError(
         error.PrincipalMismatch,
@@ -7281,12 +7275,6 @@ test "authority reload requires owner capability and exact durable scope" {
     );
     foreign = input;
     foreign.principal.cwd = "/foreign";
-    try std.testing.expectError(
-        error.PrincipalMismatch,
-        reloadAuthorityClaim(alloc, &owner, foreign),
-    );
-    foreign = input;
-    foreign.principal.transport_role = .acp;
     try std.testing.expectError(
         error.PrincipalMismatch,
         reloadAuthorityClaim(alloc, &owner, foreign),

@@ -4770,41 +4770,6 @@ pub const McpRuntime = struct {
         if (publication) |id| sink.publish(sink.context, id);
     }
 
-    pub fn acceptLegacyUrlCompletion(
-        self: *McpRuntime,
-        origin: tool_mcp_runtime.InputOrigin,
-        acp_id: []const u8,
-        sink: tool_mcp_runtime.LegacyUrlCompletionSink,
-    ) ?tool_mcp_runtime.LegacyUrlAcceptStatus {
-        const accepted = accepted: {
-            self.catalog_mutex.lockSharedUncancelable(io_mod.getIo());
-            defer self.catalog_mutex.unlockShared(io_mod.getIo());
-            self.legacy_url_waiter_mutex.lockUncancelable(io_mod.getIo());
-            defer self.legacy_url_waiter_mutex.unlock(io_mod.getIo());
-            if (!self.legacyCompletionSourceCurrentLocked(
-                origin.server_name,
-                origin.runtime_generation,
-                origin.connection_generation,
-                origin.client_generation,
-                origin.auth_generation,
-            )) break :accepted tool_mcp_runtime.LegacyUrlAcceptTransition.missing;
-            const server = self.findServer(origin.server_name) orelse
-                break :accepted tool_mcp_runtime.LegacyUrlAcceptTransition.missing;
-            if (server.catalog_generation != origin.catalog_generation) {
-                break :accepted tool_mcp_runtime.LegacyUrlAcceptTransition.missing;
-            }
-            break :accepted sink.accept(sink.context, origin, acp_id);
-        };
-        return switch (accepted) {
-            .missing => null,
-            .awaiting_completion => .awaiting_completion,
-            .completed => |id| completed: {
-                sink.publish(sink.context, id);
-                break :completed .completed;
-            },
-        };
-    }
-
     fn cancelLegacyUrlWaitersForServer(
         self: *McpRuntime,
         server_name: []const u8,
@@ -5275,19 +5240,6 @@ pub const McpRuntime = struct {
     pub fn connectAll(self: *McpRuntime, tool_registry: tool_dispatch.Registry) void {
         self.discovery_cancel_requested.store(false, .seq_cst);
         self.connectAllCancellable(tool_registry, &self.discovery_cancel_requested);
-    }
-
-    pub fn connectAllForAcp(self: *McpRuntime, tool_registry: tool_dispatch.Registry) void {
-        if (self.discovery_state.cmpxchgStrong(.idle, .loading, .seq_cst, .seq_cst) != null) return;
-        self.discovery_cancel_requested.store(false, .seq_cst);
-        self.connectAllControlled(
-            tool_registry,
-            &self.discovery_cancel_requested,
-            null,
-            .acp_startup,
-        );
-        self.finishDeferredDiscovery();
-        self.discovery_state.store(.complete, .seq_cst);
     }
 
     pub fn connectAllCancellable(
@@ -14755,36 +14707,6 @@ test "legacy completion routing keeps recovered connection identities distinct" 
         .publish = Capture.publish,
     });
     waiter.binding.runtime_generation = runtime.legacy_url_runtime_generation;
-    const stale_origin = tool_mcp_runtime.InputOrigin{
-        .wire = .legacy_mcp_2025_11,
-        .server_name = "server",
-        .operation = .{ .tools_call = "authorize" },
-        .runtime_generation = runtime.legacy_url_runtime_generation,
-        .connection_generation = 1,
-        .client_generation = 1,
-        .catalog_generation = 3,
-        .request_generation = 4,
-        .auth_generation = 5,
-        .deadline_ms = std.math.maxInt(i64),
-    };
-    try std.testing.expect(runtime.acceptLegacyUrlCompletion(
-        stale_origin,
-        "same-id",
-        runtime.legacy_url_completion_sink.?,
-    ) == null);
-    try std.testing.expectEqual(@as(usize, 0), capture.accepted);
-    var current_origin = stale_origin;
-    current_origin.connection_generation = 2;
-    current_origin.client_generation = 2;
-    try std.testing.expectEqual(
-        tool_mcp_runtime.LegacyUrlAcceptStatus.awaiting_completion,
-        runtime.acceptLegacyUrlCompletion(
-            current_origin,
-            "same-id",
-            runtime.legacy_url_completion_sink.?,
-        ).?,
-    );
-    try std.testing.expectEqual(@as(usize, 1), capture.accepted);
     var parsed = try std.json.parseFromSlice(
         std.json.Value,
         alloc,
@@ -15778,47 +15700,6 @@ test "logout releases completion arbitration before draining active legacy HTTP"
         tool_mcp_runtime.LegacyUrlCompletionStatus.cancelled,
         waiter.signal.status.load(.acquire),
     );
-
-    const Capture = struct {
-        accepted: usize = 0,
-
-        fn accept(
-            raw: *anyopaque,
-            _: tool_mcp_runtime.InputOrigin,
-            _: []const u8,
-        ) tool_mcp_runtime.LegacyUrlAcceptTransition {
-            const self: *@This() = @ptrCast(@alignCast(raw));
-            self.accepted += 1;
-            return .awaiting_completion;
-        }
-
-        fn consume(
-            _: *anyopaque,
-            _: tool_mcp_runtime.LegacyUrlCompletion,
-        ) tool_mcp_runtime.LegacyUrlConsumeTransition {
-            return .missing;
-        }
-
-        fn publish(_: *anyopaque, _: []u8) void {}
-    };
-    var capture = Capture{};
-    try std.testing.expect(runtime.acceptLegacyUrlCompletion(.{
-        .wire = .legacy_mcp_2025_11,
-        .server_name = "server",
-        .operation = .{ .tools_call = "authorize" },
-        .connection_generation = 2,
-        .client_generation = 2,
-        .catalog_generation = 3,
-        .request_generation = 4,
-        .auth_generation = 5,
-        .deadline_ms = std.math.maxInt(i64),
-    }, "acp-id", .{
-        .context = @ptrCast(&capture),
-        .accept = Capture.accept,
-        .consume = Capture.consume,
-        .publish = Capture.publish,
-    }) == null);
-    try std.testing.expectEqual(@as(usize, 0), capture.accepted);
 
     runtime.unregisterLegacyUrlWaiter(&waiter);
     waiter_registered = false;

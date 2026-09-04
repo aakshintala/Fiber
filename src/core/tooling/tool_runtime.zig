@@ -849,7 +849,6 @@ fn typedDispatchContext(ctx: Context, arena: Allocator) tool_dispatch.DispatchCo
         .terminal_transport_role = switch (ctx.lifecycle_scope.kind) {
             .interactive, .subagent => .interactive,
             .ask => .headless,
-            .acp => .acp,
         },
         .lifecycle_allocator = ctx.session_allocator,
         .cancel_flag = runtimeCancelFlag(ctx),

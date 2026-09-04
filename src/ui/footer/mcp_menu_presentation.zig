@@ -369,7 +369,6 @@ fn serverMetadata(buf: []u8, server: mcp_health.ServerSnapshot) []const u8 {
     const source = switch (server.source) {
         .profile => "Profile",
         .workspace => "Project",
-        .acp => "ACP",
     };
     const transport = switch (server.transport) {
         .stdio => "stdio",
@@ -399,7 +398,6 @@ fn composeDetailsRow(
         2 => .{ .label = "Source", .value = switch (server.source) {
             .profile => "Profile · ~/.fiber/mcp.json",
             .workspace => "Project · .mcp.json",
-            .acp => "ACP session",
         } },
         3 => .{ .label = "Transport", .value = @tagName(server.transport) },
         4 => .{ .label = "Policy", .value = if (server.required) "required" else "optional" },
