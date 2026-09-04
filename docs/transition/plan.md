@@ -11,6 +11,10 @@ where it should be. That file owns everything deferred out of the transition for
 being net-new capability rather than reshaping of inherited behavior; this file
 owns the transition only.
 
+Cleanups found mid-slice that belong to a later phase go in
+[`deferred.md`](deferred.md), tagged with the phase that owns them. A slice must
+not widen to absorb them.
+
 The transition documents are disposable. They are deleted at the end of Phase 6,
 after Phase 6 has harvested their rationale into product documentation.
 
