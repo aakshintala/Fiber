@@ -799,7 +799,7 @@ pub fn mergeNative(
     return merged;
 }
 
-pub fn appendWorkspaceAfterAcpPrimary(
+pub fn appendWorkspaceAfterPrimary(
     alloc: Allocator,
     output: *std.ArrayList(McpServerConfig),
     workspace: *std.ArrayList(McpServerConfig),
@@ -1776,7 +1776,7 @@ test "workspace primary duplicates remain ordered while workspace collisions are
         .command = try alloc.dupe(u8, "workspace"),
         .workspace_admission = .pending,
     });
-    try appendWorkspaceAfterAcpPrimary(alloc, &output, &workspace);
+    try appendWorkspaceAfterPrimary(alloc, &output, &workspace);
     try std.testing.expectEqual(@as(usize, 3), output.items.len);
     try std.testing.expectEqualStrings("one", output.items[0].command.?);
     try std.testing.expectEqualStrings("two", output.items[1].command.?);
