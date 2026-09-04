@@ -37,6 +37,35 @@ decisions. Same convention: recorded, not silently applied.
 - **`ask --resume-id` was listed as absent** in Slice 9. It exists at `cli_ask.zig:3297`, is declared in the usage string at `commands.zig:33`, and has ~12 test call sites. This is the fourth error found in this document across two revisions, and the first found in a row that would have *added* scope rather than misdirected it. **A full re-audit of every matrix row precedes Slice 1** — see "Slices", step zero.
 - **Removing `--no-color` breaks 39 e2e call sites at argument parsing**, which is a different failure from the stale assertions this phase accepts. Slice 2 cleans them up. See Slice 2's row.
 
+### Step-zero audit, 2026-09-04
+
+Every matrix row was verified against the tree at `098aabc8`. Line drift was
+corrected silently throughout. Six findings changed a row's meaning:
+
+**Scope added**
+
+- **`ask --model` and `--effort` do not exist.** `grep -rn '"--model"' src/` and the same for `--effort` return nothing, and neither is in the `ask` spec. The matrix listed both as "present / unchanged", so Slice 4 was sized as two renames and one new flag when it is actually building two flags from scratch. Both remain Phase 3 work — exposing an existing model selection through the CLI is reshaping by `plan.md`'s own example — but the slice is larger than it read.
+- **`mcp logout` exists** (`cli_surface.zig:1631`) and had no matrix row, while its pair `mcp auth` did. It must move with `mcp login` or the two spellings diverge.
+- **`/clear` and `/new` are different behaviours**, not two spellings. Slice 10 proposed aliasing them. See that row: it now needs an owner decision, because merging them is a behaviour change rather than reshaping.
+
+**Scope removed**
+
+- **`sessions --limit` is already declared and parsed** (`commands.zig:141,146`, `cli_surface.zig:2429`, tested at `:2852`). The row is a no-op.
+- **"no MCP servers configured" already exits 0**, via `.handled_success` at `cli_surface.zig:1570`. Both prior revisions of this document claimed it returned 1 and needed a decision.
+- **The `--fx-internal-terminal-*` carried row is clean.** Verified rather than assumed; nothing is owed.
+
+**Path corrections**
+
+`settings_catalog.zig` is under `src/core/config/` and `settings_menu_presentation.zig` under `src/ui/footer/` — the matrix placed both in `src/core/slash_commands/`. Every line number cited for them was correct.
+
+**Checked and confirmed correct**, recorded so the next reader does not re-derive
+them: 11 `json_option` command specs; 13 JSON payload shapes, with
+`McpLocalSnapshot` correctly excluded as a nested component; every Slice 6
+permission anchor (`config_runtime.zig:893,912`; `permissions.zig:1412,1565,1581`);
+`connected_providers` as an array at `output_contracts.zig:575`; the
+`applyFastMode` call sites; the `parseResumeArgs` flag hole; and `/background`
+genuinely unregistered.
+
 ## Measured surface at `af6ab6de`
 
 Top-level commands before Phase 3: `help`, `ask`, `acp`, `login`, `logout`,
@@ -44,18 +73,26 @@ Top-level commands before Phase 3: `help`, `ask`, `acp`, `login`, `logout`,
 `resume`, `usage`, `upgrade`, `replay` (hidden), `workspace`. Seventeen kinds;
 sixteen once `acp` is deleted in Phase 1's addendum.
 
-Files that carry the work: `src/core/cli/cli_surface.zig` (4,190 lines, all
+Files that carry the work: `src/core/cli/cli_surface.zig` (4,061 lines, all
 argument parsing and dispatch), `src/core/output/output_contracts.zig` (2,731,
-every `*Snapshot`), `src/builtins/commands.zig` (464, both catalogs),
-`src/main.zig` (3,957), `src/core/slash_commands/`.
+every `*Snapshot`), `src/builtins/commands.zig` (457, both catalogs),
+`src/main.zig` (3,940), `src/core/slash_commands/`.
 
 `--json` is declared on 11 command specs and parsed at 10 sites — 8 in
 `cli_surface.zig` (four commands share `parseLocalSurfaceArgs`), plus `ask` in
 `cli_ask.zig:3313` and `replay` in `cli_replay.zig:41`. Every declaring command
 parses it. There are **13** distinct success payload shapes: 11 `*Snapshot`
-types in `output_contracts.zig`, plus `ask`'s hand-built object
-(`cli_ask.zig:3475`) and `replay`'s inline one (`cli_replay.zig:111`). The
-shared failure shape is `CommandFailureSnapshot`.
+types in `output_contracts.zig` with a public `renderJson`, plus `ask`'s
+hand-built object (`renderFinalJsonResult`, `cli_ask.zig:3471`) and `replay`'s
+inline one (`cli_replay.zig:111`). The shared failure shape is
+`CommandFailureSnapshot`.
+
+`output_contracts.zig` declares 13 `*Snapshot` types, not 12. The extra one is
+`McpLocalSnapshot` (`:377`), which is **not** a payload: it has a private
+`writeJson` rather than a public `renderJson`, and is embedded as a field inside
+`StatusSnapshot` (`:449`) and `DoctorSnapshot` (`:1186`). It needs no envelope of
+its own; its content rides inside its host's `data`. Counting it is the obvious
+mistake and it has already been made once.
 
 Of the retained operational commands, only `mcp` lacks `--json` entirely.
 
@@ -176,14 +213,20 @@ tells a reader less than exit 1 does. (`errno` values are a different thing
 entirely and are genuinely not portable: `EDEADLK` is 35 on Linux and 11 on
 macOS. Never return one as exit status.)
 
-**130 and 143 do not work today.** `cli_ask.zig:104-131` computes them
-correctly, then `cli_surface.zig:679` collapses any non-zero `u8` into
-`.handled_failure`, which `app_entry_runtime.zig:187` maps to exit 1. Same at
-`:1216` for `replay`. The `handled_exit: u8` passthrough variant exists and is
-never returned from production code. `error.UnknownCliCommand`
-(`cli_surface.zig:1223`) bypasses `RunResult` entirely and is caught into exit 1
-at `app_entry_runtime.zig:154`. Slice 1 fixes all of this; Slice 3 then
-reclassifies the failure sites.
+**130 and 143 do not work today.** `cli_ask.zig:104-105` computes them
+correctly, then `cli_surface.zig:675` collapses any non-zero `u8` into
+`.handled_failure`, which `app_entry_runtime.zig:196` maps to exit 1. Same at
+`cli_surface.zig:1182` for `replay`. The `handled_exit: u8` passthrough variant
+exists at `cli_surface.zig:127`, is already mapped correctly at
+`app_entry_runtime.zig:197`, and is never returned from production code — the
+producers are the only liars.
+
+`error.UnknownCliCommand` bypasses `RunResult` entirely and is caught into exit 1
+at **two** sites, `app_entry_runtime.zig:150` and `:174`. The matrix named one.
+`:174` is `runBeforeInteractiveWithDeps`, the path the tests drive, so fixing
+only `:150` yields green tests on a wrong binary.
+
+Slice 1 fixes all of this; Slice 3 then moves the parse-layer sites to exit 2.
 
 ### Permission rule syntax
 
@@ -282,12 +325,9 @@ One at a time on `main`. Everything routes through `cli_surface.zig` and both
 catalogs in `builtins/commands.zig`, so the slices cannot run in parallel. The
 per-slice gate is in `AGENTS.md`.
 
-**Step zero: re-audit every matrix row before Slice 1.** Four `Current` claims
-have been wrong across two revisions of this document, most recently one that
-would have had Slice 9 build a flag that already ships. Verify each row's
-`Current` against the tree and correct it in place; a drifted `file:line` is
-caught free at slice start, but a phantom "absent" is not, because nobody greps
-for what the document says is not there.
+**Step zero is complete** — see "Step-zero audit" under Status. Every row was
+verified at `098aabc8`. Two rows still need an owner decision before their slice
+runs: `/clear` vs `/new` in Slice 10, and the enlarged Slice 4.
 
 **Prerequisite: `demolition-inventory.md` slices 21-23 (ACP removal) land
 first.** Implementing the session, permission, and model contracts while a
@@ -374,7 +414,7 @@ The completeness check is a grep: every argument-parsing error path reaches
 | `replay` parse errors | `replyError` returns 1 | usage branch returns 2 | `cli_replay.zig` | `cli_replay.zig` |
 | `--json` on a non-operational command | varies | exit 2 | `cli_surface.zig` | `cli_surface.zig` |
 | `McpAddUsage` | `:1492`, both usage and save failure | usage branch 2, save-failure branch stays 1 | `cli_surface.zig` | `cli_surface.zig` |
-| no MCP servers configured | `:1622` → 1 | **unchanged** — post-parse, so 1 by the boundary, no judgement needed | — | — |
+| no MCP servers configured | **already `.handled_success` → 0** at `cli_surface.zig:1570`; it prints "No MCP servers configured." and succeeds. The previous claim of `:1622` → 1 was wrong on both the line and the code. | **no change**; row retained only to record that it was checked | — | — |
 
 ### Slice 4 — `ask` flags and the fast decision
 
@@ -386,16 +426,16 @@ exist.
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
 | `--permission-mode <ask\|auto\|yolo>` | `--auto`, `--yolo`, `--prompt-permissions` | single flag; bad value exits 2 | `ask` | `cli_ask.zig` | `cli_ask.zig` |
-| `--model <namespaced-id>` | present | unchanged, rejects `:fast` suffix | `ask` | `cli_ask.zig` | `cli_ask.zig` |
-| `--effort <level>` | present | unchanged | `ask` | `cli_ask.zig` | `cli_ask.zig` |
+| `--model <namespaced-id>` | **absent.** `grep -rn '"--model"' src/` returns nothing and it is not in the `ask` spec (`commands.zig:31-57`). The matrix said "present". | build it; rejects a `:fast` suffix | `ask` | `cli_ask.zig` | `cli_ask.zig` |
+| `--effort <level>` | **absent**, same evidence | build it | `ask` | `cli_ask.zig` | `cli_ask.zig` |
 | `--retry` | `--continue-recovery` | renamed | `ask` | `cli_ask.zig` | `cli_ask.zig` |
 | `--fast` | unreachable; startup hardcodes false | sets the tier for one invocation | `ask` | `cli_ask.zig` | `cli_ask.zig` |
 | `--timeout` | hidden, undeclared (`cli_ask.zig:3317`), 3 test callers | declared in the spec | `ask` | `commands.zig` | `cli_ask.zig` |
 | `--verbose` | hidden, undeclared (`:3323`), no callers | deleted | — | `cli_ask.zig` | `cli_ask.zig` |
 | `--system` | declared (`commands.zig:39`), tested | unchanged | `ask` | — | — |
 | `--quiet`, `--no-save`, `--image` | present | unchanged | `ask` | — | — |
-| "Fast mode" row **inside** the `/settings` menu | one of 12 catalog rows: `settings_catalog.zig:33,67,262,321,369` and `app_commands.zig:3532` | that row removed, menu drops to 11; `toggleFast`/`toggleFastForModel` become dead and go with it. **`/settings` itself is retained.** | — | `settings_catalog.zig` | `settings_catalog.zig` |
-| settings menu row counts | `settings_catalog.zig:433,435`, `settings_menu_presentation.zig:364,385,490` | updated for one fewer row (12 to 11) | — | `settings_catalog.zig` | — |
+| "Fast mode" row **inside** the `/settings` menu | one of 12 catalog rows: `src/core/config/settings_catalog.zig:33,67,262,321,369` and `app_commands.zig:3534`. Note the path: the catalog is under `core/config/`, **not** `core/slash_commands/`. | that row removed, menu drops to 11; `toggleFast`/`toggleFastForModel` become dead and go with it. **`/settings` itself is retained.** | — | `settings_catalog.zig` | `settings_catalog.zig` |
+| settings menu row counts | `src/core/config/settings_catalog.zig:433,435`, `src/ui/footer/settings_menu_presentation.zig:364,385,490` | updated for one fewer row (12 to 11) | — | `settings_catalog.zig` | — |
 | `applyFastMode` | called by `toggleFastForModel`, `selectModelFromPicker:529`, `setResolvedModel:660` | **retained** — the picker path survives | — | — | — |
 
 ### Slice 5 — `auth`
@@ -406,8 +446,8 @@ exist.
 | `auth status` | absent; `fiber status` carries a subset | active credential: provider, expiry, refreshable | `auth.status` | `cli_surface.zig` | `output_contracts.zig` |
 | `auth login [<provider>]` | top-level `login`; provider arg parsed then discarded (`:716`) | provider honored; picks when >1 exists, proceeds when 1; no tty + no provider exits 2 and lists providers | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
 | `auth logout [<provider>]` | top-level `logout`; arg discarded (`:741`) | provider honored | `auth.logout` | `cli_surface.zig` | `cli_surface.zig` |
-| top-level `login`/`logout` | present (`commands.zig:63,69`) | absent | — | `commands.zig` | `command_specs.zig` |
-| `/login`, `/logout` | present (`commands.zig:334-335`) | **unchanged** — no `/auth` parent | — | — | — |
+| top-level `login`/`logout` | present (`commands.zig:58,64`) | absent | — | `commands.zig` | `command_specs.zig` |
+| `/login`, `/logout` | present (`commands.zig:327-328`) | **unchanged** — no `/auth` parent | — | — | — |
 
 ### Slice 6 — `permissions`
 
@@ -424,7 +464,8 @@ exist.
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
-| `mcp login` | `mcp auth` (`cli_surface.zig:1612`) | renamed | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
+| `mcp login` | `mcp auth` (`cli_surface.zig:1575`) | renamed | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
+| `mcp logout` | **present** at `cli_surface.zig:1631`, and gated alongside `auth`/`list` at `main.zig:3246`. The matrix had no row for it. | retained; enveloped for the error `code`, and it must stay paired with `mcp login` through the rename | `mcp.logout` | `cli_surface.zig` | `cli_surface.zig` |
 | `mcp list --json` | no `--json` anywhere in `mcp` | enveloped | `mcp.list` | `output_contracts.zig` | `output_contracts.zig` |
 | `mcp add\|remove\|path\|trust --json` | absent | enveloped, for the error `code` | `mcp.<sub>` | `output_contracts.zig` | `output_contracts.zig` |
 | `mcp list --connect` | already removed from `src/` (`:1590` rejects the extra token); stale callers in `tests/e2e/mcp-http.test.ts:217` | callers removed | — | tests | — |
@@ -440,7 +481,7 @@ exist.
 | `session remove` | absent; `session_store.zig:859 deleteCommittedSession` exists with no CLI path | wired to that function | `session.remove` | `cli_surface.zig` | `session_store.zig` |
 | `session recover` | present (`:916`) | unchanged, enveloped | `session.recover` | — | — |
 | `session resume` | present (`commands.zig:134`) | unchanged; **rejects `--json`** | — | `cli_surface.zig` | `cli_surface.zig` |
-| `parseResumeArgs` flag guard | any `--`-prefixed token becomes a session id (`:2652`) | rejects it, exit 2 | `cli_surface.zig` | `cli_surface.zig` |
+| `parseResumeArgs` flag guard | confirmed real, at `cli_surface.zig:2618`: when `args[0]` is not `--id` it is trimmed and returned as the id, so `fiber resume --wat` resolves to session id `"--wat"` | rejects it, exit 2 | `cli_surface.zig` | `cli_surface.zig` |
 
 ### Slice 9 — resume paths and pagination
 
@@ -449,19 +490,19 @@ exist.
 | `continue` | absent | resumes the most recent session, no picker | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
 | `ask --resume-id <id>` | **present**, not absent: parsed at `cli_ask.zig:3297`, declared at `commands.zig:33`, ~12 test call sites | verify the semantics match "one-shot resumes a specific session"; likely no change. Do not confuse with `--resume-<id>` in the row below, which is a different spelling and is removed. | `ask` | — | `cli_ask.zig` |
 | `-r`, `--resume`, `--resume-last`, `--continue`, `-c`, `--resume-<id>` | mixed: some parsed, some only in help | absent from parser and help | — | `cli_surface.zig` | `cli_surface.zig` |
-| `sessions --continuation` | `--cursor` (`commands.zig:147`, parsed `:2476`) | renamed | `session.list` | `commands.zig` | `cli_surface.zig` |
-| `sessions --limit` | absent from the target spec, present in usage | declared and parsed | `session.list` | `commands.zig` | `cli_surface.zig` |
+| `sessions --continuation` | `--cursor` (`commands.zig:141,146`, parsed `cli_surface.zig:2442`) | renamed | `session.list` | `commands.zig` | `cli_surface.zig` |
+| `sessions --limit` | **already declared and parsed**: a full `OptionDoc` at `commands.zig:146`, in the usage string at `:141`, parsed at `cli_surface.zig:2429`, with tests at `:2852`. The matrix implied work remained. | **no change** | `session.list` | — | — |
 | `resume` (picker) | present | unchanged; **rejects `--json`** | — | `cli_surface.zig` | `cli_surface.zig` |
 
 ### Slice 10 — interactive surface
 
 | Item | Current | Target | Owner | Focused test |
 | --- | --- | --- | --- | --- |
-| `/retry` | `/continue` (`commands.zig:332`) | renamed; replays an interrupted turn from its checkpoint | `commands.zig` | `command_router.zig` |
-| `/new` canonical, `/clear` alias | two separate kinds (`:329,330`) | one kind with `.aliases = &.{"/clear"}`, as `/quit` does for `/exit` | `commands.zig` | `command_router.zig` |
-| `/background` | rejected as unknown (`command_router.zig:177`) | reachable; inspects and terminates background processes | `commands.zig` | `command_router.zig` |
-| `/undo`, `/trace` | live (`commands.zig:340,343`) | **retained** — recorded owner decisions at `demolition-inventory.md:80,282` | — | — |
-| `/exit` | already aliases `/quit` (`:347`) | unchanged | — | — |
+| `/retry` | `/continue` (`commands.zig:325`) | renamed; replays an interrupted turn from its checkpoint | `commands.zig` | `command_router.zig` |
+| `/new` canonical, `/clear` alias | **two kinds with different behaviour**, not two spellings of one. `commands.zig:322` is `.clear_screen` — "start a fresh conversation while keeping managed processes"; `:323` is `.new_session` — "start a fresh session". Aliasing them collapses that difference. | **owner decision required before this slice runs.** Either (a) confirm the behaviours should merge, which is a behaviour change and not reshaping, or (b) keep both kinds and drop this row. | `commands.zig` | `command_router.zig` |
+| `/background` | rejected as unknown; confirmed at `command_router.zig:178` and absent from the welcome text (`command_specs.zig:1483`). The `"/background"` in `mods/registry.zig:119` is a test fixture, not a registration. | reachable; inspects and terminates background processes | `commands.zig` | `command_router.zig` |
+| `/undo`, `/trace` | live (`commands.zig:333,336`) | **retained** — recorded owner decisions at `demolition-inventory.md:80,282` | — | — |
+| `/exit` | already aliases `/quit` (`:340`) | unchanged | — | — |
 
 ### Slice 11 — `debug`
 
@@ -474,7 +515,7 @@ exist.
 
 | Item | Current | Target | Owner | Focused test |
 | --- | --- | --- | --- | --- |
-| `/context` | absent; TUI footer shows `Context: 12k/200k 6%` (`render.zig:432`) | slash command showing used, window, percent | `commands.zig` | `command_router.zig` |
+| `/context` | absent; TUI footer shows `Context: {d}k/{d}k {d}%` (`src/ui/render.zig:438`) | slash command showing used, window, percent | `commands.zig` | `command_router.zig` |
 | context *occupants* | no per-component accounting exists | **deferred** — see `../enhancements/pending.md` | — | — |
 | context usage in `ask --json` / `session show` | absent | **deferred** — same file | — | — |
 
@@ -482,7 +523,7 @@ exist.
 
 | Item | Note |
 | --- | --- |
-| `--fx-internal-terminal-*` rename | Design `:211`. Phase 2 owns it; confirm no `fx`-named re-exec flag survives, including the generated shell bootstrap string that embeds it. |
+| `--fx-internal-terminal-*` rename | **Verified clean 2026-09-04.** All re-exec flags are `--fiber-internal-terminal-*` (`terminal/tmux_session.zig:14,15`, `terminal/host.zig:20`, `terminal/shell_resolver.zig:299`), and the generated bootstrap string at `shell_resolver.zig:528` embeds the `fiber` spelling. Nothing further owed. |
 | `upgrade --channel` | Already removed in demolition Slice 19. |
 
 ## Testing
