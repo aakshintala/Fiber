@@ -1,5 +1,29 @@
 # Fiber demolition inventory
 
+**2026-09-04: slices 21-23 landed on `main` (`33f6810c`, `70293d4d`, `279cbe27`).**
+The ACP surface is gone: 19,358 lines in slice 21, the core enum arms in slice
+22, and tests, documentation, and CI in slice 23. Phase 1 is complete again and
+the Phase 3 contract slices are unblocked.
+
+Three things differ from the specs above, all recorded in the commits:
+
+- `jsonrpc.writeJsonStr` did not need "a shared home". It was a hand-rolled JSON
+  string escaper, so its one non-ACP caller now uses
+  `std.json.Stringify.encodeJsonString` and the function died with `src/acp/`.
+- `session_test_controls.zig` lost both importers to the deletion, so it also
+  gains a reference in the `main.zig` test import block. Zig does not compile an
+  unreferenced file; without that line it would have stopped typechecking
+  silently and its unit test would have stopped running.
+- Slice 23 retained four mixed-suite cases under its stop-if rule and converted
+  a fifth. The retained four are recorded in [`plan.md`](plan.md) under
+  "ACP-driven cases retained for conversion" so Phase 5 inherits a spec.
+
+Open, deliberately, for the owner: `appendWorkspaceAfterAcpPrimary`
+(`src/core/mcp/project_config.zig:802`) still carries an ACP name for a concept
+that no longer exists. Its body is generic and it has one caller. A rename was
+not in any slice's spec and Phase 2 identity work is closed, so it was left
+rather than changed silently.
+
 **2026-09-04: Phase 1 reopened.** Slices 1-20 landed and closed the demolition
 scoped at the audited revision. Contract planning for Phase 3 then produced an
 owner decision to delete the ACP surface, which is demolition by kind and by
