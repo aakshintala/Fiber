@@ -4,7 +4,7 @@ Status: decided, ready for implementation planning
 
 Priority: start now
 
-Last updated: September 2, 2026
+Last updated: September 4, 2026
 
 ## Decision summary
 
@@ -21,13 +21,12 @@ Fiber is a native coding-agent runtime with these supported entry points:
 | Entry point | Purpose |
 | --- | --- |
 | interactive CLI and TUI | direct terminal use |
-| `fiber acp` | desktop applications, editors, and ACP clients |
 | `fiber ask` | one-shot shell and automation use |
 | `fiber ask --json` | structured automation and worker use |
 
 The shipped runtime must not depend on Node.js, Bun, npm, JavaScript, a language toolchain, or a package manager. JavaScript development and test tooling may remain when useful.
 
-ACP remains the process integration for editors and desktop applications. MCP remains the boundary for external tools and resources. Skills remain reusable prompt and instruction content.
+MCP remains the boundary for external tools and resources. Skills remain reusable prompt and instruction content.
 
 ## Remove embedding products
 
@@ -60,7 +59,6 @@ Simplify abstractions that have one implementation after this removal. Do not re
 Retain:
 
 - the CLI and TUI
-- ACP
 - `ask` and structured JSON output
 - durable sessions and subagents
 - cancellation and progress events
@@ -117,7 +115,7 @@ Keep `/exit` as an alias for `/quit`.
 
 Consolidate saved-session operations under `fiber session list|show|resume|recover|rename|remove`.
 
-`fiber session remove` is net-new native work. The current native ACP implementation does not provide a working `session/remove` method. Implement session removal in the native runtime and expose it through the CLI and ACP.
+`fiber session remove` exposes existing native work. `session_store.deleteCommittedSession` already implements durable removal; the CLI has no path to it. Wire the command to that function.
 
 Keep:
 
@@ -138,11 +136,15 @@ Defer branching, rewind, tree navigation, and fork semantics to a session-histor
 
 Replace top-level `login` and `logout` with `fiber auth list|status|login|logout`.
 
-`fiber auth status` without a provider reports every provider and supports structured output without secrets. `fiber auth login` and `fiber auth logout` may offer a provider picker only when stdin is a terminal. Without a terminal, an omitted provider fails immediately with a deterministic exit status and lists valid providers.
+`fiber auth list` reports every provider Fiber supports and whether the profile is signed in to each. `fiber auth status` reports the active credential: which provider, whether it is expired, and whether it can refresh. Neither emits a secret. They answer different questions and both remain useful with one provider configured.
+
+`fiber auth login` and `fiber auth logout` may offer a provider picker only when stdin is a terminal. When exactly one provider exists, login proceeds directly rather than picking. Without a terminal, an omitted provider fails immediately with a deterministic exit status and lists valid providers.
+
+Shape every auth surface for several providers and implement it against the one that exists. `ProviderId` is a retained seam with a single variant today; arrays, required or picked provider arguments, and per-provider state cost nothing now and avoid a contract break when a second provider lands. `fiber status` already emits `connected_providers` as an array and is the precedent.
 
 Keep `fiber permissions` as the read-only snapshot. Add `fiber permissions mode <mode>` and `fiber permissions rule list|add|remove`. Keep `/permissions` as the interactive UI.
 
-Keep `fiber mcp add|remove|list|login|logout|path|trust` and add `fiber mcp doctor`. Rename `mcp auth` to `mcp login`. Move `mcp list --connect` behavior to `fiber mcp doctor` and remove the flag. Keep all `mcp trust` actions, including `reset`.
+Keep `fiber mcp add|remove|list|login|logout|path|trust`. Rename `mcp auth` to `mcp login`. Keep all `mcp trust` actions, including `reset`. `mcp list --connect` is already removed from `src/`; stale callers remain in the end-to-end suite. `fiber mcp doctor` is net-new diagnostic capability and moves to [`../enhancements/pending.md`](../enhancements/pending.md).
 
 Keep `/skills` as the interactive skill UI. Defer the top-level `fiber skill` command. A broader extension or plugin contract needs its own design; the current typed hooks runtime is not a user-installable plugin system.
 
@@ -152,13 +154,17 @@ Keep `fiber workspace list|add|remove|clear` and `/workspace`. Workspace command
 
 Do not add `fiber config`. Persisted settings remain in `settings.json`. Keep `/settings`, `fiber status`, and `fiber doctor` for interactive configuration, effective values, and actionable checks.
 
-Make fast a model identifier property. Keep the model picker and use `fiber ask --model <id>:fast` for a fast-capable model. Remove the persisted `fast_mode` setting and do not add `--fast`.
+Fast is a per-request service tier, not a model identifier property. `fast_mode` combined with the catalog's per-model `supports_fast_mode` resolves to `provider_options.fast`, which Codex sends as `service_tier: priority` and other routes send as `gateway.speed = fast`. The model id does not change. A `-fast` id suffix is a different thing entirely: it names a distinct model and only lights the footer indicator.
 
-Add `/context` to show current context usage and occupants. Include context usage in `fiber ask --json` and `fiber session show`. Do not add a top-level `fiber context` command.
+Choose fast with the model, not as a standing mode. Keep the model picker's fast stage and `/model <id> <effort> normal|fast`, which persist the choice to the session record. Remove the "Fast mode" row from the `/settings` menu — the row, not the command: switching tiers moves a request off its cached prompt prefix provider-side, so it should cost a deliberate trip through the model picker rather than one keystroke. `/fast` is already removed.
 
-Keep `/usage` as the interactive dashboard. Retain `fiber usage --period <24h|7d|30d>` for profile windows. Add `fiber usage --session <id>` for one saved session. Do not rename `--period` to `--scope`.
+Add `fiber ask --fast` for the non-interactive path, which otherwise cannot reach the tier at all. The persisted `fast_mode` *setting* is already gone from `settings.json`; the session-record preference and the recovery checkpoint's `requested_fast_mode`/`fast_mode` pair stay, because the checkpoint records what a turn requested against what it actually routed after a provider-outage fallback.
 
-Keep `fiber models` and `/model`. Model selection uses `fiber ask --model <namespaced-id>`, explicit subagent overrides, and ACP session configuration.
+Add `/context` to show current context usage: tokens used, the model's window, and the percentage. Do not add a top-level `fiber context` command. Showing *occupants* — the per-component breakdown of what fills the window — needs token accounting that does not exist anywhere in the tree, as does surfacing context usage in `fiber ask --json` and `fiber session show`. Both move to [`../enhancements/pending.md`](../enhancements/pending.md).
+
+Keep `/usage` as the interactive dashboard. Retain `fiber usage --period <24h|7d|30d>` for profile windows. Do not rename `--period` to `--scope`. `fiber usage --session <id>` is a net-new query dimension and moves to [`../enhancements/pending.md`](../enhancements/pending.md).
+
+Keep `fiber models` and `/model`. Model selection uses `fiber ask --model <namespaced-id>` and explicit subagent overrides.
 
 Image attachment is composer behavior. Pasted or dropped paths attach automatically. Native clipboard images attach when available. Automation uses repeatable `fiber ask --image <path>`.
 
@@ -171,7 +177,7 @@ Do not add a top-level `fiber background` command. Keep `/background` for intera
 The top-level surface is:
 
 - default interactive TUI, `help`, and version output
-- `ask` and `acp`
+- `ask`
 - `auth`, `permissions`, `models`, and `mcp`
 - `session` and `sessions`, plus `resume` and `continue`
 - `status`, `doctor`, `usage`, and `workspace`
@@ -182,10 +188,10 @@ The interactive surface is:
 
 - `/help`, `/quit`, `/exit`, and `/status`
 - `/new` and `/clear`, `/resume`, `/rename`, `/retry`, and `/compact`
-- `/auth`, `/model`, `/context`, and `/usage`
+- `/login` and `/logout`, `/model`, `/context`, and `/usage`
 - `/permissions`, `/mcp`, `/skills`, `/settings`, `/workspace`, and `/background`
 
-Use `/new` as the canonical fresh-conversation command. Keep `/clear` as its alias. Keep `/compact` as a manual context-projection control. It must not destroy canonical session history.
+Use `/new` as the canonical fresh-conversation command. Keep `/clear` as its alias, in the catalog's existing alias mechanism rather than as a second kind, the way `/exit` aliases `/quit`. Do not consolidate `/login` and `/logout` under a `/auth` parent: the slash catalog is a flat list of verbs and has never mirrored the CLI, and grouping costs a keystroke on the action most often repeated. Keep `/compact` as a manual context-projection control. It must not destroy canonical session history.
 
 Retain a command only when it expresses a supported Fiber capability, a necessary diagnostic or recovery path, a deliberate development interface, or a small human convenience.
 
@@ -203,32 +209,31 @@ Add these per-invocation controls:
 
 - `fiber ask --model <namespaced-id>`
 - `fiber ask --effort <level>`
+- `fiber ask --fast`
 
 Remove `--no-color`. Honor the established `NO_COLOR` environment variable instead.
 
-Support `--json` on every retained operational command.
+Support `--json` on every retained operational command. A command is **operational when a script can drive it to completion without a human**. That test, not interactivity during execution, decides the flag: `ask` streams and prompts for permissions but ends with a result a script consumes, so it qualifies; `auth login` waits on a browser, so it does not.
+
+These commands reject `--json` as a usage error, the way `fiber login codex --json` already does: the default TUI, `resume`, `continue`, `session resume`, `auth login`, `mcp login`, and `help`. Everything else retained carries it, including mutating subcommands such as `permissions rule add`, `session remove`, and `workspace add`, which earn it for the error `code` rather than for a success payload. `fiber -v` prints a bare version string and needs no envelope.
 
 Rename internal re-exec flags from `--fx-internal-terminal-*` to Fiber names without compatibility aliases. Review the generated shell bootstrap string by hand because it embeds the terminal-control flag.
 
 Remove `upgrade --channel`. Disable automatic update checks and `fiber upgrade` during work in progress.
 
-## Keep ACP compatible and align its controls
+## Remove ACP
 
-Keep standard ACP methods behaving as ACP specifies. Extend ACP with Fiber-specific methods rather than replacing standard methods. The current editor ACP path must keep working.
+Delete the ACP surface. `fiber acp`, `src/acp/` (10,734 lines), `src/core/cli/acp_runner.zig`, and the dedicated end-to-end suite (8,416 lines) go, along with the ACP-shaped arms carried in core: `Wire.acp` and `Scope.acp_session` in MCP elicitation, `ConfigSource.acp`, `connectAllForAcp`, `startup_admission.acp_startup`, `ScopeKind.acp`, `TransportRole.acp`, and `EntryPoint.acp`.
 
-Remove `provider` and `mode` from ACP `session/set_config_option`. Retain `model` and add `effort`. Use `session/set_mode` as the only permission-mode setter.
+Nobody drives Fiber through an ACP client. The cost is not the surface itself but that `src/acp/prompt.zig` is a second full agent host, 4,659 lines running on the same session store, permissions, and provider set as the CLI, so every session and permission change is built and proved twice. Deleting it before the contract work means the command, flag, and permission contracts are implemented once.
 
-Ship modes named `ask`, `auto`, and `yolo`. Replace the current `code` name with `auto` and make yolo reachable. Keep the tested `ToolPolicy` field as a dormant seam for a future read-only mode. Ship no read-only mode now.
+ACP is a leaf on imports — `src/core/` never imports it — so removal is bounded. Two things move rather than go: `session_test_controls.zig` is generic despite living under `src/acp/` and belongs in `src/core/session/`, and `jsonrpc.writeJsonStr` has a non-ACP caller in `src/builtins/hooks/herdr.zig`.
 
-Expose context usage in `session/prompt` results and through a dedicated on-demand method.
-
-Remove stale `fiber acp --model` and `--log-file` help. The native parser does not support these launch flags. ACP clients select a model through `session/set_config_option`.
-
-Fiber is an agent surface, not an orchestrator. Fleet views, cross-agent inboxes, cost aggregation, host management, and worktree supervision belong to the client driving one or more `fiber acp` processes.
+Fiber is an agent surface, not an orchestrator. Fleet views, cross-agent inboxes, cost aggregation, host management, and worktree supervision belong to a client, and Fiber no longer ships a protocol for one to attach to.
 
 ## Establish the Fiber identity
 
-Rename all retained product identity, including executable names, CLI help, product text, configuration, state, ACP metadata, documentation, package and artifact names, internal identifiers, filenames, fixtures, tests, and developer tooling.
+Rename all retained product identity, including executable names, CLI help, product text, configuration, state, documentation, package and artifact names, internal identifiers, filenames, fixtures, tests, and developer tooling.
 
 Use these namespaces with no compatibility reader or alias:
 
@@ -248,7 +253,7 @@ Rename these internal formats and identifiers:
 - `fx.shared_model_context.v1` and `fx_vision_evidence` contract names, with their evaluation expectations
 - the generated terminal-control flag
 - fx-branded fixture filenames
-- ACP agent metadata, UI labels, tags, and shared HTTP User-Agent values
+- UI labels, tags, and shared HTTP User-Agent values
 
 Remove the Vercel AI Gateway Keychain service. Rename retained Codex-session and MCP OAuth Keychain services to Fiber names. Require fresh Fiber authentication and do not migrate credentials.
 
@@ -280,9 +285,9 @@ Rewrite `AGENTS.md`, `CONTRIBUTING.md`, and related process documents after the 
 ## Delivery sequence
 
 1. Remove embedding products and rejected provider paths while renaming the retained native product to Fiber.
-2. Implement the chosen command, flag, ACP, state, and identity contracts.
+2. Implement the chosen command, flag, state, and identity contracts.
 3. Simplify native branches that no longer have multiple implementations.
-4. Build and exercise ACP, TUI, `ask`, JSON automation, and Codex as Fiber.
+4. Build and exercise the TUI, `ask`, JSON automation, and Codex as Fiber.
 5. Rewrite process documentation after the cutover.
 6. Build local fast and exhaustive gates before preparing Fiber `0.0.1`.
 
@@ -294,8 +299,8 @@ The transition succeeds when:
 - removed SDK and embedding products leave no dead build or continuous-integration paths
 - the retained product uses Fiber names and formats with no fx compatibility reads
 - README and NOTICE provide the required upstream attribution
-- ACP, TUI, `ask`, JSON automation, and Codex-backed subagents work
-- the existing editor still drives Fiber through ACP
+- the TUI, `ask`, JSON automation, and Codex-backed subagents work
+- no ACP surface, entry point, or core arm remains
 - `fiber ask --model <namespaced-id>`, `--effort`, and `--permission-mode` work without global provider state
 - session removal, retry, and resume contracts match the chosen command surface
 - every retained operational command supports `--json`
@@ -303,6 +308,8 @@ The transition succeeds when:
 - macOS Intel is not a Fiber support target
 
 ## Deferred follow-up work
+
+The transition ends at Phase 6. It is step one, not the release: Fiber is stamped `0.0.1` only after the enhancement work in [`../enhancements/pending.md`](../enhancements/pending.md) brings the product to where it should be. That file owns everything deferred out of the transition for being net-new capability rather than reshaping.
 
 These items do not block the cutover:
 

@@ -1,6 +1,16 @@
 # Fiber demolition inventory
 
-**2026-09-03: all 20 slices landed on `main` (`4dc28113`...`c3905530`).** Phase 1 (demolition) is complete. One item was parked rather than forced through Slice 20: `prepare-release.yml`'s Vercel AI Gateway changelog generation, whose removal has no stated replacement and reads as a Phase 6 decision — see that slice's findings block below. Phases 2-6 (`## Later-phase backlog`) are unstarted.
+**2026-09-04: Phase 1 reopened.** Slices 1-20 landed and closed the demolition
+scoped at the audited revision. Contract planning for Phase 3 then produced an
+owner decision to delete the ACP surface, which is demolition by kind and by
+gate, so it lands here as slices 21-23 rather than as contract work. It must
+land before the Phase 3 contract slices: `src/acp/prompt.zig` is a second agent
+host on the same session store and permissions as the CLI, so every contract
+implemented while it exists is implemented twice. Reasoning is recorded in
+[`../enhancements/pending.md`](../enhancements/pending.md); the surface
+decisions that produced it are in [`contract-inventory.md`](contract-inventory.md).
+
+**2026-09-03: all 20 slices landed on `main` (`4dc28113`...`c3905530`).** Slices 1-20 are complete. One item was parked rather than forced through Slice 20: `prepare-release.yml`'s Vercel AI Gateway changelog generation, whose removal has no stated replacement and reads as a Phase 6 decision — see that slice's findings block below. Phases 2-6 (`## Later-phase backlog`) are unstarted.
 
 ## Audited revision and worktree
 
@@ -15,7 +25,7 @@
 
 The large embedding and provider implementations are already gone: `sdk/`, WebAssembly and Node-API artifacts and build options, SDK CI, npm publishing, Vercel and Grok provider bundles, Vercel host streaming, and the rejected provider command surface are absent.
 
-Demolition is not finished. The remaining work falls into these primary owners:
+At the audited revision, demolition was not finished. The remaining work fell into these primary owners:
 
 1. Dead WASI branches and cooperative host paths left after the embedding products were removed.
 2. Orphaned provider infrastructure: credits, team and tenant usage lookup, chat URL and secret-store plumbing, old settings keys, and a few dead modules and fixtures. Model catalog presentation is explicitly excluded; see resolution 6.
@@ -27,7 +37,12 @@ The fake-Gateway E2E harness still has many real callers, but most callers exerc
 
 The ordered inventory below contains 20 bounded slices. Slices 1 through 14 are independent where their dependency fields allow. Slices 15 through 20 touch broad command, upgrade, or workflow surfaces and should follow their listed prerequisites.
 
-## Design coverage matrix
+## Design coverage matrix at the audited revision
+
+The classifications below record the repository state at `205370ce`, before the
+20 demolition slices ran. They are historical inputs to those slices, not the
+current transition status. The completion record at the top of this document
+and the per-slice landing notes are authoritative for Phase 1 status.
 
 Each row is independently classifiable. Compound design sentences are split so that one surviving clause cannot be hidden by an aggregate status.
 
@@ -362,6 +377,44 @@ Owner decision: CI and release workflows are stripped of Vercel and Intel work, 
 - Everything else dispatched as scoped: `cdn-backfill.yml`/`dev-release.yml` deleted outright; `release.yml` loses the `build-macos-x86_64` job (actual lines 84-124, not the guessed 88-108) and its `needs:` entry (line 191), plus the whole "Publish to CDN" step (actual lines 233-272, not 249-265) — the existing "Create GitHub Release" step (softprops/action-gh-release, already present) becomes the sole publish path with no new code needed, matching "Phase 6 replaces the publish step" meaning Phase 6 further refines it, not that Slice 20 must build a replacement; `ci.yml`'s only Intel reference is the `cross-target` job's `macos-x86_64` entry (cross-compiles on `ubuntu-latest`, no real Intel runner, still removed per the inventory's own instruction); `binary-size.yml`'s `macos-x86_64`/`macos-15-intel` matrix entry (a real Intel runner) removed too.
 - README's clone URL becomes `https://github.com/aakshintala/Fiber.git` (`git remote -v`'s `origin`), not a guess.
 - CONTRIBUTING.md's release section (~lines 417-423) needs real prose, not just deletion: "four platform binaries" → "three platform binaries" (linux-x86_64, linux-aarch64, macos-arm64, Intel gone); the `releases.fx.sh`/Vercel-Blob-CDN paragraph (~421) rewrites to describe the GitHub Release as the sole publish path; the whole dev-release paragraph (~423, `fx upgrade --channel dev`/`--channel stable`, `ctrl+g` dev-channel handoff) is deleted outright — both the workflow and the CLI flags it describes are gone.
+
+### Slice 21: delete the ACP surface
+
+Owner decision (2026-09-04): Fiber ships no ACP surface. Nobody drives it
+through an ACP client, and the surface is a second full agent host — 4,659
+lines in `src/acp/prompt.zig` alone — running on the same `session_store`,
+permissions, and `provider_set` as the CLI, so it doubles the cost of every
+remaining contract change. ACP is a leaf on imports (`src/core/` never imports
+it), so the deletion is bounded.
+
+- Move first, do not delete: `src/acp/session_test_controls.zig` (48 lines) is generic despite its location — the boundary hooks it drives live in `src/core/session/session_log.zig:2218,3296` — and moves to `src/core/session/`. `jsonrpc.writeJsonStr` has a non-ACP production caller at `src/builtins/hooks/herdr.zig:9` and moves to a shared home; `AGENTS.md:254` points at its current one.
+- Delete: `src/acp/` (8 files, 10,734 lines), `src/core/cli/acp_runner.zig` (50 lines), `tests/e2e/acp.test.ts` (8,416 lines, 122 cases).
+- Delete the command wiring: `TopLevelKind.acp` in `src/core/slash_commands/command_specs.zig:11` and its help test at `:1188`; the spec and help group in `src/builtins/commands.zig:58-61,250`; the import, `Command.acp`, parse, dispatch, and `Config.acp_runner` in `src/core/cli/cli_surface.zig:6,58,377,681-709,168`; `src/core/app/app_entry_runtime.zig:6,92,402,487,516`; `src/main.zig:18-19,3237,3404,3440,3476,3480-3481,3783,3910`.
+- Fix the gate in the same slice: `scripts/smoke.sh:37-38` pipes an `initialize` request into `"$BIN" acp` and is the only ACP-dependent step; delete it with the `acp_expect`/`acp_what` branches at `:27-32`, keep the credential branch for `models`, and update the header comment. Every later slice runs through this gate.
+- Retained invariants: the CLI, TUI, `ask`, session store, permissions, MCP, and `provider_set` all keep working. ACP shares those; it does not own them.
+- Exact post-deletion searches: `src/acp`, `acp_runner`, `acp_server`, `TopLevelKind.acp`, `"acp"` as a command token, `FIBER_E2E_ACP_`.
+- Dependencies: none. Must precede every Phase 3 contract slice.
+- Stop if: a deletion removes a session, permission, MCP, or provider path that the CLI or TUI also reaches. ACP wraps those; it does not own them.
+
+### Slice 22: remove the ACP arms carried in core
+
+Core has no import of `src/acp/`, but it carries ACP-shaped enum arms and one ACP-only function. Exhaustive switches keep compiling if an arm stays, so this is a separate, non-blocking pass.
+
+- Paths and symbols: `Wire.acp` and `Scope.acp_session`/`Scope.acp_request` in `src/core/mcp/elicitation.zig:41-45,134-141` plus `parseAcpCapabilities` at `:105`; `ConfigSource.acp` and `ConfigScope.acp_session` in `src/core/mcp/mcp_contract.zig:182-198`; `McpRuntime.connectAllForAcp` at `src/core/mcp/mcp_runtime.zig:5280-5290` (sole caller was `src/acp/mcp_servers.zig:130`); `startup_admission.Phase.acp_startup` at `src/core/mcp/startup_admission.zig:10`; `hooks.ScopeKind.acp` at `src/core/hooks/definitions.zig:65`; `context_contract.EntryPoint.acp` at `src/core/workspace/context_contract.zig:408,481`; `TransportRole.acp` at `src/core/terminal/contracts.zig:1397` and its mapping at `src/core/tooling/tool_runtime.zig:849-853`; the legacy URL completion `acp_id` path in `mcp_runtime.zig:4773`; `loadEmbeddedStartupState` (sole caller was `src/acp/server.zig:1362`); UI labels at `src/ui/footer/mcp_menu_presentation.zig:372,402`.
+- Retained invariants: the non-ACP wires, scopes, roles, and entry points that MCP, hooks, and the terminal still use. `connectAll` and `connectAllCancellable` serve interactive and `ask`.
+- Exact post-deletion searches: `acp_session`, `acp_request`, `acp_startup`, `connectAllForAcp`, `parseAcpCapabilities`, `loadEmbeddedStartupState`, `acp_protocol_transport`, `ScopeKind.acp`, `EntryPoint.acp`, `TransportRole.acp`.
+- Dependencies: Slice 21.
+- Stop if: an arm has a non-ACP producer or consumer. Several of these enums serve MCP and hooks generally; only the ACP-named variants go.
+
+### Slice 23: ACP references in tests, documentation, and continuous integration
+
+- Delete `tests/e2e/session-recovery.test.ts` (659 lines) — it is built entirely on `startAcp` at `:86`. **Transcribe its 16 cases into the Phase 5 testing obligation in [`plan.md`](plan.md) before deleting.** The crash-injection machinery it drives is generic and survives; only ACP's wiring of it goes. E2E is not gating until Phase 5, so no replacement harness is built now.
+- Strip ACP cases from mixed suites that survive: `tests/e2e/cli.test.ts:255-297` (2 help/reject cases), `tests/e2e/web-fetch-fake-network.test.ts` (2), `tests/e2e/web-search-fake-codex.test.ts` (2), `tests/e2e/tui-command-permissions.test.ts:3424` (3), `tests/e2e/tui-direct-write-audit.test.ts:58` (`category=acp_protocol_transport` allowlist) and `tests/e2e/render-lab/audit-direct-writes.ts:58`.
+- Documentation and configuration: `README.md:87-89,95`; `AGENTS.md:92,197,254,259`; `CONTRIBUTING.md:179,194,311-313`; `docs/ideas/builtin-customization-and-extensions.md`; `.github/workflows/ci.yml:111-112,248-289` (`e2e_acp_full_mode`); `tests/e2e/package.json` (`test:acp`); `scripts/pgso/corpus.json:85`, `scripts/pgso/README.md:66`, `scripts/pgso/tests/test_corpus.py:33`; `tests/e2e/ci-shard-weights.json` (`acp.test.ts`, weight 29).
+- Retained invariants: every non-ACP case in the mixed suites; shard weights for surviving files.
+- Exact post-deletion searches: `fiber acp`, `startAcp`, `test:acp`, `e2e_acp_full_mode`, `acp.test.ts`, `acp_protocol_transport`.
+- Dependencies: Slice 21.
+- Stop if: a case in a mixed suite proves retained behavior and merely happens to use ACP as its driver. Those are Phase 5 conversions, not deletions.
 
 ## Later-phase backlog
 
