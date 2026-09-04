@@ -192,11 +192,14 @@ package, publish, and install as one contract.
 
 ### Unverified at phase exit
 
-- Session resume and permission-state persistence across a restart need an
-  authenticated turn.
-- `originator=fiber` replaces `originator=fx` on the OAuth authorize request
-  and both Codex request headers. The first `fiber login codex` verifies it.
-  Reverting is one line in `chatgpt_oauth.zig` and the two gateway files.
-- `scripts/smoke.sh` relaxes its `models` and ACP checks while
-  `~/.fiber/chatgpt-auth.json` is absent. It returns to the strict path on its
-  own once that file exists.
+Resolved 2026-09-03 by the owner running `fiber login codex` and one turn.
+`~/.fiber/` now holds `chatgpt-auth.json`, `usage.jsonl`, and a saved session
+under `sessions/`.
+
+- `originator=fiber` is verified. The authorize request and both Codex request
+  headers are accepted upstream. No revert needed.
+- Session and usage persistence under the renamed state root is verified by the
+  written records. Resume across a restart is still unexercised and moves to
+  Phase 5 with the rest of the E2E work.
+- `scripts/smoke.sh` is back on its strict `models` and ACP path now that
+  `~/.fiber/chatgpt-auth.json` exists.
