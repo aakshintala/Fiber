@@ -8,7 +8,6 @@ const Allocator = std.mem.Allocator;
 pub const TopLevelKind = enum {
     help,
     ask,
-    acp,
     login,
     logout,
     status,
@@ -1183,16 +1182,6 @@ test "per-command help preserves long resume usage without debug recording" {
     try std.testing.expect(std.mem.find(u8, text, "Usage:\n  fiber session resume [last|<id>] | session resume --id <id> | resume [last|<id>] | resume --id <id>") != null);
     try std.testing.expect(std.mem.find(u8, text, "Options:") != null);
     try std.testing.expect(std.mem.find(u8, text, "--record") == null);
-}
-
-test "ACP help documents accepted options" {
-    const text = try renderTopLevelCommandHelp(std.testing.allocator, testTopLevelRegistry(), .acp);
-    defer std.testing.allocator.free(text);
-
-    try std.testing.expect(std.mem.find(u8, text, "fiber acp\n") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Usage:\n  fiber acp\n") != null);
-    try std.testing.expect(std.mem.find(u8, text, "--model <id>") == null);
-    try std.testing.expect(std.mem.find(u8, text, "--log-file <path>") == null);
 }
 
 test "hidden top-level commands do not reserve help usage width" {

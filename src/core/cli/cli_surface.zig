@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const app_lifecycle = @import("../app/app_lifecycle.zig");
 const chatgpt_oauth = @import("../auth/chatgpt_oauth.zig");
-const acp_runner = @import("acp_runner.zig");
 const cli_ask = @import("cli_ask.zig");
 const cli_replay = @import("cli_replay.zig");
 const command_specs = @import("../slash_commands/command_specs.zig");
@@ -55,7 +54,6 @@ pub const Command = union(enum) {
     interactive,
     help,
     ask: []const [:0]const u8,
-    acp: []const [:0]const u8,
     login: []const [:0]const u8,
     logout: []const [:0]const u8,
     status: []const [:0]const u8,
@@ -165,7 +163,6 @@ pub const Config = struct {
         mcp_command_provider.addProfileServerUnavailable,
     remove_mcp_profile_server: mcp_command_provider.RemoveProfileServerFn =
         mcp_command_provider.removeProfileServerUnavailable,
-    acp_runner: acp_runner.Runner,
 };
 
 const LocalSurfaceOptions = struct {
@@ -374,7 +371,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
         },
         'a' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .ask)) return .{ .ask = args[1..] };
-            if (command_specs.matchesTopLevel(command_catalog, command, .acp)) return .{ .acp = args[1..] };
         },
         'd' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .doctor)) return .{ .doctor = args[1..] };
@@ -677,36 +673,6 @@ fn runNonInteractiveWithDeps(
             try writeMcpProfileWarningIfPresent(alloc, cfg, deps);
             const exit_code = try cli_ask.run(alloc, rest, workflowConfigWithLaunchModifiers(cfg, global_args.modifiers), cfg.context_registry, cfg.tool_set);
             return if (exit_code == 0) .handled_success else .handled_failure;
-        },
-        .acp => |rest| {
-            if (rest.len != 0) {
-                try writeStderr(deps, "usage: fiber acp\n");
-                return .handled_failure;
-            }
-            try cfg.acp_runner.run(alloc, .{
-                .default_model = cfg.default_model,
-                .default_agent_step_limit = cfg.default_agent_step_limit,
-                .gateway_retry_count = cfg.gateway_retry_count,
-                .gateway_models_path = cfg.models_path,
-                .gateway_provider = cfg.gateway_provider,
-                .provider_set = cfg.provider_set,
-                .process_provider = cfg.process_provider,
-                .prompt_policy = cfg.prompt_policy,
-                .ignored_list_entries = cfg.ignored_list_entries,
-                .max_list_entries = cfg.max_list_entries,
-                .max_read_file_bytes = cfg.max_read_file_bytes,
-                .max_read_file_lines = cfg.max_read_file_lines,
-                .max_read_file_line_len = cfg.max_read_file_line_len,
-                .max_command_output_bytes = cfg.max_command_output_bytes,
-                .max_tool_result_bytes = cfg.max_tool_result_bytes,
-                .max_history_turns = cfg.max_history_turns,
-                .context_registry = cfg.context_registry,
-                .mode_registry = cfg.mode_registry,
-                .context_limit_overrides = global_args.modifiers.context_limit_overrides,
-                .additional_directories = global_args.modifiers.additional_directories,
-                .saved_directories_suppressed = global_args.modifiers.saved_directories_suppressed,
-            });
-            return .handled_success;
         },
         .login => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
@@ -2390,7 +2356,7 @@ fn workflowConfigWithLaunchModifiers(
 
 fn commandSupportsWorkspaceModifiers(command: Command) bool {
     return switch (command) {
-        .interactive, .ask, .acp, .resume_session => true,
+        .interactive, .ask, .resume_session => true,
         else => false,
     };
 }
@@ -2398,7 +2364,7 @@ fn commandSupportsWorkspaceModifiers(command: Command) bool {
 fn writeWorkspaceModifierUsage(deps: RunDeps) !void {
     try writeStderr(
         deps,
-        "fiber: --add-dir and --no-additional-dirs are only supported for interactive, resume, ask, and ACP launches\n",
+        "fiber: --add-dir and --no-additional-dirs are only supported for interactive, resume, and ask launches\n",
     );
 }
 
@@ -2683,10 +2649,6 @@ test "parse recognizes every top-level command and preserves unknown commands" {
         .ask => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
         else => return error.TestExpectedEqual,
     }
-    switch (parse(command_catalog, &.{ @constCast("acp"), @constCast("--model"), @constCast("m") })) {
-        .acp => |rest| try std.testing.expectEqual(@as(usize, 2), rest.len),
-        else => return error.TestExpectedEqual,
-    }
     switch (parse(command_catalog, &.{ @constCast("status"), @constCast("--json") })) {
         .status => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
         else => return error.TestExpectedEqual,
@@ -2848,92 +2810,6 @@ test "additional directory flags fail closed when malformed" {
     try std.testing.expectError(
         error.DuplicateAdditionalDirectorySuppression,
         parseGlobalLaunchArgs(std.testing.allocator, &.{ @constCast("--no-additional-dirs"), @constCast("--no-additional-dirs") }),
-    );
-}
-
-test "ACP command routes parsed options and launch config through the injected runner" {
-    const Capture = struct {
-        expected: Config,
-        calls: usize = 0,
-        config_matches: bool = false,
-        launch_matches: bool = false,
-
-        fn run(raw: ?*anyopaque, _: Allocator, cfg: acp_runner.Config) anyerror!void {
-            const self: *@This() = @ptrCast(@alignCast(raw.?));
-            self.calls += 1;
-            const expected = self.expected;
-            self.config_matches =
-                std.mem.eql(u8, cfg.default_model, expected.default_model) and
-                cfg.default_agent_step_limit == expected.default_agent_step_limit and
-                cfg.gateway_retry_count == expected.gateway_retry_count and
-                std.mem.eql(u8, cfg.gateway_models_path, expected.models_path) and
-                std.mem.eql(u8, cfg.prompt_policy.system_prompt, expected.prompt_policy.system_prompt) and
-                cfg.ignored_list_entries.len == expected.ignored_list_entries.len and
-                cfg.max_list_entries == expected.max_list_entries and
-                cfg.max_read_file_bytes == expected.max_read_file_bytes and
-                cfg.max_read_file_lines == expected.max_read_file_lines and
-                cfg.max_read_file_line_len == expected.max_read_file_line_len and
-                cfg.max_command_output_bytes == expected.max_command_output_bytes and
-                cfg.max_tool_result_bytes == expected.max_tool_result_bytes and
-                cfg.max_history_turns == expected.max_history_turns and
-                std.mem.eql(
-                    u8,
-                    cfg.context_registry.defaultProvider().id,
-                    expected.context_registry.defaultProvider().id,
-                ) and
-                std.mem.eql(u8, cfg.mode_registry.default_mode_id, expected.mode_registry.default_mode_id) and
-                cfg.provider_set.codex.permission_reviewer.?.review_fn == expected.provider_set.codex.permission_reviewer.?.review_fn;
-
-            const limit_matches = cfg.context_limit_overrides.len == 1 and
-                cfg.context_limit_overrides[0].name == .project_instructions_total_bytes and
-                switch (cfg.context_limit_overrides[0].value) {
-                    .bytes => |bytes| bytes == 1234,
-                    .off => false,
-                };
-            self.launch_matches =
-                limit_matches and
-                cfg.additional_directories.len == 1 and
-                std.mem.eql(u8, cfg.additional_directories[0], "/tmp/acp-extra") and
-                cfg.saved_directories_suppressed;
-        }
-    };
-
-    var cfg = testConfig();
-    cfg.provider_set.codex.permission_reviewer = test_builtin_gateway.provider_bundle.permission_reviewer;
-    var capture = Capture{ .expected = cfg };
-    cfg.acp_runner = .{ .context = &capture, .run_fn = Capture.run };
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{
-            @constCast("--context-limit"),
-            @constCast("project_instructions_total_bytes=1234"),
-            @constCast("--add-dir"),
-            @constCast("/tmp/acp-extra"),
-            @constCast("--no-additional-dirs"),
-            @constCast("acp"),
-        },
-        cfg,
-        .{},
-    );
-
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), capture.calls);
-    try std.testing.expect(capture.config_matches);
-    try std.testing.expect(capture.launch_matches);
-}
-
-test "ACP runner errors preserve their identity" {
-    const Fixture = struct {
-        fn run(_: ?*anyopaque, _: Allocator, _: acp_runner.Config) anyerror!void {
-            return error.TestAcpRunnerFailed;
-        }
-    };
-
-    var cfg = testConfig();
-    cfg.acp_runner = .{ .run_fn = Fixture.run };
-    try std.testing.expectError(
-        error.TestAcpRunnerFailed,
-        runIfRequested(std.testing.allocator, &.{@constCast("acp")}, cfg),
     );
 }
 
@@ -3337,7 +3213,7 @@ test "workspace launch modifiers still reject unsupported local command help" {
     );
     try std.testing.expectEqual(RunResult.handled_failure, result);
     try std.testing.expectEqualStrings("", capture.stdout.written());
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "only supported for interactive, resume, ask, and ACP launches") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "only supported for interactive, resume, and ask launches") != null);
 }
 
 test "global workspace launch option errors use user-facing copy" {
@@ -4014,10 +3890,6 @@ fn stableCliTestEnviron() !*const std.process.Environ.Map {
     return map;
 }
 
-fn unexpectedAcpRunForTest(_: ?*anyopaque, _: Allocator, _: acp_runner.Config) anyerror!void {
-    return error.TestUnexpectedAcpRun;
-}
-
 fn testConfig() Config {
     return .{
         .version = "0.0.0",
@@ -4043,7 +3915,6 @@ fn testConfig() Config {
         .mode_registry = .{ .default_mode_id = "surface" },
         .inspect_mcp_profile_config = clearMcpConfigInspectionForTest,
         .load_mcp_runtime = noMcpRuntimeForTest,
-        .acp_runner = .{ .run_fn = unexpectedAcpRunForTest },
         .tool_set = .{
             .registry = .{ .tools = &.{} },
             .order = &.{},

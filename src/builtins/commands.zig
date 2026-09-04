@@ -55,12 +55,6 @@ pub const top_level_specs = [_]TopLevelSpec{
         },
     },
     .{
-        .kind = .acp,
-        .token = "acp",
-        .usage = "acp",
-        .summary = "Start an ACP server over stdio",
-    },
-    .{
         .kind = .login,
         .token = "login",
         .usage = "login [codex]",
@@ -247,7 +241,6 @@ pub const top_level_help_groups = [_]TopLevelHelpGroup{
         .{ .kind = .permissions, .usage = "permissions" },
         .{ .kind = .workspace, .usage = "workspace" },
         .{ .kind = .upgrade, .usage = "upgrade", .summary = "Upgrade fiber on the selected release channel" },
-        .{ .kind = .acp, .usage = "acp" },
         .{ .kind = .help, .usage = "help" },
     } },
 };

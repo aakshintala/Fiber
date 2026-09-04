@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const app_process_runtime = @import("app_process_runtime.zig");
 const app_session_runtime = @import("app_session_runtime.zig");
 const auto_upgrade = @import("../upgrade/auto_upgrade.zig");
-const acp_runner = @import("../cli/acp_runner.zig");
 const cli_surface = @import("../cli/cli_surface.zig");
 const process_provider = @import("../execution/process_provider.zig");
 const gateway_provider = @import("../gateway/gateway_provider.zig");
@@ -89,7 +88,6 @@ pub const Config = struct {
         mcp_command_provider.addProfileServerUnavailable,
     remove_mcp_profile_server: mcp_command_provider.RemoveProfileServerFn =
         mcp_command_provider.removeProfileServerUnavailable,
-    acp_runner: acp_runner.Runner,
 };
 
 pub fn run(comptime App: type, alloc: Allocator, args: []const [:0]const u8, cfg: Config) !void {
@@ -399,7 +397,6 @@ fn cliSurfaceConfig(cfg: Config) cli_surface.Config {
         .load_mcp_runtime = cfg.load_mcp_runtime,
         .add_mcp_profile_server = cfg.add_mcp_profile_server,
         .remove_mcp_profile_server = cfg.remove_mcp_profile_server,
-        .acp_runner = cfg.acp_runner,
     };
 }
 
@@ -484,10 +481,6 @@ fn noMcpConfigInspectionForTest(
     return .clear;
 }
 
-fn unexpectedAcpRunForTest(_: ?*anyopaque, _: Allocator, _: acp_runner.Config) anyerror!void {
-    return error.TestUnexpectedAcpRun;
-}
-
 fn testConfig() Config {
     return .{
         .version = "0.2.10",
@@ -513,7 +506,6 @@ fn testConfig() Config {
         .mode_registry = .{ .default_mode_id = "entry" },
         .inspect_mcp_profile_config = noMcpConfigInspectionForTest,
         .load_mcp_runtime = noMcpRuntimeForTest,
-        .acp_runner = .{ .run_fn = unexpectedAcpRunForTest },
         .tool_set = .{
             .registry = .{ .tools = &.{} },
             .order = &.{"entry_test_tool"},

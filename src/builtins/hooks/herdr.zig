@@ -6,7 +6,7 @@
 const std = @import("std");
 const io_mod = @import("../../core/shared/io.zig");
 const debug_trace = @import("../../core/shared/debug_trace.zig");
-const jsonrpc = @import("../../acp/jsonrpc.zig");
+const json_stringify = std.json.Stringify;
 
 pub const State = enum { idle, working, blocked };
 
@@ -219,16 +219,16 @@ fn writeReportAgent(
 ) !void {
     try writeId(w, id);
     try w.writeAll(",\"method\":\"pane.report_agent\",\"params\":{\"pane_id\":");
-    try jsonrpc.writeJsonStr(pane_id, w);
+    try json_stringify.encodeJsonString(pane_id, .{}, w);
     try w.writeAll(",\"source\":");
-    try jsonrpc.writeJsonStr(source, w);
+    try json_stringify.encodeJsonString(source, .{}, w);
     try w.writeAll(",\"agent\":");
-    try jsonrpc.writeJsonStr(agent_name, w);
+    try json_stringify.encodeJsonString(agent_name, .{}, w);
     try w.writeAll(",\"state\":");
-    try jsonrpc.writeJsonStr(@tagName(state), w);
+    try json_stringify.encodeJsonString(@tagName(state), .{}, w);
     if (custom_status) |status| {
         try w.writeAll(",\"custom_status\":");
-        try jsonrpc.writeJsonStr(status, w);
+        try json_stringify.encodeJsonString(status, .{}, w);
     }
     try w.writeAll("}}\n");
 }
@@ -241,13 +241,13 @@ fn writeReportAgentSession(
 ) !void {
     try writeId(w, id);
     try w.writeAll(",\"method\":\"pane.report_agent_session\",\"params\":{\"pane_id\":");
-    try jsonrpc.writeJsonStr(pane_id, w);
+    try json_stringify.encodeJsonString(pane_id, .{}, w);
     try w.writeAll(",\"source\":");
-    try jsonrpc.writeJsonStr(source, w);
+    try json_stringify.encodeJsonString(source, .{}, w);
     try w.writeAll(",\"agent\":");
-    try jsonrpc.writeJsonStr(agent_name, w);
+    try json_stringify.encodeJsonString(agent_name, .{}, w);
     try w.writeAll(",\"agent_session_id\":");
-    try jsonrpc.writeJsonStr(session_id, w);
+    try json_stringify.encodeJsonString(session_id, .{}, w);
     try w.writeAll("}}\n");
 }
 
@@ -262,24 +262,24 @@ fn writeRename(
 ) !void {
     try writeId(w, id);
     try w.writeAll(",\"method\":");
-    try jsonrpc.writeJsonStr(method, w);
+    try json_stringify.encodeJsonString(method, .{}, w);
     try w.writeAll(",\"params\":{");
-    try jsonrpc.writeJsonStr(target_key, w);
+    try json_stringify.encodeJsonString(target_key, .{}, w);
     try w.writeAll(":");
-    try jsonrpc.writeJsonStr(target, w);
+    try json_stringify.encodeJsonString(target, .{}, w);
     try w.writeAll(",");
-    try jsonrpc.writeJsonStr(value_key, w);
+    try json_stringify.encodeJsonString(value_key, .{}, w);
     try w.writeAll(":");
-    if (value) |v| try jsonrpc.writeJsonStr(v, w) else try w.writeAll("null");
+    if (value) |v| try json_stringify.encodeJsonString(v, .{}, w) else try w.writeAll("null");
     try w.writeAll("}}\n");
 }
 
 fn writeClearAuthority(w: *std.Io.Writer, id: u64, pane_id: []const u8) !void {
     try writeId(w, id);
     try w.writeAll(",\"method\":\"pane.clear_agent_authority\",\"params\":{\"pane_id\":");
-    try jsonrpc.writeJsonStr(pane_id, w);
+    try json_stringify.encodeJsonString(pane_id, .{}, w);
     try w.writeAll(",\"source\":");
-    try jsonrpc.writeJsonStr(source, w);
+    try json_stringify.encodeJsonString(source, .{}, w);
     try w.writeAll("}}\n");
 }
 
