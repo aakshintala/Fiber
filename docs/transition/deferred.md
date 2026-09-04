@@ -11,6 +11,12 @@ known phase.
 Line numbers were verified at the commit that added the entry. Re-verify before
 acting; the demolition moves lines constantly.
 
+Each phase opens by clearing its own section here, and that clearing is written
+into that phase's exit criteria in `plan.md`. This file is deleted at the end of
+Phase 6 with the rest of the transition documents, and unlike them it is not
+harvested first — it carries work, not rationale. A section still holding
+entries at that point means a phase closed without finishing.
+
 ## Phase 4: Simplification
 
 | Site | What | Why deferred |

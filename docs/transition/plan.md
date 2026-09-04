@@ -63,7 +63,11 @@ Phase exit: every target contract exists behind its owning typed interface and h
 
 Collapse seams, adapters, host profiles, target branches, and indirection left with one implementation after demolition and contract work. Preserve only seams that still express real variation or isolate a meaningful interface.
 
-Phase exit: every known single-implementation abstraction is collapsed or justified with current callers and implementations.
+Open by clearing the Phase 4 section of [`deferred.md`](deferred.md). Those
+entries are seams earlier slices created and were forbidden to widen to fix;
+they are this phase's work, not stray cleanup.
+
+Phase exit: every known single-implementation abstraction is collapsed or justified with current callers and implementations, and the Phase 4 section of `deferred.md` is empty.
 
 ## Phase 5: Repair and exhaustive verification
 
@@ -134,11 +138,16 @@ Separately, `tests/e2e/terminal-host.test.ts:3949` sets
 removed that arm from `TransportRole`, so the case now exercises an unparseable
 role rather than a valid-but-different one. Re-point it at a surviving role.
 
-Phase exit: the success criteria in the product design are directly exercised, with unavailable external checks recorded as unverified.
+Phase exit: the success criteria in the product design are directly exercised, with unavailable external checks recorded as unverified, and the Phase 5 section of [`deferred.md`](deferred.md) is empty.
 
 ## Phase 6: Final documentation and release preparation
 
 Rewrite `AGENTS.md`, `CONTRIBUTING.md`, README material, and related process guidance for the verified Fiber workflow. Remove the temporary transition process. Build the local fast and exhaustive gates required before preparing Fiber `0.0.1`.
+
+Open by clearing the Phase 6 section of [`deferred.md`](deferred.md): stale doc
+comments, misleading test and symbol names, and inert strings naming deleted
+products. Nothing there affects behavior, which is exactly why no gate will ever
+catch it — this phase is its only reader.
 
 ### Harvest the transition documents, then delete them
 
@@ -157,9 +166,15 @@ standing toggle; why permission rules default to workspace-local scope; why ACP
 was deleted; what "operational command" means and why it decides `--json`.
 
 Then delete `contract-inventory.md`, `demolition-inventory.md`,
-`identity-inventory.md`, and this file. A transition document that survives the
-transition is a second source of truth competing with the binary.
+`identity-inventory.md`, `deferred.md`, and this file. A transition document
+that survives the transition is a second source of truth competing with the
+binary.
+
+`deferred.md` is the one exception to harvesting: it carries no rationale worth
+keeping, only work. Every section must be empty before it is deleted. A
+non-empty section at this point means a phase closed without doing its work, and
+the phase, not the deletion, is what needs revisiting.
 [`../enhancements/pending.md`](../enhancements/pending.md) survives: it describes
 work that has not happened yet.
 
-Phase exit: documentation describes observed Fiber behavior and the supported platform and release process without inherited fx-era instructions, and the transition documents are harvested and removed.
+Phase exit: documentation describes observed Fiber behavior and the supported platform and release process without inherited fx-era instructions, `deferred.md` is empty in every section, and the transition documents are harvested and removed.
