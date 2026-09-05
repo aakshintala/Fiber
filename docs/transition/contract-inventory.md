@@ -351,7 +351,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | 7 | `mcp login` and `mcp --json` | additive | **done**, `86188784` |
 | 8 | `session list\|show\|rename\|remove` | additive | **done**, `f7a0a923` |
 | 9 | `continue`, resume-alias removal, `--resume-id`, pagination | additive | **done**, `3f8cf352` |
-| 10 | Interactive surface: `/retry`, `/new` alias, `/background` | additive | |
+| 10 | Interactive surface: `/retry`, `/new` alias, `/background` | additive | **`/retry`/`/new` done**, `99b352a5`; `/background` deferred to `../enhancements/pending.md` |
 | 11 | `debug trace\|replay` parent | additive | |
 | 12 | `/context` usage | additive | |
 
@@ -736,11 +736,20 @@ steps, 7278/7280 passing, 2 pre-existing skips.
 
 ### Slice 10 — interactive surface
 
+**`/retry` and `/new`/`/clear` done, `99b352a5`.** No open product decisions
+on those two — `clearSession`/`newSession` were verified byte-identical
+before deleting `.clear_screen`, so this was a code consolidation, not the
+behavior change the "Owner decision" below assumed back when the two
+genuinely differed. `/background` is **not** done — see its row and
+`../enhancements/pending.md`: grounding found no backing process registry
+to wire it to (the one that existed was deleted upstream before Fiber's
+fork), so it's out of scope for this slice pending a sizing decision.
+
 | Item | Current | Target | Owner | Focused test |
 | --- | --- | --- | --- | --- |
 | `/retry` | `/continue` (`commands.zig:325`) | **done** — renamed; replays an interrupted turn from its checkpoint | `commands.zig` | `command_router.zig` |
 | `/new` canonical, `/clear` alias | **two kinds with different behaviour**, not two spellings of one. `commands.zig:322` was `.clear_screen` — "start a fresh conversation while keeping managed processes"; `:323` was `.new_session` — "start a fresh session". Aliasing them collapsed that difference. | **done** — `/new` is canonical, `/clear` is its alias; `.clear_screen` removed and `/clear` routes to `.new_session` | `commands.zig` | `command_router.zig` |
-| `/background` | rejected as unknown; confirmed at `command_router.zig:178` and absent from the welcome text (`command_specs.zig:1483`). The `"/background"` in `mods/registry.zig:119` is a test fixture, not a registration. | reachable; inspects and terminates background processes | `commands.zig` | `command_router.zig` |
+| `/background` | rejected as unknown; confirmed at `command_router.zig:178` and absent from the welcome text (`command_specs.zig:1483`). The `"/background"` in `mods/registry.zig:119` is a test fixture, not a registration. No backing process registry exists to wire it to — see `../enhancements/pending.md`. | **deferred out of Phase 3** — not sized | `commands.zig` | `command_router.zig` |
 | `/undo`, `/trace` | live (`commands.zig:333,336`) | **retained** — recorded owner decisions at `demolition-inventory.md:80,282` | — | — |
 | `/exit` | already aliases `/quit` (`:340`) | unchanged | — | — |
 

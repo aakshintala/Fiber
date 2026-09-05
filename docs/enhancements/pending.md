@@ -45,6 +45,46 @@ Related: surfacing context usage in `fiber ask --json` and `fiber session show`.
 The numbers exist (`session_usage.zig:1352 LiveContextSnapshot`); the plumbing
 into those two payloads does not.
 
+## `/background`
+
+Interactive inspection and termination of processes the agent started in the
+background. Unlike everything else in this file, this was not designed as
+new work — the product-transition doc lists `/background` as though it
+reconnects existing behavior: "Keep `/background` for interactive
+background-process inspection and termination."
+
+It doesn't reconnect anything. `/background` is fully unregistered today
+(confirmed: rejected as unknown, absent from welcome text) with no backing
+registry — nothing tracks a spawned background command's id, PID, or log
+path after it starts. The one thing that exists is an approval gate
+(`ApprovalReason.background_process` in `command_effect.zig`) deciding
+whether running a command in the background needs sign-off; nothing after
+that gate.
+
+A real implementation existed upstream: `src/core/background/` carried
+`background_runtime.zig` (4,250 lines), `background_store.zig` (1,479),
+`process_supervisor.zig` (1,362), plus `background_commands.zig`,
+`background_launch_identity.zig`, `background_launch_output.zig`,
+`background_record_liveness.zig`, `background_record_restore.zig`,
+`server_detection.zig`, and `execution/background_process_provider.zig` —
+roughly 9,000 lines total, present as of the `fx` `v0.0.7` tag. It was
+deleted in `3f59a59d` ("Unify command execution under shell", 2026-09-01)
+**before** Fiber's fork (`4308bd43`), so Fiber never had it. That commit's
+message claims the capability survived as "one managed shell lifecycle"
+with "Ctrl-X visibility... preserved through the existing runtime
+boundaries" — but what actually made it into the tree Fiber forked from is
+only the start half (`terminal.start`, the one lifecycle op in the tool
+registry). There is no `terminal.list` or `terminal.stop`, and the
+`ctrl_x_manager_byte` constant that commit promised
+(`src/core/app/app_input_runtime.zig:82`) is declared but never dispatched
+anywhere — dead code, not a working entry point.
+
+So this is not "expose an existing capability" and not "build genuinely
+net-new capability" either — it's a migration that shipped half-finished
+upstream, before Fiber existed. Deferred here pending a decision on how
+much of the deleted subsystem is worth rebuilding versus what a minimal
+`/background` could get away with. Not scoped or sized yet.
+
 ## `fiber mcp doctor`
 
 Opening MCP transports to check that configured servers actually answer. The
