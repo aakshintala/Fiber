@@ -6,7 +6,6 @@ const SlashRegistry = command_specs.SlashRegistry;
 
 pub const ParsedCommand = union(enum) {
     quit,
-    clear_screen,
     new_session,
     resume_session,
     continue_recovery,
@@ -31,7 +30,6 @@ pub const ParsedCommand = union(enum) {
 pub const CommandHandlers = struct {
     ctx: *anyopaque,
     quit: *const fn (ctx: *anyopaque) anyerror!void,
-    clear_screen: *const fn (ctx: *anyopaque) anyerror!void,
     new_session: *const fn (ctx: *anyopaque) anyerror!void,
     resume_session: *const fn (ctx: *anyopaque) anyerror!void,
     continue_recovery: *const fn (ctx: *anyopaque) anyerror!void,
@@ -60,7 +58,6 @@ fn command_payload(cmd: []const u8, prefix: []const u8) []const u8 {
 fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
     return switch (kind) {
         .quit => .quit,
-        .clear_screen => .clear_screen,
         .new_session => .new_session,
         .resume_session => .resume_session,
         .continue_recovery => .continue_recovery,
@@ -98,7 +95,6 @@ pub fn parse(registry: SlashRegistry, cmd: []const u8) ParsedCommand {
 pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []const u8) !void {
     switch (parse(registry, cmd)) {
         .quit => try handlers.quit(handlers.ctx),
-        .clear_screen => try handlers.clear_screen(handlers.ctx),
         .new_session => try handlers.new_session(handlers.ctx),
         .resume_session => try handlers.resume_session(handlers.ctx),
         .continue_recovery => try handlers.continue_recovery(handlers.ctx),
@@ -151,6 +147,7 @@ test "parse rejects the removed provider command" {
 
 test "parse recognizes new session lifecycle command" {
     try std.testing.expectEqual(ParsedCommand.new_session, parse(testSlashRegistry(), "/new"));
+    try std.testing.expectEqual(ParsedCommand.new_session, parse(testSlashRegistry(), "/clear"));
 }
 
 test "parse recognizes interactive resume" {
@@ -158,7 +155,11 @@ test "parse recognizes interactive resume" {
 }
 
 test "parse recognizes explicit recovery continuation" {
-    try std.testing.expectEqual(ParsedCommand.continue_recovery, parse(testSlashRegistry(), "/continue"));
+    try std.testing.expectEqual(ParsedCommand.continue_recovery, parse(testSlashRegistry(), "/retry"));
+}
+
+test "parse rejects retired continue recovery command" {
+    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/continue"));
 }
 
 test "parse recognizes logout" {
@@ -247,7 +248,7 @@ test "parse tolerates trailing whitespace on exact-match commands" {
     try std.testing.expectEqual(ParsedCommand.quit, parse(testSlashRegistry(), "/exit \t"));
     try std.testing.expectEqual(ParsedCommand.help, parse(testSlashRegistry(), "/help "));
     try std.testing.expectEqual(ParsedCommand.trace, parse(testSlashRegistry(), "/trace "));
-    try std.testing.expectEqual(ParsedCommand.clear_screen, parse(testSlashRegistry(), "/clear\t"));
+    try std.testing.expectEqual(ParsedCommand.new_session, parse(testSlashRegistry(), "/clear\t"));
 }
 
 test "parse returns empty payload for bare prefix commands" {
@@ -329,6 +330,10 @@ fn recordResumeSession(ctx: *anyopaque) anyerror!void {
     testContext(ctx).called = "resume";
 }
 
+fn recordNewSession(ctx: *anyopaque) anyerror!void {
+    testContext(ctx).called = "new_session";
+}
+
 fn recordContinueRecovery(ctx: *anyopaque) anyerror!void {
     testContext(ctx).called = "continue_recovery";
 }
@@ -360,7 +365,6 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
     return .{
         .ctx = ctx,
         .quit = unexpectedNoPayload,
-        .clear_screen = unexpectedNoPayload,
         .new_session = unexpectedNoPayload,
         .resume_session = unexpectedNoPayload,
         .continue_recovery = unexpectedNoPayload,
@@ -409,9 +413,19 @@ test "route calls explicit recovery continuation handler" {
     var handlers = testHandlers(&ctx);
     handlers.continue_recovery = recordContinueRecovery;
 
-    try route(testSlashRegistry(), &handlers, "/continue");
+    try route(testSlashRegistry(), &handlers, "/retry");
 
     try std.testing.expectEqualStrings("continue_recovery", ctx.called);
+}
+
+test "route calls new session handler for clear alias" {
+    var ctx: TestContext = .{};
+    var handlers = testHandlers(&ctx);
+    handlers.new_session = recordNewSession;
+
+    try route(testSlashRegistry(), &handlers, "/clear");
+
+    try std.testing.expectEqualStrings("new_session", ctx.called);
 }
 
 test "route forwards borrowed payload slice" {

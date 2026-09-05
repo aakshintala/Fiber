@@ -2363,7 +2363,7 @@ test "core.app_worker_runtime recovery pause replaces cancelled waiting status" 
 
     switch (app.shell.activityProjection()) {
         .turn_thinking => |thinking| try std.testing.expectEqualStrings(
-            "⚠ Mac woke from sleep · connection still unavailable · recovery paused · attempt 2/10 · /continue to resume",
+            "⚠ Mac woke from sleep · connection still unavailable · recovery paused · attempt 2/10 · /retry to resume",
             thinking.label,
         ),
         .none, .tool_slot => return error.TestUnexpectedResult,

@@ -1095,10 +1095,6 @@ const App = struct {
         self.shell.render_requests.request(.footer);
     }
 
-    pub fn clearSession(self: *App) !void {
-        try SessionAppRuntime.clearSession(self);
-    }
-
     pub fn newSession(self: *App) !void {
         try SessionAppRuntime.newSession(self);
     }
@@ -3518,7 +3514,7 @@ test "session reset traces and clears active paste state" {
     app.input_runtime.paste.decision_bytes = 4;
     try app.input_runtime.edit_state.input.appendSlice(alloc, "normal input");
 
-    try app.clearSession();
+    try app.newSession();
 
     try std.testing.expectEqual(paste_framing.Owner.none, app.input_runtime.paste.owner);
     try std.testing.expectEqual(@as(usize, 0), app.input_runtime.paste.decision_bytes);

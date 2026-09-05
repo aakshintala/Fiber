@@ -1342,10 +1342,6 @@ pub fn Runtime(comptime App: type) type {
             app.total_web_search_requests = 0;
         }
 
-        pub fn clearSession(app: *App) !void {
-            try resetSessionWithBackgroundPolicy(app, .carry_forward);
-        }
-
         pub fn newSession(app: *App) !void {
             try resetSessionWithBackgroundPolicy(app, .carry_forward);
         }
@@ -3320,7 +3316,7 @@ pub fn Runtime(comptime App: type) type {
             const recovery_notice = if (checkpoint.tool_state == .uncertain)
                 try std.fmt.allocPrint(
                     app.alloc,
-                    "model response recovery is paused at attempt {d}/{d}; inspect the uncertain tool state before /continue",
+                    "model response recovery is paused at attempt {d}/{d}; inspect the uncertain tool state before /retry",
                     .{
                         checkpoint.consumed_provider_attempts +| @intFromBool(checkpoint.outstanding_reservation),
                         checkpoint.max_provider_attempts,
@@ -3329,7 +3325,7 @@ pub fn Runtime(comptime App: type) type {
             else
                 try std.fmt.allocPrint(
                     app.alloc,
-                    "model response recovery is paused at attempt {d}/{d}; run /continue to resume the preserved turn",
+                    "model response recovery is paused at attempt {d}/{d}; run /retry to resume the preserved turn",
                     .{
                         checkpoint.consumed_provider_attempts +| @intFromBool(checkpoint.outstanding_reservation),
                         checkpoint.max_provider_attempts,

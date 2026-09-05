@@ -184,10 +184,6 @@ fn persistUserPreferences(
     }
 }
 
-fn clearSessionForClearCommand(app: anytype) !void {
-    try app.clearSession();
-}
-
 noinline fn parseWorkspaceCommand(rest: []const u8) !?workspace_commands.Action {
     const trimmed = std.mem.trim(u8, rest, " \t");
     if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "list")) return null;
@@ -343,7 +339,6 @@ pub fn Handlers(comptime App: type) type {
             return .{
                 .ctx = @ptrCast(app),
                 .quit = commandQuit,
-                .clear_screen = commandClearScreen,
                 .new_session = commandNewSession,
                 .resume_session = commandResumeSession,
                 .continue_recovery = commandContinueRecovery,
@@ -583,11 +578,6 @@ pub fn Handlers(comptime App: type) type {
         fn commandQuit(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             requestResumeExit(app);
-        }
-
-        fn commandClearScreen(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try clearSessionForClearCommand(app);
         }
 
         fn commandNewSession(ctx: *anyopaque) !void {
@@ -3720,24 +3710,6 @@ test "sound command parses toggle and off/on/max levels" {
     try std.testing.expectEqual(ParsedSoundCommand.invalid, parseSoundCommand("max extra"));
 }
 
-const ClearCommandFakeApp = struct {
-    clear_count: usize = 0,
-    new_count: usize = 0,
-    reset_count: usize = 0,
-
-    fn clearSession(self: *ClearCommandFakeApp) !void {
-        self.clear_count += 1;
-    }
-
-    fn newSession(self: *ClearCommandFakeApp) !void {
-        self.new_count += 1;
-    }
-
-    fn resetSession(self: *ClearCommandFakeApp) !void {
-        self.reset_count += 1;
-    }
-};
-
 const QuitCommandFakeApp = struct {
     should_exit: bool = false,
     session_persistence: app_session_runtime.Persistence = .{},
@@ -4202,15 +4174,6 @@ test "app_commands exposes active handler API surface" {
     try std.testing.expectEqual(@as(usize, 1), handlers_info.params.len);
     try std.testing.expect(handlers_info.params[0].type.? == *SurfaceOnlyApp);
     try std.testing.expect(handlers_info.return_type.? == command_router.CommandHandlers);
-}
-
-test "app_commands routes clear through carry-forward session reset" {
-    var app = ClearCommandFakeApp{};
-
-    try clearSessionForClearCommand(&app);
-
-    try std.testing.expectEqual(@as(usize, 1), app.clear_count);
-    try std.testing.expectEqual(@as(usize, 0), app.reset_count);
 }
 
 test "app_commands renders transactional status for explicit MCP reload" {

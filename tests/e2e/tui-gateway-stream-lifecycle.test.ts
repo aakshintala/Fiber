@@ -1952,7 +1952,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         (value) => value.includes("recovery paused after 10/10 attempts"),
         "provider-unavailable recovery pause",
       );
-      await session.sendText("/continue");
+      await session.sendText("/retry");
       await waitForCondition(
         () => queuedGateway.requests.length === 12,
         "continued recovery request",
@@ -2122,7 +2122,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       await session!.waitForComposer(TIMEOUT);
       expect(queuedGateway.requests).toHaveLength(10);
 
-      await session!.sendText("/continue");
+      await session!.sendText("/retry");
       try {
         await session!.waitForText(finalText, TIMEOUT);
       } catch (err) {
@@ -2167,7 +2167,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       await waitForCondition(() => hold.started, "held checkpointed request");
       expect(queuedGateway.requests).toHaveLength(1);
 
-      await session!.sendText("/continue");
+      await session!.sendText("/retry");
       const busy = await waitForScrollback(
         session!,
         (value) =>
@@ -2209,7 +2209,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       await session!.waitForText("recovery paused after 10/10 attempts", TIMEOUT);
       expect(queuedGateway.requests).toHaveLength(11);
 
-      await session!.sendText("/continue");
+      await session!.sendText("/retry");
       await session!.waitForText(finalText, TIMEOUT);
       const scrollback = await session!.captureFullScrollback();
 
@@ -2320,7 +2320,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         },
       });
       await session.waitForComposer(TIMEOUT);
-      await session.sendText("/continue");
+      await session.sendText("/retry");
       await session.waitForText(finalText, TIMEOUT);
 
       expect(queuedGateway.requests).toHaveLength(2);
@@ -2384,7 +2384,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       await session!.waitForComposer(TIMEOUT);
       expect(queuedGateway.requests).toHaveLength(10);
 
-      await session!.sendText("/continue");
+      await session!.sendText("/retry");
       await session!.waitForText(finalText, TIMEOUT);
       const scrollback = await session!.captureFullScrollback();
 

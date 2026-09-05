@@ -26,7 +26,6 @@ pub const TopLevelKind = enum {
 
 pub const SlashKind = enum {
     quit,
-    clear_screen,
     new_session,
     resume_session,
     continue_recovery,
@@ -1259,9 +1258,9 @@ test "slash completion categories follow canonical entries" {
 test "help catalog groups visible commands and searches all command metadata" {
     const registry = testSlashRegistry();
 
-    try std.testing.expectEqual(@as(usize, 20), helpCatalogCount(registry, ""));
+    try std.testing.expectEqual(@as(usize, 19), helpCatalogCount(registry, ""));
     try std.testing.expectEqualStrings("/help", helpCatalogSpecAt(registry, "", 0).?.command);
-    try std.testing.expectEqual(@as(usize, 4), helpCatalogCategoryCount(registry, "", .general));
+    try std.testing.expectEqual(@as(usize, 3), helpCatalogCategoryCount(registry, "", .general));
     try std.testing.expectEqual(@as(usize, 1), helpCatalogCount(registry, "appearance"));
     try std.testing.expectEqualStrings("/trace", helpCatalogSpecAt(registry, "diagnostic", 0).?.command);
 }
@@ -1460,7 +1459,7 @@ test "slash completion descriptions follow completion matches" {
     try std.testing.expectEqual(@as(usize, 1), slashCompletionCount(testSlashRegistry(), "/mo"));
     try std.testing.expectEqualStrings("/model", nthSlashCompletion(testSlashRegistry(), "/mo", 0).?);
     try std.testing.expectEqualStrings("choose what model and reasoning effort to use", nthSlashCompletionDescription(testSlashRegistry(), "/mo", 0).?);
-    try std.testing.expectEqualStrings("start a fresh conversation while keeping managed processes", nthSlashCompletionDescription(testSlashRegistry(), "/cl", 0).?);
+    try std.testing.expectEqualStrings("start a fresh session", nthSlashCompletionDescription(testSlashRegistry(), "/cl", 0).?);
     try std.testing.expectEqualStrings("undo the latest tracked file operation", nthSlashCompletionDescription(testSlashRegistry(), "/un", 0).?);
     try std.testing.expectEqualStrings("copy a private diagnostic trace", nthSlashCompletionDescription(testSlashRegistry(), "/tr", 0).?);
     try std.testing.expectEqualStrings("compact older conversation turns", nthSlashCompletionDescription(testSlashRegistry(), "/comp", 0).?);
@@ -1479,7 +1478,6 @@ test "rendered slash welcome excludes non-welcome help entries" {
     defer std.testing.allocator.free(welcome_text);
 
     try std.testing.expect(std.mem.find(u8, welcome_text, "/help") != null);
-    try std.testing.expect(std.mem.find(u8, welcome_text, "/clear") != null);
     try std.testing.expect(std.mem.find(u8, welcome_text, "/new") != null);
     try std.testing.expect(std.mem.find(u8, welcome_text, "/status") != null);
     try std.testing.expect(std.mem.find(u8, welcome_text, "/background") == null);

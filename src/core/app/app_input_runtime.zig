@@ -3154,7 +3154,7 @@ const FakeApprovalShell = struct {
 
 const routing_test_slash_specs = [_]command_specs.SlashSpec{
     .{ .kind = .help, .command = "/help", .help_entry = "/help", .completion_description = "show available slash commands", .presentation_category = .general },
-    .{ .kind = .clear_screen, .command = "/clear", .help_entry = "/clear", .completion_description = "clear the terminal transcript", .presentation_category = .general },
+    .{ .kind = .new_session, .command = "/new", .aliases = &.{"/clear"}, .help_entry = "/new", .completion_description = "start a fresh session", .presentation_category = .session },
     .{ .kind = .model, .command = "/model", .help_entry = "/model <id-or-query>", .completion_description = "choose a model", .presentation_category = .model, .has_args = true, .accepts_payload = true, .requires_prompt_credential = true },
     .{ .kind = .skills, .command = "/skills", .help_entry = "/skills", .completion_description = "browse and manage skills", .presentation_category = .extensions, .has_args = true, .accepts_payload = true },
     .{ .kind = .workspace, .command = "/workspace", .help_entry = "/workspace [list|add PATH|remove PATH|clear]", .completion_description = "manage additional workspace directories", .presentation_category = .workspace, .has_args = true, .accepts_payload = true },
@@ -4168,7 +4168,7 @@ test "app_input_runtime help menu navigation skips headings and Enter executes s
     try Runtime(RoutingFakeApp).handleByte(&app, '\r', RoutingFakeApp.input_byte_limit, 100);
 
     try std.testing.expect(!app.input_runtime.help_menu.active);
-    try std.testing.expectEqualStrings("/clear", app.last_command.?);
+    try std.testing.expectEqualStrings("/new", app.last_command.?);
     try std.testing.expectEqual(@as(usize, 0), app.input_runtime.edit_state.input.items.len);
 }
 

@@ -333,10 +333,9 @@ pub fn topLevelUsage(kind: TopLevelKind) []const u8 {
 
 pub const slash_specs = [_]SlashSpec{
     .{ .kind = .help, .command = "/help", .help_entry = "/help", .completion_description = "show available slash commands", .presentation_category = .general, .show_in_welcome = true },
-    .{ .kind = .clear_screen, .command = "/clear", .help_entry = "/clear", .completion_description = "start a fresh conversation while keeping managed processes", .presentation_category = .general, .show_in_welcome = true },
-    .{ .kind = .new_session, .command = "/new", .help_entry = "/new", .completion_description = "start a fresh session", .presentation_category = .session, .show_in_welcome = true },
+    .{ .kind = .new_session, .command = "/new", .aliases = &.{"/clear"}, .help_entry = "/new", .completion_description = "start a fresh session", .presentation_category = .session, .show_in_welcome = true },
     .{ .kind = .resume_session, .command = "/resume", .help_entry = "/resume", .completion_description = "resume a saved session", .presentation_category = .session },
-    .{ .kind = .continue_recovery, .command = "/continue", .help_entry = "/continue", .completion_description = "continue a paused model response", .presentation_category = .session, .requires_prompt_credential = true },
+    .{ .kind = .continue_recovery, .command = "/retry", .help_entry = "/retry", .completion_description = "retry an interrupted turn from its checkpoint", .presentation_category = .session, .requires_prompt_credential = true },
     .{ .kind = .rename_session, .command = "/rename", .help_entry = "/rename <title>", .completion_description = "rename the current session", .presentation_category = .session, .has_args = true, .accepts_payload = true },
     .{ .kind = .login, .command = "/login", .help_entry = "/login", .completion_description = "sign in to Codex", .presentation_category = .account },
     .{ .kind = .logout, .command = "/logout", .help_entry = "/logout [codex]", .completion_description = "sign out of the Codex session", .presentation_category = .account, .has_args = true, .accepts_payload = true },
@@ -411,10 +410,9 @@ pub const permissionsArgCompletionPrefix = command_specs.permissionsArgCompletio
 test "built-in slash commands register exact active order" {
     const expected_commands = [_][]const u8{
         "/help",
-        "/clear",
         "/new",
         "/resume",
-        "/continue",
+        "/retry",
         "/rename",
         "/login",
         "/logout",
@@ -448,6 +446,13 @@ test "built-in slash registry resolves primary commands and aliases" {
     const quit_alias = slash_registry.matchExact("/exit\t") orelse return error.TestExpectedEqual;
     try std.testing.expectEqual(SlashKind.quit, quit_alias.command.kind);
     try std.testing.expectEqualStrings("/exit", quit_alias.token);
+
+    const clear = slash_registry.lookup("/clear") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(SlashKind.new_session, clear.kind);
+
+    const clear_alias = slash_registry.matchExact("/clear\t") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(SlashKind.new_session, clear_alias.command.kind);
+    try std.testing.expectEqualStrings("/clear", clear_alias.token);
 
     const model = command_specs.matchedSlashPrefix(slash_registry, "/model\tmodel-id", .model) orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("/model", model);
