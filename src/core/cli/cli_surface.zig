@@ -22,6 +22,7 @@ const oauth_transport = @import("../auth/oauth_transport.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
 const secret = @import("../auth/secret.zig");
 const output_contracts = @import("../output/output_contracts.zig");
+const permissions = @import("../permissions/permissions.zig");
 const prompt_policy = @import("../config/prompt_policy.zig");
 const session_store = @import("../session/session_store.zig");
 const subagent_resume_admission = @import("../subagent/resume_admission.zig");
@@ -720,6 +721,9 @@ fn runNonInteractiveWithDeps(
             return .handled_success;
         },
         .permissions => |rest| {
+            if (rest.len > 0 and (std.mem.eql(u8, rest[0], "mode") or std.mem.eql(u8, rest[0], "rule"))) {
+                return runTopLevelPermissions(alloc, rest, cfg, deps);
+            }
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .permissions, output_contracts.Kind.permissions.jsonName(), err, rest);
                 return .handled_usage_error;
@@ -1683,6 +1687,416 @@ fn runTopLevelAuth(
     return .handled_usage_error;
 }
 
+fn runTopLevelPermissions(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    if (rest.len == 0) {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .permissions);
+        return .handled_usage_error;
+    }
+    const operation = rest[0];
+    if (std.mem.eql(u8, operation, "mode")) {
+        const parsed = parsePermissionsModeArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(
+                alloc,
+                cfg.command_catalog,
+                deps,
+                .permissions,
+                output_contracts.Kind.permissions_mode.jsonName(),
+                err,
+                rest[1..],
+            );
+            return .handled_usage_error;
+        };
+        var outcome = config_runtime.setUserPreferences(alloc, .{ .permission_mode = parsed.mode }) catch |err| {
+            try writePermissionsModeFailure(alloc, deps, parsed.format, err);
+            return .handled_failure;
+        };
+        defer outcome.deinit(alloc);
+        const text = try (output_contracts.PermissionsModeSnapshot{
+            .mode = parsed.mode,
+        }).render(alloc, parsed.format);
+        defer alloc.free(text);
+        try writeFormattedOutput(deps, text, parsed.format);
+        return .handled_success;
+    }
+    if (std.mem.eql(u8, operation, "rule")) {
+        return runPermissionsRule(alloc, rest[1..], cfg, deps);
+    }
+
+    try writeTopLevelUsage(cfg.command_catalog, deps, .permissions);
+    return .handled_usage_error;
+}
+
+fn runPermissionsRule(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    if (rest.len == 0) {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .permissions);
+        return .handled_usage_error;
+    }
+    const operation = rest[0];
+    if (std.mem.eql(u8, operation, "list")) {
+        const format = parsePermissionsRuleListArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(
+                alloc,
+                cfg.command_catalog,
+                deps,
+                .permissions,
+                output_contracts.Kind.permissions_rule_list.jsonName(),
+                err,
+                rest[1..],
+            );
+            return .handled_usage_error;
+        };
+        var startup = try deps.load_startup_state_without_credentials(alloc, cfg.default_model, cfg.default_agent_step_limit);
+        defer startup.deinit(alloc);
+        try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+
+        var detailed = try config_runtime.loadMergedSettingsDetailed(alloc, startup.workspace_root);
+        defer detailed.deinit(alloc);
+        const entries = try permissionRuleListEntriesFromSources(alloc, detailed.permission_sources);
+        defer if (entries.len > 0) alloc.free(entries);
+
+        const text = try (output_contracts.PermissionsRuleListSnapshot{
+            .rules = entries,
+            .user_shadowed_by_local = detailed.permission_sources.user_shadowed_by_local,
+        }).render(alloc, format);
+        defer alloc.free(text);
+        try writeFormattedOutput(deps, text, format);
+        return .handled_success;
+    }
+    if (std.mem.eql(u8, operation, "add")) {
+        const args = parsePermissionsRuleAddArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(
+                alloc,
+                cfg.command_catalog,
+                deps,
+                .permissions,
+                output_contracts.Kind.permissions_rule_add.jsonName(),
+                err,
+                rest[1..],
+            );
+            return .handled_usage_error;
+        };
+        return runPermissionsRuleAdd(alloc, cfg, deps, args, rest[1..]);
+    }
+    if (std.mem.eql(u8, operation, "remove")) {
+        const args = parsePermissionsRuleRemoveArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(
+                alloc,
+                cfg.command_catalog,
+                deps,
+                .permissions,
+                output_contracts.Kind.permissions_rule_remove.jsonName(),
+                err,
+                rest[1..],
+            );
+            return .handled_usage_error;
+        };
+        return runPermissionsRuleRemove(alloc, cfg, deps, args, rest[1..]);
+    }
+
+    try writeTopLevelUsage(cfg.command_catalog, deps, .permissions);
+    return .handled_usage_error;
+}
+
+fn runPermissionsRuleAdd(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    args: PermissionsRuleAddArgs,
+    raw_args: []const [:0]const u8,
+) !RunResult {
+    var canonical_pattern: ?[]u8 = null;
+    defer if (canonical_pattern) |pattern| alloc.free(pattern);
+
+    const pattern = if (std.mem.eql(u8, args.permission, "web_fetch")) blk: {
+        canonical_pattern = permissions.canonicalWebFetchDomainPattern(alloc, args.pattern) catch |err| {
+            if (err == error.InvalidToolArguments) {
+                try writeUsageOrJsonError(
+                    alloc,
+                    cfg.command_catalog,
+                    deps,
+                    .permissions,
+                    output_contracts.Kind.permissions_rule_add.jsonName(),
+                    error.InvalidPermissionArgs,
+                    raw_args,
+                );
+                return .handled_usage_error;
+            }
+            return err;
+        };
+        break :blk canonical_pattern.?;
+    } else args.pattern;
+
+    var startup = try deps.load_startup_state_without_credentials(alloc, cfg.default_model, cfg.default_agent_step_limit);
+    defer startup.deinit(alloc);
+    try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+
+    const workspace_root: ?[]const u8 = if (args.scope == .local) startup.workspace_root else null;
+    var outcome = config_runtime.addPermissionRule(
+        alloc,
+        args.scope,
+        workspace_root,
+        args.permission,
+        pattern,
+        args.action,
+    ) catch |err| {
+        try writePermissionsRuleMutationFailure(alloc, deps, "add", args.format, err);
+        return .handled_failure;
+    };
+    defer outcome.deinit(alloc);
+
+    const text = try (output_contracts.PermissionsRuleAddSnapshot{
+        .scope = permissionScopeLabel(args.scope),
+        .permission = args.permission,
+        .pattern = pattern,
+        .action = args.action,
+        .changed = outcome == .committed,
+    }).render(alloc, args.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, args.format);
+    return .handled_success;
+}
+
+fn runPermissionsRuleRemove(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    args: PermissionsRuleRemoveArgs,
+    raw_args: []const [:0]const u8,
+) !RunResult {
+    _ = raw_args;
+    var startup = try deps.load_startup_state_without_credentials(alloc, cfg.default_model, cfg.default_agent_step_limit);
+    defer startup.deinit(alloc);
+    try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+
+    const workspace_root: ?[]const u8 = if (args.scope == .local) startup.workspace_root else null;
+    var outcome = config_runtime.removePermissionRule(
+        alloc,
+        args.scope,
+        workspace_root,
+        args.permission,
+        args.pattern,
+    ) catch |err| {
+        try writePermissionsRuleMutationFailure(alloc, deps, "remove", args.format, err);
+        return .handled_failure;
+    };
+    defer outcome.deinit(alloc);
+
+    const text = try (output_contracts.PermissionsRuleRemoveSnapshot{
+        .scope = permissionScopeLabel(args.scope),
+        .permission = args.permission,
+        .pattern = args.pattern,
+        .removed = outcome == .committed,
+    }).render(alloc, args.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, args.format);
+    return .handled_success;
+}
+
+const PermissionsModeArgs = struct {
+    mode: types.PermissionMode,
+    format: output_contracts.OutputFormat = .text,
+};
+
+const PermissionsRuleAddArgs = struct {
+    format: output_contracts.OutputFormat = .text,
+    scope: config_runtime.PermissionScope = .local,
+    permission: []const u8,
+    pattern: []const u8,
+    action: types.PermissionAction,
+};
+
+const PermissionsRuleRemoveArgs = struct {
+    format: output_contracts.OutputFormat = .text,
+    scope: config_runtime.PermissionScope = .local,
+    permission: []const u8,
+    pattern: []const u8,
+};
+
+fn parsePermissionsModeArgs(args: []const [:0]const u8) !PermissionsModeArgs {
+    var options: PermissionsModeArgs = .{ .mode = undefined };
+    var mode_seen = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (mode_seen) return error.InvalidPermissionArgs;
+        mode_seen = true;
+        options.mode = config_runtime.parsePermissionMode(arg) orelse return error.InvalidPermissionArgs;
+    }
+    if (!mode_seen) return error.InvalidPermissionArgs;
+    return options;
+}
+
+fn parsePermissionsRuleListArgs(args: []const [:0]const u8) !output_contracts.OutputFormat {
+    if (args.len == 0) return .text;
+    if (args.len == 1 and std.mem.eql(u8, args[0], "--json")) return .json;
+    return error.InvalidPermissionArgs;
+}
+
+fn parsePermissionsRuleAddArgs(args: []const [:0]const u8) !PermissionsRuleAddArgs {
+    var options: PermissionsRuleAddArgs = .{
+        .permission = undefined,
+        .pattern = undefined,
+        .action = undefined,
+    };
+    var permission_seen = false;
+    var pattern_seen = false;
+    var action_seen = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--user")) {
+            options.scope = .user;
+            continue;
+        }
+        if (!permission_seen) {
+            permission_seen = true;
+            options.permission = arg;
+            continue;
+        }
+        if (!pattern_seen) {
+            pattern_seen = true;
+            options.pattern = arg;
+            continue;
+        }
+        if (!action_seen) {
+            action_seen = true;
+            options.action = config_runtime.parsePermissionAction(arg) orelse return error.InvalidPermissionArgs;
+            continue;
+        }
+        return error.InvalidPermissionArgs;
+    }
+    if (!permission_seen or !pattern_seen or !action_seen) return error.InvalidPermissionArgs;
+    return options;
+}
+
+fn parsePermissionsRuleRemoveArgs(args: []const [:0]const u8) !PermissionsRuleRemoveArgs {
+    var options: PermissionsRuleRemoveArgs = .{
+        .permission = undefined,
+        .pattern = undefined,
+    };
+    var permission_seen = false;
+    var pattern_seen = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--user")) {
+            options.scope = .user;
+            continue;
+        }
+        if (!permission_seen) {
+            permission_seen = true;
+            options.permission = arg;
+            continue;
+        }
+        if (!pattern_seen) {
+            pattern_seen = true;
+            options.pattern = arg;
+            continue;
+        }
+        return error.InvalidPermissionArgs;
+    }
+    if (!permission_seen or !pattern_seen) return error.InvalidPermissionArgs;
+    return options;
+}
+
+fn permissionScopeLabel(scope: config_runtime.PermissionScope) []const u8 {
+    return switch (scope) {
+        .user => "user",
+        .local => "local",
+    };
+}
+
+fn permissionRuleListEntriesFromSources(
+    alloc: Allocator,
+    sources: config_runtime.PermissionSourceViews,
+) ![]output_contracts.PermissionsRuleListEntry {
+    const total = sources.user.rules.len + sources.local.rules.len;
+    if (total == 0) return &.{};
+    const entries = try alloc.alloc(output_contracts.PermissionsRuleListEntry, total);
+    var index: usize = 0;
+    for (sources.user.rules) |rule| {
+        entries[index] = .{
+            .scope = "user",
+            .permission = rule.permission,
+            .pattern = rule.pattern,
+            .action = rule.action,
+        };
+        index += 1;
+    }
+    for (sources.local.rules) |rule| {
+        entries[index] = .{
+            .scope = "local",
+            .permission = rule.permission,
+            .pattern = rule.pattern,
+            .action = rule.action,
+        };
+        index += 1;
+    }
+    return entries;
+}
+
+fn writePermissionsModeFailure(
+    alloc: Allocator,
+    deps: RunDeps,
+    format: output_contracts.OutputFormat,
+    err: anyerror,
+) !void {
+    const message = "fiber permissions mode failed";
+    if (format == .json) {
+        try writeJsonCommandFailure(
+            alloc,
+            deps,
+            output_contracts.Kind.permissions_mode.jsonName(),
+            err,
+            message,
+        );
+        return;
+    }
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try out.writer.print("{s}: {s}.\n", .{ message, @errorName(err) });
+    try writeStderr(deps, out.written());
+}
+
+fn writePermissionsRuleMutationFailure(
+    alloc: Allocator,
+    deps: RunDeps,
+    operation: []const u8,
+    format: output_contracts.OutputFormat,
+    err: anyerror,
+) !void {
+    const kind = if (std.mem.eql(u8, operation, "add"))
+        output_contracts.Kind.permissions_rule_add.jsonName()
+    else
+        output_contracts.Kind.permissions_rule_remove.jsonName();
+    const message = try std.fmt.allocPrint(alloc, "fiber permissions rule {s} failed", .{operation});
+    defer alloc.free(message);
+    if (format == .json) {
+        try writeJsonCommandFailure(alloc, deps, kind, err, message);
+        return;
+    }
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try out.writer.print("{s}: {s}.\n", .{ message, @errorName(err) });
+    try writeStderr(deps, out.written());
+}
+
 fn runTopLevelMcp(
     alloc: Allocator,
     rest: []const [:0]const u8,
@@ -2436,6 +2850,7 @@ fn commandFailureMessage(err: anyerror) ?[]const u8 {
         error.InvalidSessionDetailArgs,
         error.InvalidSessionRecoveryArgs,
         error.InvalidResumeArgs,
+        error.InvalidPermissionArgs,
         => "invalid arguments",
         else => null,
     };
@@ -4337,6 +4752,69 @@ test "resolveAuthLoginProvider proceeds without a tty when only one provider exi
     const provider = try resolveAuthLoginProvider(deps, null);
     try std.testing.expectEqual(model_provider.ProviderId.codex, provider);
     try std.testing.expectEqualStrings("", capture.stderr.written());
+}
+
+test "parse routes bare permissions and subcommands separately" {
+    const command_catalog = testCommandCatalog();
+    switch (parse(command_catalog, &.{@constCast("permissions")})) {
+        .permissions => |rest| try std.testing.expectEqual(@as(usize, 0), rest.len),
+        else => return error.TestExpectedEqual,
+    }
+    switch (parse(command_catalog, &.{ @constCast("permissions"), @constCast("mode"), @constCast("auto") })) {
+        .permissions => |rest| {
+            try std.testing.expectEqual(@as(usize, 2), rest.len);
+            try std.testing.expectEqualStrings("mode", rest[0]);
+            try std.testing.expectEqualStrings("auto", rest[1]);
+        },
+        else => return error.TestExpectedEqual,
+    }
+    switch (parse(command_catalog, &.{ @constCast("permissions"), @constCast("rule"), @constCast("list") })) {
+        .permissions => |rest| {
+            try std.testing.expectEqual(@as(usize, 2), rest.len);
+            try std.testing.expectEqualStrings("rule", rest[0]);
+            try std.testing.expectEqualStrings("list", rest[1]);
+        },
+        else => return error.TestExpectedEqual,
+    }
+}
+
+test "permissions mode argument parsing accepts mode and json" {
+    const parsed = try parsePermissionsModeArgs(&.{ @constCast("yolo"), @constCast("--json") });
+    try std.testing.expectEqual(types.PermissionMode.yolo, parsed.mode);
+    try std.testing.expectEqual(output_contracts.OutputFormat.json, parsed.format);
+    try std.testing.expectError(error.InvalidPermissionArgs, parsePermissionsModeArgs(&.{@constCast("wat")}));
+}
+
+test "permissions rule add argument parsing accepts scope flags and action" {
+    const parsed = try parsePermissionsRuleAddArgs(&.{
+        @constCast("--user"),
+        @constCast("bash"),
+        @constCast("git *"),
+        @constCast("allow"),
+    });
+    try std.testing.expectEqual(config_runtime.PermissionScope.user, parsed.scope);
+    try std.testing.expectEqualStrings("bash", parsed.permission);
+    try std.testing.expectEqualStrings("git *", parsed.pattern);
+    try std.testing.expectEqual(types.PermissionAction.allow, parsed.action);
+    try std.testing.expectError(error.InvalidPermissionArgs, parsePermissionsRuleAddArgs(&.{
+        @constCast("bash"),
+        @constCast("git *"),
+        @constCast("wat"),
+    }));
+}
+
+test "permissions rule add rejects invalid web_fetch pattern" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("permissions"), @constCast("rule"), @constCast("add"), @constCast("web_fetch"), @constCast("example.*"), @constCast("allow"), @constCast("--json") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"code\":\"InvalidPermissionArgs\"") != null);
 }
 
 test "auth login rejects --json" {

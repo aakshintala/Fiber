@@ -667,12 +667,12 @@ pre-existing skips.
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
-| `permissions` (read) | present, read-only | unchanged, enveloped | `permissions` | — | — |
-| `permissions mode <mode>` | absent | sets persisted mode | `permissions.mode` | `cli_surface.zig` | `config_runtime.zig` |
-| `permissions rule list` | absent | lists rules with scope | `permissions.rule.list` | `cli_surface.zig` | `config_runtime.zig` |
-| `permissions rule add [--user] <permission> <pattern> <action>` | absent; `addPermissionRule` has had no production caller since `/allowlist` was deleted | wired | `permissions.rule.add` | `cli_surface.zig` | `config_runtime.zig` |
-| `permissions rule remove [--user] <permission> <pattern>` | absent; two positionals, no action | wired | `permissions.rule.remove` | `cli_surface.zig` | `config_runtime.zig` |
-| unmatched-pattern validation | none; a `web_fetch` glob is silently inert | usage error, exit 2 | `permissions.zig` | `permissions.zig` |
+| `permissions` (read) | present, read-only, enveloped | unchanged, enveloped | `permissions` | — | — |
+| `permissions mode <mode>` | wired; sets persisted global mode via `setUserPreferences` | sets persisted mode | `permissions.mode` | `cli_surface.zig` | `config_runtime.zig` |
+| `permissions rule list` | wired; lists user/local rules from `loadMergedSettingsDetailed` | lists rules with scope | `permissions.rule.list` | `cli_surface.zig` | `config_runtime.zig` |
+| `permissions rule add [--user] <permission> <pattern> <action>` | wired via `addPermissionRule`; `web_fetch` patterns canonicalized before persist | wired | `permissions.rule.add` | `cli_surface.zig` | `config_runtime.zig` |
+| `permissions rule remove [--user] <permission> <pattern>` | wired via `removePermissionRule` | wired | `permissions.rule.remove` | `cli_surface.zig` | `config_runtime.zig` |
+| unmatched-pattern validation | `web_fetch` invalid patterns exit 2 at CLI parse via `canonicalWebFetchDomainPattern` | usage error, exit 2 | `permissions.zig` | `permissions.zig` |
 
 ### Slice 7 — `mcp`
 

@@ -33,6 +33,10 @@ pub const Kind = enum {
     auth_logout,
     status,
     permissions,
+    permissions_mode,
+    permissions_rule_list,
+    permissions_rule_add,
+    permissions_rule_remove,
     models,
     doctor,
     session_list,
@@ -51,6 +55,10 @@ pub const Kind = enum {
             .auth_logout => "auth.logout",
             .status => "status",
             .permissions => "permissions",
+            .permissions_mode => "permissions.mode",
+            .permissions_rule_list => "permissions.rule.list",
+            .permissions_rule_add => "permissions.rule.add",
+            .permissions_rule_remove => "permissions.rule.remove",
             .models => "models",
             .doctor => "doctor",
             .session_list => "session.list",
@@ -953,6 +961,180 @@ pub const AuthStatusSnapshot = struct {
             try out.writer.writeAll("null");
         }
         try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const PermissionsModeSnapshot = struct {
+    mode: types.PermissionMode,
+
+    pub fn render(self: PermissionsModeSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: PermissionsModeSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(alloc, "[permissions] mode={s}\n", .{permissionModeLabel(self.mode)});
+    }
+
+    pub fn renderJson(self: PermissionsModeSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"mode\":",
+            .{Kind.permissions_mode.jsonName()},
+        );
+        try std.json.Stringify.value(permissionModeLabel(self.mode), .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const PermissionsRuleListEntry = struct {
+    scope: []const u8,
+    permission: []const u8,
+    pattern: []const u8,
+    action: types.PermissionAction,
+};
+
+pub const PermissionsRuleListSnapshot = struct {
+    rules: []const PermissionsRuleListEntry,
+    user_shadowed_by_local: bool = false,
+
+    pub fn render(self: PermissionsRuleListSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: PermissionsRuleListSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        if (self.rules.len == 0) {
+            try out.writer.writeAll("[permissions] configured rules: (none)\n");
+            return try out.toOwnedSlice();
+        }
+
+        try out.writer.writeAll("[permissions] configured rules:\n");
+        for (self.rules) |rule| {
+            try out.writer.print(
+                " - scope={s} {s} {s} -> {s}\n",
+                .{ rule.scope, @tagName(rule.action), rule.permission, rule.pattern },
+            );
+        }
+        if (self.user_shadowed_by_local) {
+            try out.writer.writeAll("[permissions] note: workspace-local rules shadow matching user rules\n");
+        }
+        return try out.toOwnedSlice();
+    }
+
+    pub fn renderJson(self: PermissionsRuleListSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"user_shadowed_by_local\":{},\"rules\":[",
+            .{ Kind.permissions_rule_list.jsonName(), self.user_shadowed_by_local },
+        );
+        for (self.rules, 0..) |rule, index| {
+            if (index > 0) try out.writer.writeByte(',');
+            try out.writer.writeAll("{\"scope\":");
+            try std.json.Stringify.value(rule.scope, .{}, &out.writer);
+            try out.writer.writeAll(",\"permission\":");
+            try std.json.Stringify.value(rule.permission, .{}, &out.writer);
+            try out.writer.writeAll(",\"pattern\":");
+            try std.json.Stringify.value(rule.pattern, .{}, &out.writer);
+            try out.writer.writeAll(",\"action\":");
+            try std.json.Stringify.value(@tagName(rule.action), .{}, &out.writer);
+            try out.writer.writeByte('}');
+        }
+        try out.writer.writeAll("]}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const PermissionsRuleAddSnapshot = struct {
+    scope: []const u8,
+    permission: []const u8,
+    pattern: []const u8,
+    action: types.PermissionAction,
+    changed: bool,
+
+    pub fn render(self: PermissionsRuleAddSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: PermissionsRuleAddSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "[permissions] added scope={s} {s} {s} -> {s} changed={}\n",
+            .{ self.scope, @tagName(self.action), self.permission, self.pattern, self.changed },
+        );
+    }
+
+    pub fn renderJson(self: PermissionsRuleAddSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"scope\":",
+            .{Kind.permissions_rule_add.jsonName()},
+        );
+        try std.json.Stringify.value(self.scope, .{}, &out.writer);
+        try out.writer.writeAll(",\"permission\":");
+        try std.json.Stringify.value(self.permission, .{}, &out.writer);
+        try out.writer.writeAll(",\"pattern\":");
+        try std.json.Stringify.value(self.pattern, .{}, &out.writer);
+        try out.writer.writeAll(",\"action\":");
+        try std.json.Stringify.value(@tagName(self.action), .{}, &out.writer);
+        try out.writer.print(",\"changed\":{}}}", .{self.changed});
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const PermissionsRuleRemoveSnapshot = struct {
+    scope: []const u8,
+    permission: []const u8,
+    pattern: []const u8,
+    removed: bool,
+
+    pub fn render(self: PermissionsRuleRemoveSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: PermissionsRuleRemoveSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "[permissions] removed scope={s} {s} {s} removed={}\n",
+            .{ self.scope, self.permission, self.pattern, self.removed },
+        );
+    }
+
+    pub fn renderJson(self: PermissionsRuleRemoveSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"scope\":",
+            .{Kind.permissions_rule_remove.jsonName()},
+        );
+        try std.json.Stringify.value(self.scope, .{}, &out.writer);
+        try out.writer.writeAll(",\"permission\":");
+        try std.json.Stringify.value(self.permission, .{}, &out.writer);
+        try out.writer.writeAll(",\"pattern\":");
+        try std.json.Stringify.value(self.pattern, .{}, &out.writer);
+        try out.writer.print(",\"removed\":{}}}", .{self.removed});
         return try out.toOwnedSlice();
     }
 };

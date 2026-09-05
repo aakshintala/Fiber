@@ -2549,6 +2549,13 @@ test "web_fetch grants do not authorize other tools" {
     try std.testing.expect(!sessionGrantAllowed(&grants, "run_command", "https://example.com/docs"));
 }
 
+test "canonicalWebFetchDomainPattern rejects wildcard host patterns" {
+    const alloc = std.testing.allocator;
+    try std.testing.expectError(error.InvalidToolArguments, canonicalWebFetchDomainPattern(alloc, "example.*"));
+    try std.testing.expectError(error.InvalidToolArguments, canonicalWebFetchDomainPattern(alloc, "*"));
+    try std.testing.expectError(error.InvalidToolArguments, canonicalWebFetchDomainPattern(alloc, "https://example.com/*"));
+}
+
 test "web_fetch allowlist rejects wildcard and hand edited broad authorization" {
     const alloc = std.testing.allocator;
     var rules_buf = [_]types.PermissionRule{

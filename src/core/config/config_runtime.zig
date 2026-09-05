@@ -2861,6 +2861,37 @@ test "user startup scrollback preference writes bool and preserves unrelated key
     try std.testing.expect((try workspaceOverrideObject(&parsed.value, workspace_root)).get("startup_scrollback") == null);
 }
 
+test "setUserPreferences writes global permission_mode" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+
+    const home = try TestHome.install(std.testing.allocator, home_root);
+    defer home.deinit();
+
+    var outcome = try setUserPreferences(
+        std.testing.allocator,
+        .{ .permission_mode = .yolo },
+    );
+    defer outcome.deinit(std.testing.allocator);
+
+    var settings = try loadMergedSettings(std.testing.allocator, workspace_root);
+    defer settings.deinit(std.testing.allocator);
+    try std.testing.expectEqual(types.PermissionMode.yolo, settings.permission_mode.?);
+
+    const bytes = try readSettingsBytesForTest(std.testing.allocator, home_root);
+    defer std.testing.allocator.free(bytes);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, bytes, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("yolo", parsed.value.object.get("permission_mode").?.string);
+}
+
 test "project profile-only settings are ignored and diagnosed by key" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
