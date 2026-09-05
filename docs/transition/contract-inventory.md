@@ -721,10 +721,10 @@ test --summary all`: 9/9 steps, 7275/7277 passing, 2 pre-existing skips.
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
-| `continue` | absent | resumes the most recent session, no picker | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
-| `ask --resume-id <id>` | **present**, not absent: parsed at `cli_ask.zig:3297`, declared at `commands.zig:33`, ~12 test call sites | verify the semantics match "one-shot resumes a specific session"; likely no change. Do not confuse with `--resume-<id>` in the row below, which is a different spelling and is removed. | `ask` | — | `cli_ask.zig` |
-| `-r`, `--resume`, `--resume-last`, `--continue`, `-c`, `--resume-<id>` | mixed: some parsed, some only in help | absent from parser and help | — | `cli_surface.zig` | `cli_surface.zig` |
-| `sessions --continuation` | `--cursor` (`commands.zig:141,146`, parsed `cli_surface.zig:2442`) | renamed | `session.list` | `commands.zig` | `cli_surface.zig` |
+| `continue` | **implemented**: top-level token in `commands.zig`, parsed to `Command.resume_session` with empty args in `cli_surface.zig`; extra arguments return usage error | resumes the most recent session, no picker | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
+| `ask --resume-id <id>` | **present** at `cli_ask.zig:3341`; loads and resumes a specific session by exact id for a one-shot `ask` invocation (no picker, no interactive launch) via `resumeForExternalPrompt` | **no change** | `ask` | — | `cli_ask.zig` |
+| `-r`, `--resume`, `--resume-last`, `--continue`, `-c`, `--resume-<id>` | **already removed** in an earlier slice; no parser or help references remain (`command_specs.zig` negative test at `:1077`) | absent from parser and help | — | — | — |
+| `sessions --continuation` | **renamed** from `--cursor` in `commands.zig`, `cli_surface.zig`, and `output_contracts.zig` text hint; JSON field remains `next_cursor` | renamed | `session.list` | `commands.zig` | `cli_surface.zig` |
 | `sessions --limit` | **already declared and parsed**: a full `OptionDoc` at `commands.zig:146`, in the usage string at `:141`, parsed at `cli_surface.zig:2429`, with tests at `:2852`. The matrix implied work remained. | **no change** | `session.list` | — | — |
 | `resume` (picker) | present | unchanged; **rejects `--json`** | — | `cli_surface.zig` | `cli_surface.zig` |
 

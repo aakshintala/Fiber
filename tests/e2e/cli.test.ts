@@ -1911,7 +1911,7 @@ describe("cli: sessions", () => {
         expect(firstJson.sessions[99].id).toBe("indexed-session-00099");
 
         const second = await runFx(
-          ["sessions", "--json", "--cursor", firstJson.next_cursor],
+          ["sessions", "--json", "--continuation", firstJson.next_cursor],
           {
             cwd: workspaceRoot,
             env: { HOME: home, ...NO_GATEWAY_AUTH },

@@ -408,6 +408,9 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
             if (command_specs.matchesTopLevel(command_catalog, command, .auth)) return .{ .auth = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .ask)) return .{ .ask = args[1..] };
         },
+        'c' => {
+            if (command_specs.matchesTopLevel(command_catalog, command, .@"continue")) return .{ .resume_session = .{ .args = args[1..] } };
+        },
         'd' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .doctor)) return .{ .doctor = args[1..] };
         },
@@ -489,6 +492,11 @@ pub fn parseInteractiveLaunch(
             .modifiers = global_args.takeModifiers(),
         } },
         .resume_session => |invocation| {
+            if (command_specs.matchesTopLevel(command_catalog, effective_args[0], .@"continue") and
+                invocation.args.len > 0)
+            {
+                return error.InvalidContinueArgs;
+            }
             const resume_args = invocation.args;
             const upgrade_relaunch = resume_args.len == 2 and
                 std.mem.eql(u8, resume_args[1], upgrade_relaunch_arg);
@@ -636,6 +644,10 @@ fn runIfRequestedWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Con
     const parsed_launch = parseInteractiveLaunch(alloc, args, cfg.command_catalog) catch |err| {
         if (err == error.InvalidResumeArgs) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .@"resume");
+            return .handled_usage_error;
+        }
+        if (err == error.InvalidContinueArgs) {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .@"continue");
             return .handled_usage_error;
         }
         var writer: std.Io.Writer.Allocating = .init(alloc);
@@ -3522,7 +3534,7 @@ fn parseSessionListArgs(args: []const [:0]const u8) !SessionListOptions {
             }
             continue;
         }
-        if (std.mem.eql(u8, arg, "--cursor")) {
+        if (std.mem.eql(u8, arg, "--continuation")) {
             if (cursor_seen or index + 1 >= args.len) return error.InvalidLocalSurfaceArgs;
             cursor_seen = true;
             index += 1;
@@ -3895,6 +3907,10 @@ test "parse recognizes every top-level command and preserves unknown commands" {
         .resume_session => |invocation| try std.testing.expectEqual(@as(usize, 1), invocation.args.len),
         else => return error.TestExpectedEqual,
     }
+    switch (parse(command_catalog, &.{@constCast("continue")})) {
+        .resume_session => |invocation| try std.testing.expectEqual(@as(usize, 0), invocation.args.len),
+        else => return error.TestExpectedEqual,
+    }
     switch (parse(command_catalog, &.{ @constCast("usage"), @constCast("--period"), @constCast("24h") })) {
         .usage => |rest| try std.testing.expectEqual(@as(usize, 2), rest.len),
         else => return error.TestExpectedEqual,
@@ -4040,7 +4056,7 @@ test "parse session list args supports bounded canonical pagination" {
         @constCast("--all"),
         @constCast("--limit"),
         @constCast("2"),
-        @constCast("--cursor"),
+        @constCast("--continuation"),
         @constCast("v1:20:session-a"),
     });
     try std.testing.expectEqual(output_contracts.OutputFormat.json, paged.format);
@@ -4067,19 +4083,27 @@ test "parse session list args supports bounded canonical pagination" {
     );
     try std.testing.expectError(
         error.InvalidLocalSurfaceArgs,
+        parseSessionListArgs(&.{@constCast("--continuation")}),
+    );
+    try std.testing.expectError(
+        error.InvalidLocalSurfaceArgs,
+        parseSessionListArgs(&.{ @constCast("--continuation"), @constCast("v1:020:session-a") }),
+    );
+    try std.testing.expectError(
+        error.InvalidLocalSurfaceArgs,
+        parseSessionListArgs(&.{ @constCast("--continuation"), @constCast("v2:20:session-a") }),
+    );
+    try std.testing.expectError(
+        error.InvalidLocalSurfaceArgs,
+        parseSessionListArgs(&.{ @constCast("--continuation"), @constCast("v1:20:../unsafe") }),
+    );
+    try std.testing.expectError(
+        error.InvalidLocalSurfaceArgs,
         parseSessionListArgs(&.{@constCast("--cursor")}),
     );
     try std.testing.expectError(
         error.InvalidLocalSurfaceArgs,
-        parseSessionListArgs(&.{ @constCast("--cursor"), @constCast("v1:020:session-a") }),
-    );
-    try std.testing.expectError(
-        error.InvalidLocalSurfaceArgs,
-        parseSessionListArgs(&.{ @constCast("--cursor"), @constCast("v2:20:session-a") }),
-    );
-    try std.testing.expectError(
-        error.InvalidLocalSurfaceArgs,
-        parseSessionListArgs(&.{ @constCast("--cursor"), @constCast("v1:20:../unsafe") }),
+        parseSessionListArgs(&.{ @constCast("--cursor"), @constCast("v1:20:session-a") }),
     );
 }
 
@@ -4752,6 +4776,46 @@ test "runIfRequested resume no args returns last target" {
         else => return error.TestExpectedEqual,
     }
     try std.testing.expectEqualStrings("", capture.stderr.written());
+}
+
+test "runIfRequested continue returns last target like bare resume" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(std.testing.allocator, &.{@constCast("continue")}, testConfig(), capture.deps());
+    switch (result) {
+        .interactive => |launch| try std.testing.expectEqual(ResumeTarget.last, launch.requested_resume.?),
+        else => return error.TestExpectedEqual,
+    }
+    try std.testing.expectEqualStrings("", capture.stderr.written());
+}
+
+test "runIfRequested continue rejects extra arguments" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("continue"), @constCast("session.v3") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    try std.testing.expectEqualStrings("usage: fiber continue\n", capture.stderr.written());
+}
+
+test "runIfRequested continue rejects json flags" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("continue"), @constCast("--json") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    try std.testing.expectEqualStrings("usage: fiber continue\n", capture.stderr.written());
 }
 
 test "runIfRequested resume id returns owned id" {

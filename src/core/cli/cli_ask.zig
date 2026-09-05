@@ -4911,7 +4911,7 @@ test "parse options rejects invalid model effort and fast suffix values" {
 
     try std.testing.expectError(
         error.InvalidAskArgs,
-        parseOptionsWithStdin(alloc, &.{ "--model" }, .tty),
+        parseOptionsWithStdin(alloc, &.{"--model"}, .tty),
     );
     try std.testing.expectError(
         error.InvalidAskArgs,
@@ -4923,7 +4923,7 @@ test "parse options rejects invalid model effort and fast suffix values" {
     );
     try std.testing.expectError(
         error.InvalidAskArgs,
-        parseOptionsWithStdin(alloc, &.{ "--effort" }, .tty),
+        parseOptionsWithStdin(alloc, &.{"--effort"}, .tty),
     );
     try std.testing.expectError(
         error.InvalidAskArgs,

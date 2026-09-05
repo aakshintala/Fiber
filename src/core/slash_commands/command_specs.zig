@@ -16,6 +16,7 @@ pub const TopLevelKind = enum {
     doctor,
     session,
     sessions,
+    @"continue",
     @"resume",
     usage,
     upgrade,

@@ -127,7 +127,7 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .session,
         .token = "session",
-        .usage = "session show <last|id>|--id <id> [--json] | session list [--all] [--limit <1-100>] [--cursor <cursor>] [--json] | session rename <id> <title> [--json] | session remove <id>|--id <id> [--json] | session recover <id>|--id <id> [--json] | session resume [last|<id>] | session resume --id <id>",
+        .usage = "session show <last|id>|--id <id> [--json] | session list [--all] [--limit <1-100>] [--continuation <cursor>] [--json] | session rename <id> <title> [--json] | session remove <id>|--id <id> [--json] | session recover <id>|--id <id> [--json] | session resume [last|<id>] | session resume --id <id>",
         .summary = "Inspect, list, rename, remove, resume, or recover saved sessions",
         .options = &.{
             .{ .flag = "show <last|id>", .description = "Show the current workspace session or one saved session by id" },
@@ -143,14 +143,20 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .sessions,
         .token = "sessions",
-        .usage = "sessions [--all] [--limit <1-100>] [--cursor <cursor>] [--json]",
+        .usage = "sessions [--all] [--limit <1-100>] [--continuation <cursor>] [--json]",
         .summary = "List saved sessions for the current workspace",
         .options = &.{
             .{ .flag = "--all", .description = "List saved sessions across every workspace in this profile" },
             .{ .flag = "--limit <1-100>", .description = "Set the maximum sessions returned per page" },
-            .{ .flag = "--cursor <cursor>", .description = "Continue from a prior sessions result" },
+            .{ .flag = "--continuation <cursor>", .description = "Continue from a prior sessions result" },
             json_option,
         },
+    },
+    .{
+        .kind = .@"continue",
+        .token = "continue",
+        .usage = "continue",
+        .summary = "Resume the most recent saved session",
     },
     .{
         .kind = .@"resume",
@@ -226,6 +232,7 @@ pub const top_level_help_groups = [_]TopLevelHelpGroup{
         .{ .kind = .ask, .usage = "ask <prompt>" },
     } },
     .{ .entries = &.{
+        .{ .kind = .@"continue", .usage = "continue", .summary = "Resume the most recent saved session" },
         .{ .kind = .sessions, .usage = "sessions" },
         .{ .kind = .session, .usage = "session show <last|id>" },
         .{ .usage = "session list", .summary = "List saved sessions for the current workspace" },

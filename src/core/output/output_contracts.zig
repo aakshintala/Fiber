@@ -1483,7 +1483,7 @@ pub const SessionListSnapshot = struct {
         }
         if (self.has_more) {
             try out.writer.print(
-                "[sessions] more saved sessions; continue with `fiber sessions {s}--cursor {s}`\n",
+                "[sessions] more saved sessions; continue with `fiber sessions {s}--continuation {s}`\n",
                 .{ if (self.all_workspaces) "--all " else "", self.next_cursor orelse "" },
             );
         }
@@ -2777,7 +2777,7 @@ test "core session list snapshot text and json stay stable" {
     defer std.testing.allocator.free(paged_text);
     try std.testing.expectEqualStrings(
         "[sessions] 1 saved\n - Session title\n   id=abc | 3 turns | Spanish | updated 1970-01-01 00:00:00.002 UTC\n" ++
-            "[sessions] more saved sessions; continue with `fiber sessions --cursor v1:2:abc`\n",
+            "[sessions] more saved sessions; continue with `fiber sessions --continuation v1:2:abc`\n",
         paged_text,
     );
 
