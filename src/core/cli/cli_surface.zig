@@ -1140,6 +1140,20 @@ fn writeTopLevelHelp(
     }
 }
 
+/// Routes `fiber debug replay` output through the caller's injected sinks so
+/// tests capture it instead of writing to the real process streams.
+const ReplayOutput = struct {
+    deps: RunDeps,
+
+    pub fn writeStdout(self: *@This(), text: []const u8) !void {
+        try self.deps.write_stdout(self.deps.stdout_ctx, text);
+    }
+
+    pub fn writeStderr(self: *@This(), text: []const u8) !void {
+        try self.deps.write_stderr(self.deps.stderr_ctx, text);
+    }
+};
+
 fn writeStdout(deps: RunDeps, text: []const u8) !void {
     try deps.write_stdout(deps.stdout_ctx, text);
 }
@@ -1662,7 +1676,8 @@ fn runTopLevelDebug(
     }
     const operation = rest[0];
     if (std.mem.eql(u8, operation, "replay")) {
-        const exit_code = try cli_replay.run(alloc, rest[1..]);
+        var output: ReplayOutput = .{ .deps = deps };
+        const exit_code = try cli_replay.runWithOutput(alloc, rest[1..], &output);
         return .{ .handled_exit = exit_code };
     }
 
@@ -5563,6 +5578,11 @@ test "debug replay dispatches through cli replay with exit passthrough" {
         .handled_exit => |code| try std.testing.expectEqual(@as(u8, 2), code),
         else => return error.TestExpectedEqual,
     }
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        capture.stderr.written(),
+        "fiber replay: missing tape path\n",
+    ));
 }
 
 test "bare replay is no longer a top-level command" {

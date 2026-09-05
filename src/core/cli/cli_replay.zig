@@ -68,7 +68,7 @@ pub fn run(alloc: std.mem.Allocator, args: []const [:0]const u8) !u8 {
     return runWithOutput(alloc, args, &output);
 }
 
-fn runWithOutput(alloc: Allocator, args: []const [:0]const u8, output: anytype) !u8 {
+pub fn runWithOutput(alloc: Allocator, args: []const [:0]const u8, output: anytype) !u8 {
     const opts = parseArgs(args) catch |err| {
         return replyParseError(alloc, output, err, argsContainJson(args));
     };
