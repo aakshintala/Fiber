@@ -26,6 +26,7 @@ const permissions = @import("../permissions/permissions.zig");
 const prompt_policy = @import("../config/prompt_policy.zig");
 const session_store = @import("../session/session_store.zig");
 const subagent_resume_admission = @import("../subagent/resume_admission.zig");
+const app_session_runtime = @import("../app/app_session_runtime.zig");
 const usage_report = @import("../session/usage_report.zig");
 const skill_contract = @import("../skills/skill_contract.zig");
 const types = @import("../shared/types.zig");
@@ -243,6 +244,34 @@ const SessionRecoveryOptions = struct {
         self.* = undefined;
     }
 };
+
+const SessionRenameOptions = struct {
+    format: output_contracts.OutputFormat = .text,
+    session_id: []u8,
+    title: []u8,
+
+    fn deinit(self: *SessionRenameOptions, alloc: Allocator) void {
+        alloc.free(self.session_id);
+        alloc.free(self.title);
+        self.* = undefined;
+    }
+};
+
+const SessionRemoveOptions = struct {
+    format: output_contracts.OutputFormat = .text,
+    session_id: []u8,
+
+    fn deinit(self: *SessionRemoveOptions, alloc: Allocator) void {
+        alloc.free(self.session_id);
+        self.* = undefined;
+    }
+};
+
+const SessionTitleValidator = app_session_runtime.Runtime(struct {});
+
+fn validateSessionTitle(raw: []const u8) SessionTitleValidator.RenameError![]const u8 {
+    return SessionTitleValidator.validateSessionTitle(raw);
+}
 
 const WriteFn = *const fn (?*anyopaque, []const u8) anyerror!void;
 const LoadStartupStateFn = *const fn (Allocator, oauth_transport.Provider, []const u8, usize) anyerror!app_lifecycle.StartupState;
@@ -843,7 +872,25 @@ fn runNonInteractiveWithDeps(
             return .handled_success;
         },
         .session => |rest| {
-            if (rest.len > 0 and std.mem.eql(u8, rest[0], "recover")) {
+            if (rest.len == 0 or
+                (!std.mem.eql(u8, rest[0], "show") and
+                    !std.mem.eql(u8, rest[0], "list") and
+                    !std.mem.eql(u8, rest[0], "rename") and
+                    !std.mem.eql(u8, rest[0], "remove") and
+                    !std.mem.eql(u8, rest[0], "recover")))
+            {
+                try writeUsageOrJsonError(
+                    alloc,
+                    cfg.command_catalog,
+                    deps,
+                    .session,
+                    output_contracts.Kind.session_show.jsonName(),
+                    error.InvalidSessionDetailArgs,
+                    rest,
+                );
+                return .handled_usage_error;
+            }
+            if (std.mem.eql(u8, rest[0], "recover")) {
                 var recovery = parseSessionRecoveryArgs(
                     alloc,
                     rest[1..],
@@ -903,114 +950,19 @@ fn runNonInteractiveWithDeps(
                 else
                     .handled_failure;
             }
-
-            var opts = parseSessionDetailArgs(alloc, rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, output_contracts.Kind.session_show.jsonName(), err, rest);
-                return .handled_usage_error;
-            };
-            defer opts.deinit(alloc);
-
-            const target = opts.target orelse {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, output_contracts.Kind.session_show.jsonName(), error.InvalidSessionDetailArgs, rest);
-                return .handled_usage_error;
-            };
-
-            const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-            defer alloc.free(workspace_root);
-
-            var store = session_store.Store.initReadOnly(alloc, workspace_root) catch |err| {
-                try writeLookupFailure(alloc, deps, output_contracts.Kind.session_show.jsonName(), err, opts.format);
-                return .handled_failure;
-            };
-            defer store.deinit(alloc);
-
-            switch (target) {
-                .last => {
-                    var summary = subagent_resume_admission.latestVisibleWorkspaceSummary(
-                        store,
-                        alloc,
-                    ) catch |err| {
-                        try writeLookupFailure(alloc, deps, output_contracts.Kind.session_show.jsonName(), err, opts.format);
-                        return .handled_failure;
-                    };
-                    defer summary.deinit(alloc);
-
-                    const text = try (output_contracts.SessionSummarySnapshot{
-                        .summary = summary,
-                    }).render(alloc, opts.format);
-                    defer alloc.free(text);
-                    try writeFormattedOutput(deps, text, opts.format);
-                    return .handled_success;
-                },
-                .id => |id| {
-                    var detail = subagent_resume_admission.loadVisibleReadOnlyDetail(
-                        store,
-                        alloc,
-                        id,
-                        .{},
-                    ) catch |err| {
-                        try writeSessionDetailFailure(
-                            alloc,
-                            deps,
-                            id,
-                            err,
-                            opts.format,
-                        );
-                        return .handled_failure;
-                    };
-                    defer detail.deinit(alloc);
-
-                    const text = try (output_contracts.SessionDetailSnapshot{
-                        .detail = detail,
-                    }).render(alloc, opts.format);
-                    defer alloc.free(text);
-                    try writeFormattedOutput(deps, text, opts.format);
-                    return .handled_success;
-                },
+            if (std.mem.eql(u8, rest[0], "show")) {
+                return try executeSessionShow(alloc, cfg, deps, rest[1..]);
             }
+            if (std.mem.eql(u8, rest[0], "list")) {
+                return try executeSessionList(alloc, cfg, deps, rest[1..]);
+            }
+            if (std.mem.eql(u8, rest[0], "rename")) {
+                return try executeSessionRename(alloc, cfg, deps, rest[1..]);
+            }
+            return try executeSessionRemove(alloc, cfg, deps, rest[1..]);
         },
         .sessions => |rest| {
-            const opts = parseSessionListArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .sessions, output_contracts.Kind.session_list.jsonName(), err, rest);
-                return .handled_usage_error;
-            };
-
-            const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-            defer alloc.free(workspace_root);
-
-            var store = session_store.Store.initReadOnly(alloc, workspace_root) catch |err| {
-                try writeLookupFailure(alloc, deps, output_contracts.Kind.session_list.jsonName(), err, opts.format);
-                return .handled_failure;
-            };
-            defer store.deinit(alloc);
-
-            var page = subagent_resume_admission.listVisiblePage(
-                store,
-                alloc,
-                opts.scope,
-                opts.continuation,
-                opts.limit,
-            ) catch |err| return err;
-            defer page.deinit(alloc);
-            const next_cursor = if (page.has_more and page.summaries.items.len > 0)
-                try formatSessionListCursor(
-                    alloc,
-                    page.summaries.items[page.summaries.items.len - 1],
-                )
-            else
-                null;
-            defer if (next_cursor) |cursor| alloc.free(cursor);
-
-            const text = try (output_contracts.SessionListSnapshot{
-                .sessions = page.summaries.items,
-                .has_more = page.has_more,
-                .next_cursor = next_cursor,
-                .skipped_invalid = page.skipped_invalid,
-                .all_workspaces = opts.scope == .all_workspaces,
-            }).render(alloc, opts.format);
-            defer alloc.free(text);
-            try writeFormattedOutput(deps, text, opts.format);
-            return .handled_success;
+            return try executeSessionList(alloc, cfg, deps, rest);
         },
         .workspace => |rest| {
             const opts = parseWorkspaceArgs(rest) catch |err| {
@@ -2980,9 +2932,10 @@ fn writeLookupFailure(
     }
 }
 
-fn writeSessionDetailFailure(
+fn writeSessionCommandFailure(
     alloc: Allocator,
     deps: RunDeps,
+    kind: []const u8,
     session_id: []const u8,
     err: anyerror,
     format: output_contracts.OutputFormat,
@@ -3001,7 +2954,7 @@ fn writeSessionDetailFailure(
         else => return writeLookupFailure(
             alloc,
             deps,
-            output_contracts.Kind.session_show.jsonName(),
+            kind,
             err,
             format,
         ),
@@ -3011,7 +2964,7 @@ fn writeSessionDetailFailure(
         return writeJsonCommandFailure(
             alloc,
             deps,
-            output_contracts.Kind.session_show.jsonName(),
+            kind,
             err,
             message,
         );
@@ -3021,6 +2974,23 @@ fn writeSessionDetailFailure(
     try writeStderr(deps, "\n");
 }
 
+fn writeSessionDetailFailure(
+    alloc: Allocator,
+    deps: RunDeps,
+    session_id: []const u8,
+    err: anyerror,
+    format: output_contracts.OutputFormat,
+) !void {
+    return writeSessionCommandFailure(
+        alloc,
+        deps,
+        output_contracts.Kind.session_show.jsonName(),
+        session_id,
+        err,
+        format,
+    );
+}
+
 fn commandFailureMessage(err: anyerror) ?[]const u8 {
     if (lookupFailureMessage(err)) |message| return message;
     return switch (err) {
@@ -3028,6 +2998,8 @@ fn commandFailureMessage(err: anyerror) ?[]const u8 {
         error.InvalidUsageArgs,
         error.InvalidSessionDetailArgs,
         error.InvalidSessionRecoveryArgs,
+        error.InvalidSessionRenameArgs,
+        error.InvalidSessionRemoveArgs,
         error.InvalidResumeArgs,
         error.InvalidPermissionArgs,
         => "invalid arguments",
@@ -3249,6 +3221,273 @@ fn parseUpgradeArgs(args: []const [:0]const u8) !UpgradeOptions {
     return options;
 }
 
+fn executeSessionList(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    rest: []const [:0]const u8,
+) !RunResult {
+    const opts = parseSessionListArgs(rest) catch |err| {
+        try writeUsageOrJsonError(
+            alloc,
+            cfg.command_catalog,
+            deps,
+            .sessions,
+            output_contracts.Kind.session_list.jsonName(),
+            err,
+            rest,
+        );
+        return .handled_usage_error;
+    };
+
+    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace_root);
+
+    var store = session_store.Store.initReadOnly(alloc, workspace_root) catch |err| {
+        try writeLookupFailure(alloc, deps, output_contracts.Kind.session_list.jsonName(), err, opts.format);
+        return .handled_failure;
+    };
+    defer store.deinit(alloc);
+
+    var page = subagent_resume_admission.listVisiblePage(
+        store,
+        alloc,
+        opts.scope,
+        opts.continuation,
+        opts.limit,
+    ) catch |err| return err;
+    defer page.deinit(alloc);
+    const next_cursor = if (page.has_more and page.summaries.items.len > 0)
+        try formatSessionListCursor(
+            alloc,
+            page.summaries.items[page.summaries.items.len - 1],
+        )
+    else
+        null;
+    defer if (next_cursor) |cursor| alloc.free(cursor);
+
+    const text = try (output_contracts.SessionListSnapshot{
+        .sessions = page.summaries.items,
+        .has_more = page.has_more,
+        .next_cursor = next_cursor,
+        .skipped_invalid = page.skipped_invalid,
+        .all_workspaces = opts.scope == .all_workspaces,
+    }).render(alloc, opts.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, opts.format);
+    return .handled_success;
+}
+
+fn executeSessionShow(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    rest: []const [:0]const u8,
+) !RunResult {
+    var opts = parseSessionDetailArgs(alloc, rest) catch |err| {
+        try writeUsageOrJsonError(
+            alloc,
+            cfg.command_catalog,
+            deps,
+            .session,
+            output_contracts.Kind.session_show.jsonName(),
+            err,
+            rest,
+        );
+        return .handled_usage_error;
+    };
+    defer opts.deinit(alloc);
+
+    const target = opts.target orelse {
+        try writeUsageOrJsonError(
+            alloc,
+            cfg.command_catalog,
+            deps,
+            .session,
+            output_contracts.Kind.session_show.jsonName(),
+            error.InvalidSessionDetailArgs,
+            rest,
+        );
+        return .handled_usage_error;
+    };
+
+    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace_root);
+
+    var store = session_store.Store.initReadOnly(alloc, workspace_root) catch |err| {
+        try writeLookupFailure(alloc, deps, output_contracts.Kind.session_show.jsonName(), err, opts.format);
+        return .handled_failure;
+    };
+    defer store.deinit(alloc);
+
+    switch (target) {
+        .last => {
+            var summary = subagent_resume_admission.latestVisibleWorkspaceSummary(
+                store,
+                alloc,
+            ) catch |err| {
+                try writeLookupFailure(alloc, deps, output_contracts.Kind.session_show.jsonName(), err, opts.format);
+                return .handled_failure;
+            };
+            defer summary.deinit(alloc);
+
+            const text = try (output_contracts.SessionSummarySnapshot{
+                .summary = summary,
+            }).render(alloc, opts.format);
+            defer alloc.free(text);
+            try writeFormattedOutput(deps, text, opts.format);
+            return .handled_success;
+        },
+        .id => |id| {
+            var detail = subagent_resume_admission.loadVisibleReadOnlyDetail(
+                store,
+                alloc,
+                id,
+                .{},
+            ) catch |err| {
+                try writeSessionCommandFailure(
+                    alloc,
+                    deps,
+                    output_contracts.Kind.session_show.jsonName(),
+                    id,
+                    err,
+                    opts.format,
+                );
+                return .handled_failure;
+            };
+            defer detail.deinit(alloc);
+
+            const text = try (output_contracts.SessionDetailSnapshot{
+                .detail = detail,
+            }).render(alloc, opts.format);
+            defer alloc.free(text);
+            try writeFormattedOutput(deps, text, opts.format);
+            return .handled_success;
+        },
+    }
+}
+
+fn executeSessionRename(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    rest: []const [:0]const u8,
+) !RunResult {
+    var opts = parseSessionRenameArgs(alloc, rest) catch |err| {
+        try writeUsageOrJsonError(
+            alloc,
+            cfg.command_catalog,
+            deps,
+            .session,
+            output_contracts.Kind.session_rename.jsonName(),
+            err,
+            rest,
+        );
+        return .handled_usage_error;
+    };
+    defer opts.deinit(alloc);
+
+    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace_root);
+
+    var store = session_store.Store.init(alloc, workspace_root) catch |err| {
+        try writeLookupFailure(alloc, deps, output_contracts.Kind.session_rename.jsonName(), err, opts.format);
+        return .handled_failure;
+    };
+    defer store.deinit(alloc);
+
+    store.renameSessionDisplayTitle(alloc, opts.session_id, opts.title) catch |err| {
+        try writeSessionCommandFailure(
+            alloc,
+            deps,
+            output_contracts.Kind.session_rename.jsonName(),
+            opts.session_id,
+            err,
+            opts.format,
+        );
+        return .handled_failure;
+    };
+
+    const text = try (output_contracts.SessionRenameSnapshot{
+        .id = opts.session_id,
+        .title = opts.title,
+    }).render(alloc, opts.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, opts.format);
+    return .handled_success;
+}
+
+fn executeSessionRemove(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    rest: []const [:0]const u8,
+) !RunResult {
+    var opts = parseSessionRemoveArgs(alloc, rest) catch |err| {
+        try writeUsageOrJsonError(
+            alloc,
+            cfg.command_catalog,
+            deps,
+            .session,
+            output_contracts.Kind.session_remove.jsonName(),
+            err,
+            rest,
+        );
+        return .handled_usage_error;
+    };
+    defer opts.deinit(alloc);
+
+    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace_root);
+
+    var store = session_store.Store.init(alloc, workspace_root) catch |err| {
+        try writeLookupFailure(alloc, deps, output_contracts.Kind.session_remove.jsonName(), err, opts.format);
+        return .handled_failure;
+    };
+    defer store.deinit(alloc);
+
+    var loaded = store.resumeTargetForWrite(
+        alloc,
+        .{ .id = opts.session_id },
+        workspace_root,
+        .{},
+    ) catch |err| {
+        try writeSessionCommandFailure(
+            alloc,
+            deps,
+            output_contracts.Kind.session_remove.jsonName(),
+            opts.session_id,
+            err,
+            opts.format,
+        );
+        return .handled_failure;
+    };
+
+    const disposition = store.deleteCommittedSession(alloc, &loaded);
+    switch (disposition) {
+        .discarded => {},
+        .retained, .indeterminate => {
+            try writeSessionCommandFailure(
+                alloc,
+                deps,
+                output_contracts.Kind.session_remove.jsonName(),
+                opts.session_id,
+                error.SessionStoreUnavailable,
+                opts.format,
+            );
+            return .handled_failure;
+        },
+    }
+
+    const text = try (output_contracts.SessionRemoveSnapshot{
+        .id = opts.session_id,
+        .removed = true,
+    }).render(alloc, opts.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, opts.format);
+    return .handled_success;
+}
+
 fn parseSessionListArgs(args: []const [:0]const u8) !SessionListOptions {
     var options = SessionListOptions{};
     var format_seen = false;
@@ -3459,6 +3698,124 @@ fn parseSessionRecoveryArgs(
     };
 }
 
+fn parseSessionRenameArgs(
+    alloc: Allocator,
+    args: []const [:0]const u8,
+) !SessionRenameOptions {
+    var format: output_contracts.OutputFormat = .text;
+    var format_seen = false;
+    var owned_id: ?[]u8 = null;
+    var owned_title: ?[]u8 = null;
+    var title_start: ?usize = null;
+    errdefer {
+        if (owned_id) |value| alloc.free(value);
+        if (owned_title) |value| alloc.free(value);
+    }
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--json")) {
+            if (format_seen) return error.InvalidSessionRenameArgs;
+            format_seen = true;
+            format = .json;
+            continue;
+        }
+        if (owned_id != null) return error.InvalidSessionRenameArgs;
+        const exact_id = std.mem.eql(u8, arg, "--id");
+        if (exact_id) {
+            i += 1;
+            if (i >= args.len) return error.InvalidSessionRenameArgs;
+        }
+        const trimmed = std.mem.trim(u8, args[i], " \t\r\n");
+        if (trimmed.len == 0) return error.InvalidSessionRenameArgs;
+        owned_id = try alloc.dupe(u8, trimmed);
+        title_start = i + 1;
+        break;
+    }
+    if (owned_id == null or title_start == null or title_start.? >= args.len) {
+        return error.InvalidSessionRenameArgs;
+    }
+    owned_title = try joinValidatedSessionTitle(alloc, args[title_start.?..]);
+    return .{
+        .format = format,
+        .session_id = owned_id.?,
+        .title = owned_title.?,
+    };
+}
+
+fn parseSessionRemoveArgs(
+    alloc: Allocator,
+    args: []const [:0]const u8,
+) !SessionRemoveOptions {
+    var format: output_contracts.OutputFormat = .text;
+    var format_seen = false;
+    var owned_id: ?[]u8 = null;
+    errdefer if (owned_id) |value| alloc.free(value);
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--json")) {
+            if (format_seen) return error.InvalidSessionRemoveArgs;
+            format_seen = true;
+            format = .json;
+            continue;
+        }
+        if (owned_id != null) return error.InvalidSessionRemoveArgs;
+        const exact_id = std.mem.eql(u8, arg, "--id");
+        if (exact_id) {
+            i += 1;
+            if (i >= args.len) return error.InvalidSessionRemoveArgs;
+        }
+        const trimmed = std.mem.trim(u8, args[i], " \t\r\n");
+        if (trimmed.len == 0) return error.InvalidSessionRemoveArgs;
+        owned_id = try alloc.dupe(u8, trimmed);
+    }
+    return .{
+        .format = format,
+        .session_id = owned_id orelse return error.InvalidSessionRemoveArgs,
+    };
+}
+
+fn joinValidatedSessionTitle(
+    alloc: Allocator,
+    parts: []const [:0]const u8,
+) ![]u8 {
+    if (parts.len == 0) return error.InvalidSessionRenameArgs;
+    for (parts) |part| {
+        if (part.len > 0 and part[0] == '-') return error.InvalidSessionRenameArgs;
+    }
+    if (parts.len == 1) {
+        const validated = validateSessionTitle(parts[0]) catch return error.InvalidSessionRenameArgs;
+        return try alloc.dupe(u8, validated);
+    }
+
+    var total: usize = 0;
+    for (parts, 0..) |part, index| {
+        total += part.len;
+        if (index + 1 < parts.len) total += 1;
+    }
+    var combined = try alloc.alloc(u8, total);
+    errdefer alloc.free(combined);
+    var offset: usize = 0;
+    for (parts, 0..) |part, index| {
+        @memcpy(combined[offset..][0..part.len], part);
+        offset += part.len;
+        if (index + 1 < parts.len) {
+            combined[offset] = ' ';
+            offset += 1;
+        }
+    }
+    const validated = validateSessionTitle(combined) catch {
+        alloc.free(combined);
+        return error.InvalidSessionRenameArgs;
+    };
+    const owned = try alloc.dupe(u8, validated);
+    alloc.free(combined);
+    return owned;
+}
+
 fn parseResumeArgs(
     alloc: Allocator,
     args: []const [:0]const u8,
@@ -3466,6 +3823,7 @@ fn parseResumeArgs(
     if (args.len == 0) return .last;
 
     const exact_id = std.mem.eql(u8, args[0], "--id");
+    if (!exact_id and args[0].len > 0 and args[0][0] == '-') return error.InvalidResumeArgs;
     const operand_index: usize = if (exact_id) 1 else 0;
     if (args.len != operand_index + 1) return error.InvalidResumeArgs;
 
@@ -3830,6 +4188,70 @@ test "parse resume args defaults to last owns ids and rejects invalid input" {
 
     try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{ @constCast("a"), @constCast("b") }));
     try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{@constCast("   ")}));
+    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{@constCast("--wat")}));
+    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{@constCast("--bogus")}));
+    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{@constCast("--json")}));
+}
+
+test "parse session subcommands require explicit show rename and remove forms" {
+    const alloc = std.testing.allocator;
+
+    var show = try parseSessionDetailArgs(alloc, &.{ @constCast("last"), @constCast("--json") });
+    defer show.deinit(alloc);
+    try std.testing.expectEqual(output_contracts.OutputFormat.json, show.format);
+    try std.testing.expectEqual(SessionDetailTarget.last, show.target.?);
+
+    var rename = try parseSessionRenameArgs(alloc, &.{
+        @constCast("session-a"),
+        @constCast("deploy"),
+        @constCast("pipeline"),
+    });
+    defer rename.deinit(alloc);
+    try std.testing.expectEqualStrings("session-a", rename.session_id);
+    try std.testing.expectEqualStrings("deploy pipeline", rename.title);
+
+    var remove = try parseSessionRemoveArgs(alloc, &.{ @constCast("--id"), @constCast("session-b") });
+    defer remove.deinit(alloc);
+    try std.testing.expectEqualStrings("session-b", remove.session_id);
+
+    try std.testing.expectError(
+        error.InvalidSessionRenameArgs,
+        parseSessionRenameArgs(alloc, &.{@constCast("session-a")}),
+    );
+    try std.testing.expectError(
+        error.InvalidSessionRemoveArgs,
+        parseSessionRemoveArgs(alloc, &.{}),
+    );
+}
+
+test "runIfRequested bare session target is a usage error" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("session"), @constCast("session-a") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+}
+
+test "runIfRequested resume rejects json flags" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("resume"), @constCast("--json") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    try std.testing.expectEqualStrings(
+        "usage: fiber session resume [last|<id>] | session resume --id <id> | resume [last|<id>] | resume --id <id>\n",
+        capture.stderr.written(),
+    );
 }
 
 test "parse resume args accepts explicit id flag" {

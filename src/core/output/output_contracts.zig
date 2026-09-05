@@ -48,6 +48,8 @@ pub const Kind = enum {
     session_list,
     session_show,
     session_recover,
+    session_rename,
+    session_remove,
     usage,
     upgrade,
     workspace,
@@ -76,6 +78,8 @@ pub const Kind = enum {
             .session_list => "session.list",
             .session_show => "session.show",
             .session_recover => "session.recover",
+            .session_rename => "session.rename",
+            .session_remove => "session.remove",
             .usage => "usage",
             .upgrade => "upgrade",
             .workspace => "workspace",
@@ -1741,6 +1745,72 @@ pub const SessionDetailSnapshot = struct {
         }
 
         try out.writer.writeAll("]}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const SessionRenameSnapshot = struct {
+    id: []const u8,
+    title: []const u8,
+
+    pub fn render(self: SessionRenameSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: SessionRenameSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "[session] renamed {s} title={s}\n",
+            .{ self.id, self.title },
+        );
+    }
+
+    pub fn renderJson(self: SessionRenameSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"id\":",
+            .{Kind.session_rename.jsonName()},
+        );
+        try std.json.Stringify.value(self.id, .{}, &out.writer);
+        try out.writer.writeAll(",\"title\":");
+        try std.json.Stringify.value(self.title, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const SessionRemoveSnapshot = struct {
+    id: []const u8,
+    removed: bool,
+
+    pub fn render(self: SessionRemoveSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: SessionRemoveSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "[session] removed {s} removed={}\n",
+            .{ self.id, self.removed },
+        );
+    }
+
+    pub fn renderJson(self: SessionRemoveSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"id\":",
+            .{Kind.session_remove.jsonName()},
+        );
+        try std.json.Stringify.value(self.id, .{}, &out.writer);
+        try out.writer.print(",\"removed\":{}}}", .{self.removed});
         return try out.toOwnedSlice();
     }
 };

@@ -2494,6 +2494,43 @@ pub const Store = struct {
         try summary_codec.writeSessionIndex(alloc, &sessions, summaries.items);
     }
 
+    /// Renames one session's display title in its sidecar and session index.
+    pub fn renameSessionDisplayTitle(
+        self: Store,
+        alloc: Allocator,
+        session_id: []const u8,
+        title: []const u8,
+    ) !void {
+        var session_dir = try self.openSessionDir(session_id);
+        defer session_dir.close();
+
+        var display = session_display_metadata.readSidecarOrFallback(
+            alloc,
+            &session_dir,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => try session_display_metadata.missingFallback(alloc),
+        };
+        defer display.deinit(alloc);
+
+        const owned_title = try alloc.dupe(u8, title);
+        alloc.free(display.title);
+        display.title = owned_title;
+        display.present = true;
+        if (display.origin_workspace_root == null) {
+            display.origin_workspace_root = try alloc.dupe(u8, self.workspace_root);
+        }
+        try session_display_metadata.writeSidecar(alloc, &session_dir, display);
+        self.updateIndexedTitle(alloc, session_id, title) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => debug_trace.logf(
+                "session",
+                "event=rename_index_update_failed id={s} err={s}",
+                .{ session_id, @errorName(err) },
+            ),
+        };
+    }
+
     fn tryListResumableIndexPageForScope(
         self: Store,
         alloc: Allocator,
@@ -6096,6 +6133,31 @@ test "pristine discard refuses resumed and committed writers" {
         return error.TestExpectedEqual;
     defer latest.deinit(alloc);
     try std.testing.expectEqualStrings(committed_state.id, latest.session_id);
+}
+
+test "renameSessionDisplayTitle persists sidecar and index title" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var ctx = try initTempStore(alloc, &tmp);
+    defer ctx.deinit(alloc);
+
+    try writeWritableHistoryFixture(
+        alloc,
+        ctx.store,
+        "rename-target",
+        ctx.workspace,
+        20,
+        "rename me",
+    );
+
+    try ctx.store.renameSessionDisplayTitle(alloc, "rename-target", "deploy pipeline fix");
+
+    var session_dir = try ctx.store.openSessionDir("rename-target");
+    defer session_dir.close();
+    var display = try session_display_metadata.readSidecarOrFallback(alloc, &session_dir);
+    defer display.deinit(alloc);
+    try std.testing.expectEqualStrings("deploy pipeline fix", display.title);
 }
 
 test "committed session deletion consumes its exact writer" {

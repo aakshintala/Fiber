@@ -703,13 +703,13 @@ skips.
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
-| `session list` | `sessions` is list | subcommand; `sessions` kept as shorthand | `session.list` | `cli_surface.zig` | `cli_surface.zig` |
-| `session show` | `session <last\|id>` | subcommand | `session.show` | `cli_surface.zig` | `cli_surface.zig` |
-| `session rename` | absent (`/rename` exists) | new | `session.rename` | `cli_surface.zig` | `cli_surface.zig` |
-| `session remove` | absent; `session_store.zig:859 deleteCommittedSession` exists with no CLI path | wired to that function | `session.remove` | `cli_surface.zig` | `session_store.zig` |
-| `session recover` | present (`:916`) | unchanged, enveloped | `session.recover` | — | — |
-| `session resume` | present (`commands.zig:134`) | unchanged; **rejects `--json`** | — | `cli_surface.zig` | `cli_surface.zig` |
-| `parseResumeArgs` flag guard | confirmed real, at `cli_surface.zig:2618`: when `args[0]` is not `--id` it is trimmed and returned as the id, so `fiber resume --wat` resolves to session id `"--wat"` | rejects it, exit 2 | `cli_surface.zig` | `cli_surface.zig` |
+| `session list` | wired via `session list`; `sessions` kept as shorthand | subcommand; `sessions` kept as shorthand | `session.list` | `cli_surface.zig` | `cli_surface.zig` |
+| `session show` | wired via `session show <last\|id>` | subcommand | `session.show` | `cli_surface.zig` | `cli_surface.zig` |
+| `session rename` | wired via `session rename <id> <title>` | new | `session.rename` | `cli_surface.zig` | `cli_surface.zig` |
+| `session remove` | wired via `session remove <id>` using `deleteCommittedSession` | wired to that function | `session.remove` | `cli_surface.zig` | `session_store.zig` |
+| `session recover` | present, unchanged, enveloped | unchanged, enveloped | `session.recover` | — | — |
+| `session resume` | present; rejects `--json` | unchanged; **rejects `--json`** | — | `cli_surface.zig` | `cli_surface.zig` |
+| `parseResumeArgs` flag guard | fixed: unknown flags such as `--wat` exit 2 | rejects it, exit 2 | `cli_surface.zig` | `cli_surface.zig` |
 
 ### Slice 9 — resume paths and pagination
 
