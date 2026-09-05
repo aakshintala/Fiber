@@ -1138,7 +1138,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(closeFrame).toMatch(/full_repaint=true invalidation=external_clear/);
       expect(readFileSync(resumedStderrPath, "utf8")).toBe("");
 
-      const replayOutput = execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
+      const replayOutput = execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], {
         encoding: "utf8",
       });
       writeFileSync(join(workDir, "replay.json"), replayOutput);
@@ -2888,7 +2888,7 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       session = null;
       expect(existsSync(fixture.tapePath)).toBe(true);
       const replay = JSON.parse(
-        execFileSync(FIBER_BIN, ["replay", fixture.tapePath, "--json"], { encoding: "utf8" }),
+        execFileSync(FIBER_BIN, ["debug", "replay", fixture.tapePath, "--json"], { encoding: "utf8" }),
       ) as { frame_count: number; stdout_bytes: number };
       expect(replay.frame_count).toBeGreaterThan(0);
       expect(replay.stdout_bytes).toBeGreaterThan(0);

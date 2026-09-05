@@ -1636,7 +1636,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       hold.release?.();
       await session.waitForText(finalText, TIMEOUT);
 
-      execFileSync(FIBER_BIN, ["replay", tapePath, "--frames-dir", framesRoot], {
+      execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--frames-dir", framesRoot], {
         encoding: "utf8",
       });
       const grids = readdirSync(join(framesRoot, "frames"))
@@ -2738,7 +2738,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       await session.sendKeys("C-c");
       const cancelledPane = await session.waitForText("cancelled", TIMEOUT);
 
-      execFileSync(FIBER_BIN, ["replay", tapePath, "--frames-dir", framesRoot], {
+      execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--frames-dir", framesRoot], {
         encoding: "utf8",
       });
       assertFirstPostEnterOutputShowsSubmittedPrompt(tapePath, submittedPrompt);
@@ -2821,7 +2821,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       await session.sendKeys("C-c");
       await session.waitForText("cancelled", TIMEOUT);
 
-      execFileSync(FIBER_BIN, ["replay", tapePath, "--frames-dir", framesRoot], {
+      execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--frames-dir", framesRoot], {
         encoding: "utf8",
       });
       assertFirstPostEnterOutputShowsSubmittedPrompt(tapePath, submittedPrompt);
@@ -2934,7 +2934,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       expect(existsSync(tapePath)).toBe(true);
       expect(existsSync(tracePath)).toBe(true);
       expect(
-        execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
+        execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], {
           encoding: "utf8",
         }),
       ).not.toBe("");
@@ -4769,7 +4769,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         expect(readFileSync(stderrPath, "utf8")).toBe("");
         expect(existsSync(tapePath)).toBe(true);
         expect(
-          execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
+          execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], {
             encoding: "utf8",
           }),
         ).not.toBe("");
@@ -4957,7 +4957,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(existsSync(tapePath)).toBe(true);
       expect(
-        execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
+        execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], {
           encoding: "utf8",
         }),
       ).not.toBe("");
@@ -5088,7 +5088,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(existsSync(tapePath)).toBe(true);
       expect(
-        execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
+        execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], {
           encoding: "utf8",
         }),
       ).not.toBe("");

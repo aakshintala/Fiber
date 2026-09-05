@@ -757,7 +757,7 @@ fork), so it's out of scope for this slice pending a sizing decision.
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
-| `debug replay` | `replay` is a hidden top-level kind | reachable only under `debug` | `debug.replay` | `cli_surface.zig` | `command_specs.zig` |
+| `debug replay` | **done** — `replay` was a hidden top-level kind; reachable only under `debug` | reachable only under `debug` | `debug.replay` | `cli_surface.zig` | `command_specs.zig` |
 | `debug trace` | absent; `/trace` is the slash form | hidden parent gains it | `debug.trace` | `cli_surface.zig` | `command_specs.zig` |
 
 ### Slice 12 — `/context`

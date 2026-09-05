@@ -20,7 +20,7 @@ pub const TopLevelKind = enum {
     @"resume",
     usage,
     upgrade,
-    replay,
+    debug,
     workspace,
 };
 
@@ -1150,9 +1150,9 @@ test "top-level help hides developer recording surfaces" {
     try std.testing.expect(std.mem.find(u8, text, "--record") == null);
     try std.testing.expect(std.mem.find(u8, text, "replay <tape>") == null);
 
-    const replay = try renderTopLevelCommandHelp(std.testing.allocator, testTopLevelRegistry(), .replay);
-    defer std.testing.allocator.free(replay);
-    try std.testing.expect(std.mem.find(u8, replay, "fiber replay") != null);
+    const debug = try renderTopLevelCommandHelp(std.testing.allocator, testTopLevelRegistry(), .debug);
+    defer std.testing.allocator.free(debug);
+    try std.testing.expect(std.mem.find(u8, debug, "fiber debug replay") != null);
 }
 
 test "default top-level help styles fit the startup buffer" {

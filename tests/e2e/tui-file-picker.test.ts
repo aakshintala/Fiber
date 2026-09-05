@@ -415,7 +415,7 @@ function expectCleanRuntime(current: Fixture, active: TmuxSession): void {
 async function replayTape(current: Fixture): Promise<void> {
   await session?.kill();
   session = null;
-  const replay = await runFx(["replay", current.tapePath], {
+  const replay = await runFx(["debug", "replay", current.tapePath], {
     cwd: current.workspace,
     env: { HOME: current.home },
     timeoutMs: TIMEOUT,

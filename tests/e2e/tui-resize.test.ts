@@ -1997,7 +1997,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       expect(gateway.requests).toHaveLength(2);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       const replay = JSON.parse(
-        execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], { encoding: "utf8" }),
+        execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], { encoding: "utf8" }),
       ) as { resize_count: number };
       expect(replay.resize_count).toBe(1);
       expect(active.paneStatus()).toEqual({ dead: false, status: null });
@@ -3597,7 +3597,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       expect(resizeFrameIndex).toBeGreaterThanOrEqual(0);
       expect(inputFrameIndex).toBeGreaterThanOrEqual(0);
 
-      execFileSync(FIBER_BIN, ["replay", tapePath, "--frames-dir", replayDir], {
+      execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--frames-dir", replayDir], {
         cwd: workspace,
         stdio: "pipe",
       });

@@ -68,7 +68,7 @@ pub const Command = union(enum) {
     resume_session: ResumeInvocation,
     usage: []const [:0]const u8,
     upgrade: []const [:0]const u8,
-    replay: []const [:0]const u8,
+    debug: []const [:0]const u8,
     workspace: []const [:0]const u8,
     unknown: []const u8,
 };
@@ -412,6 +412,7 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
             if (command_specs.matchesTopLevel(command_catalog, command, .@"continue")) return .{ .resume_session = .{ .args = args[1..] } };
         },
         'd' => {
+            if (command_specs.matchesTopLevel(command_catalog, command, .debug)) return .{ .debug = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .doctor)) return .{ .doctor = args[1..] };
         },
         'l' => {},
@@ -424,7 +425,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
         },
         'r' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .@"resume")) return .{ .resume_session = .{ .args = args[1..] } };
-            if (command_specs.matchesTopLevel(command_catalog, command, .replay)) return .{ .replay = args[1..] };
         },
         's' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .status)) return .{ .status = args[1..] };
@@ -1105,9 +1105,8 @@ fn runNonInteractiveWithDeps(
             if (opts.format == .json) try writeStdout(deps, "\n");
             return if (result.snapshot.status == .failed) .handled_failure else .handled_success;
         },
-        .replay => |rest| {
-            const exit_code = try cli_replay.run(alloc, rest);
-            return .{ .handled_exit = exit_code };
+        .debug => |rest| {
+            return runTopLevelDebug(alloc, rest, cfg, deps);
         },
         .unknown => |command| {
             try writeStderr(deps, "fiber: unknown subcommand: ");
@@ -1648,6 +1647,26 @@ fn runTopLevelAuth(
     }
 
     try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+    return .handled_usage_error;
+}
+
+fn runTopLevelDebug(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    if (rest.len == 0) {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .debug);
+        return .handled_usage_error;
+    }
+    const operation = rest[0];
+    if (std.mem.eql(u8, operation, "replay")) {
+        const exit_code = try cli_replay.run(alloc, rest[1..]);
+        return .{ .handled_exit = exit_code };
+    }
+
+    try writeTopLevelUsage(cfg.command_catalog, deps, .debug);
     return .handled_usage_error;
 }
 
@@ -3919,8 +3938,16 @@ test "parse recognizes every top-level command and preserves unknown commands" {
         .upgrade => |rest| try std.testing.expectEqual(@as(usize, 0), rest.len),
         else => return error.TestExpectedEqual,
     }
+    switch (parse(command_catalog, &.{ @constCast("debug"), @constCast("replay"), @constCast("tape") })) {
+        .debug => |rest| {
+            try std.testing.expectEqual(@as(usize, 2), rest.len);
+            try std.testing.expectEqualStrings("replay", rest[0]);
+            try std.testing.expectEqualStrings("tape", rest[1]);
+        },
+        else => return error.TestExpectedEqual,
+    }
     switch (parse(command_catalog, &.{ @constCast("replay"), @constCast("tape") })) {
-        .replay => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
+        .unknown => |value| try std.testing.expectEqualStrings("replay", value),
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{@constCast("wat")})) {
@@ -5520,6 +5547,35 @@ test "parseLoginProvider accepts a single provider token" {
     try std.testing.expectEqual(model_provider.ProviderId.codex, (try parseLoginProvider(&.{@constCast("codex")})).?);
     try std.testing.expect((try parseLoginProvider(&.{})) == null);
     try std.testing.expectError(error.InvalidLoginProviderArgs, parseLoginProvider(&.{ @constCast("codex"), @constCast("extra") }));
+}
+
+test "debug replay dispatches through cli replay with exit passthrough" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("debug"), @constCast("replay") },
+        testConfig(),
+        capture.deps(),
+    );
+    switch (result) {
+        .handled_exit => |code| try std.testing.expectEqual(@as(u8, 2), code),
+        else => return error.TestExpectedEqual,
+    }
+}
+
+test "bare replay is no longer a top-level command" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    try std.testing.expectError(error.UnknownCliCommand, runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("replay"), @constCast("tape") },
+        testConfig(),
+        capture.deps(),
+    ));
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "fiber: unknown subcommand: replay") != null);
 }
 
 test "top-level MCP auth subcommand is no longer recognized" {

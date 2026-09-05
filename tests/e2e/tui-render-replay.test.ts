@@ -165,7 +165,7 @@ describe("tui: render record/replay", () => {
       const goldenPath = join(workDir, "grid.txt");
       const tracePath = join(workDir, "trace.log");
 
-      const replayJsonOutput = execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
+      const replayJsonOutput = execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], {
         encoding: "utf8",
       });
       const replay = parseReplayJson(replayJsonOutput);
@@ -173,7 +173,7 @@ describe("tui: render record/replay", () => {
       expect(replay.resize_count).toBe(0);
       expect(replay.stdout_bytes).toBeGreaterThan(0);
 
-      execFileSync(FIBER_BIN, ["replay", tapePath, "--golden", goldenPath], {
+      execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--golden", goldenPath], {
         env: {
           ...process.env,
           FIBER_TRACE_LOG: tracePath,
@@ -237,7 +237,7 @@ describe("tui: render record/replay", () => {
 
       const scrollback = await session.captureFullScrollback();
       expect(scrollback).toContain("why");
-      execFileSync(FIBER_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
+      execFileSync(FIBER_BIN, ["debug", "replay", launched.tapePath, "--golden", launched.goldenPath]);
       const grid = readFileSync(launched.goldenPath, "utf8");
       expect(grid).toContain("why");
 
@@ -268,7 +268,7 @@ describe("tui: render record/replay", () => {
 
       const scrollback = await session.captureFullScrollback();
       expect(scrollback).toContain("x");
-      execFileSync(FIBER_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
+      execFileSync(FIBER_BIN, ["debug", "replay", launched.tapePath, "--golden", launched.goldenPath]);
       expect(readFileSync(launched.goldenPath, "utf8")).toContain("x");
 
       await session.sendKeys("C-u");
@@ -293,7 +293,7 @@ describe("tui: render record/replay", () => {
       const goldenPath = join(workDir, "grid.txt");
       const tracePath = join(workDir, "trace.log");
 
-      const replayJsonOutput = execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
+      const replayJsonOutput = execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], {
         encoding: "utf8",
       });
       const replay = parseReplayJson(replayJsonOutput);
@@ -301,7 +301,7 @@ describe("tui: render record/replay", () => {
       expect(replay.resize_count).toBe(0);
       expect(replay.stdout_bytes).toBeGreaterThan(0);
 
-      execFileSync(FIBER_BIN, ["replay", tapePath, "--golden", goldenPath], {
+      execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--golden", goldenPath], {
         env: {
           ...process.env,
           FIBER_TRACE_LOG: tracePath,
@@ -350,7 +350,7 @@ describe("tui: render record/replay", () => {
       expect(pasteEnd).toBeGreaterThanOrEqual(recordedPaste.length);
       expect(stdin.slice(pasteEnd)).toMatch(/^(?:\x1b\[\?[\d;]*c)*\r/);
 
-      execFileSync(FIBER_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
+      execFileSync(FIBER_BIN, ["debug", "replay", launched.tapePath, "--golden", launched.goldenPath]);
       expect(
         readFileSync(launched.goldenPath, "utf8").replaceAll("|", " ").replace(/\s+/g, " "),
       ).toContain(authNotice);
@@ -385,7 +385,7 @@ describe("tui: render record/replay", () => {
 
       const replayJsonOutput = execFileSync(
         FIBER_BIN,
-        ["replay", launched.tapePath, "--json"],
+        ["debug", "replay", launched.tapePath, "--json"],
         { encoding: "utf8" },
       );
       const replay = parseReplayJson(replayJsonOutput);
@@ -393,7 +393,7 @@ describe("tui: render record/replay", () => {
       if (replay.stdout_bytes <= 0) failures.push("replay reported no stdout bytes");
       if (replay.resize_count < 3) failures.push("replay reported too few resize frames");
 
-      execFileSync(FIBER_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
+      execFileSync(FIBER_BIN, ["debug", "replay", launched.tapePath, "--golden", launched.goldenPath]);
       const gridText = readFileSync(launched.goldenPath, "utf8");
       const grid = gridText.replace(/\n$/, "").split("\n");
       assertPaneContains(gridText, inputTail, failures, "replay grid");
@@ -437,13 +437,13 @@ describe("tui: render record/replay", () => {
 
       const replayJsonOutput = execFileSync(
         FIBER_BIN,
-        ["replay", launched.tapePath, "--json"],
+        ["debug", "replay", launched.tapePath, "--json"],
         { encoding: "utf8" },
       );
       const replay = parseReplayJson(replayJsonOutput);
       if (replay.resize_count < 1) failures.push("replay reported no resize frame");
 
-      execFileSync(FIBER_BIN, ["replay", launched.tapePath, "--golden", launched.goldenPath]);
+      execFileSync(FIBER_BIN, ["debug", "replay", launched.tapePath, "--golden", launched.goldenPath]);
       const gridText = readFileSync(launched.goldenPath, "utf8");
       assertPaneContains(gridText, inputTail, failures, "automatic recording replay grid");
 
@@ -482,6 +482,7 @@ describe("tui: render record/replay", () => {
       await session.sendText(marker);
       await session.waitForText("● Auth: Codex needs a subscription login", 5_000);
       execFileSync(FIBER_BIN, [
+        "debug",
         "replay",
         launched.tapePath,
         "--golden",

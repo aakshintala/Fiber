@@ -1100,7 +1100,7 @@ printf '${trailingMarker}   '
       expect(resumedGateway.requests).toHaveLength(0);
       expect(readFileSync(resumedStderrPath, "utf8")).toBe("");
 
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: realpathSync(workspace),
         env: { HOME: home },
       });
@@ -1332,7 +1332,7 @@ test.skipIf(!tmuxAvailable())(
       expect(replayBytes.includes(Buffer.from(stdoutTail))).toBe(true);
       expect(replayBytes.includes(Buffer.from(stderrTail))).toBe(true);
 
-      const replay = await runFx(["replay", tapePath, "--json"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--json"], {
         cwd: realpathSync(workspace),
         env: { HOME: home },
       });
@@ -1758,7 +1758,7 @@ while :; do :; done
       await active.kill();
       active = null;
 
-      const replayFrames = await runFx(["replay", tapePath, "--frames"], {
+      const replayFrames = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: realpathSync(workspace),
         env: { HOME: home },
         timeoutMs: timeout,
@@ -1766,7 +1766,7 @@ while :; do :; done
       expect(replayFrames.code).toBe(0);
       expect(replayFrames.stderr).toBe("");
       expect(replayFrames.stdout).toContain(tailMarker);
-      const replayJson = await runFx(["replay", tapePath, "--json"], {
+      const replayJson = await runFx(["debug", "replay", tapePath, "--json"], {
         cwd: realpathSync(workspace),
         env: { HOME: home },
         timeoutMs: timeout,
@@ -1911,7 +1911,7 @@ while :; do :; done
       expect(await active.captureFullScrollback()).not.toContain(tailMarker);
       expect(active.isPaneAlive()).toBe(true);
 
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: realpathSync(workspace),
         env: { HOME: home },
         timeoutMs: timeout,
@@ -2054,7 +2054,7 @@ test.skipIf(!tmuxAvailable())(
       expect(ctrlOVisible).not.toContain("<stdout>");
       expect(ctrlOVisible).not.toContain("</stdout>");
 
-      const replay = await runFx(["replay", tapePath, "--json"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--json"], {
         cwd: workspace,
         env: { HOME: home },
       });
@@ -2671,7 +2671,7 @@ test.skipIf(!tmuxAvailable())(
       expect(countOccurrences(stdout, "\x1b[?1049h")).toBe(1);
       expect(countOccurrences(stdout, "\x1b[?1049l")).toBe(1);
 
-      const replay = await runFx(["replay", tapePath, "--json"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--json"], {
         cwd: realpathSync(workspace),
         env: { HOME: home },
       });
@@ -3886,7 +3886,7 @@ test.skipIf(!tmuxAvailable())(
       expect(existsSync(tapePath)).toBe(true);
       expect(statSync(tapePath).size).toBeGreaterThan(0);
 
-      const replayFrames = await runFx(["replay", tapePath, "--frames"], {
+      const replayFrames = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: realpathSync(workspace),
         env: { HOME: home },
       });
@@ -3896,7 +3896,7 @@ test.skipIf(!tmuxAvailable())(
       expect(replayFrames.stdout).toContain(finalSentinel);
       expect(replayFrames.stdout).toContain(composerProbe);
 
-      const replayFinalGrid = await runFx(["replay", tapePath], {
+      const replayFinalGrid = await runFx(["debug", "replay", tapePath], {
         cwd: realpathSync(workspace),
         env: { HOME: home },
       });
@@ -3989,7 +3989,7 @@ test.skipIf(!tmuxAvailable())(
       expect(contenderScrollback).not.toContain("❯");
       expect(contenderScrollback).not.toContain("┃");
       expect(contenderScrollback).not.toContain("show available slash commands");
-      const contenderReplay = await runFx(["replay", contenderTapePath, "--frames"], {
+      const contenderReplay = await runFx(["debug", "replay", contenderTapePath, "--frames"], {
         cwd: workspaceRoot,
         env: { HOME: home },
       });
@@ -4789,7 +4789,7 @@ test.skipIf(!tmuxAvailable())(
         expect(resumeTrace).toMatch(
           /event=resume_view_cache (?:outcome=painted freshness=exact|outcome=skipped freshness=(?:exact|older))/,
         );
-        const replay = await runFx(["replay", tapePath, "--frames"], {
+        const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
           cwd: workspaceRoot,
           env: { HOME: home },
         });
@@ -4888,7 +4888,7 @@ test.skipIf(!tmuxAvailable())(
       await active.kill();
       active = null;
       expect(readFileSync(markdownStderrPath, "utf8")).not.toContain("AnsiBandOverflow");
-      const liveReplay = await runFx(["replay", markdownTapePath, "--frames"], {
+      const liveReplay = await runFx(["debug", "replay", markdownTapePath, "--frames"], {
         cwd: realpathSync(markdownWorkspace),
         env: { HOME: markdownHome },
       });
@@ -4933,7 +4933,7 @@ test.skipIf(!tmuxAvailable())(
       expect(await active.waitForSessionEnd()).toBe(true);
       await active.kill();
       active = null;
-      const resumedReplay = await runFx(["replay", resumedMarkdownTapePath, "--frames"], {
+      const resumedReplay = await runFx(["debug", "replay", resumedMarkdownTapePath, "--frames"], {
         cwd: realpathSync(markdownWorkspace),
         env: { HOME: markdownHome },
       });
@@ -5498,7 +5498,7 @@ test.skipIf(!tmuxAvailable())(
       expect(readFileSync(join(workspace, "second-large.md"), "utf8")).toBe(
         `${secondLines.join("\n")}\n`,
       );
-      const replay = await runFx(["replay", resumedTapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", resumedTapePath, "--frames"], {
         cwd: realpathSync(workspace),
         env: { HOME: home },
       });

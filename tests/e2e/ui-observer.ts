@@ -279,7 +279,7 @@ async function captureArtifacts(
   const marker = `ui-observer:${scenario}:${context.checkpoint}:frame:${sequence}`;
   const tapePath = join(context.artifactDir, "session.fxtp");
   const replayDir = join(context.artifactDir, "replay");
-  execFileSync(FIBER_BIN, ["replay", tapePath, "--frames-dir", replayDir], {
+  execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--frames-dir", replayDir], {
     cwd: context.artifactDir,
     stdio: "pipe",
   });

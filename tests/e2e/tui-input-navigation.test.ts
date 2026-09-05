@@ -602,7 +602,7 @@ tmuxTest(
     expect(trace).not.toContain("frame_owner_violation");
 
     const goldenPath = join(testHome!, "replay-grid.txt");
-    const replay = await runFx(["replay", tapePath, "--golden", goldenPath], {
+    const replay = await runFx(["debug", "replay", tapePath, "--golden", goldenPath], {
       cwd: REPO_ROOT,
       timeoutMs: READY_TIMEOUT,
     });

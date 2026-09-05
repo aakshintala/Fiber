@@ -1990,7 +1990,7 @@ async function writeReplaySummary(manifest: RenderLabManifest): Promise<void> {
   try {
     const output = execFileSync(
       FIBER_BIN,
-      ["replay", manifest.tapePath, "--json", "--golden", manifest.finalGridPath],
+      ["debug", "replay", manifest.tapePath, "--json", "--golden", manifest.finalGridPath],
       { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
     const jsonLine = output.split(/\r?\n/).find((line) => line.trim().startsWith("{"));

@@ -1212,7 +1212,7 @@ describe("gateway stream lifecycle", () => {
         expect(paneExitMatches(tui.paneStatus(), 0)).toBe(true);
         expect(existsSync(tapePath)).toBe(true);
         const replayFrames = Bun.spawnSync({
-          cmd: [FIBER_BIN, "replay", tapePath, "--frames"],
+          cmd: [FIBER_BIN, "debug", "replay", tapePath, "--frames"],
           stdout: "pipe",
           stderr: "pipe",
         });

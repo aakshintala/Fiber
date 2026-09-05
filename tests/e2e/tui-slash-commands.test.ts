@@ -166,7 +166,7 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
       expect(await session.waitForSessionEnd(5_000)).toBe(true);
       session = null;
 
-      const replay = JSON.parse(execFileSync(FIBER_BIN, ["replay", tapePath, "--json"], {
+      const replay = JSON.parse(execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], {
         encoding: "utf8",
       }));
       expect(replay.frame_count).toBeGreaterThan(0);

@@ -1170,7 +1170,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       await ctx.session.sendText("/quit");
       expect(await ctx.session.waitForSessionEnd(TIMEOUT)).toBe(true);
       expect(readFileSync(ctx.stderrPath, "utf8")).toBe("");
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: ctx.root.workspace,
         env: { HOME: ctx.root.home },
       });
@@ -1339,7 +1339,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       await ctx.session.sendLiteralText("1");
       await ctx.session.waitForText("long command fragmented approval complete", TIMEOUT);
       expect(ctx.gateway.requests).toHaveLength(2);
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: ctx.root.workspace,
         env: { HOME: ctx.root.home },
       });
@@ -1573,7 +1573,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
 
       const stdout = Buffer.concat(stdoutFrames(tapePath).map((frame) => frame.payload));
       expect(stdout.includes(Buffer.from("\x1b[?1049h"))).toBe(false);
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: ctx.root.workspace,
         env: { HOME: ctx.root.home },
       });

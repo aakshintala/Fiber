@@ -255,7 +255,7 @@ With --prompt-permissions, JSON and quiet requests may prompt on stderr only whe
   test(
     "fiber replay help describes golden output",
     async () => {
-      const r = await runFx(["replay", "--help"]);
+      const r = await runFx(["debug", "--help"]);
       expect(r.code).toBe(0);
       expect(r.stderr).toBe("");
       expect(r.stdout).toContain("--golden <path>");
@@ -2693,21 +2693,21 @@ describe("cli: replay failures", () => {
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fiber-e2e-replay-json-errors-"));
       try {
-        const missing = await runFx(["replay", join(root, "missing.fibertape"), "--json"]);
+        const missing = await runFx(["debug", "replay", join(root, "missing.fibertape"), "--json"]);
         expect(missing.code).toBe(1);
         expect(missing.stderr).toBe("");
         expect(JSON.parse(missing.stdout.trim())).toMatchObject({
-          kind: "replay",
+          kind: "debug.replay",
           code: "FileNotFound",
         });
 
         const malformedPath = join(root, "malformed.fibertape");
         writeFileSync(malformedPath, "not a tape");
-        const malformed = await runFx(["replay", malformedPath, "--json"]);
+        const malformed = await runFx(["debug", "replay", malformedPath, "--json"]);
         expect(malformed.code).toBe(1);
         expect(malformed.stderr).toBe("");
         expect(JSON.parse(malformed.stdout.trim())).toMatchObject({
-          kind: "replay",
+          kind: "debug.replay",
         });
       } finally {
         rmSync(root, { recursive: true, force: true });

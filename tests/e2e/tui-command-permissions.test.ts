@@ -958,7 +958,7 @@ describe("effect-aware command permissions", () => {
       await activeSession.kill();
       activeSession = null;
 
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: root.workspace,
         env: { HOME: root.home },
       });
@@ -1985,7 +1985,7 @@ describe("effect-aware command permissions", () => {
       await activeSession.kill();
       activeSession = null;
 
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: root.workspace,
         env: { HOME: root.home },
       });
@@ -2184,7 +2184,7 @@ describe("effect-aware command permissions", () => {
           sessionIdFromHome(root),
           command,
         );
-        const replay = await runFx(["replay", tapePath, "--frames"], {
+        const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
           cwd: root.workspace,
           env: { HOME: root.home },
         });

@@ -611,7 +611,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       const scrollback = await session.captureFullScrollback();
       expect(scrollback).not.toContain("Apply this change?");
       expect(scrollback).not.toContain("+ review-line-15");
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: root.workspace,
         env: { HOME: root.home },
       });
@@ -1414,7 +1414,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       );
       expectCleanStderr(stderrPath);
 
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: root.workspace,
         env: { HOME: root.home },
       });
@@ -1482,7 +1482,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
 
       expect(session.isAlive()).toBe(true);
       expectCleanStderr(stderrPath);
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: root.workspace,
         env: { HOME: root.home },
       });

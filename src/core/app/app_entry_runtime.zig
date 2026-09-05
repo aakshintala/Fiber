@@ -802,7 +802,7 @@ test "app entry maps handled CLI exit without initializing app" {
     const alloc = std.testing.allocator;
     var capture = TestCapture.init(.{ .handled_exit = 42 });
     defer capture.deinit();
-    const outcome = try runWithDeps(TestApp, alloc, &.{ @constCast("replay"), @constCast("tape") }, testConfig(), capture.deps());
+    const outcome = try runWithDeps(TestApp, alloc, &.{ @constCast("debug"), @constCast("replay"), @constCast("tape") }, testConfig(), capture.deps());
 
     try std.testing.expectEqual(@as(u8, 42), outcome.exit);
     try std.testing.expectEqual(@as(usize, 1), capture.cli_calls);
@@ -813,7 +813,7 @@ test "app entry returns after handled zero exit without initializing app" {
     const alloc = std.testing.allocator;
     var capture = TestCapture.init(.{ .handled_exit = 0 });
     defer capture.deinit();
-    const outcome = try runWithDeps(TestApp, alloc, &.{ @constCast("replay"), @constCast("tape") }, testConfig(), capture.deps());
+    const outcome = try runWithDeps(TestApp, alloc, &.{ @constCast("debug"), @constCast("replay"), @constCast("tape") }, testConfig(), capture.deps());
 
     try std.testing.expectEqual(RunOutcome.returned, outcome);
     try std.testing.expectEqual(@as(usize, 1), capture.cli_calls);
