@@ -343,7 +343,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | # | Slice | Class | Status |
 | --- | --- | --- | --- |
 | 1 | Signal and unknown-command exit passthrough | contract-shaping | done, `47bbe883` |
-| 2 | Output envelope, `kind` registry, `NO_COLOR`, smoke-gate growth | contract-shaping | 2a done, `67538d14`; 2b (`--no-color` + e2e) next |
+| 2 | Output envelope, `kind` registry, `NO_COLOR`, smoke-gate growth | contract-shaping | **done** — 2a `67538d14`, 2b `afc6cec2` |
 | 3 | Exit-status: parse-layer errors return 2 | contract-shaping | |
 | 4 | `ask` flags and the fast decision | additive | |
 | 5 | `auth list\|status\|login\|logout` | additive | |
@@ -426,12 +426,24 @@ clean, not just taken on the delegate's word.
 | `replay --json` | inline object (`cli_replay.zig:111`), no `kind` field on success; failure already used `CommandFailureSnapshot` with `kind = "replay"` | enveloped | `debug.replay` (**new** on success, **renamed** from `replay` on failure) | `cli_replay.zig` | `cli_replay.zig` |
 | smoke gate | exit codes only | also asserts `"ok":`/`"kind":` and one exit-2 case | — | `scripts/smoke.sh` | the gate is the test |
 
-**2b — not started.**
+**2b — done, `afc6cec2`.** Sized larger than the row implied: `NO_COLOR` the
+env var already existed but only controlled top-level `--help` styling
+(`main.zig`), never `ask`'s actual color output — deleting the flag with
+nothing to replace it would have been a capability regression, not
+reshaping. Fixed by adding an env-read seam to `cli_ask.zig`'s `RunDeps`
+(mirroring `cli_surface.zig`'s existing `HOME`-reading pattern) and wiring
+`options.no_color` from it post-parse. Real count: 36 e2e call sites across 2 files (33 in
+`vision-route-fake-gateway.test.ts`, 3 in `ask-presentation.test.ts`), not
+39 — `cli.test.ts`'s 2 occurrences are a `--help`-text content assertion,
+not a spawn argument, and were correctly left stale rather than counted as
+a call site. (38 if `cli.test.ts`'s 2 are counted in, which is presumably
+where the matrix's original "39" came from, off by one for a reason not
+worth chasing further.)
 
-| Item | Current | Target | JSON `kind` | Owner | Focused test |
+| Item | Current (pre-slice) | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
-| `--no-color` | flag parsed at `cli_ask.zig:3327`, declared at `commands.zig:33,44` | removed; `NO_COLOR` env only | — | `cli_ask.zig` | `cli_ask.zig` |
-| `--no-color` e2e call sites | 39 across 3 files pass it | the 38 incidental ones drop the argument; `ask-presentation.test.ts:453`, whose subject *is* the flag, is deleted. **Not an assertion rewrite** — see Testing. | — | tests | — |
+| `--no-color` | flag parsed at `cli_ask.zig:3328`, declared at `commands.zig:33,44`; `NO_COLOR` env had no effect on `ask` | removed; `NO_COLOR` env now drives `AskOptions.no_color` via a new `RunDeps.getenv` seam | — | `cli_ask.zig` | `cli_ask.zig` |
+| `--no-color` e2e call sites | 36 across 2 files pass it (not 3 files — `cli.test.ts`'s 2 occurrences are a stale `--help` text assertion, left alone) | the 34 incidental ones drop the argument; `ask-presentation.test.ts`'s dedicated `"--no-color keeps the TTY layout..."` test, whose subject *is* the flag, is deleted whole. **Not an assertion rewrite** — see Testing. | — | tests | — |
 
 ### Slice 3 — parse-layer errors return 2
 
