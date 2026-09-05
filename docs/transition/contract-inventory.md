@@ -350,7 +350,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | 6 | `permissions mode` and `permissions rule list\|add\|remove` | additive | **done**, `2f0690ca` |
 | 7 | `mcp login` and `mcp --json` | additive | **done**, `86188784` |
 | 8 | `session list\|show\|rename\|remove` | additive | **done**, `f7a0a923` |
-| 9 | `continue`, resume-alias removal, `--resume-id`, pagination | additive | |
+| 9 | `continue`, resume-alias removal, `--resume-id`, pagination | additive | **done**, `3f8cf352` |
 | 10 | Interactive surface: `/retry`, `/new` alias, `/background` | additive | |
 | 11 | `debug trace\|replay` parent | additive | |
 | 12 | `/context` usage | additive | |
@@ -718,6 +718,12 @@ test --summary all`: 9/9 steps, 7275/7277 passing, 2 pre-existing skips.
 | `parseResumeArgs` flag guard | fixed: unknown flags such as `--wat` exit 2 | rejects it, exit 2 | `cli_surface.zig` | `cli_surface.zig` |
 
 ### Slice 9 — resume paths and pagination
+
+**Done, `3f8cf352`.** No open product decisions. Grounding found this table
+already stale before the slice started: the legacy resume flags were
+already removed and `ask --resume-id` already worked — both corrected in
+place rather than re-implemented. `zig build test --summary all`: 9/9
+steps, 7278/7280 passing, 2 pre-existing skips.
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
