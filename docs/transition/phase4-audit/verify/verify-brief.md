@@ -1,5 +1,9 @@
 # Adversarial verification of deletion claims
 
+Status: historical input. Do not reuse. It wrongly treated some compound
+unsupported-platform conditions as indivisible branches, so several removable
+WASI clauses were marked REFUTED. Use [`../CORRECTIONS.md`](../CORRECTIONS.md).
+
 Repo root: `/Users/aakshintala/work/fiber`. Read-only. Do not edit, create, or
 commit anything. Do not run build or test commands.
 

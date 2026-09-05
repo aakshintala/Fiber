@@ -1,4 +1,8 @@
-# Fiber Phase 4 simplification audit — shard brief
+# Fiber Phase 4 simplification audit shard brief
+
+Status: historical input. Do not reuse. Its blanket layering premise and
+`deleted-product` versus `always-was` phase boundary were disproved after the
+audit. Use [`CORRECTIONS.md`](CORRECTIONS.md) for current decisions.
 
 Repo root: `/Users/aakshintala/work/fiber`. All paths below are relative to it.
 

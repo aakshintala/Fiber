@@ -1,13 +1,18 @@
 # Phase 4 simplification audit
 
-Read-only audit of the Fiber tree, run 2026-09-05 to give Phase 4 a measured
-surface instead of a hunt. A transition document: deleted in Phase 6 with the
-rest, after its rationale is harvested.
+Read-only audit of the Fiber `src` tree, run September 5, 2026. The raw corpus
+remains evidence, but the original triage is superseded by
+[`CORRECTIONS.md`](CORRECTIONS.md). Read that correction before the report or
+implementation inventory.
+
+This is a transition document. Delete it in Phase 6 after harvesting its
+rationale.
 
 | File | What |
 |---|---|
 | [`HANDOFF.md`](HANDOFF.md) | Start here if you are picking this up cold |
-| [`REPORT.md`](REPORT.md) | The findings, bucketed by verdict and origin |
+| [`CORRECTIONS.md`](CORRECTIONS.md) | Authoritative scope, triage, and retention corrections |
+| [`REPORT.md`](REPORT.md) | Raw findings, bucketed by original verdict and origin |
 | [`audit-brief.md`](audit-brief.md) | Instructions the 16 shard agents were given |
 | [`verify/verify-brief.md`](verify/verify-brief.md) | Instructions the 12 adversarial verifiers were given |
 | [`corpus-raw.txt`](corpus-raw.txt) | 360 raw findings, deduplicated, shard-tagged |

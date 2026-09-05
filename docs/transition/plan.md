@@ -61,24 +61,41 @@ Phase exit: every target contract exists behind its owning typed interface and h
 
 ## Phase 4: Simplification
 
-Collapse seams, adapters, host profiles, target branches, and indirection left with one implementation after demolition and contract work. Preserve only seams that still express real variation or isolate a meaningful interface.
+Remove all verified dead code, false variation, obsolete product residue, and
+unsupported platform behavior. Inherited dead code is in scope. Collapse
+single-implementation seams when they do not protect a real effect, unavailable
+adapter, test adapter over retained behavior, public contract, persisted format,
+or security boundary.
 
-The re-audit is done (2026-09-05): see
-[`phase4-audit/REPORT.md`](phase4-audit/REPORT.md), a read-only sweep of all 490
-files and 362k production lines. Current step: execute the ordered slices in
-[`simplification-inventory.md`](simplification-inventory.md), which now carries
-the audit's findings. That document separates false post-demolition variation
-from real seams and broader design work.
+Fiber supports macOS arm64, Linux x86_64, and Linux arm64. Phase 4 removes
+Windows, WebAssembly, WASI, Emscripten, freestanding, macOS Intel, BSD, and other
+unsupported-target behavior. `build.zig` must reject unsupported targets before
+their branches are removed.
 
-Phase 4 changes no user-visible behavior. Slice 5 was withdrawn for breaking that
-property; keeping it true is what lets Phase 5 treat every failure as
-pre-existing.
+The September 5, 2026 audit covered all 490 Zig files under `src`, not the whole
+tree. Its raw 360-row corpus and arithmetic remain evidence, but its original
+triage is superseded by
+[`phase4-audit/CORRECTIONS.md`](phase4-audit/CORRECTIONS.md). The corrected
+ordered work is in
+[`simplification-inventory.md`](simplification-inventory.md).
 
-Open by clearing the Phase 4 section of [`deferred.md`](deferred.md) into the
-simplification inventory. Those entries are seams earlier slices created and
-were forbidden to widen to fix; they are this phase's work, not stray cleanup.
+Before the first source slice, run the complete deterministic E2E suite once and
+record a per-test baseline. None has run during the transition. Phase 4 still
+preserves behavior on retained targets, but the baseline now proves whether a
+later failure is new instead of assuming every Phase 5 failure was pre-existing.
+Run E2E checkpoints after unsupported-platform removal, after host-profile
+collapse, and at phase exit. Keep routine per-slice E2E deferred.
 
-Phase exit: every known single-implementation abstraction is collapsed or justified with current callers and implementations, and the Phase 4 section of `deferred.md` is empty.
+Open by confirming the Phase 4 section of [`deferred.md`](deferred.md) is empty.
+Newly exposed dead code stays in Phase 4 rather than moving to a post-transition
+backlog.
+
+Phase exit: the build accepts exactly the 3 retained targets; every audited dead
+or tested-only row is deleted, retracted, or explicitly retained; every remaining
+implementation seam has measured justification; unsupported-platform and removed
+product searches have no unexplained hits; no E2E failure or failure signature is
+new against the opening baseline; and the Phase 4 section of `deferred.md` is
+empty.
 
 ## Phase 5: Repair and exhaustive verification
 

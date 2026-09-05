@@ -2,475 +2,722 @@
 
 Scope: Phase 4 of the Fiber product transition.
 
-Status: seeded during Phase 3 from the post-demolition audit. Re-verify every
-path, caller count, and stop condition against the Phase 4 opening commit before
-editing.
+Status: replanned after the audit correction. Read
+[`phase4-audit/CORRECTIONS.md`](phase4-audit/CORRECTIONS.md) before using the
+raw findings in [`phase4-audit/REPORT.md`](phase4-audit/REPORT.md).
 
-This document becomes the Phase 4 source of truth when Phase 3 closes. Phase 4
-removes false variation left by deleted products. It does not redesign modules
-that still have real adapters or add new capability.
+## Phase goal
 
-## Decision rule
+Phase 4 removes:
 
-Apply the deletion test to each seam:
+- every verified dead declaration, field, variant, branch, module, and test
+- false variation left by deleted products and hosts
+- unsupported platform implementations and test guards
+- one-value policy types and constant parameters that do not protect a public,
+  persisted, security, or effect boundary
+- single-caller wrappers when deleting them makes the caller simpler
 
-- collapse it when deleting the module removes complexity and no caller must
-  recreate that complexity
-- retain it when at least 2 real adapters vary behind the interface
-- retain it when the interface isolates a meaningful effect and tests use the
-  same seam as production
-- move broader redesign or new behavior to
-  [`../enhancements/pending.md`](../enhancements/pending.md)
+Origin does not limit deletion. Inherited dead code is Phase 4 work too.
 
-A planned future adapter does not by itself justify a large hypothetical seam.
-A stable public contract may retain its provider-shaped data while its current
-implementation becomes direct.
+Phase 4 preserves behavior on macOS arm64, Linux x86_64, and Linux arm64. It may
+remove behavior on unsupported targets because those targets are not Fiber.
 
 ## Retained invariants
 
 Every slice preserves:
 
-- the native interactive TUI and `fiber ask` paths
+- the native interactive TUI and `fiber ask` paths on retained targets
 - durable sessions, subagents, cancellation, permissions, and progress events
+- corrupt-session isolation and validation of persisted authority records
 - the Codex subscription authentication path
 - provider-shaped command and JSON contracts chosen in Phase 3
 - Codex-native web search and explicitly selected MCP search
 - MCP interoperability across retained transports and protocol versions
-- production and test adapters at seams where behavior genuinely varies
+- concrete effects and adapters that express real production, unavailable, or
+  test variation
+- the one-source Connections screen
 
-Phase 4 changes implementation shape, not user-facing behavior. Behavioral
-failures become Phase 5 repair evidence unless a slice caused them.
+Do not delete a persisted or security field merely because it currently has one
+value. Remove it only when its containing format and all validation or hash
+consumers are deliberately replaced in the same slice without data loss.
 
-## Ordered slices
+## Supported platform contract
 
-Run one slice at a time. Before editing, update that slice's removal surface,
-exact searches, caller evidence, and stop conditions from the current tree.
-Keep each slice to one subsystem or about 15 files.
+Fiber supports exactly:
 
-**Recommended order (2026-09-05).** Run 2, 3, 4, 6, 7, 9, 10, 11, 13 first: they
-are near-pure deletions with exact-name absence searches, cheap to verify and
-cheap to delegate. Slice 1 is the largest diff in the phase and the only one
-needing per-site reading, so it benefits from a smaller tree. Slice 12 closes the
-phase.
+- macOS arm64
+- Linux x86_64
+- Linux arm64
 
-Evidence for slices 2, 4, 7, 9, 10, 11 and the open decisions comes from
-[`phase4-audit/REPORT.md`](phase4-audit/REPORT.md) — 490 files, 362k production
-lines, 360 raw findings, 31% of adversarially verified claims refuted. The audit
-inputs and per-shard outputs are in that directory. It is a transition document
-and is deleted with the rest in Phase 6.
+Delete Windows, WebAssembly, WASI, Emscripten, freestanding, macOS Intel, BSD,
+and other unsupported-target behavior. The build must reject unsupported targets
+before their source branches are removed.
 
-### Slice 1: collapse the native-only host profile
+This resolves the temporary conflict with inherited Full CI guidance. The
+product design in `docs/ideas/fiber-product-transition.md` is authoritative.
 
-Removal surface:
+## Verification and attribution
 
-- `src/core/hosts/runtime_profile.zig`
-- `runtime_profile.allows` checks in the app runtime
-- `App.host_profile` and the selected native profile in `src/main.zig`
-- false branches and messages that exist only for removed embedding hosts
+### Phase opening baseline
 
-Current evidence:
+Before the first code slice:
 
-- `runtime_profile.Profile` contains 13 capability booleans
-- `runtime_profile.native` sets every capability to `true`
-- no second production host profile remains
-- imports span 9 files — `src/main.zig` plus 8 modules under `src/core/app/` —
-  across roughly 30 call sites (re-verified 2026-09-05)
+1. Run the normal clean-tree gate.
+2. Run the complete deterministic E2E suite once.
+3. Record each failing file, test name, exit status, and stable failure signature
+   in `docs/transition/phase4-baseline.md`, together with the `zlint` warning
+   count and the lazy-analysis probe output.
+4. Mark known stale Phase 3 JSON assertions and ACP-driven cases as Phase 5
+   evidence rather than repairing them during the baseline.
 
-Guard shapes differ and a regex codemod gets the second kind wrong **silently**,
-because every condition here is comptime-true and the compiler will not object:
-
-- `if (comptime allows(X)) { body }` — keep the body
-- `if (comptime !allows(X)) return;` — delete the whole statement
-
-Read every site. Do not sed this slice.
-
-Retain concrete effect seams such as clipboard, URL opening, terminal title, and
-their unavailable or test adapters. Remove only the profile that predicts
-whether those seams exist.
-
-Stop if a surviving entry point supplies a different profile or a false branch
-is reachable in the native CLI.
-
-Completion criterion: no runtime-profile selection or capability branch remains,
-and retained unavailable-effect behavior still has direct focused coverage.
-
-### Slice 2: remove deleted-host tool completion residue
-
-Removal surface:
-
-- `DeferredToolCompletion`
-- `ToolExecutionResult.deferred_tool_completion`
-- `AgentRuntimeDeps.publish_deferred_tool_completion`
-- publication handling in tool batching and parallel-execution eligibility
-- `unavailableHostToolResult` and its JavaScript-host message
-- `tool_dispatch.HostToolProvider` and `HostToolProviderFn` (`tool_dispatch.zig:157,166`)
-  and the `host_tool_provider` fields threading them
-  (`tool_dispatch.zig:272`, `tool_runtime.zig:141,870`) — never constructed anywhere
-  (added by the Phase 4 audit, 2026-09-05)
-
-Current evidence:
-
-- the deleted ACP host was the real producer and publisher
-- exact-name searches find consumers but no assignment of a non-null deferred
-  completion
-- `unavailableHostToolResult` has no caller
-
-Retain committed-file secondary publication. The root agent and subagents still
-vary there deliberately.
-
-Stop if a surviving tool executor produces a deferred completion or an external
-transport consumes one.
-
-Completion criterion: exact searches find no removed symbols or deleted-host
-messages, and ordinary tool completion behavior is unchanged.
-
-### Slice 3: flatten the OAuth transport wrapper
-
-Removal surface:
-
-- `gateway_provider.Provider`, which contains only `oauth_transport`
-- wrapper construction in `src/builtins/gateway.zig`
-- fields and parameters that immediately unwrap `.oauth_transport`
-
-Retain `oauth_transport.Provider`. It has native, unavailable, and test adapters,
-so that seam expresses real variation.
-
-Stop if another field or invariant is added to `gateway_provider.Provider`
-before this slice starts.
-
-Completion criterion: callers accept `oauth_transport.Provider` directly and
-`gateway_provider.zig` retains only its model-catalog and capability behavior.
-
-### Slice 4: remove unreachable Fiber search-backend wiring
-
-Removal surface:
-
-- `provider_set.Bundle.Capabilities.fiber_search`
-- `provider_set.Bundle.fiber_search`
-- null propagation through root-agent, one-shot, and subagent construction
-- **the whole `src/core/tooling/web_search_provider.zig` module**, plus
-  `web_search_runtime.zig:34`'s `provider: ?Provider = null` field. Removing the
-  `fiber_search` slot leaves the module with no production implementation at all —
-  its only remaining constructor is a test double at `web_search_runtime.zig:341`.
-  Scoping this slice to the field alone orphans a vtable module
-  (widened by the Phase 4 audit, 2026-09-05)
-
-Current evidence:
-
-- no production provider bundle supplies a Fiber-owned search backend
-- active runtimes initialize the provider as null
-
-Retain:
-
-- provider-neutral web-search contracts and policy
-- Codex-native search gating
-- explicitly selected MCP search
-
-A Fiber-owned search backend is new capability and belongs in enhancements.
-
-Stop if a production bundle supplies `fiber_search` or removing the field would
-remove Codex-native or MCP search.
-
-Completion criterion: no unreachable backend slot remains and retained search
-routes still compile behind their existing interfaces.
-
-### Slice 5: withdrawn — the one-source authentication picker stays
-
-**Withdrawn 2026-09-05 by owner decision.** The removal surface was the
-intermediate `Connections` screen, which today offers one action because
-`credential_source_order` (`auth_runtime.zig:20`) holds only
-`chatgpt_subscription`.
-
-It stays for two reasons. OpenCode and Databricks are both planned, so the screen
-is early rather than false — deleting a working screen to rebuild it in a few
-months is negative work. And it is the only slice in this phase that changes
-user-visible behavior, which breaks the property that makes Phase 5 triage clean:
-if every Phase 4 slice is invisible from outside the binary, any Phase 5 failure
-is unambiguously pre-existing.
-
-The slice number is retained rather than renumbered so earlier commit messages
-and notes still resolve.
-
-### Slice 6: remove the detached stream-flush switch
-
-Removal surface:
-
-- `AgentRuntimeDeps.flush_assistant_stream_per_content_chunk`
-- the matching `StreamChunkContext` field and conditional flush
-- the test-only assignment that enables it
-
-Current evidence:
-
-- no production construction reads or enables the dependency
-- only one unit test enables the stream-context field
-
-Stop if a surviving output adapter requires per-chunk flush semantics.
-
-Completion criterion: production streaming has one flush policy and tests drive
-that policy directly.
-
-### Slice 7: remove one-value branch residue
-
-Initial removal surface:
-
-- `parseTitledChoices(..., allow_description)`, whose 2 callers pass `false`
-- `TransitionRoute`, whose only value is `root`
-
-Single-variant enums found by the Phase 4 audit (2026-09-05):
-
-- `src/core/upgrade/update_target.zig:7` — `Channel = enum { stable }`, whose
-  `parse()` accepts only `"stable"`, and the `switch (channel)` in
-  `upgrade_helpers.zig:69`. `upgrade --channel` was removed in demolition Slice 19,
-  so this is deleted-product residue, not ordinary one-value shape.
-- `src/ui/render_engine/viewport_selection.zig:23` — `HardLinePolicy`
-- `src/core/shell_command/command_effect.zig:185` — `PrintfFormatLanguage`
-- `src/core/shell_command/command_effect.zig:238` — `LsSymlinkSemantics`
-- `src/core/terminal/contracts.zig:146` — `PersistenceLevel`
-- `src/tools/shell/shell.zig:37` — `ShellKind = enum { executable }`
-
-The MCP item is also recorded in `deferred.md`. At Phase 4 opening, move that
-entry here by clearing the Phase 4 deferred section before implementing this
-slice.
-
-Stop if a second live value or caller appears. Split newly found residue into a
-separate bounded slice when it crosses subsystem ownership.
-
-Completion criterion: parameters and tags with one invariant value are removed,
-and their invariant is expressed directly by the implementation.
-
-### Slice 8: renumbered
-
-The one-implementation audit that was Slice 8 is now **Slice 12**, rewritten from
-an open-ended search into a checklist after the Phase 4 audit covered the tree.
-The number is left in place so earlier notes still resolve.
-
-### Slice 9: remove WebAssembly target residue
-
-Added by the Phase 4 audit, 2026-09-05. The deleted WebAssembly target left
-`wasi`/`emscripten` branches in code that now only ever builds native.
-
-Removal surface:
-
-- `src/core/hosts/host.zig:149` — `nativeForOs` wasi `process_control` guard
-- `src/main.zig:3223` — `hasPosixArgVector` wasi arm
-- `src/core/shared/io.zig:214` — wasi branch in `openExistingRegularFileWithPolicy`
-- `src/core/shared/io.zig:427` — wasi/emscripten guard in `getenvFromBlock`
-
-Stop if a build target other than native is reintroduced to `build.zig` first.
-
-Completion criterion: no `wasi` or `emscripten` branch remains in retained code
-and native behavior on every touched path is unchanged.
-
-### Slice 10: remove the `workspace_clean` execution environment
-
-Added by the Phase 4 audit, 2026-09-05. A union variant plus every arm that
-handles it. Delete the variant and its arms together or the switches will not
-compile.
-
-Removal surface:
-
-- `src/core/execution/command_environment.zig:16` — `Environment.workspace_clean` union variant
-- `src/core/execution/command_environment.zig:136` — `Host.workspace_clean` enum variant
-- `src/core/execution/command_environment.zig:116` — `formatApprovalCommand` arm
-- `src/core/execution/command_runner.zig:626` — `executeCommandInEnvironment` arm
-- `src/core/execution/managed_execution.zig:1425` — `dupeEnvironment` arm
-
-Stop if any production path constructs a `workspace_clean` environment.
-
-Completion criterion: the environment union has no unreachable variant and
-command execution behavior is unchanged.
-
-### Slice 11: remove confirmed dead deleted-product symbols
-
-Added by the Phase 4 audit, 2026-09-05. Individually small, one subsystem each,
-grouped here because none justifies its own slice. Every entry was verified to
-have zero production references. Split into per-subsystem commits.
-
-| Site | What |
-|---|---|
-| `src/ui/footer/picker_presentation.zig:455` | `composeApiKeyPickerRow` — API-key auth row, no such source remains |
-| `src/ui/footer/picker_presentation.zig:223,332,333` | `manual_code_visible`, `manual_code_mask_count` params — `:229` is literally `_ = manual_code_visible;` and `input_presentation.zig:1581` hardcodes `false` |
-| `src/core/agent/runtime/deps.zig:126,127` | `ParentTurnDeliveryAck.discovery_start_offset` / `discovery_next_offset` — never assigned |
-| `src/core/agent/question_prompt.zig:197,209` | `syncChoicesFrom`, `append_freeform` false-path param |
-| `src/core/auth/oauth.zig:118` | `requestDeviceAuthorization` — dead duplicate; the live device-code flow is `login_flow.zig:521` |
-| `src/core/app/prompt_history_runtime.zig:67` | `initializeWithProvider` — confirms `prompt_history_provider.Provider` is a dead seam; take the module with it |
-| `src/core/cli/cli_surface.zig:558` | `ProviderActivationCaller.provider_command` variant |
-| `src/core/gateway/model_catalog.zig:359,424` | `compareModelCatalogEntries`, `projectPickerModelCatalog` |
-| `src/core/gateway/model_catalog.zig:292` | `web_search_price` field |
-| `src/core/gateway/provider_set.zig:23` | `presentation` field |
-| `src/core/app/app_commands.zig:8` | unused `gateway_provider` import — fold into Slice 3 |
-| `src/gateway/agent_request_body.zig:390` | `withRequestUserAgent` |
-| `src/ui/render_engine/frame_builder.zig:20` + `src/ui/render_request.zig:10` | `subagent_panel` variant in both — delete together |
-| `src/core/session/session_test_controls.zig:7` | `logOptions` |
-
-Two clusters where one deletion resolves several findings:
-
-- `elicitation.zig` — `Binding.user_identity` / `AnswerBinding.user_identity` are
-  never assigned, so the `optionalStringEqual` comparison at `:203` always passes
-  and `Rejection.wrong_user` (`:173`) is unreachable. One deletion, four findings.
-- `command_specs.zig` — `childChatSlashRegistry` (`:150`) is dead, taking
-  `child_chat_slash_command_count` (`:148`) and its `[N]SlashSpec` storage with it.
-- `builtins/commands.zig:301` — `top_level_resources` is an empty array wired into
-  `top_level_registry`; `maxTopLevelResourceLabelWidth` (`command_specs.zig:814`)
-  and `writeTopLevelResource` (`:852`) iterate it and produce nothing. Array, both
-  helpers, and the loops at `:268,314` go together.
-
-Stop on any entry whose production caller count is no longer zero at slice time.
-
-Completion criterion: exact searches find none of these symbols, and no retained
-behavior changed.
-
-### Slice 12: close the one-implementation audit
-
-Replaces the open-ended search that was Slice 8. The Phase 4 audit
-(`phase4-audit/REPORT.md`, 2026-09-05) covered all 490 files and 362k production
-lines, so this slice is a checklist, not a hunt.
-
-**The layering rule settles most candidates.** `src/core` defines contracts,
-`src/builtins` implements them, `src/main.zig` wires them, and every production
-`core -> builtins` import is `if (builtin.is_test)`-guarded. A vtable in
-`src/core` with one implementation in `src/builtins` is therefore *correct* —
-collapsing it would invert the dependency. Verify with
-`rg -n '@import\(".*builtins/' src/core` and confirm every hit is test-guarded.
-
-Ten `Provider` structs remain unclassified. For each, record production adapter
-count, test adapter count, and whether caller and implementation sit on the same
-side of the core/builtins boundary:
-
-`web_search_provider` (dies with Slice 4), `usage_dashboard_runtime`,
-`context_contract`, `command_provider`, `process_provider`,
-`notification_contract`, `model_catalog`, `skill_commands`, `tool_provider`,
-`prompt_history_provider` (dies with Slice 11).
-
-Retain, with evidence already gathered: `oauth_transport` (native, unavailable,
-test), `stream_provider` (Codex plus deterministic test streams),
-`auto_classifier` (production and test reviewers), `process_provider` (has an
-`unavailable_provider` adapter).
-
-Completion criterion: each of the ten is collapsed or justified with current
-caller and adapter evidence, and the Phase 4 section of `deferred.md` is empty.
-
-### Slice 13: close the discarded provider-selection parameters
-
-Owner decision, 2026-09-05. The audit found eight sites where provider-related
-parameters are accepted and discarded. They are not one thing; they split on
-**type**, and that is the line.
-
-`ProviderId` is the seam Phase 3 chose and this document already retains.
-A parameter *typed* `ProviderId` is that seam and stays. A parameter encoding
-variation in some other dimension — credential source, manual device-code entry —
-is not, and those dimensions have already collapsed with no planned provider
-reviving them.
-
-**Retain and strengthen.** `activateProviderSelection`'s `target: ProviderId`
-(`cli_surface.zig:581`) stays. Replace its `_ = target;` with an exhaustive
-`switch (target) { .codex => {} }`. Identical behavior today; when a second
-variant lands the compiler stops the build instead of silently activating Codex.
-`provider` on `credentials.resolveForProvider` (`:165`) and
-`auth_runtime.loadStatusSnapshotForProvider` (`:299`) are already honored and were
-never in the removal set.
-
-**Removal surface:**
-
-- `src/core/auth/credentials.zig:170` — `preferred: ?Source`; every caller passes
-  `null` (`:162`, `auth_runtime.zig:111,312,929`, `app_lifecycle.zig:367`,
-  `app_auth_runtime.zig:301`, `cli_surface.zig:586`, `cli_ask.zig:1526`,
-  `agent_adapter.zig:149`)
-- `src/core/auth/auth_runtime.zig:302` — `preferred: ?Source`, and the passthrough
-  at `:296`
-- `src/ui/footer/picker_presentation.zig:222` — `signInProjectedRowIndex` `source`
-  and `manual_code_visible`; one caller, `:194`
-- `src/ui/footer/picker_presentation.zig:331` — `composeSignInPickerRow` `source`,
-  `manual_code_visible`, `manual_code_mask_count`; one caller, `:201`. The body
-  hardcodes `subscription_source = true`.
-- `src/ui/footer/model_menu_presentation.zig:410` — `_ = state.source;`, a no-op
-  statement
-- `src/core/cli/cli_surface.zig:558` — `ProviderActivationCaller.provider_command`.
-  No `fiber provider` command exists; Phase 3 did not build one. With the variant
-  gone, `writeProviderActivationError`'s `"fiber provider"` arm (`:571`) is
-  unreachable and its `caller` parameter, and `activateProviderSelection`'s
-  discarded `caller`, stop earning their place.
-
-**Why not keep them under the Slice 5 argument.** Slice 5 kept a working screen —
-real behavior, merely early. These are `_ =` discards: signatures that claim to
-honor something and do not. Re-adding a parameter when Databricks lands is one
-line in a signature, the same line whoever wires it must touch anyway to replace
-the discard with real logic. Keeping them buys nothing and leaves eight
-signatures lying. The exhaustive `switch` on `target` protects the future case,
-and does it better than a discarded parameter did.
-
-Stop if a second `ProviderId` variant lands before this slice starts — then
-`target` gets real logic and the picker parameters may come back with it.
-
-Completion criterion: no `_ =` discard remains among these sites, `target` is
-switched exhaustively, and `fiber auth login --provider codex` behaves exactly as
-before.
-
-## Explicitly retained seams
-
-Re-verify these at Phase 4 opening. They currently express real variation or a
-meaningful effect:
-
-- agent stream providers used by Codex and deterministic tests
-- automatic permission reviewers used by production and tests
-- OAuth transport providers used by native, unavailable, and test adapters
-- URL opener, clipboard, and terminal-title effects
-- MCP stdio and HTTP transports, protocol negotiation, authentication, and
-  tool, prompt, resource, and subscription behavior
-- committed-file secondary publication, where root agents publish and subagents
-  deliberately skip
-- provider-shaped public command and output contracts
-
-## Post-transition backlog: ordinary dead code
-
-The audit tagged each finding `deleted-product` or `always-was`. Only the first
-is Phase 4's work. The `always-was` findings are real dead code with no
-connection to the demolition — inherited fx-era rot — and they are **out of scope
-for this phase**: removing them widens the gate and muddies Phase 5's ability to
-treat every failure as pre-existing.
-
-They are recorded, with verdicts, in
-[`phase4-audit/REPORT.md`](phase4-audit/REPORT.md): 75 dead, plus the
-`always-was` entries under CONFIRMED and TESTED-ONLY. The densest sites are
-`auth_runtime.zig` (7), `skill_runtime.zig` (6), `agent_request_body.zig` (5),
-`editor_state.zig` (4), and `image_attachments.zig` (4).
-
-Two categories there are **not** deletions and should not be treated as such:
-
-- **TESTED-ONLY (61)** — the only callers are the symbol's own tests. Deletable,
-  but the test goes too, so each needs a judgment about whether the coverage is
-  worth keeping the code for.
-- **SINGLE-CALLER (60)** — exactly one caller. An inline-the-wrapper candidate,
-  not dead code.
-
-Feed this to the architectural audit planned after Phase 6, not to a Phase 4 slice.
-
-## Outside Phase 4
-
-Keep these out of the transition simplification gate:
-
-- decomposing the whole MCP runtime
-- redesigning `AgentRuntimeDeps`
-- adding another model provider
-- implementing a Fiber-owned web-search backend
-- implementing `fiber mcp doctor`
-- rebuilding ACP or editor integration
-- TUI resize, cancellation, and transcript-transition repair, which Phase 5 owns
-
-These may be valuable, but they are deeper-module design, new capability, or
-behavioral repair rather than removal of false post-demolition variation.
-
-## Verification
-
-For every code slice, run the narrowest focused tests while developing, then:
+Commands:
 
 ```sh
 zig fmt --check src/
 zig build -Doptimize=ReleaseSafe
 zig build test -Doptimize=ReleaseSafe
 ./scripts/smoke.sh
+zlint
+cd tests/e2e && bun install && bun test
 ```
 
-Also run the slice's exact absence searches and report every command with its
-exit status. Phase 5 owns routine deterministic E2E and real-product exhaustive
-verification unless a Phase 4 slice changes or breaks a directly covered path.
+Also record in `phase4-baseline.md`:
+
+- the `zlint` `unused-decls` warning count, which is 111 at commit `b26e3d99`
+- the full output of the lazy-analysis probe described below
+
+Both get the same attribution rule as E2E. A count or error that grows after a
+slice is caused by that slice until fixed or reverted.
+
+A red Zig build, unit test, formatting check, or smoke test stops Phase 4. E2E
+failures do not stop the opening only when they are recorded precisely.
+
+### Failure attribution
+
+- a unit, build, formatting, or smoke failure first seen after a slice is caused
+  by that slice until fixed or reverted
+- an E2E file green at baseline and red later is caused by the intervening slice
+- a baseline-red E2E with the same failure signature remains Phase 5 evidence
+- a baseline-red E2E with a changed signature is slice-caused until disproved
+- retry one suspected TTY flake after resetting its tmux server, matching Full CI
+
+Run the full E2E suite again after the platform series, after the host-profile
+collapse, and at phase exit. Routine per-slice E2E remains unnecessary.
+
+### Per-slice gate
+
+Run one slice at a time on `main`. A suffixed slice such as 9c is a separate
+slice and gets its own commit and gate.
+
+For every code slice, run and report:
+
+```sh
+zig fmt --check src/
+zig build -Doptimize=ReleaseSafe
+zig build test -Doptimize=ReleaseSafe
+./scripts/smoke.sh
+zlint
+```
+
+Also grep the `zig build test` output for `failed command:` and run the slice's
+exact absence searches. Do not trust the test command's exit status alone.
+
+### Orphaned private declarations
+
+`zlint` must report no more `unused-decls` warnings than the count recorded in
+`phase4-baseline.md`. Deleting a public function orphans the private imports and
+aliases that fed it; that residue is this rule's exact shape.
+
+`zlint.json` scopes the linter to `unused-decls` only. Do not widen it during
+Phase 4. Its other rules are inherited-code style opinions and belong to the
+end-of-transition quality audit.
+
+Run `zlint` from the repository root with no path arguments. Directory arguments
+are broken in v0.9.1 and silently lint zero files.
+
+Clear the residue with `zlint --fix-dangerously`, then read the diff before
+committing. The fixer removes the declaration and its doc comment.
+
+The rule finds only private, file-local, top-level `const` declarations. It never
+reports `pub` declarations, so it cannot find the cross-module dead code that the
+audit corpus inventories. It is a residue sweep, not a substitute for a slice.
+
+### Lazy-analysis probe
+
+Zig never semantically analyzes an unreferenced container-level declaration. A
+dead `pub` function that calls a symbol this phase deleted still compiles clean,
+because nothing analyzes it. A green build is therefore weaker evidence than it
+looks.
+
+Force analysis at each full checkpoint:
+
+```sh
+{ echo 'const std = @import("std");'
+  git ls-files 'src/**/*.zig' \
+    | sed 's|^src/||; s|.*|test { std.testing.refAllDecls(@import("&")); }|'
+} > src/zz_refall_probe.zig
+printf '\ntest { _ = @import("zz_refall_probe.zig"); }\n' >> src/main.zig
+zig build test -Doptimize=ReleaseSafe
+git checkout src/main.zig && rm src/zz_refall_probe.zig
+```
+
+The probe must run through `zig build`, not `zig test`. Several modules import
+the generated `build_options` module, which only the build graph supplies.
+
+Never commit the probe. Permanently forcing analysis makes dead declarations look
+referenced to the next audit and to `zlint`.
+
+`std.testing.refAllDecls` in Zig 0.16 reaches one level and public declarations
+only. There is no `refAllDeclsRecursive`. Methods on nested structs stay
+unanalyzed, so a clean probe is not proof of a clean tree.
+
+## Corrected audit policy
+
+The raw 360-row corpus remains evidence, not a ready-made deletion plan.
+
+- delete DEAD and CONFIRMED rows after rechecking current declarations and
+  references, except explicit retentions in the correction document
+- delete obsolete TESTED-ONLY code with its tests
+- retain the five TESTED-ONLY exceptions in `phase4-audit/CORRECTIONS.md`
+- retain SINGLE-CALLER and REFUTED rows unless this inventory or the correction
+  document explicitly assigns them to a slice
+- ignore the old `deleted-product` versus `always-was` phase boundary
+
+The audit covered `src`, not every tracked Zig file. Each relevant slice must
+also inspect `build.zig`, benchmarks, scripts, and test support.
+
+## Ordered slices
+
+### Slice 0: record the pre-simplification baseline
+
+Run the phase opening baseline and write `phase4-baseline.md`. Make no source
+change.
+
+Stop if any non-E2E gate is red.
+
+### Slice 1: restrict builds and CI to supported targets
+
+Removal surface:
+
+- reject every target except macOS arm64, Linux x86_64, and Linux arm64 in
+  `build.zig`
+- remove macOS Intel runners, matrices, binary-size work, and documentation from
+  retained workflows
+- remove any release artifact or installer branch for an unsupported target
+
+Use `upgrade_helpers.platformFromTarget` as the existing allowlist precedent.
+
+Proof:
+
+```sh
+zig build -Dtarget=x86_64-windows
+zig build -Dtarget=wasm32-wasi
+zig build -Dtarget=x86_64-macos
+```
+
+All three commands must fail with the explicit unsupported-target message. The
+three retained target builds must still succeed where the local toolchain can
+cross-build them.
+
+### Slice 2: remove deleted-host tool completion and sandbox residue
+
+Removal surface:
+
+- `DeferredToolCompletion`
+- `ToolExecutionResult.deferred_tool_completion`
+- `AgentRuntimeDeps.publish_deferred_tool_completion`
+- publication and parallel-execution handling for deferred completion
+- `unavailableHostToolResult`
+- `HostToolProvider`, `HostToolProviderFn`, and threaded provider fields
+- `HostSandboxDefault`, `host_sandbox_default`, its tool-admission branch, and
+  `ShellAuthorizationSource.js_host`
+- tests that manufacture deleted JavaScript-host defaults
+
+Retain committed-file secondary publication.
+
+Stop if a surviving executor produces deferred completion or a retained runtime
+supplies a non-default host sandbox policy.
+
+### Slice 3: flatten the OAuth transport wrapper
+
+Removal surface:
+
+- `gateway_provider.Provider`, which contains only `oauth_transport`
+- wrapper construction and fields that immediately unwrap it
+- the unused `gateway_provider` import in `app_commands.zig`
+
+Retain `oauth_transport.Provider`; native, unavailable, and test adapters vary.
+
+Stop if the wrapper gains another field or invariant before this slice starts.
+
+### Slice 4: delete dead Gateway request fixtures and parser code
+
+Removal surface:
+
+- the test-only request-building family in `src/builtins/gateway.zig`
+- `provider_bundle`, `buildAgentRequest`, `buildAgentToolsJson`,
+  `writeDynamicFunctionTool`, and `toolNameSelected`
+- the dead request and legacy completion parser family in
+  `src/gateway/agent_request_body.zig`
+- test-gated imports and tests whose only purpose is that family
+
+Prefer deleting `agent_request_body.zig` whole if its only remaining importer is
+the test fixture. Rewrite a dependent test only when it still proves retained
+Codex behavior; otherwise delete the obsolete test.
+
+Stop if a production request path imports the file at slice open.
+
+### Slice 5: remove the unreachable Fiber search backend
+
+Removal surface:
+
+- `provider_set.Bundle.Capabilities.fiber_search`
+- `provider_set.Bundle.fiber_search`
+- null propagation through root, one-shot, and subagent construction
+- `web_search_provider.zig`
+- the provider and policy fields in `web_search_runtime.zig`
+- `web_search_policy.zig` if its only remaining consumers are deleted modules or
+  tests
+- `main.zig`'s `web_search_models_path`; use the retained Codex path directly
+
+Retain provider-neutral request and result contracts used by Codex-native or MCP
+search. Do not retain a policy module with no production consumer.
+
+Stop if a production Fiber-owned backend exists or a deletion reaches
+Codex-native or MCP search.
+
+### Slice 6: remove the detached stream-flush switch
+
+Remove `flush_assistant_stream_per_content_chunk`, its stream-context field,
+conditional flush, and obsolete test variation.
+
+Stop if a surviving output adapter requires per-content-chunk flush semantics.
+
+### Slice 7: remove deleted-product one-value residue
+
+Removal surface:
+
+- `update_target.Channel`, its dead parser, fixed channel parameters, and the
+  stale E2E tests that expect a development channel or document
+  `--channel <stable|dev>`
+- `parseTitledChoices(..., allow_description)`
+- `TransitionRoute`
+- `TransientContextInput.host_workspace`, `HostWorkspaceContext`, and the
+  alternate-host context branch
+- elicitation `user_identity`, `wrong_user`, and canonical-response behavior that
+  exists only for the deleted host path
+
+Retain elicitation identity checks only if a current protocol supplies identity.
+The current tree does not.
+
+### Slice 8: remove `workspace_clean` completely
+
+Delete the variant and every arm together across:
+
+- `command_environment.zig`
+- `command_runner.zig`
+- `managed_execution.zig`
+- `command_admission.zig`
+- `tool_admission.zig`
+- `tool_runtime.zig`
+- `terminal/shell_resolver.zig`
+- `tools/shell/shell.zig`
+
+Proof:
+
+```sh
+git grep -n workspace_clean -- src/
+```
+
+The search must return no matches.
+
+Stop if a production path constructs this environment at slice open.
+
+### Slice 9: close provider-selection discards
+
+Retain parameters typed `ProviderId`. Replace the discarded provider target with
+an exhaustive switch so another variant fails compilation until implemented.
+
+Delete:
+
+- credential-source `preferred` parameters that every caller passes as null
+- picker `source` and `manual_code_*` parameters that are ignored
+- `ProviderActivationCaller.provider_command`
+- its unreachable error arm and now-useless caller parameter
+- the no-op `state.source` read
+
+This slice solely owns these symbols; no earlier slice may delete them.
+
+Retain the `ProviderId` enum itself. Slice 26 collapses provider plumbing but
+keeps the one-variant enum at the persisted and public boundary.
+
+Stop if a second `ProviderId` variant lands first.
+
+### Slice 10: remove unsupported execution and process branches
+
+Was Slice 19 before the 2026-09-05 reorder.
+
+After Slice 1 makes them unreachable, remove unsupported-target branches and test
+guards from:
+
+- `command_runner.zig`
+- `process_tree.zig`
+- `direct_command.zig`
+
+Keep macOS and Linux process-group, signal, timeout, and descendant cleanup
+behavior.
+
+### Slice 11: remove unsupported MCP and tooling branches
+
+Was Slice 20 before the 2026-09-05 reorder.
+
+Remove unsupported-target code from MCP subprocess, auth, Docker, tool runtime,
+tool dispatch, and file-mutation modules. Delete Windows process APIs and
+executable-name fallbacks.
+
+Keep macOS and Linux stdio shutdown and process cleanup behavior.
+
+### Slice 12: remove unsupported host, terminal, and session branches
+
+Was Slice 21 before the 2026-09-05 reorder.
+
+Remove unsupported-target code and test guards from host capabilities, keychain,
+URL opener, terminal host, native session, shell resolution, command replay, and
+session stores.
+
+Retain macOS Keychain behavior and Linux profile-file credential behavior.
+
+### Slice 13: remove unsupported workspace, image, and skill branches
+
+Was Slice 22 before the 2026-09-05 reorder.
+
+Remove unsupported-target fallbacks and skips from workspace indexing, pathing,
+search, tape recording, image handling, skills, and filesystem tools.
+
+Delete test guards when the test covers retained behavior. Delete or retarget a
+test only when it exclusively asserts an unsupported platform.
+
+### Slice 14: remove unsupported CLI, UI, main, and shared I/O branches
+
+Was Slice 23 before the 2026-09-05 reorder.
+
+Remove unsupported-target implementations and constant capability switches from
+`main.zig`, CLI output, doctor, app commands, shared I/O, resize, shell runtime,
+and remaining UI code.
+
+Collapse constants such as `supports_headless_interrupt`, `supports_test_pty`,
+`supports_resize_signal`, and `hasPosixArgVector` after the target allowlist makes
+them invariant.
+
+Run the full deterministic E2E checkpoint after this slice.
+
+### Slice 15: collapse the native host profile
+
+Was Slice 24 before the 2026-09-05 reorder.
+
+Delete `runtime_profile.Profile`, the all-true native profile, capability guards,
+`App.host_profile`, and false branches that only served deleted hosts.
+
+Read every site. Two guard shapes require different edits:
+
+- `if (comptime allows(X)) { body }` keeps the body
+- `if (comptime !allows(X)) return;` deletes the statement
+
+Retain concrete clipboard, URL, terminal-title, process, and notification effect
+seams.
+
+Run the full deterministic E2E checkpoint after this slice.
+
+### Re-audit checkpoint
+
+Run before the renumbered dead-code series below.
+
+The platform removal and host-profile collapse above delete roughly 154
+unsupported-target sites and 48 `runtime_profile` sites, and orphan code that no
+prior slice could see. The dead-code slices that follow were written against the
+tree as it stood at `b26e3d99`, so re-derive their removal surfaces against the
+collapsed tree before opening any of them.
+
+Do this:
+
+1. Run the full deterministic E2E checkpoint and compare with the opening
+   baseline.
+2. Run `zlint` and the lazy-analysis probe; record both.
+3. Re-run the audit searches over all tracked source, build, benchmark, script,
+   and test files.
+4. Merge the following slices by subsystem wherever their surfaces now overlap.
+   Fewer, larger, better-targeted slices are the point of running them here
+   rather than before the collapse.
+
+This checkpoint is why Slice 27 should find residue rather than a second full
+pass.
+
+### Slice 16: delete dead auth and model-catalog families
+
+Was Slice 10 before the 2026-09-05 reorder.
+
+Removal surface:
+
+- dead OAuth discovery, refresh, revoke, and granted-scope helpers
+- dead auth picker, logout inventory, precedence, and credential wrappers
+- dead API-key picker code
+- dead model-picker projection, rank, comparison, price, and presentation fields
+- fields used only inside those dead chains
+
+Do not touch `modelProviderRank`, `modelTierRank`, `featured_picker_families`, or
+the `ModelProviderFilter` enum. Those rejected-vendor rows are inert but
+observable, and Slice 26 retains them deliberately.
+
+Retain live Codex token parsing, device authorization, polling, credential
+resolution, catalog parsing, and public model capabilities.
+
+### Slice 17: delete dead command and builtin wrappers
+
+Was Slice 11 before the 2026-09-05 reorder.
+
+Removal surface:
+
+- forwarding wrappers and re-exports in `builtins/commands.zig`,
+  `builtins/tools.zig`, and `builtins/modes.zig`
+- dead slash help and welcome rendering
+- the child-chat slash registry and storage
+- the empty top-level resource array, its loops, and helper functions
+- constant completion-policy fields with no varying spec
+
+Retain underlying command-spec functions with live CLI or picker callers.
+
+### Slice 18: delete dead agent and subagent code
+
+Was Slice 12 before the 2026-09-05 reorder.
+
+Removal surface:
+
+- delivery-ack fields never assigned
+- dead question-prompt wrappers and constant parameters
+- dead execution-memory constructors and adapters
+- dead subagent authority, model-contract, background URL, and host wrappers
+- no-op tool activity recorder
+- direct-child resume no-op calls
+- discarded subagent execution options
+
+Retain subagent permission, persistence, cancellation, and model-selection
+contracts used by production.
+
+### Slice 19: delete dead execution and permission code
+
+Was Slice 13 before the 2026-09-05 reorder.
+
+Removal surface:
+
+- dead managed-execution presentation, terminal-state, cancellation, tombstone,
+  and router chains
+- dead permission-prompter retention fields and methods
+- unused automatic-reviewer input fields and disabled variant
+- `auto_classifier.gateway_reviewer_model = "moonshotai/kimi-k3"` (`:15`), the
+  `Reviewer.model` field default at `:357`, and the assertion at `:1955`
+
+Automatic permission review is live and already runs on catalog-selected
+`gpt-5.4-mini` via `openai_codex_permission_reviewer`. The Kimi constant is
+inherited Gateway residue reachable only from tests. Retarget the field default
+to the Codex reviewer model rather than leaving the seam without one, and keep
+the review path itself working. Do not change
+`openai_codex_models.reviewer_model`; the owner declined that on 2026-09-05.
+- constant source-refresh guards
+- no-op permission protocol parameters
+
+Retain admission fingerprints, configured and session grants, auto review, yolo,
+and all security validation.
+
+### Slice 20: delete dead MCP code
+
+Was Slice 14 before the 2026-09-05 reorder.
+
+Removal surface:
+
+- dead elicitation states, rejections, fields, parsers, and schema helpers
+- dead MCP auth-store status API and PKCE helper
+- dead health publication and MRTR parsing helpers
+- dead tool and resource re-exports, errors, and test-only wrappers
+- adjacent single-caller helpers that become chain-dead
+
+Retain stdio and HTTP transports, protocol negotiation, authentication, tools,
+prompts, resources, subscriptions, and corrupt or invalid input handling.
+
+### Slice 21: delete dead terminal and session code
+
+Was Slice 15 before the 2026-09-05 reorder.
+
+Removal surface:
+
+- dead terminal client dequeue and projection methods
+- dead shell formatting helper
+- dead store export and UI background projection
+- unreachable recovery evidence variants only when production construction proves
+  they cannot occur
+- dead monitor or transition helpers not used by persisted validation
+
+Retain `session_test_controls.zig`, corrupt-session isolation, authority hashes,
+proofs, lifetime validation, schedules, and compatibility needed to read current
+Fiber sessions.
+
+Stop if a candidate participates in serialization, hashing, authority checks, or
+recovery of a retained record.
+
+### Slice 22: delete dead UI and input code
+
+Was Slice 16 before the 2026-09-05 reorder.
+
+Removal surface:
+
+- all three `subagent_panel` variants, the production switch arm in
+  `app_render_runtime.zig`, and the obsolete `frame_fixed_point.zig` test
+- dead transcript preview, reconstruction, wrapping, and resume-projection chains
+- dead row formatting and resize-reflow variants
+- dead editor cursor methods duplicated by live navigation functions
+- discarded footer, picker, and render parameters, except the provider-selection
+  picker parameters owned by Slice 9
+- constant rendering flags and one-value frame placement policy
+
+Retain the live transcript, resize, approval, catalog, and resume paths. Run the
+focused resize and render unit tests after each UI sub-slice.
+
+### Slice 23: delete dead skill, filesystem, image, and shared helpers
+
+Was Slice 17 before the 2026-09-05 reorder.
+
+Removal surface:
+
+- dead skill summary and menu-filter chains
+- dead skill tool entry wrappers
+- dead write-file dispatch code embedded in `read_file.zig`
+- dead image placeholder span and review helpers
+- dead gateway diagnostic, debug-trace, message, and tool-dispatch helpers
+- dead gesture accessors
+
+Split this slice by subsystem when more than about 15 files would change.
+
+### Slice 24: delete dead app-runtime code
+
+Was Slice 18 before the 2026-09-05 reorder.
+
+Removal surface:
+
+- dead prompt-history provider and initialization
+- dead startup, lifecycle, bootstrap, and terminal managed-facts helpers
+- unreachable startup branches and unused imports
+- cooperative live-session transition state that every production caller disables
+
+Retain live session installation, cancellation, resume, prompt history, and
+workspace startup behavior.
+
+### Slice 25: collapse general one-value and single-caller residue
+
+Removal surface:
+
+- `HardLinePolicy`
+- `PrintfFormatLanguage`
+- `LsSymlinkSemantics`
+- internal `ShellKind` while preserving the advertised and validated
+  `"kind":"executable"` tool contract
+- one-value message content and frame-placement types when their collapse stays
+  mechanical
+- the always-true project-instruction switch in `builtins/context.zig`
+- discarded protocol parameters in `mcp/features/common.zig` and
+  `mcp/features/tools.zig`
+- every correction-document action not owned by an earlier slice
+- explicit single-caller candidates in `phase4-audit/CORRECTIONS.md`
+
+Do not collapse persisted terminal authority types or public provider-shaped
+contracts.
+
+### Slice 26: close the implementation-seam audit
+
+The old blanket layering premise is withdrawn.
+
+For every remaining `Provider`, vtable, callback table, and optional adapter:
+
+1. record production adapter count
+2. record unavailable adapter count
+3. record test adapter count
+4. identify the effect or dependency boundary it protects
+5. collapse it when no real variation or effect boundary remains
+6. retain it only with the evidence above
+
+Also resolve the existing production `core -> builtins` imports. Move composition
+toward `main.zig` or a typed dependency rather than citing a boundary the tree
+does not currently enforce.
+
+#### Provider seam: collapse the plumbing, keep the boundary
+
+Owner decision, 2026-09-05. The seam now in the tree was shaped for Gateway,
+Grok, and Vercel. All three are deleted, so its original justification is gone,
+and its current shape is a guess about a provider set that does not exist yet.
+Collapse it rather than preserving a fossil.
+
+Step 5 above applies to internal plumbing only. Three layers, three answers:
+
+- *internal plumbing* — one-arm switches, threaded `ProviderId` parameters,
+  one-implementation vtables and wrappers. Collapse. Rebuilding is mechanical and
+  the compiler enumerates every site.
+- *persisted and public contracts* — session records, JSON shape, command
+  surface. Keep the discriminant. Versioned data cannot be refactored
+  unilaterally, and Codex-only assumptions baked there are expensive to undo.
+- *the model catalog* — `modelProviderRank`, `modelTierRank`,
+  `featured_picker_families`, and the full `ModelProviderFilter` enum stay
+  whole. Those rejected-vendor rows are inert but observable: the provider tab
+  does not render until the catalog spans two families, unmatched featured rows
+  break immediately, and `modelTierRank` is a substring matcher that deleting
+  entries is the only way to break. This also constrains Slice 16.
+
+Keep `ProviderId` as a one-variant enum at the persisted and public boundary.
+Carrying cost is near zero and `git grep ProviderId` becomes the worklist when
+the real multi-provider seam is designed. Do not delete the enum itself.
+
+Before designing that seam, read the deleted Grok implementation. It is the
+worked example of a second provider with its own endpoint and credential sharing
+the retained `responses_protocol.zig`:
+
+```sh
+git show 993688a5:src/gateway/xai_grok.zig
+git show 993688a5:src/gateway/xai_grok_models.zig
+git show 993688a5:src/core/auth/grok_oauth.zig
+```
+
+### Slice 27: final dead-code and residue sweep
+
+Repeat the audit against all tracked source, build, benchmark, script, and test
+files after the prior deletions. New dead code exposed by those deletions is part
+of this slice, not a post-transition backlog.
+
+Required searches include:
+
+```sh
+git grep -n -E '\.windows|\.wasi|\.emscripten|\.freestanding' -- src/ benchmarks/ tests/ build.zig
+git grep -n -E '\.freebsd|\.netbsd|\.openbsd|\.dragonfly|\.plan9|\.illumos|\.haiku|\.serenity|\.uefi|\.solaris' -- src/
+git grep -n -E 'workspace_clean|DeferredToolCompletion|HostToolProvider|fiber_search|host_sandbox_default|host_workspace' -- src/
+git grep -n -E 'acp|grok|vercel|gateway|wasm|napi|node_api|javascript_host' -- src/ build.zig tests/ scripts/
+```
+
+A remaining product-name hit may stay only when it is required attribution,
+history, or a live external protocol identifier. Record each exception.
+
+Run the full deterministic E2E suite and compare it with the opening baseline.
+
+## Phase exit
+
+Phase 4 closes only when:
+
+- the build accepts exactly the 3 retained targets
+- unsupported platform searches have no unexplained hits
+- every DEAD, CONFIRMED, and TESTED-ONLY audit row is deleted, retracted, or
+  explicitly retained in `phase4-audit/CORRECTIONS.md`
+- every actionable SINGLE-CALLER and false REFUTED row in the correction document
+  is resolved
+- every remaining implementation seam has measured retention evidence
+- no newly exposed dead code remains
+- `zlint` reports zero `unused-decls` warnings
+- the lazy-analysis probe compiles clean
+- the Phase 4 section of `deferred.md` is empty
+- build, unit, formatting, and smoke gates pass
+- the final E2E result introduces no failure or changed failure signature against
+  the opening baseline

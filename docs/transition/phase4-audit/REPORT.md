@@ -1,4 +1,8 @@
-# Fiber Phase 4 — simplification audit, final report
+# Fiber Phase 4 simplification audit
+
+Status: raw historical report. Its arithmetic and finding corpus remain valid,
+but its original scope, retention premise, and phase triage are superseded by
+[`CORRECTIONS.md`](CORRECTIONS.md). Do not implement from this report alone.
 
 Read-only audit. Nothing in the tree was modified to produce it.
 
