@@ -353,7 +353,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | 9 | `continue`, resume-alias removal, `--resume-id`, pagination | additive | **done**, `3f8cf352` |
 | 10 | Interactive surface: `/retry`, `/new` alias, `/background` | additive | **`/retry`/`/new` done**, `99b352a5`; `/background` deferred to `../enhancements/pending.md` |
 | 11 | `debug trace\|replay` parent | additive | **`debug replay` done**, `ac625872`; `debug trace` deferred to `../enhancements/pending.md` |
-| 12 | `/context` usage | additive | |
+| 12 | `/context` usage | additive | **done** |
 
 ## The matrix
 
@@ -768,11 +768,11 @@ the most recently saved session instead), not mechanical wiring.
 | `debug replay` | **done** — `replay` was a hidden top-level kind; reachable only under `debug` | reachable only under `debug` | `debug.replay` | `cli_surface.zig` | `command_specs.zig` |
 | `debug trace` | absent; `/trace` is the slash form, `buildTraceReport` is live-`App`-only | **deferred out of Phase 3** — see `../enhancements/pending.md`; needs a rework, not sized | `debug.trace` | `cli_surface.zig` | `command_specs.zig` |
 
-### Slice 12 — `/context`
+### Slice 12 — `/context` — **done**
 
 | Item | Current | Target | Owner | Focused test |
 | --- | --- | --- | --- | --- |
-| `/context` | absent; TUI footer shows `Context: {d}k/{d}k {d}%` (`src/ui/render.zig:438`) | slash command showing used, window, percent | `commands.zig` | `command_router.zig` |
+| `/context` | slash command showing used, window, percent | slash command showing used, window, percent | `commands.zig` | `command_router.zig` |
 | context *occupants* | no per-component accounting exists | **deferred** — see `../enhancements/pending.md` | — | — |
 | context usage in `ask --json` / `session show` | absent | **deferred** — same file | — | — |
 

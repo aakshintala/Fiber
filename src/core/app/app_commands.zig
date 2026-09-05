@@ -353,6 +353,7 @@ pub fn Handlers(comptime App: type) type {
                 .handle_mcp = commandHandleMcp,
                 .handle_skills = commandHandleSkills,
                 .create_trace = commandCreateTrace,
+                .show_context = commandShowContext,
                 .compact_history = commandCompactHistory,
                 .handle_settings = commandHandleSettings,
                 .rename_session = commandRenameSession,
@@ -1818,6 +1819,11 @@ pub fn Handlers(comptime App: type) type {
             try handleTraceReport(app);
         }
 
+        fn commandShowContext(ctx: *anyopaque) !void {
+            const app: *App = @ptrCast(@alignCast(ctx));
+            try handleContextUsage(app);
+        }
+
         fn commandCompactHistory(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try app_session_runtime.Runtime(App).compactHistory(app);
@@ -3184,6 +3190,37 @@ fn stripAnsiEscapes(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
     return out.toOwnedSlice(alloc);
 }
 
+fn formatContextUsageBody(
+    alloc: std.mem.Allocator,
+    used_tokens: u64,
+    context_window: ?u32,
+) ![]u8 {
+    if (used_tokens == 0) {
+        return alloc.dupe(u8, "No context used in this session yet.");
+    }
+    const used_k = used_tokens / 1000;
+    if (context_window) |total| {
+        const total_k: u64 = @as(u64, total) / 1000;
+        const pct = if (total > 0) (used_tokens * 100) / @as(u64, total) else 0;
+        return std.fmt.allocPrint(alloc, "Context: {d}k/{d}k tokens used ({d}%).", .{ used_k, total_k, pct });
+    }
+    return std.fmt.allocPrint(alloc, "Context: {d}k tokens used.", .{used_k});
+}
+
+fn handleContextUsage(app: anytype) !void {
+    const App = @TypeOf(app.*);
+    const used_tokens = app.total_input_tokens;
+    const visible_model = provider_runtime.model(app);
+    const context_window = model_capabilities.resolveForApp(App, app, visible_model).context_window;
+    const body = try formatContextUsageBody(app.alloc, used_tokens, context_window);
+    defer app.alloc.free(body);
+    try app.writeDomainNotice(.{
+        .topic = "context",
+        .tone = .neutral,
+        .body = body,
+    }, true);
+}
+
 fn handleRenameCommand(app: anytype, rest: []const u8) !void {
     const App = @TypeOf(app.*);
     const SessionRuntime = app_session_runtime.Runtime(App);
@@ -3798,6 +3835,103 @@ const ChangeCommandFakeApp = struct {
         try self.transcript.appendSlice(self.alloc, notice.body);
     }
 };
+
+const ContextCommandFakeApp = struct {
+    alloc: std.mem.Allocator,
+    total_input_tokens: u64 = 0,
+    selected_model: std.ArrayList(u8) = .empty,
+    gateway_metadata_model: ?[]const u8 = null,
+    gateway_metadata: model_capabilities.GatewayMetadata = .{},
+    last_notice: ?types.SemanticNotice = null,
+
+    fn deinit(self: *ContextCommandFakeApp) void {
+        self.selected_model.deinit(self.alloc);
+        if (self.last_notice) |notice| self.alloc.free(notice.body);
+    }
+
+    pub fn resolvedModelCapabilities(self: *ContextCommandFakeApp, model: []const u8) model_capabilities.Capabilities {
+        const fallback = model_capabilities.Capabilities{
+            .context_window = 1_000_000,
+        };
+        if (self.gateway_metadata_model) |metadata_model| {
+            if (std.mem.eql(u8, metadata_model, model)) {
+                return model_capabilities.mergeCapabilities(fallback, self.gateway_metadata);
+            }
+        }
+        return fallback;
+    }
+
+    noinline fn writeDomainNotice(self: *ContextCommandFakeApp, notice: types.SemanticNotice, _: bool) !void {
+        if (self.last_notice) |previous| self.alloc.free(previous.body);
+        self.last_notice = .{
+            .topic = notice.topic,
+            .tone = notice.tone,
+            .body = try self.alloc.dupe(u8, notice.body),
+        };
+    }
+};
+
+test "formatContextUsageBody reports used, window, and percent" {
+    const body = try formatContextUsageBody(std.testing.allocator, 43_000, 1_000_000);
+    defer std.testing.allocator.free(body);
+    try std.testing.expectEqualStrings("Context: 43k/1000k tokens used (4%).", body);
+}
+
+test "formatContextUsageBody degrades when context window is unknown" {
+    const body = try formatContextUsageBody(std.testing.allocator, 5_000, null);
+    defer std.testing.allocator.free(body);
+    try std.testing.expectEqualStrings("Context: 5k tokens used.", body);
+}
+
+test "formatContextUsageBody reports no usage when session has no tokens" {
+    const body = try formatContextUsageBody(std.testing.allocator, 0, 1_000_000);
+    defer std.testing.allocator.free(body);
+    try std.testing.expectEqualStrings("No context used in this session yet.", body);
+}
+
+test "context command writes usage notice from app totals" {
+    const alloc = std.testing.allocator;
+    var app = ContextCommandFakeApp{ .alloc = alloc };
+    defer app.deinit();
+    app.total_input_tokens = 43_000;
+    try app.selected_model.appendSlice(alloc, "anthropic/claude-opus-4.8");
+
+    try Handlers(ContextCommandFakeApp).commandShowContext(@ptrCast(&app));
+
+    const notice = app.last_notice orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("context", notice.topic);
+    try std.testing.expectEqual(types.NoticeTone.neutral, notice.tone);
+    try std.testing.expectEqualStrings("Context: 43k/1000k tokens used (4%).", notice.body);
+}
+
+test "context command uses gateway context window when available" {
+    const alloc = std.testing.allocator;
+    var app = ContextCommandFakeApp{
+        .alloc = alloc,
+        .total_input_tokens = 12_000,
+        .gateway_metadata_model = "provider/new-long-context",
+        .gateway_metadata = .{ .context_window = 750_000 },
+    };
+    defer app.deinit();
+    try app.selected_model.appendSlice(alloc, "provider/new-long-context");
+
+    try Handlers(ContextCommandFakeApp).commandShowContext(@ptrCast(&app));
+
+    const notice = app.last_notice orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("Context: 12k/750k tokens used (1%).", notice.body);
+}
+
+test "context command reports no usage when tokens are zero" {
+    const alloc = std.testing.allocator;
+    var app = ContextCommandFakeApp{ .alloc = alloc };
+    defer app.deinit();
+    try app.selected_model.appendSlice(alloc, "test-model");
+
+    try Handlers(ContextCommandFakeApp).commandShowContext(@ptrCast(&app));
+
+    const notice = app.last_notice orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("No context used in this session yet.", notice.body);
+}
 
 fn writeTempSkillFile(tmp: *std.testing.TmpDir, sub_path: []const u8, content: []const u8) !void {
     if (std.fs.path.dirname(sub_path)) |parent| {

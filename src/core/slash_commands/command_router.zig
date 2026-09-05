@@ -21,6 +21,7 @@ pub const ParsedCommand = union(enum) {
     mcp: []const u8,
     skills: []const u8,
     trace,
+    context,
     compact,
     settings: []const u8,
     workspace: []const u8,
@@ -44,6 +45,7 @@ pub const CommandHandlers = struct {
     handle_mcp: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_skills: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     create_trace: *const fn (ctx: *anyopaque) anyerror!void,
+    show_context: *const fn (ctx: *anyopaque) anyerror!void,
     compact_history: *const fn (ctx: *anyopaque) anyerror!void,
     handle_settings: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     rename_session: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
@@ -73,6 +75,7 @@ fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
         .mcp => .{ .mcp = payload },
         .skills => .{ .skills = payload },
         .trace => .trace,
+        .context => .context,
         .compact => .compact,
         .settings => .{ .settings = payload },
         .workspace => .{ .workspace = payload },
@@ -110,6 +113,7 @@ pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []c
         .mcp => |rest| try handlers.handle_mcp(handlers.ctx, rest),
         .skills => |rest| try handlers.handle_skills(handlers.ctx, rest),
         .trace => try handlers.create_trace(handlers.ctx),
+        .context => try handlers.show_context(handlers.ctx),
         .compact => try handlers.compact_history(handlers.ctx),
         .settings => |rest| try handlers.handle_settings(handlers.ctx, rest),
         .workspace => |rest| try handlers.handle_workspace(handlers.ctx, rest),
@@ -212,6 +216,7 @@ test "parse rejects removed upstream-service slash commands" {
 
 test "parse recognizes exact no-payload commands" {
     try std.testing.expectEqual(ParsedCommand.trace, parse(testSlashRegistry(), "/trace"));
+    try std.testing.expectEqual(ParsedCommand.context, parse(testSlashRegistry(), "/context"));
     try std.testing.expectEqual(ParsedCommand.compact, parse(testSlashRegistry(), "/compact"));
 }
 
@@ -248,6 +253,7 @@ test "parse tolerates trailing whitespace on exact-match commands" {
     try std.testing.expectEqual(ParsedCommand.quit, parse(testSlashRegistry(), "/exit \t"));
     try std.testing.expectEqual(ParsedCommand.help, parse(testSlashRegistry(), "/help "));
     try std.testing.expectEqual(ParsedCommand.trace, parse(testSlashRegistry(), "/trace "));
+    try std.testing.expectEqual(ParsedCommand.context, parse(testSlashRegistry(), "/context "));
     try std.testing.expectEqual(ParsedCommand.new_session, parse(testSlashRegistry(), "/clear\t"));
 }
 
@@ -326,6 +332,10 @@ fn recordTrace(ctx: *anyopaque) anyerror!void {
     testContext(ctx).called = "trace";
 }
 
+fn recordContext(ctx: *anyopaque) anyerror!void {
+    testContext(ctx).called = "context";
+}
+
 fn recordResumeSession(ctx: *anyopaque) anyerror!void {
     testContext(ctx).called = "resume";
 }
@@ -379,6 +389,7 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
         .handle_mcp = unexpectedPayload,
         .handle_skills = unexpectedPayload,
         .create_trace = unexpectedNoPayload,
+        .show_context = unexpectedNoPayload,
         .compact_history = unexpectedNoPayload,
         .handle_settings = unexpectedPayload,
         .rename_session = unexpectedPayload,
@@ -395,6 +406,17 @@ test "route calls expected no-payload handler" {
     try route(testSlashRegistry(), &handlers, "/trace");
 
     try std.testing.expectEqualStrings("trace", ctx.called);
+    try std.testing.expectEqualStrings("", ctx.payload);
+}
+
+test "route calls context handler" {
+    var ctx: TestContext = .{};
+    var handlers = testHandlers(&ctx);
+    handlers.show_context = recordContext;
+
+    try route(testSlashRegistry(), &handlers, "/context");
+
+    try std.testing.expectEqualStrings("context", ctx.called);
     try std.testing.expectEqualStrings("", ctx.payload);
 }
 

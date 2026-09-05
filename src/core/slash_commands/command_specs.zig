@@ -41,6 +41,7 @@ pub const SlashKind = enum {
     mcp,
     skills,
     trace,
+    context,
     compact,
     settings,
     workspace,
@@ -1258,9 +1259,9 @@ test "slash completion categories follow canonical entries" {
 test "help catalog groups visible commands and searches all command metadata" {
     const registry = testSlashRegistry();
 
-    try std.testing.expectEqual(@as(usize, 19), helpCatalogCount(registry, ""));
+    try std.testing.expectEqual(@as(usize, 20), helpCatalogCount(registry, ""));
     try std.testing.expectEqualStrings("/help", helpCatalogSpecAt(registry, "", 0).?.command);
-    try std.testing.expectEqual(@as(usize, 3), helpCatalogCategoryCount(registry, "", .general));
+    try std.testing.expectEqual(@as(usize, 4), helpCatalogCategoryCount(registry, "", .general));
     try std.testing.expectEqual(@as(usize, 1), helpCatalogCount(registry, "appearance"));
     try std.testing.expectEqualStrings("/trace", helpCatalogSpecAt(registry, "diagnostic", 0).?.command);
 }
