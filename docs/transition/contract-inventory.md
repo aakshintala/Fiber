@@ -44,9 +44,9 @@ corrected silently throughout. Six findings changed a row's meaning:
 
 **Scope added**
 
-- **`ask --model` and `--effort` do not exist.** `grep -rn '"--model"' src/` and the same for `--effort` return nothing, and neither is in the `ask` spec. The matrix listed both as "present / unchanged", so Slice 4 was sized as two renames and one new flag when it is actually building two flags from scratch. Both remain Phase 3 work — exposing an existing model selection through the CLI is reshaping by `plan.md`'s own example — but the slice is larger than it read.
+- **`ask --model` and `--effort` do not exist.** `grep -rn '"--model"' src/` and the same for `--effort` return nothing, and neither is in the `ask` spec. The matrix listed both as "present / unchanged", so Slice 4 was sized as two renames and one new flag when it is actually building two flags from scratch. Both remain Phase 3 work — exposing an existing model selection through the CLI is reshaping by `plan.md`'s own example — but the slice is larger than it read. **Owner decision (2026-09-04): build both, sized as new work.**
 - **`mcp logout` exists** (`cli_surface.zig:1631`) and had no matrix row, while its pair `mcp auth` did. It must move with `mcp login` or the two spellings diverge.
-- **`/clear` and `/new` are different behaviours**, not two spellings. Slice 10 proposed aliasing them. See that row: it now needs an owner decision, because merging them is a behaviour change rather than reshaping.
+- **`/clear` and `/new` are different behaviours**, not two spellings. Slice 10 proposed aliasing them. **Owner decision (2026-09-04): already resolved at `demolition-inventory.md:456` — `/new` is canonical, `/clear` becomes its alias.** This document had reopened a settled question; see Slice 10's row.
 
 **Scope removed**
 
@@ -326,8 +326,8 @@ catalogs in `builtins/commands.zig`, so the slices cannot run in parallel. The
 per-slice gate is in `AGENTS.md`.
 
 **Step zero is complete** — see "Step-zero audit" under Status. Every row was
-verified at `098aabc8`. Two rows still need an owner decision before their slice
-runs: `/clear` vs `/new` in Slice 10, and the enlarged Slice 4.
+verified at `098aabc8`. Both rows that needed an owner decision — `/clear` vs
+`/new` in Slice 10, and the enlarged Slice 4 — are resolved; see those rows.
 
 **Prerequisite: `demolition-inventory.md` slices 21-23 (ACP removal) land
 first.** Implementing the session, permission, and model contracts while a
@@ -340,20 +340,20 @@ produces. From Slice 2 the gate also asserts that every `--json` command's
 stdout carries `"ok":` and `"kind":`, and that one usage error per command
 family exits 2. Dependency-free `grep`, no `jq`.
 
-| # | Slice | Class |
-| --- | --- | --- |
-| 1 | Signal and unknown-command exit passthrough | contract-shaping |
-| 2 | Output envelope, `kind` registry, `NO_COLOR`, smoke-gate growth | contract-shaping |
-| 3 | Exit-status: parse-layer errors return 2 | contract-shaping |
-| 4 | `ask` flags and the fast decision | additive |
-| 5 | `auth list\|status\|login\|logout` | additive |
-| 6 | `permissions mode` and `permissions rule list\|add\|remove` | additive |
-| 7 | `mcp login` and `mcp --json` | additive |
-| 8 | `session list\|show\|rename\|remove` | additive |
-| 9 | `continue`, resume-alias removal, `--resume-id`, pagination | additive |
-| 10 | Interactive surface: `/retry`, `/new` alias, `/background` | additive |
-| 11 | `debug trace\|replay` parent | additive |
-| 12 | `/context` usage | additive |
+| # | Slice | Class | Status |
+| --- | --- | --- | --- |
+| 1 | Signal and unknown-command exit passthrough | contract-shaping | done, `47bbe883` |
+| 2 | Output envelope, `kind` registry, `NO_COLOR`, smoke-gate growth | contract-shaping | next |
+| 3 | Exit-status: parse-layer errors return 2 | contract-shaping | |
+| 4 | `ask` flags and the fast decision | additive | |
+| 5 | `auth list\|status\|login\|logout` | additive | |
+| 6 | `permissions mode` and `permissions rule list\|add\|remove` | additive | |
+| 7 | `mcp login` and `mcp --json` | additive | |
+| 8 | `session list\|show\|rename\|remove` | additive | |
+| 9 | `continue`, resume-alias removal, `--resume-id`, pagination | additive | |
+| 10 | Interactive surface: `/retry`, `/new` alias, `/background` | additive | |
+| 11 | `debug trace\|replay` parent | additive | |
+| 12 | `/context` usage | additive | |
 
 ## The matrix
 
@@ -365,15 +365,30 @@ Tests name the file that must gain focused coverage, not an existing passing
 test. End-to-end assertions are **not** updated as slices land — see Testing
 below.
 
-### Slice 1 — signal and unknown-command exit passthrough
+### Slice 1 — signal and unknown-command exit passthrough — **done, `47bbe883`**
 
-| Item | Current | Target | Owner | Focused test |
+Paths and line numbers below were stale in every prior revision of this
+document; corrected to match the tree at `47bbe883`. The real files are
+`src/core/cli/cli_surface.zig` and `src/core/app/app_entry_runtime.zig`, not
+`src/cli_surface.zig` / `src/app_entry_runtime.zig`. Assume the same drift is
+possible in any row below that has not yet had its slice land, and re-verify
+before acting on it.
+
+| Item | Current (pre-slice) | Target | Owner | Focused test |
 | --- | --- | --- | --- | --- |
-| `ask` exit code passthrough | `cli_surface.zig:679` collapses non-zero to `.handled_failure` → 1 | returns `.handled_exit = <code>` | `cli_surface.zig` | `cli_surface.zig` |
-| `replay` exit code passthrough | `cli_surface.zig:1216`, same collapse | returns `.handled_exit = <code>` | `cli_surface.zig` | `cli_surface.zig` |
-| SIGINT exit 130 | computed at `cli_ask.zig:104`, discarded | reaches the process | `cli_ask.zig` | `cli_surface.zig` |
-| SIGTERM exit 143 | computed at `cli_ask.zig:105`, discarded | reaches the process | `cli_ask.zig` | `cli_surface.zig` |
-| unknown command exit | `error.UnknownCliCommand` caught into 1 at `app_entry_runtime.zig:154` | exit 2 | `app_entry_runtime.zig` | `app_entry_runtime.zig` |
+| `ask` exit code passthrough | `src/core/cli/cli_surface.zig:675` collapsed non-zero to `.handled_failure` → 1 | returns `.handled_exit = <code>` | `cli_surface.zig` | `cli_surface.zig` |
+| `replay` exit code passthrough | `src/core/cli/cli_surface.zig:1182`, same collapse | returns `.handled_exit = <code>` | `cli_surface.zig` | `cli_surface.zig` |
+| SIGINT exit 130 | computed at `cli_ask.zig:104`, discarded by the collapse above | reaches the process | `cli_ask.zig` | `cli_surface.zig` |
+| SIGTERM exit 143 | computed at `cli_ask.zig:105`, discarded by the collapse above | reaches the process | `cli_ask.zig` | `cli_surface.zig` |
+| unknown command exit | `error.UnknownCliCommand` caught into 1 at `src/core/app/app_entry_runtime.zig:154` (`runBeforeInteractiveWithDeps`) and `:175` (`runBeforeInteractive`, no-deps variant) | exit 2, both sites | `app_entry_runtime.zig` | `app_entry_runtime.zig` |
+
+Landed as four production-line edits plus one new test
+(`"runBeforeInteractiveWithDeps maps unknown cli command to exit 2"` in
+`app_entry_runtime.zig`); mutation-checked. `:154` has no test — no injection
+seam exists without new plumbing, out of scope for this slice; it is a
+one-liner identical to the covered `:175`. Full gate (`zig fmt`, `zig build
+-Doptimize=ReleaseSafe`, `zig build test`, `scripts/smoke.sh`) passes at
+`47bbe883`.
 
 ### Slice 2 — output envelope
 
@@ -426,8 +441,8 @@ exist.
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
 | `--permission-mode <ask\|auto\|yolo>` | `--auto`, `--yolo`, `--prompt-permissions` | single flag; bad value exits 2 | `ask` | `cli_ask.zig` | `cli_ask.zig` |
-| `--model <namespaced-id>` | **absent.** `grep -rn '"--model"' src/` returns nothing and it is not in the `ask` spec (`commands.zig:31-57`). The matrix said "present". | build it; rejects a `:fast` suffix | `ask` | `cli_ask.zig` | `cli_ask.zig` |
-| `--effort <level>` | **absent**, same evidence | build it | `ask` | `cli_ask.zig` | `cli_ask.zig` |
+| `--model <namespaced-id>` | **absent.** `grep -rn '"--model"' src/` returns nothing and it is not in the `ask` spec (`commands.zig:31-57`). The matrix said "present". **Decided (2026-09-04): build it, sized as new work, not a rename.** | build it; rejects a `:fast` suffix | `ask` | `cli_ask.zig` | `cli_ask.zig` |
+| `--effort <level>` | **absent**, same evidence. **Decided (2026-09-04): build it.** | build it | `ask` | `cli_ask.zig` | `cli_ask.zig` |
 | `--retry` | `--continue-recovery` | renamed | `ask` | `cli_ask.zig` | `cli_ask.zig` |
 | `--fast` | unreachable; startup hardcodes false | sets the tier for one invocation | `ask` | `cli_ask.zig` | `cli_ask.zig` |
 | `--timeout` | hidden, undeclared (`cli_ask.zig:3317`), 3 test callers | declared in the spec | `ask` | `commands.zig` | `cli_ask.zig` |
@@ -499,7 +514,7 @@ exist.
 | Item | Current | Target | Owner | Focused test |
 | --- | --- | --- | --- | --- |
 | `/retry` | `/continue` (`commands.zig:325`) | renamed; replays an interrupted turn from its checkpoint | `commands.zig` | `command_router.zig` |
-| `/new` canonical, `/clear` alias | **two kinds with different behaviour**, not two spellings of one. `commands.zig:322` is `.clear_screen` — "start a fresh conversation while keeping managed processes"; `:323` is `.new_session` — "start a fresh session". Aliasing them collapses that difference. | **owner decision required before this slice runs.** Either (a) confirm the behaviours should merge, which is a behaviour change and not reshaping, or (b) keep both kinds and drop this row. | `commands.zig` | `command_router.zig` |
+| `/new` canonical, `/clear` alias | **two kinds with different behaviour**, not two spellings of one. `commands.zig:322` is `.clear_screen` — "start a fresh conversation while keeping managed processes"; `:323` is `.new_session` — "start a fresh session". Aliasing them collapses that difference. | **Decided (2026-09-04), per `demolition-inventory.md:456`: `/new` is canonical, `/clear` is its alias.** The `.clear_screen` behaviour (fresh conversation, managed processes kept) is removed; `/clear` routes to `.new_session`. This is a behaviour change, not reshaping — confirmed by the owner. `/background` (row below) is the separate, unaffected concern for inspecting/terminating managed processes. | `commands.zig` | `command_router.zig` |
 | `/background` | rejected as unknown; confirmed at `command_router.zig:178` and absent from the welcome text (`command_specs.zig:1483`). The `"/background"` in `mods/registry.zig:119` is a test fixture, not a registration. | reachable; inspects and terminates background processes | `commands.zig` | `command_router.zig` |
 | `/undo`, `/trace` | live (`commands.zig:333,336`) | **retained** — recorded owner decisions at `demolition-inventory.md:80,282` | — | — |
 | `/exit` | already aliases `/quit` (`:340`) | unchanged | — | — |
