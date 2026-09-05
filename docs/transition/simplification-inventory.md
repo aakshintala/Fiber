@@ -47,10 +47,11 @@ Run one slice at a time. Before editing, update that slice's removal surface,
 exact searches, caller evidence, and stop conditions from the current tree.
 Keep each slice to one subsystem or about 15 files.
 
-**Recommended order (2026-09-05).** Run 2, 3, 4, 6, 7, 9, 10, 11 first: they are
-near-pure deletions with exact-name absence searches, cheap to verify and cheap
-to delegate. Slice 1 is the largest diff in the phase and the only one needing
-per-site reading, so it benefits from a smaller tree. Slice 12 closes the phase.
+**Recommended order (2026-09-05).** Run 2, 3, 4, 6, 7, 9, 10, 11, 13 first: they
+are near-pure deletions with exact-name absence searches, cheap to verify and
+cheap to delegate. Slice 1 is the largest diff in the phase and the only one
+needing per-site reading, so it benefits from a smaller tree. Slice 12 closes the
+phase.
 
 Evidence for slices 2, 4, 7, 9, 10, 11 and the open decisions comes from
 [`phase4-audit/REPORT.md`](phase4-audit/REPORT.md) — 490 files, 362k production
@@ -349,29 +350,61 @@ test), `stream_provider` (Codex plus deterministic test streams),
 Completion criterion: each of the ten is collapsed or justified with current
 caller and adapter evidence, and the Phase 4 section of `deferred.md` is empty.
 
-## Open decisions for the owner
+### Slice 13: close the discarded provider-selection parameters
 
-Surfaced by the Phase 4 audit and deliberately **not** folded into a slice,
-because each is a product or design call rather than removal of false variation.
+Owner decision, 2026-09-05. The audit found eight sites where provider-related
+parameters are accepted and discarded. They are not one thing; they split on
+**type**, and that is the line.
 
-### The provider-selection parameters
+`ProviderId` is the seam Phase 3 chose and this document already retains.
+A parameter *typed* `ProviderId` is that seam and stays. A parameter encoding
+variation in some other dimension — credential source, manual device-code entry —
+is not, and those dimensions have already collapsed with no planned provider
+reviving them.
 
-Verified dead, but they are the machinery a second model provider would use, and
-OpenCode and Databricks are both planned:
+**Retain and strengthen.** `activateProviderSelection`'s `target: ProviderId`
+(`cli_surface.zig:581`) stays. Replace its `_ = target;` with an exhaustive
+`switch (target) { .codex => {} }`. Identical behavior today; when a second
+variant lands the compiler stops the build instead of silently activating Codex.
+`provider` on `credentials.resolveForProvider` (`:165`) and
+`auth_runtime.loadStatusSnapshotForProvider` (`:299`) are already honored and were
+never in the removal set.
 
-- `src/core/auth/credentials.zig:170` — `resolveForProvider(preferred)`, body starts `_ = preferred;`
-- `src/core/auth/auth_runtime.zig:302` — `loadStatusSnapshotForProvider(preferred)`
-- `src/core/cli/cli_surface.zig:581,582` — `activateProviderSelection(target, caller)`, body starts `_ = caller; _ = target;` and then hardcodes `.codex`
-- `src/core/cli/cli_surface.zig:571` — `writeProviderActivationError` fiber-provider branch
-- `src/ui/footer/picker_presentation.zig:222,331` — `source` parameters
-- `src/ui/footer/model_menu_presentation.zig:410` — `loadedCatalogStatusText` `state.source` read
+**Removal surface:**
 
-This is the same question Slice 5 answered "keep", with one difference worth
-weighing: a `_ = target;` parameter is not merely early, it is actively
-misleading — the signature claims the caller can select a provider and the body
-ignores it. Deleting them is a smaller diff today and more work when Databricks
-lands. Keeping them means the signature keeps lying until then. Either is
-defensible; it needs an owner, not a slice.
+- `src/core/auth/credentials.zig:170` — `preferred: ?Source`; every caller passes
+  `null` (`:162`, `auth_runtime.zig:111,312,929`, `app_lifecycle.zig:367`,
+  `app_auth_runtime.zig:301`, `cli_surface.zig:586`, `cli_ask.zig:1526`,
+  `agent_adapter.zig:149`)
+- `src/core/auth/auth_runtime.zig:302` — `preferred: ?Source`, and the passthrough
+  at `:296`
+- `src/ui/footer/picker_presentation.zig:222` — `signInProjectedRowIndex` `source`
+  and `manual_code_visible`; one caller, `:194`
+- `src/ui/footer/picker_presentation.zig:331` — `composeSignInPickerRow` `source`,
+  `manual_code_visible`, `manual_code_mask_count`; one caller, `:201`. The body
+  hardcodes `subscription_source = true`.
+- `src/ui/footer/model_menu_presentation.zig:410` — `_ = state.source;`, a no-op
+  statement
+- `src/core/cli/cli_surface.zig:558` — `ProviderActivationCaller.provider_command`.
+  No `fiber provider` command exists; Phase 3 did not build one. With the variant
+  gone, `writeProviderActivationError`'s `"fiber provider"` arm (`:571`) is
+  unreachable and its `caller` parameter, and `activateProviderSelection`'s
+  discarded `caller`, stop earning their place.
+
+**Why not keep them under the Slice 5 argument.** Slice 5 kept a working screen —
+real behavior, merely early. These are `_ =` discards: signatures that claim to
+honor something and do not. Re-adding a parameter when Databricks lands is one
+line in a signature, the same line whoever wires it must touch anyway to replace
+the discard with real logic. Keeping them buys nothing and leaves eight
+signatures lying. The exhaustive `switch` on `target` protects the future case,
+and does it better than a discarded parameter did.
+
+Stop if a second `ProviderId` variant lands before this slice starts — then
+`target` gets real logic and the picker parameters may come back with it.
+
+Completion criterion: no `_ =` discard remains among these sites, `target` is
+switched exhaustively, and `fiber auth login --provider codex` behaves exactly as
+before.
 
 ## Explicitly retained seams
 

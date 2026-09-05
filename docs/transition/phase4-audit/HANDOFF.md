@@ -59,15 +59,14 @@ one to read.
 - **Phase 4 changes no user-visible behavior.** That is what lets Phase 5 treat
   every failure as pre-existing. Slice 5 was withdrawn for violating it.
 
-## Open decision waiting on the owner
+## Decisions already made — do not reopen
 
-The provider-selection parameters (`credentials.zig:170`, `auth_runtime.zig:302`,
-`cli_surface.zig:571,581,582`, `picker_presentation.zig:222,331`,
-`model_menu_presentation.zig:410`) are verified dead — several are literally
-`_ = target;` — but they are the machinery OpenCode and Databricks would use, and
-both are planned. Same question as Slice 5, with the wrinkle that a discarded
-parameter actively lies about what the signature does. Not folded into a slice.
-See "Open decisions for the owner" in the inventory.
+- **Slice 5 withdrawn.** The one-item `Connections` sign-in screen stays.
+  OpenCode and Databricks are planned, so it is early rather than false.
+- **Slice 13 settles the discarded provider-selection parameters.** The line is
+  type, not deadness: parameters typed `ProviderId` are the retained seam and
+  stay (with `_ = target;` becoming an exhaustive switch); parameters encoding
+  credential-source or manual-code variation go. Rationale is in the slice.
 
 ## Not Phase 4's work
 
