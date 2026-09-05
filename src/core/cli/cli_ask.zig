@@ -3842,7 +3842,7 @@ fn testModelPromptOverlay(model: []const u8) ?[]const u8 {
 
 fn testConfig() Config {
     return .{
-        .command_usage = "ask [--auto|--yolo] [--image PATH] [--json] [--quiet] [--prompt-permissions] [--no-save] [--no-color] [--resume-id <id>] [--] <prompt>",
+        .command_usage = "ask [--permission-mode <ask|auto|yolo>] [--model <model-id>] [--effort <level>] [--fast] [--image PATH] [--system TEXT] [--json] [--quiet] [--no-save] [--resume-id <id>] [--retry] [--timeout <seconds>] [--] <prompt>",
         .default_model = "model",
         .default_agent_step_limit = 4,
         .gateway_retry_count = 1,

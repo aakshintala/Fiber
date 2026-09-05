@@ -19,9 +19,11 @@ entries at that point means a phase closed without finishing.
 
 ## Phase 3: Contract shaping
 
-| Site | What | Why deferred |
-|---|---|---|
-| `src/core/cli/cli_ask.zig:3793` | `testConfig()`'s synthetic `command_usage` string still contains `[--no-color]`, stale after Slice 2b removed the real flag from `commands.zig`. Inert: nothing asserts on this string's content, it only ever gets printed to a test's captured stderr on a usage-error path that no test greps for the flag text. | Found mid-Slice-2b; fixing it would touch a file already reviewed for that slice's own diff. One line, no behavior. |
+Cleared 2026-09-04 (folded into Slice 8's commit): `cli_ask.zig`'s `testConfig()`
+synthetic `command_usage` string was updated to match the real `ask` usage
+string in `commands.zig` (it had drifted through Slices 2b and 4c — stale
+`--no-color`, and stale `--auto|--yolo`/`--prompt-permissions` from before
+`--permission-mode`). One line, no behavior; nothing asserted on its content.
 
 ## Phase 4: Simplification
 
