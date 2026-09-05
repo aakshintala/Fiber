@@ -349,7 +349,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | 5 | `auth list\|status\|login\|logout` | additive | **done**, `dd7527a1` |
 | 6 | `permissions mode` and `permissions rule list\|add\|remove` | additive | **done**, `2f0690ca` |
 | 7 | `mcp login` and `mcp --json` | additive | **done**, `86188784` |
-| 8 | `session list\|show\|rename\|remove` | additive | |
+| 8 | `session list\|show\|rename\|remove` | additive | **done**, `f7a0a923` |
 | 9 | `continue`, resume-alias removal, `--resume-id`, pagination | additive | |
 | 10 | Interactive surface: `/retry`, `/new` alias, `/background` | additive | |
 | 11 | `debug trace\|replay` parent | additive | |
@@ -700,6 +700,12 @@ skips.
 | `mcp doctor` | absent | **deferred** — see `../enhancements/pending.md` | — | — | — |
 
 ### Slice 8 — `session` subcommands
+
+**Done, `f7a0a923`.** No open product decisions. Rename composes the same
+durable-write sequence as `/rename` (sidecar + index) at the `Store` level
+instead of the app-coupled `renameActiveSession`; remove reuses the
+`resumeTargetForWrite` loader `ask --resume-id` already uses. `zig build
+test --summary all`: 9/9 steps, 7275/7277 passing, 2 pre-existing skips.
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
