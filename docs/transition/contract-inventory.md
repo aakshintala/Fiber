@@ -347,7 +347,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | 3 | Exit-status: parse-layer errors return 2 | contract-shaping | |
 | 4 | `ask` flags and the fast decision | additive | **done** — 4a `83ca601b`, 4b `fb69be33`, 4c `8b9e4277` |
 | 5 | `auth list\|status\|login\|logout` | additive | **done**, `dd7527a1` |
-| 6 | `permissions mode` and `permissions rule list\|add\|remove` | additive | |
+| 6 | `permissions mode` and `permissions rule list\|add\|remove` | additive | **done**, `2f0690ca` |
 | 7 | `mcp login` and `mcp --json` | additive | |
 | 8 | `session list\|show\|rename\|remove` | additive | |
 | 9 | `continue`, resume-alias removal, `--resume-id`, pagination | additive | |
@@ -664,6 +664,13 @@ pre-existing skips.
 | `/login`, `/logout` | present (`commands.zig:327-328`) | **unchanged** — no `/auth` parent | — | — | — |
 
 ### Slice 6 — `permissions`
+
+**Done, `2f0690ca`.** No open product decisions surfaced during grounding —
+every backend piece (`addPermissionRule`/`removePermissionRule`,
+`parsePermissionMode`/`parsePermissionAction`, `loadMergedSettingsDetailed`'s
+`PermissionSourceViews`, `canonicalWebFetchDomainPattern`) already existed
+with zero non-test callers; this slice was pure CLI wiring. `zig build test
+--summary all`: 9/9 steps, 7266/7268 passing, 2 pre-existing skips.
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
