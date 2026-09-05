@@ -394,6 +394,7 @@ const LoadSkillsFn = *const fn (
 const ProcessQueuedPromptFn = *const fn (*agent_runtime.Agent, *const agent_runtime.AgentRuntimeDeps, ?agent_runtime.SemanticPresentationSink, agent_runtime.LifecycleContext, agent_runtime.Config, worker_runtime.QueuedPrompt) anyerror!void;
 const DiscardPristineSessionFn = *const fn (?*anyopaque, *AskContext, *session_store.LoadedWritableSession) session_store.PristineDiscardDisposition;
 const PersistYoloAcknowledgmentFn = *const fn (Allocator) config_runtime.CommitAttempt;
+const GetenvFn = *const fn (?*anyopaque, []const u8) ?[]const u8;
 
 const RunDeps = struct {
     stdin_ctx: ?*anyopaque = null,
@@ -419,6 +420,8 @@ const RunDeps = struct {
     install_headless_interrupt: bool = false,
     start_subagent_background_recovery: bool = true,
     stdin_source: StdinSource = .real,
+    env_ctx: ?*anyopaque = null,
+    getenv: GetenvFn = getenvDefault,
 };
 
 const OutputMode = enum {
@@ -1206,6 +1209,7 @@ fn runWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Config, deps: 
         },
         else => return err,
     };
+    options.no_color = deps.getenv(deps.env_ctx, "NO_COLOR") != null;
     defer options.deinit(alloc);
 
     if (interrupt_scope.requested()) return headless_interrupt.exitCode();
@@ -3325,8 +3329,6 @@ fn parseOptionsWithStdin(alloc: Allocator, args: []const [:0]const u8, stdin: St
             opts.verbose = true;
         } else if (std.mem.eql(u8, arg, "--no-save")) {
             opts.no_save = true;
-        } else if (std.mem.eql(u8, arg, "--no-color")) {
-            opts.no_color = true;
         } else if (std.mem.eql(u8, arg, "--continue-recovery")) {
             if (opts.continue_recovery) return error.InvalidAskArgs;
             opts.continue_recovery = true;
@@ -3672,6 +3674,10 @@ fn writeRealStderr(_: ?*anyopaque, text: []const u8) !void {
     try std.Io.File.stderr().writeStreamingAll(io_mod.getIo(), text);
 }
 
+fn getenvDefault(_: ?*anyopaque, key: []const u8) ?[]const u8 {
+    return io_mod.getenv(key);
+}
+
 const TestCapture = struct {
     bytes: std.ArrayList(u8) = .empty,
 
@@ -3720,6 +3726,10 @@ const TestTty = struct {
         return false;
     }
 };
+
+fn testGetenvNoColor(_: ?*anyopaque, key: []const u8) ?[]const u8 {
+    return if (std.mem.eql(u8, key, "NO_COLOR")) "1" else null;
+}
 
 const TestYoloPersistence = struct {
     var calls: usize = 0;
@@ -4762,7 +4772,6 @@ test "parse options preserves active ask flags and operands" {
         "--quiet",
         "--verbose",
         "--no-save",
-        "--no-color",
         "--timeout",
         "123",
         "hello",
@@ -4776,7 +4785,6 @@ test "parse options preserves active ask flags and operands" {
     try std.testing.expect(options.quiet);
     try std.testing.expect(options.verbose);
     try std.testing.expect(options.no_save);
-    try std.testing.expect(options.no_color);
     try std.testing.expectEqual(@as(?usize, 123 * std.time.ms_per_s), options.timeout_ms);
     try std.testing.expectEqualStrings("second", options.system_prompt_override.?);
     try std.testing.expectEqual(@as(usize, 1), options.image_paths.items.len);
@@ -4942,9 +4950,10 @@ test "headless yolo warning respects acknowledgment and no-color" {
     );
     no_color_deps.stderr_is_tty = TestTty.yes;
     no_color_deps.persist_yolo_acknowledgment = TestYoloPersistence.persist;
+    no_color_deps.getenv = testGetenvNoColor;
     _ = try runWithDeps(
         alloc,
-        &.{ "--no-color", "--yolo", "hello" },
+        &.{ "--yolo", "hello" },
         testConfig(),
         no_color_deps,
     );

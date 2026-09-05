@@ -164,7 +164,7 @@ describe("fiber ask presentation", () => {
     gateways.push(gateway);
 
     const result = await runFx(
-      ["ask", "--json", "--yolo", "--no-save", "--no-color", "Run both commands."],
+      ["ask", "--json", "--yolo", "--no-save", "Run both commands."],
       {
         cwd: root.workspace,
         env: gatewayEnv(root.home, gateway),
@@ -445,42 +445,6 @@ describe("fiber ask presentation", () => {
       expect(pane).not.toContain("# Ask presentation");
       expect(pane).not.toContain("**bold**");
       expect(escaped).toContain("\x1b[");
-    },
-    TIMEOUT,
-  );
-
-  test.skipIf(!tmuxAvailable())(
-    "--no-color keeps the TTY layout without fx styles or hyperlinks",
-    async () => {
-      const root = createRoot();
-      const gateway = startFakeGateway([fakeGatewayFinalText(MARKDOWN)]);
-      gateways.push(gateway);
-
-      const session = await TmuxSession.create({
-        isolated: true,
-        cmd: terminalCommand([
-          "ask",
-          "--no-color",
-          "--no-save",
-          "Render the no-color fixture.",
-        ]),
-        cwd: root.workspace,
-        env: { ...gatewayEnv(root.home, gateway), NO_COLOR: undefined },
-        width: 120,
-        height: 40,
-        remainOnExit: true,
-      });
-      sessions.push(session);
-
-      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
-      const pane = await session.captureFullScrollback();
-      const escaped = await session.captureFullScrollbackEscapes();
-      expect(pane).toContain("Render the no-color fixture.");
-      expect(pane).toContain("Ask presentation");
-      expect(pane).toContain("bold and docs");
-      expect(pane).toContain("const answer: u8 = 42;");
-      expect(escaped).not.toMatch(/\x1b\[[0-9;]*m/);
-      expect(escaped).not.toContain("\x1b]8;");
     },
     TIMEOUT,
   );

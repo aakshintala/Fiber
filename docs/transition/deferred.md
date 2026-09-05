@@ -17,6 +17,12 @@ Phase 6 with the rest of the transition documents, and unlike them it is not
 harvested first — it carries work, not rationale. A section still holding
 entries at that point means a phase closed without finishing.
 
+## Phase 3: Contract shaping
+
+| Site | What | Why deferred |
+|---|---|---|
+| `src/core/cli/cli_ask.zig:3793` | `testConfig()`'s synthetic `command_usage` string still contains `[--no-color]`, stale after Slice 2b removed the real flag from `commands.zig`. Inert: nothing asserts on this string's content, it only ever gets printed to a test's captured stderr on a usage-error path that no test greps for the flag text. | Found mid-Slice-2b; fixing it would touch a file already reviewed for that slice's own diff. One line, no behavior. |
+
 ## Phase 4: Simplification
 
 | Site | What | Why deferred |
