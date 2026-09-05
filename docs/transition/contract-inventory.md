@@ -346,7 +346,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | 2 | Output envelope, `kind` registry, `NO_COLOR`, smoke-gate growth | contract-shaping | **done** — 2a `67538d14`, 2b `afc6cec2` |
 | 3 | Exit-status: parse-layer errors return 2 | contract-shaping | |
 | 4 | `ask` flags and the fast decision | additive | **done** — 4a `83ca601b`, 4b `fb69be33`, 4c `8b9e4277` |
-| 5 | `auth list\|status\|login\|logout` | additive | |
+| 5 | `auth list\|status\|login\|logout` | additive | **done**, `dd7527a1` |
 | 6 | `permissions mode` and `permissions rule list\|add\|remove` | additive | |
 | 7 | `mcp login` and `mcp --json` | additive | |
 | 8 | `session list\|show\|rename\|remove` | additive | |
@@ -600,6 +600,19 @@ sub-slice expected to exceed the usual file-count guideline (31 files) — that
 breadth was inherent in the atomic flag replacement, not scope creep.
 
 ### Slice 5 — `auth`
+
+**Done, `dd7527a1`.** `resolveAuthLoginProvider`'s first draft checked
+`stdin_is_tty` before the single-provider case, so `auth login` with no
+explicit provider would exit 2 in any non-tty context even at today's N=1 —
+a regression from current `fiber login`, which has no tty check at all
+(`chatgpt_oauth.runLogin` needs none). The tty gate only makes sense for the
+genuinely ambiguous >1-provider case; reordered so a single provider
+proceeds unconditionally, tty or not. Caught and fixed in review before
+commit — the delegate's own test had been written around the buggy
+ordering and would, once fixed, have driven a real OAuth attempt instead of
+hitting the error path; replaced with a direct unit test of the resolution
+function. `zig build test --summary all`: 9/9 steps, 7260/7262 passing, 2
+pre-existing skips.
 
 **Owner decisions (2026-09-04):**
 
