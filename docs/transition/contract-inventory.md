@@ -445,12 +445,50 @@ worth chasing further.)
 | `--no-color` | flag parsed at `cli_ask.zig:3328`, declared at `commands.zig:33,44`; `NO_COLOR` env had no effect on `ask` | removed; `NO_COLOR` env now drives `AskOptions.no_color` via a new `RunDeps.getenv` seam | — | `cli_ask.zig` | `cli_ask.zig` |
 | `--no-color` e2e call sites | 36 across 2 files pass it (not 3 files — `cli.test.ts`'s 2 occurrences are a stale `--help` text assertion, left alone) | the 34 incidental ones drop the argument; `ask-presentation.test.ts`'s dedicated `"--no-color keeps the TTY layout..."` test, whose subject *is* the flag, is deleted whole. **Not an assertion rewrite** — see Testing. | — | tests | — |
 
-### Slice 3 — parse-layer errors return 2
+### Slice 3 — parse-layer errors return 2 — **done, `78885737` + worktree**
 
 Scoped by the structural boundary in "Exit status". Post-parse failures are not
 touched, so there is no site-by-site classification and no silent-error surface.
 The completeness check is a grep: every argument-parsing error path reaches
 `.handled_usage_error`, and nothing else does.
+
+Re-verified against the tree before delegating (same pattern as Slices 1-2):
+`RunResult` had no usage-error variant yet, `cli_ask.zig`/`cli_replay.zig` had
+zero `.handled_failure` sites (they return a raw `u8` through `.handled_exit`,
+Slice 1's passthrough), and `writeUsageOrJsonError` turned out to be a real
+single choke point covering 9 of the moved sites. The `--json`-on-non-operational
+row needed no new "operational command" list: every non-operational command
+already rejects `--json` as an ordinary unrecognized argument once its own
+parser runs (`login`/`logout`/`mcp` all confirmed), except `.help`, which
+matched on `args[0]` alone and silently ignored everything after it — the one
+new check this slice added, not a flip of an existing return.
+
+Delegated to `composer-2.5`; 25 `.handled_failure` sites in `cli_surface.zig`
+moved to the new `.handled_usage_error` variant, plus the four shape-error arms
+in `cli_ask.zig` and `replyParseError`'s path in `cli_replay.zig`. One site the
+delegate correctly declined to guess on (`session recover`'s
+`writeUsageOrJsonError` caller, omitted from the delegation prompt by my own
+oversight, not a real ambiguity) fixed directly afterward. `usage`'s
+`HomeNotSet` branch, also flagged by the delegate, correctly stays operational
+(same tier as `mcp path`'s `HomeNotSet`).
+
+Independent re-verification: `zig fmt`, `zig build`, `zig build test` clean,
+completeness grep confirms no missed parse-layer site. **Also ran
+`bun test cli.test.ts`**, which the doc's "Focused test" column never named for
+this slice — 60 of 88 tests failed. Isolated with a baseline worktree at
+pre-slice `HEAD` (`78885737`): 58 of those 60 were already failing before this
+slice touched anything — `tests/e2e/cli.test.ts` was never updated for Slice
+2a's envelope wrap (confirmed: `67538d14` and `afc6cec2` never touch this
+file), so most of its `--json`-shape and several exit-code assertions
+(including `unknown-command exits 1`, stale since Slice 1) have been silently
+broken since Slice 2a landed. Only the remaining 2 were this slice's doing
+(`ask` with no prompt, and the two global-launch-arg parse errors under
+"workspace launch modifiers ... friendly option errors") — both fixed in
+`cli.test.ts` to expect 2. **The other 58 are a pre-existing gap, not fixed
+here** — fixing them means updating dozens of assertions across most of this
+file's describe blocks, out of scope for a slice about exit codes. Flagged for
+the owner to schedule; `bun test cli.test.ts` should be added to every future
+slice's own verification, not just the Zig gate.
 
 | Item | Current | Target | Owner | Focused test |
 | --- | --- | --- | --- | --- |
