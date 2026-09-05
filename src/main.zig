@@ -3247,9 +3247,14 @@ fn needsEarlyThreadedIo(args: []const [:0]const u8) bool {
             std.mem.eql(u8, effective_args[1], "list") or
             std.mem.eql(u8, effective_args[1], "logout");
     }
-    return std.mem.eql(u8, command, "login") or
-        std.mem.eql(u8, command, "logout") or
-        std.mem.eql(u8, command, "upgrade") or
+    if (std.mem.eql(u8, command, "auth")) {
+        if (effective_args.len < 2) return false;
+        return std.mem.eql(u8, effective_args[1], "login") or
+            std.mem.eql(u8, effective_args[1], "logout") or
+            std.mem.eql(u8, effective_args[1], "list") or
+            std.mem.eql(u8, effective_args[1], "status");
+    }
+    return std.mem.eql(u8, command, "upgrade") or
         // Resolve a stored credential, which reads the platform key store out of process.
         std.mem.eql(u8, command, "status") or
         std.mem.eql(u8, command, "doctor") or
@@ -3260,8 +3265,8 @@ test "auth and upgrade commands use early threaded io without full entry config"
     const args = &.{@as([:0]const u8, "upgrade")};
     try std.testing.expect(!needsFullEntryConfig(args));
     try std.testing.expect(needsEarlyThreadedIo(args));
-    try std.testing.expect(needsEarlyThreadedIo(&.{@as([:0]const u8, "login")}));
-    try std.testing.expect(needsEarlyThreadedIo(&.{@as([:0]const u8, "logout")}));
+    try std.testing.expect(needsEarlyThreadedIo(&.{ @as([:0]const u8, "auth"), @as([:0]const u8, "login") }));
+    try std.testing.expect(needsEarlyThreadedIo(&.{ @as([:0]const u8, "auth"), @as([:0]const u8, "logout") }));
 }
 
 test "credential-reading commands use early threaded io without full entry config" {
@@ -3296,6 +3301,7 @@ test "early threaded io is resolved after global launch args" {
     }));
     try std.testing.expect(needsEarlyThreadedIo(&.{
         @as([:0]const u8, "--no-additional-dirs"),
+        @as([:0]const u8, "auth"),
         @as([:0]const u8, "login"),
     }));
 }

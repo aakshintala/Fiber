@@ -8,8 +8,7 @@ const Allocator = std.mem.Allocator;
 pub const TopLevelKind = enum {
     help,
     ask,
-    login,
-    logout,
+    auth,
     status,
     permissions,
     mcp,
@@ -1065,8 +1064,10 @@ test "rendered top-level help is a complete CLI navigation page" {
     try std.testing.expect(std.mem.find(u8, text, "ask <prompt>") != null);
     try std.testing.expect(std.mem.find(u8, text, "Run one noninteractive request") != null);
     try std.testing.expect(std.mem.find(u8, text, "Draft or publish a GitHub issue") == null);
-    try std.testing.expect(std.mem.find(u8, text, "Sign in to Codex") != null);
-    try std.testing.expect(std.mem.find(u8, text, "Sign out of the Codex session") != null);
+    try std.testing.expect(std.mem.find(u8, text, "auth <command>") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Sign in, sign out, and inspect provider") != null);
+    try std.testing.expect(std.mem.find(u8, text, "credentials") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Sign out of the Codex session") == null);
     try std.testing.expect(std.mem.find(u8, text, "Sign in to Vercel or a selected provider") == null);
     try std.testing.expect(std.mem.find(u8, text, "credits|balance") == null);
     try std.testing.expect(std.mem.find(u8, text, "Flags:") != null);
@@ -1102,11 +1103,11 @@ test "rendered top-level help is a complete CLI navigation page" {
 }
 
 test "top-level help summary overrides do not change command-specific help" {
-    const login = try renderTopLevelCommandHelp(std.testing.allocator, testTopLevelRegistry(), .login);
-    defer std.testing.allocator.free(login);
+    const auth = try renderTopLevelCommandHelp(std.testing.allocator, testTopLevelRegistry(), .auth);
+    defer std.testing.allocator.free(auth);
 
-    try std.testing.expect(std.mem.find(u8, login, "Sign in to Codex") != null);
-    try std.testing.expect(std.mem.find(u8, login, "Sign in to Vercel or a selected provider") == null);
+    try std.testing.expect(std.mem.find(u8, auth, "Sign in, sign out, and inspect provider credentials") != null);
+    try std.testing.expect(std.mem.find(u8, auth, "Sign in to Vercel or a selected provider") == null);
 }
 
 test "terminal top-level help adds styling without changing visible content" {

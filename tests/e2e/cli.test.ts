@@ -1383,7 +1383,7 @@ describe("cli: logout", () => {
       try {
         writeSeededChatGptLogin(home, chatGptAccessToken());
 
-        const logout = await runFx(["logout"], {
+        const logout = await runFx(["auth", "logout"], {
           env: {
             ...NO_GATEWAY_AUTH,
             HOME: realpathSync(home),
@@ -1427,7 +1427,7 @@ describe("cli: logout", () => {
         writeSeededChatGptLogin(home, chatGptAccessToken());
         chmodSync(authPath, 0o644);
 
-        const logout = await runFx(["logout"], {
+        const logout = await runFx(["auth", "logout"], {
           env: {
             ...NO_GATEWAY_AUTH,
             HOME: realpathSync(home),
@@ -1461,7 +1461,7 @@ describe("cli: logout", () => {
           HOME: realpathSync(home),
           FIBER_DISABLE_KEYCHAIN: "1",
         };
-        const logout = await runFx(["logout"], { env });
+        const logout = await runFx(["auth", "logout"], { env });
         const status = await runFx(["status", "--json"], { env });
 
         expect(logout.code).toBe(1);
@@ -1490,7 +1490,7 @@ describe("cli: logout", () => {
           VERCEL_OIDC_TOKEN: undefined,
           FIBER_DISABLE_KEYCHAIN: "1",
         };
-        const logout = await runFx(["logout"], { env });
+        const logout = await runFx(["auth", "logout"], { env });
         const status = await runFx(["status", "--json"], { env });
 
         expect(logout.code).toBe(0);

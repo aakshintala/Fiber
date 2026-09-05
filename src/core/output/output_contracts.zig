@@ -28,6 +28,9 @@ pub const OutputFormat = enum {
 };
 
 pub const Kind = enum {
+    auth_list,
+    auth_status,
+    auth_logout,
     status,
     permissions,
     models,
@@ -43,6 +46,9 @@ pub const Kind = enum {
 
     pub fn jsonName(self: Kind) []const u8 {
         return switch (self) {
+            .auth_list => "auth.list",
+            .auth_status => "auth.status",
+            .auth_logout => "auth.logout",
             .status => "status",
             .permissions => "permissions",
             .models => "models",
@@ -830,6 +836,169 @@ pub const ModelListSnapshot = struct {
             .authenticated_credential_rejected => "Your Codex credential was rejected; using the public model catalog.",
             .chatgpt_subscription => "Codex models require an authenticated Codex catalog.",
         };
+    }
+};
+
+pub const AuthListEntry = struct {
+    id: []const u8,
+    name: []const u8,
+    connected: bool,
+};
+
+pub const AuthListSnapshot = struct {
+    providers: []const AuthListEntry,
+
+    pub fn render(self: AuthListSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: AuthListSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print("[auth] {d} provider{s}\n", .{ self.providers.len, if (self.providers.len == 1) "" else "s" });
+        for (self.providers) |entry| {
+            try out.writer.print(" - {s} ({s}) connected={}\n", .{ entry.name, entry.id, entry.connected });
+        }
+        return try out.toOwnedSlice();
+    }
+
+    pub fn renderJson(self: AuthListSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"providers\":[",
+            .{Kind.auth_list.jsonName()},
+        );
+        for (self.providers, 0..) |entry, index| {
+            if (index > 0) try out.writer.writeByte(',');
+            try out.writer.writeAll("{\"id\":");
+            try std.json.Stringify.value(entry.id, .{}, &out.writer);
+            try out.writer.writeAll(",\"name\":");
+            try std.json.Stringify.value(entry.name, .{}, &out.writer);
+            try out.writer.print(",\"connected\":{}}}", .{entry.connected});
+        }
+        try out.writer.writeAll("]}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const AuthStatusSnapshot = struct {
+    provider: model_provider.ProviderId,
+    status: auth_runtime.StatusSnapshot,
+
+    fn providerSlug(self: AuthStatusSnapshot) []const u8 {
+        return provider_catalog.find(self.provider).slug;
+    }
+
+    pub fn render(self: AuthStatusSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: AuthStatusSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print("[auth] provider={s}\n", .{self.providerSlug()});
+        try out.writer.print("[auth] active_source={s}\n", .{self.status.activeSourceLabel()});
+        if (self.status.required_source) |source| {
+            try out.writer.print("[auth] required_source={s}\n", .{credentials.sourceLabel(source)});
+        }
+        try out.writer.print("[auth] chatgpt_connected={}\n", .{self.status.chatgpt_connected});
+        try out.writer.print("[auth] expired={}\n", .{self.status.expired});
+        try out.writer.print("[auth] refreshable={}\n", .{self.status.refreshable()});
+        if (self.status.expires_at_ms) |expires_at_ms| {
+            try out.writer.print("[auth] expires_at_ms={d}\n", .{expires_at_ms});
+        }
+        return try out.toOwnedSlice();
+    }
+
+    pub fn renderJson(self: AuthStatusSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"provider\":",
+            .{Kind.auth_status.jsonName()},
+        );
+        try std.json.Stringify.value(self.providerSlug(), .{}, &out.writer);
+        try out.writer.writeAll(",\"active_source\":");
+        if (self.status.active_source) |source| {
+            try std.json.Stringify.value(credentials.sourceLabel(source), .{}, &out.writer);
+        } else {
+            try out.writer.writeAll("null");
+        }
+        try out.writer.writeAll(",\"required_source\":");
+        if (self.status.required_source) |source| {
+            try std.json.Stringify.value(credentials.sourceLabel(source), .{}, &out.writer);
+        } else {
+            try out.writer.writeAll("null");
+        }
+        try out.writer.print(",\"chatgpt_connected\":{},\"expired\":{},\"refreshable\":{}", .{
+            self.status.chatgpt_connected,
+            self.status.expired,
+            self.status.refreshable(),
+        });
+        try out.writer.writeAll(",\"expires_at_ms\":");
+        if (self.status.expires_at_ms) |expires_at_ms| {
+            try out.writer.print("{d}", .{expires_at_ms});
+        } else {
+            try out.writer.writeAll("null");
+        }
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const AuthLogoutSnapshot = struct {
+    provider: model_provider.ProviderId,
+    result: enum {
+        deleted,
+        missing,
+    },
+
+    fn providerSlug(self: AuthLogoutSnapshot) []const u8 {
+        return provider_catalog.find(self.provider).slug;
+    }
+
+    fn providerName(self: AuthLogoutSnapshot) []const u8 {
+        return provider_catalog.find(self.provider).name;
+    }
+
+    pub fn render(self: AuthLogoutSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: AuthLogoutSnapshot, alloc: Allocator) ![]u8 {
+        return switch (self.result) {
+            .deleted => std.fmt.allocPrint(alloc, "Signed out of {s}.\n", .{self.providerName()}),
+            .missing => std.fmt.allocPrint(alloc, "No {s} login session found.\n", .{self.providerName()}),
+        };
+    }
+
+    pub fn renderJson(self: AuthLogoutSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"provider\":",
+            .{Kind.auth_logout.jsonName()},
+        );
+        try std.json.Stringify.value(self.providerSlug(), .{}, &out.writer);
+        try out.writer.writeAll(",\"result\":");
+        try std.json.Stringify.value(@tagName(self.result), .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
     }
 };
 
@@ -2006,6 +2175,47 @@ test "core model list snapshot handles limits and empty lists" {
     try std.testing.expectEqualStrings(
         "{\"ok\":true,\"kind\":\"models\",\"data\":{\"count\":0,\"shown_count\":0,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[]}}",
         empty_json,
+    );
+}
+
+test "auth list and status snapshots render stable text and json" {
+    const providers = [_]AuthListEntry{
+        .{ .id = "codex", .name = "Codex", .connected = true },
+    };
+    const list_text = try (AuthListSnapshot{ .providers = &providers }).renderText(std.testing.allocator);
+    defer std.testing.allocator.free(list_text);
+    try std.testing.expectEqualStrings(
+        "[auth] 1 provider\n - Codex (codex) connected=true\n",
+        list_text,
+    );
+
+    const list_json = try (AuthListSnapshot{ .providers = &providers }).renderJson(std.testing.allocator);
+    defer std.testing.allocator.free(list_json);
+    try std.testing.expectEqualStrings(
+        "{\"ok\":true,\"kind\":\"auth.list\",\"data\":{\"providers\":[{\"id\":\"codex\",\"name\":\"Codex\",\"connected\":true}]}}",
+        list_json,
+    );
+
+    const status = AuthStatusSnapshot{
+        .provider = .codex,
+        .status = .{
+            .active_source = .chatgpt_subscription,
+            .chatgpt_connected = true,
+            .expires_at_ms = 1_700_000_000_000,
+        },
+    };
+    const status_text = try status.renderText(std.testing.allocator);
+    defer std.testing.allocator.free(status_text);
+    try std.testing.expectEqualStrings(
+        "[auth] provider=codex\n[auth] active_source=Codex subscription\n[auth] chatgpt_connected=true\n[auth] expired=false\n[auth] refreshable=true\n[auth] expires_at_ms=1700000000000\n",
+        status_text,
+    );
+
+    const status_json = try status.renderJson(std.testing.allocator);
+    defer std.testing.allocator.free(status_json);
+    try std.testing.expectEqualStrings(
+        "{\"ok\":true,\"kind\":\"auth.status\",\"data\":{\"provider\":\"codex\",\"active_source\":\"Codex subscription\",\"required_source\":null,\"chatgpt_connected\":true,\"expired\":false,\"refreshable\":true,\"expires_at_ms\":1700000000000}}",
+        status_json,
     );
 }
 

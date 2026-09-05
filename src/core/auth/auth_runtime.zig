@@ -256,6 +256,7 @@ pub const StatusSnapshot = struct {
     /// The active credential is past its refresh deadline. Distinct from `refreshable`,
     /// which answers whether this source type can refresh at all.
     expired: bool = false,
+    expires_at_ms: ?i64 = null,
 
     pub fn activeSourceLabel(self: StatusSnapshot) []const u8 {
         return sourceLabelOrMissing(self.active_source);
@@ -328,6 +329,7 @@ pub fn loadStatusSnapshotForProvider(
             .active_source = credential.source,
             .chatgpt_connected = chatgpt_connected,
             .expired = credential.needsRefreshAt(io_mod.milliTimestamp()),
+            .expires_at_ms = credential.refresh_after_ms,
         };
     }
     return .{

@@ -56,16 +56,17 @@ pub const top_level_specs = [_]TopLevelSpec{
         },
     },
     .{
-        .kind = .login,
-        .token = "login",
-        .usage = "login [codex]",
-        .summary = "Sign in to Codex",
-    },
-    .{
-        .kind = .logout,
-        .token = "logout",
-        .usage = "logout [codex]",
-        .summary = "Sign out of the Codex session",
+        .kind = .auth,
+        .token = "auth",
+        .usage = "auth <command> ...",
+        .summary = "Sign in, sign out, and inspect provider credentials",
+        .details = &.{
+            "Commands:",
+            "  fiber auth list [--json]",
+            "  fiber auth status [<provider>] [--json]",
+            "  fiber auth login [<provider>]",
+            "  fiber auth logout [<provider>] [--json]",
+        },
     },
     .{
         .kind = .status,
@@ -228,8 +229,7 @@ pub const top_level_help_groups = [_]TopLevelHelpGroup{
         .{ .usage = "session recover <id>", .summary = "Copy a recoverable corrupt session" },
     } },
     .{ .entries = &.{
-        .{ .kind = .login, .usage = "login [codex]", .summary = "Sign in to Codex" },
-        .{ .kind = .logout, .usage = "logout [codex]", .summary = "Sign out of the Codex session" },
+        .{ .kind = .auth, .usage = "auth <command> ...", .summary = "Sign in, sign out, and inspect provider credentials" },
         .{ .kind = .models, .usage = "models" },
     } },
     .{ .entries = &.{

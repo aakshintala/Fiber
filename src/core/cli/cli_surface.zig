@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const app_lifecycle = @import("../app/app_lifecycle.zig");
 const chatgpt_oauth = @import("../auth/chatgpt_oauth.zig");
+const auth_runtime = @import("../auth/auth_runtime.zig");
 const cli_ask = @import("cli_ask.zig");
 const cli_replay = @import("cli_replay.zig");
 const command_specs = @import("../slash_commands/command_specs.zig");
@@ -54,8 +55,7 @@ pub const Command = union(enum) {
     interactive,
     help,
     ask: []const [:0]const u8,
-    login: []const [:0]const u8,
-    logout: []const [:0]const u8,
+    auth: []const [:0]const u8,
     status: []const [:0]const u8,
     permissions: []const [:0]const u8,
     mcp: []const [:0]const u8,
@@ -251,13 +251,16 @@ const LoadStartupStatusFn = *const fn (Allocator, []const u8, usize) anyerror!ap
 const GetenvFn = *const fn (?*anyopaque, []const u8) ?[]const u8;
 const EnvironMapFn = *const fn (?*anyopaque) ?*const std.process.Environ.Map;
 const SelfExePathFn = *const fn (?*anyopaque, Allocator) anyerror![]u8;
+const IsTtyFn = *const fn (?*anyopaque) bool;
 const RunDeps = struct {
     stdout_ctx: ?*anyopaque = null,
     stderr_ctx: ?*anyopaque = null,
+    stdin_ctx: ?*anyopaque = null,
     env_ctx: ?*anyopaque = null,
     self_exe_ctx: ?*anyopaque = null,
     write_stdout: WriteFn = writeRealStdout,
     write_stderr: WriteFn = writeRealStderr,
+    stdin_is_tty: IsTtyFn = realStdinIsTty,
     load_startup_state: LoadStartupStateFn = app_lifecycle.loadStartupState,
     load_catalog_startup_state: LoadCatalogStartupStateFn = app_lifecycle.loadCatalogStartupState,
     load_startup_state_without_credentials: LoadStartupStateWithoutCredentialsFn = app_lifecycle.loadStartupStateWithoutCredentials,
@@ -372,15 +375,13 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
             if (command_specs.matchesTopLevel(command_catalog, command, .help)) return .help;
         },
         'a' => {
+            if (command_specs.matchesTopLevel(command_catalog, command, .auth)) return .{ .auth = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .ask)) return .{ .ask = args[1..] };
         },
         'd' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .doctor)) return .{ .doctor = args[1..] };
         },
-        'l' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .login)) return .{ .login = args[1..] };
-            if (command_specs.matchesTopLevel(command_catalog, command, .logout)) return .{ .logout = args[1..] };
-        },
+        'l' => {},
         'm' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .mcp)) return .{ .mcp = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .models)) return .{ .models = args[1..] };
@@ -529,7 +530,7 @@ fn writeProviderActivationError(
     const message = try std.fmt.allocPrint(
         alloc,
         "{s}: {s}\n",
-        .{ if (caller == .provider_login) "fiber login" else "fiber provider", detail },
+        .{ if (caller == .provider_login) "fiber auth login" else "fiber provider", detail },
     );
     defer alloc.free(message);
     try writeStderr(deps, message);
@@ -680,55 +681,8 @@ fn runNonInteractiveWithDeps(
             const exit_code = try cli_ask.run(alloc, rest, workflowConfigWithLaunchModifiers(cfg, global_args.modifiers), cfg.context_registry, cfg.tool_set);
             return .{ .handled_exit = exit_code };
         },
-        .login => |rest| {
-            const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fiber login [codex]\n");
-                return .handled_usage_error;
-            };
-            _ = maybe_login_provider;
-            chatgpt_oauth.runLogin(
-                alloc,
-                cfg.gateway_provider.oauth_transport,
-                cfg.url_opener,
-            ) catch |err| {
-                const message = switch (err) {
-                    error.ChatGptLoginTimedOut => "fiber login: Codex authorization expired; run fiber login codex again\n",
-                    error.ChatGptAuthorizationFailed => "fiber login: Codex authorization denied\n",
-                    else => "fiber login: failed to sign in with Codex\n",
-                };
-                try writeStderr(deps, message);
-                return .handled_failure;
-            };
-            if (!try activateProviderSelection(alloc, cfg, deps, .codex, .provider_login)) {
-                return .handled_failure;
-            }
-            try writeStdout(deps, "Signed in with Codex.\n");
-            return .handled_success;
-        },
-        .logout => |rest| {
-            const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fiber logout [codex]\n");
-                return .handled_usage_error;
-            };
-            _ = maybe_login_provider;
-            const outcome = chatgpt_oauth.logout() catch {
-                try writeStderr(deps, "fiber logout: failed to durably remove saved Codex login\n");
-                return .handled_failure;
-            };
-            return switch (outcome) {
-                .deleted => result: {
-                    try writeStdout(deps, "Signed out of Codex.\n");
-                    break :result .handled_success;
-                },
-                .missing => result: {
-                    try writeStdout(deps, "No Codex login session found.\n");
-                    break :result .handled_success;
-                },
-                .deleted_not_durable => result: {
-                    try writeStderr(deps, "fiber logout: failed to durably remove saved Codex login\n");
-                    break :result .handled_failure;
-                },
-            };
+        .auth => |rest| {
+            return runTopLevelAuth(alloc, rest, cfg, deps);
         },
 
         .status => |rest| {
@@ -1366,6 +1320,10 @@ fn writeRealStderr(_: ?*anyopaque, text: []const u8) !void {
     try std.Io.File.stderr().writeStreamingAll(io_mod.getIo(), text);
 }
 
+fn realStdinIsTty(_: ?*anyopaque) bool {
+    return std.Io.File.stdin().isTty(io_mod.getIo()) catch false;
+}
+
 fn writeFdAll(fd: std.posix.fd_t, text: []const u8) !void {
     @setRuntimeSafety(false);
     var remaining = text;
@@ -1437,6 +1395,292 @@ fn loadMcpCommandRuntime(
         .{ .form = true, .url = true },
     );
     return .{ .startup = startup, .runtime = runtime };
+}
+
+const AuthSurfaceOptions = struct {
+    format: output_contracts.OutputFormat = .text,
+    provider: ?model_provider.ProviderId = null,
+};
+
+fn parseAuthSurfaceArgs(args: []const [:0]const u8) !AuthSurfaceOptions {
+    var options: AuthSurfaceOptions = .{};
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (options.provider != null) return error.InvalidAuthArgs;
+        options.provider = provider_catalog.parse(arg) orelse return error.InvalidAuthArgs;
+    }
+    return options;
+}
+
+fn parseAuthListArgs(args: []const [:0]const u8) !output_contracts.OutputFormat {
+    if (args.len == 0) return .text;
+    if (args.len == 1 and std.mem.eql(u8, args[0], "--json")) return .json;
+    return error.InvalidAuthArgs;
+}
+
+fn providerConnected(alloc: Allocator, provider: model_provider.ProviderId) !bool {
+    return switch (provider) {
+        .codex => chatgpt_oauth.sourceExists(alloc) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => false,
+        },
+    };
+}
+
+fn loadConfiguredAuthProvider(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+) !model_provider.ProviderId {
+    var startup = try deps.load_startup_state_without_credentials(
+        alloc,
+        cfg.default_model,
+        cfg.default_agent_step_limit,
+    );
+    defer startup.deinit(alloc);
+    return startup.provider;
+}
+
+fn defaultAuthProvider(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+) !model_provider.ProviderId {
+    if (provider_catalog.entries.len == 1) return provider_catalog.entries[0].id;
+    return loadConfiguredAuthProvider(alloc, cfg, deps);
+}
+
+fn resolveAuthProvider(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    maybe_provider: ?model_provider.ProviderId,
+) !model_provider.ProviderId {
+    if (maybe_provider) |provider| return provider;
+    return defaultAuthProvider(alloc, cfg, deps);
+}
+
+fn writeSupportedAuthProviders(deps: RunDeps) !void {
+    try writeStderr(deps, "Supported providers:\n");
+    for (&provider_catalog.entries) |*entry| {
+        try writeStderr(deps, "  ");
+        try writeStderr(deps, entry.slug);
+        try writeStderr(deps, " — ");
+        try writeStderr(deps, entry.name);
+        try writeStderr(deps, "\n");
+    }
+}
+
+fn writeAuthLoginNonInteractiveError(deps: RunDeps) !void {
+    try writeStderr(deps, "fiber auth login: no provider and stdin is not a tty\n");
+    try writeSupportedAuthProviders(deps);
+}
+
+fn pickAuthProviderInteractive(deps: RunDeps) !model_provider.ProviderId {
+    try writeStderr(deps, "Select a provider:\n");
+    for (&provider_catalog.entries, 0..) |*entry, index| {
+        var line_buf: [128]u8 = undefined;
+        const line = try std.fmt.bufPrint(
+            &line_buf,
+            "  {d}. {s} ({s})\n",
+            .{ index + 1, entry.name, entry.slug },
+        );
+        try writeStderr(deps, line);
+    }
+    try writeStderr(deps, "Enter number: ");
+
+    var read_buffer: [256]u8 = undefined;
+    var reader = std.Io.File.stdin().reader(io_mod.getIo(), &read_buffer);
+    const line = reader.takeDelimiter('\n') catch |err| switch (err) {
+        error.StreamTooLong, error.EndOfStream => return error.InvalidAuthProviderSelection,
+    };
+    const trimmed = std.mem.trim(u8, line, " \t\r\n");
+    const selected = std.fmt.parseInt(usize, trimmed, 10) catch return error.InvalidAuthProviderSelection;
+    if (selected == 0 or selected > provider_catalog.entries.len) return error.InvalidAuthProviderSelection;
+    return provider_catalog.entries[selected - 1].id;
+}
+
+fn resolveAuthLoginProvider(
+    deps: RunDeps,
+    maybe_provider: ?model_provider.ProviderId,
+) !model_provider.ProviderId {
+    if (maybe_provider) |provider| return provider;
+    // Only ambiguous when >1 provider exists: a single provider proceeds
+    // unconditionally, tty or not, matching today's `fiber login` behavior
+    // (no tty check at all) for the one case that's actually reachable.
+    if (provider_catalog.entries.len == 1) return provider_catalog.entries[0].id;
+    if (!deps.stdin_is_tty(deps.stdin_ctx)) return error.ProviderRequiredNonInteractive;
+    return pickAuthProviderInteractive(deps);
+}
+
+fn runProviderLogin(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    provider: model_provider.ProviderId,
+) !RunResult {
+    const provider_name = provider_catalog.find(provider).name;
+    switch (provider) {
+        .codex => {
+            chatgpt_oauth.runLogin(
+                alloc,
+                cfg.gateway_provider.oauth_transport,
+                cfg.url_opener,
+            ) catch |err| {
+                const message = switch (err) {
+                    error.ChatGptLoginTimedOut => "fiber auth login: Codex authorization expired; run fiber auth login codex again\n",
+                    error.ChatGptAuthorizationFailed => "fiber auth login: Codex authorization denied\n",
+                    else => "fiber auth login: failed to sign in with Codex\n",
+                };
+                try writeStderr(deps, message);
+                return .handled_failure;
+            };
+        },
+    }
+    if (!try activateProviderSelection(alloc, cfg, deps, provider, .provider_login)) {
+        return .handled_failure;
+    }
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try out.writer.print("Signed in with {s}.\n", .{provider_name});
+    try writeStdout(deps, out.written());
+    return .handled_success;
+}
+
+fn runProviderLogout(
+    alloc: Allocator,
+    deps: RunDeps,
+    provider: model_provider.ProviderId,
+    format: output_contracts.OutputFormat,
+) !RunResult {
+    const provider_name = provider_catalog.find(provider).name;
+    const outcome = switch (provider) {
+        .codex => chatgpt_oauth.logout() catch {
+            var message: std.Io.Writer.Allocating = .init(alloc);
+            defer message.deinit();
+            try message.writer.print(
+                "fiber auth logout: failed to durably remove saved {s} login\n",
+                .{provider_name},
+            );
+            try writeStderr(deps, message.written());
+            return .handled_failure;
+        },
+    };
+    return switch (outcome) {
+        .deleted, .missing => result: {
+            const snapshot = output_contracts.AuthLogoutSnapshot{
+                .provider = provider,
+                .result = switch (outcome) {
+                    .deleted => .deleted,
+                    .missing => .missing,
+                    .deleted_not_durable => unreachable,
+                },
+            };
+            const text = try snapshot.render(alloc, format);
+            defer alloc.free(text);
+            try writeFormattedOutput(deps, text, format);
+            break :result .handled_success;
+        },
+        .deleted_not_durable => result: {
+            var message: std.Io.Writer.Allocating = .init(alloc);
+            defer message.deinit();
+            try message.writer.print(
+                "fiber auth logout: failed to durably remove saved {s} login\n",
+                .{provider_name},
+            );
+            try writeStderr(deps, message.written());
+            break :result .handled_failure;
+        },
+    };
+}
+
+fn runTopLevelAuth(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    if (rest.len == 0) {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+        return .handled_usage_error;
+    }
+    const operation = rest[0];
+    if (std.mem.eql(u8, operation, "list")) {
+        const format = parseAuthListArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .auth, output_contracts.Kind.auth_list.jsonName(), err, rest[1..]);
+            return .handled_usage_error;
+        };
+        var entries: [provider_catalog.entries.len]output_contracts.AuthListEntry = undefined;
+        var count: usize = 0;
+        for (&provider_catalog.entries) |*entry| {
+            entries[count] = .{
+                .id = entry.slug,
+                .name = entry.name,
+                .connected = try providerConnected(alloc, entry.id),
+            };
+            count += 1;
+        }
+        const text = try (output_contracts.AuthListSnapshot{
+            .providers = entries[0..count],
+        }).render(alloc, format);
+        defer alloc.free(text);
+        try writeFormattedOutput(deps, text, format);
+        return .handled_success;
+    }
+    if (std.mem.eql(u8, operation, "status")) {
+        const opts = parseAuthSurfaceArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .auth, output_contracts.Kind.auth_status.jsonName(), err, rest[1..]);
+            return .handled_usage_error;
+        };
+        const provider = resolveAuthProvider(alloc, cfg, deps, opts.provider) catch {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+            return .handled_usage_error;
+        };
+        const status = try auth_runtime.loadStatusSnapshotForProvider(alloc, provider, null);
+        const text = try (output_contracts.AuthStatusSnapshot{
+            .provider = provider,
+            .status = status,
+        }).render(alloc, opts.format);
+        defer alloc.free(text);
+        try writeFormattedOutput(deps, text, opts.format);
+        return .handled_success;
+    }
+    if (std.mem.eql(u8, operation, "login")) {
+        if (argsContainJson(rest[1..])) {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+            return .handled_usage_error;
+        }
+        const maybe_provider = parseLoginProvider(rest[1..]) catch {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+            return .handled_usage_error;
+        };
+        const provider = resolveAuthLoginProvider(deps, maybe_provider) catch |err| {
+            if (err == error.ProviderRequiredNonInteractive) {
+                try writeAuthLoginNonInteractiveError(deps);
+            } else {
+                try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+            }
+            return .handled_usage_error;
+        };
+        return runProviderLogin(alloc, cfg, deps, provider);
+    }
+    if (std.mem.eql(u8, operation, "logout")) {
+        const opts = parseAuthSurfaceArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .auth, output_contracts.Kind.auth_logout.jsonName(), err, rest[1..]);
+            return .handled_usage_error;
+        };
+        const provider = resolveAuthProvider(alloc, cfg, deps, opts.provider) catch {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+            return .handled_usage_error;
+        };
+        return runProviderLogout(alloc, deps, provider, opts.format);
+    }
+
+    try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+    return .handled_usage_error;
 }
 
 fn runTopLevelMcp(
@@ -2669,6 +2913,10 @@ test "parse recognizes every top-level command and preserves unknown commands" {
     }
     switch (parse(command_catalog, &.{ @constCast("mcp"), @constCast("add"), @constCast("fixture"), @constCast("node") })) {
         .mcp => |rest| try std.testing.expectEqual(@as(usize, 3), rest.len),
+        else => return error.TestExpectedEqual,
+    }
+    switch (parse(command_catalog, &.{ @constCast("auth"), @constCast("list") })) {
+        .auth => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{@constCast("doctor")})) {
@@ -4065,3 +4313,68 @@ const ModelFetchProbe = struct {
         } };
     }
 };
+
+const TestTty = struct {
+    fn yes(_: ?*anyopaque) bool {
+        return true;
+    }
+
+    fn no(_: ?*anyopaque) bool {
+        return false;
+    }
+};
+
+test "resolveAuthLoginProvider proceeds without a tty when only one provider exists" {
+    // A single provider is unambiguous: `fiber auth login` must proceed without
+    // a tty, matching today's `fiber login` (no tty check at all). The tty gate
+    // (writeAuthLoginNonInteractiveError) only guards the >1-provider case,
+    // which is unreachable while provider_catalog.entries has one entry.
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+    var deps = capture.deps();
+    deps.stdin_is_tty = TestTty.no;
+
+    const provider = try resolveAuthLoginProvider(deps, null);
+    try std.testing.expectEqual(model_provider.ProviderId.codex, provider);
+    try std.testing.expectEqualStrings("", capture.stderr.written());
+}
+
+test "auth login rejects --json" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("auth"), @constCast("login"), @constCast("--json") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+}
+
+test "auth list renders provider catalog json" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("auth"), @constCast("list"), @constCast("--json") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_success, result);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"kind\":\"auth.list\"") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"id\":\"codex\"") != null);
+}
+
+test "auth logout argument parsing accepts provider and json" {
+    const opts = try parseAuthSurfaceArgs(&.{ @constCast("codex"), @constCast("--json") });
+    try std.testing.expectEqual(model_provider.ProviderId.codex, opts.provider.?);
+    try std.testing.expectEqual(output_contracts.OutputFormat.json, opts.format);
+}
+
+test "parseLoginProvider accepts a single provider token" {
+    try std.testing.expectEqual(model_provider.ProviderId.codex, (try parseLoginProvider(&.{@constCast("codex")})).?);
+    try std.testing.expect((try parseLoginProvider(&.{})) == null);
+    try std.testing.expectError(error.InvalidLoginProviderArgs, parseLoginProvider(&.{ @constCast("codex"), @constCast("extra") }));
+}
