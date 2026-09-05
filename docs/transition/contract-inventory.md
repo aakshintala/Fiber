@@ -343,7 +343,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | # | Slice | Class | Status |
 | --- | --- | --- | --- |
 | 1 | Signal and unknown-command exit passthrough | contract-shaping | done, `47bbe883` |
-| 2 | Output envelope, `kind` registry, `NO_COLOR`, smoke-gate growth | contract-shaping | next |
+| 2 | Output envelope, `kind` registry, `NO_COLOR`, smoke-gate growth | contract-shaping | 2a done, `67538d14`; 2b (`--no-color` + e2e) next |
 | 3 | Exit-status: parse-layer errors return 2 | contract-shaping | |
 | 4 | `ask` flags and the fast decision | additive | |
 | 5 | `auth list\|status\|login\|logout` | additive | |
@@ -392,7 +392,21 @@ one-liner identical to the covered `:175`. Full gate (`zig fmt`, `zig build
 
 ### Slice 2 — output envelope
 
-| Item | Current | Target | JSON `kind` | Owner | Focused test |
+Split into two delegated passes for blast-radius reasons: 2a is pure
+additive reshaping (registry + 13 renderer sites + Zig unit tests +
+smoke.sh), 2b deletes a flag and touches 39 e2e call sites. Same slice
+number, same matrix rows — the split is an execution detail, not a scope
+change.
+
+**2a — done, `67538d14`.** `Kind` enum landed in `output_contracts.zig`
+(`jsonName()` per member); every site below and every `CommandFailureSnapshot`
+construction site across `cli_surface.zig` (22), `cli_ask.zig`, and
+`cli_replay.zig` reference it instead of a bare literal. Full gate
+(`zig fmt`, `zig build -Doptimize=ReleaseSafe`, `zig build test
+-Doptimize=ReleaseSafe`, `scripts/smoke.sh`) independently re-verified
+clean, not just taken on the delegate's word.
+
+| Item | Current (pre-slice) | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
 | envelope, success | bare snapshot object | `{"ok":true,"kind":..,"data":{..}}` | — | `output_contracts.zig` | `output_contracts.zig` |
 | envelope, failure | `{kind,error,code}` | `{"ok":false,"kind":..,"error":..,"code":..}` | — | `output_contracts.zig` | `output_contracts.zig` |
@@ -401,18 +415,23 @@ one-liner identical to the covered `:175`. Full gate (`zig fmt`, `zig build
 | `permissions --json` | flat (`:667`) | enveloped | `permissions` | `output_contracts.zig` | `output_contracts.zig` |
 | `models --json` | flat (`:762`) | enveloped | `models` | `output_contracts.zig` | `output_contracts.zig` |
 | `doctor --json` | flat (`:1228`) | enveloped | `doctor` | `output_contracts.zig` | `output_contracts.zig` |
-| `sessions --json` | flat (`:848`) | enveloped | `session.list` | `output_contracts.zig` | `output_contracts.zig` |
-| `session --json` (summary) | flat (`:987`) | enveloped | `session.show` | `output_contracts.zig` | `output_contracts.zig` |
-| `session --json` (detail) | flat (`:1074`) | enveloped | `session.show` | `output_contracts.zig` | `output_contracts.zig` |
-| `session recover --json` | flat (`:1150`) | enveloped | `session.recover` | `output_contracts.zig` | `output_contracts.zig` |
+| `sessions --json` | flat (`:848`) | enveloped | `session.list` (**renamed** from `sessions`) | `output_contracts.zig` | `output_contracts.zig` |
+| `session --json` (summary) | flat (`:987`) | enveloped | `session.show` (**renamed** from `session_summary`) | `output_contracts.zig` | `output_contracts.zig` |
+| `session --json` (detail) | flat (`:1074`) | enveloped | `session.show` (**renamed** from `session_detail`; same target as summary, two shapes, by design) | `output_contracts.zig` | `output_contracts.zig` |
+| `session recover --json` | flat (`:1150`) | enveloped | `session.recover` (**renamed** from `session_recovery`) | `output_contracts.zig` | `output_contracts.zig` |
 | `usage --json` | flat (`:133`) | enveloped | `usage` | `output_contracts.zig` | `output_contracts.zig` |
 | `upgrade --json` | flat (`:1343`) | enveloped | `upgrade` | `output_contracts.zig` | `output_contracts.zig` |
 | `workspace --json` | flat (`:325`) | enveloped | `workspace` | `output_contracts.zig` | `output_contracts.zig` |
-| `ask --json` | hand-built object (`cli_ask.zig:3475`) | enveloped | `ask` | `cli_ask.zig` | `cli_ask.zig` |
-| `replay --json` | inline object (`cli_replay.zig:111`) | enveloped | `debug.replay` | `cli_replay.zig` | `cli_replay.zig` |
+| `ask --json` | hand-built object (`cli_ask.zig:3475`), no `kind` field; error path was a bespoke shape, not `CommandFailureSnapshot` | enveloped; error path now routes through `CommandFailureSnapshot` | `ask` (**new**) | `cli_ask.zig` | `cli_ask.zig` |
+| `replay --json` | inline object (`cli_replay.zig:111`), no `kind` field on success; failure already used `CommandFailureSnapshot` with `kind = "replay"` | enveloped | `debug.replay` (**new** on success, **renamed** from `replay` on failure) | `cli_replay.zig` | `cli_replay.zig` |
+| smoke gate | exit codes only | also asserts `"ok":`/`"kind":` and one exit-2 case | — | `scripts/smoke.sh` | the gate is the test |
+
+**2b — not started.**
+
+| Item | Current | Target | JSON `kind` | Owner | Focused test |
+| --- | --- | --- | --- | --- | --- |
 | `--no-color` | flag parsed at `cli_ask.zig:3327`, declared at `commands.zig:33,44` | removed; `NO_COLOR` env only | — | `cli_ask.zig` | `cli_ask.zig` |
 | `--no-color` e2e call sites | 39 across 3 files pass it | the 38 incidental ones drop the argument; `ask-presentation.test.ts:453`, whose subject *is* the flag, is deleted. **Not an assertion rewrite** — see Testing. | — | tests | — |
-| smoke gate | exit codes only | also asserts `"ok":`/`"kind":` and one exit-2 case | — | `scripts/smoke.sh` | the gate is the test |
 
 ### Slice 3 — parse-layer errors return 2
 
