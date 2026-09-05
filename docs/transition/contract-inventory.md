@@ -352,7 +352,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | 8 | `session list\|show\|rename\|remove` | additive | **done**, `f7a0a923` |
 | 9 | `continue`, resume-alias removal, `--resume-id`, pagination | additive | **done**, `3f8cf352` |
 | 10 | Interactive surface: `/retry`, `/new` alias, `/background` | additive | **`/retry`/`/new` done**, `99b352a5`; `/background` deferred to `../enhancements/pending.md` |
-| 11 | `debug trace\|replay` parent | additive | |
+| 11 | `debug trace\|replay` parent | additive | **`debug replay` done**, `ac625872`; `debug trace` deferred to `../enhancements/pending.md` |
 | 12 | `/context` usage | additive | |
 
 ## The matrix
@@ -755,10 +755,18 @@ fork), so it's out of scope for this slice pending a sizing decision.
 
 ### Slice 11 — `debug`
 
+**`debug replay` done, `ac625872`.** No open product decisions on that row.
+`debug trace` is **not** done — see its row and `../enhancements/pending.md`:
+its only backing function (`buildTraceReport`) reads live in-memory
+interactive `App` state (current turn history, live permission mode,
+fast-mode flag) with no non-interactive equivalent; a one-shot CLI
+invocation has no live `App` to read. Needs a real rework (likely: read
+the most recently saved session instead), not mechanical wiring.
+
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
 | `debug replay` | **done** — `replay` was a hidden top-level kind; reachable only under `debug` | reachable only under `debug` | `debug.replay` | `cli_surface.zig` | `command_specs.zig` |
-| `debug trace` | absent; `/trace` is the slash form | hidden parent gains it | `debug.trace` | `cli_surface.zig` | `command_specs.zig` |
+| `debug trace` | absent; `/trace` is the slash form, `buildTraceReport` is live-`App`-only | **deferred out of Phase 3** — see `../enhancements/pending.md`; needs a rework, not sized | `debug.trace` | `cli_surface.zig` | `command_specs.zig` |
 
 ### Slice 12 — `/context`
 

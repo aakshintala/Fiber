@@ -85,6 +85,30 @@ upstream, before Fiber existed. Deferred here pending a decision on how
 much of the deleted subsystem is worth rebuilding versus what a minimal
 `/background` could get away with. Not scoped or sized yet.
 
+## `fiber debug trace`
+
+`debug replay` moved under the new hidden `debug` parent cleanly in the
+transition (`fiber debug replay <tape>` calls the same `cli_replay.run`
+the bare command always called — pure reachability change). `debug trace`
+does not, for a structural reason `replay` never had: its only backing
+function has no non-interactive data source.
+
+`/trace` (the interactive slash command) exists to answer "something's
+wrong with *this conversation right now*" — `buildTraceReport`
+(`src/core/app/app_commands.zig:1953`) reads live in-memory `App` state:
+current turn history (`app.session.agent.history.items`), live permission
+mode, the `fast_mode` flag, the current workspace. It was designed
+exclusively for a live interactive session and was never meant to run
+outside one.
+
+A one-shot `fiber debug trace` CLI invocation has no live `App` to read.
+The natural fix is reworking `buildTraceReport`'s input to read the most
+recently saved session from disk instead (the same `session_store` read
+path `session show`/`session recover` already use) and building the same
+report shape from that session's history — but that's redesigning what
+the function draws from, not exposing something that already works
+headless. Not scoped or sized yet.
+
 ## `fiber mcp doctor`
 
 Opening MCP transports to check that configured servers actually answer. The
