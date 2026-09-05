@@ -3445,10 +3445,10 @@ describe("cli: error handling", () => {
   );
 
   test(
-    "fiber ask with no prompt exits 1",
+    "fiber ask with no prompt exits 2",
     async () => {
       const r = await runFx(["ask"]);
-      expect(r.code).toBe(1);
+      expect(r.code).toBe(2);
       expect(r.stderr).toContain("missing prompt");
     },
     TIMEOUT,
@@ -3524,7 +3524,7 @@ describe("cli: workspace access", () => {
       expect(help.stderr).toBe("");
 
       const missing = await runFx(["--add-dir"], { env: enabled });
-      expect(missing.code).toBe(1);
+      expect(missing.code).toBe(2);
       expect(missing.stderr).toContain("--add-dir requires a directory path");
       expect(missing.stderr).not.toContain("MissingAddDirectoryValue");
 
@@ -3532,7 +3532,7 @@ describe("cli: workspace access", () => {
         ["--no-additional-dirs", "--no-additional-dirs"],
         { env: enabled },
       );
-      expect(duplicate.code).toBe(1);
+      expect(duplicate.code).toBe(2);
       expect(duplicate.stderr).toContain(
         "--no-additional-dirs may only be specified once",
       );

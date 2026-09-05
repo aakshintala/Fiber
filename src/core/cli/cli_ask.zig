@@ -1150,22 +1150,22 @@ fn runWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Config, deps: 
                 const json = try renderErrorJsonResult(alloc, @errorName(err));
                 defer alloc.free(json);
                 try deps.write_stdout(deps.stdout_ctx, json);
-                return 1;
+                return 2;
             }
             try deps.write_stderr(deps.stderr_ctx, "fiber ask: missing prompt\n");
             try writeAskUsage(deps, cfg.command_usage);
-            return 1;
+            return 2;
         },
         error.NoSaveResumeConflict => {
             if (hasJsonFlag(args)) {
                 const json = try renderErrorJsonResult(alloc, "InvalidAskArgs");
                 defer alloc.free(json);
                 try deps.write_stdout(deps.stdout_ctx, json);
-                return 1;
+                return 2;
             }
             try deps.write_stderr(deps.stderr_ctx, "fiber ask: --no-save cannot be used with --resume-id\n");
             try writeAskUsage(deps, cfg.command_usage);
-            return 1;
+            return 2;
         },
         error.PromptResourceLimitExceeded => {
             if (hasJsonFlag(args)) {
@@ -1192,20 +1192,20 @@ fn runWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Config, deps: 
                 const json = try renderErrorJsonResult(alloc, @errorName(err));
                 defer alloc.free(json);
                 try deps.write_stdout(deps.stdout_ctx, json);
-                return 1;
+                return 2;
             }
             try writeAskUsage(deps, cfg.command_usage);
-            return 1;
+            return 2;
         },
         error.InvalidPromptText => {
             if (hasJsonFlag(args)) {
                 const json = try renderErrorJsonResult(alloc, @errorName(err));
                 defer alloc.free(json);
                 try deps.write_stdout(deps.stdout_ctx, json);
-                return 1;
+                return 2;
             }
             try deps.write_stderr(deps.stderr_ctx, "fiber ask: prompt must be valid UTF-8 and contain no NUL bytes\n");
-            return 1;
+            return 2;
         },
         else => return err,
     };

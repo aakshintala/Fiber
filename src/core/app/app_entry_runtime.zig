@@ -194,6 +194,7 @@ fn beforeInteractiveResultFromRunResult(alloc: Allocator, run_result: cli_surfac
         },
         .handled_success => return .returned,
         .handled_failure => return .{ .exit = 1 },
+        .handled_usage_error => return .{ .exit = 2 },
         .handled_exit => |code| return if (code == 0) .returned else .{ .exit = code },
     }
 }

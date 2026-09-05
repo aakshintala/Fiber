@@ -124,10 +124,12 @@ pub const RunResult = union(enum) {
     interactive: InteractiveLaunch,
     handled_success,
     handled_failure,
+    handled_usage_error,
     handled_exit: u8,
 };
 
 const version_usage = "usage: fiber --version\n";
+const help_usage = "usage: fiber help\n";
 
 pub const Config = struct {
     version: []const u8 = "",
@@ -603,7 +605,7 @@ fn runIfRequestedWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Con
     const parsed_launch = parseInteractiveLaunch(alloc, args, cfg.command_catalog) catch |err| {
         if (err == error.InvalidResumeArgs) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .@"resume");
-            return .handled_failure;
+            return .handled_usage_error;
         }
         var writer: std.Io.Writer.Allocating = .init(alloc);
         defer writer.deinit();
@@ -614,7 +616,7 @@ fn runIfRequestedWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Con
         }
         try writer.writer.writeAll("usage: fiber [--context-limit NAME=BYTES|off] [--add-dir PATH]... [--no-additional-dirs] <command>\n");
         try writeStderr(deps, writer.written());
-        return .handled_failure;
+        return .handled_usage_error;
     };
     switch (parsed_launch) {
         .interactive => |launch| {
@@ -643,13 +645,13 @@ fn runNonInteractiveWithDeps(
         !commandSupportsWorkspaceModifiers(parsed_command))
     {
         try writeWorkspaceModifierUsage(deps);
-        return .handled_failure;
+        return .handled_usage_error;
     }
 
     if (isVersionFlag(effective_args[0])) {
         if (effective_args.len != 1) {
             try writeStderr(deps, version_usage);
-            return .handled_failure;
+            return .handled_usage_error;
         }
         try writeStdout(deps, cfg.version);
         try writeStdout(deps, "\n");
@@ -666,6 +668,10 @@ fn runNonInteractiveWithDeps(
     switch (parsed_command) {
         .interactive, .resume_session => unreachable,
         .help => {
+            if (effective_args.len != 1) {
+                try writeStderr(deps, help_usage);
+                return .handled_usage_error;
+            }
             try writeTopLevelHelp(alloc, cfg.command_catalog, deps, cfg.version, .stdout);
             return .handled_success;
         },
@@ -677,7 +683,7 @@ fn runNonInteractiveWithDeps(
         .login => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
                 try writeStderr(deps, "usage: fiber login [codex]\n");
-                return .handled_failure;
+                return .handled_usage_error;
             };
             _ = maybe_login_provider;
             chatgpt_oauth.runLogin(
@@ -702,7 +708,7 @@ fn runNonInteractiveWithDeps(
         .logout => |rest| {
             const maybe_login_provider = parseLoginProvider(rest) catch {
                 try writeStderr(deps, "usage: fiber logout [codex]\n");
-                return .handled_failure;
+                return .handled_usage_error;
             };
             _ = maybe_login_provider;
             const outcome = chatgpt_oauth.logout() catch {
@@ -728,7 +734,7 @@ fn runNonInteractiveWithDeps(
         .status => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .status, output_contracts.Kind.status.jsonName(), err, rest);
-                return .handled_failure;
+                return .handled_usage_error;
             };
             var startup = try deps.load_startup_status(
                 alloc,
@@ -762,7 +768,7 @@ fn runNonInteractiveWithDeps(
         .permissions => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .permissions, output_contracts.Kind.permissions.jsonName(), err, rest);
-                return .handled_failure;
+                return .handled_usage_error;
             };
             var startup = try deps.load_startup_state_without_credentials(alloc, cfg.default_model, cfg.default_agent_step_limit);
             defer startup.deinit(alloc);
@@ -787,7 +793,7 @@ fn runNonInteractiveWithDeps(
         .models => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .models, output_contracts.Kind.models.jsonName(), err, rest);
-                return .handled_failure;
+                return .handled_usage_error;
             };
 
             var startup = try deps.load_catalog_startup_state(
@@ -848,7 +854,7 @@ fn runNonInteractiveWithDeps(
         .doctor => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .doctor, output_contracts.Kind.doctor.jsonName(), err, rest);
-                return .handled_failure;
+                return .handled_usage_error;
             };
 
             const workspace_root = try io_mod.realpathAlloc(alloc, ".");
@@ -893,7 +899,7 @@ fn runNonInteractiveWithDeps(
                         err,
                         rest[1..],
                     );
-                    return .handled_failure;
+                    return .handled_usage_error;
                 };
                 defer recovery.deinit(alloc);
 
@@ -942,13 +948,13 @@ fn runNonInteractiveWithDeps(
 
             var opts = parseSessionDetailArgs(alloc, rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, output_contracts.Kind.session_show.jsonName(), err, rest);
-                return .handled_failure;
+                return .handled_usage_error;
             };
             defer opts.deinit(alloc);
 
             const target = opts.target orelse {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, output_contracts.Kind.session_show.jsonName(), error.InvalidSessionDetailArgs, rest);
-                return .handled_failure;
+                return .handled_usage_error;
             };
 
             const workspace_root = try io_mod.realpathAlloc(alloc, ".");
@@ -1008,7 +1014,7 @@ fn runNonInteractiveWithDeps(
         .sessions => |rest| {
             const opts = parseSessionListArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .sessions, output_contracts.Kind.session_list.jsonName(), err, rest);
-                return .handled_failure;
+                return .handled_usage_error;
             };
 
             const workspace_root = try io_mod.realpathAlloc(alloc, ".");
@@ -1051,7 +1057,7 @@ fn runNonInteractiveWithDeps(
         .workspace => |rest| {
             const opts = parseWorkspaceArgs(rest) catch |err| {
                 try writeWorkspaceCommandError(alloc, cfg.command_catalog, deps, rest, err);
-                return .handled_failure;
+                return .handled_usage_error;
             };
             var startup = deps.load_startup_state_without_credentials(
                 alloc,
@@ -1106,7 +1112,7 @@ fn runNonInteractiveWithDeps(
         .usage => |rest| {
             const opts = parseUsageArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .usage, output_contracts.Kind.usage.jsonName(), err, rest);
-                return .handled_failure;
+                return .handled_usage_error;
             };
             const home = deps.getenv(deps.env_ctx, "HOME") orelse {
                 try writeUsageCommandFailure(
@@ -1138,7 +1144,7 @@ fn runNonInteractiveWithDeps(
             const upgrade_runtime = @import("../upgrade/upgrade_runtime.zig");
             const opts = parseUpgradeArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .upgrade, output_contracts.Kind.upgrade.jsonName(), err, rest);
-                return .handled_failure;
+                return .handled_usage_error;
             };
 
             var startup = deps.load_startup_state_without_credentials(
@@ -1441,7 +1447,7 @@ fn runTopLevelMcp(
 ) !RunResult {
     if (rest.len == 0) {
         try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-        return .handled_failure;
+        return .handled_usage_error;
     }
     const operation = rest[0];
     if (std.mem.eql(u8, operation, "add")) {
@@ -1452,9 +1458,9 @@ fn runTopLevelMcp(
         const intent = mcp_command_provider.parseAddIntent(tokens.items) catch |err| {
             if (err == error.McpAddUsage) {
                 try writeMcpAddUsage(deps);
-            } else {
-                try writeMcpOperationFailure(alloc, deps, "add", err);
+                return .handled_usage_error;
             }
+            try writeMcpOperationFailure(alloc, deps, "add", err);
             return .handled_failure;
         };
         var result = cfg.add_mcp_profile_server(alloc, intent) catch |err| {
@@ -1480,7 +1486,7 @@ fn runTopLevelMcp(
     if (std.mem.eql(u8, operation, "trust")) {
         const action = parseTopLevelProjectMcpAction(rest[1..]) catch {
             try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
+            return .handled_usage_error;
         };
         const workspace_root = io_mod.realpathAlloc(alloc, ".") catch |err| {
             try writeMcpOperationFailure(alloc, deps, "trust", err);
@@ -1506,7 +1512,7 @@ fn runTopLevelMcp(
     if (std.mem.eql(u8, operation, "path")) {
         if (rest.len != 1) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
+            return .handled_usage_error;
         }
         const home = deps.getenv(deps.env_ctx, "HOME") orelse {
             try writeMcpOperationFailure(alloc, deps, "path", error.HomeNotSet);
@@ -1523,7 +1529,7 @@ fn runTopLevelMcp(
     if (std.mem.eql(u8, operation, "remove")) {
         if (rest.len != 2 or rest[1].len == 0) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
+            return .handled_usage_error;
         }
         var result = cfg.remove_mcp_profile_server(alloc, rest[1]) catch |err| {
             try writeMcpOperationFailure(alloc, deps, "remove", err);
@@ -1556,7 +1562,7 @@ fn runTopLevelMcp(
     if (std.mem.eql(u8, operation, "list")) {
         if (rest.len != 1) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
+            return .handled_usage_error;
         }
         var loaded = loadMcpCommandRuntime(alloc, cfg, deps) catch |err| {
             try writeMcpOperationFailure(alloc, deps, "list", err);
@@ -1575,7 +1581,7 @@ fn runTopLevelMcp(
     if (std.mem.eql(u8, operation, "auth")) {
         if (rest.len != 2 or rest[1].len == 0) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
+            return .handled_usage_error;
         }
         var loaded = loadMcpCommandRuntime(alloc, cfg, deps) catch |err| {
             try writeMcpOperationFailure(alloc, deps, "auth", err);
@@ -1631,7 +1637,7 @@ fn runTopLevelMcp(
     if (std.mem.eql(u8, operation, "logout")) {
         if (rest.len != 2 or rest[1].len == 0) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
+            return .handled_usage_error;
         }
         var loaded = loadMcpCommandRuntime(alloc, cfg, deps) catch |err| {
             try writeMcpOperationFailure(alloc, deps, "logout", err);
@@ -1677,7 +1683,7 @@ fn runTopLevelMcp(
     }
 
     try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-    return .handled_failure;
+    return .handled_usage_error;
 }
 
 fn parseTopLevelProjectMcpAction(
@@ -3211,7 +3217,7 @@ test "workspace launch modifiers still reject unsupported local command help" {
         testConfig(),
         deps,
     );
-    try std.testing.expectEqual(RunResult.handled_failure, result);
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
     try std.testing.expectEqualStrings("", capture.stdout.written());
     try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "only supported for interactive, resume, and ask launches") != null);
 }
@@ -3237,7 +3243,7 @@ test "global workspace launch option errors use user-facing copy" {
         const deps = capture.deps();
 
         const result = try runIfRequestedWithDeps(std.testing.allocator, case.args, testConfig(), deps);
-        try std.testing.expectEqual(RunResult.handled_failure, result);
+        try std.testing.expectEqual(RunResult.handled_usage_error, result);
         try std.testing.expectEqualStrings("", capture.stdout.written());
         try std.testing.expect(std.mem.startsWith(u8, capture.stderr.written(), case.expected));
         try std.testing.expect(std.mem.endsWith(u8, capture.stderr.written(), "<command>\n"));
@@ -3272,7 +3278,7 @@ test "runIfRequested version flags reject extra args" {
         defer capture.deinit();
 
         const result = try runIfRequestedWithDeps(std.testing.allocator, args, testConfig(), capture.deps());
-        try std.testing.expectEqual(RunResult.handled_failure, result);
+        try std.testing.expectEqual(RunResult.handled_usage_error, result);
         try std.testing.expectEqualStrings("", capture.stdout.written());
         try std.testing.expectEqualStrings("usage: fiber --version\n", capture.stderr.written());
     }
@@ -3456,7 +3462,7 @@ test "runIfRequested invalid local flags write usage" {
     defer capture.deinit();
 
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--wat") }, testConfig(), capture.deps());
-    try std.testing.expectEqual(RunResult.handled_failure, result);
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
     try std.testing.expectEqualStrings("", capture.stdout.written());
     try std.testing.expectEqualStrings("usage: fiber status [--json]\n", capture.stderr.written());
 }
@@ -3466,7 +3472,7 @@ test "runIfRequested invalid json local flags write json error" {
     defer capture.deinit();
 
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--json"), @constCast("--wat") }, testConfig(), capture.deps());
-    try std.testing.expectEqual(RunResult.handled_failure, result);
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
     try std.testing.expectEqualStrings("", capture.stderr.written());
     try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"kind\":\"status\"") != null);
     try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"code\":\"InvalidLocalSurfaceArgs\"") != null);
@@ -3507,7 +3513,7 @@ test "runIfRequested invalid resume writes usage" {
     defer capture.deinit();
 
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("resume"), @constCast("a"), @constCast("b") }, testConfig(), capture.deps());
-    try std.testing.expectEqual(RunResult.handled_failure, result);
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
     try std.testing.expectEqualStrings(
         "usage: fiber session resume [last|<id>] | session resume --id <id> | resume [last|<id>] | resume --id <id>\n",
         capture.stderr.written(),

@@ -83,18 +83,18 @@ fn runWithOutput(alloc: Allocator, args: []const [:0]const u8, output: anytype) 
     });
 
     const file = std.Io.Dir.cwd().openFile(io_mod.getIo(), opts.path, .{}) catch |err| {
-        return replyFormattedError(alloc, output, opts.json, @errorName(err), 512, "fiber replay: cannot open {s}: {s}\n", .{ opts.path, @errorName(err) }, "fiber replay: open failed\n");
+        return replyFormattedError(alloc, output, opts.json, false, @errorName(err), 512, "fiber replay: cannot open {s}: {s}\n", .{ opts.path, @errorName(err) }, "fiber replay: open failed\n");
     };
     var file_mut = file;
     defer file_mut.close(io_mod.getIo());
 
     const bytes = io_mod.readFileToEnd(alloc, &file_mut, 64 * 1024 * 1024) catch |err| {
-        return replyFormattedError(alloc, output, opts.json, @errorName(err), 256, "fiber replay: read failed: {s}\n", .{@errorName(err)}, "fiber replay: read failed\n");
+        return replyFormattedError(alloc, output, opts.json, false, @errorName(err), 256, "fiber replay: read failed: {s}\n", .{@errorName(err)}, "fiber replay: read failed\n");
     };
     defer alloc.free(bytes);
 
     var parser = record_tape.Parser.init(bytes) catch |err| {
-        return replyFormattedError(alloc, output, opts.json, @errorName(err), 256, "fiber replay: bad tape: {s}\n", .{@errorName(err)}, "fiber replay: bad tape\n");
+        return replyFormattedError(alloc, output, opts.json, false, @errorName(err), 256, "fiber replay: bad tape: {s}\n", .{@errorName(err)}, "fiber replay: bad tape\n");
     };
     debug_trace.logf("render", "replay_header cols={d} rows={d} version_bytes={d}", .{
         parser.header.cols,
@@ -128,7 +128,7 @@ fn runWithOutput(alloc: Allocator, args: []const [:0]const u8, output: anytype) 
 
     if (opts.frames_dir) |dir| {
         prepareFramesDir(alloc, dir) catch |err| {
-            return replyFormattedError(alloc, output, opts.json, @errorName(err), 512, "fiber replay: cannot prepare frames dir {s}: {s}\n", .{ dir, @errorName(err) }, "fiber replay: cannot prepare frames dir\n");
+            return replyFormattedError(alloc, output, opts.json, false, @errorName(err), 512, "fiber replay: cannot prepare frames dir {s}: {s}\n", .{ dir, @errorName(err) }, "fiber replay: cannot prepare frames dir\n");
         };
     }
 
@@ -181,7 +181,7 @@ fn runWithOutput(alloc: Allocator, args: []const [:0]const u8, output: anytype) 
 
         if (opts.frames_dir) |dir| {
             writeFrameArtifacts(alloc, dir, frame_count, frame, elapsed_ms, grid, markers.items) catch |err| {
-                return replyFormattedError(alloc, output, opts.json, @errorName(err), 512, "fiber replay: cannot write frame artifacts to {s}: {s}\n", .{ dir, @errorName(err) }, "fiber replay: cannot write frame artifacts\n");
+                return replyFormattedError(alloc, output, opts.json, false, @errorName(err), 512, "fiber replay: cannot write frame artifacts to {s}: {s}\n", .{ dir, @errorName(err) }, "fiber replay: cannot write frame artifacts\n");
             };
         }
     }
@@ -205,7 +205,7 @@ fn runWithOutput(alloc: Allocator, args: []const [:0]const u8, output: anytype) 
 
     if (opts.frames_dir) |dir| {
         writeFramesManifest(alloc, dir, parser.header, frame_count, resize_count, stdout_bytes) catch |err| {
-            return replyFormattedError(alloc, output, opts.json, @errorName(err), 512, "fiber replay: cannot write frames manifest to {s}: {s}\n", .{ dir, @errorName(err) }, "fiber replay: cannot write frames manifest\n");
+            return replyFormattedError(alloc, output, opts.json, false, @errorName(err), 512, "fiber replay: cannot write frames manifest to {s}: {s}\n", .{ dir, @errorName(err) }, "fiber replay: cannot write frames manifest\n");
         };
     }
 
@@ -215,7 +215,7 @@ fn runWithOutput(alloc: Allocator, args: []const [:0]const u8, output: anytype) 
 
     if (opts.golden_path) |out_path| {
         var out_file = std.Io.Dir.cwd().createFile(io_mod.getIo(), out_path, .{ .truncate = true }) catch |err| {
-            return replyFormattedError(alloc, output, opts.json, @errorName(err), 256, "fiber replay: cannot write {s}: {s}\n", .{ out_path, @errorName(err) }, "fiber replay: write failed\n");
+            return replyFormattedError(alloc, output, opts.json, false, @errorName(err), 256, "fiber replay: cannot write {s}: {s}\n", .{ out_path, @errorName(err) }, "fiber replay: write failed\n");
         };
         defer out_file.close(io_mod.getIo());
         try out_file.writeStreamingAll(io_mod.getIo(), final.items);
@@ -394,6 +394,7 @@ fn replyFormattedError(
     alloc: Allocator,
     output: anytype,
     json: bool,
+    usage: bool,
     code: []const u8,
     comptime buffer_len: usize,
     comptime fmt: []const u8,
@@ -402,19 +403,21 @@ fn replyFormattedError(
 ) !u8 {
     var buf: [buffer_len]u8 = undefined;
     const msg = std.fmt.bufPrint(&buf, fmt, args) catch fallback;
-    return replyError(alloc, output, json, code, msg);
+    return replyError(alloc, output, json, usage, code, msg);
 }
 
 fn replyError(
     alloc: Allocator,
     output: anytype,
     json: bool,
+    usage: bool,
     code: []const u8,
     message: []const u8,
 ) !u8 {
+    const exit_code: u8 = if (usage) 2 else 1;
     if (!json) {
         output.writeStderr(message) catch {};
-        return 1;
+        return exit_code;
     }
     const rendered = try (output_contracts.CommandFailureSnapshot{
         .kind = output_contracts.Kind.debug_replay.jsonName(),
@@ -424,7 +427,7 @@ fn replyError(
     defer alloc.free(rendered);
     output.writeStdout(rendered) catch {};
     output.writeStdout("\n") catch {};
-    return 1;
+    return exit_code;
 }
 
 fn replyParseError(
@@ -441,7 +444,7 @@ fn replyParseError(
         Error.MissingFramesDirPath => "fiber replay: --frames-dir requires a path\n",
         else => "fiber replay: argument error\n",
     };
-    return replyError(alloc, output, json, @errorName(err), msg);
+    return replyError(alloc, output, json, true, @errorName(err), msg);
 }
 
 fn argsContainJson(args: []const [:0]const u8) bool {
@@ -863,7 +866,7 @@ test "run missing tape path returns current stderr" {
     defer capture.deinit();
 
     const exit_code = try runCaptured(alloc, &.{}, &capture);
-    try testing.expectEqual(@as(u8, 1), exit_code);
+    try testing.expectEqual(@as(u8, 2), exit_code);
     try testing.expect(std.mem.startsWith(u8, capture.stderr.written(), "fiber replay: missing tape path\n"));
 }
 
@@ -873,7 +876,7 @@ test "json failures use stdout for missing arguments files and malformed tapes" 
     var missing_arg = CaptureOutput.init(alloc);
     defer missing_arg.deinit();
     try testing.expectEqual(
-        @as(u8, 1),
+        @as(u8, 2),
         try runCaptured(alloc, &.{"--json"}, &missing_arg),
     );
     try testing.expectEqual(@as(usize, 0), missing_arg.stderr.written().len);
