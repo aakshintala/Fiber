@@ -24,6 +24,7 @@ const gateway_error_format = @import("../shared/gateway_error_format.zig");
 const image_attachments = @import("../images/image_attachments.zig");
 const hooks = @import("../hooks/hooks.zig");
 const notification_sound = @import("../notifications/sound.zig");
+const output_contracts = @import("../output/output_contracts.zig");
 const io_mod = @import("../shared/io.zig");
 const config_runtime = @import("../config/config_runtime.zig");
 const model_capabilities = @import("../config/model_capabilities.zig");
@@ -3472,7 +3473,7 @@ fn renderFinalJsonResult(alloc: Allocator, result: PromptRunResult) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
 
-    try out.writer.writeAll("{\"output\":");
+    try out.writer.print("{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"output\":", .{output_contracts.Kind.ask.jsonName()});
     try std.json.Stringify.value(result.assistant_output, .{}, &out.writer);
     try out.writer.writeAll(",\"final_output\":");
     try std.json.Stringify.value(result.final_output, .{}, &out.writer);
@@ -3553,18 +3554,27 @@ fn renderFinalJsonResult(alloc: Allocator, result: PromptRunResult) ![]u8 {
         try std.json.Stringify.value(recovery.label(&label_buf), .{}, &out.writer);
         try out.writer.writeAll("}");
     }
-    try out.writer.writeAll("}\n");
+    try out.writer.writeAll("}}\n");
     return try out.toOwnedSlice();
 }
 
 fn renderErrorJsonResult(alloc: Allocator, err_name: []const u8) ![]u8 {
+    const rendered = try (output_contracts.CommandFailureSnapshot{
+        .kind = output_contracts.Kind.ask.jsonName(),
+        .message = err_name,
+        .code = err_name,
+    }).renderJson(alloc);
+    defer alloc.free(rendered);
+
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
-
-    try out.writer.writeAll("{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"error\":");
-    try std.json.Stringify.value(err_name, .{}, &out.writer);
-    try out.writer.writeAll("}\n");
+    try out.writer.writeAll(rendered);
+    try out.writer.writeAll("\n");
     return try out.toOwnedSlice();
+}
+
+fn askJsonData(value: std.json.Value) std.json.ObjectMap {
+    return value.object.get("data").?.object;
 }
 
 fn toCoreReasoningEffort(effort: types.ReasoningEffort) types.ReasoningEffort {
@@ -5016,7 +5026,6 @@ test "runWithDeps reports unsupported images in JSON before startup" {
     try std.testing.expectEqual(@as(usize, 0), test_image_preflight_startup_calls);
     try std.testing.expectEqual(@as(usize, 0), test_image_preflight_process_calls);
     try std.testing.expectEqual(@as(usize, 0), stderr_capture.bytes.items.len);
-    try std.testing.expect(std.mem.find(u8, stdout_capture.bytes.items, "\"exit_code\":1") != null);
     try std.testing.expect(std.mem.find(u8, stdout_capture.bytes.items, "UnsupportedImageType") != null);
     try std.testing.expect(std.mem.find(u8, stdout_capture.bytes.items, invalid_path_z) != null);
 }
@@ -5158,14 +5167,14 @@ test "stdin prompt errors keep exact structured names" {
     const overflow = try renderErrorJsonResult(alloc, "PromptResourceLimitExceeded");
     defer alloc.free(overflow);
     try std.testing.expectEqualStrings(
-        "{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"error\":\"PromptResourceLimitExceeded\"}\n",
+        "{\"ok\":false,\"kind\":\"ask\",\"error\":\"PromptResourceLimitExceeded\",\"code\":\"PromptResourceLimitExceeded\"}\n",
         overflow,
     );
 
     const read_failure = try renderErrorJsonResult(alloc, "PromptInputReadFailed");
     defer alloc.free(read_failure);
     try std.testing.expectEqualStrings(
-        "{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"error\":\"PromptInputReadFailed\"}\n",
+        "{\"ok\":false,\"kind\":\"ask\",\"error\":\"PromptInputReadFailed\",\"code\":\"PromptInputReadFailed\"}\n",
         read_failure,
     );
 }
@@ -5182,7 +5191,7 @@ test "image preparation failure has stable text and JSON contracts" {
     const json = try renderErrorJsonResult(alloc, @errorName(error.ImagePreparationFailed));
     defer alloc.free(json);
     try std.testing.expectEqualStrings(
-        "{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"error\":\"ImagePreparationFailed\"}\n",
+        "{\"ok\":false,\"kind\":\"ask\",\"error\":\"ImagePreparationFailed\",\"code\":\"ImagePreparationFailed\"}\n",
         json,
     );
 }
@@ -5200,7 +5209,7 @@ test "unresolved image capability has actionable text and stable JSON code" {
     );
     defer alloc.free(json);
     try std.testing.expectEqualStrings(
-        "{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"error\":\"ModelImageCapabilityUnavailable\"}\n",
+        "{\"ok\":false,\"kind\":\"ask\",\"error\":\"ModelImageCapabilityUnavailable\",\"code\":\"ModelImageCapabilityUnavailable\"}\n",
         json,
     );
 }
@@ -5231,7 +5240,7 @@ test "stdin read failure has distinct text and JSON output contracts" {
         try runWithDeps(alloc, &.{"--json"}, testConfig(), deps),
     );
     try std.testing.expectEqualStrings(
-        "{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"error\":\"PromptInputReadFailed\"}\n",
+        "{\"ok\":false,\"kind\":\"ask\",\"error\":\"PromptInputReadFailed\",\"code\":\"PromptInputReadFailed\"}\n",
         stdout_capture.bytes.items,
     );
     try std.testing.expectEqualStrings("", stderr_capture.bytes.items);
@@ -6561,7 +6570,7 @@ test "final ask json keeps shell tool call shape and adds command result" {
     defer alloc.free(rendered);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, rendered, .{});
     defer parsed.deinit();
-    const tool_call = parsed.value.object.get("tool_calls").?.array.items[0].object;
+    const tool_call = askJsonData(parsed.value).get("tool_calls").?.array.items[0].object;
     try std.testing.expectEqualStrings("shell", tool_call.get("name").?.string);
     try std.testing.expectEqualStrings("success", tool_call.get("status").?.string);
     const command_result = tool_call.get("command_result").?.object;
@@ -7395,7 +7404,7 @@ test "render final JSON preserves shape escaping order and newline" {
     defer alloc.free(json);
 
     try std.testing.expectEqualStrings(
-        "{\"output\":\"hello \\\"zig\\\"\\n\",\"final_output\":\"\",\"exit_code\":0,\"model\":\"model-x\",\"session_id\":\"123\",\"steps\":2,\"tool_calls\":[{\"name\":\"read_file\",\"status\":\"success\"}]}\n",
+        "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"hello \\\"zig\\\"\\n\",\"final_output\":\"\",\"exit_code\":0,\"model\":\"model-x\",\"session_id\":\"123\",\"steps\":2,\"tool_calls\":[{\"name\":\"read_file\",\"status\":\"success\"}]}}\n",
         json,
     );
 }
@@ -7412,7 +7421,7 @@ test "render final JSON emits empty tool call array" {
     defer alloc.free(json);
 
     try std.testing.expectEqualStrings(
-        "{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[]}\n",
+        "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[]}}\n",
         json,
     );
 }
@@ -7434,7 +7443,7 @@ test "render final JSON reports the successful recovery attempt" {
     defer alloc.free(json);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, json, .{});
     defer parsed.deinit();
-    const recovery = parsed.value.object.get("recovery").?.object;
+    const recovery = askJsonData(parsed.value).get("recovery").?.object;
     try std.testing.expectEqual(@as(i64, 3), recovery.get("attempt").?.integer);
     try std.testing.expectEqualStrings("recovered", recovery.get("state").?.string);
     try std.testing.expectEqualStrings(
@@ -7465,7 +7474,7 @@ test "render final JSON includes the latest terminal recovery diagnostic" {
     defer alloc.free(json);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, json, .{});
     defer parsed.deinit();
-    const recovery = parsed.value.object.get("recovery").?.object;
+    const recovery = askJsonData(parsed.value).get("recovery").?.object;
     try std.testing.expectEqualStrings("paused", recovery.get("state").?.string);
     try std.testing.expectEqualStrings(
         "⚠ Provider unavailable · HTTP 503 · no_available_providers: No providers are currently available · recovery paused after 2/2 attempts",
@@ -7492,7 +7501,7 @@ test "cli json records built in web_search completion" {
     defer alloc.free(rendered);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, rendered, .{});
     defer parsed.deinit();
-    const web_search = parsed.value.object.get("tool_calls").?.array.items[0].object.get("web_search").?.object;
+    const web_search = askJsonData(parsed.value).get("tool_calls").?.array.items[0].object.get("web_search").?.object;
     try std.testing.expectEqual(@as(i64, 3), web_search.get("searches").?.integer);
     try std.testing.expectEqual(@as(i64, 42), web_search.get("duration_ms").?.integer);
 }
@@ -7516,11 +7525,11 @@ test "fiber ask JSON captures HTTP 413 prompt-too-long blocker" {
 
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, stdout_capture.bytes.items, .{});
     defer parsed.deinit();
-    const output = parsed.value.object.get("output").?.string;
+    const output = askJsonData(parsed.value).get("output").?.string;
     try std.testing.expect(std.mem.find(u8, output, "HTTP 413") != null);
     try std.testing.expect(std.mem.find(u8, output, "prompt_too_long=true") != null);
     try std.testing.expect(std.mem.find(u8, output, "Provider rejected the prompt as too large") != null);
-    try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
+    try std.testing.expectEqual(@as(i64, 1), askJsonData(parsed.value).get("exit_code").?.integer);
 }
 
 test "fiber ask formats restricted-provider HTTP errors without raw JSON" {
@@ -7543,10 +7552,10 @@ test "fiber ask formats restricted-provider HTTP errors without raw JSON" {
 
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, stdout_capture.bytes.items, .{});
     defer parsed.deinit();
-    const output = parsed.value.object.get("output").?.string;
+    const output = askJsonData(parsed.value).get("output").?.string;
     try std.testing.expect(std.mem.find(u8, output, "API access denied · HTTP 403 · Provider: wafer") != null);
     try std.testing.expect(std.mem.find(u8, output, "{\"error\"") == null);
-    try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
+    try std.testing.expectEqual(@as(i64, 1), askJsonData(parsed.value).get("exit_code").?.integer);
 }
 
 test "fiber ask text and JSON share the selected auth failure facts" {
@@ -7570,12 +7579,12 @@ test "fiber ask text and JSON share the selected auth failure facts" {
     );
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, stdout_capture.bytes.items, .{});
     defer parsed.deinit();
-    try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
+    try std.testing.expectEqual(@as(i64, 1), askJsonData(parsed.value).get("exit_code").?.integer);
     try std.testing.expectEqualStrings(
         "Codex subscription authentication failed · HTTP 401\n",
-        parsed.value.object.get("output").?.string,
+        askJsonData(parsed.value).get("output").?.string,
     );
-    const auth_failure = parsed.value.object.get("auth_failure").?.object;
+    const auth_failure = askJsonData(parsed.value).get("auth_failure").?.object;
     try std.testing.expectEqualStrings("Codex subscription", auth_failure.get("source").?.string);
     try std.testing.expectEqualStrings("http_unauthorized", auth_failure.get("reason").?.string);
     try std.testing.expectEqual(@as(i64, 401), auth_failure.get("http_status").?.integer);
@@ -7622,11 +7631,11 @@ test "saved API key 401 discards the fresh pristine session" {
     defer parsed.deinit();
     try std.testing.expectEqualStrings(
         "",
-        parsed.value.object.get("session_id").?.string,
+        askJsonData(parsed.value).get("session_id").?.string,
     );
-    try std.testing.expectEqual(@as(i64, 0), parsed.value.object.get("steps").?.integer);
-    try std.testing.expectEqual(@as(usize, 0), parsed.value.object.get("tool_calls").?.array.items.len);
-    try std.testing.expect(parsed.value.object.get("auth_failure") != null);
+    try std.testing.expectEqual(@as(i64, 0), askJsonData(parsed.value).get("steps").?.integer);
+    try std.testing.expectEqual(@as(usize, 0), askJsonData(parsed.value).get("tool_calls").?.array.items.len);
+    try std.testing.expect(askJsonData(parsed.value).get("auth_failure") != null);
 
     var store = try session_store.Store.initFromHome(alloc, home, "/tmp/fiber-test");
     defer store.deinit(alloc);
@@ -7732,11 +7741,11 @@ test "saved failures retain ineligible session lifecycles" {
             .{},
         );
         defer parsed.deinit();
-        const session_id = parsed.value.object.get("session_id").?.string;
+        const session_id = askJsonData(parsed.value).get("session_id").?.string;
         try std.testing.expect(session_id.len > 0);
         try std.testing.expectEqual(
             @as(i64, @intCast(case.expected_steps)),
-            parsed.value.object.get("steps").?.integer,
+            askJsonData(parsed.value).get("steps").?.integer,
         );
 
         var store = try session_store.Store.initFromHome(
@@ -7836,13 +7845,13 @@ test "indeterminate saved auth cleanup keeps the primary result and session id" 
         .{},
     );
     defer parsed.deinit();
-    try std.testing.expect(parsed.value.object.get("error") == null);
-    try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
+    try std.testing.expect(askJsonData(parsed.value).get("error") == null);
+    try std.testing.expectEqual(@as(i64, 1), askJsonData(parsed.value).get("exit_code").?.integer);
     try std.testing.expectEqualStrings(
         "Codex subscription authentication failed · HTTP 401\n",
-        parsed.value.object.get("output").?.string,
+        askJsonData(parsed.value).get("output").?.string,
     );
-    const session_id = parsed.value.object.get("session_id").?.string;
+    const session_id = askJsonData(parsed.value).get("session_id").?.string;
     try std.testing.expect(session_id.len > 0);
 
     var store = try session_store.Store.initFromHome(alloc, home, "/tmp/fiber-test");
@@ -8077,7 +8086,7 @@ test "fiber ask JSON records ask_user_question text for matching assertions" {
     defer alloc.free(rendered);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, rendered, .{});
     defer parsed.deinit();
-    const tool_call = parsed.value.object.get("tool_calls").?.array.items[0].object;
+    const tool_call = askJsonData(parsed.value).get("tool_calls").?.array.items[0].object;
     try std.testing.expectEqualStrings("ask_user_question", tool_call.get("name").?.string);
     try std.testing.expectEqualStrings("What is your GitHub handle?", tool_call.get("question").?.string);
 }
@@ -8120,7 +8129,7 @@ test "fiber ask JSON clips ask_user_question text at a UTF-8 boundary" {
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, rendered, .{});
     defer parsed.deinit();
 
-    const question = parsed.value.object.get("tool_calls").?.array.items[0].object.get("question").?;
+    const question = askJsonData(parsed.value).get("tool_calls").?.array.items[0].object.get("question").?;
     try std.testing.expect(question == .string);
     if (question != .string) return error.TestUnexpectedResult;
     try std.testing.expect(std.unicode.utf8ValidateSlice(question.string));
@@ -8139,7 +8148,7 @@ test "json run with missing API key prints diagnostic then final object" {
     try std.testing.expectEqual(@as(u8, 1), exit_code);
     try std.testing.expectEqualStrings("fiber ask: " ++ credentials.missing_credential_message ++ "\n", stderr_capture.bytes.items);
     try std.testing.expectEqualStrings(
-        "{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"error\":\"MissingCredentials\"}\n",
+        "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"error\":\"MissingCredentials\"}}\n",
         stdout_capture.bytes.items,
     );
 }
@@ -8212,8 +8221,7 @@ test "json run with session setup failure still emits final object" {
     );
 
     try std.testing.expectEqual(@as(u8, 1), exit_code);
-    try std.testing.expect(std.mem.find(u8, stdout_capture.bytes.items, "\"exit_code\":1") != null);
-    try std.testing.expect(std.mem.find(u8, stdout_capture.bytes.items, "\"error\":\"InvalidSessionFormat\"") != null);
+    try std.testing.expect(std.mem.find(u8, stdout_capture.bytes.items, "InvalidSessionFormat") != null);
 }
 
 test "missing API key returns before project context gathering" {
@@ -8347,8 +8355,8 @@ test "default fiber ask preserves project context gathering error mappings" {
         json: ?[]const u8,
     }{
         .{ .err = error.OutOfMemory, .json = null },
-        .{ .err = error.NoSpaceLeft, .json = "{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"error\":\"NoSpaceLeft\"}\n" },
-        .{ .err = error.WriteFailed, .json = "{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"error\":\"WriteFailed\"}\n" },
+        .{ .err = error.NoSpaceLeft, .json = "{\"ok\":false,\"kind\":\"ask\",\"error\":\"NoSpaceLeft\",\"code\":\"NoSpaceLeft\"}\n" },
+        .{ .err = error.WriteFailed, .json = "{\"ok\":false,\"kind\":\"ask\",\"error\":\"WriteFailed\",\"code\":\"WriteFailed\"}\n" },
     };
 
     for (cases) |case| {
@@ -8401,8 +8409,8 @@ test "quiet suppresses streaming while quiet json captures final output" {
 
     const json_exit = try runWithDeps(alloc, &.{ "--quiet", "--json", "hello" }, testConfig(), testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup));
     try std.testing.expectEqual(@as(u8, 0), json_exit);
-    try std.testing.expect(std.mem.startsWith(u8, stdout_capture.bytes.items, "{\"output\":\"assistant text\",\"final_output\":\"\",\"exit_code\":0,\"model\":\"model\",\"session_id\":\""));
-    try std.testing.expect(std.mem.endsWith(u8, stdout_capture.bytes.items, "\",\"steps\":0,\"tool_calls\":[]}\n"));
+    try std.testing.expect(std.mem.startsWith(u8, stdout_capture.bytes.items, "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"assistant text\",\"final_output\":\"\",\"exit_code\":0,\"model\":\"model\",\"session_id\":\""));
+    try std.testing.expect(std.mem.endsWith(u8, stdout_capture.bytes.items, "\",\"steps\":0,\"tool_calls\":[]}}\n"));
     try std.testing.expectEqualStrings("", stderr_capture.bytes.items);
 }
 
@@ -8422,8 +8430,8 @@ test "fiber ask JSON recovery keeps stdout structured and reports progress on st
     try std.testing.expectEqual(@as(u8, 0), exit_code);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, stdout_capture.bytes.items, .{});
     defer parsed.deinit();
-    try std.testing.expectEqualStrings("assistant text", parsed.value.object.get("output").?.string);
-    try std.testing.expect(parsed.value.object.get("recovery") == null);
+    try std.testing.expectEqualStrings("assistant text", askJsonData(parsed.value).get("output").?.string);
+    try std.testing.expect(askJsonData(parsed.value).get("recovery") == null);
     try std.testing.expectEqualStrings(
         "[notice] ⚠ Network interrupted · waiting for connection · attempt 1/10\n",
         stderr_capture.bytes.items,
@@ -8446,13 +8454,13 @@ test "fiber ask JSON reports the consumed attempt after retry admission failure"
     try std.testing.expectEqual(@as(u8, 1), exit_code);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, stdout_capture.bytes.items, .{});
     defer parsed.deinit();
-    const recovery = parsed.value.object.get("recovery").?.object;
+    const recovery = askJsonData(parsed.value).get("recovery").?.object;
     try std.testing.expectEqualStrings("paused", recovery.get("state").?.string);
     try std.testing.expectEqual(@as(i64, 1), recovery.get("attempt").?.integer);
     try std.testing.expectEqual(@as(i64, 0), recovery.get("delay_seconds").?.integer);
     try std.testing.expectEqualStrings(
         "TestProviderSerializationFailed",
-        parsed.value.object.get("error").?.string,
+        askJsonData(parsed.value).get("error").?.string,
     );
     try std.testing.expect(std.mem.find(u8, stderr_capture.bytes.items, "retrying request in 4s · attempt 1/2") != null);
     try std.testing.expect(std.mem.find(u8, stderr_capture.bytes.items, "recovery paused after 1/2 attempts") != null);
@@ -8481,12 +8489,12 @@ test "fiber ask JSON preserves partial output on prompt failure" {
     try std.testing.expectEqual(@as(u8, 1), exit_code);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, stdout_capture.bytes.items, .{});
     defer parsed.deinit();
-    try std.testing.expectEqualStrings("partial résumé", parsed.value.object.get("output").?.string);
-    try std.testing.expectEqual(@as(i64, 1), parsed.value.object.get("exit_code").?.integer);
-    try std.testing.expectEqualStrings("ReadFailed", parsed.value.object.get("error").?.string);
-    try std.testing.expectEqualStrings("model", parsed.value.object.get("model").?.string);
-    try std.testing.expectEqualStrings("", parsed.value.object.get("session_id").?.string);
-    try std.testing.expectEqual(@as(usize, 0), parsed.value.object.get("tool_calls").?.array.items.len);
+    try std.testing.expectEqualStrings("partial résumé", askJsonData(parsed.value).get("output").?.string);
+    try std.testing.expectEqual(@as(i64, 1), askJsonData(parsed.value).get("exit_code").?.integer);
+    try std.testing.expectEqualStrings("ReadFailed", askJsonData(parsed.value).get("error").?.string);
+    try std.testing.expectEqualStrings("model", askJsonData(parsed.value).get("model").?.string);
+    try std.testing.expectEqualStrings("", askJsonData(parsed.value).get("session_id").?.string);
+    try std.testing.expectEqual(@as(usize, 0), askJsonData(parsed.value).get("tool_calls").?.array.items.len);
     try std.testing.expectEqualStrings("", stderr_capture.bytes.items);
 }
 
@@ -8608,8 +8616,8 @@ test "CLI tagged stream routes source output rendering and diagnostics by mode" 
     defer alloc.free(rendered);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, rendered, .{});
     defer parsed.deinit();
-    try std.testing.expectEqualStrings(source_output, parsed.value.object.get("output").?.string);
-    try std.testing.expectEqualStrings("final answer", parsed.value.object.get("final_output").?.string);
+    try std.testing.expectEqualStrings(source_output, askJsonData(parsed.value).get("output").?.string);
+    try std.testing.expectEqualStrings("final answer", askJsonData(parsed.value).get("final_output").?.string);
 }
 
 test "CLI final output admits only completed assistant finish prompts" {

@@ -110,8 +110,8 @@ fn runWithOutput(alloc: Allocator, args: []const [:0]const u8, output: anytype) 
 
     if (opts.json) {
         try summary.writer.print(
-            "{{\"cols\":{d},\"rows\":{d},\"epoch_ms\":{d},\"version\":",
-            .{ parser.header.cols, parser.header.rows, parser.header.epoch_ms },
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"cols\":{d},\"rows\":{d},\"epoch_ms\":{d},\"version\":",
+            .{ output_contracts.Kind.debug_replay.jsonName(), parser.header.cols, parser.header.rows, parser.header.epoch_ms },
         );
         try std.json.Stringify.value(parser.header.version, .{}, &summary.writer);
         try summary.writer.writeAll(",\"frames\":[");
@@ -193,9 +193,10 @@ fn runWithOutput(alloc: Allocator, args: []const [:0]const u8, output: anytype) 
 
     if (opts.json) {
         try summary.writer.print(
-            "],\"frame_count\":{d},\"resize_count\":{d},\"stdout_bytes\":{d}}}\n",
+            "],\"frame_count\":{d},\"resize_count\":{d},\"stdout_bytes\":{d}",
             .{ frame_count, resize_count, stdout_bytes },
         );
+        try summary.writer.writeAll("}}\n");
         try output.writeStdout(summary.written());
     }
     if (ignored_incomplete_tail) {
@@ -416,7 +417,7 @@ fn replyError(
         return 1;
     }
     const rendered = try (output_contracts.CommandFailureSnapshot{
-        .kind = "replay",
+        .kind = output_contracts.Kind.debug_replay.jsonName(),
         .message = std.mem.trimEnd(u8, message, "\r\n"),
         .code = code,
     }).renderJson(alloc);
@@ -706,10 +707,11 @@ test "json output includes unknown frame metadata without altering grid" {
 
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, std.mem.trim(u8, capture.stdout.written(), " \t\r\n"), .{});
     defer parsed.deinit();
-    const frames = parsed.value.object.get("frames").?.array.items;
+    const data = parsed.value.object.get("data").?.object;
+    const frames = data.get("frames").?.array.items;
     try testing.expectEqual(@as(usize, 1), frames.len);
     try testing.expectEqualStrings("unknown", frames[0].object.get("kind").?.string);
-    try testing.expectEqualStrings("{\"cols\":3,\"rows\":1,\"epoch_ms\":123456789,\"version\":\"vtest\",\"frames\":[{\"delta_ms\":5,\"kind\":\"unknown\",\"len\":7}],\"frame_count\":1,\"resize_count\":0,\"stdout_bytes\":0}\n", capture.stdout.written());
+    try testing.expectEqualStrings("{\"ok\":true,\"kind\":\"debug.replay\",\"data\":{\"cols\":3,\"rows\":1,\"epoch_ms\":123456789,\"version\":\"vtest\",\"frames\":[{\"delta_ms\":5,\"kind\":\"unknown\",\"len\":7}],\"frame_count\":1,\"resize_count\":0,\"stdout_bytes\":0}}\n", capture.stdout.written());
 }
 
 test "json replay recovers an incomplete final frame through stderr" {
@@ -739,7 +741,8 @@ test "json replay recovers an incomplete final frame through stderr" {
     try testing.expectEqual(@as(u8, 0), exit_code);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, std.mem.trim(u8, capture.stdout.written(), " \t\r\n"), .{});
     defer parsed.deinit();
-    try testing.expectEqual(@as(i64, 1), parsed.value.object.get("frame_count").?.integer);
+    const data = parsed.value.object.get("data").?.object;
+    try testing.expectEqual(@as(i64, 1), data.get("frame_count").?.integer);
     try testing.expectEqualStrings("fiber replay: ignored incomplete final tape frame\n", capture.stderr.written());
 }
 
@@ -890,7 +893,7 @@ test "json failures use stdout for missing arguments files and malformed tapes" 
         .{},
     );
     defer missing_json.deinit();
-    try testing.expectEqualStrings("replay", missing_json.value.object.get("kind").?.string);
+    try testing.expectEqualStrings("debug.replay", missing_json.value.object.get("kind").?.string);
     try testing.expectEqualStrings("FileNotFound", missing_json.value.object.get("code").?.string);
 
     var tmp = testing.tmpDir(.{});
@@ -914,7 +917,7 @@ test "json failures use stdout for missing arguments files and malformed tapes" 
         .{},
     );
     defer malformed_json.deinit();
-    try testing.expectEqualStrings("replay", malformed_json.value.object.get("kind").?.string);
+    try testing.expectEqualStrings("debug.replay", malformed_json.value.object.get("kind").?.string);
 }
 
 test "run malformed tape returns bad tape stderr" {

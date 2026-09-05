@@ -727,7 +727,7 @@ fn runNonInteractiveWithDeps(
 
         .status => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .status, "status", err, rest);
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .status, output_contracts.Kind.status.jsonName(), err, rest);
                 return .handled_failure;
             };
             var startup = try deps.load_startup_status(
@@ -761,7 +761,7 @@ fn runNonInteractiveWithDeps(
         },
         .permissions => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .permissions, "permissions", err, rest);
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .permissions, output_contracts.Kind.permissions.jsonName(), err, rest);
                 return .handled_failure;
             };
             var startup = try deps.load_startup_state_without_credentials(alloc, cfg.default_model, cfg.default_agent_step_limit);
@@ -786,7 +786,7 @@ fn runNonInteractiveWithDeps(
         },
         .models => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .models, "models", err, rest);
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .models, output_contracts.Kind.models.jsonName(), err, rest);
                 return .handled_failure;
             };
 
@@ -820,7 +820,7 @@ fn runNonInteractiveWithDeps(
                         try writeJsonCommandFailureCode(
                             alloc,
                             deps,
-                            "models",
+                            output_contracts.Kind.models.jsonName(),
                             error_name,
                             message,
                         );
@@ -847,7 +847,7 @@ fn runNonInteractiveWithDeps(
         },
         .doctor => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .doctor, "doctor", err, rest);
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .doctor, output_contracts.Kind.doctor.jsonName(), err, rest);
                 return .handled_failure;
             };
 
@@ -889,7 +889,7 @@ fn runNonInteractiveWithDeps(
                         cfg.command_catalog,
                         deps,
                         .session,
-                        "session",
+                        output_contracts.Kind.session_recover.jsonName(),
                         err,
                         rest[1..],
                     );
@@ -906,7 +906,7 @@ fn runNonInteractiveWithDeps(
                     try writeLookupFailure(
                         alloc,
                         deps,
-                        "session",
+                        output_contracts.Kind.session_recover.jsonName(),
                         err,
                         recovery.format,
                     );
@@ -921,7 +921,7 @@ fn runNonInteractiveWithDeps(
                     try writeLookupFailure(
                         alloc,
                         deps,
-                        "session",
+                        output_contracts.Kind.session_recover.jsonName(),
                         err,
                         recovery.format,
                     );
@@ -941,13 +941,13 @@ fn runNonInteractiveWithDeps(
             }
 
             var opts = parseSessionDetailArgs(alloc, rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, "session", err, rest);
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, output_contracts.Kind.session_show.jsonName(), err, rest);
                 return .handled_failure;
             };
             defer opts.deinit(alloc);
 
             const target = opts.target orelse {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, "session", error.InvalidSessionDetailArgs, rest);
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, output_contracts.Kind.session_show.jsonName(), error.InvalidSessionDetailArgs, rest);
                 return .handled_failure;
             };
 
@@ -955,7 +955,7 @@ fn runNonInteractiveWithDeps(
             defer alloc.free(workspace_root);
 
             var store = session_store.Store.initReadOnly(alloc, workspace_root) catch |err| {
-                try writeLookupFailure(alloc, deps, "session", err, opts.format);
+                try writeLookupFailure(alloc, deps, output_contracts.Kind.session_show.jsonName(), err, opts.format);
                 return .handled_failure;
             };
             defer store.deinit(alloc);
@@ -966,7 +966,7 @@ fn runNonInteractiveWithDeps(
                         store,
                         alloc,
                     ) catch |err| {
-                        try writeLookupFailure(alloc, deps, "session", err, opts.format);
+                        try writeLookupFailure(alloc, deps, output_contracts.Kind.session_show.jsonName(), err, opts.format);
                         return .handled_failure;
                     };
                     defer summary.deinit(alloc);
@@ -1007,7 +1007,7 @@ fn runNonInteractiveWithDeps(
         },
         .sessions => |rest| {
             const opts = parseSessionListArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .sessions, "sessions", err, rest);
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .sessions, output_contracts.Kind.session_list.jsonName(), err, rest);
                 return .handled_failure;
             };
 
@@ -1015,7 +1015,7 @@ fn runNonInteractiveWithDeps(
             defer alloc.free(workspace_root);
 
             var store = session_store.Store.initReadOnly(alloc, workspace_root) catch |err| {
-                try writeLookupFailure(alloc, deps, "sessions", err, opts.format);
+                try writeLookupFailure(alloc, deps, output_contracts.Kind.session_list.jsonName(), err, opts.format);
                 return .handled_failure;
             };
             defer store.deinit(alloc);
@@ -1105,7 +1105,7 @@ fn runNonInteractiveWithDeps(
         },
         .usage => |rest| {
             const opts = parseUsageArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .usage, "usage", err, rest);
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .usage, output_contracts.Kind.usage.jsonName(), err, rest);
                 return .handled_failure;
             };
             const home = deps.getenv(deps.env_ctx, "HOME") orelse {
@@ -1137,7 +1137,7 @@ fn runNonInteractiveWithDeps(
         .upgrade => |rest| {
             const upgrade_runtime = @import("../upgrade/upgrade_runtime.zig");
             const opts = parseUpgradeArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .upgrade, "upgrade", err, rest);
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .upgrade, output_contracts.Kind.upgrade.jsonName(), err, rest);
                 return .handled_failure;
             };
 
@@ -1147,7 +1147,7 @@ fn runNonInteractiveWithDeps(
                 cfg.default_agent_step_limit,
             ) catch |err| {
                 if (opts.format == .json) {
-                    try writeJsonCommandFailure(alloc, deps, "upgrade", err, "failed to load update settings");
+                    try writeJsonCommandFailure(alloc, deps, output_contracts.Kind.upgrade.jsonName(), err, "failed to load update settings");
                 } else {
                     try writeStderr(deps, "fiber upgrade: failed to load update settings\n");
                 }
@@ -1845,7 +1845,7 @@ fn writeUsageCommandFailure(
         return writeJsonCommandFailure(
             alloc,
             deps,
-            "usage",
+            output_contracts.Kind.usage.jsonName(),
             err,
             message,
         );
@@ -2158,7 +2158,7 @@ fn writeSessionDetailFailure(
         else => return writeLookupFailure(
             alloc,
             deps,
-            "session",
+            output_contracts.Kind.session_show.jsonName(),
             err,
             format,
         ),
@@ -2168,7 +2168,7 @@ fn writeSessionDetailFailure(
         return writeJsonCommandFailure(
             alloc,
             deps,
-            "session",
+            output_contracts.Kind.session_show.jsonName(),
             err,
             message,
         );
@@ -2282,7 +2282,7 @@ test "session recovery boundary failures keep stable text and json guidance" {
     try writeLookupFailure(
         std.testing.allocator,
         text_output.deps(),
-        "session",
+        output_contracts.Kind.session_recover.jsonName(),
         error.SessionRecoveryBoundaryInvalid,
         .text,
     );
@@ -2297,7 +2297,7 @@ test "session recovery boundary failures keep stable text and json guidance" {
     try writeLookupFailure(
         std.testing.allocator,
         json_output.deps(),
-        "session",
+        output_contracts.Kind.session_recover.jsonName(),
         error.SessionRecoveryBoundaryInvalid,
         .json,
     );
@@ -3573,7 +3573,7 @@ test "runIfRequested model fetch failure preserves json output" {
     );
     try std.testing.expectEqual(RunResult.handled_failure, result);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"error\":\"could not list models: Unavailable\",\"code\":\"Unavailable\"}\n",
+        "{\"ok\":false,\"kind\":\"models\",\"error\":\"could not list models: Unavailable\",\"code\":\"Unavailable\"}\n",
         capture.stdout.written(),
     );
     try std.testing.expectEqualStrings("", capture.stderr.written());
@@ -3611,7 +3611,7 @@ test "runIfRequested models passes startup team to fetch seam" {
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expect(probe.called);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[\"private/blue-hornbill\"]}\n",
+        "{\"ok\":true,\"kind\":\"models\",\"data\":{\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[\"private/blue-hornbill\"]}}\n",
         capture.stdout.written(),
     );
 }
@@ -3626,7 +3626,7 @@ test "runIfRequested local json success appends exactly one newline" {
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--json") }, testConfig(), deps);
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"auto\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42,\"mcp\":{\"connection_check\":\"not_checked\",\"servers\":[],\"configuration_issues\":[],\"inspection_error\":null}}\n",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"auto\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42,\"mcp\":{\"connection_check\":\"not_checked\",\"servers\":[],\"configuration_issues\":[],\"inspection_error\":null}}}\n",
         capture.stdout.written(),
     );
     try std.testing.expect(!std.mem.endsWith(u8, capture.stdout.written(), "\n\n"));
@@ -3715,7 +3715,7 @@ test "writeRenderedJsonLine falls back to heap and appends exactly one newline" 
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}}\n",
         capture.stdout.written(),
     );
 }
@@ -3746,7 +3746,7 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fiber\",\"model\":\"test-model\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"auto\",\"agent_step_limit\":42,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}\n",
+        "{\"ok\":true,\"kind\":\"doctor\",\"data\":{\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fiber\",\"model\":\"test-model\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"auto\",\"agent_step_limit\":42,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}}\n",
         capture.stdout.written(),
     );
 }

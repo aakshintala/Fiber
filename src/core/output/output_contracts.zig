@@ -27,6 +27,38 @@ pub const OutputFormat = enum {
     json,
 };
 
+pub const Kind = enum {
+    status,
+    permissions,
+    models,
+    doctor,
+    session_list,
+    session_show,
+    session_recover,
+    usage,
+    upgrade,
+    workspace,
+    ask,
+    debug_replay,
+
+    pub fn jsonName(self: Kind) []const u8 {
+        return switch (self) {
+            .status => "status",
+            .permissions => "permissions",
+            .models => "models",
+            .doctor => "doctor",
+            .session_list => "session.list",
+            .session_show => "session.show",
+            .session_recover => "session.recover",
+            .usage => "usage",
+            .upgrade => "upgrade",
+            .workspace => "workspace",
+            .ask => "ask",
+            .debug_replay => "debug.replay",
+        };
+    }
+};
+
 pub const CommandFailureSnapshot = struct {
     kind: []const u8,
     message: []const u8,
@@ -36,7 +68,7 @@ pub const CommandFailureSnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.writeAll("{\"kind\":");
+        try out.writer.writeAll("{\"ok\":false,\"kind\":");
         try std.json.Stringify.value(self.kind, .{}, &out.writer);
         try out.writer.writeAll(",\"error\":");
         try std.json.Stringify.value(self.message, .{}, &out.writer);
@@ -130,7 +162,10 @@ pub const UsageSnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.writeAll("{\"kind\":\"usage\",\"schema_version\":1,\"period\":");
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"schema_version\":1,\"period\":",
+            .{Kind.usage.jsonName()},
+        );
         try std.json.Stringify.value(report.scope.cliValue() orelse "session", .{}, &out.writer);
         try out.writer.print(
             ",\"snapshot_time_ms\":{d},\"window_start_ms\":{d},\"coverage\":{{\"status\":",
@@ -163,7 +198,7 @@ pub const UsageSnapshot = struct {
             try writeUsageTotalsJson(&out.writer, model.totals);
             try out.writer.writeByte('}');
         }
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 };
@@ -322,7 +357,10 @@ pub const WorkspaceSnapshot = struct {
 
         const action = if (self.mutation) |mutation| mutation.action else "list";
         const changed = if (self.mutation) |mutation| mutation.saved_changed or mutation.runtime_changed else false;
-        try out.writer.writeAll("{\"kind\":\"workspace\",\"action\":");
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"action\":",
+            .{Kind.workspace.jsonName()},
+        );
         try std.json.Stringify.value(action, .{}, &out.writer);
         try out.writer.print(",\"changed\":{}", .{changed});
         try out.writer.writeAll(",\"primary_directory\":");
@@ -351,7 +389,7 @@ pub const WorkspaceSnapshot = struct {
                 entry.active,
             });
         }
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 };
@@ -543,7 +581,7 @@ pub const StatusSnapshot = struct {
     }
 
     pub fn writeJson(self: StatusSnapshot, writer: *std.Io.Writer) !void {
-        try writer.writeAll("{\"kind\":\"status\",\"model\":");
+        try writer.print("{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"model\":", .{Kind.status.jsonName()});
         try std.json.Stringify.value(self.model, .{}, writer);
 
         try writer.writeAll(",\"update_channel\":");
@@ -594,7 +632,7 @@ pub const StatusSnapshot = struct {
             try writer.writeAll(",\"mcp\":");
             try mcp.writeJson(writer);
         }
-        try writer.writeByte('}');
+        try writer.writeAll("}}");
     }
 };
 
@@ -664,7 +702,10 @@ pub const PermissionsSnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.writeAll("{\"kind\":\"permissions\",\"mode\":");
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"mode\":",
+            .{Kind.permissions.jsonName()},
+        );
         try std.json.Stringify.value(permissionModeLabel(self.mode), .{}, &out.writer);
         try out.writer.print(",\"grant_count\":{d}", .{self.grants.len});
         try out.writer.writeAll(",\"grant_scope\":\"session\"");
@@ -688,7 +729,7 @@ pub const PermissionsSnapshot = struct {
             try out.writer.writeByte('}');
         }
 
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 };
@@ -760,14 +801,14 @@ pub const ModelListSnapshot = struct {
 
         const shown = self.shownCount();
         try out.writer.print(
-            "{{\"kind\":\"models\",\"count\":{d},\"shown_count\":{d},\"more_count\":{d},\"private_models_hidden\":{},\"ids\":[",
-            .{ self.ids.len, shown, self.ids.len - shown, self.private_models_hidden },
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"count\":{d},\"shown_count\":{d},\"more_count\":{d},\"private_models_hidden\":{},\"ids\":[",
+            .{ Kind.models.jsonName(), self.ids.len, shown, self.ids.len - shown, self.private_models_hidden },
         );
         for (self.ids[0..shown], 0..) |id, i| {
             if (i > 0) try out.writer.writeByte(',');
             try std.json.Stringify.value(id, .{}, &out.writer);
         }
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 
@@ -847,13 +888,16 @@ pub const SessionListSnapshot = struct {
 
     pub fn renderJson(self: SessionListSnapshot, alloc: Allocator) ![]u8 {
         if (self.sessions.len == 0 and self.skipped_invalid == 0) {
-            return alloc.dupe(u8, "{\"kind\":\"sessions\",\"count\":0,\"sessions\":[]}");
+            return alloc.dupe(u8, "{\"ok\":true,\"kind\":\"session.list\",\"data\":{\"count\":0,\"sessions\":[]}}");
         }
 
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.print("{{\"kind\":\"sessions\",\"count\":{d}", .{self.sessions.len});
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"count\":{d}",
+            .{ Kind.session_list.jsonName(), self.sessions.len },
+        );
         if (self.skipped_invalid > 0) {
             try out.writer.print(",\"skipped_invalid\":{d}", .{self.skipped_invalid});
         }
@@ -872,7 +916,7 @@ pub const SessionListSnapshot = struct {
             try std.json.Stringify.value(entry.conversation_language.view(), .{}, &out.writer);
             try out.writer.writeByte('}');
         }
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 };
@@ -984,7 +1028,10 @@ pub const SessionSummarySnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.writeAll("{\"kind\":\"session_summary\",\"id\":");
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"id\":",
+            .{Kind.session_show.jsonName()},
+        );
         try std.json.Stringify.value(self.summary.id, .{}, &out.writer);
         try writeSessionDisplayJsonFields(&out.writer, self.summary);
         try out.writer.print(
@@ -1000,7 +1047,7 @@ pub const SessionSummarySnapshot = struct {
             .{},
             &out.writer,
         );
-        try out.writer.writeByte('}');
+        try out.writer.writeAll("}}");
         return out.toOwnedSlice();
     }
 };
@@ -1071,7 +1118,10 @@ pub const SessionDetailSnapshot = struct {
         defer out.deinit();
 
         const state = self.detail.state;
-        try out.writer.writeAll("{\"kind\":\"session_detail\",\"id\":");
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"id\":",
+            .{Kind.session_show.jsonName()},
+        );
         try std.json.Stringify.value(state.id, .{}, &out.writer);
         try out.writer.print(",\"created_at_ms\":{d},\"updated_at_ms\":{d},\"history_len\":{d}", .{ state.created_at_ms, state.updated_at_ms, state.history.len });
         try out.writer.writeAll(",\"conversation_language\":");
@@ -1083,7 +1133,7 @@ pub const SessionDetailSnapshot = struct {
             try writeSessionHistoryTurnJson(&out.writer, turn);
         }
 
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 };
@@ -1147,8 +1197,9 @@ pub const SessionRecoverySnapshot = struct {
     ) ![]u8 {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
-        try out.writer.writeAll(
-            "{\"kind\":\"session_recovery\",\"source_id\":",
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"source_id\":",
+            .{Kind.session_recover.jsonName()},
         );
         try std.json.Stringify.value(
             self.result.source_session_id,
@@ -1168,9 +1219,10 @@ pub const SessionRecoverySnapshot = struct {
             &out.writer,
         );
         try out.writer.print(
-            ",\"history_turns\":{d}}}",
+            ",\"history_turns\":{d}",
             .{self.result.history_len},
         );
+        try out.writer.writeAll("}}");
         return try out.toOwnedSlice();
     }
 };
@@ -1232,8 +1284,8 @@ pub const DoctorSnapshot = struct {
     pub fn writeJson(self: DoctorSnapshot, writer: *std.Io.Writer) !void {
         const counts = countDoctorChecks(self.checks);
         try writer.print(
-            "{{\"kind\":\"doctor\",\"ok_count\":{d},\"warn_count\":{d},\"fail_count\":{d}",
-            .{ counts.ok, counts.warn, counts.fail },
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"ok_count\":{d},\"warn_count\":{d},\"fail_count\":{d}",
+            .{ Kind.doctor.jsonName(), counts.ok, counts.warn, counts.fail },
         );
         try writer.writeAll(",\"workspace\":");
         try std.json.Stringify.value(self.workspace_root, .{}, writer);
@@ -1265,7 +1317,7 @@ pub const DoctorSnapshot = struct {
             try writer.writeAll(",\"mcp\":");
             try mcp.writeJson(writer);
         }
-        try writer.writeByte('}');
+        try writer.writeAll("}}");
     }
 };
 
@@ -1340,16 +1392,16 @@ pub const UpgradeSnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.writeAll("{\"kind\":\"upgrade\"");
+        try out.writer.print("{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{", .{Kind.upgrade.jsonName()});
 
         if (self.err_message) |msg| {
-            try out.writer.writeAll(",\"error\":");
+            try out.writer.writeAll("\"error\":");
             try std.json.Stringify.value(msg, .{}, &out.writer);
-            try out.writer.writeByte('}');
+            try out.writer.writeAll("}}");
             return try out.toOwnedSlice();
         }
 
-        try out.writer.writeAll(",\"current\":");
+        try out.writer.writeAll("\"current\":");
         try std.json.Stringify.value(self.current, .{}, &out.writer);
         try out.writer.writeAll(",\"latest\":");
         try std.json.Stringify.value(self.latest, .{}, &out.writer);
@@ -1368,7 +1420,7 @@ pub const UpgradeSnapshot = struct {
         }
         try out.writer.writeAll(",\"status\":");
         try std.json.Stringify.value(self.status.label(), .{}, &out.writer);
-        try out.writer.writeByte('}');
+        try out.writer.writeAll("}}");
         return try out.toOwnedSlice();
     }
 };
@@ -1619,14 +1671,14 @@ fn writeSessionUserTurnJson(writer: *std.Io.Writer, user: types.UserTurn) !void 
 
 test "command failure snapshot renders stable escaped json" {
     const rendered = try (CommandFailureSnapshot{
-        .kind = "models",
+        .kind = Kind.models.jsonName(),
         .message = "could not list \"models\"",
         .code = "ConnectionRefused",
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(rendered);
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"error\":\"could not list \\\"models\\\"\",\"code\":\"ConnectionRefused\"}",
+        "{\"ok\":false,\"kind\":\"models\",\"error\":\"could not list \\\"models\\\"\",\"code\":\"ConnectionRefused\"}",
         rendered,
     );
 }
@@ -1652,7 +1704,7 @@ test "core status snapshot text and json stay stable" {
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}}",
         json,
     );
 }
@@ -1678,7 +1730,7 @@ test "core status snapshot renders codex auth without team state" {
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"Codex subscription\",\"connected_providers\":[\"codex\"],\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"Codex subscription\",\"connected_providers\":[\"codex\"],\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}}",
         json,
     );
 }
@@ -1853,7 +1905,7 @@ test "core permissions snapshot text and json stay stable" {
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"permissions\",\"mode\":\"auto\",\"grant_count\":2,\"grant_scope\":\"session\",\"runtime_grants_available\":true,\"rules_scope\":\"persistent_config\",\"rules\":[{\"permission\":\"edit\",\"pattern\":\"src/*\",\"action\":\"allow\"},{\"permission\":\"open_url\",\"pattern\":\"*\",\"action\":\"ask\"}],\"grants\":[{\"tool_name\":\"write_file\",\"target_path\":\"/tmp/workspace/src/app.zig\",\"display_target\":\"src/app.zig\"},{\"tool_name\":\"run_command\",\"target_path\":\"/tmp/workspace::npm test\",\"display_target\":\"/tmp/workspace::npm test\"}]}",
+        "{\"ok\":true,\"kind\":\"permissions\",\"data\":{\"mode\":\"auto\",\"grant_count\":2,\"grant_scope\":\"session\",\"runtime_grants_available\":true,\"rules_scope\":\"persistent_config\",\"rules\":[{\"permission\":\"edit\",\"pattern\":\"src/*\",\"action\":\"allow\"},{\"permission\":\"open_url\",\"pattern\":\"*\",\"action\":\"ask\"}],\"grants\":[{\"tool_name\":\"write_file\",\"target_path\":\"/tmp/workspace/src/app.zig\",\"display_target\":\"src/app.zig\"},{\"tool_name\":\"run_command\",\"target_path\":\"/tmp/workspace::npm test\",\"display_target\":\"/tmp/workspace::npm test\"}]}}",
         json,
     );
 }
@@ -1908,7 +1960,7 @@ test "model list explains public-only and rejected-credential catalogs" {
     const json = try rejected.renderJson(alloc);
     defer alloc.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":true,\"ids\":[\"alpha\"]}",
+        "{\"ok\":true,\"kind\":\"models\",\"data\":{\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":true,\"ids\":[\"alpha\"]}}",
         json,
     );
 
@@ -1941,7 +1993,7 @@ test "core model list snapshot handles limits and empty lists" {
     const limit_json = try (ModelListSnapshot{ .ids = &ids, .limit = 2 }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(limit_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":3,\"shown_count\":2,\"more_count\":1,\"private_models_hidden\":false,\"ids\":[\"alpha\",\"beta\"]}",
+        "{\"ok\":true,\"kind\":\"models\",\"data\":{\"count\":3,\"shown_count\":2,\"more_count\":1,\"private_models_hidden\":false,\"ids\":[\"alpha\",\"beta\"]}}",
         limit_json,
     );
 
@@ -1952,7 +2004,7 @@ test "core model list snapshot handles limits and empty lists" {
     const empty_json = try (ModelListSnapshot{ .ids = &.{} }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(empty_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":0,\"shown_count\":0,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[]}",
+        "{\"ok\":true,\"kind\":\"models\",\"data\":{\"count\":0,\"shown_count\":0,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[]}}",
         empty_json,
     );
 }
@@ -1983,7 +2035,7 @@ test "core session list snapshot text and json stay stable" {
     const json = try (SessionListSnapshot{ .sessions = &sessions }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"sessions\",\"count\":1,\"sessions\":[{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session title\\npreview line\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}]}",
+        "{\"ok\":true,\"kind\":\"session.list\",\"data\":{\"count\":1,\"sessions\":[{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session title\\npreview line\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}]}}",
         json,
     );
 
@@ -2006,7 +2058,7 @@ test "core session list snapshot text and json stay stable" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(paged_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"sessions\",\"count\":1,\"has_more\":true,\"next_cursor\":\"v1:2:abc\",\"sessions\":[{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session title\\npreview line\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}]}",
+        "{\"ok\":true,\"kind\":\"session.list\",\"data\":{\"count\":1,\"has_more\":true,\"next_cursor\":\"v1:2:abc\",\"sessions\":[{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session title\\npreview line\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}]}}",
         paged_json,
     );
 
@@ -2057,7 +2109,7 @@ test "core session list snapshot text and json stay stable" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(warning_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"sessions\",\"count\":0,\"skipped_invalid\":2,\"sessions\":[]}",
+        "{\"ok\":true,\"kind\":\"session.list\",\"data\":{\"count\":0,\"skipped_invalid\":2,\"sessions\":[]}}",
         warning_json,
     );
 }
@@ -2131,7 +2183,7 @@ test "core session summary snapshot text and json stay stable" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_summary\",\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session preview\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}",
+        "{\"ok\":true,\"kind\":\"session.show\",\"data\":{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session preview\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}}",
         json,
     );
 }
@@ -2151,7 +2203,7 @@ test "core session JSON uses fallback title for metadata-missing summaries" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_summary\",\"id\":\"old-session\",\"title\":\"Untitled session\",\"preview\":null,\"workspace_root\":null,\"origin_workspace_root\":null,\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":1,\"conversation_language\":\"en\"}",
+        "{\"ok\":true,\"kind\":\"session.show\",\"data\":{\"id\":\"old-session\",\"title\":\"Untitled session\",\"preview\":null,\"workspace_root\":null,\"origin_workspace_root\":null,\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":1,\"conversation_language\":\"en\"}}",
         json,
     );
 }
@@ -2195,7 +2247,7 @@ test "core empty session detail snapshot text and json stay stable" {
     const json = try (SessionDetailSnapshot{ .detail = detail }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_detail\",\"id\":\"sess-empty\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":0,\"conversation_language\":\"en\",\"history\":[]}",
+        "{\"ok\":true,\"kind\":\"session.show\",\"data\":{\"id\":\"sess-empty\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":0,\"conversation_language\":\"en\",\"history\":[]}}",
         json,
     );
 }
@@ -2382,7 +2434,7 @@ test "core session recovery snapshot text and json stay stable" {
     );
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_recovery\",\"source_id\":\"source-session\",\"recovered_id\":\"recovered-session\",\"status\":\"recovered\",\"history_turns\":4}",
+        "{\"ok\":true,\"kind\":\"session.recover\",\"data\":{\"source_id\":\"source-session\",\"recovered_id\":\"recovered-session\",\"status\":\"recovered\",\"history_turns\":4}}",
         json,
     );
 
@@ -2405,7 +2457,7 @@ test "core session recovery snapshot text and json stay stable" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(partial_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_recovery\",\"source_id\":\"source-session\",\"recovered_id\":\"partial-session\",\"status\":\"recovered_with_unverified_artifacts\",\"history_turns\":4}",
+        "{\"ok\":true,\"kind\":\"session.recover\",\"data\":{\"source_id\":\"source-session\",\"recovered_id\":\"partial-session\",\"status\":\"recovered_with_unverified_artifacts\",\"history_turns\":4}}",
         partial_json,
     );
 
@@ -2449,7 +2501,7 @@ test "core doctor snapshot text and json stay stable" {
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fiber\",\"model\":\"alpha\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"agent_step_limit\":24,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}",
+        "{\"ok\":true,\"kind\":\"doctor\",\"data\":{\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fiber\",\"model\":\"alpha\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"agent_step_limit\":24,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}}",
         json,
     );
 }
@@ -2501,7 +2553,7 @@ test "core upgrade snapshot renders errors and statuses" {
     const error_json = try error_snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(error_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"upgrade\",\"error\":\"download failed\"}",
+        "{\"ok\":true,\"kind\":\"upgrade\",\"data\":{\"error\":\"download failed\"}}",
         error_json,
     );
 
@@ -2521,7 +2573,7 @@ test "core upgrade snapshot renders errors and statuses" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(upgraded_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"upgrade\",\"current\":\"0.2.9\",\"latest\":\"0.2.10\",\"status\":\"upgraded\"}",
+        "{\"ok\":true,\"kind\":\"upgrade\",\"data\":{\"current\":\"0.2.9\",\"latest\":\"0.2.10\",\"status\":\"upgraded\"}}",
         upgraded_json,
     );
 
@@ -2554,7 +2606,7 @@ test "core upgrade snapshot renders errors and statuses" {
     const up_to_date_json = try up_to_date.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(up_to_date_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"upgrade\",\"current\":\"0.2.9\",\"latest\":\"0.2.10\",\"status\":\"up_to_date\"}",
+        "{\"ok\":true,\"kind\":\"upgrade\",\"data\":{\"current\":\"0.2.9\",\"latest\":\"0.2.10\",\"status\":\"up_to_date\"}}",
         up_to_date_json,
     );
 }
@@ -2577,7 +2629,7 @@ test "core upgrade snapshot identifies dev revisions" {
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"upgrade\",\"current\":\"0.3.66\",\"latest\":\"0.3.66\",\"channel\":\"dev\",\"current_channel\":\"stable\",\"current_revision\":\"111111111111\",\"latest_revision\":\"abcdef0123456789abcdef0123456789abcdef01\",\"status\":\"upgraded\"}",
+        "{\"ok\":true,\"kind\":\"upgrade\",\"data\":{\"current\":\"0.3.66\",\"latest\":\"0.3.66\",\"channel\":\"dev\",\"current_channel\":\"stable\",\"current_revision\":\"111111111111\",\"latest_revision\":\"abcdef0123456789abcdef0123456789abcdef01\",\"status\":\"upgraded\"}}",
         json,
     );
 }
@@ -2621,7 +2673,7 @@ test "workspace snapshot renders source availability and mutation in text and js
     const json_output = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json_output);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"workspace\",\"action\":\"remove\",\"changed\":true,\"primary_directory\":\"/tmp/project\",\"saved_suppressed\":false,\"limit\":16,\"path\":\"/tmp/removed\",\"saved_changed\":false,\"runtime_changed\":true,\"launch_flag_can_restore\":true,\"additional_directories\":[{\"path\":\"/tmp/shared\",\"saved\":true,\"command_line\":false,\"available\":true,\"active\":true},{\"path\":\"/tmp/run-only\",\"saved\":false,\"command_line\":true,\"available\":true,\"active\":true}]}",
+        "{\"ok\":true,\"kind\":\"workspace\",\"data\":{\"action\":\"remove\",\"changed\":true,\"primary_directory\":\"/tmp/project\",\"saved_suppressed\":false,\"limit\":16,\"path\":\"/tmp/removed\",\"saved_changed\":false,\"runtime_changed\":true,\"launch_flag_can_restore\":true,\"additional_directories\":[{\"path\":\"/tmp/shared\",\"saved\":true,\"command_line\":false,\"available\":true,\"active\":true},{\"path\":\"/tmp/run-only\",\"saved\":false,\"command_line\":true,\"available\":true,\"active\":true}]}}",
         json_output,
     );
 
@@ -2717,15 +2769,16 @@ test "usage text and JSON render the same optional and ordered facts" {
     defer alloc.free(json);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, json, .{});
     defer parsed.deinit();
+    const data = parsed.value.object.get("data").?.object;
     try std.testing.expectEqualStrings(
         "7d",
-        parsed.value.object.get("period").?.string,
+        data.get("period").?.string,
     );
     try std.testing.expect(
-        parsed.value.object.get("totals").?.object.get("reasoning_tokens").? == .null,
+        data.get("totals").?.object.get("reasoning_tokens").? == .null,
     );
     try std.testing.expectEqualStrings(
         "provider/model",
-        parsed.value.object.get("models").?.array.items[0].object.get("model").?.string,
+        data.get("models").?.array.items[0].object.get("model").?.string,
     );
 }
