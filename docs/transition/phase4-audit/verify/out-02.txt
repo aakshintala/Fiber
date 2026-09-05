@@ -1,0 +1,20 @@
+src/core/slash_commands/command_specs.zig:137 | REFUTED | referenced in firstSlashCompletion in src/core/slash_commands/command_specs.zig:470
+src/core/slash_commands/command_specs.zig:704 | CONFIRMED | function is completely unused in the entire codebase
+src/builtins/commands.zig:375 | CONFIRMED | wrapper function is completely unused in the entire codebase
+src/builtins/commands.zig:379 | CONFIRMED | wrapper function is completely unused in the entire codebase
+src/builtins/commands.zig:412 | CONFIRMED | re-export is completely unused in the entire codebase
+src/core/terminal/ui_projection.zig:32 | TESTED-ONLY | only referenced in backgroundStatus test block in ui_projection.zig
+src/core/terminal/recovery.zig:49 | REFUTED | returned by reconcile which has a production caller in store.zig:1084
+src/core/mcp/elicitation.zig:232 | REFUTED | called by decideTransition which has a production caller in legacy_url_completion.zig:101
+src/core/workspace/change_tracker.zig:8 | REFUTED | referenced in app_callbacks.zig:727-728 for file change tracking
+src/core/workspace/context_contract.zig:369 | TESTED-ONLY | only referenced in snapshot functions that are called exclusively in unit tests
+src/ui/footer/settings_menu_presentation.zig:141 | CONFIRMED | width parameter is discarded with _ = width; and unused in measureBrowseBody
+src/ui/footer/help_menu_presentation.zig:110 | CONFIRMED | width parameter is discarded with _ = width; and unused in measureBody
+src/core/shared/gateway_error_format.zig:332 | TESTED-ONLY | wrapCut is only used by formatMarkedLine, which itself is only called in a test block
+src/core/session/session_test_controls.zig:7 | CONFIRMED | function is completely unused in both production and test code
+src/ui/transcript/writer.zig:180 | TESTED-ONLY | only referenced inside test blocks in resize_tests.zig and runtime_tests.zig
+src/ui/transcript/runtime.zig:9127 | TESTED-ONLY | only referenced inside test blocks in resize_tests.zig and runtime_tests.zig
+src/ui/transcript/painter.zig:1225 | TESTED-ONLY | only referenced inside test blocks in runtime_tests.zig
+src/ui/transcript/runtime.zig:10529 | TESTED-ONLY | only referenced inside test blocks in runtime_tests.zig
+
+STATUS: DONE

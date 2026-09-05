@@ -1,0 +1,210 @@
+CONFIRMED	always-was	src/core/mcp/elicitation.zig:161	Rejection.duplicate variant	Rejection.duplicate is only referenced in a dead-code path of decideTransition and in tests
+TESTED-ONLY	always-was	src/core/input/editor_state.zig:148	moveCharacterLeft method	only referenced in editor_state.zig test blocks
+CONFIRMED	always-was	src/core/input/editor_state.zig:154	moveCharacterRight method	unused function with zero references in production or tests
+TESTED-ONLY	always-was	src/core/workspace/context_contract.zig:405	EntryPoint enum	only referenced in context_contract.zig test blocks
+TESTED-ONLY	always-was	src/core/workspace/context_contract.zig:419	DriftStatus enum	only referenced in context_contract.zig test blocks
+TESTED-ONLY	always-was	src/core/workspace/context_contract.zig:433	EntrypointInventory struct	only referenced in context_contract.zig test blocks
+TESTED-ONLY	always-was	src/core/workspace/context_contract.zig:445	required_fragments table	only referenced in context_contract.zig test blocks
+REFUTED	deleted-product	src/ui/footer/picker_presentation.zig:345	subscription_source always-true constant	guards live Codex authentication UI rendering at lines 346 and 379
+REFUTED	always-was	src/ui/footer/viewport.zig:180	eraseCurrentFrame metrics parameter	active production caller in src/core/app/app_lifecycle.zig:586 passes this parameter
+TESTED-ONLY	always-was	src/core/shared/debug_trace.zig:369	isEnabled function	only referenced in debug_trace.zig test blocks
+REFUTED	always-was	src/ui/render_engine/frame_layout.zig:11	FramePlacementPolicy single-variant enum	used as field type in SolveInput and FrameLayout, and hashed in layoutId
+TESTED-ONLY	deleted-product	src/ui/render_engine/frame_layout.zig:81	BodyMode.subagent_panel variant	only referenced in frame_fixed_point.zig test blocks
+CONFIRMED	deleted-product	src/ui/render_engine/frame_builder.zig:20	FrameBody.subagent_panel variant	unused variant whose only production reference is inside a dead switch path in app_render_runtime.zig
+CONFIRMED	deleted-product	src/core/hosts/host.zig:149	nativeForOs wasi process_control guard	WASI target has been removed and os_tag can never be .wasi in production
+CONFIRMED	deleted-product	src/ui/render_request.zig:10	Reason.subagent_panel enum variant	enum variant has zero references in production or tests
+CONFIRMED	always-was	src/core/auth/chatgpt_session.zig:19	presence function	unused function with zero references in production or tests
+TESTED-ONLY	always-was	src/core/subagent/authority.zig:15	permissionRank helper fn	only referenced in authority.zig test blocks via admitChildPermission
+REFUTED	always-was	src/core/subagent/tool_host.zig:62	ExecuteOptions.max_result_bytes ignored field	field is populated via anonymous struct literal at src/core/tooling/tool_runtime.zig:1655
+REFUTED	deleted-product	src/core/subagent/resume_admission.zig:326	retainExternalRootUserTurn noop fn	live production callers in src/core/app/app_session_runtime.zig:2376 and src/core/cli/cli_ask.zig:2573
+TESTED-ONLY	deleted-product	src/gateway/agent_request_body.zig:874	freeGatewayCompletion	only referenced in errdefer path of parseGatewayCompletion and test blocks inside src/gateway/agent_request_bo
+TESTED-ONLY	always-was	src/core/skills/skill_runtime.zig:234	SkillSummaryStyles	only referenced in listSkillsSummaryStyled and associated test blocks inside src/core/skills/skill_runtime.zig
+TESTED-ONLY	always-was	src/core/skills/skill_runtime.zig:1065	skillGroupLabel	only called in listSkillsSummaryStyled and associated test blocks inside src/core/skills/skill_runtime.zig
+TESTED-ONLY	always-was	src/core/execution/managed_execution_contract.zig:123	Presentation enum	only referenced in initialPresentation and associated test blocks in src/core/execution/managed_execution_cont
+TESTED-ONLY	always-was	src/core/execution/managed_execution_contract.zig:48	Event.backend_lost variant	only referenced in transition cases and associated test blocks in src/core/execution/managed_execution_contrac
+REFUTED	always-was	src/core/gateway/provider_set.zig:24	auth_strategy field	written through struct literals in src/builtins/gateway.zig:24 and src/builtins/providers.zig:10 which would f
+TESTED-ONLY	deleted-product	src/core/gateway/model_catalog.zig:374	modelProviderRank function	only called in compareModelCatalogEntries which is exclusively referenced in model_catalog.zig test blocks
+TESTED-ONLY	deleted-product	src/core/gateway/model_catalog.zig:386	modelTierRank function	only called in compareModelCatalogEntries which is exclusively referenced in model_catalog.zig test blocks
+REFUTED	always-was	src/builtins/context.zig:165	loadsProjectInstructionFiles always-true helper	called in production functions registered on the context Provider interface at src/builtins/context.zig:44-45
+TESTED-ONLY	deleted-product	src/builtins/gateway.zig:112	buildAgentRequest fixture body builder	only referenced in test-only VisionGatewayFixture and FakeGateway structures in tool_runtime.zig and support.z
+TESTED-ONLY	always-was	src/builtins/tools.zig:885	toolRequiresApproval wrapper re-export	wrapper function with no production callers and only referenced in src/builtins/tools.zig tests
+TESTED-ONLY	always-was	src/builtins/tools.zig:889	toolHasPermissionContract wrapper	wrapper function with no production callers and only referenced in src/builtins/tools.zig tests
+TESTED-ONLY	always-was	src/core/slash_commands/command_router.zig:311	TestContext route test harness	struct and helper functions only defined and referenced inside command_router.zig test blocks
+REFUTED	always-was	src/core/terminal/contracts.zig:1399	TerminalLifetime single-variant enum	referenced explicitly as 'lifetime: "session"' in TypeScript e2e test tests/e2e/terminal-host.test.ts:1220
+TESTED-ONLY	always-was	src/core/slash_commands/command_specs.zig:366	renderSlashHelp function	function and wrapper have no production callers and only referenced in command_specs.zig test blocks
+TESTED-ONLY	always-was	src/core/slash_commands/command_specs.zig:370	renderSlashWelcome function	function and wrapper have no production callers and only referenced in command_specs.zig test blocks
+TESTED-ONLY	always-was	src/core/slash_commands/command_specs.zig:730	renderSlashEntries function	helper function for renderSlashHelp and renderSlashWelcome which both have no production callers
+REFUTED	always-was	src/core/slash_commands/command_specs.zig:137	SlashSpec.show_aliases_in_completion field	referenced in firstSlashCompletion in src/core/slash_commands/command_specs.zig:470
+CONFIRMED	always-was	src/core/slash_commands/command_specs.zig:704	argCompletionIndexForLabel function	function is completely unused in the entire codebase
+CONFIRMED	always-was	src/builtins/commands.zig:375	renderSlashHelp wrapper	wrapper function is completely unused in the entire codebase
+CONFIRMED	always-was	src/builtins/commands.zig:379	renderSlashWelcome wrapper	wrapper function is completely unused in the entire codebase
+CONFIRMED	always-was	src/builtins/commands.zig:412	argCompletionIndexForLabel re-export	re-export is completely unused in the entire codebase
+TESTED-ONLY	always-was	src/core/terminal/ui_projection.zig:32	BackgroundStatus struct	only referenced in backgroundStatus test block in ui_projection.zig
+REFUTED	always-was	src/core/terminal/recovery.zig:49	Disposition.isolate_corrupt variant	returned by reconcile which has a production caller in store.zig:1084
+REFUTED	deleted-product	src/core/mcp/elicitation.zig:232	fn optionalStringEqual	called by decideTransition which has a production caller in legacy_url_completion.zig:101
+REFUTED	always-was	src/core/workspace/change_tracker.zig:8	OperationKind enum	referenced in app_callbacks.zig:727-728 for file change tracking
+TESTED-ONLY	always-was	src/core/workspace/context_contract.zig:369	contract_name constant	only referenced in snapshot functions that are called exclusively in unit tests
+CONFIRMED	always-was	src/ui/footer/settings_menu_presentation.zig:141	measureBrowseBody width parameter	width parameter is discarded with _ = width; and unused in measureBrowseBody
+CONFIRMED	always-was	src/ui/footer/help_menu_presentation.zig:110	measureBody width parameter	width parameter is discarded with _ = width; and unused in measureBody
+TESTED-ONLY	always-was	src/core/shared/gateway_error_format.zig:332	wrapCut helper only used by formatMarkedLine	wrapCut is only used by formatMarkedLine, which itself is only called in a test block
+CONFIRMED	deleted-product	src/core/session/session_test_controls.zig:7	logOptions	function is completely unused in both production and test code
+TESTED-ONLY	always-was	src/ui/transcript/writer.zig:180	reconstructivePaint function	only referenced inside test blocks in resize_tests.zig and runtime_tests.zig
+TESTED-ONLY	always-was	src/ui/transcript/runtime.zig:9127	reconstructivePaint runtime forwarder	only referenced inside test blocks in resize_tests.zig and runtime_tests.zig
+TESTED-ONLY	always-was	src/ui/transcript/painter.zig:1225	previewTranscriptFlow function	only referenced inside test blocks in runtime_tests.zig
+TESTED-ONLY	always-was	src/ui/transcript/runtime.zig:10529	previewTranscriptFlow runtime forwarder	only referenced inside test blocks in runtime_tests.zig
+CONFIRMED	always-was	src/core/auth/oauth.zig:201	revokeToken function	No callers or test references in the entire workspace.
+REFUTED	always-was	src/core/auth/auth_runtime.zig:229	PickerView.choiceEnabled always-true stub	Called in production by picker_presentation.zig:95 and auth_runtime.zig:617,724.
+TESTED-ONLY	always-was	src/core/subagent/model_contract.zig:121	Plan union type	Only referenced in tests in model_contract.zig (lines 198, 202, 211, 268).
+TESTED-ONLY	deleted-product	src/gateway/agent_request_body.zig:13	GatewayCompletion alias	Only referenced in tests in agent_request_body.zig (lines 792, 808, 812, 874, 888, 1600+).
+TESTED-ONLY	always-was	src/gateway/agent_request_body.zig:246	expandPendingToolReviewMessages	Only referenced in tests via buildGatewayPendingToolReviewRequestBodyWithMaxOutputTokens in agent_request_body
+TESTED-ONLY	always-was	src/gateway/agent_request_body.zig:22	pending_tool_review_result_text	Only referenced in expandPendingToolReviewMessages which is only called by tests in agent_request_body.zig.
+REFUTED	always-was	src/builtins/context.zig:102	SelectionOptions.load_project_instruction_files flag	Struct field written in production struct literals in context.zig at lines 185, 197 and read at line 222.
+TESTED-ONLY	deleted-product	src/builtins/gateway.zig:22	provider_bundle test-only Codex bundle	Only referenced in test configurations in cli_surface.zig:5263, app_entry_runtime.zig:494, and cli_ask.zig:385
+TESTED-ONLY	deleted-product	src/builtins/gateway.zig:254	toolNameSelected helper	Only called by buildAgentToolsJson which is only called by test-only buildAgentRequest in gateway.zig:122.
+REFUTED	always-was	src/core/terminal/contracts.zig:1692	RepeatedProbeAuthority struct	Struct is field type in AuthorityGrant in contracts.zig:1671, and field is serialized in store.zig:1863.
+REFUTED	always-was	src/core/terminal/contracts.zig:171	PollSchedule struct	Struct is field type in contracts.zig:1695,276 and serialized in store.zig:2018.
+REFUTED	always-was	src/core/terminal/contracts.zig:270	NotifySchedule union	Union is field type in contracts.zig:1696 and hashed in store.zig:2013.
+REFUTED	always-was	src/core/terminal/contracts.zig:289	MonitorLifetime union	Union is field type in contracts.zig:1697 and hashed in store.zig:2025.
+CONFIRMED	always-was	src/builtins/commands.zig:326	renderTopLevelCommandHelp wrapper	Unused wrapper function with no production or test references in the entire workspace.
+CONFIRMED	always-was	src/builtins/commands.zig:330	topLevelKindFromToken wrapper	Unused wrapper function with no production or test references in the entire workspace.
+CONFIRMED	always-was	src/builtins/commands.zig:363	matchesSlashExact wrapper	Unused wrapper function with no production or test references in the entire workspace.
+CONFIRMED	always-was	src/builtins/commands.zig:371	matchedSlashPrefix wrapper	Unused wrapper function with no production or test references in the entire workspace.
+CONFIRMED	always-was	src/builtins/commands.zig:383	firstSlashCompletion wrapper	Unused wrapper function with no production or test references in the entire workspace.
+CONFIRMED	always-was	src/builtins/commands.zig:407	slashCompletionHasArgs wrapper	no callers found in the codebase
+TESTED-ONLY	deleted-product	src/core/mcp/elicitation.zig:138	Binding.user_identity optional field	user_identity field is only set to non-null in test blocks
+TESTED-ONLY	deleted-product	src/core/mcp/elicitation.zig:151	AnswerBinding.user_identity optional field	user_identity field is only set to non-null in test blocks
+TESTED-ONLY	always-was	src/core/shared/lexical_relevance.zig:35	Score struct score and order	Score struct, score, and order are only referenced inside test blocks
+REFUTED	always-was	src/core/mcp/features/common.zig:103	completeResult ignored protocol parameter	called with protocol parameter in src/core/mcp/features/resources.zig:329
+TESTED-ONLY	always-was	src/ui/render_engine/transcript_blocks.zig:414	wrapAssistantText one-line forwarder	wrapAssistantText is only called in test files
+TESTED-ONLY	always-was	src/ui/transcript/resume_projection.zig:47	ResumeProjection.initEmpty	ResumeProjection.initEmpty is only called in test blocks
+CONFIRMED	always-was	src/core/subagent/model_contract.zig:44	Request.agentName method	Request.agentName is never called in the codebase
+REFUTED	deleted-product	src/core/gateway/model_catalog.zig:287	has_web_search field	used to set supports_web_search in src/core/gateway/model_catalog_metadata.zig:18
+REFUTED	deleted-product	src/core/gateway/model_catalog.zig:288	has_explicit_caching field	used to set supports_explicit_caching in src/core/gateway/model_catalog_metadata.zig:19
+CONFIRMED	deleted-product	src/core/gateway/model_catalog.zig:292	web_search_price field	field is always null and never set or read
+REFUTED	always-was	src/builtins/context.zig:39	model_prompt_overlay_fn hook in prompt_policy	function pointer assigned into prompt_policy struct, called in src/core/app/app_agent_runtime.zig:1022
+TESTED-ONLY	always-was	src/builtins/tools.zig:881	toolActivityKind wrapper re-export	toolActivityKind in src/builtins/tools.zig is only called in test blocks
+CONFIRMED	always-was	src/builtins/commands.zig:322	renderTopLevelHelpWithStyle wrapper	renderTopLevelHelpWithStyle wrapper is never called
+CONFIRMED	always-was	src/builtins/commands.zig:334	topLevelUsage wrapper	topLevelUsage wrapper is never called
+CONFIRMED	always-was	src/builtins/commands.zig:403	nthSlashCompletionCategory wrapper	nthSlashCompletionCategory wrapper is never called
+REFUTED	always-was	src/core/app/app_auth_runtime.zig:14	oauthAuthEnabled comptime wrapper function	called at comptime in production functions in src/core/app/app_auth_runtime.zig:59
+REFUTED	deleted-product	src/main.zig:99	compiled_update_channel stable-only literal	used in currentBuild() and App.build_update_channel in src/main.zig
+REFUTED	always-was	src/core/auth/credentials.zig:220	sourceRefreshable function	referenced in src/core/auth/auth_runtime.zig:107
+TESTED-ONLY	always-was	src/builtins/hooks.zig:76	RecordingClient test double struct	only used in test blocks of src/builtins/hooks.zig
+CONFIRMED	always-was	src/builtins/tools.zig:3	unused builtin_gateway import	unused import, no references in src/builtins/tools.zig
+CONFIRMED	always-was	src/builtins/tools.zig:877	toolLabelValue wrapper re-export	unused function, no references in src/builtins/tools.zig or anywhere else
+REFUTED	always-was	src/core/terminal/contracts.zig:1495	AllowedControls.monitor capability bit	referenced in src/core/terminal/contracts.zig:1683 and bitcasted in src/core/terminal/store.zig:2040
+REFUTED	always-was	src/core/slash_commands/command_specs.zig:86	TopLevelResource struct	referenced in TopLevelRegistry.resources and renderTopLevelHelpWithStyle in src/core/slash_commands/command_sp
+CONFIRMED	always-was	src/builtins/commands.zig:399	nthSlashCompletionDescription wrapper	unused wrapper function, no references in src/builtins/commands.zig
+REFUTED	deleted-product	src/main.zig:57	codex_models_path empty models path constant	referenced as an argument at lines 431, 452, 1855 in src/main.zig
+REFUTED	always-was	src/builtins/context.zig:32	modelPromptOverlay stub always returns null	function pointer assigned in prompt_policy struct at src/builtins/context.zig:39
+CONFIRMED	deleted-product	src/core/auth/credentials.zig:170	preferred parameter on resolveForProvider	unused parameter, only referenced as _ = preferred;
+CONFIRMED	deleted-product	src/core/auth/auth_runtime.zig:302	preferred parameter on loadStatusSnapshotForProvider	unused parameter, only referenced as _ = preferred;
+REFUTED	always-was	src/core/terminal/store.zig:203	Record.monitor_count legacy field	referenced in session repair logic in src/core/terminal/store.zig:4824
+REFUTED	always-was	src/core/slash_commands/command_specs.zig:141	SlashSpec.show_in_welcome field	referenced in renderSlashEntries in src/core/slash_commands/command_specs.zig:737
+CONFIRMED	always-was	src/builtins/commands.zig:391	nthSlashCompletion wrapper	unused wrapper function, no references in src/builtins/commands.zig
+CONFIRMED	always-was	src/builtins/commands.zig:395	nthSlashCompletionLabel wrapper	unused wrapper function, no references in src/builtins/commands.zig
+REFUTED	always-was	src/core/subagent/agent_adapter.zig:378	pushLiveRouteRecoveryStatus deps override	referenced in RunDeps initialization and route recovery event processing in src/core/subagent/agent_adapter.zi
+CONFIRMED	always-was	src/builtins/commands.zig:413	permissionsArgCompletionPrefix re-export	unused re-export, no references in src/builtins/commands.zig
+CONFIRMED	deleted-product	src/core/cli/cli_surface.zig:582	activateProviderSelection caller parameter	unused parameter, only referenced as _ = caller;
+CONFIRMED	always-was	src/builtins/commands.zig:411	argCompletionAnchor re-export	zero references to this re-export are found across the entire codebase
+REFUTED	always-was	src/core/agent/runtime/execution_memory.zig:230	prepareToolModelOutput null-capture wrapper	called by orchestrator.zig:2316 in production providerExecutedResult flow
+TESTED-ONLY	always-was	src/core/terminal/contracts.zig:1671	AuthorityGrant.repeated_probes default slice	only referenced in test blocks (e.g. test_persistence in store.zig and contracts.zig tests)
+REFUTED	always-was	src/core/shared/message.zig:16	Content text-only union wrapper	MessageAdapter.content in execution_memory.zig:305 calls content_value.asText() in production buildNormalMessa
+CONFIRMED	deleted-product	src/core/gateway/provider_set.zig:23	presentation field	field is initialized in builtins but never read anywhere in production code
+CONFIRMED	always-was	src/builtins/commands.zig:387	slashCompletionCount wrapper	zero references to this wrapper function exist in the codebase
+CONFIRMED	always-was	src/core/app/prompt_history_runtime.zig:188	displayPath	zero references to PromptHistoryRuntime.displayPath exist in the codebase
+REFUTED	always-was	src/core/input/composer_history.zig:31	ActiveComposer struct	ActiveComposer is the type of navigate's third parameter, which is called by src/ui/input/runtime.zig:741 in p
+TESTED-ONLY	deleted-product	src/core/auth/oauth.zig:103	discover function	only reference is in test "oauth discovery..." block in oauth.zig
+REFUTED	always-was	src/core/subagent/execution.zig:40	RunOutcome.awaiting_approval variant	variant is matched in a production switch in managed_owner.zig:332
+TESTED-ONLY	always-was	src/builtins/mcp.zig:1136	stableEmptyTestEnviron test helper	only referenced within test blocks in mcp.zig
+CONFIRMED	always-was	src/core/mcp/features/tools.zig:214	InputRequest and InputRequired re-exports	these re-exports are never referenced anywhere in the codebase
+CONFIRMED	deleted-product	src/core/execution/command_environment.zig:16	Environment.workspace_clean union variant	workspace_clean environment is never constructed or parsed in any production path
+CONFIRMED	deleted-product	src/core/execution/command_environment.zig:136	Host.workspace_clean enum variant	workspace_clean host is never set on any production tools spec
+CONFIRMED	deleted-product	src/core/execution/command_environment.zig:116	formatApprovalCommand workspace_clean arm	workspace_clean arm is dead code as the environment variant is never produced in production
+CONFIRMED	deleted-product	src/core/execution/command_runner.zig:626	executeCommandInEnvironment workspace_clean arm	workspace_clean arm is dead code as the environment variant is never produced in production
+CONFIRMED	deleted-product	src/core/execution/managed_execution.zig:1425	dupeEnvironment workspace_clean arm	workspace_clean arm is dead code as the environment variant is never produced in production
+REFUTED	deleted-product	src/main.zig:58	agent_retry_count constant always zero	constant is referenced in 15+ production callers in main.zig (e.g. lines 1698, 1774, 3374)
+REFUTED	always-was	src/core/subagent/agent_adapter.zig:375	pushLiveToolLifecycle deps override	pushLiveToolLifecycle is referenced by .push_tool_lifecycle in agent_adapter.zig runtimeDeps (line 375) and ca
+TESTED-ONLY	always-was	src/core/workspace/context_contract.zig:371	Fragment enum	Fragment and its usages are only referenced inside test blocks (line 601 onward in context_contract.zig)
+REFUTED	always-was	src/core/app/app_terminal_runtime.zig:19	ExitPreparation.deferred variant	ExitPreparation.deferred is referenced as an enum variant and handled in a switch statement inside production 
+REFUTED	deleted-product	src/core/gateway/model_catalog.zig:280	released field	released field is used in model catalog sorting via compareModelCatalogEntries (line 370) and referenced in sl
+TESTED-ONLY	always-was	src/core/subagent/model_contract.zig:109	model_contract.Phase enum	model_contract.Phase is only used in model_contract.plan, which is only called in unit tests (lines 202, 211, 
+CONFIRMED	always-was	src/builtins/commands.zig:314	matchesTopLevel wrapper	matchesTopLevel in commands.zig (line 314) has no callers; all callers use command_specs.matchesTopLevel direc
+REFUTED	always-was	src/core/mcp/features/tools.zig:202	duplicate ProtocolError struct	ProtocolError in tools.zig (line 202) is a live struct referenced as tools_feature.ProtocolError in tool_resul
+REFUTED	always-was	src/core/input/composer_history.zig:15	ImageBlocks alias	ImageBlocks is a live type alias used for ActiveComposer.images in composer_history.zig:37 and throughout its 
+REFUTED	always-was	src/ui/assistant/pacer.zig:146	pause no-op method and unused now_ns	pacer.pause has a live production caller in src/main.zig:2726
+REFUTED	deleted-product	src/core/auth/auth_runtime.zig:137	Choice.source union variant	Choice.source union variant is a live variant handled inside several production functions in auth_runtime.zig 
+CONFIRMED	always-was	src/core/app/app_auth_runtime.zig:9	unused provider_catalog import	provider_catalog import in app_auth_runtime.zig:9 is unused and can be safely deleted
+TESTED-ONLY	always-was	src/core/terminal/recovery.zig:15	HostEvidence.absent variant	HostEvidence.absent is never referenced in production code; its only uses are in the recovery.zig unit tests (
+CONFIRMED	deleted-product	src/main.zig:3223	hasPosixArgVector wasi arm	wasi branch in hasPosixArgVector (src/main.zig:3223) is a dead leftover from removed WASI support and can be s
+REFUTED	deleted-product	src/core/gateway/model_catalog.zig:12	View enum	View enum is live and used in model_cache_runtime.zig:581 (.view = .picker) and openai_codex_models.zig:37 (.v
+TESTED-ONLY	always-was	src/core/permissions/auto_classifier.zig:331	ProviderInput.endpoint field	ProviderInput.endpoint is never set or read in production code; its only references are in the auto_classifier
+TESTED-ONLY	always-was	src/core/mcp/elicitation.zig:156	RequestState.consumed variant	RequestState.consumed is never used in production code; its only uses are in the elicitation.zig unit tests (l
+CONFIRMED	deleted-product	src/core/app/app_commands.zig:8	unused gateway_provider import	gateway_provider import in app_commands.zig:8 is unused and can be safely deleted
+REFUTED	deleted-product	src/core/upgrade/update_target.zig:26	Target union only stable variant remains	Target union is live and heavily referenced in upgrade_runtime.zig (lines 16, 392), upgrade_helpers.zig (line 
+CONFIRMED	always-was	src/core/auth/auth_runtime.zig:69	FailureSnapshot.renderJson method	no callers of FailureSnapshot.renderJson exist in the codebase
+REFUTED	deleted-product	src/core/upgrade/update_target.zig:68	Target.revision always returns null	called by upgrade_runtime.zig:84 in production update flow
+CONFIRMED	always-was	src/core/mcp/mcp_auth_store.zig:134	Status enum	mcp_auth_store.status has no callers in the codebase
+CONFIRMED	always-was	src/core/permissions/auto_classifier.zig:329	ProviderInput.credential_source field	field is never set or read in production or test code
+TESTED-ONLY	always-was	src/core/execution/managed_execution_contract.zig:21	TerminalState enum	only referenced in test "tombstones contain terminal facts without authority"
+REFUTED	always-was	src/core/mcp/features/tools.zig:11	duplicate Protocol and CacheScope enums	used as field types and parameter types in src/core/mcp/features/tools.zig
+CONFIRMED	always-was	src/tools/skills/install_skill.zig:96	execute function	function has zero callers in production or test code
+CONFIRMED	always-was	src/tools/skills/skill.zig:135	execute function	function has zero callers in production or test code
+REFUTED	always-was	src/core/notifications/sound.zig:116	Platform.linux variant	referenced in production sound.zig:136 compile-time check
+REFUTED	deleted-product	src/core/mcp/elicitation.zig:119	Scope single-variant union wrapper	referenced as field type in elicitation.zig:131 and used in mcp_runtime.zig:2244
+CONFIRMED	always-was	src/core/permissions/auto_classifier.zig:361	Reviewer.disabled	function has zero callers in production or test code
+REFUTED	always-was	src/core/slash_commands/command_specs.zig:100	TopLevelRegistry.resources field	referenced in commands.zig:312 and command_specs.zig:313
+REFUTED	always-was	src/builtins/tools.zig:872	lookup wrapper re-export	called in toolRequiresApproval in tools.zig:886 and modes.zig:60
+TESTED-ONLY	always-was	src/builtins/modes.zig:23	lookup wrapper function	only referenced in test blocks in src/builtins/modes.zig
+TESTED-ONLY	always-was	src/core/terminal/recovery.zig:6	RecordEvidence.missing partial corrupt unsupported	only referenced in test "recovery never restarts and isolates invalid durable records"
+CONFIRMED	deleted-product	src/core/cli/cli_surface.zig:581	activateProviderSelection target parameter	parameter is explicitly discarded with _ = target; in the function body
+CONFIRMED	always-was	src/core/auth/credentials.zig:157	resolve function	function has zero callers in production or test code
+TESTED-ONLY	deleted-product	src/core/upgrade/update_target.zig:10	Channel.parse has no production callers	only referenced in test blocks in src/core/upgrade/update_target.zig
+CONFIRMED	always-was	src/ui/footer/picker_presentation.zig:221	signInProjectedRowIndex snapshot parameter	signInProjectedRowIndex snapshot parameter is discarded and only used as _ = snapshot
+CONFIRMED	always-was	src/core/mcp/elicitation.zig:613	FormSchema.title field	FormSchema.title field is never set or used because any schema containing title is rejected on line 720
+TESTED-ONLY	always-was	src/core/terminal/host_policy.zig:111	PendingRequests.cancel method	PendingRequests.cancel is only referenced in test blocks within host_policy.zig
+REFUTED	deleted-product	src/core/gateway/model_catalog.zig:21	FetchInput.view field	FetchInput.view is written through a struct literal in src/gateway/openai_codex_models.zig:37
+TESTED-ONLY	always-was	src/core/subagent/model_contract.zig:108	model_contract.Kind enum	Kind enum is only used by model_contract.Snapshot and inside model_contract.zig test blocks
+CONFIRMED	always-was	src/core/hooks/tool.zig:1	unused tool re-export shim module	tool.zig and its re-export in hooks.zig are completely unused in the codebase
+TESTED-ONLY	always-was	src/core/subagent/model_contract.zig:110	model_contract.Snapshot struct	Snapshot struct is only used by model_contract.plan and inside model_contract.zig test blocks
+TESTED-ONLY	always-was	src/core/input/composer_selection.zig:31	finish method	composer_selection.State.finish is only called in a test block in composer_selection.zig
+REFUTED	deleted-product	src/core/auth/auth_runtime.zig:796	provider parameter on selectForProvider	selectForProvider is called in production at src/core/app/app_auth_runtime.zig:25 with provider parameter
+CONFIRMED	always-was	src/core/mcp/elicitation.zig:157	RequestState.cancelled variant	RequestState.cancelled is never constructed or used in production or test code
+CONFIRMED	always-was	src/core/mcp/elicitation.zig:174	Rejection.cancelled variant	Rejection.cancelled is never returned or checked in production or test code
+CONFIRMED	always-was	src/core/subagent/authority.zig:51	HostAuthority.capture wrapper method	HostAuthority.capture is completely unused and has no callers in production or tests
+REFUTED	always-was	src/core/app/app_auth_runtime.zig:111	reconcileAfterChatGptLogout @hasDecl else false	reconcileAfterChatGptLogout exists on app.auth in production, so the comptime check compiles and executes it
+CONFIRMED	always-was	src/core/app/app_bootstrap_runtime.zig:10	unused credentials import	credentials import is unused in app_bootstrap_runtime.zig
+CONFIRMED	always-was	src/core/app/app_auth_runtime.zig:3	unused host import	host import is unused in app_auth_runtime.zig
+CONFIRMED	always-was	src/core/app/app_commands.zig:9	unused host import	host import is unused in app_commands.zig
+CONFIRMED	always-was	src/core/mcp/elicitation.zig:614	FormSchema.description field	FormSchema.description field is never set or used because any schema containing description is rejected on lin
+REFUTED	always-was	src/ui/render_engine/frame_builder.zig:21	FrameBody.none variant	FrameBody.none variant is matched in paintBody switch in src/core/app/app_render_runtime.zig:2152
+CONFIRMED	deleted-product	src/ui/footer/picker_presentation.zig:331	composeSignInPickerRow source parameter	parameter is explicitly discarded with _ = source; in the function body
+CONFIRMED	deleted-product	src/ui/footer/picker_presentation.zig:222	signInProjectedRowIndex source parameter	parameter is explicitly discarded with _ = source; in the function body
+TESTED-ONLY	always-was	src/core/subagent/model_contract.zig:128	plan scheduling fn	only referenced inside test blocks in src/core/subagent/model_contract.zig
+CONFIRMED	always-was	src/core/mcp/elicitation.zig:185	decideTransition state parameter	the sole production caller decideLegacyUrlCompletion always passes .pending
+CONFIRMED	always-was	src/ui/footer/render_input.zig:638	turnActivityProjection shell parameter	parameter is explicitly discarded with _ = shell; in the function body
+CONFIRMED	always-was	src/core/hooks/hooks.zig:5	pub const tool imports dead shim	the imported namespace is never referenced anywhere in the codebase
+CONFIRMED	always-was	src/core/mcp/mcp_auth_store.zig:267	fn status	the function is never called or referenced anywhere in the codebase
+REFUTED	always-was	src/core/shared/mem_utils.zig:7	free function never called	called via deinitList in src/core/agent/runtime/orchestrator.zig
+CONFIRMED	always-was	src/core/mcp/elicitation.zig:781	unreachable root title/description assignment	any non-null title or description returns error.UnsupportedSchema at line 721
+CONFIRMED	always-was	src/ui/footer/paint_plan.zig:930	authPickerQueryCursorColumn cursor branch	authPickerQueryCursorColumn always returns null, making the branch dead
+CONFIRMED	deleted-product	src/core/cli/cli_surface.zig:571	writeProviderActivationError fiber provider branch	all callers of writeProviderActivationError pass .provider_login as the caller argument
+CONFIRMED	deleted-product	src/ui/footer/model_menu_presentation.zig:410	loadedCatalogStatusText state.source read	state.source is explicitly discarded with _ = state.source;
+CONFIRMED	always-was	src/ui/footer/compact_command_menu_presentation.zig:195	composeUsageRow totals binding	totals is explicitly discarded with _ = totals;
+CONFIRMED	deleted-product	src/core/shared/io.zig:214	wasi branch in openExistingRegularFileWithPolicy	the WASI target is being removed and is never true in production
+CONFIRMED	deleted-product	src/core/shared/io.zig:427	wasi emscripten guard in getenvFromBlock	the WASI and Emscripten targets are unsupported/dead in production
+CONFIRMED	always-was	src/core/mcp/features/tools.zig:44	Error.InvalidInputRequired variant never returned	the error variant is never returned or referenced in the codebase
+TESTED-ONLY	always-was	src/core/mcp/features/resources.zig:38	Error.InvalidInputRequired variant never returned	only referenced inside a test block in src/core/mcp/features/resources.zig
+CONFIRMED	always-was	src/core/app/app_bootstrap_runtime.zig:376	if (false) keychain startup notice block	the block is guarded by an explicit if (false) condition
+CONFIRMED	always-was	src/core/app/app_bootstrap_runtime.zig:218	refreshChatGptSourceInventory else-if startup branch	@TypeOf(app.auth) is auth_runtime.Self which always has refreshSourceInventory, making this else-if comptime-d
+REFUTED	always-was	src/core/app/app_auth_runtime.zig:21	selectForProvider comptime @hasDecl guard	input_submit_runtime.zig:688 calls ensurePromptCredential which runs this guard and executes selectForProvider
+REFUTED	always-was	src/core/app/app_callbacks.zig:941	Switch model dead route-recovery label match	app_callbacks.zig:917 explicitly populates a QuestionOption with .label = "Change model" matching this conditi
+REFUTED	deleted-product	src/main.zig:3214	exitFast wasi compile-time branch	Portability guard beside .windows that is live on production macOS/Linux platforms to call std.c._exit for fas
+REFUTED	deleted-product	src/core/hosts/host.zig:159	operatingSystemText wasi compile branch	Deleting this branch would break Windows compilation where std.posix.uname is not supported
+REFUTED	deleted-product	src/terminal_client_fixture.zig:265	FIBER_TERMINAL_AUTHORITY_FIXTURE_COMPAT ACP compat shim	tests/e2e/terminal-host.test.ts:7520 explicitly sets FIBER_TERMINAL_AUTHORITY_FIXTURE_COMPAT to "1" for e2e te
+REFUTED	always-was	src/tools/filesystem/grep_files.zig:493	writeGrepResultNotes truncated_reason switch	grep_files.zig:350 and 484 call writeGrepResultNotes to output truncation warnings in production
+REFUTED	deleted-product	src/core/execution/command_runner.zig:56	supports_foreground_session wasi conjunct	supports_foreground_session is live on macOS/Linux and checking .wasi beside .windows is a standard portabilit
+REFUTED	deleted-product	src/core/execution/process_tree.zig:609	inspectProcessGroup wasi branch	Deleting this branch would break Windows compilation where POSIX getpgid is unavailable
+TESTED-ONLY	always-was	src/core/slash_commands/command_specs.zig:160	projectResultV4 identity helper	childChatSlashRegistry is only called inside the test "child chat slash registry exposes only locally handled 
+REFUTED	deleted-product	src/builtins/commands.zig:184	Gateway reports usage detail line	This text defines the details for the live /usage command, displayed to users in help menus in production
+REFUTED	always-was	src/core/terminal/recovery.zig:60	reconcile invalid-record branch	src/core/terminal/store.zig:1084 calls recovery.reconcile to isolate corrupt session records in production

@@ -1,0 +1,12 @@
+Reading the audit brief and shard file list first.
+Analyzing shard-09 files for deletable residue.
+src/core/permissions/auto_classifier.zig:361 | Reviewer.disabled | always-was | rg -n 'Reviewer\.disabled' src
+src/core/permissions/auto_classifier.zig:15 | gateway_reviewer_model constant | deleted-product | rg -n 'gateway_reviewer_model' src
+src/core/permissions/auto_classifier.zig:329 | ProviderInput.credential_source field | always-was | rg -n 'input\.credential_source|provider_input\.credential_source' src/gateway
+src/core/permissions/auto_classifier.zig:331 | ProviderInput.endpoint field | always-was | rg -n 'input\.endpoint' src/gateway/responses_permission_reviewer.zig src/gateway/openai_codex_permission_reviewer.zig
+src/core/permissions/command_admission.zig:66 | ShellAuthorizationSource.js_host variant | deleted-product | rg -n 'host_sandbox_default' src
+src/core/permissions/permission_prompter.zig:21 | retain_grant_fn field | always-was | rg -n 'retain_grant_fn' src
+src/core/permissions/permission_prompter.zig:41 | retainGrant method | always-was | rg -n 'retainGrant' src
+src/core/session/session_test_controls.zig:7 | logOptions | deleted-product | rg -n 'session_test_controls\.logOptions' src tests
+src/core/session/session_test_controls.zig:25 | pauseAtRequestedBoundary | deleted-product | rg -n 'pauseAtRequestedBoundary' src
+STATUS: DONE

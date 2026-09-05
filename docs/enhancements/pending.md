@@ -22,6 +22,25 @@ the transition changes its spelling or its reachability.
 Building token accounting that nothing computes today is not. Every item that
 survives the reshaping test is an argument for the transition never ending.
 
+## Active-turn steering defaults
+
+Make the common action use the common key while Fiber is working:
+
+- `Enter` steers the active turn at the next safe model boundary
+- `Command+Enter` queues a separate follow-up turn
+- `Escape` cancels active work, then applies a pending steering message after the
+  turn settles
+
+Today `Enter` queues and `Ctrl+Enter` steers. Reversing the default is a product
+behavior change, not transition reshaping. The implementation must preserve a
+single ordering contract across active model output, running tools,
+cancellation, recovery, and resumed session history. The composer must show
+whether a pending message will steer or queue before Fiber accepts it.
+
+Terminal input support for `Command+Enter` must be verified across supported
+terminals. If a terminal cannot distinguish it from `Enter`, Fiber needs an
+explicit alternative rather than silently choosing the wrong action.
+
 ## Context occupants
 
 `/context` ships in the transition with usage only: tokens used, the model's

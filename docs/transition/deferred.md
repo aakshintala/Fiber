@@ -27,9 +27,11 @@ string in `commands.zig` (it had drifted through Slices 2b and 4c — stale
 
 ## Phase 4: Simplification
 
-| Site | What | Why deferred |
-|---|---|---|
-| `src/core/mcp/elicitation.zig:934` | `parseTitledChoices` takes `allow_description: bool`, passed `false` at both call sites (`:827`, `:921`). It existed only to express `wire == .acp`. The branch it guards is dead. | Same shape as the one-element-seam collapses Phase 4 already owns. Slice 22 created it and correctly did not widen to fix it. |
+Cleared 2026-09-05 into
+[`simplification-inventory.md`](simplification-inventory.md) Slice 7, which now
+carries `parseTitledChoices(allow_description)` (`elicitation.zig:938`, callers at
+`:827`, `:921`) alongside the single-variant enums the Phase 4 audit found. Phase 4
+opens with this section empty, as `plan.md` requires.
 
 ## Phase 5: Repair and verification
 
@@ -59,6 +61,12 @@ This is the complete `grep -rni acp src/` residue as of `HEAD`.
 - `src/builtins/gateway.zig:21` — "used by ACP/CLI test configurations"
 
 **Inert strings and one dead assertion**
+
+- `src/core/permissions/auto_classifier.zig:15` — `gateway_reviewer_model =
+  "moonshotai/kimi-k3"`, a Gateway-era model id that is still the live default on
+  `auto_classifier.Provider.model` (`:357`) and asserted at `:1955`. The seam is
+  retained and the constant is load-bearing, so this is a rename/retarget of a
+  stale value, not a deletion. Found by the Phase 4 audit, 2026-09-05.
 
 - `src/core/slash_commands/command_specs.zig:1085` — negative assertion that the
   help text does not contain `"Supported for interactive, resume, ask, ACP, PR,

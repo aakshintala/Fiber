@@ -1,0 +1,20 @@
+src/core/mcp/elicitation.zig:161 | CONFIRMED | Rejection.duplicate is only referenced in a dead-code path of decideTransition and in tests
+src/core/input/editor_state.zig:148 | TESTED-ONLY | only referenced in editor_state.zig test blocks
+src/core/input/editor_state.zig:154 | CONFIRMED | unused function with zero references in production or tests
+src/core/workspace/context_contract.zig:405 | TESTED-ONLY | only referenced in context_contract.zig test blocks
+src/core/workspace/context_contract.zig:419 | TESTED-ONLY | only referenced in context_contract.zig test blocks
+src/core/workspace/context_contract.zig:433 | TESTED-ONLY | only referenced in context_contract.zig test blocks
+src/core/workspace/context_contract.zig:445 | TESTED-ONLY | only referenced in context_contract.zig test blocks
+src/ui/footer/picker_presentation.zig:345 | REFUTED | guards live Codex authentication UI rendering at lines 346 and 379
+src/ui/footer/viewport.zig:180 | REFUTED | active production caller in src/core/app/app_lifecycle.zig:586 passes this parameter
+src/core/shared/debug_trace.zig:369 | TESTED-ONLY | only referenced in debug_trace.zig test blocks
+src/ui/render_engine/frame_layout.zig:11 | REFUTED | used as field type in SolveInput and FrameLayout, and hashed in layoutId
+src/ui/render_engine/frame_layout.zig:81 | TESTED-ONLY | only referenced in frame_fixed_point.zig test blocks
+src/ui/render_engine/frame_builder.zig:20 | CONFIRMED | unused variant whose only production reference is inside a dead switch path in app_render_runtime.zig
+src/core/hosts/host.zig:149 | CONFIRMED | WASI target has been removed and os_tag can never be .wasi in production
+src/ui/render_request.zig:10 | CONFIRMED | enum variant has zero references in production or tests
+src/core/auth/chatgpt_session.zig:19 | CONFIRMED | unused function with zero references in production or tests
+src/core/subagent/authority.zig:15 | TESTED-ONLY | only referenced in authority.zig test blocks via admitChildPermission
+src/core/subagent/tool_host.zig:62 | REFUTED | field is populated via anonymous struct literal at src/core/tooling/tool_runtime.zig:1655
+
+STATUS: DONE

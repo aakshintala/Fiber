@@ -1,0 +1,28 @@
+Reading the audit brief and shard file list.
+Auditing shard-11 files for deletable residue; reading files and searching for evidence.
+src/core/auth/oauth.zig:103 | discover function | deleted-product | rg 'oauth\.discover' src --glob '!src/core/auth/oauth.zig'
+src/core/auth/oauth.zig:118 | requestDeviceAuthorization function | deleted-product | rg 'oauth\.requestDeviceAuthorization' src --glob '!src/core/auth/oauth.zig'
+src/core/auth/oauth.zig:176 | refreshToken function | always-was | rg 'refreshToken' src/core/auth/oauth.zig
+src/core/auth/oauth.zig:201 | revokeToken function | always-was | rg 'revokeToken' src/core/auth/oauth.zig
+src/core/auth/oauth.zig:15 | missingGrantedScope function | always-was | rg 'missingGrantedScope' src --glob '!src/core/auth/oauth.zig'
+src/core/auth/credentials.zig:157 | resolve function | always-was | rg 'credentials\.resolve\(' src
+src/core/auth/credentials.zig:170 | preferred parameter on resolveForProvider | deleted-product | rg '_ = preferred' src/core/auth/credentials.zig
+src/core/auth/credentials.zig:220 | sourceRefreshable function | always-was | rg 'pub const CredentialSource = enum' -A2 src/core/shared/types.zig
+src/core/auth/chatgpt_session.zig:19 | presence function | always-was | rg 'chatgpt_session\.presence' src
+src/core/auth/auth_runtime.zig:921 | unused_local_placeholder constant | always-was | rg 'unused_local_placeholder' src
+src/core/auth/auth_runtime.zig:91 | refreshCredentialToken wrapper function | always-was | rg 'refreshCredentialToken\(' src | rg -v ForAccount
+src/core/auth/auth_runtime.zig:137 | Choice.source union variant | deleted-product | rg '\{ \.source =' src/core/auth
+src/core/auth/auth_runtime.zig:69 | FailureSnapshot.renderJson method | always-was | rg 'failure\.renderJson|FailureSnapshot.*renderJson' src
+src/core/auth/auth_runtime.zig:229 | PickerView.choiceEnabled always-true stub | always-was | rg -A2 'fn choiceEnabled' src/core/auth/auth_runtime.zig
+src/core/auth/auth_runtime.zig:302 | preferred parameter on loadStatusSnapshotForProvider | deleted-product | rg '_ = preferred' src/core/auth/auth_runtime.zig
+src/core/auth/auth_runtime.zig:796 | provider parameter on selectForProvider | deleted-product | rg '_ = provider' src/core/auth/auth_runtime.zig
+src/core/auth/auth_runtime.zig:631 | openSignInPicker function | always-was | rg '\.openSignInPicker\(' src
+src/core/auth/auth_runtime.zig:635 | openSignInPickerFromRoot duplicate wrapper | always-was | rg 'openSignInPickerFromRoot' src
+src/core/auth/auth_runtime.zig:643 | openChatGptSignInPickerForProviderSwitch wrapper | always-was | rg 'openChatGptSignInPickerForProviderSwitch' src
+src/core/auth/auth_runtime.zig:490 | refreshSourceInventoryForLogout function | always-was | rg 'refreshSourceInventoryForLogout' src
+src/core/auth/auth_runtime.zig:923 | probeCredentialSourceForLogout function | always-was | rg 'probeCredentialSourceForLogout' src
+src/core/auth/auth_runtime.zig:810 | reselectByPrecedence function | always-was | rg 'reselectByPrecedence' src
+src/core/agent/runtime/deps.zig:126 | ParentTurnDeliveryAck.discovery_start_offset field | deleted-product | rg 'discovery_start_offset' src
+src/core/agent/runtime/deps.zig:127 | ParentTurnDeliveryAck.discovery_next_offset field | deleted-product | rg 'discovery_next_offset' src
+src/core/agent/runtime/execution_memory.zig:230 | prepareToolModelOutput null-capture wrapper | always-was | rg -A4 'pub fn prepareToolModelOutput' src/core/agent/runtime/execution_memory.zig
+STATUS: DONE

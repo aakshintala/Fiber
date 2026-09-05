@@ -1,0 +1,21 @@
+Reading the audit brief and shard file list first.
+
+
+Auditing shard files for dead code and false variation; reading files and searching for evidence.
+
+
+src/core/agent/question_prompt.zig:197 | syncChoicesFrom | deleted-product | rg -n 'syncChoicesFrom\(' /Users/aakshintala/work/fiber --glob '*.zig'
+src/core/agent/question_prompt.zig:209 | append_freeform false-path parameter | deleted-product | rg -n 'syncChoicesFrom|append_freeform, false' /Users/aakshintala/work/fiber/src/core/agent/question_prompt.zig
+src/core/agent/execution_memory.zig:75 | buildNormalMessageExecutionMemory | always-was | rg -n 'buildNormalMessageExecutionMemory' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'execution_memory.zig'
+src/core/agent/execution_memory.zig:265 | MessageAdapter | always-was | rg -n 'MessageAdapter' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'execution_memory.zig'
+src/ui/render_engine/viewport_selection.zig:23 | HardLinePolicy single-variant enum | always-was | rg -n 'HardLinePolicy|hard_line_policy' /Users/aakshintala/work/fiber --glob '*.zig'
+src/ui/render_engine/frame_layout.zig:11 | FramePlacementPolicy single-variant enum | always-was | rg -n 'FramePlacementPolicy|placement_policy' /Users/aakshintala/work/fiber --glob '*.zig'
+src/ui/render_engine/frame_layout.zig:81 | BodyMode.subagent_panel variant | deleted-product | rg -n 'body_mode = \.subagent_panel' /Users/aakshintala/work/fiber --glob '*.zig'
+src/ui/render_engine/frame_builder.zig:20 | FrameBody.subagent_panel variant | deleted-product | rg -n 'body: \.subagent_panel|body = \.subagent_panel' /Users/aakshintala/work/fiber --glob '*.zig'
+src/ui/render_engine/frame_builder.zig:21 | FrameBody.none variant | always-was | rg -n 'body: \.none|body = \.none|FrameBody\.none' /Users/aakshintala/work/fiber --glob '*.zig'
+src/ui/render_engine/transcript_blocks.zig:2202 | renderEntriesToFlowBytes family | always-was | rg -l 'renderEntriesToFlowBytes' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/ui/render_engine/transcript_blocks.zig:414 | wrapAssistantText one-line forwarder | always-was | rg -n 'transcript_blocks\.wrapAssistantText' /Users/aakshintala/work/fiber --glob '*.zig'
+src/ui/render_engine/paint_plan.zig:324 | FooterReservationSource.resize_reflow variant | always-was | rg -n 'footer_reservation_source = \.resize_reflow' /Users/aakshintala/work/fiber --glob '*.zig'
+src/ui/render_engine/assistant_wrap.zig:391 | wrapTranscriptAssistantTextInterruptible | always-was | rg -n 'wrapTranscriptAssistantTextInterruptible' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'assistant_wrap.zig'
+src/ui/render_engine/assistant_wrap.zig:463 | wrapLiteralToolOutput non-interruptible wrapper | always-was | rg -n 'wrapLiteralToolOutput\(' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'assistant_wrap.zig'
+STATUS: DONE

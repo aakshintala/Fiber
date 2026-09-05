@@ -1,0 +1,20 @@
+src/ui/footer/picker_presentation.zig:331 | CONFIRMED | parameter is explicitly discarded with _ = source; in the function body
+src/ui/footer/picker_presentation.zig:222 | CONFIRMED | parameter is explicitly discarded with _ = source; in the function body
+src/core/subagent/model_contract.zig:128 | TESTED-ONLY | only referenced inside test blocks in src/core/subagent/model_contract.zig
+src/core/mcp/elicitation.zig:185 | CONFIRMED | the sole production caller decideLegacyUrlCompletion always passes .pending
+src/ui/footer/render_input.zig:638 | CONFIRMED | parameter is explicitly discarded with _ = shell; in the function body
+src/core/hooks/hooks.zig:5 | CONFIRMED | the imported namespace is never referenced anywhere in the codebase
+src/core/mcp/mcp_auth_store.zig:267 | CONFIRMED | the function is never called or referenced anywhere in the codebase
+src/core/shared/mem_utils.zig:7 | REFUTED | called via deinitList in src/core/agent/runtime/orchestrator.zig
+src/core/mcp/elicitation.zig:781 | CONFIRMED | any non-null title or description returns error.UnsupportedSchema at line 721
+src/ui/footer/paint_plan.zig:930 | CONFIRMED | authPickerQueryCursorColumn always returns null, making the branch dead
+src/core/cli/cli_surface.zig:571 | CONFIRMED | all callers of writeProviderActivationError pass .provider_login as the caller argument
+src/ui/footer/model_menu_presentation.zig:410 | CONFIRMED | state.source is explicitly discarded with _ = state.source;
+src/ui/footer/compact_command_menu_presentation.zig:195 | CONFIRMED | totals is explicitly discarded with _ = totals;
+src/core/shared/io.zig:214 | CONFIRMED | the WASI target is being removed and is never true in production
+src/core/shared/io.zig:427 | CONFIRMED | the WASI and Emscripten targets are unsupported/dead in production
+src/core/mcp/features/tools.zig:44 | CONFIRMED | the error variant is never returned or referenced in the codebase
+src/core/mcp/features/resources.zig:38 | TESTED-ONLY | only referenced inside a test block in src/core/mcp/features/resources.zig
+src/core/app/app_bootstrap_runtime.zig:376 | CONFIRMED | the block is guarded by an explicit if (false) condition
+
+STATUS: DONE

@@ -1,0 +1,25 @@
+Reading the audit brief and shard file list first.
+Auditing shard-07 files for deletable residue; reading files and searching for evidence.
+src/main.zig:58 | agent_retry_count constant always zero | deleted-product | rg -n 'agent_retry_count: usize = 0' src/main.zig
+src/main.zig:57 | codex_models_path empty models path constant | deleted-product | rg -n 'codex_models_path = ""' src/main.zig
+src/main.zig:464 | web_search_models_path always aliases empty path | deleted-product | rg -n 'web_search_models_path' src/main.zig
+src/main.zig:99 | compiled_update_channel stable-only literal | deleted-product | rg -n 'compiled_update_channel.*\.stable' src/main.zig
+src/main.zig:3214 | exitFast wasi compile-time branch | deleted-product | rg -n '\.wasi' src/main.zig
+src/main.zig:3223 | hasPosixArgVector wasi arm | deleted-product | rg -n 'wasi =>' src/main.zig
+src/core/hosts/host.zig:136 | capabilitiesForTarget wrapper around nativeForOs | always-was | rg -n 'capabilitiesForTarget' src
+src/core/hosts/host.zig:149 | nativeForOs wasi process_control guard | deleted-product | rg -n 'os_tag != \.wasi' src/core/hosts/host.zig
+src/core/hosts/host.zig:159 | operatingSystemText wasi compile branch | deleted-product | rg -n 'builtin\.os\.tag == \.wasi' src/core/hosts/host.zig
+src/core/hooks/tool.zig:1 | unused tool re-export shim module | always-was | rg -n 'hooks/tool|pub const tool' src/core/hooks
+src/core/hooks/hooks.zig:5 | pub const tool imports dead shim | always-was | rg -n 'pub const tool' src/core/hooks/hooks.zig
+src/core/shell_command/command_effect.zig:185 | PrintfFormatLanguage single-variant enum | always-was | rg -n 'PrintfFormatLanguage' src/core/shell_command/command_effect.zig
+src/core/shell_command/command_effect.zig:238 | LsSymlinkSemantics single-variant enum | always-was | rg -n 'LsSymlinkSemantics' src/core/shell_command/command_effect.zig
+src/core/upgrade/update_target.zig:10 | Channel.parse has no production callers | deleted-product | rg 'Channel\.parse' src
+src/core/upgrade/update_target.zig:26 | Target union only stable variant remains | deleted-product | rg -n 'pub const Target = union' src/core/upgrade/update_target.zig
+src/core/upgrade/update_target.zig:68 | Target.revision always returns null | deleted-product | rg -n 'pub fn revision' src/core/upgrade/update_target.zig
+src/core/upgrade/upgrade_helpers.zig:69 | fetchTarget channel param always stable | deleted-product | rg -n 'fetchTarget\(' src
+src/core/hosts/native_keychain.zig:263 | loadMcpValueMac test-only wrapper | always-was | rg 'loadMcpValueMac' src
+src/core/hosts/native_keychain.zig:452 | storeMcpValueMac test-only wrapper | always-was | rg 'storeMcpValueMac' src
+src/ui/assistant/pacer.zig:146 | pause no-op method and unused now_ns | always-was | rg -n 'fn pause' src/ui/assistant/pacer.zig
+src/tools/web/fetch.zig:33 | callWithTransport always uses default transport | always-was | rg -n 'callWithTransport' src/tools/web/fetch.zig
+src/terminal_client_fixture.zig:265 | FIBER_TERMINAL_AUTHORITY_FIXTURE_COMPAT ACP compat shim | deleted-product | rg -n 'AUTHORITY_FIXTURE_COMPAT' src
+STATUS: DONE

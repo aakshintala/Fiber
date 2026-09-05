@@ -1,0 +1,25 @@
+Reading the audit brief and shard file list first.
+Analyzing shard-12 files for deletable residue; reading files and searching for callers.
+src/core/subagent/agent_adapter.zig:770 | discardBackgroundUrl fn | always-was | rg 'discardBackgroundUrl' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/agent_adapter.zig:36 | childModelCapabilityResolver pass-through fn | always-was | rg 'childModelCapabilityResolver' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/agent_adapter.zig:375 | pushLiveToolLifecycle deps override | always-was | rg 'pushLiveToolLifecycle' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/agent_adapter.zig:378 | pushLiveRouteRecoveryStatus deps override | always-was | rg 'pushLiveRouteRecoveryStatus' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/authority.zig:15 | permissionRank helper fn | always-was | rg 'permissionRank' /Users/aakshintala/work/fiber/src/core/subagent/authority.zig
+src/core/subagent/authority.zig:23 | admitChildPermission fn | always-was | rg 'admitChildPermission' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/authority.zig:51 | HostAuthority.capture wrapper method | always-was | rg 'HostAuthority\.capture\b' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/tool_host.zig:62 | ExecuteOptions.max_result_bytes ignored field | always-was | rg 'max_result_bytes' /Users/aakshintala/work/fiber/src/core/subagent/tool_host.zig
+src/core/subagent/tool_host.zig:802 | captureHostAuthority wrapper fn | always-was | rg 'captureHostAuthority[^W]|captureHostAuthority$' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/model_contract.zig:44 | Request.agentName method | always-was | rg 'request\.agentName|\.agentName\(\)' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/model_contract.zig:108 | model_contract.Kind enum | always-was | rg 'model_contract\.Kind' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/model_contract.zig:109 | model_contract.Phase enum | always-was | rg 'model_contract\.Phase' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/model_contract.zig:110 | model_contract.Snapshot struct | always-was | rg 'model_contract\.Snapshot' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/model_contract.zig:115 | RejectCode enum | always-was | rg 'RejectCode|model_contract\.RejectCode' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/model_contract.zig:121 | Plan union type | always-was | rg 'model_contract\.Plan|Plan\.(create_|continue_|reject)' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/model_contract.zig:128 | plan scheduling fn | always-was | rg 'model_contract\.plan\b' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/execution.zig:40 | RunOutcome.awaiting_approval variant | always-was | rg 'return \.awaiting_approval' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/execution.zig:218 | toolActivityRecorder noop provider | always-was | rg 'recordToolActivity|toolActivityRecorder' /Users/aakshintala/work/fiber/src/core/subagent/execution.zig
+src/core/subagent/execution.zig:327 | recordToolActivity noop fn | always-was | rg 'recordToolActivity' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/subagent/resume_admission.zig:326 | retainExternalRootUserTurn noop fn | deleted-product | rg 'retainExternalRootUserTurn' /Users/aakshintala/work/fiber/src --glob '*.zig'
+src/core/tooling/tool_dispatch.zig:53 | web_fetch_unavailable_message const | always-was | rg 'web_fetch_unavailable_message' /Users/aakshintala/work/fiber
+
+STATUS: DONE

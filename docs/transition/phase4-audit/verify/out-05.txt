@@ -1,0 +1,20 @@
+src/core/auth/credentials.zig:220 | REFUTED | referenced in src/core/auth/auth_runtime.zig:107
+src/builtins/hooks.zig:76 | TESTED-ONLY | only used in test blocks of src/builtins/hooks.zig
+src/builtins/tools.zig:3 | CONFIRMED | unused import, no references in src/builtins/tools.zig
+src/builtins/tools.zig:877 | CONFIRMED | unused function, no references in src/builtins/tools.zig or anywhere else
+src/core/terminal/contracts.zig:1495 | REFUTED | referenced in src/core/terminal/contracts.zig:1683 and bitcasted in src/core/terminal/store.zig:2040
+src/core/slash_commands/command_specs.zig:86 | REFUTED | referenced in TopLevelRegistry.resources and renderTopLevelHelpWithStyle in src/core/slash_commands/command_specs.zig
+src/builtins/commands.zig:399 | CONFIRMED | unused wrapper function, no references in src/builtins/commands.zig
+src/main.zig:57 | REFUTED | referenced as an argument at lines 431, 452, 1855 in src/main.zig
+src/builtins/context.zig:32 | REFUTED | function pointer assigned in prompt_policy struct at src/builtins/context.zig:39
+src/core/auth/credentials.zig:170 | CONFIRMED | unused parameter, only referenced as _ = preferred;
+src/core/auth/auth_runtime.zig:302 | CONFIRMED | unused parameter, only referenced as _ = preferred;
+src/core/terminal/store.zig:203 | REFUTED | referenced in session repair logic in src/core/terminal/store.zig:4824
+src/core/slash_commands/command_specs.zig:141 | REFUTED | referenced in renderSlashEntries in src/core/slash_commands/command_specs.zig:737
+src/builtins/commands.zig:391 | CONFIRMED | unused wrapper function, no references in src/builtins/commands.zig
+src/builtins/commands.zig:395 | CONFIRMED | unused wrapper function, no references in src/builtins/commands.zig
+src/core/subagent/agent_adapter.zig:378 | REFUTED | referenced in RunDeps initialization and route recovery event processing in src/core/subagent/agent_adapter.zig:725
+src/builtins/commands.zig:413 | CONFIRMED | unused re-export, no references in src/builtins/commands.zig
+src/core/cli/cli_surface.zig:582 | CONFIRMED | unused parameter, only referenced as _ = caller;
+
+STATUS: DONE

@@ -1,0 +1,16 @@
+Reading the audit brief and shard file list, then analyzing only those files.
+Analyzing shard files for deletion candidates; reading production files and searching for dead code patterns.
+src/core/app/app_bootstrap_runtime.zig:376 | if (false) keychain startup notice block | always-was | rg -n 'if \(false\)' src/core/app/app_bootstrap_runtime.zig
+src/core/app/app_bootstrap_runtime.zig:218 | refreshChatGptSourceInventory else-if startup branch | always-was | rg -n 'pub fn refresh(Source|ChatGptSource)Inventory' src/core/auth/auth_runtime.zig
+src/core/app/app_bootstrap_runtime.zig:10 | unused credentials import | always-was | rg -n 'credentials\.' src/core/app/app_bootstrap_runtime.zig
+src/core/app/app_auth_runtime.zig:3 | unused host import | always-was | rg -n 'host\.' src/core/app/app_auth_runtime.zig
+src/core/app/app_auth_runtime.zig:9 | unused provider_catalog import | always-was | rg -n 'provider_catalog' src/core/app/app_auth_runtime.zig
+src/core/app/app_auth_runtime.zig:14 | oauthAuthEnabled comptime wrapper function | always-was | rg -n 'oauthAuthEnabled|runtime_profile\.allows\(App, \.native_auth\)' src/core/app/app_auth_runtime.zig
+src/core/app/app_auth_runtime.zig:21 | selectForProvider comptime @hasDecl guard | always-was | rg -n 'pub fn selectForProvider' src/core/auth/auth_runtime.zig
+src/core/app/app_auth_runtime.zig:111 | reconcileAfterChatGptLogout @hasDecl else false | always-was | rg -n 'pub fn reconcileAfterChatGptLogout' src/core/auth/auth_runtime.zig
+src/core/app/app_commands.zig:8 | unused gateway_provider import | deleted-product | rg -n 'gateway_provider' src/core/app/app_commands.zig
+src/core/app/app_commands.zig:9 | unused host import | always-was | rg -n '^const host =|host\.' src/core/app/app_commands.zig
+src/core/app/app_callbacks.zig:49 | preparedDiffPayload passthrough wrapper function | always-was | rg -n 'fn preparedDiffPayload|preparedDiffPayloadWithFullAllocator' src/core/app/app_callbacks.zig
+src/core/app/app_callbacks.zig:941 | Switch model dead route-recovery label match | always-was | rg -n 'Switch model|Change model' src
+
+STATUS: DONE

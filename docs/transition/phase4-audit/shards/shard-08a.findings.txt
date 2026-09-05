@@ -1,0 +1,42 @@
+Reading the audit brief and shard file list, then analyzing the assigned files.
+Searching shard files for dead code patterns and cross-referencing callers.
+src/builtins/context.zig:32 | modelPromptOverlay stub always returns null | always-was | rg -n 'modelPromptOverlay' /Users/aakshintala/work/fiber/src/builtins/context.zig
+src/builtins/context.zig:39 | model_prompt_overlay_fn hook in prompt_policy | always-was | rg -n 'model_prompt_overlay_fn' /Users/aakshintala/work/fiber/src/builtins/context.zig
+src/builtins/context.zig:102 | SelectionOptions.load_project_instruction_files flag | always-was | rg -n 'load_project_instruction_files' /Users/aakshintala/work/fiber
+src/builtins/context.zig:165 | loadsProjectInstructionFiles always-true helper | always-was | rg -n 'loadsProjectInstructionFiles' /Users/aakshintala/work/fiber
+src/builtins/context.zig:1977 | buildTurnContextFragmentForHost embed-host branch | deleted-product | rg -n 'host_workspace\s*=' /Users/aakshintala/work/fiber
+src/builtins/gateway.zig:22 | provider_bundle test-only Codex bundle | deleted-product | rg -n 'provider_bundle' /Users/aakshintala/work/fiber --glob '!src/builtins/gateway.zig' --glob '!docs/**'
+src/builtins/gateway.zig:112 | buildAgentRequest fixture body builder | deleted-product | rg -n 'buildAgentRequest' /Users/aakshintala/work/fiber --glob '!src/builtins/gateway.zig'
+src/builtins/gateway.zig:188 | buildAgentToolsJson helper | deleted-product | rg -n 'buildAgentToolsJson' /Users/aakshintala/work/fiber
+src/builtins/gateway.zig:241 | writeDynamicFunctionTool helper | deleted-product | rg -n 'writeDynamicFunctionTool' /Users/aakshintala/work/fiber
+src/builtins/gateway.zig:254 | toolNameSelected helper | deleted-product | rg -n 'toolNameSelected' /Users/aakshintala/work/fiber
+src/builtins/hooks.zig:76 | RecordingClient test double struct | always-was | rg -n 'RecordingClient' /Users/aakshintala/work/fiber
+src/builtins/tools.zig:3 | unused builtin_gateway import | always-was | rg -n 'builtin_gateway' /Users/aakshintala/work/fiber/src/builtins/tools.zig
+src/builtins/tools.zig:872 | lookup wrapper re-export | always-was | rg -n 'builtin_tools\.lookup' /Users/aakshintala/work/fiber
+src/builtins/tools.zig:877 | toolLabelValue wrapper re-export | always-was | rg -n 'builtin_tools\.toolLabelValue' /Users/aakshintala/work/fiber
+src/builtins/tools.zig:881 | toolActivityKind wrapper re-export | always-was | rg -n 'builtin_tools\.toolActivityKind' /Users/aakshintala/work/fiber
+src/builtins/tools.zig:885 | toolRequiresApproval wrapper re-export | always-was | rg -n 'builtin_tools\.toolRequiresApproval' /Users/aakshintala/work/fiber
+src/builtins/tools.zig:889 | toolHasPermissionContract wrapper | always-was | rg -n 'builtin_tools\.toolHasPermissionContract' /Users/aakshintala/work/fiber
+src/builtins/tools.zig:859 | isReadOnlyToolName helper | always-was | rg -n 'isReadOnlyToolName' /Users/aakshintala/work/fiber --glob '!src/builtins/tools.zig'
+src/builtins/mcp.zig:1136 | stableEmptyTestEnviron test helper | always-was | rg -n 'stableEmptyTestEnviron' /Users/aakshintala/work/fiber
+src/core/slash_commands/command_router.zig:124 | testSlashRegistry test-only helper | always-was | rg -n 'testSlashRegistry' /Users/aakshintala/work/fiber/src/core/slash_commands/command_router.zig
+src/core/slash_commands/command_router.zig:282 | parsedIsUnknown test-only helper | always-was | rg -n 'parsedIsUnknown' /Users/aakshintala/work/fiber
+src/core/slash_commands/command_router.zig:311 | TestContext route test harness | always-was | rg -n 'TestContext' /Users/aakshintala/work/fiber/src/core/slash_commands/command_router.zig
+src/core/terminal/client.zig:276 | Runtime.takeCompletion FIFO dequeue API | always-was | rg -n '\.takeCompletion\(' /Users/aakshintala/work/fiber --glob '!src/core/terminal/client.zig'
+src/core/terminal/client.zig:308 | Runtime.clearTerminalProjection | always-was | rg -n 'clearTerminalProjection' /Users/aakshintala/work/fiber
+src/core/terminal/host_policy.zig:111 | PendingRequests.cancel method | always-was | rg -n 'pending\.cancel\(' /Users/aakshintala/work/fiber
+src/core/terminal/contracts.zig:13 | max_monitor_definitions constant | always-was | rg -n 'max_monitor_definitions' /Users/aakshintala/work/fiber
+src/core/terminal/contracts.zig:146 | PersistenceLevel single-variant enum | always-was | rg -n 'PersistenceLevel' /Users/aakshintala/work/fiber
+src/core/terminal/contracts.zig:1399 | TerminalLifetime single-variant enum | always-was | rg -n 'TerminalLifetime' /Users/aakshintala/work/fiber
+src/core/terminal/contracts.zig:1495 | AllowedControls.monitor capability bit | always-was | rg -n 'monitor:\s*true|\.monitor\s*=\s*true' /Users/aakshintala/work/fiber
+src/core/terminal/contracts.zig:1671 | AuthorityGrant.repeated_probes default slice | always-was | rg -n 'repeated_probes\s*=' /Users/aakshintala/work/fiber
+src/core/terminal/contracts.zig:1692 | RepeatedProbeAuthority struct | always-was | rg -n 'RepeatedProbeAuthority' /Users/aakshintala/work/fiber
+src/core/terminal/contracts.zig:171 | PollSchedule struct | always-was | rg -n 'PollSchedule' /Users/aakshintala/work/fiber --glob '!src/core/terminal/contracts.zig' --glob '!src/core/terminal/store.zig'
+src/core/terminal/contracts.zig:270 | NotifySchedule union | always-was | rg -n 'NotifySchedule' /Users/aakshintala/work/fiber --glob '!src/core/terminal/contracts.zig' --glob '!src/core/terminal/store.zig'
+src/core/terminal/contracts.zig:289 | MonitorLifetime union | always-was | rg -n 'MonitorLifetime' /Users/aakshintala/work/fiber --glob '!src/core/terminal/contracts.zig' --glob '!src/core/terminal/store.zig'
+src/core/terminal/store.zig:203 | Record.monitor_count legacy field | always-was | rg -n 'monitor_count\s*=' /Users/aakshintala/work/fiber/src/core/terminal/store.zig
+src/core/terminal/store.zig:2238 | reloadHumanTakeoverAuthorityClaim export | always-was | rg -n 'reloadHumanTakeoverAuthorityClaim' /Users/aakshintala/work/fiber --glob '!src/core/terminal/store.zig'
+src/core/terminal/store.zig:2011 | hash_monitor_notify legacy hash helper | always-was | rg -n 'hash_monitor_notify' /Users/aakshintala/work/fiber
+src/core/terminal/store.zig:2023 | hash_monitor_lifetime legacy hash helper | always-was | rg -n 'hash_monitor_lifetime' /Users/aakshintala/work/fiber
+
+STATUS: DONE

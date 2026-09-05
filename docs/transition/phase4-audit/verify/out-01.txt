@@ -1,0 +1,20 @@
+src/core/subagent/resume_admission.zig:326 | REFUTED | live production callers in src/core/app/app_session_runtime.zig:2376 and src/core/cli/cli_ask.zig:2573
+src/gateway/agent_request_body.zig:874 | TESTED-ONLY | only referenced in errdefer path of parseGatewayCompletion and test blocks inside src/gateway/agent_request_body.zig
+src/core/skills/skill_runtime.zig:234 | TESTED-ONLY | only referenced in listSkillsSummaryStyled and associated test blocks inside src/core/skills/skill_runtime.zig
+src/core/skills/skill_runtime.zig:1065 | TESTED-ONLY | only called in listSkillsSummaryStyled and associated test blocks inside src/core/skills/skill_runtime.zig
+src/core/execution/managed_execution_contract.zig:123 | TESTED-ONLY | only referenced in initialPresentation and associated test blocks in src/core/execution/managed_execution_contract.zig
+src/core/execution/managed_execution_contract.zig:48 | TESTED-ONLY | only referenced in transition cases and associated test blocks in src/core/execution/managed_execution_contract.zig
+src/core/gateway/provider_set.zig:24 | REFUTED | written through struct literals in src/builtins/gateway.zig:24 and src/builtins/providers.zig:10 which would fail compilation if removed
+src/core/gateway/model_catalog.zig:374 | TESTED-ONLY | only called in compareModelCatalogEntries which is exclusively referenced in model_catalog.zig test blocks
+src/core/gateway/model_catalog.zig:386 | TESTED-ONLY | only called in compareModelCatalogEntries which is exclusively referenced in model_catalog.zig test blocks
+src/builtins/context.zig:165 | REFUTED | called in production functions registered on the context Provider interface at src/builtins/context.zig:44-45
+src/builtins/gateway.zig:112 | TESTED-ONLY | only referenced in test-only VisionGatewayFixture and FakeGateway structures in tool_runtime.zig and support.zig
+src/builtins/tools.zig:885 | TESTED-ONLY | wrapper function with no production callers and only referenced in src/builtins/tools.zig tests
+src/builtins/tools.zig:889 | TESTED-ONLY | wrapper function with no production callers and only referenced in src/builtins/tools.zig tests
+src/core/slash_commands/command_router.zig:311 | TESTED-ONLY | struct and helper functions only defined and referenced inside command_router.zig test blocks
+src/core/terminal/contracts.zig:1399 | REFUTED | referenced explicitly as 'lifetime: "session"' in TypeScript e2e test tests/e2e/terminal-host.test.ts:1220
+src/core/slash_commands/command_specs.zig:366 | TESTED-ONLY | function and wrapper have no production callers and only referenced in command_specs.zig test blocks
+src/core/slash_commands/command_specs.zig:370 | TESTED-ONLY | function and wrapper have no production callers and only referenced in command_specs.zig test blocks
+src/core/slash_commands/command_specs.zig:730 | TESTED-ONLY | helper function for renderSlashHelp and renderSlashWelcome which both have no production callers
+
+STATUS: DONE

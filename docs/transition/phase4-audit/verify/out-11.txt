@@ -1,0 +1,14 @@
+src/core/app/app_bootstrap_runtime.zig:218 | CONFIRMED | @TypeOf(app.auth) is auth_runtime.Self which always has refreshSourceInventory, making this else-if comptime-dead
+src/core/app/app_auth_runtime.zig:21 | REFUTED | input_submit_runtime.zig:688 calls ensurePromptCredential which runs this guard and executes selectForProvider in production
+src/core/app/app_callbacks.zig:941 | REFUTED | app_callbacks.zig:917 explicitly populates a QuestionOption with .label = "Change model" matching this condition
+src/main.zig:3214 | REFUTED | Portability guard beside .windows that is live on production macOS/Linux platforms to call std.c._exit for fast exiting
+src/core/hosts/host.zig:159 | REFUTED | Deleting this branch would break Windows compilation where std.posix.uname is not supported
+src/terminal_client_fixture.zig:265 | REFUTED | tests/e2e/terminal-host.test.ts:7520 explicitly sets FIBER_TERMINAL_AUTHORITY_FIXTURE_COMPAT to "1" for e2e tests
+src/tools/filesystem/grep_files.zig:493 | REFUTED | grep_files.zig:350 and 484 call writeGrepResultNotes to output truncation warnings in production
+src/core/execution/command_runner.zig:56 | REFUTED | supports_foreground_session is live on macOS/Linux and checking .wasi beside .windows is a standard portability guard
+src/core/execution/process_tree.zig:609 | REFUTED | Deleting this branch would break Windows compilation where POSIX getpgid is unavailable
+src/core/slash_commands/command_specs.zig:160 | TESTED-ONLY | childChatSlashRegistry is only called inside the test "child chat slash registry exposes only locally handled commands" block
+src/builtins/commands.zig:184 | REFUTED | This text defines the details for the live /usage command, displayed to users in help menus in production
+src/core/terminal/recovery.zig:60 | REFUTED | src/core/terminal/store.zig:1084 calls recovery.reconcile to isolate corrupt session records in production
+
+STATUS: DONE

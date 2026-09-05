@@ -1,0 +1,20 @@
+src/core/subagent/agent_adapter.zig:375 | REFUTED | pushLiveToolLifecycle is referenced by .push_tool_lifecycle in agent_adapter.zig runtimeDeps (line 375) and called in tool_presentation.zig hooks
+src/core/workspace/context_contract.zig:371 | TESTED-ONLY | Fragment and its usages are only referenced inside test blocks (line 601 onward in context_contract.zig)
+src/core/app/app_terminal_runtime.zig:19 | REFUTED | ExitPreparation.deferred is referenced as an enum variant and handled in a switch statement inside production code in src/main.zig:851
+src/core/gateway/model_catalog.zig:280 | REFUTED | released field is used in model catalog sorting via compareModelCatalogEntries (line 370) and referenced in slash menu tests
+src/core/subagent/model_contract.zig:109 | TESTED-ONLY | model_contract.Phase is only used in model_contract.plan, which is only called in unit tests (lines 202, 211, 269, 271 of model_contract.zig)
+src/builtins/commands.zig:314 | CONFIRMED | matchesTopLevel in commands.zig (line 314) has no callers; all callers use command_specs.matchesTopLevel directly
+src/core/mcp/features/tools.zig:202 | REFUTED | ProtocolError in tools.zig (line 202) is a live struct referenced as tools_feature.ProtocolError in tool_result.zig (line 227)
+src/core/input/composer_history.zig:15 | REFUTED | ImageBlocks is a live type alias used for ActiveComposer.images in composer_history.zig:37 and throughout its history recall logic
+src/ui/assistant/pacer.zig:146 | REFUTED | pacer.pause has a live production caller in src/main.zig:2726
+src/core/auth/auth_runtime.zig:137 | REFUTED | Choice.source union variant is a live variant handled inside several production functions in auth_runtime.zig (lines 143, 211, 221, 733, 736)
+src/core/app/app_auth_runtime.zig:9 | CONFIRMED | provider_catalog import in app_auth_runtime.zig:9 is unused and can be safely deleted
+src/core/terminal/recovery.zig:15 | TESTED-ONLY | HostEvidence.absent is never referenced in production code; its only uses are in the recovery.zig unit tests (lines 160, 187, 202)
+src/main.zig:3223 | CONFIRMED | wasi branch in hasPosixArgVector (src/main.zig:3223) is a dead leftover from removed WASI support and can be safely deleted
+src/core/gateway/model_catalog.zig:12 | REFUTED | View enum is live and used in model_cache_runtime.zig:581 (.view = .picker) and openai_codex_models.zig:37 (.view = .full)
+src/core/permissions/auto_classifier.zig:331 | TESTED-ONLY | ProviderInput.endpoint is never set or read in production code; its only references are in the auto_classifier.zig unit tests (lines 1305, 1317)
+src/core/mcp/elicitation.zig:156 | TESTED-ONLY | RequestState.consumed is never used in production code; its only uses are in the elicitation.zig unit tests (lines 191, 2044)
+src/core/app/app_commands.zig:8 | CONFIRMED | gateway_provider import in app_commands.zig:8 is unused and can be safely deleted
+src/core/upgrade/update_target.zig:26 | REFUTED | Target union is live and heavily referenced in upgrade_runtime.zig (lines 16, 392), upgrade_helpers.zig (line 13), and auto_upgrade.zig
+
+STATUS: DONE

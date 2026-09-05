@@ -63,9 +63,20 @@ Phase exit: every target contract exists behind its owning typed interface and h
 
 Collapse seams, adapters, host profiles, target branches, and indirection left with one implementation after demolition and contract work. Preserve only seams that still express real variation or isolate a meaningful interface.
 
-Open by clearing the Phase 4 section of [`deferred.md`](deferred.md). Those
-entries are seams earlier slices created and were forbidden to widen to fix;
-they are this phase's work, not stray cleanup.
+The re-audit is done (2026-09-05): see
+[`phase4-audit/REPORT.md`](phase4-audit/REPORT.md), a read-only sweep of all 490
+files and 362k production lines. Current step: execute the ordered slices in
+[`simplification-inventory.md`](simplification-inventory.md), which now carries
+the audit's findings. That document separates false post-demolition variation
+from real seams and broader design work.
+
+Phase 4 changes no user-visible behavior. Slice 5 was withdrawn for breaking that
+property; keeping it true is what lets Phase 5 treat every failure as
+pre-existing.
+
+Open by clearing the Phase 4 section of [`deferred.md`](deferred.md) into the
+simplification inventory. Those entries are seams earlier slices created and
+were forbidden to widen to fix; they are this phase's work, not stray cleanup.
 
 Phase exit: every known single-implementation abstraction is collapsed or justified with current callers and implementations, and the Phase 4 section of `deferred.md` is empty.
 
@@ -78,6 +89,32 @@ here rather than earlier:
 
 - **The `--json` assertions are stale.** Phase 3's envelope changes 13 payload shapes and only the Zig unit tests are updated as slices land. The old expected shapes are a useful diff against the new ones.
 - **Session-recovery coverage is dark.** `tests/e2e/session-recovery.test.ts` was built entirely on `fiber acp` and was deleted with it. This phase decides the testing story before rebuilding, rather than porting the old harness.
+- **TUI recovery needs transition coverage.** Upstream fixes after the fork exposed
+  repeated state-loss risks where resize, cancellation, approval screens, menus,
+  transcript transitions, and session recovery meet. Fiber retains these
+  interactions and must verify their combined behavior rather than treating each
+  event in isolation.
+
+### TUI state-transition recovery
+
+Exercise retained behavior through the real TUI and add focused unit regressions
+for failures found. The matrix must prove:
+
+- resize during model output, tool activity, and cancellation restores the main
+  transcript, composer, cursor, and terminal modes
+- closing approval and catalog screens after resize restores transcript rows and
+  preserves the pending approval or selection
+- `Ctrl+L` preserves the draft and conversation while `Ctrl+O` still shows the
+  complete transcript
+- clearing, reopening, and resizing the full transcript preserves scrollback and
+  returns to the same inline conversation
+- cancellation does not admit late model output or tool results into the next
+  turn
+- resuming after interruption preserves accepted assistant text, tool activity,
+  images, skill context, and retrievable stored output
+
+A test passes only when the final grid, scrollback, draft, transcript content,
+and terminal modes are correct. Process survival alone is not enough.
 
 ### Session-recovery harness: what the deleted suite proved
 
@@ -166,7 +203,8 @@ standing toggle; why permission rules default to workspace-local scope; why ACP
 was deleted; what "operational command" means and why it decides `--json`.
 
 Then delete `contract-inventory.md`, `demolition-inventory.md`,
-`identity-inventory.md`, `deferred.md`, and this file. A transition document
+`identity-inventory.md`, `simplification-inventory.md`, `phase4-audit/`,
+`deferred.md`, and this file. A transition document
 that survives the transition is a second source of truth competing with the
 binary.
 

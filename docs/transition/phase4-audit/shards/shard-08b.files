@@ -1,0 +1,14 @@
+src/builtins/commands.zig
+src/builtins/modes.zig
+src/builtins/skills.zig
+src/core/slash_commands/command_specs.zig
+src/core/terminal/action_executor.zig
+src/core/terminal/engine.zig
+src/core/terminal/host.zig
+src/core/terminal/identity.zig
+src/core/terminal/native_session.zig
+src/core/terminal/protocol.zig
+src/core/terminal/recovery.zig
+src/core/terminal/shell_resolver.zig
+src/core/terminal/tmux_session.zig
+src/core/terminal/ui_projection.zig
