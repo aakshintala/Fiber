@@ -843,7 +843,7 @@ describe("MCP remote authentication lifecycle", () => {
       AI_GATEWAY_API_KEY: undefined,
     };
 
-    const authenticated = await runFx(["mcp", "auth", "fixture"], {
+    const authenticated = await runFx(["mcp", "login", "fixture"], {
       cwd: root.workspace,
       env,
       timeoutMs: 20_000,
@@ -915,7 +915,7 @@ describe("MCP remote authentication lifecycle", () => {
       AI_GATEWAY_API_KEY: undefined,
     };
 
-    const authenticated = await runFx(["mcp", "auth", "fixture"], {
+    const authenticated = await runFx(["mcp", "login", "fixture"], {
       cwd: root.workspace,
       env,
       timeoutMs: 20_000,
@@ -958,7 +958,7 @@ describe("MCP remote authentication lifecycle", () => {
       AI_GATEWAY_API_KEY: undefined,
     };
 
-    const authenticated = await runFx(["mcp", "auth", "fixture"], {
+    const authenticated = await runFx(["mcp", "login", "fixture"], {
       cwd: root.workspace,
       env,
       timeoutMs: 20_000,
@@ -1002,7 +1002,7 @@ describe("MCP remote authentication lifecycle", () => {
       AI_GATEWAY_API_KEY: undefined,
     };
 
-    const authenticated = await runFx(["mcp", "auth", "fixture"], {
+    const authenticated = await runFx(["mcp", "login", "fixture"], {
       cwd: root.workspace,
       env,
       timeoutMs: 20_000,
@@ -1044,7 +1044,7 @@ describe("MCP remote authentication lifecycle", () => {
       AI_GATEWAY_API_KEY: undefined,
     };
 
-    const authenticated = await runFx(["mcp", "auth", "fixture"], {
+    const authenticated = await runFx(["mcp", "login", "fixture"], {
       cwd: root.workspace,
       env,
       timeoutMs: 20_000,
@@ -1084,7 +1084,7 @@ describe("MCP remote authentication lifecycle", () => {
         FIBER_DISABLE_KEYCHAIN: undefined,
       };
 
-      const authenticated = await runFx(["mcp", "auth", "fixture"], {
+      const authenticated = await runFx(["mcp", "login", "fixture"], {
         cwd: root.workspace,
         env,
         timeoutMs: 20_000,
@@ -2283,7 +2283,7 @@ describe("MCP remote authentication lifecycle", () => {
       AI_GATEWAY_API_KEY: undefined,
     };
 
-    const authentication = await runFx(["mcp", "auth", "fixture"], {
+    const authentication = await runFx(["mcp", "login", "fixture"], {
       cwd: root.workspace,
       env,
       timeoutMs: 20_000,

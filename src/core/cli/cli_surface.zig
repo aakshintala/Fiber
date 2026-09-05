@@ -2109,20 +2109,36 @@ fn runTopLevelMcp(
     }
     const operation = rest[0];
     if (std.mem.eql(u8, operation, "add")) {
+        var format: output_contracts.OutputFormat = .text;
         var tokens: std.ArrayList([]const u8) = .empty;
         defer tokens.deinit(alloc);
-        try tokens.ensureTotalCapacity(alloc, rest.len - 1);
-        for (rest[1..]) |token| tokens.appendAssumeCapacity(token);
+        for (rest[1..]) |token| {
+            if (std.mem.eql(u8, token, "--json")) {
+                format = .json;
+                continue;
+            }
+            try tokens.append(alloc, token);
+        }
         const intent = mcp_command_provider.parseAddIntent(tokens.items) catch |err| {
             if (err == error.McpAddUsage) {
-                try writeMcpAddUsage(deps);
+                if (format == .json) {
+                    try writeJsonCommandFailure(
+                        alloc,
+                        deps,
+                        output_contracts.Kind.mcp_add.jsonName(),
+                        err,
+                        "fiber mcp add: invalid arguments",
+                    );
+                } else {
+                    try writeMcpAddUsage(deps);
+                }
                 return .handled_usage_error;
             }
-            try writeMcpOperationFailure(alloc, deps, "add", err);
+            try writeMcpOperationFailure(alloc, deps, "add", format, err);
             return .handled_failure;
         };
         var result = cfg.add_mcp_profile_server(alloc, intent) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "add", err);
+            try writeMcpOperationFailure(alloc, deps, "add", format, err);
             return .handled_failure;
         };
         defer result.deinit(alloc);
@@ -2131,23 +2147,40 @@ fn runTopLevelMcp(
             .local => |local| local.name,
             .http => |http| http.name,
         };
-        try writeMcpProfileMutationSuccess(
-            alloc,
-            deps,
-            "Saved",
-            "to",
-            name,
-            result.profile_path,
-        );
+        if (format == .json) {
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpAddSnapshot{
+                .server = name,
+                .profile_path = result.profile_path,
+            });
+        } else {
+            try writeMcpProfileMutationSuccess(
+                alloc,
+                deps,
+                "Saved",
+                "to",
+                name,
+                result.profile_path,
+            );
+        }
         return .handled_success;
     }
     if (std.mem.eql(u8, operation, "trust")) {
-        const action = parseTopLevelProjectMcpAction(rest[1..]) catch {
-            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
+        var format: output_contracts.OutputFormat = .text;
+        var trust_args: std.ArrayList([:0]const u8) = .empty;
+        defer trust_args.deinit(alloc);
+        for (rest[1..]) |token| {
+            if (std.mem.eql(u8, token, "--json")) {
+                format = .json;
+                continue;
+            }
+            try trust_args.append(alloc, token);
+        }
+        const action = parseTopLevelProjectMcpAction(trust_args.items) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "trust", rest[1..]);
             return .handled_usage_error;
         };
         const workspace_root = io_mod.realpathAlloc(alloc, ".") catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "trust", err);
+            try writeMcpOperationFailure(alloc, deps, "trust", format, err);
             return .handled_failure;
         };
         defer alloc.free(workspace_root);
@@ -2159,71 +2192,107 @@ fn runTopLevelMcp(
         defer attempt.deinit(alloc);
         switch (attempt) {
             .failure => |failure| {
-                try writeMcpOperationFailure(alloc, deps, "trust", failure.err);
+                try writeMcpOperationFailure(alloc, deps, "trust", format, failure.err);
                 return .handled_failure;
             },
             .outcome => {},
         }
-        try writeMcpTrustSuccess(alloc, deps, workspace_root, action);
+        if (format == .json) {
+            const fields = mcpTrustSnapshotFields(action);
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpTrustSnapshot{
+                .workspace_root = workspace_root,
+                .action = fields.action,
+                .server = fields.server,
+            });
+        } else {
+            try writeMcpTrustSuccess(alloc, deps, workspace_root, action);
+        }
         return .handled_success;
     }
     if (std.mem.eql(u8, operation, "path")) {
-        if (rest.len != 1) {
-            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
+        const format = parseMcpOptionalJsonArgs(rest[1..]) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "path", rest[1..]);
             return .handled_usage_error;
-        }
+        };
         const home = deps.getenv(deps.env_ctx, "HOME") orelse {
-            try writeMcpOperationFailure(alloc, deps, "path", error.HomeNotSet);
+            try writeMcpOperationFailure(alloc, deps, "path", format, error.HomeNotSet);
             return .handled_failure;
         };
         const path = try profile_paths.mcpConfigPath(alloc, home);
         defer alloc.free(path);
-        var encoded_path = try text_utils.encodeTerminalSafe(alloc, path, 512);
-        defer encoded_path.deinit(alloc);
-        try writeStdout(deps, encoded_path.bytes);
-        try writeStdout(deps, "\n");
+        if (format == .json) {
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpPathSnapshot{ .path = path });
+        } else {
+            var encoded_path = try text_utils.encodeTerminalSafe(alloc, path, 512);
+            defer encoded_path.deinit(alloc);
+            try writeStdout(deps, encoded_path.bytes);
+            try writeStdout(deps, "\n");
+        }
         return .handled_success;
     }
     if (std.mem.eql(u8, operation, "remove")) {
-        if (rest.len != 2 or rest[1].len == 0) {
-            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
+        const parsed = parseMcpServerArgs(rest[1..]) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "remove", rest[1..]);
             return .handled_usage_error;
-        }
-        var result = cfg.remove_mcp_profile_server(alloc, rest[1]) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "remove", err);
+        };
+        var result = cfg.remove_mcp_profile_server(alloc, parsed.server) catch |err| {
+            try writeMcpOperationFailure(alloc, deps, "remove", parsed.format, err);
             return .handled_failure;
         };
         defer result.deinit(alloc);
         if (result.warning) |warning| try writeMcpProfileWarning(alloc, deps, warning);
         if (!result.removed) {
-            var encoded_name = try text_utils.encodeTerminalSafe(alloc, rest[1], 160);
-            defer encoded_name.deinit(alloc);
-            var out: std.Io.Writer.Allocating = .init(alloc);
-            defer out.deinit();
-            try out.writer.print(
-                "MCP server '{s}' was not found in the profile.\n",
-                .{encoded_name.bytes},
-            );
-            try writeStderr(deps, out.written());
+            if (parsed.format == .json) {
+                const message = try std.fmt.allocPrint(
+                    alloc,
+                    "MCP server '{s}' was not found in the profile",
+                    .{parsed.server},
+                );
+                defer alloc.free(message);
+                try writeJsonCommandFailure(
+                    alloc,
+                    deps,
+                    output_contracts.Kind.mcp_remove.jsonName(),
+                    error.McpServerNotFound,
+                    message,
+                );
+            } else {
+                var encoded_name = try text_utils.encodeTerminalSafe(alloc, parsed.server, 160);
+                defer encoded_name.deinit(alloc);
+                var out: std.Io.Writer.Allocating = .init(alloc);
+                defer out.deinit();
+                try out.writer.print(
+                    "MCP server '{s}' was not found in the profile.\n",
+                    .{encoded_name.bytes},
+                );
+                try writeStderr(deps, out.written());
+            }
             return .handled_failure;
         }
-        try writeMcpProfileMutationSuccess(
-            alloc,
-            deps,
-            "Removed",
-            "from",
-            rest[1],
-            result.profile_path,
-        );
+        if (parsed.format == .json) {
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpRemoveSnapshot{
+                .server = parsed.server,
+                .profile_path = result.profile_path,
+            });
+        } else {
+            try writeMcpProfileMutationSuccess(
+                alloc,
+                deps,
+                "Removed",
+                "from",
+                parsed.server,
+                result.profile_path,
+            );
+        }
         return .handled_success;
     }
     if (std.mem.eql(u8, operation, "list")) {
-        if (rest.len != 1) {
-            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
+        const format = parseMcpOptionalJsonArgs(rest[1..]) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "list", rest[1..]);
             return .handled_usage_error;
-        }
+        };
         var loaded = loadMcpCommandRuntime(alloc, cfg, deps) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "list", err);
+            try writeMcpOperationFailure(alloc, deps, "list", format, err);
             return .handled_failure;
         };
         defer loaded.deinit(alloc);
@@ -2233,22 +2302,30 @@ fn runTopLevelMcp(
             break :listing try runtime.listServersAndTools(alloc);
         } else try alloc.dupe(u8, "No MCP servers configured.\n");
         defer alloc.free(listing);
-        try writeStdout(deps, listing);
+        if (format == .json) {
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpListSnapshot{ .listing = listing });
+        } else {
+            try writeStdout(deps, listing);
+        }
         return .handled_success;
     }
-    if (std.mem.eql(u8, operation, "auth")) {
+    if (std.mem.eql(u8, operation, "login")) {
+        if (argsContainJson(rest[1..])) {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
+            return .handled_usage_error;
+        }
         if (rest.len != 2 or rest[1].len == 0) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
             return .handled_usage_error;
         }
         var loaded = loadMcpCommandRuntime(alloc, cfg, deps) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "auth", err);
+            try writeMcpOperationFailure(alloc, deps, "login", .text, err);
             return .handled_failure;
         };
         defer loaded.deinit(alloc);
         try writeConfigDiagnostics(alloc, deps, loaded.startup.config_diagnostics);
         const runtime = loaded.runtime orelse {
-            try writeMcpOperationFailure(alloc, deps, "auth", error.McpServerNotFound);
+            try writeMcpOperationFailure(alloc, deps, "login", .text, error.McpServerNotFound);
             return .handled_failure;
         };
         var opener = cfg.url_opener;
@@ -2257,7 +2334,7 @@ fn runTopLevelMcp(
             &opener,
             openTopLevelMcpUrl,
         ) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "auth", err);
+            try writeMcpOperationFailure(alloc, deps, "login", .text, err);
             return .handled_failure;
         };
         defer result.deinit();
@@ -2285,7 +2362,8 @@ fn runTopLevelMcp(
                 try writeMcpOperationFailure(
                     alloc,
                     deps,
-                    "auth",
+                    "login",
+                    .text,
                     error.McpAuthorizationIssuerMismatch,
                 );
                 return .handled_failure;
@@ -2293,50 +2371,57 @@ fn runTopLevelMcp(
         }
     }
     if (std.mem.eql(u8, operation, "logout")) {
-        if (rest.len != 2 or rest[1].len == 0) {
-            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
+        const parsed = parseMcpServerArgs(rest[1..]) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "logout", rest[1..]);
             return .handled_usage_error;
-        }
+        };
         var loaded = loadMcpCommandRuntime(alloc, cfg, deps) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "logout", err);
+            try writeMcpOperationFailure(alloc, deps, "logout", parsed.format, err);
             return .handled_failure;
         };
         defer loaded.deinit(alloc);
         try writeConfigDiagnostics(alloc, deps, loaded.startup.config_diagnostics);
         const runtime = loaded.runtime orelse {
-            try writeMcpOperationFailure(alloc, deps, "logout", error.McpServerNotFound);
+            try writeMcpOperationFailure(alloc, deps, "logout", parsed.format, error.McpServerNotFound);
             return .handled_failure;
         };
-        const result = runtime.logoutServer(rest[1]) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "logout", err);
+        const result = runtime.logoutServer(parsed.server) catch |err| {
+            try writeMcpOperationFailure(alloc, deps, "logout", parsed.format, err);
             return .handled_failure;
         };
-        var encoded_name = try text_utils.encodeTerminalSafe(alloc, rest[1], 160);
-        defer encoded_name.deinit(alloc);
-        var out: std.Io.Writer.Allocating = .init(alloc);
-        defer out.deinit();
-        if (!result.removed) {
-            try out.writer.print(
-                "No stored MCP credentials found for '{s}'.\n",
-                .{encoded_name.bytes},
-            );
-        } else if (result.local_only) {
-            try out.writer.print(
-                "Logged out of MCP server '{s}' locally.\n",
-                .{encoded_name.bytes},
-            );
-        } else if (result.revocation_failed) {
-            try out.writer.print(
-                "Logged out of MCP server '{s}' locally; remote revocation failed.\n",
-                .{encoded_name.bytes},
-            );
+        if (parsed.format == .json) {
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpLogoutSnapshot{
+                .server = parsed.server,
+                .result = mcpLogoutSnapshotResult(result),
+            });
         } else {
-            try out.writer.print(
-                "Logged out of MCP server '{s}'.\n",
-                .{encoded_name.bytes},
-            );
+            var encoded_name = try text_utils.encodeTerminalSafe(alloc, parsed.server, 160);
+            defer encoded_name.deinit(alloc);
+            var out: std.Io.Writer.Allocating = .init(alloc);
+            defer out.deinit();
+            if (!result.removed) {
+                try out.writer.print(
+                    "No stored MCP credentials found for '{s}'.\n",
+                    .{encoded_name.bytes},
+                );
+            } else if (result.local_only) {
+                try out.writer.print(
+                    "Logged out of MCP server '{s}' locally.\n",
+                    .{encoded_name.bytes},
+                );
+            } else if (result.revocation_failed) {
+                try out.writer.print(
+                    "Logged out of MCP server '{s}' locally; remote revocation failed.\n",
+                    .{encoded_name.bytes},
+                );
+            } else {
+                try out.writer.print(
+                    "Logged out of MCP server '{s}'.\n",
+                    .{encoded_name.bytes},
+                );
+            }
+            try writeStdout(deps, out.written());
         }
-        try writeStdout(deps, out.written());
         return .handled_success;
     }
 
@@ -2435,8 +2520,15 @@ fn writeMcpOperationFailure(
     alloc: Allocator,
     deps: RunDeps,
     operation: []const u8,
+    format: output_contracts.OutputFormat,
     err: anyerror,
 ) !void {
+    const message = try std.fmt.allocPrint(alloc, "fiber mcp {s} failed", .{operation});
+    defer alloc.free(message);
+    if (format == .json) {
+        try writeJsonCommandFailure(alloc, deps, mcpOutputKind(operation), err, message);
+        return;
+    }
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.print(
@@ -2444,6 +2536,93 @@ fn writeMcpOperationFailure(
         .{ operation, @errorName(err) },
     );
     try writeStderr(deps, out.written());
+}
+
+fn mcpOutputKind(operation: []const u8) []const u8 {
+    if (std.mem.eql(u8, operation, "list")) return output_contracts.Kind.mcp_list.jsonName();
+    if (std.mem.eql(u8, operation, "add")) return output_contracts.Kind.mcp_add.jsonName();
+    if (std.mem.eql(u8, operation, "remove")) return output_contracts.Kind.mcp_remove.jsonName();
+    if (std.mem.eql(u8, operation, "path")) return output_contracts.Kind.mcp_path.jsonName();
+    if (std.mem.eql(u8, operation, "logout")) return output_contracts.Kind.mcp_logout.jsonName();
+    if (std.mem.eql(u8, operation, "trust")) return output_contracts.Kind.mcp_trust.jsonName();
+    return "mcp";
+}
+
+fn writeMcpUsageOrJsonError(
+    alloc: Allocator,
+    command_catalog: CommandCatalog,
+    deps: RunDeps,
+    operation: []const u8,
+    args: []const [:0]const u8,
+) !void {
+    if (argsContainJson(args)) {
+        try writeJsonCommandFailure(
+            alloc,
+            deps,
+            mcpOutputKind(operation),
+            error.InvalidMcpArgs,
+            "fiber mcp: invalid arguments",
+        );
+    } else {
+        try writeTopLevelUsage(command_catalog, deps, .mcp);
+    }
+}
+
+fn parseMcpOptionalJsonArgs(args: []const [:0]const u8) error{InvalidMcpArgs}!output_contracts.OutputFormat {
+    if (args.len == 0) return .text;
+    if (args.len == 1 and std.mem.eql(u8, args[0], "--json")) return .json;
+    return error.InvalidMcpArgs;
+}
+
+const McpServerArgs = struct {
+    server: []const u8,
+    format: output_contracts.OutputFormat = .text,
+};
+
+fn parseMcpServerArgs(args: []const [:0]const u8) error{InvalidMcpArgs}!McpServerArgs {
+    var options: McpServerArgs = .{ .server = undefined };
+    var server_seen = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (server_seen) return error.InvalidMcpArgs;
+        server_seen = true;
+        if (arg.len == 0) return error.InvalidMcpArgs;
+        options.server = arg;
+    }
+    if (!server_seen) return error.InvalidMcpArgs;
+    return options;
+}
+
+fn mcpLogoutSnapshotResult(result: mcp_runtime.McpRuntime.LogoutResult) output_contracts.McpLogoutSnapshot.Result {
+    if (!result.removed) return .missing;
+    if (result.local_only) return .local_only;
+    if (result.revocation_failed) return .revocation_failed;
+    return .removed;
+}
+
+fn mcpTrustSnapshotFields(action: project_config.ProjectMcpAction) struct {
+    action: []const u8,
+    server: ?[]const u8,
+} {
+    return switch (action) {
+        .approve => |name| .{ .action = "approve", .server = name },
+        .reject => |name| .{ .action = "reject", .server = name },
+        .approve_all => .{ .action = "approve_all", .server = null },
+        .reset => .{ .action = "reset", .server = null },
+    };
+}
+
+fn writeMcpJsonOutput(
+    alloc: Allocator,
+    deps: RunDeps,
+    snapshot: anytype,
+) !void {
+    const text = try snapshot.render(alloc, .json);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, .json);
 }
 
 fn writeMcpProfileWarningIfPresent(
@@ -4855,4 +5034,81 @@ test "parseLoginProvider accepts a single provider token" {
     try std.testing.expectEqual(model_provider.ProviderId.codex, (try parseLoginProvider(&.{@constCast("codex")})).?);
     try std.testing.expect((try parseLoginProvider(&.{})) == null);
     try std.testing.expectError(error.InvalidLoginProviderArgs, parseLoginProvider(&.{ @constCast("codex"), @constCast("extra") }));
+}
+
+test "top-level MCP auth subcommand is no longer recognized" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("mcp"), @constCast("auth"), @constCast("fixture") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+}
+
+test "top-level MCP login rejects --json and requires a server name" {
+    {
+        var capture = CaptureOutput.init(std.testing.allocator);
+        defer capture.deinit();
+
+        const result = try runIfRequestedWithDeps(
+            std.testing.allocator,
+            &.{ @constCast("mcp"), @constCast("login"), @constCast("--json") },
+            testConfig(),
+            capture.deps(),
+        );
+        try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    }
+    {
+        var capture = CaptureOutput.init(std.testing.allocator);
+        defer capture.deinit();
+
+        const result = try runIfRequestedWithDeps(
+            std.testing.allocator,
+            &.{ @constCast("mcp"), @constCast("login") },
+            testConfig(),
+            capture.deps(),
+        );
+        try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    }
+}
+
+test "parseMcpServerArgs accepts server name and json flag" {
+    const parsed = try parseMcpServerArgs(&.{ @constCast("fixture"), @constCast("--json") });
+    try std.testing.expectEqualStrings("fixture", parsed.server);
+    try std.testing.expectEqual(output_contracts.OutputFormat.json, parsed.format);
+    try std.testing.expectError(error.InvalidMcpArgs, parseMcpServerArgs(&.{}));
+}
+
+test "top-level MCP add renders json envelope" {
+    const alloc = std.testing.allocator;
+    var capture = CaptureOutput.init(alloc);
+    defer capture.deinit();
+    var cfg = testConfig();
+    cfg.add_mcp_profile_server = captureMcpProfileAddForTest;
+    mcp_profile_add_calls_for_test = 0;
+    var deps = capture.deps();
+    deps.load_startup_state = failingStartupState;
+
+    const result = try runIfRequestedWithDeps(
+        alloc,
+        &.{
+            @constCast("mcp"),
+            @constCast("add"),
+            @constCast("fixture"),
+            @constCast("node"),
+            @constCast("server.js"),
+            @constCast("--json"),
+        },
+        cfg,
+        deps,
+    );
+    try std.testing.expectEqual(RunResult.handled_success, result);
+    try std.testing.expectEqual(@as(usize, 1), mcp_profile_add_calls_for_test);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"kind\":\"mcp.add\"") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"server\":\"fixture\"") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"profile_path\":\"/tmp/test-home/.fiber/mcp.json\"") != null);
 }

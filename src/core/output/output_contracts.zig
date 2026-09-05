@@ -37,6 +37,12 @@ pub const Kind = enum {
     permissions_rule_list,
     permissions_rule_add,
     permissions_rule_remove,
+    mcp_list,
+    mcp_add,
+    mcp_remove,
+    mcp_path,
+    mcp_logout,
+    mcp_trust,
     models,
     doctor,
     session_list,
@@ -59,6 +65,12 @@ pub const Kind = enum {
             .permissions_rule_list => "permissions.rule.list",
             .permissions_rule_add => "permissions.rule.add",
             .permissions_rule_remove => "permissions.rule.remove",
+            .mcp_list => "mcp.list",
+            .mcp_add => "mcp.add",
+            .mcp_remove => "mcp.remove",
+            .mcp_path => "mcp.path",
+            .mcp_logout => "mcp.logout",
+            .mcp_trust => "mcp.trust",
             .models => "models",
             .doctor => "doctor",
             .session_list => "session.list",
@@ -1135,6 +1147,250 @@ pub const PermissionsRuleRemoveSnapshot = struct {
         try out.writer.writeAll(",\"pattern\":");
         try std.json.Stringify.value(self.pattern, .{}, &out.writer);
         try out.writer.print(",\"removed\":{}}}", .{self.removed});
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpListSnapshot = struct {
+    listing: []const u8,
+
+    pub fn render(self: McpListSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpListSnapshot, alloc: Allocator) ![]u8 {
+        return alloc.dupe(u8, self.listing);
+    }
+
+    pub fn renderJson(self: McpListSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"listing\":",
+            .{Kind.mcp_list.jsonName()},
+        );
+        try std.json.Stringify.value(self.listing, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpAddSnapshot = struct {
+    server: []const u8,
+    profile_path: []const u8,
+
+    pub fn render(self: McpAddSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpAddSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "Saved MCP server '{s}' to {s}.\n",
+            .{ self.server, self.profile_path },
+        );
+    }
+
+    pub fn renderJson(self: McpAddSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"server\":",
+            .{Kind.mcp_add.jsonName()},
+        );
+        try std.json.Stringify.value(self.server, .{}, &out.writer);
+        try out.writer.writeAll(",\"profile_path\":");
+        try std.json.Stringify.value(self.profile_path, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpRemoveSnapshot = struct {
+    server: []const u8,
+    profile_path: []const u8,
+
+    pub fn render(self: McpRemoveSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpRemoveSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "Removed MCP server '{s}' from {s}.\n",
+            .{ self.server, self.profile_path },
+        );
+    }
+
+    pub fn renderJson(self: McpRemoveSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"server\":",
+            .{Kind.mcp_remove.jsonName()},
+        );
+        try std.json.Stringify.value(self.server, .{}, &out.writer);
+        try out.writer.writeAll(",\"profile_path\":");
+        try std.json.Stringify.value(self.profile_path, .{}, &out.writer);
+        try out.writer.writeAll(",\"removed\":true}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpPathSnapshot = struct {
+    path: []const u8,
+
+    pub fn render(self: McpPathSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpPathSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(alloc, "{s}\n", .{self.path});
+    }
+
+    pub fn renderJson(self: McpPathSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"path\":",
+            .{Kind.mcp_path.jsonName()},
+        );
+        try std.json.Stringify.value(self.path, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpLogoutSnapshot = struct {
+    pub const Result = enum {
+        removed,
+        missing,
+        local_only,
+        revocation_failed,
+    };
+
+    server: []const u8,
+    result: Result,
+
+    pub fn render(self: McpLogoutSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpLogoutSnapshot, alloc: Allocator) ![]u8 {
+        return switch (self.result) {
+            .missing => std.fmt.allocPrint(
+                alloc,
+                "No stored MCP credentials found for '{s}'.\n",
+                .{self.server},
+            ),
+            .local_only => std.fmt.allocPrint(
+                alloc,
+                "Logged out of MCP server '{s}' locally.\n",
+                .{self.server},
+            ),
+            .revocation_failed => std.fmt.allocPrint(
+                alloc,
+                "Logged out of MCP server '{s}' locally; remote revocation failed.\n",
+                .{self.server},
+            ),
+            .removed => std.fmt.allocPrint(
+                alloc,
+                "Logged out of MCP server '{s}'.\n",
+                .{self.server},
+            ),
+        };
+    }
+
+    pub fn renderJson(self: McpLogoutSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"server\":",
+            .{Kind.mcp_logout.jsonName()},
+        );
+        try std.json.Stringify.value(self.server, .{}, &out.writer);
+        try out.writer.writeAll(",\"result\":");
+        try std.json.Stringify.value(@tagName(self.result), .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpTrustSnapshot = struct {
+    workspace_root: []const u8,
+    action: []const u8,
+    server: ?[]const u8 = null,
+
+    pub fn render(self: McpTrustSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpTrustSnapshot, alloc: Allocator) ![]u8 {
+        if (self.server) |name| {
+            if (std.mem.eql(u8, self.action, "approve")) {
+                return std.fmt.allocPrint(
+                    alloc,
+                    "Approved project MCP server '{s}' for {s}.\n",
+                    .{ name, self.workspace_root },
+                );
+            }
+            return std.fmt.allocPrint(
+                alloc,
+                "Rejected project MCP server '{s}' for {s}.\n",
+                .{ name, self.workspace_root },
+            );
+        }
+        if (std.mem.eql(u8, self.action, "approve_all")) {
+            return std.fmt.allocPrint(
+                alloc,
+                "Approved all project MCP servers for {s}.\n",
+                .{self.workspace_root},
+            );
+        }
+        return std.fmt.allocPrint(
+            alloc,
+            "Reset project MCP trust for {s}.\n",
+            .{self.workspace_root},
+        );
+    }
+
+    pub fn renderJson(self: McpTrustSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"workspace_root\":",
+            .{Kind.mcp_trust.jsonName()},
+        );
+        try std.json.Stringify.value(self.workspace_root, .{}, &out.writer);
+        try out.writer.writeAll(",\"action\":");
+        try std.json.Stringify.value(self.action, .{}, &out.writer);
+        try out.writer.writeAll(",\"server\":");
+        try std.json.Stringify.value(self.server, .{}, &out.writer);
+        try out.writer.writeAll("}}");
         return try out.toOwnedSlice();
     }
 };
@@ -2357,6 +2613,18 @@ test "core model list snapshot handles limits and empty lists" {
     try std.testing.expectEqualStrings(
         "{\"ok\":true,\"kind\":\"models\",\"data\":{\"count\":0,\"shown_count\":0,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[]}}",
         empty_json,
+    );
+}
+
+test "Mcp logout snapshot renders stable json" {
+    const json = try (McpLogoutSnapshot{
+        .server = "fixture",
+        .result = .removed,
+    }).renderJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    try std.testing.expectEqualStrings(
+        "{\"ok\":true,\"kind\":\"mcp.logout\",\"data\":{\"server\":\"fixture\",\"result\":\"removed\"}}",
+        json,
     );
 }
 

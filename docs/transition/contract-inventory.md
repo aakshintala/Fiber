@@ -685,11 +685,11 @@ with zero non-test callers; this slice was pure CLI wiring. `zig build test
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
-| `mcp login` | `mcp auth` (`cli_surface.zig:1575`) | renamed | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
+| `mcp login` | `mcp auth` (`cli_surface.zig:1575`) | renamed; wired | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
 | `mcp logout` | **present** at `cli_surface.zig:1631`, and gated alongside `auth`/`list` at `main.zig:3246`. The matrix had no row for it. | retained; enveloped for the error `code`, and it must stay paired with `mcp login` through the rename | `mcp.logout` | `cli_surface.zig` | `cli_surface.zig` |
-| `mcp list --json` | no `--json` anywhere in `mcp` | enveloped | `mcp.list` | `output_contracts.zig` | `output_contracts.zig` |
-| `mcp add\|remove\|path\|trust --json` | absent | enveloped, for the error `code` | `mcp.<sub>` | `output_contracts.zig` | `output_contracts.zig` |
-| `mcp list --connect` | already removed from `src/` (`:1590` rejects the extra token); stale callers in `tests/e2e/mcp-http.test.ts:217` | callers removed | — | tests | — |
+| `mcp list --json` | no `--json` anywhere in `mcp` | enveloped; wired | `mcp.list` | `output_contracts.zig` | `output_contracts.zig` |
+| `mcp add\|remove\|path\|trust --json` | absent | enveloped, for the error `code`; wired | `mcp.<sub>` | `output_contracts.zig` | `output_contracts.zig` |
+| `mcp list --connect` | already removed from `src/` (`:1590` rejects the extra token); stale callers in `tests/e2e/mcp-http.test.ts:217` | callers removed; wired | — | tests | — |
 | `mcp doctor` | absent | **deferred** — see `../enhancements/pending.md` | — | — | — |
 
 ### Slice 8 — `session` subcommands

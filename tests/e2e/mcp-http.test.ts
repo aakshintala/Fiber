@@ -215,7 +215,7 @@ describe("modern MCP Streamable HTTP", () => {
     const root = createRoot("mongodb-legacy-fallback", fixture);
 
     const result = await runFx(
-      ["mcp", "list", "--connect"],
+      ["mcp", "list"],
       {
         cwd: root.workspace,
         env: {
@@ -250,7 +250,7 @@ describe("modern MCP Streamable HTTP", () => {
     const root = createRoot("gitmcp-legacy-fallback", fixture);
 
     const result = await runFx(
-      ["mcp", "list", "--connect"],
+      ["mcp", "list"],
       {
         cwd: root.workspace,
         env: {
@@ -285,7 +285,7 @@ describe("modern MCP Streamable HTTP", () => {
     const root = createRoot("plaintext-auth-rejection", fixture);
 
     const result = await runFx(
-      ["mcp", "list", "--connect"],
+      ["mcp", "list"],
       {
         cwd: root.workspace,
         env: {
