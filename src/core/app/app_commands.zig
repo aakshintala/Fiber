@@ -3529,10 +3529,6 @@ pub fn applySettingsCatalogChange(app: anytype, change: settings_catalog.Change)
             }
             try session_commands.Commands(@TypeOf(app.*)).selectEffortFromSettings(app, effort);
         },
-        .fast_mode => {
-            const enabled = parseOnOff(change.value) orelse return error.InvalidSettingsCatalogValue;
-            if (enabled != app.fast_mode) try session_commands.Commands(@TypeOf(app.*)).toggleFast(app);
-        },
         .permission_mode => try session_commands.Commands(@TypeOf(app.*)).handlePermissions(app, change.value),
         .sound_level => try handleNotificationsCommand(app, change.value),
         .startup_scrollback => {

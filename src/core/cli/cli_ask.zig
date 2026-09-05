@@ -27,6 +27,7 @@ const notification_sound = @import("../notifications/sound.zig");
 const output_contracts = @import("../output/output_contracts.zig");
 const io_mod = @import("../shared/io.zig");
 const config_runtime = @import("../config/config_runtime.zig");
+const settings_store = @import("../config/settings_store.zig");
 const model_capabilities = @import("../config/model_capabilities.zig");
 const model_provider = @import("../config/model_provider.zig");
 const mcp_elicitation_interaction = @import("../mcp/elicitation_interaction.zig");
@@ -330,6 +331,9 @@ const AskOptions = struct {
     no_save: bool = false,
     no_color: bool = false,
     continue_recovery: bool = false,
+    model_override: ?[]u8 = null,
+    effort_override: ?types.ReasoningEffort = null,
+    fast_override: bool = false,
 
     fn deinit(self: *AskOptions, alloc: Allocator) void {
         alloc.free(self.prompt);
@@ -338,6 +342,7 @@ const AskOptions = struct {
         for (self.images.items) |image| types.freeImageAttachment(alloc, image);
         self.images.deinit(alloc);
         if (self.system_prompt_override) |s| alloc.free(s);
+        if (self.model_override) |model| alloc.free(model);
     }
 };
 
@@ -449,6 +454,9 @@ const RunOptions = struct {
     resume_target: ?ResumeTarget = null,
     color_enabled: bool = true,
     continue_recovery: bool = false,
+    model_override: ?[]const u8 = null,
+    effort_override: ?types.ReasoningEffort = null,
+    fast_override: bool = false,
     deps: RunDeps,
 };
 
@@ -546,6 +554,9 @@ const AskContext = struct {
     writable: ?session_store.LoadedWritableSession = null,
     session_write_mutex: std.Io.Mutex = .init,
     requested_resume: ?ResumeTarget = null,
+    explicit_model: ?[]const u8 = null,
+    explicit_effort: ?types.ReasoningEffort = null,
+    explicit_fast: ?bool = null,
     seed_model: []const u8 = "",
     command_timeout_ms: ?usize = null,
     session: SessionRuntime,
@@ -890,6 +901,9 @@ const AskContext = struct {
             self.effort = preferences.effort;
             self.fast_mode = preferences.fast_mode;
         }
+        if (self.explicit_model) |model| self.model = model;
+        if (self.explicit_effort) |effort| self.effort = effort;
+        if (self.explicit_fast) |fast| self.fast_mode = fast;
         self.subagent_host = try subagent_tool_host.Runtime.create(
             self.alloc,
             &self.store.?,
@@ -1240,6 +1254,9 @@ fn runWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Config, deps: 
         .resume_target = options.resume_target,
         .color_enabled = !options.no_color,
         .continue_recovery = options.continue_recovery,
+        .model_override = options.model_override,
+        .effort_override = options.effort_override,
+        .fast_override = options.fast_override,
         .deps = deps,
     }) catch |err| {
         if (interrupt_scope.requested()) return headless_interrupt.exitCode();
@@ -1446,6 +1463,15 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     ctx.context_limits.applyCommandLine(cfg.context_limit_overrides);
     ctx.fast_mode = startup.fast_mode;
     ctx.effort = toCoreReasoningEffort(startup.effort);
+    ctx.explicit_model = options.model_override;
+    ctx.explicit_effort = options.effort_override;
+    ctx.explicit_fast = if (options.fast_override) true else null;
+    if (options.model_override) |model| {
+        ctx.model = model;
+        ctx.seed_model = model;
+    }
+    if (options.effort_override) |effort| ctx.effort = effort;
+    if (options.fast_override) ctx.fast_mode = true;
     ctx.first_call_tool_choice = startup.first_call_tool_choice;
     ctx.permission_mode = permission_mode;
     ctx.mode_id = mode_id;
@@ -3278,6 +3304,11 @@ fn resolveAskSubagentAuthority(
     );
 }
 
+fn validateAskModel(model: []const u8) !void {
+    try settings_store.validateModel(model);
+    if (std.mem.endsWith(u8, model, ":fast")) return error.InvalidAskArgs;
+}
+
 fn parseOptionsWithStdin(alloc: Allocator, args: []const [:0]const u8, stdin: StdinSource) !AskOptions {
     var opts: AskOptions = .{ .prompt = &.{} };
     errdefer opts.deinit(alloc);
@@ -3315,6 +3346,23 @@ fn parseOptionsWithStdin(alloc: Allocator, args: []const [:0]const u8, stdin: St
             if (i >= args.len) return error.MissingPrompt;
             if (opts.system_prompt_override) |old| alloc.free(old);
             opts.system_prompt_override = try alloc.dupe(u8, args[i]);
+        } else if (std.mem.eql(u8, arg, "--model")) {
+            i += 1;
+            if (i >= args.len) return error.InvalidAskArgs;
+            if (opts.model_override) |old| alloc.free(old);
+            const model = try alloc.dupe(u8, args[i]);
+            validateAskModel(model) catch {
+                alloc.free(model);
+                return error.InvalidAskArgs;
+            };
+            opts.model_override = model;
+        } else if (std.mem.eql(u8, arg, "--effort")) {
+            i += 1;
+            if (i >= args.len) return error.InvalidAskArgs;
+            const effort = types.ReasoningEffort.parse(args[i]) orelse return error.InvalidAskArgs;
+            opts.effort_override = effort;
+        } else if (std.mem.eql(u8, arg, "--fast")) {
+            opts.fast_override = true;
         } else if (std.mem.eql(u8, arg, "--json")) {
             opts.json_output = true;
         } else if (std.mem.eql(u8, arg, "--prompt-permissions")) {
@@ -4810,6 +4858,167 @@ test "parse options accepts yolo and rejects permission flag conflicts" {
             .tty,
         ),
     );
+}
+
+test "parse options accepts model effort and fast overrides" {
+    const alloc = std.testing.allocator;
+    var options = try parseOptionsWithStdin(
+        alloc,
+        &.{
+            "--model",
+            "anthropic/claude-opus-4.6",
+            "--effort",
+            "high",
+            "--fast",
+            "hello",
+        },
+        .tty,
+    );
+    defer options.deinit(alloc);
+
+    try std.testing.expectEqualStrings("anthropic/claude-opus-4.6", options.model_override.?);
+    try std.testing.expect(types.ReasoningEffort.eql(
+        options.effort_override.?,
+        types.ReasoningEffort.literal("high"),
+    ));
+    try std.testing.expect(options.fast_override);
+    try std.testing.expectEqualStrings("hello", options.prompt);
+}
+
+test "parse options rejects invalid model effort and fast suffix values" {
+    const alloc = std.testing.allocator;
+
+    try std.testing.expectError(
+        error.InvalidAskArgs,
+        parseOptionsWithStdin(alloc, &.{ "--model" }, .tty),
+    );
+    try std.testing.expectError(
+        error.InvalidAskArgs,
+        parseOptionsWithStdin(alloc, &.{ "--model", " bad-model" }, .tty),
+    );
+    try std.testing.expectError(
+        error.InvalidAskArgs,
+        parseOptionsWithStdin(alloc, &.{ "--model", "provider/model:fast", "hello" }, .tty),
+    );
+    try std.testing.expectError(
+        error.InvalidAskArgs,
+        parseOptionsWithStdin(alloc, &.{ "--effort" }, .tty),
+    );
+    try std.testing.expectError(
+        error.InvalidAskArgs,
+        parseOptionsWithStdin(alloc, &.{ "--effort", "bad effort", "hello" }, .tty),
+    );
+}
+
+test "ask explicit cli overrides become new session seed preferences" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    const test_home = try TestAskHome.install(alloc, home);
+    defer test_home.deinit();
+
+    var stdout_capture: TestCapture = .{};
+    defer stdout_capture.deinit(alloc);
+    var stderr_capture: TestCapture = .{};
+    defer stderr_capture.deinit(alloc);
+    var ctx = AskContext.init(
+        alloc,
+        testConfig(),
+        testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup),
+        workspace,
+    );
+    defer ctx.deinit();
+    ctx.model = "startup-model";
+    ctx.seed_model = "configured-model";
+    ctx.effort = .auto;
+    ctx.fast_mode = false;
+    const override_model = try alloc.dupe(u8, "cli-model");
+    defer alloc.free(override_model);
+    ctx.explicit_model = override_model;
+    ctx.model = override_model;
+    ctx.seed_model = override_model;
+    ctx.explicit_effort = types.ReasoningEffort.literal("high");
+    ctx.effort = ctx.explicit_effort.?;
+    ctx.explicit_fast = true;
+    ctx.fast_mode = true;
+
+    try ctx.initializeSessionStores();
+
+    const preferences = ctx.writable.?.state.preferences;
+    try std.testing.expectEqualStrings("cli-model", preferences.model);
+    try std.testing.expect(types.ReasoningEffort.eql(
+        preferences.effort,
+        types.ReasoningEffort.literal("high"),
+    ));
+    try std.testing.expect(preferences.fast_mode);
+}
+
+test "ask explicit cli overrides apply for one resumed session without rewriting stored preferences" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    const test_home = try TestAskHome.install(alloc, home);
+    defer test_home.deinit();
+
+    var store = try session_store.Store.initFromHome(alloc, home, workspace);
+    defer store.deinit(alloc);
+    const session_id = "resume-cli-overrides";
+    var state = try testAskDurableState(alloc, workspace, session_id);
+    alloc.free(state.preferences.model);
+    state.preferences.model = try alloc.dupe(u8, "stored-model");
+    state.preferences.effort = types.ReasoningEffort.literal("low");
+    state.preferences.fast_mode = false;
+    defer state.deinit(alloc);
+    var writable = try store.startWritableSession(alloc, state);
+    writable.deinit(alloc);
+
+    var stdout_capture: TestCapture = .{};
+    defer stdout_capture.deinit(alloc);
+    var stderr_capture: TestCapture = .{};
+    defer stderr_capture.deinit(alloc);
+    var ctx = AskContext.init(
+        alloc,
+        testConfig(),
+        testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup),
+        workspace,
+    );
+    defer ctx.deinit();
+    ctx.requested_resume = .{ .id = session_id };
+    const override_model = try alloc.dupe(u8, "override-model");
+    defer alloc.free(override_model);
+    ctx.explicit_model = override_model;
+    ctx.explicit_effort = types.ReasoningEffort.literal("high");
+    ctx.explicit_fast = true;
+
+    try ctx.initializeSessionStores();
+
+    try std.testing.expectEqualStrings("override-model", ctx.model);
+    try std.testing.expect(types.ReasoningEffort.eql(
+        ctx.effort,
+        types.ReasoningEffort.literal("high"),
+    ));
+    try std.testing.expect(ctx.fast_mode);
+    const preferences = ctx.writable.?.state.preferences;
+    try std.testing.expectEqualStrings("stored-model", preferences.model);
+    try std.testing.expect(types.ReasoningEffort.eql(
+        preferences.effort,
+        types.ReasoningEffort.literal("low"),
+    ));
+    try std.testing.expect(!preferences.fast_mode);
 }
 
 test "headless yolo warning reaches stderr before acknowledgment persistence" {

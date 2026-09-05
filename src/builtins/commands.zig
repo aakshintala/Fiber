@@ -30,11 +30,14 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .ask,
         .token = "ask",
-        .usage = "ask [--auto|--yolo] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save] [--resume-id <id>] [--continue-recovery] [--] <prompt>",
+        .usage = "ask [--auto|--yolo] [--model <model-id>] [--effort <level>] [--fast] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save] [--resume-id <id>] [--continue-recovery] [--] <prompt>",
         .summary = "Run one noninteractive request",
         .options = &.{
             .{ .flag = "--auto", .description = "Automatically review unresolved permission requests" },
             .{ .flag = "--yolo", .description = "Disable fiber permission checks" },
+            .{ .flag = "--model <model-id>", .description = "Use one model for this request" },
+            .{ .flag = "--effort <level>", .description = "Use one reasoning effort for this request" },
+            .{ .flag = "--fast", .description = "Use the fast tier for this request when the model supports it" },
             .{ .flag = "--image PATH", .description = "Attach an image file; repeat for multiple images" },
             .{ .flag = "--system TEXT", .description = "Replace the built-in system prompt for this request" },
             json_option,

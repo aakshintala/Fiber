@@ -30,7 +30,6 @@ pub const SettingId = enum {
     collapse_tool_calls,
     model,
     effort,
-    fast_mode,
     permission_mode,
     sound_level,
     startup_scrollback,
@@ -64,7 +63,6 @@ pub const Snapshot = struct {
         return switch (id) {
             .model => self.model,
             .effort => self.effort,
-            .fast_mode => onOff(self.fast_mode),
             .permission_mode => self.permission_mode,
             .statusline_context => onOff(self.statusline_context),
             .statusline_session => onOff(self.statusline_session),
@@ -259,7 +257,6 @@ const specs = [_]Spec{
     .{ .id = .collapse_tool_calls, .category = .interface, .label = "Collapse tool calls", .description = "Show only a summary for each group of tool calls" },
     .{ .id = .model, .category = .agent, .label = "Model", .description = "Choose the model used for new turns" },
     .{ .id = .effort, .category = .agent, .label = "Reasoning effort", .description = "Control how much reasoning the model applies" },
-    .{ .id = .fast_mode, .category = .agent, .label = "Fast mode", .description = "Use faster inference when the model supports it" },
     .{ .id = .permission_mode, .category = .agent, .label = "Permission mode", .description = "Choose when fiber asks before taking actions" },
     .{ .id = .sound_level, .category = .notifications, .label = "Sound level", .description = "Choose off, on, or max sounds and terminal bells" },
     .{ .id = .startup_scrollback, .category = .advanced, .label = "Startup scrollback", .description = "Restore terminal output when fiber starts" },
@@ -318,7 +315,6 @@ pub fn optionCount(snapshot: *const Snapshot, id: SettingId) usize {
             snapshot.reasoning_efforts.len + 1
         else
             0,
-        .fast_mode => if (snapshot.supports_fast_mode or snapshot.fast_mode) on_off_options.len else 0,
         else => staticOptionsFor(id).len,
     };
 }
@@ -366,7 +362,6 @@ pub fn changeAt(snapshot: *const Snapshot, id: SettingId, option_index: usize) ?
 fn staticOptionsFor(id: SettingId) []const []const u8 {
     return switch (id) {
         .model, .effort => &.{},
-        .fast_mode,
         .statusline_context,
         .statusline_session,
         .statusline_workspace,
@@ -430,9 +425,9 @@ test "settings catalog projects grouped searchable preferences" {
         .sound_level = "on",
     };
 
-    try std.testing.expectEqual(@as(usize, 12), filteredCount(snapshot, .all, ""));
+    try std.testing.expectEqual(@as(usize, 11), filteredCount(snapshot, .all, ""));
     try std.testing.expectEqual(@as(usize, 5), filteredCount(snapshot, .interface, ""));
-    try std.testing.expectEqual(@as(usize, 4), filteredCount(snapshot, .agent, ""));
+    try std.testing.expectEqual(@as(usize, 3), filteredCount(snapshot, .agent, ""));
     try std.testing.expectEqual(@as(usize, 1), filteredCount(snapshot, .notifications, ""));
     try std.testing.expectEqual(@as(usize, 2), filteredCount(snapshot, .advanced, ""));
 

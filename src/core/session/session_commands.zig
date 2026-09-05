@@ -443,30 +443,6 @@ pub fn Commands(comptime App: type) type {
             try app.writeDomainNotice(.{ .topic = "history", .tone = .@"error", .body = "prompt history options: on, off" }, true);
         }
 
-        pub fn toggleFast(app: *App) !void {
-            try toggleFastForModel(app, provider_runtime.model(app), true);
-        }
-
-        fn toggleFastForModel(app: *App, model: []const u8, announce: bool) !void {
-            if (app.fast_mode) {
-                try applyFastMode(app, false, announce);
-                return;
-            }
-            if (!model_capabilities.resolveForApp(App, app, model).supports_fast_mode) {
-                if (announce) {
-                    try app.writeDomainNotice(.{
-                        .topic = "fast",
-                        .tone = .neutral,
-                        .body = "This model does not come with a fast mode.",
-                    }, true);
-                }
-                app.shell.render_requests.request(.footer);
-                return;
-            }
-
-            try applyFastMode(app, !app.fast_mode, announce);
-        }
-
         fn applyFastMode(app: *App, enabled: bool, announce: bool) !void {
             const previous = app.fast_mode;
             app.fast_mode = enabled;
@@ -1618,60 +1594,6 @@ test "session_commands handlePermissions reports usage and invalid action before
     try Commands(FakeApp).handlePermissions(&app, "remove");
     try expectTranscriptContains(&app, "usage: /permissions [ask|auto|yolo|reset]");
     try std.testing.expectEqual(@as(usize, 0), app.permission_mode_preference_commit_count);
-}
-
-test "session_commands toggleFast reports unsupported model and redraws footer" {
-    const alloc = std.testing.allocator;
-    var app = try FakeApp.init(alloc, "/tmp/workspace", "openai/gpt-4o");
-    defer app.deinit();
-
-    try Commands(FakeApp).toggleFast(&app);
-
-    try std.testing.expect(!app.fast_mode);
-    try std.testing.expect(app.shell.render_requests.hasReason(.footer));
-    try std.testing.expect(app.worker.synced_fast_mode == null);
-    try std.testing.expectEqual(@as(usize, 0), app.worker.fast_sync_count);
-    try expectTranscriptContains(&app, "● Fast: This model does not come with a fast mode.");
-}
-
-test "session_commands toggleFast disables stale fast mode for unsupported model" {
-    const alloc = std.testing.allocator;
-    var app = try FakeApp.init(alloc, "/tmp/workspace", "openai/gpt-4o");
-    defer app.deinit();
-    app.fast_mode = true;
-    app.worker.synced_fast_mode = true;
-
-    try Commands(FakeApp).toggleFast(&app);
-
-    try std.testing.expect(!app.fast_mode);
-    try std.testing.expectEqual(@as(?bool, false), app.worker.synced_fast_mode);
-    try std.testing.expectEqual(@as(usize, 1), app.worker.fast_sync_count);
-}
-
-test "session_commands toggleFast syncs queued fast mode for supported models" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "anthropic/claude-opus-4.6");
-    defer app.deinit();
-    app.setGatewayControls("anthropic/claude-opus-4.6", &.{}, true);
-
-    try Commands(FakeApp).toggleFast(&app);
-
-    try std.testing.expect(app.fast_mode);
-    try std.testing.expectEqual(@as(?bool, true), app.worker.synced_fast_mode);
-    try std.testing.expectEqual(@as(usize, 1), app.worker.fast_sync_count);
-    try expectTranscriptContains(&app, "● Fast: on");
 }
 
 test "session_commands selectModelFromPicker skips effort changes for models without reasoning support" {
