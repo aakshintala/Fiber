@@ -507,20 +507,63 @@ what makes `--fast` the single way to set the tier outside the model picker.
 Splitting them would leave a window in which a cheap toggle and a new flag both
 exist.
 
+**Owner decisions (2026-09-04):**
+
+- **Permission prompting.** `--permission-mode <ask|auto|yolo>` replaces
+  `--auto`, `--yolo`, and `--prompt-permissions` outright — no aliases, old
+  flags become usage errors immediately (exit 2). `ask` enables the TTY
+  prompt for JSON and quiet output; `auto` keeps current automatic-review
+  behavior with no captured-output prompt; `yolo` is unchanged; no flag keeps
+  the configured mode and current captured-output default.
+- **Override precedence and persistence.** Effective order: explicit CLI
+  control > relevant `FIBER_*` env override > resumed-session preference >
+  profile/workspace config > built-in default. A new session's explicit
+  `--model`/`--effort`/`--fast` become its seed preferences. A resumed
+  session applies explicit choices for that invocation only, without
+  rewriting stored preferences. No CLI choice writes profile config. Focused
+  tests cover both new-session and resumed-session paths.
+- **Model identifier validation.** `--model` accepts the existing bounded
+  model-ID grammar (unnamespaced, matching the current Codex catalog and
+  compiled default, e.g. `gpt-5.4-mini`) and rejects a terminal `:fast`
+  suffix. Documented operand renamed from `<namespaced-id>` to `<model-id>`.
+  Slash-namespace enforcement is out of scope for this slice — it needs
+  explicit provider parsing, an owner decision not yet made.
+- **Sub-slice boundary.** Slice 4 splits into 4a, 4b, 4c below, implemented
+  and reviewed sequentially — no parallel work, since all three touch
+  `cli_ask.zig` and its command specs/tests.
+
+#### Slice 4a — `--model`, `--effort`, `--fast`, and the `/settings` Fast row
+
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
-| `--permission-mode <ask\|auto\|yolo>` | `--auto`, `--yolo`, `--prompt-permissions` | single flag; bad value exits 2 | `ask` | `cli_ask.zig` | `cli_ask.zig` |
-| `--model <namespaced-id>` | **absent.** `grep -rn '"--model"' src/` returns nothing and it is not in the `ask` spec (`commands.zig:31-57`). The matrix said "present". **Decided (2026-09-04): build it, sized as new work, not a rename.** | build it; rejects a `:fast` suffix | `ask` | `cli_ask.zig` | `cli_ask.zig` |
-| `--effort <level>` | **absent**, same evidence. **Decided (2026-09-04): build it.** | build it | `ask` | `cli_ask.zig` | `cli_ask.zig` |
-| `--retry` | `--continue-recovery` | renamed | `ask` | `cli_ask.zig` | `cli_ask.zig` |
+| `--model <model-id>` | **absent.** `grep -rn '"--model"' src/` returns nothing and it is not in the `ask` spec (`commands.zig:31-57`). The matrix said "present". Built as new work, not a rename. | build it; rejects a `:fast` suffix | `ask` | `cli_ask.zig` | `cli_ask.zig` |
+| `--effort <level>` | **absent**, same evidence. | build it, reusing `types.ReasoningEffort.parse` | `ask` | `cli_ask.zig` | `cli_ask.zig` |
 | `--fast` | unreachable; startup hardcodes false | sets the tier for one invocation | `ask` | `cli_ask.zig` | `cli_ask.zig` |
-| `--timeout` | hidden, undeclared (`cli_ask.zig:3317`), 3 test callers | declared in the spec | `ask` | `commands.zig` | `cli_ask.zig` |
-| `--verbose` | hidden, undeclared (`:3323`), no callers | deleted | — | `cli_ask.zig` | `cli_ask.zig` |
-| `--system` | declared (`commands.zig:39`), tested | unchanged | `ask` | — | — |
-| `--quiet`, `--no-save`, `--image` | present | unchanged | `ask` | — | — |
 | "Fast mode" row **inside** the `/settings` menu | one of 12 catalog rows: `src/core/config/settings_catalog.zig:33,67,262,321,369` and `app_commands.zig:3534`. Note the path: the catalog is under `core/config/`, **not** `core/slash_commands/`. | that row removed, menu drops to 11; `toggleFast`/`toggleFastForModel` become dead and go with it. **`/settings` itself is retained.** | — | `settings_catalog.zig` | `settings_catalog.zig` |
 | settings menu row counts | `src/core/config/settings_catalog.zig:433,435`, `src/ui/footer/settings_menu_presentation.zig:364,385,490` | updated for one fewer row (12 to 11) | — | `settings_catalog.zig` | — |
 | `applyFastMode` | called by `toggleFastForModel`, `selectModelFromPicker:529`, `setResolvedModel:660` | **retained** — the picker path survives | — | — | — |
+| `--system` | declared (`commands.zig:39`), tested | unchanged | `ask` | — | — |
+| `--quiet`, `--no-save`, `--image` | present | unchanged | `ask` | — | — |
+
+#### Slice 4b — `--retry`, `--timeout`, `--verbose`
+
+| Item | Current | Target | JSON `kind` | Owner | Focused test |
+| --- | --- | --- | --- | --- | --- |
+| `--retry` | `--continue-recovery` | renamed | `ask` | `cli_ask.zig` | `cli_ask.zig` |
+| `--timeout` | hidden, undeclared (`cli_ask.zig:3317`), 3 test callers | declared in the spec | `ask` | `commands.zig` | `cli_ask.zig` |
+| `--verbose` | hidden, undeclared (`:3323`), no callers | deleted | — | `cli_ask.zig` | `cli_ask.zig` |
+
+#### Slice 4c — `--permission-mode`
+
+| Item | Current | Target | JSON `kind` | Owner | Focused test |
+| --- | --- | --- | --- | --- | --- |
+| `--permission-mode <ask\|auto\|yolo>` | `--auto`, `--yolo`, `--prompt-permissions` | single flag; bad value exits 2; old flags immediate usage error, no aliases | `ask` | `cli_ask.zig` | `cli_ask.zig` |
+
+Atomic replacement: all invocation and documentation call sites migrate in the
+same commit as the parser change. No compatibility aliases, and migrated
+callers do not land before the parser accepts the new spelling. This is the
+sub-slice expected to exceed the usual file-count guideline — that breadth is
+inherent in the atomic flag replacement, not scope creep.
 
 ### Slice 5 — `auth`
 
