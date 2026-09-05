@@ -6026,7 +6026,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           "--auto",
           "--resume-id",
           paused.session_id,
-          "--continue-recovery",
+          "--retry",
         ],
         {
           cwd: root.workspace,
@@ -6086,7 +6086,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           "--auto",
           "--resume-id",
           paused.session_id,
-          "--continue-recovery",
+          "--retry",
         ],
         {
           cwd: root.workspace,

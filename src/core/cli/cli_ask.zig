@@ -327,7 +327,6 @@ const AskOptions = struct {
     prompt_permissions: bool = false,
     timeout_ms: ?usize = null,
     quiet: bool = false,
-    verbose: bool = false,
     no_save: bool = false,
     no_color: bool = false,
     continue_recovery: bool = false,
@@ -3373,11 +3372,9 @@ fn parseOptionsWithStdin(alloc: Allocator, args: []const [:0]const u8, stdin: St
             opts.timeout_ms = parseTimeoutMs(args[i]);
         } else if (std.mem.eql(u8, arg, "--quiet")) {
             opts.quiet = true;
-        } else if (std.mem.eql(u8, arg, "--verbose")) {
-            opts.verbose = true;
         } else if (std.mem.eql(u8, arg, "--no-save")) {
             opts.no_save = true;
-        } else if (std.mem.eql(u8, arg, "--continue-recovery")) {
+        } else if (std.mem.eql(u8, arg, "--retry")) {
             if (opts.continue_recovery) return error.InvalidAskArgs;
             opts.continue_recovery = true;
         } else if (arg.len > 1 and arg[0] == '-') {
@@ -4818,7 +4815,6 @@ test "parse options preserves active ask flags and operands" {
         "--json",
         "--prompt-permissions",
         "--quiet",
-        "--verbose",
         "--no-save",
         "--timeout",
         "123",
@@ -4831,7 +4827,6 @@ test "parse options preserves active ask flags and operands" {
     try std.testing.expect(options.json_output);
     try std.testing.expect(options.prompt_permissions);
     try std.testing.expect(options.quiet);
-    try std.testing.expect(options.verbose);
     try std.testing.expect(options.no_save);
     try std.testing.expectEqual(@as(?usize, 123 * std.time.ms_per_s), options.timeout_ms);
     try std.testing.expectEqualStrings("second", options.system_prompt_override.?);
@@ -7549,7 +7544,7 @@ test "parse options preserves exact resume-id operands" {
 test "parse options requires an explicit saved session for recovery continuation" {
     var options = try parseOptionsWithStdin(
         std.testing.allocator,
-        &.{ "--resume-id", "session.v3", "--continue-recovery" },
+        &.{ "--resume-id", "session.v3", "--retry" },
         .tty,
     );
     defer options.deinit(std.testing.allocator);
@@ -7560,7 +7555,7 @@ test "parse options requires an explicit saved session for recovery continuation
         error.InvalidAskArgs,
         parseOptionsWithStdin(
             std.testing.allocator,
-            &.{"--continue-recovery"},
+            &.{"--retry"},
             .tty,
         ),
     );
@@ -7568,7 +7563,7 @@ test "parse options requires an explicit saved session for recovery continuation
         error.InvalidAskArgs,
         parseOptionsWithStdin(
             std.testing.allocator,
-            &.{ "--resume-id", "last", "--continue-recovery", "new prompt" },
+            &.{ "--resume-id", "last", "--retry", "new prompt" },
             .tty,
         ),
     );
@@ -8402,7 +8397,7 @@ test "recovery continuation checks local checkpoint before credentials" {
 
     const exit_code = try runWithDeps(
         alloc,
-        &.{ "--json", "--resume-id", session_id, "--continue-recovery" },
+        &.{ "--json", "--resume-id", session_id, "--retry" },
         testConfig(),
         deps,
     );

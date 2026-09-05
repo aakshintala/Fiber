@@ -30,7 +30,7 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .ask,
         .token = "ask",
-        .usage = "ask [--auto|--yolo] [--model <model-id>] [--effort <level>] [--fast] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save] [--resume-id <id>] [--continue-recovery] [--] <prompt>",
+        .usage = "ask [--auto|--yolo] [--model <model-id>] [--effort <level>] [--fast] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save] [--resume-id <id>] [--retry] [--timeout <seconds>] [--] <prompt>",
         .summary = "Run one noninteractive request",
         .options = &.{
             .{ .flag = "--auto", .description = "Automatically review unresolved permission requests" },
@@ -45,7 +45,8 @@ pub const top_level_specs = [_]TopLevelSpec{
             .{ .flag = "--prompt-permissions", .description = "Prompt for Y/N permission approval when stdin is a TTY" },
             .{ .flag = "--no-save", .description = "Do not save the session; incompatible with --resume-id" },
             .{ .flag = "--resume-id <id>", .description = "Continue a session by exact id" },
-            .{ .flag = "--continue-recovery", .description = "Resume the paused model response in the selected session" },
+            .{ .flag = "--retry", .description = "Resume the paused model response in the selected session" },
+            .{ .flag = "--timeout <seconds>", .description = "Set the maximum request duration in seconds" },
             .{ .flag = "--", .description = "Treat every following argument as prompt text" },
         },
         .details = &.{
