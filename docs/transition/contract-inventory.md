@@ -348,7 +348,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | 4 | `ask` flags and the fast decision | additive | **done** — 4a `83ca601b`, 4b `fb69be33`, 4c `8b9e4277` |
 | 5 | `auth list\|status\|login\|logout` | additive | **done**, `dd7527a1` |
 | 6 | `permissions mode` and `permissions rule list\|add\|remove` | additive | **done**, `2f0690ca` |
-| 7 | `mcp login` and `mcp --json` | additive | |
+| 7 | `mcp login` and `mcp --json` | additive | **done**, `86188784` |
 | 8 | `session list\|show\|rename\|remove` | additive | |
 | 9 | `continue`, resume-alias removal, `--resume-id`, pagination | additive | |
 | 10 | Interactive surface: `/retry`, `/new` alias, `/background` | additive | |
@@ -682,6 +682,13 @@ with zero non-test callers; this slice was pure CLI wiring. `zig build test
 | unmatched-pattern validation | `web_fetch` invalid patterns exit 2 at CLI parse via `canonicalWebFetchDomainPattern` | usage error, exit 2 | `permissions.zig` | `permissions.zig` |
 
 ### Slice 7 — `mcp`
+
+**Done, `86188784`.** No open product decisions. `mcp list`'s JSON payload
+wraps the existing preformatted text listing as one `listing` string field
+rather than structuring per-server fields — a lazy-but-valid reading of
+"enveloped"; noted for the end-of-transition audit, not reworked here.
+`zig build test --summary all`: 9/9 steps, 7271/7273 passing, 2 pre-existing
+skips.
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
