@@ -601,12 +601,52 @@ breadth was inherent in the atomic flag replacement, not scope creep.
 
 ### Slice 5 — `auth`
 
+**Owner decisions (2026-09-04):**
+
+- **`auth status` expiry field.** Adds `expires_at_ms: i64 | null` to the
+  `auth.status` JSON, the raw value of `Credential.refresh_after_ms`
+  (`credentials.zig:129`). `loadStatusSnapshotForProvider`
+  (`auth_runtime.zig:298`) must capture it onto a new
+  `auth_runtime.StatusSnapshot.expires_at_ms` field before its existing
+  `defer credential.deinit(alloc)` fires — new plumbing, not a rename.
+- **`auth login` non-interactivity.** `auth login` is browser/OAuth-only —
+  there is no API-key credential path in this codebase. The ">1 provider,
+  no arg" case is therefore *not* a distinct UX branch from plain "no tty":
+  any non-interactive invocation (`!stdin_is_tty`) exits 2 and lists
+  providers, regardless of how many providers exist. A tty with >1 provider
+  gets a plain interactive prompt (unreachable at today's N=1, but the
+  branch must be written generically over `model_provider.ProviderId`, not
+  hardcoded to one arm). This needs a `stdin_is_tty` dependency added to
+  `cli_surface.zig`'s `RunDeps` (`:254`) — it has no tty-detection field
+  today, unlike `cli_ask.zig`'s `RunDeps` (`:403..413`), which is the
+  pattern to mirror (`IsTtyFn`, real default backed by
+  `std.Io.File.stdin().isTty(...)`, injectable for tests).
+- **Stream for the no-tty error.** The exit-2 message and provider list go
+  to stderr, consistent with existing usage-error conventions in this file
+  (e.g. `writeUsageOrJsonError`).
+- **JSON shapes**, following the `output_contracts.zig` snapshot pattern
+  (`render`/`renderText`/`renderJson`, see `SessionListSnapshot` at `:836`):
+  - `auth.list` → `{"providers":[{"id":"codex","name":"Codex","connected":bool}, ...]}`,
+    built by iterating `provider_catalog.entries` (`provider_catalog.zig:14`),
+    not hardcoded to codex.
+  - `auth.status` → `{"provider":"codex","active_source":string|null,"required_source":string|null,"chatgpt_connected":bool,"expired":bool,"refreshable":bool,"expires_at_ms":i64|null}`,
+    a new `AuthStatusSnapshot` wrapping `model_provider.ProviderId` plus the
+    extended `auth_runtime.StatusSnapshot` above. Distinct type from the
+    existing wide `StatusSnapshot` (`output_contracts.zig:479`, backs `fiber
+    status`) — that one is untouched.
+  - `auth.logout` → `{"provider":"codex","result":"deleted"|"missing"}`;
+    `deleted_not_durable` stays a failure (`handled_failure`, non-JSON
+    stderr message), it never reaches the success envelope.
+- **Dispatch shape.** New `runTopLevelAuth(alloc, rest, cfg, deps)` in
+  `cli_surface.zig`, mirroring `runTopLevelMcp` (`:1442`) as the template for
+  a subcommand-parent with its own sub-dispatch on `rest[0]`.
+
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
 | `auth list` | absent | every supported provider, signed-in state; array-shaped | `auth.list` | `cli_surface.zig` | `output_contracts.zig` |
 | `auth status` | absent; `fiber status` carries a subset | active credential: provider, expiry, refreshable | `auth.status` | `cli_surface.zig` | `output_contracts.zig` |
-| `auth login [<provider>]` | top-level `login`; provider arg parsed then discarded (`:716`) | provider honored; picks when >1 exists, proceeds when 1; no tty + no provider exits 2 and lists providers | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
-| `auth logout [<provider>]` | top-level `logout`; arg discarded (`:741`) | provider honored | `auth.logout` | `cli_surface.zig` | `cli_surface.zig` |
+| `auth login [<provider>]` | top-level `login`; provider arg parsed then discarded (`cli_surface.zig:684`, via `parseLoginProvider` at `:174`) | provider honored; picks when >1 exists (unreachable today, must compile generically), proceeds when 1; no tty exits 2 and lists providers to stderr, regardless of provider count | — (rejects `--json`) | `cli_surface.zig` | `cli_surface.zig` |
+| `auth logout [<provider>]` | top-level `logout`; arg discarded (`cli_surface.zig:709`) | provider honored | `auth.logout` | `cli_surface.zig` | `cli_surface.zig` |
 | top-level `login`/`logout` | present (`commands.zig:58,64`) | absent | — | `commands.zig` | `command_specs.zig` |
 | `/login`, `/logout` | present (`commands.zig:327-328`) | **unchanged** — no `/auth` parent | — | — | — |
 
