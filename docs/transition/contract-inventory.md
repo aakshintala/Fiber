@@ -345,7 +345,7 @@ family exits 2. Dependency-free `grep`, no `jq`.
 | 1 | Signal and unknown-command exit passthrough | contract-shaping | done, `47bbe883` |
 | 2 | Output envelope, `kind` registry, `NO_COLOR`, smoke-gate growth | contract-shaping | **done** — 2a `67538d14`, 2b `afc6cec2` |
 | 3 | Exit-status: parse-layer errors return 2 | contract-shaping | |
-| 4 | `ask` flags and the fast decision | additive | |
+| 4 | `ask` flags and the fast decision | additive | **done** — 4a `83ca601b`, 4b `fb69be33`, 4c `8b9e4277` |
 | 5 | `auth list\|status\|login\|logout` | additive | |
 | 6 | `permissions mode` and `permissions rule list\|add\|remove` | additive | |
 | 7 | `mcp login` and `mcp --json` | additive | |
@@ -534,6 +534,18 @@ exist.
 
 #### Slice 4a — `--model`, `--effort`, `--fast`, and the `/settings` Fast row
 
+**Done, `83ca601b`.** Precedence implemented as three `?`-typed explicit-override
+fields on `AskContext` (`explicit_model`/`explicit_effort`/`explicit_fast`),
+applied once in `runPromptInternal` right after the startup/env/profile
+resolution (so a new session's seed preferences already reflect the CLI
+choice) and reapplied a second time in `initializeSessionStores` immediately
+after the resumed-session preference restore (so a resumed session honors the
+CLI choice for that invocation only, without writing it back to the store).
+`--model` validation reuses `settings_store.validateModel` (`settings_store.zig:870`)
+plus a `:fast`-suffix check. `toggleFast`/`toggleFastForModel` had exactly one
+caller each (the deleted `/settings` row handler, then `toggleFast` itself) and
+came out clean; `applyFastMode` kept its other two callers untouched.
+
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
 | `--model <model-id>` | **absent.** `grep -rn '"--model"' src/` returns nothing and it is not in the `ask` spec (`commands.zig:31-57`). The matrix said "present". Built as new work, not a rename. | build it; rejects a `:fast` suffix | `ask` | `cli_ask.zig` | `cli_ask.zig` |
@@ -547,13 +559,35 @@ exist.
 
 #### Slice 4b — `--retry`, `--timeout`, `--verbose`
 
+**Done, `fb69be33`.** `--timeout`'s declared placeholder is `<seconds>`, not
+`<ms>` — `parseTimeoutMs` (`cli_ask.zig:3446`) parses the CLI value as
+seconds and stores milliseconds internally; the first-drafted `<ms>`
+placeholder would have told users to pass milliseconds and gotten a value
+1000x too long. Caught and fixed in review before commit. The `/continue`
+slash command and its `.continue_recovery` kind (`commands.zig:327`) were left
+untouched, as scoped — that rename is Slice 10's, a different surface that
+happens to land on the same target name.
+
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
 | `--retry` | `--continue-recovery` | renamed | `ask` | `cli_ask.zig` | `cli_ask.zig` |
-| `--timeout` | hidden, undeclared (`cli_ask.zig:3317`), 3 test callers | declared in the spec | `ask` | `commands.zig` | `cli_ask.zig` |
+| `--timeout <seconds>` | hidden, undeclared (`cli_ask.zig:3317`), 3 test callers | declared in the spec | `ask` | `commands.zig` | `cli_ask.zig` |
 | `--verbose` | hidden, undeclared (`:3323`), no callers | deleted | — | `cli_ask.zig` | `cli_ask.zig` |
 
 #### Slice 4c — `--permission-mode`
+
+**Done, `8b9e4277`.** Migrated 29 e2e/eval files (~280 spawn-argument
+substitutions, not the ~297 the earlier handoff estimated — that number
+covered every obsolete ask-flag spelling across the whole Slice 4, not just
+the permission ones). One spawn had no direct two-axis equivalent:
+`permission-errors.test.ts`'s advisory-caution test combined `--auto` with
+`--prompt-permissions` in one invocation; `--permission-mode auto` alone
+covers it, since `auto` is defined to never open the captured-output prompt
+— exactly what that test already asserted. `tests/e2e/cli.test.ts`'s stale
+`--help`-text assertions (already a documented pre-existing gap since Slice
+2a) were confirmed untouched; `tests/evals/agent-quality-matrix.ts`'s
+`--auto`/`--json` mentions are prose describing past transcripts, not spawn
+arguments, and were correctly left alone.
 
 | Item | Current | Target | JSON `kind` | Owner | Focused test |
 | --- | --- | --- | --- | --- | --- |
@@ -561,9 +595,9 @@ exist.
 
 Atomic replacement: all invocation and documentation call sites migrate in the
 same commit as the parser change. No compatibility aliases, and migrated
-callers do not land before the parser accepts the new spelling. This is the
-sub-slice expected to exceed the usual file-count guideline — that breadth is
-inherent in the atomic flag replacement, not scope creep.
+callers do not land before the parser accepts the new spelling. This was the
+sub-slice expected to exceed the usual file-count guideline (31 files) — that
+breadth was inherent in the atomic flag replacement, not scope creep.
 
 ### Slice 5 — `auth`
 
