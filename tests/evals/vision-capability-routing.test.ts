@@ -91,7 +91,7 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
       const result = await runFx(
         [
           "ask",
-          "--yolo",
+          "--permission-mode", "yolo",
           "--json",
           "--no-save",
           "--no-color",
@@ -133,7 +133,7 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
       const result = await runFx(
         [
           "ask",
-          "--yolo",
+          "--permission-mode", "yolo",
           "--json",
           "--no-save",
           "--no-color",
@@ -178,7 +178,7 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
       const result = await runFx(
         [
           "ask",
-          "--yolo",
+          "--permission-mode", "yolo",
           "--json",
           "--no-save",
           "--no-color",
@@ -218,7 +218,7 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
       const result = await runFx(
         [
           "ask",
-          "--yolo",
+          "--permission-mode", "yolo",
           "--json",
           "--no-save",
           "--no-color",

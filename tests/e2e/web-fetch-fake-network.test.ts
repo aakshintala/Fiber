@@ -325,7 +325,7 @@ describe("web_fetch Gateway fixture", () => {
         const gateway = startFakeGateway([outerText(`schema ok for ${model}`)], model);
         try {
           const result = await runFx(
-            ["ask", "--auto", "--json", "--no-save", "Say schema ok."],
+            ["ask", "--permission-mode", "auto", "--json", "--no-save", "Say schema ok."],
             {
               cwd: root.workspace,
               env: fakeGatewayEnv(root, gateway),
@@ -359,7 +359,7 @@ describe("web_fetch Gateway fixture", () => {
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "Issue invalid credentialed web_fetch."],
+          ["ask", "--permission-mode", "auto", "--json", "Issue invalid credentialed web_fetch."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),
@@ -401,7 +401,7 @@ describe("web_fetch Gateway fixture", () => {
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Issue malformed web_fetch."],
+          ["ask", "--permission-mode", "auto", "--json", "--no-save", "Issue malformed web_fetch."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),
@@ -434,7 +434,7 @@ describe("web_fetch Gateway fixture", () => {
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "Issue malformed web_fetch."],
+          ["ask", "--permission-mode", "auto", "Issue malformed web_fetch."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),
@@ -470,7 +470,7 @@ describe("web_fetch Gateway fixture", () => {
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Issue malformed web_fetch and a sibling read."],
+          ["ask", "--permission-mode", "auto", "--json", "--no-save", "Issue malformed web_fetch and a sibling read."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),
@@ -514,7 +514,7 @@ describe("web_fetch Gateway fixture", () => {
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Issue invalid fetch and repeated reads."],
+          ["ask", "--permission-mode", "auto", "--json", "--no-save", "Issue invalid fetch and repeated reads."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),

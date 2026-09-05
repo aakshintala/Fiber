@@ -101,7 +101,7 @@ describe("yolo permission mode", () => {
       gateway = fake;
 
       const result = await runFx(
-        ["ask", "--yolo", "--json", "--no-save", "Run the fixture command exactly once."],
+        ["ask", "--permission-mode", "yolo", "--json", "--no-save", "Run the fixture command exactly once."],
         {
           cwd: fixture.workspace,
           env: {
@@ -209,7 +209,7 @@ describe("yolo permission mode", () => {
       gateway = fake;
 
       const result = await runFx(
-        ["ask", "--yolo", "--json", "--no-save", "Run the ps fixture once."],
+        ["ask", "--permission-mode", "yolo", "--json", "--no-save", "Run the ps fixture once."],
         {
           cwd: fixture.workspace,
           env: {

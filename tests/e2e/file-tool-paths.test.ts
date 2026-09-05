@@ -272,7 +272,7 @@ async function runFirstCallToolScenario(args: {
   }));
   try {
     const result = await runFx(
-      ["ask", "--auto", "--json", "--no-save", "Execute the requested file tool once."],
+      ["ask", "--permission-mode", "auto", "--json", "--no-save", "Execute the requested file tool once."],
       {
         cwd: args.root.workspace,
         env: gatewayEnv(args.root, gateway, args.root.home),
@@ -313,7 +313,7 @@ async function runTerminalToolScenario(args: {
   ]);
   try {
     const result = await runFx(
-      ["ask", "--auto", "--json", "--no-save", "Execute the requested file tool once."],
+      ["ask", "--permission-mode", "auto", "--json", "--no-save", "Execute the requested file tool once."],
       {
         cwd: args.root.workspace,
         env: gatewayEnv(
@@ -422,7 +422,7 @@ describe("filesystem path handling", () => {
                 "--add-dir",
                 root.external,
                 "ask",
-                "--auto",
+                "--permission-mode", "auto",
                 "--json",
                 "--no-save",
                 "Execute the requested tool once.",
@@ -482,7 +482,7 @@ describe("filesystem path handling", () => {
             "--add-dir",
             root.external,
             "ask",
-            "--auto",
+            "--permission-mode", "auto",
             "--json",
             "--no-save",
             "Write the requested fixture once.",
@@ -526,7 +526,7 @@ describe("filesystem path handling", () => {
             "--add-dir",
             root.external,
             "ask",
-            "--auto",
+            "--permission-mode", "auto",
             "--json",
             "--no-save",
             `Use read_file to read exactly ${target}, then reply with its exact content. Do not use terminal.`,
@@ -635,7 +635,7 @@ describe("filesystem path handling", () => {
           ]);
           try {
             const result = await runFx(
-              ["ask", "--auto", "--json", "--no-save", "Run the requested command once."],
+              ["ask", "--permission-mode", "auto", "--json", "--no-save", "Run the requested command once."],
               {
                 cwd: root.workspace,
                 env: gatewayEnv(root, gateway, root.home),
@@ -736,7 +736,7 @@ describe("filesystem path handling", () => {
               [
                 ...(scenario.addDir ? ["--add-dir", root.external] : []),
                 "ask",
-                "--auto",
+                "--permission-mode", "auto",
                 "--json",
                 "--no-save",
                 "Execute the requested file tool once.",
@@ -842,7 +842,7 @@ describe("filesystem path handling", () => {
         const result = await runFx(
           [
             "ask",
-            "--auto",
+            "--permission-mode", "auto",
             "--json",
             "--no-save",
             "Execute the requested file tool once.",
@@ -904,7 +904,7 @@ describe("filesystem path handling", () => {
       ], { classifierDecision: "caution" });
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Attempt the requested write once."],
+          ["ask", "--permission-mode", "auto", "--json", "--no-save", "Attempt the requested write once."],
           {
             cwd: root.workspace,
             env: gatewayEnv(root, gateway, root.home),
@@ -967,7 +967,7 @@ describe("filesystem path handling", () => {
           const result = await runFx(
             [
               "ask",
-              "--auto",
+              "--permission-mode", "auto",
               "--quiet",
               "--json",
               "--no-save",
@@ -1132,7 +1132,7 @@ describe("filesystem path handling", () => {
           const result = await runFx(
             [
               "ask",
-              "--auto",
+              "--permission-mode", "auto",
               "--json",
               "--no-save",
               "Read and edit the requested external file.",
@@ -1248,7 +1248,7 @@ describe("filesystem path handling", () => {
         const result = await runFx(
           [
             "ask",
-            "--auto",
+            "--permission-mode", "auto",
             "--json",
             "--no-save",
             "Use the shell to create, inspect, search, copy, rename, and remove disposable files.",
@@ -1283,7 +1283,7 @@ describe("filesystem path handling", () => {
         const result = await runFx(
           [
             "ask",
-            "--auto",
+            "--permission-mode", "auto",
             "--json",
             "--no-save",
             [

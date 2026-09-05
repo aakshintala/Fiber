@@ -930,7 +930,7 @@ describe("Vision route fake Gateway", () => {
             [
               "ask",
               "--json",
-              "--auto",
+              "--permission-mode", "auto",
               "--no-save",
               "--image",
               fixture.imageArg,
@@ -983,7 +983,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--no-save",
             "--image",
             fixture.imagePath,
@@ -1190,7 +1190,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--image",
             fixture.imagePath,
             "Describe the attached image.",
@@ -1242,7 +1242,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             firstJson.session_id,
             "Continue with the saved native image context.",
@@ -1334,7 +1334,7 @@ describe("Vision route fake Gateway", () => {
             [
               "ask",
               "--json",
-              "--auto",
+              "--permission-mode", "auto",
               "--image",
               imagePath,
               `Save ${entry.name} image.`,
@@ -1358,7 +1358,7 @@ describe("Vision route fake Gateway", () => {
             [
               "ask",
               "--json",
-              "--auto",
+              "--permission-mode", "auto",
               "--resume-id",
               savedJson.session_id,
               `Reread ${entry.name} image.`,
@@ -1719,7 +1719,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--image",
             fixture.imagePath,
             "Inspect the first image.",
@@ -1738,7 +1738,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             firstJson.session_id,
             "--image",
@@ -1760,7 +1760,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             firstJson.session_id,
             "Reread only the second historical image.",
@@ -1857,7 +1857,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             sessionId,
             "--image",
@@ -1902,7 +1902,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             sessionId,
             "Reread only the second repaired legacy image.",
@@ -1961,7 +1961,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--no-save",
             "--image",
             IMAGE_PATH,
@@ -2016,7 +2016,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--no-save",
             "--image",
             IMAGE_PATH,
@@ -2068,7 +2068,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--no-save",
             "--image",
             IMAGE_PATH,
@@ -2132,7 +2132,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--no-save",
             "--image",
             imagePaths[0],
@@ -2210,7 +2210,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--image",
             imagePaths[0],
             "--image",
@@ -2233,7 +2233,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             savedJson.session_id,
             "Inspect both saved images.",
@@ -2301,7 +2301,7 @@ describe("Vision route fake Gateway", () => {
       try {
         const imageArgs = imagePaths.flatMap((imagePath) => ["--image", imagePath]);
         const saved = await runFx(
-          ["ask", "--json", "--auto", ...imageArgs, "Save every image."],
+          ["ask", "--json", "--permission-mode", "auto", ...imageArgs, "Save every image."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway, GEMINI_MODEL),
@@ -2318,7 +2318,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             savedJson.session_id,
             "Inspect all saved images.",
@@ -2394,7 +2394,7 @@ describe("Vision route fake Gateway", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--no-save",
             ...imageArgs,
             "Inspect every attached image.",

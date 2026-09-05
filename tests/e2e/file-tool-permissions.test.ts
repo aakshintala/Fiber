@@ -82,7 +82,7 @@ async function runWithFakeGateway(
 
 describe("external file permissions", () => {
   test(
-    "fiber ask --yolo bypasses a configured write denial without a classifier request",
+    "fiber ask --permission-mode yolo bypasses a configured write denial without a classifier request",
     async () => {
       const root = createIsolatedRoot("fiber-yolo-permissions-");
       try {
@@ -105,7 +105,7 @@ describe("external file permissions", () => {
             "ask",
             "--json",
             "--no-save",
-            "--yolo",
+            "--permission-mode", "yolo",
             `Use only the write_file tool to create ${target} with exactly this content: FIBER_E2E_YOLO.`,
           ],
           [
@@ -165,7 +165,7 @@ describe("external file permissions", () => {
             "ask",
             "--json",
             "--no-save",
-            "--auto",
+            "--permission-mode", "auto",
             `Use only the read_file tool to read ${readTarget}, then reply with exactly the file content and nothing else.`,
           ],
           [
@@ -184,7 +184,7 @@ describe("external file permissions", () => {
               "ask",
               "--json",
               "--no-save",
-              "--auto",
+              "--permission-mode", "auto",
               `Use only the write_file tool to overwrite ${classifiedTarget} with exactly this content: FIBER_E2E_EXTERNAL_CLASSIFIED.`,
             ],
             [
@@ -225,7 +225,7 @@ describe("external file permissions", () => {
             "ask",
             "--json",
             "--no-save",
-            "--auto",
+            "--permission-mode", "auto",
             `Use only the write_file tool to create ${allowedTarget} with exactly this content: FIBER_E2E_EXTERNAL_ALLOWED.`,
           ],
           [

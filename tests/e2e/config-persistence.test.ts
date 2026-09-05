@@ -932,7 +932,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         });
 
         const staleResult = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Use stale minimal fast."],
+          ["ask", "--permission-mode", "auto", "--json", "--no-save", "Use stale minimal fast."],
           {
             cwd: workspaceRoot,
             env: catalogEnv,

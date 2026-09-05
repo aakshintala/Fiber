@@ -38,7 +38,7 @@ describe("web_search permission progress", () => {
     async () => {
       const result = await runWithoutGatewayAuth([
         "ask",
-        "--auto",
+        "--permission-mode", "auto",
         "search the web for current news",
       ]);
 

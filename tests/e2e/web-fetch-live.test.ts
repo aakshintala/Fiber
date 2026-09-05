@@ -162,7 +162,7 @@ describe.skipIf(process.env.FIBER_WEB_FETCH_LIVE !== "1")("live web_fetch public
         ]);
         try {
           const result = await runFx(
-            ["ask", "--auto", "--json", "--no-save", `Fetch ${probe.url} exactly once.`],
+            ["ask", "--permission-mode", "auto", "--json", "--no-save", `Fetch ${probe.url} exactly once.`],
             {
               cwd: root.workspace,
               env: {
@@ -237,7 +237,7 @@ describe.skipIf(process.env.FIBER_WEB_FETCH_LIVE !== "1")("live web_fetch public
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Fetch and then refetch https://example.com/."],
+          ["ask", "--permission-mode", "auto", "--json", "--no-save", "Fetch and then refetch https://example.com/."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),
@@ -303,7 +303,7 @@ describe.skipIf(process.env.FIBER_WEB_FETCH_LIVE !== "1")("live web_fetch public
       ]);
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "Fetch the public PDF artifact."],
+          ["ask", "--permission-mode", "auto", "--json", "Fetch the public PDF artifact."],
           {
             cwd: root.workspace,
             env: fakeGatewayEnv(root, gateway),

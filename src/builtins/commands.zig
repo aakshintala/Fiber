@@ -30,11 +30,10 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .ask,
         .token = "ask",
-        .usage = "ask [--auto|--yolo] [--model <model-id>] [--effort <level>] [--fast] [--image PATH] [--system TEXT] [--json] [--quiet] [--prompt-permissions] [--no-save] [--resume-id <id>] [--retry] [--timeout <seconds>] [--] <prompt>",
+        .usage = "ask [--permission-mode <ask|auto|yolo>] [--model <model-id>] [--effort <level>] [--fast] [--image PATH] [--system TEXT] [--json] [--quiet] [--no-save] [--resume-id <id>] [--retry] [--timeout <seconds>] [--] <prompt>",
         .summary = "Run one noninteractive request",
         .options = &.{
-            .{ .flag = "--auto", .description = "Automatically review unresolved permission requests" },
-            .{ .flag = "--yolo", .description = "Disable fiber permission checks" },
+            .{ .flag = "--permission-mode <ask|auto|yolo>", .description = "Set permission handling for this request: ask prompts on a TTY, auto reviews unresolved requests, yolo disables checks" },
             .{ .flag = "--model <model-id>", .description = "Use one model for this request" },
             .{ .flag = "--effort <level>", .description = "Use one reasoning effort for this request" },
             .{ .flag = "--fast", .description = "Use the fast tier for this request when the model supports it" },
@@ -42,7 +41,6 @@ pub const top_level_specs = [_]TopLevelSpec{
             .{ .flag = "--system TEXT", .description = "Replace the built-in system prompt for this request" },
             json_option,
             .{ .flag = "--quiet", .description = "Suppress assistant output" },
-            .{ .flag = "--prompt-permissions", .description = "Prompt for Y/N permission approval when stdin is a TTY" },
             .{ .flag = "--no-save", .description = "Do not save the session; incompatible with --resume-id" },
             .{ .flag = "--resume-id <id>", .description = "Continue a session by exact id" },
             .{ .flag = "--retry", .description = "Resume the paused model response in the selected session" },
@@ -54,7 +52,7 @@ pub const top_level_specs = [_]TopLevelSpec{
             "TTY stdout uses the Minimal transcript presentation; redirected stdout emits raw assistant Markdown.",
             "Operational progress and diagnostics are written to stderr. JSON `output` keeps accumulated assistant Markdown; `final_output` contains only the completed final response, or an empty string when absent.",
             "--system replaces only the built-in base prompt for this request; tool, skill, project, and runtime context still apply.",
-            "With --prompt-permissions, JSON and quiet requests may prompt on stderr only when stdin is a TTY.",
+            "With --permission-mode ask, JSON and quiet requests may prompt on stderr only when stdin is a TTY.",
         },
     },
     .{

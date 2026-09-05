@@ -910,7 +910,7 @@ describe("effect-aware command permissions", () => {
       const cliResume = await runFx(
         [
           "ask",
-          "--auto",
+          "--permission-mode", "auto",
           "--resume",
           sessionId,
           "Continue through the exact resume flag.",
@@ -2506,7 +2506,7 @@ describe("effect-aware command permissions", () => {
         finalText("direct repetition complete"),
       ]);
 
-      const result = await runFx(["ask", "--yolo", "Run pwd until you can answer."], {
+      const result = await runFx(["ask", "--permission-mode", "yolo", "Run pwd until you can answer."], {
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           PATH: hostilePath(root),
@@ -2539,7 +2539,7 @@ describe("effect-aware command permissions", () => {
         finalText("direct unlimited complete"),
       ]);
 
-      const result = await runFx(["ask", "--yolo", "Run pwd until you can answer."], {
+      const result = await runFx(["ask", "--permission-mode", "yolo", "Run pwd until you can answer."], {
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           PATH: hostilePath(root),
@@ -2994,7 +2994,7 @@ describe("effect-aware command permissions", () => {
       const gateway = startFakeGateway([toolCall("pwd"), finalText("ask direct complete")]);
       const tracePath = join(root.root, "trace.log");
       const result = await runFx(
-        ["ask", "--yolo", "--quiet", "--json", "--no-save", "Run pwd once."],
+        ["ask", "--permission-mode", "yolo", "--quiet", "--json", "--no-save", "Run pwd once."],
         {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
@@ -3391,7 +3391,7 @@ describe("effect-aware command permissions", () => {
       const tracePath = join(root.root, "trace.log");
 
       activeSession = await TmuxSession.create({
-        cmd: `${shellQuote(FIBER_BIN)} ask --auto --no-save ${shellQuote("Run the one-shot prompt fixture.")}`,
+        cmd: `${shellQuote(FIBER_BIN)} ask --permission-mode auto --no-save ${shellQuote("Run the one-shot prompt fixture.")}`,
         cwd: root.workspace,
         env: gatewayEnv(root, gateway, {
           FIBER_TRACE_LOG: tracePath,
@@ -3432,7 +3432,7 @@ describe("effect-aware command permissions", () => {
         finalText("large CLI complete"),
       ]);
       const cliResult = await runFx(
-        ["ask", "--auto", "--quiet", "--json", "Run the large CLI fixture."],
+        ["ask", "--permission-mode", "auto", "--quiet", "--json", "Run the large CLI fixture."],
         {
           cwd: cliRoot.workspace,
           env: gatewayEnv(cliRoot, cliGateway),
@@ -3472,7 +3472,7 @@ describe("effect-aware command permissions", () => {
       const gateway = startFakeGateway([toolCall("ls"), finalText("ask ls complete")]);
       const tracePath = join(root.root, "trace.log");
       const result = await runFx(
-        ["ask", "--yolo", "--quiet", "--json", "--no-save", "List this directory."],
+        ["ask", "--permission-mode", "yolo", "--quiet", "--json", "--no-save", "List this directory."],
         {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {
@@ -3508,7 +3508,7 @@ describe("effect-aware command permissions", () => {
       ]);
       const tracePath = join(root.root, "trace.log");
       const result = await runFx(
-        ["ask", "--yolo", "--quiet", "--json", "--no-save", "Print a literal less-than sign."],
+        ["ask", "--permission-mode", "yolo", "--quiet", "--json", "--no-save", "Print a literal less-than sign."],
         {
           cwd: root.workspace,
           env: gatewayEnv(root, gateway, {

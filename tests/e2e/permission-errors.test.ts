@@ -126,7 +126,7 @@ async function runTtyPromptPermissionsCase(
   let session: TmuxSession | null = null;
   try {
     session = await TmuxSession.create({
-      cmd: `${JSON.stringify(FIBER_BIN)} ask --${outputMode} --prompt-permissions --no-save "Run the exact ${outputMode} fixture." > ${JSON.stringify(stdoutPath)}`,
+      cmd: `${JSON.stringify(FIBER_BIN)} ask --${outputMode} --permission-mode ask --no-save "Run the exact ${outputMode} fixture." > ${JSON.stringify(stdoutPath)}`,
       cwd: root.workspace,
       env: permissionEnv(root.home, gateway),
       remainOnExit: true,
@@ -189,7 +189,7 @@ describe("generic permission typed errors", () => {
           }),
         );
 
-        const result = await runFx(["ask", "--json", "--no-save", "--auto", "Run the denied command."], {
+        const result = await runFx(["ask", "--json", "--no-save", "--permission-mode", "auto", "Run the denied command."], {
           cwd: root.workspace,
           env: {
             HOME: root.home,
@@ -274,7 +274,7 @@ describe("generic permission typed errors", () => {
       let session: TmuxSession | null = null;
       try {
         session = await TmuxSession.create({
-          cmd: `${JSON.stringify(FIBER_BIN)} ask --auto --json --prompt-permissions --no-save "Run the advisory caution fixture." > ${JSON.stringify(stdoutPath)}`,
+          cmd: `${JSON.stringify(FIBER_BIN)} ask --permission-mode auto --json --no-save "Run the advisory caution fixture." > ${JSON.stringify(stdoutPath)}`,
           cwd: root.workspace,
           env: permissionEnv(root.home, gateway),
           remainOnExit: true,
@@ -317,9 +317,9 @@ describe("generic permission typed errors", () => {
     async () => {
       const cases = [
         { mode: "json", args: ["--json"], optIn: false },
-        { mode: "json", args: ["--json", "--prompt-permissions"], optIn: true },
+        { mode: "json", args: ["--json", "--permission-mode", "ask"], optIn: true },
         { mode: "quiet", args: ["--quiet"], optIn: false },
-        { mode: "quiet", args: ["--quiet", "--prompt-permissions"], optIn: true },
+        { mode: "quiet", args: ["--quiet", "--permission-mode", "ask"], optIn: true },
       ] as const;
 
       for (const testCase of cases) {

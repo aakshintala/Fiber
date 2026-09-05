@@ -267,7 +267,7 @@ test(
 
     try {
       const seed = await runFx(
-        ["ask", "--json", "--auto", "Persist the seed session."],
+        ["ask", "--json", "--permission-mode", "auto", "Persist the seed session."],
         { cwd: workspace, env, timeoutMs: TIMEOUT },
       );
       expect(
@@ -282,7 +282,7 @@ test(
       expect(sessionIdsFromHome(home)).toEqual([seedSessionId]);
 
       const rejected = await runFx(
-        ["ask", "--json", "--auto", "Reject this new saved session."],
+        ["ask", "--json", "--permission-mode", "auto", "Reject this new saved session."],
         { cwd: workspace, env, timeoutMs: TIMEOUT },
       );
       expect(rejected.code).toBe(1);
@@ -312,7 +312,7 @@ test(
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--resume",
           "last",
           "Resume the seed session.",

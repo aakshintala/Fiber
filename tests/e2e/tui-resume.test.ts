@@ -773,7 +773,7 @@ test.skipIf(!tmuxAvailable())(
     const askGateway = startFakeGateway([fakeGatewayFinalText(answer)]);
     let active: TmuxSession | null = null;
     try {
-      const ask = await runFx(["ask", "--json", "--auto", prompt], {
+      const ask = await runFx(["ask", "--json", "--permission-mode", "auto", prompt], {
         cwd: realpathSync(workspace),
         env: gatewayEnv(home, askGateway),
         timeoutMs: TIMEOUT,

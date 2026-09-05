@@ -3323,12 +3323,21 @@ fn parseOptionsWithStdin(alloc: Allocator, args: []const [:0]const u8, stdin: St
             try prompt_parts.append(alloc, arg);
         } else if (std.mem.eql(u8, arg, "--")) {
             options_ended = true;
-        } else if (std.mem.eql(u8, arg, "--auto")) {
+        } else if (std.mem.eql(u8, arg, "--permission-mode")) {
+            i += 1;
+            if (i >= args.len) return error.InvalidAskArgs;
             if (opts.permission_override != null) return error.InvalidAskArgs;
-            opts.permission_override = .auto;
-        } else if (std.mem.eql(u8, arg, "--yolo")) {
-            if (opts.permission_override != null) return error.InvalidAskArgs;
-            opts.permission_override = .yolo;
+            const mode = args[i];
+            if (std.mem.eql(u8, mode, "ask")) {
+                opts.permission_override = .ask;
+                opts.prompt_permissions = true;
+            } else if (std.mem.eql(u8, mode, "auto")) {
+                opts.permission_override = .auto;
+            } else if (std.mem.eql(u8, mode, "yolo")) {
+                opts.permission_override = .yolo;
+            } else {
+                return error.InvalidAskArgs;
+            }
         } else if (std.mem.eql(u8, arg, "--resume-id")) {
             if (opts.resume_target != null) return error.InvalidAskArgs;
             i += 1;
@@ -3364,8 +3373,6 @@ fn parseOptionsWithStdin(alloc: Allocator, args: []const [:0]const u8, stdin: St
             opts.fast_override = true;
         } else if (std.mem.eql(u8, arg, "--json")) {
             opts.json_output = true;
-        } else if (std.mem.eql(u8, arg, "--prompt-permissions")) {
-            opts.prompt_permissions = true;
         } else if (std.mem.eql(u8, arg, "--timeout")) {
             i += 1;
             if (i >= args.len) return error.MissingPrompt;
@@ -4805,7 +4812,8 @@ test "fiber ask deps reject malformed native web_search calls" {
 
 test "parse options preserves active ask flags and operands" {
     var options = try parseOptionsWithStdin(std.testing.allocator, &.{
-        "--auto",
+        "--permission-mode",
+        "auto",
         "--image",
         "a.png",
         "--system",
@@ -4813,7 +4821,6 @@ test "parse options preserves active ask flags and operands" {
         "--system",
         "second",
         "--json",
-        "--prompt-permissions",
         "--quiet",
         "--no-save",
         "--timeout",
@@ -4825,7 +4832,7 @@ test "parse options preserves active ask flags and operands" {
 
     try std.testing.expectEqual(@as(?PermissionMode, .auto), options.permission_override);
     try std.testing.expect(options.json_output);
-    try std.testing.expect(options.prompt_permissions);
+    try std.testing.expect(!options.prompt_permissions);
     try std.testing.expect(options.quiet);
     try std.testing.expect(options.no_save);
     try std.testing.expectEqual(@as(?usize, 123 * std.time.ms_per_s), options.timeout_ms);
@@ -4836,20 +4843,39 @@ test "parse options preserves active ask flags and operands" {
     try std.testing.expectEqualStrings("hello world", options.prompt);
 }
 
-test "parse options accepts yolo and rejects permission flag conflicts" {
+test "parse options accepts permission modes and rejects invalid or repeated values" {
     var yolo = try parseOptionsWithStdin(
         std.testing.allocator,
-        &.{ "--yolo", "hello" },
+        &.{ "--permission-mode", "yolo", "hello" },
         .tty,
     );
     defer yolo.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(?PermissionMode, .yolo), yolo.permission_override);
+    try std.testing.expect(!yolo.prompt_permissions);
+
+    var ask = try parseOptionsWithStdin(
+        std.testing.allocator,
+        &.{ "--permission-mode", "ask", "hello" },
+        .tty,
+    );
+    defer ask.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(?PermissionMode, .ask), ask.permission_override);
+    try std.testing.expect(ask.prompt_permissions);
 
     try std.testing.expectError(
         error.InvalidAskArgs,
         parseOptionsWithStdin(
             std.testing.allocator,
-            &.{ "--auto", "--yolo", "hello" },
+            &.{ "--permission-mode", "auto", "--permission-mode", "yolo", "hello" },
+            .tty,
+        ),
+    );
+
+    try std.testing.expectError(
+        error.InvalidAskArgs,
+        parseOptionsWithStdin(
+            std.testing.allocator,
+            &.{ "--permission-mode", "bogus", "hello" },
             .tty,
         ),
     );
@@ -5030,7 +5056,7 @@ test "headless yolo warning reaches stderr before acknowledgment persistence" {
     deps.persist_yolo_acknowledgment = TestYoloPersistence.persist;
     const exit_code = try runWithDeps(
         alloc,
-        &.{ "--json", "--yolo", "hello" },
+        &.{ "--json", "--permission-mode", "yolo", "hello" },
         testConfig(),
         deps,
     );
@@ -5063,7 +5089,7 @@ test "headless yolo warning precedes startup configuration diagnostics" {
     deps.persist_yolo_acknowledgment = TestYoloPersistence.persist;
     _ = try runWithDeps(
         alloc,
-        &.{ "--yolo", "hello" },
+        &.{ "--permission-mode", "yolo", "hello" },
         testConfig(),
         deps,
     );
@@ -5119,7 +5145,7 @@ test "headless yolo warning respects acknowledgment and no-color" {
     acknowledged_deps.persist_yolo_acknowledgment = TestYoloPersistence.persist;
     _ = try runWithDeps(
         alloc,
-        &.{ "--yolo", "hello" },
+        &.{ "--permission-mode", "yolo", "hello" },
         testConfig(),
         acknowledged_deps,
     );
@@ -5136,7 +5162,7 @@ test "headless yolo warning respects acknowledgment and no-color" {
     color_deps.persist_yolo_acknowledgment = TestYoloPersistence.persist;
     _ = try runWithDeps(
         alloc,
-        &.{ "--yolo", "hello" },
+        &.{ "--permission-mode", "yolo", "hello" },
         testConfig(),
         color_deps,
     );
@@ -5157,7 +5183,7 @@ test "headless yolo warning respects acknowledgment and no-color" {
     no_color_deps.getenv = testGetenvNoColor;
     _ = try runWithDeps(
         alloc,
-        &.{ "--yolo", "hello" },
+        &.{ "--permission-mode", "yolo", "hello" },
         testConfig(),
         no_color_deps,
     );
@@ -8491,7 +8517,7 @@ test "fiber ask carries resolved auto mode and initial registry context into the
     deps.context_registry = test_cli_context_registry;
     deps.process_queued_prompt = TestContextRegistryFixture.process;
 
-    const exit_code = try runWithDeps(alloc, &.{ "--auto", "hello" }, testConfig(), deps);
+    const exit_code = try runWithDeps(alloc, &.{ "--permission-mode", "auto", "hello" }, testConfig(), deps);
 
     try std.testing.expectEqual(@as(u8, 0), exit_code);
     try std.testing.expectEqual(@as(usize, 1), TestContextRegistryFixture.gather_calls);

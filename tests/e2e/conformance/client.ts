@@ -144,7 +144,7 @@ try {
       fxBin,
       "ask",
       "--json",
-      "--auto",
+      "--permission-mode", "auto",
       "--no-save",
       "Call the conformance add_numbers MCP tool with a=2 and b=3.",
     ],

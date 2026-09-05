@@ -679,7 +679,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", submitted],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", submitted],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -764,7 +764,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--auto", "--json", "--no-save", "Verify removed memory behavior."],
+        ["ask", "--permission-mode", "auto", "--json", "--no-save", "Verify removed memory behavior."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -805,7 +805,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Use the default model."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the default model."],
         {
           cwd: root.workspace,
           env: {
@@ -862,7 +862,7 @@ describe("gateway stream lifecycle", () => {
           [
             "ask",
             "--json",
-            ...(mode === "auto" ? ["--auto"] : []),
+            ...(mode === "auto" ? ["--permission-mode", "auto"] : []),
             "--no-save",
             "Read the permission mode probe.",
           ],
@@ -912,7 +912,7 @@ describe("gateway stream lifecycle", () => {
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "$oversized-context apply the explicitly invoked skill.",
         ],
@@ -959,7 +959,7 @@ describe("gateway stream lifecycle", () => {
           "skill_chunk_bytes=off",
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "$oversized-context apply the explicitly invoked skill again.",
         ],
@@ -993,7 +993,7 @@ describe("gateway stream lifecycle", () => {
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "Do not use the oversized-context skill; only acknowledge the request.",
         ],
@@ -1055,7 +1055,7 @@ describe("gateway stream lifecycle", () => {
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "$linked-skill apply the linked instructions and skill.",
         ],
@@ -1243,7 +1243,7 @@ describe("gateway stream lifecycle", () => {
     );
     try {
       const result = await runFx(
-        ["ask", "--auto", "--no-save", "Inspect the deeply scoped target."],
+        ["ask", "--permission-mode", "auto", "--no-save", "Inspect the deeply scoped target."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -1496,7 +1496,7 @@ describe("gateway stream lifecycle", () => {
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "Install and explicitly load the fixture.",
         ],
@@ -1652,7 +1652,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const first = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Exercise the exact duplicate skill fixture."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Exercise the exact duplicate skill fixture."],
         {
           cwd: root.workspace,
           env: {
@@ -1828,7 +1828,7 @@ describe("gateway stream lifecycle", () => {
           "skill_catalog_bytes=1024",
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "Send an email message to a recipient.",
         ],
         {
@@ -1914,7 +1914,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Design the fixture system."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Design the fixture system."],
         {
           cwd: root.workspace,
           env: {
@@ -1992,7 +1992,7 @@ describe("gateway stream lifecycle", () => {
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "Inspect the dynamic context fixture.",
         ],
@@ -2151,7 +2151,7 @@ describe("gateway stream lifecycle", () => {
     });
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Inspect the victim file."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Inspect the victim file."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -2188,7 +2188,7 @@ describe("gateway stream lifecycle", () => {
     );
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Run the malformed argument fixture."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Run the malformed argument fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -2270,7 +2270,7 @@ describe("gateway stream lifecycle", () => {
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "Run the repeated malformed argument fixture.",
         ],
@@ -2365,8 +2365,8 @@ describe("gateway stream lifecycle", () => {
       try {
         const result = await runFx(
           variant.json
-            ? ["ask", "--json", "--auto", "--no-save", "Write the scoped fixture file."]
-            : ["ask", "--auto", "Write the scoped fixture file."],
+            ? ["ask", "--json", "--permission-mode", "auto", "--no-save", "Write the scoped fixture file."]
+            : ["ask", "--permission-mode", "auto", "Write the scoped fixture file."],
           {
             cwd: root.workspace,
             env: fixtureEnv(root, gateway, tracePath),
@@ -2443,8 +2443,8 @@ describe("gateway stream lifecycle", () => {
       try {
         const result = await runFx(
           variant.json
-            ? ["ask", "--json", "--auto", "--no-save", "Read the external fixture file."]
-            : ["ask", "--auto", "Read the external fixture file."],
+            ? ["ask", "--json", "--permission-mode", "auto", "--no-save", "Read the external fixture file."]
+            : ["ask", "--permission-mode", "auto", "Read the external fixture file."],
           {
             cwd: root.workspace,
             env: fixtureEnv(root, gateway, tracePath),
@@ -2504,7 +2504,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Write both fixture files."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Write both fixture files."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -2562,7 +2562,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Apply both fixture edits."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Apply both fixture edits."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -2597,7 +2597,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Inspect the blocked directory."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Inspect the blocked directory."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -2652,7 +2652,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const first = await runFx(
-        ["ask", "--json", "--auto", "Persist the first ordinary turn."],
+        ["ask", "--json", "--permission-mode", "auto", "Persist the first ordinary turn."],
         {
           cwd: root.workspace,
           env: {
@@ -2683,7 +2683,7 @@ describe("gateway stream lifecycle", () => {
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--resume-id",
           firstJson.session_id,
           "Persist the second ordinary turn.",
@@ -2749,7 +2749,7 @@ describe("gateway stream lifecycle", () => {
     );
     try {
       const first = await runFx(
-        ["ask", "--json", "--auto", "Persist the malformed recovery fixture."],
+        ["ask", "--json", "--permission-mode", "auto", "Persist the malformed recovery fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, firstTracePath),
@@ -2791,7 +2791,7 @@ describe("gateway stream lifecycle", () => {
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--resume-id",
           firstJson.session_id,
           "Continue after the saved malformed recovery.",
@@ -2881,7 +2881,7 @@ describe("gateway stream lifecycle", () => {
     );
     try {
       const result = await runFx(
-        ["ask", "--json", "--yolo", "Write the long command fixture."],
+        ["ask", "--json", "--permission-mode", "yolo", "Write the long command fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -2932,7 +2932,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--yolo", "--no-save", "Run the mutation exactly once."],
+        ["ask", "--json", "--permission-mode", "yolo", "--no-save", "Run the mutation exactly once."],
         {
           cwd: root.workspace,
           env: {
@@ -3064,7 +3064,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--yolo", "Inspect the retained large result."],
+        ["ask", "--json", "--permission-mode", "yolo", "Inspect the retained large result."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -3161,7 +3161,7 @@ describe("gateway stream lifecycle", () => {
     try {
       const startedAt = Date.now();
       const result = await runFx(
-        ["ask", "--json", "--yolo", "--no-save", "Run the timeout fixture."],
+        ["ask", "--json", "--permission-mode", "yolo", "--no-save", "Run the timeout fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -3196,7 +3196,7 @@ describe("gateway stream lifecycle", () => {
       );
       try {
         const expired = await runFx(
-          ["ask", "--json", "--yolo", "--no-save", "Read the prior replay."],
+          ["ask", "--json", "--permission-mode", "yolo", "--no-save", "Read the prior replay."],
           {
             cwd: root.workspace,
             env: fixtureEnv(root, expiredGateway, tracePath),
@@ -3249,7 +3249,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--yolo", "--no-save", "Run the strict timeout fixture."],
+        ["ask", "--json", "--permission-mode", "yolo", "--no-save", "Run the strict timeout fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -3316,7 +3316,7 @@ describe("gateway stream lifecycle", () => {
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--yolo", "--no-save", "Run the setsid timeout fixture."],
+        ["ask", "--json", "--permission-mode", "yolo", "--no-save", "Run the setsid timeout fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -3420,7 +3420,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--yolo", "--no-save", "Run the combined timeout fixture."],
+        ["ask", "--json", "--permission-mode", "yolo", "--no-save", "Run the combined timeout fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -3536,7 +3536,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
     try {
       const first = await runFx(
-        ["ask", "--json", "--yolo", "Run the saved replay fixture."],
+        ["ask", "--json", "--permission-mode", "yolo", "Run the saved replay fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, firstGateway, firstTracePath),
@@ -3572,7 +3572,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           [
             "ask",
             "--json",
-            "--yolo",
+            "--permission-mode", "yolo",
             "--resume-id",
             firstJson.session_id,
             "Read the saved replay again.",
@@ -3616,7 +3616,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       )
     );
     const proc = Bun.spawn(
-      [FIBER_BIN, "ask", "--yolo", "--no-save", "Run the crash cleanup fixture."],
+      [FIBER_BIN, "ask", "--permission-mode", "yolo", "--no-save", "Run the crash cleanup fixture."],
       {
         cwd: root.workspace,
         env: {
@@ -3714,7 +3714,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         liveBin,
         "ask",
         "--json",
-        "--yolo",
+        "--permission-mode", "yolo",
         "--no-save",
         "Run both terminal commands.",
       ], {
@@ -3805,7 +3805,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       FIBER_BIN,
       "ask",
       "--json",
-      "--yolo",
+      "--permission-mode", "yolo",
       "--no-save",
       "Run the active command fixture.",
     ], {
@@ -3910,7 +3910,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       return fakeGatewayFinalText("Cancelled replay inspected after resume.");
     });
     const proc = Bun.spawn(
-      [FIBER_BIN, "ask", "--json", "--yolo", "Run the cancellable command fixture."],
+      [FIBER_BIN, "ask", "--json", "--permission-mode", "yolo", "Run the cancellable command fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway, firstTracePath),
@@ -3953,7 +3953,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         [
           "ask",
           "--json",
-          "--yolo",
+          "--permission-mode", "yolo",
           "--resume-id",
           sessionId,
           "Inspect the cancelled command output.",
@@ -4002,11 +4002,11 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         let sessionId = "";
         for (let turn = 1; turn <= 9; turn += 1) {
           const args = turn === 1
-            ? ["ask", "--json", "--auto", `canonical turn ${turn}`]
+            ? ["ask", "--json", "--permission-mode", "auto", `canonical turn ${turn}`]
             : [
                 "ask",
                 "--json",
-                "--auto",
+                "--permission-mode", "auto",
                 "--resume-id",
                 sessionId,
                 `canonical turn ${turn}`,
@@ -4058,7 +4058,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             sessionId,
             "canonical projection probe",
@@ -4190,7 +4190,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             sessionId,
             "compaction restart probe",
@@ -4353,7 +4353,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--auto", "Run the malformed argument fixture."],
+        ["ask", "--permission-mode", "auto", "Run the malformed argument fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -4392,7 +4392,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--auto", "Recover in ask turn."],
+        ["ask", "--permission-mode", "auto", "Recover in ask turn."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -4483,7 +4483,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           throw new Error("missing reset fixture address");
         }
         const result = await runFx(
-          ["ask", "--json", "--auto", "--no-save", "Recover after the immediate reset."],
+          ["ask", "--json", "--permission-mode", "auto", "--no-save", "Recover after the immediate reset."],
           {
             cwd: root.workspace,
             env: {
@@ -4614,7 +4614,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         throw new Error("missing mixed retry fixture address");
       }
       const result = await runFx(
-        ["ask", "--auto", "--no-save", "Recover after mixed provider and network failures."],
+        ["ask", "--permission-mode", "auto", "--no-save", "Recover after mixed provider and network failures."],
         {
           cwd: root.workspace,
           env: {
@@ -4670,7 +4670,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--auto", "Start a tool then fail."],
+        ["ask", "--permission-mode", "auto", "Start a tool then fail."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -4712,7 +4712,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     });
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Run one command, then continue."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Run one command, then continue."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -4782,7 +4782,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     });
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Discover the MCP fixture lazily."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Discover the MCP fixture lazily."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -4893,7 +4893,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "Summarize alerting production monitors and open incidents.",
         ],
@@ -4927,7 +4927,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const gateway = startGateway(() => fakeGatewayFinalText("MCP ready summary complete."));
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Inspect configured MCP availability."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Inspect configured MCP availability."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -5007,7 +5007,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     });
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "Delegate the MCP fixture call."],
+        ["ask", "--json", "--permission-mode", "auto", "Delegate the MCP fixture call."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -5167,7 +5167,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "Exercise managed delegation."],
+        ["ask", "--json", "--permission-mode", "auto", "Exercise managed delegation."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -5226,7 +5226,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "Exercise terminal child completion."],
+        ["ask", "--json", "--permission-mode", "auto", "Exercise terminal child completion."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -5306,7 +5306,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     });
 
     const run = runFx(
-      ["ask", "--json", "--auto", "Delegate both independent sibling tasks."],
+      ["ask", "--json", "--permission-mode", "auto", "Delegate both independent sibling tasks."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway, tracePath),
@@ -5395,7 +5395,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     });
     try {
       const first = await runFx(
-        ["ask", "--json", "--auto", "RESUME_PERSISTENT_FIRST"],
+        ["ask", "--json", "--permission-mode", "auto", "RESUME_PERSISTENT_FIRST"],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -5416,7 +5416,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--resume-id",
           firstJson.session_id,
           "RESUME_PERSISTENT_SECOND",
@@ -5437,7 +5437,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       const directChildResume = await runFx(
         [
           "ask",
-          "--auto",
+          "--permission-mode", "auto",
           "--resume-id",
           internalChildId,
           "DIRECT_CHILD_RESUME_MUST_FAIL",
@@ -5505,7 +5505,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
     });
     const first = Bun.spawn(
-      [FIBER_BIN, "ask", "--json", "--auto", "Start the persistent child."],
+      [FIBER_BIN, "ask", "--json", "--permission-mode", "auto", "Start the persistent child."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway, tracePath),
@@ -5576,7 +5576,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--resume-id",
           parentId!,
           resumePrompt,
@@ -5632,7 +5632,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       );
       try {
         const result = await runFx(
-          ["ask", "--json", "--auto", "--no-save", `Run the ${decision} MCP fixture.`],
+          ["ask", "--json", "--permission-mode", "auto", "--no-save", `Run the ${decision} MCP fixture.`],
           {
             cwd: root.workspace,
             env: {
@@ -5714,7 +5714,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       );
       try {
         const result = await runFx(
-          ["ask", "--json", "--auto", "--no-save", "Run the MCP fixture."],
+          ["ask", "--json", "--permission-mode", "auto", "--no-save", "Run the MCP fixture."],
           {
             cwd: root.workspace,
             env: fixtureEnv(root, gateway, tracePath),
@@ -5769,7 +5769,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       try {
         const startedAt = Date.now();
         const result = await runFx(
-          ["ask", "--json", "--auto", "--no-save", "Return the fixture response."],
+          ["ask", "--json", "--permission-mode", "auto", "--no-save", "Return the fixture response."],
           {
             cwd: root.workspace,
             env: fixtureEnv(root, gateway, tracePath),
@@ -5814,7 +5814,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Run the fixture command."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Run the fixture command."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -5861,7 +5861,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Use the provider search result once."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the provider search result once."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -5905,7 +5905,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Recover from a route failure."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Recover from a route failure."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -5951,7 +5951,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const gateway = startGateway(() => unavailableResponse("0"));
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "Exhaust the model response budget."],
+        ["ask", "--json", "--permission-mode", "auto", "Exhaust the model response budget."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -5991,7 +5991,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const first = await runFx(
-        ["ask", "--json", "--auto", "Pause after exhausting recovery."],
+        ["ask", "--json", "--permission-mode", "auto", "Pause after exhausting recovery."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -6023,7 +6023,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--resume-id",
           paused.session_id,
           "--retry",
@@ -6066,7 +6066,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const first = await runFx(
-        ["ask", "--json", "--auto", "Recover this CLI response."],
+        ["ask", "--json", "--permission-mode", "auto", "Recover this CLI response."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -6083,7 +6083,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--resume-id",
           paused.session_id,
           "--retry",
@@ -6114,7 +6114,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     const gateway = startGateway(() => contentFilterResponse());
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Trigger content filter fixture."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Trigger content filter fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -6154,7 +6154,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Start a tool then fail."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Start a tool then fail."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -6189,7 +6189,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "Run the fixture command."],
+        ["ask", "--json", "--permission-mode", "auto", "Run the fixture command."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -6235,7 +6235,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--auto", "Run the fixture command."],
+        ["ask", "--permission-mode", "auto", "Run the fixture command."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -6279,7 +6279,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Run the fixture command."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Run the fixture command."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -6339,7 +6339,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       );
       try {
         const result = await runFx(
-          ["ask", "--json", "--auto", "--no-save", "Return the fixture response."],
+          ["ask", "--json", "--permission-mode", "auto", "--no-save", "Return the fixture response."],
           {
             cwd: root.workspace,
             env: fixtureEnv(root, gateway, tracePath),
@@ -6421,7 +6421,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     });
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Read fixture.txt, then continue."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Read fixture.txt, then continue."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -6465,7 +6465,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "Write the requested fixture file."],
+        ["ask", "--json", "--permission-mode", "auto", "Write the requested fixture file."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),
@@ -6534,7 +6534,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
     );
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "Write the fixture file."],
+        ["ask", "--json", "--permission-mode", "auto", "Write the fixture file."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway, tracePath),

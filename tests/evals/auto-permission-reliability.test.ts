@@ -1315,7 +1315,7 @@ describe.skipIf(!HAS_API_KEY)("eval: auto permission reliability", () => {
           const result = await runFx(
             [
               "ask",
-              "--auto",
+              "--permission-mode", "auto",
               "--json",
               ...(prepared.saveSession ? [] : ["--no-save"]),
               prepared.request,

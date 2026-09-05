@@ -179,7 +179,7 @@ export async function runEval(
 
     const args = [
       "ask",
-      "--auto",
+      "--permission-mode", "auto",
       "--json",
       "--no-save",
       "--timeout",

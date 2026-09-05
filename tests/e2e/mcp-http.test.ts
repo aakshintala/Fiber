@@ -333,7 +333,7 @@ describe("modern MCP Streamable HTTP", () => {
       models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
     });
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the HTTP MCP echo tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the HTTP MCP echo tool."],
       { cwd: root.workspace, env: fixtureEnv(root, gateway), timeoutMs: 20_000 },
     );
     expect(result.code).toBe(0);
@@ -357,7 +357,7 @@ describe("modern MCP Streamable HTTP", () => {
         [
           "ask",
           "--json",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           `Call the fixed-length ${responseType} fixture.`,
         ],
@@ -460,7 +460,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Refresh after the MCP resource update storm."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Refresh after the MCP resource update storm."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -505,7 +505,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Recover the failed MCP resource refresh."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Recover the failed MCP resource refresh."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -543,7 +543,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Refresh the expired MCP resource catalog."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Refresh the expired MCP resource catalog."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -602,7 +602,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Try the removed MCP identities."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Try the removed MCP identities."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -646,7 +646,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Reject the invalid MCP resource template match."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Reject the invalid MCP resource template match."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -681,7 +681,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Read the deeply nested MCP catalog."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Read the deeply nested MCP catalog."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -745,7 +745,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the modern HTTP MCP resource and prompt features."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the modern HTTP MCP resource and prompt features."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -815,7 +815,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Read the stalled HTTP MCP resource."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Read the stalled HTTP MCP resource."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -863,7 +863,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Complete the stalled HTTP MCP prompt argument."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Complete the stalled HTTP MCP prompt argument."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -902,7 +902,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the live MCP tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the live MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -960,7 +960,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the stale MCP tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the stale MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1012,7 +1012,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use TTL after the unsupported filter."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use TTL after the unsupported filter."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1050,7 +1050,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use TTL after server cancellation."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use TTL after server cancellation."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1091,7 +1091,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use TTL after the unexpected filter."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use TTL after the unexpected filter."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1137,7 +1137,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Do not send the invalidated tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Do not send the invalidated tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1192,7 +1192,7 @@ describe("modern MCP Streamable HTTP", () => {
       });
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Search the MCP cache."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Search the MCP cache."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway),
@@ -1232,7 +1232,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Search the delayed MCP catalog."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Search the delayed MCP catalog."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1277,7 +1277,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Search the empty-cursor MCP catalog."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Search the empty-cursor MCP catalog."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1301,7 +1301,7 @@ describe("modern MCP Streamable HTTP", () => {
       gateway = startToolGateway(`${mode} MCP HTTP complete.`);
 
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", `Call the ${mode} HTTP fixture.`],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", `Call the ${mode} HTTP fixture.`],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway),
@@ -1326,7 +1326,7 @@ describe("modern MCP Streamable HTTP", () => {
     gateway = startToolGateway("Server-authoritative schema complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the schema fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the schema fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1422,7 +1422,7 @@ describe("modern MCP Streamable HTTP", () => {
     gateway = startToolGateway("Mixed SSE delimiters complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the mixed SSE fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the mixed SSE fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1463,7 +1463,7 @@ describe("modern MCP Streamable HTTP", () => {
     gateway = startToolGateway("Environment-backed MCP complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the environment-backed fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the environment-backed fixture."],
       {
         cwd: root.workspace,
         env: {
@@ -1523,7 +1523,7 @@ describe("modern MCP Streamable HTTP", () => {
     expect(trusted.code).toBe(0);
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the workspace HTTP fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the workspace HTTP fixture."],
       {
         cwd: root.workspace,
         env,
@@ -1554,7 +1554,7 @@ describe("modern MCP Streamable HTTP", () => {
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Do not call the invalid tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Do not call the invalid tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1577,7 +1577,7 @@ describe("modern MCP Streamable HTTP", () => {
     gateway = startToolGateway("Held-open SSE complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the held-open HTTP fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the held-open HTTP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1606,7 +1606,7 @@ describe("modern MCP Streamable HTTP", () => {
     gateway = startToolGateway("HTTP timeout recovered.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the stalled HTTP fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the stalled HTTP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),

@@ -134,7 +134,7 @@ async function runAsk(
   extraEnv: Record<string, string> = {},
 ) {
   return runFx(
-    ["ask", "--json", "--auto", "--no-save", prompt],
+    ["ask", "--json", "--permission-mode", "auto", "--no-save", prompt],
     {
       cwd: root.workspace,
       env: {
@@ -664,7 +664,7 @@ describe("version-scoped legacy MCP remote transports", () => {
             cwd: root.workspace,
             width: 110,
             height: 34,
-            cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the legacy HTTP URL-required fixture.")}`,
+            cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call the legacy HTTP URL-required fixture.")}`,
             remainOnExit: true,
             env: {
               ...fixtureEnv(root, gateway),

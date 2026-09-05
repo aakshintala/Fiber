@@ -164,7 +164,7 @@ describe("fiber ask presentation", () => {
     gateways.push(gateway);
 
     const result = await runFx(
-      ["ask", "--json", "--yolo", "--no-save", "Run both commands."],
+      ["ask", "--json", "--permission-mode", "yolo", "--no-save", "Run both commands."],
       {
         cwd: root.workspace,
         env: gatewayEnv(root.home, gateway),
@@ -245,7 +245,7 @@ describe("fiber ask presentation", () => {
     gateways.push(gateway);
 
     const result = await runFx(
-      ["ask", "--json", "--yolo", "--no-save", "Verify shell run profiles."],
+      ["ask", "--json", "--permission-mode", "yolo", "--no-save", "Verify shell run profiles."],
       {
         cwd: root.workspace,
         env: gatewayEnv(root.home, gateway),
@@ -355,7 +355,7 @@ describe("fiber ask presentation", () => {
     gateways.push(gateway);
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Inspect fixture.txt."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Inspect fixture.txt."],
       {
         cwd: root.workspace,
         env: gatewayEnv(root.home, gateway),
@@ -411,7 +411,7 @@ describe("fiber ask presentation", () => {
         isolated: true,
         cmd: terminalCommand([
           "ask",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "Inspect fixture.txt and render the response.",
         ]),
@@ -735,7 +735,7 @@ describe("fiber ask presentation", () => {
         isolated: true,
         cmd: terminalCommand([
           "ask",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "Run the notice filtering fixture.",
         ]),

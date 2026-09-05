@@ -49,7 +49,7 @@ describe.skipIf(!LIVE_ENABLED || !HAS_API_KEY)("live source context limits", () 
             "skill_chunk_bytes=240",
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--no-save",
             "--timeout",
             String(TIMEOUT),

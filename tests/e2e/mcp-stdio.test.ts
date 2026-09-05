@@ -584,7 +584,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
     try {
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Confirm the workspace is available."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Confirm the workspace is available."],
         {
           cwd: workspace,
           env: {
@@ -643,7 +643,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       WORKSPACE_MCP_PID_PATH: join(root.root, "mcp.pid"),
     };
     const skipped = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the workspace MCP."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the workspace MCP."],
       {
         cwd: root.workspace,
         env,
@@ -670,7 +670,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     expect(settings).toContain("enabledMcpjsonServers");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the workspace MCP."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the workspace MCP."],
       { cwd: root.workspace, env, timeoutMs: 20_000 },
     );
     expect(result.code).toBe(0);
@@ -696,7 +696,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
     });
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Confirm the workspace is available."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Confirm the workspace is available."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -774,7 +774,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     expect(existsSync(root.wireLogPath)).toBe(false);
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the stdio MCP echo tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the stdio MCP echo tool."],
       { cwd: root.workspace, env, timeoutMs: 20_000 },
     );
     expect(result.code).toBe(0);
@@ -813,7 +813,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     expect(trusted.code).toBe(0);
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Exercise the project MCP."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Exercise the project MCP."],
       {
         cwd: root.workspace,
         env,
@@ -849,7 +849,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
     });
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Confirm the workspace is available."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Confirm the workspace is available."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -975,7 +975,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
     gateway = initialGateway;
     const initial = await runFx(
-      ["ask", "--json", "--auto", "Use the fresh profile MCP."],
+      ["ask", "--json", "--permission-mode", "auto", "Use the fresh profile MCP."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, initialGateway),
@@ -1004,7 +1004,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
     gateway = resumedGateway;
     const resumed = await runFx(
-      ["ask", "--json", "--auto", "--resume", sessionId, "Use the current profile MCP."],
+      ["ask", "--json", "--permission-mode", "auto", "--resume", sessionId, "Use the current profile MCP."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, resumedGateway),
@@ -1101,7 +1101,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", parentPrompt],
+      ["ask", "--json", "--permission-mode", "auto", parentPrompt],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -1167,7 +1167,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       gateway = activeGateway;
 
       const result = await runFx(
-        ["ask", "--json", "--auto", parentPrompt],
+        ["ask", "--json", "--permission-mode", "auto", parentPrompt],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -1262,7 +1262,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       gateway = activeGateway;
 
       const result = await runFx(
-        ["ask", "--json", "--auto", parentPrompt],
+        ["ask", "--json", "--permission-mode", "auto", parentPrompt],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -1367,7 +1367,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       gateway = activeGateway;
 
       const result = await runFx(
-        ["ask", "--json", "--auto", parentPrompt],
+        ["ask", "--json", "--permission-mode", "auto", parentPrompt],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -1438,7 +1438,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Try the MCP features requiring input."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Try the MCP features requiring input."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1518,7 +1518,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the configured MCP resource and prompt features."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the configured MCP resource and prompt features."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1579,7 +1579,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Exercise MCP feature errors."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Exercise MCP feature errors."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1621,7 +1621,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Read the stalled MCP resource."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Read the stalled MCP resource."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1672,7 +1672,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the live stdio MCP tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the live stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1730,7 +1730,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the changed legacy stdio tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the changed legacy stdio tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1767,7 +1767,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     gateway = startToolGateway("Latest legacy stdio negotiation complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the legacy stdio MCP tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1800,7 +1800,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     gateway = startToolGateway("Invalid params fallback complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the legacy stdio MCP tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1839,7 +1839,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the failing MCP tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the failing MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1866,7 +1866,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     gateway = startToolGateway("Ordered legacy stdio negotiation complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the legacy stdio MCP tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1894,7 +1894,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     gateway = startToolGateway("Legacy stdio version ladder complete.");
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the oldest legacy stdio MCP tool."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the oldest legacy stdio MCP tool."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, gateway),
@@ -1945,7 +1945,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
 
       const started = Date.now();
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", "Exercise the malformed MCP fixture."],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", "Exercise the malformed MCP fixture."],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, gateway),
@@ -2342,7 +2342,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       const activeGateway = startToolGateway(`${fixture.label} MCP complete.`);
       gateway = activeGateway;
       const result = await runFx(
-        ["ask", "--json", "--auto", "--no-save", `Call the ${fixture.label} MCP fixture.`],
+        ["ask", "--json", "--permission-mode", "auto", "--no-save", `Call the ${fixture.label} MCP fixture.`],
         {
           cwd: root.workspace,
           env: fixtureEnv(root, activeGateway),
@@ -2392,7 +2392,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     const parentPath = process.env.PATH ?? "/usr/bin:/bin";
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the environment MCP fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the environment MCP fixture."],
       {
         cwd: root.workspace,
         env: {
@@ -2436,7 +2436,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Answer without using MCP."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Answer without using MCP."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -2466,7 +2466,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Answer without using MCP.")}`,
+        cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Answer without using MCP.")}`,
         cwd: root.workspace,
         width: 120,
         height: 34,
@@ -2513,7 +2513,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Cancel optional MCP startup.")}`,
+        cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Cancel optional MCP startup.")}`,
         cwd: root.workspace,
         width: 120,
         height: 34,
@@ -2553,7 +2553,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     const activeGateway = startToolGateway("Legacy Draft 7 complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the legacy Draft 7 MCP fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the legacy Draft 7 MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -2591,7 +2591,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     });
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Try invalid legacy Draft 7 arguments."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Try invalid legacy Draft 7 arguments."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -2615,7 +2615,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     const activeGateway = startToolGateway("Legacy progress complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the legacy MCP fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the legacy MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -2640,7 +2640,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     const activeGateway = startToolGateway("MRTR Ask boundary complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the MRTR MCP fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the MRTR MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -2922,7 +2922,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
           isolated: true,
           ...(surface === "Ask"
             ? {
-                cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the unsafe MCP elicitation fixture.")}`,
+                cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call the unsafe MCP elicitation fixture.")}`,
                 remainOnExit: true,
               }
             : { stderrPath }),
@@ -2999,7 +2999,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
           isolated: true,
           ...(surface === "Ask"
             ? {
-                cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the colliding MCP form fixture.")}`,
+                cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call the colliding MCP form fixture.")}`,
                 remainOnExit: true,
               }
             : { stderrPath }),
@@ -3257,7 +3257,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     const activeGateway = startToolGateway("Legacy URL-required version gate complete.");
     gateway = activeGateway;
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the legacy URL-required fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the legacy URL-required fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -3286,7 +3286,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       const prompt = "Call the MRTR MCP fixture interactively.";
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify(prompt)}`,
+        cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify(prompt)}`,
         cwd: root.workspace,
         width: 120,
         height: 34,
@@ -3340,7 +3340,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
         const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the direct legacy elicitation fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call the direct legacy elicitation fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -3412,7 +3412,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       try {
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the legacy URL-required fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call the legacy URL-required fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -3474,7 +3474,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the multiple legacy URL fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call the multiple legacy URL fixture.")}`,
         cwd: root.workspace,
         width: 120,
         height: 36,
@@ -3543,7 +3543,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the malformed completion fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call the malformed completion fixture.")}`,
         cwd: root.workspace,
         width: 120,
         height: 36,
@@ -3599,7 +3599,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       writeFakeUrlOpeners(fakeBin, "#!/bin/sh\nexit 0\n");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call and cancel the legacy URL fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call and cancel the legacy URL fixture.")}`,
         cwd: root.workspace,
         width: 110,
         height: 34,
@@ -3641,7 +3641,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       writeFakeUrlOpeners(fakeBin, "#!/bin/sh\nexit 0\n");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call and wait for the legacy URL fixture.")}`,
+        cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call and wait for the legacy URL fixture.")}`,
         cwd: root.workspace,
         width: 110,
         height: 34,
@@ -3716,7 +3716,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
         const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify(`Use the legacy ${operation} URL-required fixture.`)}`,
+          cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify(`Use the legacy ${operation} URL-required fixture.`)}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -3766,7 +3766,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
       tui = await TmuxSession.create({
         isolated: true,
-        cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Complete the full MCP form.")}`,
+        cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Complete the full MCP form.")}`,
         cwd: root.workspace,
         width: 120,
         height: 38,
@@ -3900,7 +3900,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       try {
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Call the URL elicitation fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call the URL elicitation fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 36,
@@ -3981,7 +3981,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       try {
         tui = await TmuxSession.create({
           isolated: true,
-          cmd: `${JSON.stringify(binary)} ask --auto --no-save ${JSON.stringify("Decline the URL elicitation fixture.")}`,
+          cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Decline the URL elicitation fixture.")}`,
           cwd: root.workspace,
           width: 120,
           height: 34,
@@ -4024,7 +4024,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     const progressGateway = startToolGateway("Progress MCP complete.");
     gateway = progressGateway;
     const progressResult = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the progress MCP fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the progress MCP fixture."],
       {
         cwd: progressRoot.workspace,
         env: fixtureEnv(progressRoot, progressGateway),
@@ -4054,7 +4054,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     const timeoutGateway = startToolGateway("Timed out MCP recovered.");
     gateway = timeoutGateway;
     const timeoutResult = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Call the stalled MCP fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the stalled MCP fixture."],
       {
         cwd: timeoutRoot.workspace,
         env: fixtureEnv(timeoutRoot, timeoutGateway),
@@ -4090,7 +4090,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Use the stalled MCP fixture."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the stalled MCP fixture."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -4177,7 +4177,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "This request must remain blocked."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "This request must remain blocked."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -4906,7 +4906,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Recover the MCP fixture once."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Recover the MCP fixture once."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),
@@ -5025,7 +5025,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     gateway = activeGateway;
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Exhaust the MCP restart budget."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Exhaust the MCP restart budget."],
       {
         cwd: root.workspace,
         env: fixtureEnv(root, activeGateway),

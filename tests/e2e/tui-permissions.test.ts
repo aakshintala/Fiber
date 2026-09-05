@@ -837,7 +837,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       const resumed = await runFx(
         [
           "ask",
-          "--auto",
+          "--permission-mode", "auto",
           "--resume-id",
           sessionId,
           "Continue the amended review session.",

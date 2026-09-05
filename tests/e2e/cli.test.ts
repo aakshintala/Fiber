@@ -1650,7 +1650,7 @@ describe("cli: missing durable home", () => {
         // home is bootstrapped with the login file before the saved session.
         writeSeededChatGptLogin(home, chatGptAccessToken());
         const asked = await runFx(
-          ["ask", "--json", "--auto", "Persist under the new home."],
+          ["ask", "--json", "--permission-mode", "auto", "Persist under the new home."],
           {
             cwd,
             env: fakeCodexEnv(home, codex),
@@ -2935,7 +2935,7 @@ describe("cli: ask success", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--no-save",
             "$cli-explicit apply the selected skill.",
           ],
@@ -2982,7 +2982,7 @@ describe("cli: ask success", () => {
         for (const [index, size] of sizes.entries()) {
           const prompt = `B${"x".repeat(size - 2)}E`;
           const result = await runFx(
-            ["ask", "--json", "--auto", "--no-save"],
+            ["ask", "--json", "--permission-mode", "auto", "--no-save"],
             {
               cwd: realpathSync(workspace),
               env: fakeCodexEnv(home, codex),
@@ -3014,7 +3014,7 @@ describe("cli: ask success", () => {
     async () => {
       const oversized = Buffer.alloc(8 * 1024 * 1024 + 1, 0x78);
 
-      const textResult = await runFx(["ask", "--auto", "--no-save"], {
+      const textResult = await runFx(["ask", "--permission-mode", "auto", "--no-save"], {
         env: { ...NO_GATEWAY_AUTH, FIBER_DISABLE_KEYCHAIN: "1" },
         stdin: oversized,
         timeoutMs: 60_000,
@@ -3025,7 +3025,7 @@ describe("cli: ask success", () => {
         "fiber ask: prompt exceeds the local input safety limit\n",
       );
 
-      const jsonResult = await runFx(["ask", "--json", "--auto", "--no-save"], {
+      const jsonResult = await runFx(["ask", "--json", "--permission-mode", "auto", "--no-save"], {
         env: { ...NO_GATEWAY_AUTH, FIBER_DISABLE_KEYCHAIN: "1" },
         stdin: oversized,
         timeoutMs: 60_000,
@@ -3055,7 +3055,7 @@ describe("cli: ask success", () => {
         );
 
         const result = await runFx(
-          ["ask", "--json", "--auto", "--no-save", "Use portable reasoning."],
+          ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use portable reasoning."],
           {
             cwd: realpathSync(workspace),
             env: fakeCodexEnv(home, codex),
@@ -3119,7 +3119,7 @@ describe("cli: ask success", () => {
         } as ReturnType<typeof startFakeCodex>);
 
         const first = await runFx(
-          ["ask", "--json", "--auto", "Reply with exactly: orange triangle"],
+          ["ask", "--json", "--permission-mode", "auto", "Reply with exactly: orange triangle"],
           {
             cwd: workspaceRoot,
             env,
@@ -3141,7 +3141,7 @@ describe("cli: ask success", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume",
             "last",
             "Reply with exactly: blue circle",
@@ -3175,7 +3175,7 @@ describe("cli: ask success", () => {
 
         writeSeededChatGptLogin(noSaveHome, chatGptAccessToken());
         const noSave = await runFx(
-          ["ask", "--json", "--auto", "--no-save", "Reply with exactly: green square"],
+          ["ask", "--json", "--permission-mode", "auto", "--no-save", "Reply with exactly: green square"],
           {
             cwd: workspaceRoot,
             env: {
@@ -3246,7 +3246,7 @@ describe("cli: ask success", () => {
         } as ReturnType<typeof startFakeCodex>);
 
         const unrelated = await runFx(
-          ["ask", "--json", "--auto", "Save an unrelated long turn."],
+          ["ask", "--json", "--permission-mode", "auto", "Save an unrelated long turn."],
           { cwd: workspaceRoot, env, timeoutMs: 60_000 },
         );
         expect(unrelated.code).toBe(0);
@@ -3256,7 +3256,7 @@ describe("cli: ask success", () => {
         expect(unrelatedJson.output).toBe(unrelatedReply);
 
         const first = await runFx(
-          ["ask", "--json", "--auto", "Reply with the first saved turn."],
+          ["ask", "--json", "--permission-mode", "auto", "Reply with the first saved turn."],
           { cwd: workspaceRoot, env, timeoutMs: 60_000 },
         );
         expect(first.code).toBe(0);
@@ -3288,7 +3288,7 @@ describe("cli: ask success", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             sessionId,
             "Reply with the contended exact turn.",
@@ -3330,7 +3330,7 @@ describe("cli: ask success", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume",
             "last",
             "Reply with the contended latest turn.",
@@ -3350,7 +3350,7 @@ describe("cli: ask success", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--resume-id",
             sessionId,
             "Reply with the repairing turn.",
@@ -3417,7 +3417,7 @@ describe("cli: error handling", () => {
           [
             "ask",
             "--json",
-            "--auto",
+            "--permission-mode", "auto",
             "--no-save",
             "--",
             "--definitely-prompt-text",

@@ -197,7 +197,7 @@ describe("web_search Codex fixture", () => {
       });
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Search the web for the latest Zig release."],
+          ["ask", "--permission-mode", "auto", "--json", "--no-save", "Search the web for the latest Zig release."],
           {
             cwd: root.workspace,
             env: fakeCodexEnv(root.home, codex),
@@ -229,7 +229,7 @@ describe("web_search Codex fixture", () => {
       const codex = startFakeCodex();
       try {
         const result = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Search current Zig release information."],
+          ["ask", "--permission-mode", "auto", "--json", "--no-save", "Search current Zig release information."],
           {
             cwd: root.workspace,
             env: fakeCodexEnv(root.home, codex),

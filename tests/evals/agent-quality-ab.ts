@@ -294,7 +294,7 @@ export async function runAbTrial(
     binaryPath,
     [
       "ask",
-      "--auto",
+      "--permission-mode", "auto",
       "--json",
       "--no-save",
       "--timeout",

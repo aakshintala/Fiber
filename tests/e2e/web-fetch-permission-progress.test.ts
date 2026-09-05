@@ -39,7 +39,7 @@ describe("web_fetch permission progress", () => {
     async () => {
       const result = await runWithoutGatewayAuth([
         "ask",
-        "--auto",
+        "--permission-mode", "auto",
         "fetch https://example.com/ and summarize it",
       ]);
 
