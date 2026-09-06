@@ -50,7 +50,6 @@ const tool_presentation = @import("../tooling/tool_presentation.zig");
 const tool_runtime = @import("../tooling/tool_runtime.zig");
 const skill_invocation = @import("../skills/skill_invocation.zig");
 const web_fetch_runtime = @import("../tooling/web_fetch_runtime.zig");
-const web_search_runtime = @import("../tooling/web_search_runtime.zig");
 const types = @import("../shared/types.zig");
 const worker_runtime = @import("../agent/worker_runtime.zig");
 const workspace_access = @import("../workspace/workspace_access.zig");
@@ -203,7 +202,8 @@ pub fn Runtime(comptime App: type) type {
                 .oauth_transport = app.auth.oauthTransport(),
                 .model = provider_runtime.model(app),
                 .gateway_retry_count = gateway_retry_count,
-                .gateway_models_path = if (comptime @hasField(App, "web_search_models_path")) app.web_search_models_path else "/v1/models",
+                // Codex resolves the catalog from its own base URL; the path stays empty.
+                .gateway_models_path = "",
                 .agent_step_limit = app.agent_step_limit,
                 .fast_mode = agent_settings.fast_mode,
                 .effort = agent_settings.effort,
@@ -264,22 +264,6 @@ pub fn Runtime(comptime App: type) type {
                 ctx.web_fetch_artifact_error = app.session.webFetchArtifactError();
                 ctx.web_fetch_progress_ctx = @ptrCast(app);
                 ctx.on_web_fetch_progress = app_callbacks.Bindings(App).onWebFetchProgress;
-            }
-            if (comptime @hasField(App, "web_search_runtime")) {
-                if (provider_capabilities.fiber_search) {
-                    app.web_search_runtime.configure(.{
-                        .api_key = app.auth.apiKey() orelse "",
-                        .credential_source = app.auth.credentialSource(),
-                        .worker_model = provider_runtime.model(app),
-                        .gateway_retry_count = gateway_retry_count,
-                        .usage = &app.session.usage,
-                        .usage_allocator = app.alloc,
-                    });
-                    ctx.web_search_backend = app.web_search_runtime.dispatchBackend();
-                }
-                ctx.web_search_runtime_ready = false;
-                ctx.web_search_progress_ctx = @ptrCast(app);
-                ctx.on_web_search_progress = app_callbacks.Bindings(App).onWebSearchProgress;
             }
             if (comptime runtime_profile.allows(App, .mcp) and
                 @hasDecl(@TypeOf(app.worker), "requestMcpElicitationAnswerBlocking") and
@@ -1419,8 +1403,6 @@ const FakeApp = struct {
     mcp_result: []const u8 = "{\"ok\":true}",
     diff_blocks: usize = 0,
     web_fetch_runtime: web_fetch_runtime.Runtime = web_fetch_runtime.Runtime.init(.{}),
-    web_search_runtime: web_search_runtime.Runtime = web_search_runtime.Runtime.init(.{}),
-    web_search_models_path: []const u8 = "/models",
     lifecycle_runtime: hooks.Runtime,
     lifecycle_view: hooks.RuntimeView,
     tool_registry: tool_dispatch.Registry = test_tool_registry,
@@ -1479,7 +1461,6 @@ const FakeApp = struct {
         self.context_snapshot.deinit(self.alloc);
         self.worker.deinit(std.heap.c_allocator);
         self.web_fetch_runtime.deinit(self.alloc);
-        self.web_search_runtime.deinit();
         self.session.deinit(self.alloc);
         self.change_tracker.deinit(self.alloc);
         self.lifecycle_runtime.deinit();
@@ -1733,8 +1714,7 @@ test "app agent runtime builds tool context from app state and MCP callbacks" {
     try std.testing.expect(ctx.web_fetch_runtime.? == &app.web_fetch_runtime);
     try std.testing.expect(ctx.web_fetch_progress_ctx != null);
     try std.testing.expect(ctx.on_web_fetch_progress != null);
-    try std.testing.expect(app.web_search_runtime.provider == null);
-    try std.testing.expectEqualStrings("/models", ctx.gateway_models_path);
+    try std.testing.expectEqualStrings("", ctx.gateway_models_path);
     try std.testing.expectEqual(@as(usize, 4096), ctx.max_tool_result_bytes);
     try std.testing.expectEqual(types.ToolChoice.none, ctx.first_call_tool_choice);
     try std.testing.expect(ctx.cancel_flag.? == &app.worker.worker_cancel_requested);
@@ -1824,81 +1804,6 @@ test "interactive app prepared file mutation callback applies app permission pol
 
     try std.testing.expectEqual(ToolPermissionDecision.policy_denied, outcome.decision);
     try std.testing.expect(outcome.execution_authority == null);
-}
-
-test "app prompt projection configures web search then blocks native execution" {
-    const alloc = std.testing.allocator;
-    const web_search_contract = @import("../tooling/web_search_contract.zig");
-    const ProviderState = struct {
-        calls: usize = 0,
-    };
-    const FailingWebSearchProvider = struct {
-        fn preferredBackends(_: ?*anyopaque) !?[]const web_search_contract.SearchBackendId {
-            return null;
-        }
-        fn execute(
-            raw_ctx: ?*anyopaque,
-            _: Allocator,
-            _: web_search_runtime.Inputs,
-            _: web_search_contract.ProviderRequest,
-            _: ?web_search_contract.ProgressFn,
-            _: ?*anyopaque,
-        ) anyerror!web_search_contract.ProviderResponse {
-            const state: *ProviderState = @ptrCast(@alignCast(raw_ctx orelse return error.TestWebSearchProvider));
-            state.calls += 1;
-            return error.TestWebSearchProvider;
-        }
-    };
-    var app = try FakeApp.init(alloc);
-    defer app.deinit();
-    var provider_state = ProviderState{};
-    app.web_search_runtime = web_search_runtime.Runtime.init(.{
-        .provider = .{
-            .context = @ptrCast(&provider_state),
-            .policy = .{},
-            .preferred_backends_fn = FailingWebSearchProvider.preferredBackends,
-            .execute_fn = FailingWebSearchProvider.execute,
-        },
-    });
-
-    app.web_search_runtime.configure(.{
-        .api_key = "stale-key",
-        .worker_model = "stale-model",
-        .gateway_retry_count = 99,
-    });
-
-    var arena_state = std.heap.ArenaAllocator.init(alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var messages: std.ArrayList(ChatMessage) = .empty;
-    defer messages.deinit(arena);
-    try Runtime(FakeApp).appendStaticContextMessage(&app, arena, &messages, &test_ignored_list_entries, 100, 1024, 40, 120, 2048, 2);
-    try app.appendRuntimeContextMessage(arena, &messages);
-
-    try std.testing.expectEqualStrings("stale-key", app.web_search_runtime.api_key);
-
-    const validation = try app.validateToolCall(arena, .{
-        .id = "search",
-        .name = "web_search",
-        .arguments_json = "{\"query\":\"x\"}",
-    });
-    try std.testing.expectEqualStrings("web_search field \"query\" must contain at least two characters", validation.failure);
-
-    const execution = try app.executeToolCall(.{
-        .call_allocator = arena,
-        .result_allocator = arena,
-        .call = .{
-            .id = "search-execute",
-            .name = "web_search",
-            .arguments_json = "{\"query\":\"current Zig release\"}",
-        },
-        .authority = .ordinary,
-        .session_grants = &.{},
-        .advertised_dynamic_tool_names = &.{},
-        .max_tool_result_bytes = 2048,
-    });
-    try std.testing.expectEqual(.failure, execution.status);
-    try std.testing.expectEqual(@as(usize, 0), provider_state.calls);
 }
 
 test "app ChatGPT route removes Gateway-backed auxiliary capabilities" {

@@ -4,7 +4,6 @@ const model_provider = @import("../config/model_provider.zig");
 const model_capabilities = @import("../config/model_capabilities.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
 const gateway_provider = @import("gateway_provider.zig");
-const web_search_provider = @import("../tooling/web_search_provider.zig");
 const auto_classifier = @import("../permissions/auto_classifier.zig");
 const model_catalog = @import("model_catalog.zig");
 
@@ -15,7 +14,6 @@ pub const Bundle = struct {
         chatgpt,
     };
     pub const Capabilities = struct {
-        fiber_search: bool = false,
         vision_fallback: bool = false,
     };
 
@@ -27,7 +25,6 @@ pub const Bundle = struct {
     cli_model_catalog: ?gateway_provider.CliModelCatalogProvider = null,
     model_catalog: ?model_catalog.Provider = null,
     permission_reviewer: ?auto_classifier.Provider = null,
-    fiber_search: ?web_search_provider.Provider = null,
 
     pub fn agent_stream_or_unavailable(self: Bundle) stream_provider.Provider {
         return self.agent_stream orelse stream_provider.unavailable_provider;
@@ -97,7 +94,6 @@ test "provider set selects the codex route" {
     var providers = Set{ .codex = codex };
 
     try std.testing.expect(providers.select(.codex).agent_stream.?.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
-    try std.testing.expect(!providers.select(.codex).capabilities.fiber_search);
     try std.testing.expect(providers.select(.codex).model_catalog.?.context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
     try std.testing.expect(providers.select(.codex).agent_stream_or_unavailable().context.? == @as(*anyopaque, @ptrCast(&codex_tag)));
 
