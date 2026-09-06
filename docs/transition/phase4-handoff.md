@@ -8,7 +8,8 @@ Rewritten 2026-09-06 after Slice 20. Supersedes every earlier copy.
    Current numbers, the argument that every unsupported-target hit left in
    `src/` is explained, and the host-capability measurement.
 2. `phase4-audit/OWNER-QUESTIONS.md` — decisions taken without the owner.
-   **Decisions 5 and 6 are open and unanswered.** Decision 3 is withdrawn.
+   **Decisions 5, 6, and 7 are resolved.** Decision 3 is withdrawn. Decision 5's
+   original evidence was wrong; read the correction before trusting its premise.
 3. `simplification-inventory.md` — the ordered slices.
 4. `phase4-audit/CORRECTIONS.md` — retention decisions.
 
@@ -45,7 +46,7 @@ in its own commit message. Read the message before re-deriving anything.
 
 ## Current numbers
 
-| Signal | Opening (`38496f4c`) | Now (`8a24bb73`) |
+| Signal | Opening (`38496f4c`) | Now (`1230e87e`) |
 | --- | --- | --- |
 | main test binary | 7287 pass, 2 skip, 7289 total | 7234, 2, 7236 |
 | lazy-analysis probe | 7791 total, 502 never analysed | 7744 / 498 at `b20f559c` |
@@ -98,7 +99,7 @@ a slice is caused by that slice until fixed or reverted.
 
 ## How to derive a removal surface
 
-The scanner used for Slices 16 and 17 is at
+The scanner used for Slices 16 through 20 is at
 `scratchpad/deadscan.py` in the session temp dir; rewrite it if lost. It strips
 `test "..." { }` blocks by brace matching, then for every container-level
 declaration counts references in the production text against references in the
