@@ -13,14 +13,9 @@ const process_provider_mod = @import(
     "../execution/process_provider.zig",
 );
 const process_tree = @import("../execution/process_tree.zig");
-const command_admission = @import("../permissions/command_admission.zig");
-const command_runner = @import("../execution/command_runner.zig");
-const execution_router = @import("../execution/router.zig");
 const io_mod = @import("../shared/io.zig");
 const self_exe = @import("../shared/self_exe.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
-const types = @import("../shared/types.zig");
-const workspace_pathing = @import("../workspace/pathing.zig");
 
 const Allocator = std.mem.Allocator;
 

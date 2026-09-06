@@ -11,7 +11,6 @@ const process_provider_mod = @import(
 const profile_paths = @import("../shared/profile_paths.zig");
 const io_mod = @import("../shared/io.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
-const types = @import("../shared/types.zig");
 
 const Allocator = std.mem.Allocator;
 

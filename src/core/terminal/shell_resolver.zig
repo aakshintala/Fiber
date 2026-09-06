@@ -217,19 +217,6 @@ pub fn capturedInvocation(
     }
 }
 
-pub fn formatInvocationCommand(
-    alloc: Allocator,
-    invocation: *const Invocation,
-) Allocator.Error![]u8 {
-    var output: std.ArrayList(u8) = .empty;
-    errdefer output.deinit(alloc);
-    for (invocation.argv(), 0..) |word, index| {
-        if (index != 0) try output.append(alloc, ' ');
-        try appendShellWord(&output, alloc, word);
-    }
-    return output.toOwnedSlice(alloc);
-}
-
 fn removeInteractiveFlag(invocation: *Invocation) void {
     std.debug.assert(invocation.len > 0);
     std.debug.assert(std.mem.eql(u8, invocation.values[invocation.len - 1], "-i"));
@@ -462,16 +449,6 @@ test "captured profiles use exact non-PTY argv" {
     for (&expected_zsh_user, zsh_user.argv()) |expected, actual| {
         try std.testing.expectEqualStrings(expected, actual);
     }
-}
-
-test "captured invocation provider projection shell-quotes every argv word" {
-    const invocation = try capturedInvocation(std.testing.allocator, .{ .clean = "/bin/zsh" }, "printf '%s' ok");
-    const command = try formatInvocationCommand(std.testing.allocator, &invocation);
-    defer std.testing.allocator.free(command);
-    try std.testing.expectEqualStrings(
-        "'/bin/zsh' '-f' '-c' 'printf '\"'\"'%s'\"'\"' ok'",
-        command,
-    );
 }
 
 test "profile normalization defaults captured and persistent execution to user" {

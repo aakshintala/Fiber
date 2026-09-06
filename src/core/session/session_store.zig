@@ -30,7 +30,6 @@ const store_types = @import("session_store_types.zig");
 const summary_codec = @import("session_summary_codec.zig");
 const sort_utils = @import("../shared/sort_utils.zig");
 
-const authorityTransitionsEqual = authority_module.authorityTransitionsEqual;
 const classifyAuthority = authority_module.classifyAuthority;
 const deleteSessionEntry = authority_module.deleteSessionEntry;
 const loadAuthorityTransitionOptional = authority_module.loadAuthorityTransitionOptional;

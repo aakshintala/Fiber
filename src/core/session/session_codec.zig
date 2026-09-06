@@ -603,10 +603,6 @@ fn validateStateWithPermissionMigration(
     }
 }
 
-pub fn validateModelPreference(value: []const u8) !void {
-    try validateModel(value);
-}
-
 pub fn parseConversationLanguage(raw: []const u8) !session.ConversationLanguage {
     try validateConversationLanguageBytes(raw);
     return session.ConversationLanguage.fromSlice(raw) catch error.InvalidDurableField;

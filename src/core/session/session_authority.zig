@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
-const session = @import("session.zig");
 const session_event = @import("session_event.zig");
 const session_log = @import("session_log.zig");
 const session_projection = @import("session_projection.zig");

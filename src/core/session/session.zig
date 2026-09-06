@@ -12,7 +12,6 @@ const web_fetch_artifacts = @import("web_fetch_artifacts.zig");
 const command_replay_store = @import("command_replay_store.zig");
 pub const session_usage = @import("session_usage.zig");
 pub const profile_usage_runtime = @import("profile_usage_runtime.zig");
-const command_contract = @import("../execution/command_contract.zig");
 const sort_utils = @import("../shared/sort_utils.zig");
 const Allocator = std.mem.Allocator;
 
