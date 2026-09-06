@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const glob_pattern = @import("../../core/workspace/glob_pattern.zig");
 const io_mod = @import("../../core/shared/io.zig");
 const pathing = @import("../../core/workspace/pathing.zig");
@@ -748,7 +747,6 @@ test "glob_files resolver error for missing path returns failure result" {
 }
 
 test "glob_files permission denied directory returns structured recovery" {
-    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     const root = try std.fmt.allocPrint(alloc, "/tmp/fiber-glob-files-access-{d}", .{io_mod.nanoTimestamp()});
     defer alloc.free(root);

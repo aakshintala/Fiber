@@ -1146,8 +1146,6 @@ fn writeTestFile(dir: std.Io.Dir, path: []const u8, content: []const u8) !void {
 }
 
 fn createTestSymlinkOrSkip(dir: std.Io.Dir, target_path: []const u8, link_path: []const u8, is_directory: bool) !void {
-    const builtin = @import("builtin");
-    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     dir.symLink(io_mod.getIo(), target_path, link_path, .{ .is_directory = is_directory }) catch |err| {
         if (err == error.AccessDenied or std.mem.eql(u8, @errorName(err), "Permission" ++ "Denied")) {
             return error.SkipZigTest;
@@ -1301,9 +1299,6 @@ test "bounded resolver rejects component scratch overflow" {
 }
 
 test "bounded resolver resolves contained intermediate symlinks and preserves final symlink entry" {
-    const builtin = @import("builtin");
-    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
@@ -1397,9 +1392,6 @@ test "bounded resolver resolves contained intermediate symlinks and preserves fi
 }
 
 test "bounded resolver reports intermediate symlink loops" {
-    const builtin = @import("builtin");
-    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
@@ -2211,9 +2203,6 @@ test "resolveWorkspacePathEntryCreate uses nearest existing parent for missing n
 }
 
 test "resolveWorkspacePathEntryExisting preserves the final symlink entry" {
-    const builtin = @import("builtin");
-    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();

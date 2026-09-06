@@ -975,7 +975,6 @@ fn createSkillSymlinkOrSkip(
     link_path: []const u8,
     is_directory: bool,
 ) !void {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     dir.symLink(std.testing.io, target_path, link_path, .{ .is_directory = is_directory }) catch |err| {
         if (err == error.AccessDenied or std.mem.eql(u8, @errorName(err), "Permission" ++ "Denied")) {
             return error.SkipZigTest;

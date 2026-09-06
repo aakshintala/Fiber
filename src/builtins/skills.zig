@@ -1535,7 +1535,6 @@ test "installFromSource skips a symlinked root skill and installs a valid nested
 
     try writeTempFile(&tmp, "outside/SKILL.md", "---\nname: outside\ndescription: outside root\n---\n\nbody\n");
     try writeTempFile(&tmp, "pack/valid/SKILL.md", "---\nname: valid\ndescription: valid nested skill\n---\n\nbody\n");
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     tmp.dir.symLink(std.testing.io, "../outside/SKILL.md", "pack/SKILL.md", .{ .is_directory = false }) catch |err| {
         if (err == error.AccessDenied or err == error.FileSystem) return error.SkipZigTest;
         return err;

@@ -3747,7 +3747,6 @@ fn writeTempFile(tmp: *std.testing.TmpDir, sub_path: []const u8, content: []cons
 }
 
 fn createTempSymlinkOrSkip(tmp: *std.testing.TmpDir, target_path: []const u8, link_path: []const u8) !void {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     if (std.fs.path.dirname(link_path)) |parent| {
         try tmp.dir.createDirPath(io_mod.getIo(), parent);
     }
@@ -3760,9 +3759,6 @@ fn createTempSymlinkOrSkip(tmp: *std.testing.TmpDir, target_path: []const u8, li
 extern "c" fn mkfifo(path: [*:0]const u8, mode: std.c.mode_t) c_int;
 
 fn createTempFifoOrSkip(alloc: Allocator, tmp: *std.testing.TmpDir, sub_path: []const u8) !void {
-    if (comptime @import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
     if (std.fs.path.dirname(sub_path)) |parent| {
         try tmp.dir.createDirPath(io_mod.getIo(), parent);
     }
@@ -5065,7 +5061,6 @@ test "skill discovery rejects a symlinked selected root" {
     defer tmp.cleanup();
 
     try writeTempFile(&tmp, "real-root/external/SKILL.md", "---\nname: external\ndescription: must not load\n---\nbody\n");
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     tmp.dir.symLink(std.testing.io, "real-root", "linked-root", .{ .is_directory = true }) catch |err| {
         if (err == error.AccessDenied or err == error.FileSystem) return error.SkipZigTest;
         return err;
@@ -5087,7 +5082,6 @@ test "skill discovery reports a broken symlinked selected root" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     tmp.dir.symLink(std.testing.io, "missing-root", "broken-root", .{ .is_directory = true }) catch |err| {
         if (err == error.AccessDenied or err == error.FileSystem) return error.SkipZigTest;
         return err;
@@ -5113,7 +5107,6 @@ test "skill discovery rejects symlinked ancestors inside an automatic root" {
     try writeTempFile(&tmp, "outside/skills/external/SKILL.md", "---\nname: external\ndescription: must not load\n---\nbody\n");
     try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
     try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills");
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     tmp.dir.symLink(std.testing.io, "../../outside", "home/workspace/.agents", .{ .is_directory = true }) catch |err| {
         if (err == error.AccessDenied or err == error.FileSystem) return error.SkipZigTest;
         return err;
@@ -5142,7 +5135,6 @@ test "skill discovery reports a symlinked automatic root whose target lacks the 
     try tmp.dir.createDirPath(io_mod.getIo(), "outside");
     try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
     try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills");
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     tmp.dir.symLink(std.testing.io, "../../outside", "home/workspace/.agents", .{ .is_directory = true }) catch |err| {
         if (err == error.AccessDenied or err == error.FileSystem) return error.SkipZigTest;
         return err;

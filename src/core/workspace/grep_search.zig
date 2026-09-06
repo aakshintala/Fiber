@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const debug_trace = @import("../shared/debug_trace.zig");
 const glob_pattern = @import("glob_pattern.zig");
 const ignored_dirs = @import("ignored_dirs.zig");
@@ -808,7 +807,6 @@ fn workspaceRoot(alloc: Allocator, tmp: std.testing.TmpDir) ![]u8 {
 }
 
 fn createBrokenSymlinkOrSkip(tmp: *std.testing.TmpDir, target_path: []const u8, link_path: []const u8) !void {
-    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     tmp.dir.symLink(std.testing.io, target_path, link_path, .{ .is_directory = false }) catch |err| {
         if (err == error.AccessDenied or std.mem.eql(u8, @errorName(err), "Permission" ++ "Denied")) return error.SkipZigTest;
         return err;
@@ -816,7 +814,6 @@ fn createBrokenSymlinkOrSkip(tmp: *std.testing.TmpDir, target_path: []const u8, 
 }
 
 fn createSymlinkOrSkip(tmp: *std.testing.TmpDir, target_path: []const u8, link_path: []const u8) !void {
-    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     tmp.dir.symLink(std.testing.io, target_path, link_path, .{ .is_directory = false }) catch |err| {
         if (err == error.AccessDenied or std.mem.eql(u8, @errorName(err), "Permission" ++ "Denied")) return error.SkipZigTest;
         return err;

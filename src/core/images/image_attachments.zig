@@ -349,27 +349,6 @@ pub fn openVisionRegularFile(canonical_path: []const u8) !VisionRegularFile {
     };
     if (initial.kind != .file) return error.NotRegularFile;
 
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        var file = cwd.openFile(io_mod.getIo(), canonical_path, .{
-            .mode = .read_only,
-            .allow_directory = false,
-            .follow_symlinks = false,
-        }) catch |err| switch (err) {
-            error.IsDir, error.SymLinkLoop, error.NotDir => return error.NotRegularFile,
-            else => return err,
-        };
-        errdefer file.close(io_mod.getIo());
-        const stat = try file.stat(io_mod.getIo());
-        if (stat.kind != .file) return error.NotRegularFile;
-        return .{
-            .file = file,
-            .identity = pathing.fileIdentity(
-                try pathing.descriptorDevice(file.handle),
-                stat,
-            ),
-        };
-    }
-
     var flags: std.posix.O = .{
         .ACCMODE = .RDONLY,
         .NOFOLLOW = true,
@@ -2798,8 +2777,6 @@ test "capture rejection distinguishes source size from preparation failure" {
 }
 
 test "image normalizer process requires success and preserves operational errors" {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     const success_argv = [_][]const u8{ "/bin/sh", "-c", "exit 0" };
     try runImageNormalizerProcess(&success_argv, .{});
 

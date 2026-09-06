@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const debug_trace = @import("../shared/debug_trace.zig");
 const ignored_dirs = @import("ignored_dirs.zig");
 const io_mod = @import("../shared/io.zig");
@@ -258,19 +257,13 @@ fn runGitRawList(
 }
 
 fn trustedGitExecutable() ?[]const u8 {
-    const candidates = switch (builtin.os.tag) {
-        .windows => &[_][]const u8{
-            "C:\\Program Files\\Git\\cmd\\git.exe",
-            "C:\\Program Files\\Git\\bin\\git.exe",
-        },
-        else => &[_][]const u8{
-            "/usr/bin/git",
-            "/bin/git",
-            "/usr/local/bin/git",
-            "/opt/homebrew/bin/git",
-            "/opt/local/bin/git",
-            "/run/current-system/sw/bin/git",
-        },
+    const candidates = &[_][]const u8{
+        "/usr/bin/git",
+        "/bin/git",
+        "/usr/local/bin/git",
+        "/opt/homebrew/bin/git",
+        "/opt/local/bin/git",
+        "/run/current-system/sw/bin/git",
     };
     for (candidates) |candidate| {
         const stat = std.Io.Dir.cwd().statFile(io_mod.getIo(), candidate, .{ .follow_symlinks = true }) catch continue;
@@ -821,8 +814,6 @@ test "workspace directory provider honors its cap and cancellation" {
 }
 
 test "workspace file provider recursive fallback does not recurse symlink directories" {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -878,8 +869,6 @@ test "workspace file provider falls back when git is skipped" {
 }
 
 test "workspace file provider treats empty successful git result as authoritative" {
-    if (comptime @import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try writeTestFile(tmp.dir, "untracked.txt", "not tracked\n");
@@ -952,8 +941,6 @@ test "workspace file provider does not recurse after a selected Git executable f
 }
 
 test "workspace file provider git result contains tracked files only" {
-    if (comptime @import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try writeTestFile(tmp.dir, ".gitignore", "ignored.txt\n");
@@ -981,8 +968,6 @@ test "workspace file provider git result contains tracked files only" {
 }
 
 test "workspace directory provider uses Git ignores without collapsing nested empty directories" {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try writeTestFile(tmp.dir, ".gitignore", "ignored-dir/\n");
@@ -1027,8 +1012,6 @@ test "workspace file provider cancellable fallback stops before traversal" {
 }
 
 test "workspace file provider cancellation terminates an active child" {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
-
     var stop_requested = std.atomic.Value(bool).init(false);
     const RequestStop = struct {
         fn run(stop: *std.atomic.Value(bool)) void {

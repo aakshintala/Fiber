@@ -2311,8 +2311,6 @@ test "scope discovery emits primary-relative and added-absolute paths in root or
 }
 
 test "production scope admits tracked untracked hidden and direct directory candidates" {
-    if (comptime @import("builtin").os.tag == .windows or @import("builtin").os.tag == .wasi) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -2344,9 +2342,7 @@ test "production scope admits tracked untracked hidden and direct directory cand
         var file = try tmp.dir.createFile(io_mod.getIo(), path, .{ .truncate = true });
         file.close(io_mod.getIo());
     }
-    if (comptime @import("builtin").os.tag != .windows) {
-        try tmp.dir.symLink(std.testing.io, "nested", "root/linked-dir", .{ .is_directory = true });
-    }
+    try tmp.dir.symLink(std.testing.io, "nested", "root/linked-dir", .{ .is_directory = true });
 
     const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "root");
     defer alloc.free(root);
@@ -2459,8 +2455,6 @@ test "typed current candidate validation rejects missing and changed kinds" {
 }
 
 test "typed current candidate validation keeps symlinks as file references" {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

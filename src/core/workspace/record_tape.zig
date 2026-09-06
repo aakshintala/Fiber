@@ -749,10 +749,8 @@ test "debug recording request creates a private tape under home" {
             try testing.expect(std.mem.startsWith(u8, active.path, expected_dir));
             const file = try std.Io.Dir.openFileAbsolute(io_mod.getIo(), active.path, .{});
             defer file.close(io_mod.getIo());
-            if (@import("builtin").os.tag != .windows) {
-                const stat = try file.stat(io_mod.getIo());
-                try testing.expectEqual(@as(std.posix.mode_t, 0), stat.permissions.toMode() & 0o077);
-            }
+            const stat = try file.stat(io_mod.getIo());
+            try testing.expectEqual(@as(std.posix.mode_t, 0), stat.permissions.toMode() & 0o077);
         },
         else => return error.TestExpectedActiveRecording,
     }
