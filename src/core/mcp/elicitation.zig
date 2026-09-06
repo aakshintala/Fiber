@@ -777,11 +777,6 @@ fn parseFormSchemaValue(
     return result;
 }
 
-fn schemaNodeLimit(limits: Limits) usize {
-    return std.math.mul(usize, limits.max_fields, limits.max_options) catch
-        std.math.maxInt(usize);
-}
-
 fn parseFieldInto(
     out: *Field,
     alloc: Allocator,
