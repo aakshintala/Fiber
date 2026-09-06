@@ -12,7 +12,12 @@ const types = @import("../shared/types.zig");
 pub const tool_name = "permission_decision";
 const max_rationale_bytes: usize = 240;
 const max_review_packet_bytes: usize = 16 * 1024;
-pub const gateway_reviewer_model = "moonshotai/kimi-k3";
+/// Fallback reviewer model for a Reviewer built without an explicit one.
+/// Production always sets `model` explicitly; `openai_codex_permission_reviewer`
+/// passes `openai_codex_models.reviewer_model`. Kept as a literal rather than an
+/// import so `core` does not depend on `gateway`; a test in
+/// `gateway/openai_codex_permission_reviewer.zig` fails if the two drift apart.
+pub const default_reviewer_model = "gpt-5.4-mini";
 
 pub const Risk = enum {
     low,
@@ -354,7 +359,7 @@ pub const Reviewer = struct {
     override_fn: ?OverrideFn = null,
     cancel_flag: ?*std.atomic.Value(bool) = null,
     timeout_ms: u32 = default_timeout_ms,
-    model: []const u8 = gateway_reviewer_model,
+    model: []const u8 = default_reviewer_model,
 
     pub const default_timeout_ms: u32 = 30_000;
 
@@ -1952,7 +1957,7 @@ test "normal automatic review serializes the pending call without root task text
             self.saw_pending_results =
                 std.mem.count(u8, payload, "\"role\":\"tool\"") == 1 and
                 std.mem.count(u8, payload, "pending review") == 1;
-            self.saw_reviewer_model = std.mem.eql(u8, model, gateway_reviewer_model);
+            self.saw_reviewer_model = std.mem.eql(u8, model, default_reviewer_model);
             self.saw_review_settings =
                 std.mem.find(u8, payload, "\"maxOutputTokens\":2048") != null and
                 std.mem.find(u8, payload, "\"toolChoice\":{\"type\":\"required\"}") != null and

@@ -48,6 +48,13 @@ test "Codex reviewer model remains catalog-selected gpt-5.4-mini" {
     try std.testing.expectEqualStrings("gpt-5.4-mini", openai_codex_models.reviewer_model);
 }
 
+test "auto-classifier fallback reviewer model tracks the Codex reviewer model" {
+    try std.testing.expectEqualStrings(
+        openai_codex_models.reviewer_model,
+        permission_auto_classifier.default_reviewer_model,
+    );
+}
+
 test "Codex reviewer builds a direct Responses request with gpt-5.4-mini" {
     const messages = [_]types.ChatMessage{
         .{ .role = .user, .content = "User requested the change." },

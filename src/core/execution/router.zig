@@ -104,7 +104,9 @@ pub fn executePreparedRoute(
     return local_executor.executePreparedCommand(cfg, alloc, route);
 }
 
-pub fn executePlannedCommand(
+/// Test-only composition of validateConfigContext, prepareAuthorizedRoute, and
+/// executePreparedRoute. Production calls those three directly.
+fn executePlannedCommand(
     cfg: command_runner.Config,
     alloc: std.mem.Allocator,
     command_ctx: command_admission.CommandContext,
