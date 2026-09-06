@@ -142,7 +142,7 @@ pub const Config = struct {
     default_agent_step_limit: usize,
     models_path: []const u8,
     gateway_retry_count: usize,
-    gateway_provider: gateway_provider.Provider,
+    oauth_transport: oauth_transport.Provider,
     provider_set: provider_set.Set,
     process_provider: execution_process_provider.Provider = execution_process_provider.unavailable_provider,
     url_opener: host.UrlOpener,
@@ -585,7 +585,7 @@ fn activateProviderSelection(
     _ = target;
     var resolution = try credentials.resolveForProvider(
         alloc,
-        cfg.gateway_provider.oauth_transport,
+        cfg.oauth_transport,
         .refresh_if_needed,
         .codex,
         null,
@@ -1508,7 +1508,7 @@ fn runProviderLogin(
         .codex => {
             chatgpt_oauth.runLogin(
                 alloc,
-                cfg.gateway_provider.oauth_transport,
+                cfg.oauth_transport,
                 cfg.url_opener,
             ) catch |err| {
                 const message = switch (err) {
@@ -3187,7 +3187,7 @@ fn workflowConfig(cfg: Config) @import("cli_ask.zig").Config {
         .default_agent_step_limit = cfg.default_agent_step_limit,
         .gateway_retry_count = cfg.gateway_retry_count,
         .gateway_models_path = cfg.models_path,
-        .gateway_provider = cfg.gateway_provider,
+        .oauth_transport = cfg.oauth_transport,
         .provider_set = cfg.provider_set,
         .process_provider = cfg.process_provider,
         .prompt_policy = cfg.prompt_policy,
@@ -5274,7 +5274,7 @@ fn testConfig() Config {
         .default_agent_step_limit = 42,
         .models_path = "/v1/models",
         .gateway_retry_count = 1,
-        .gateway_provider = test_builtin_gateway.provider,
+        .oauth_transport = test_builtin_gateway.oauth_transport_provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
         .prompt_policy = .{ .system_prompt = "system" },

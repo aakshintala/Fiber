@@ -104,7 +104,12 @@ Evidence is in `phase4-baseline.md`; the decision is logged in
 - a unit, build, formatting, or smoke failure first seen after a slice is caused
   by that slice until fixed or reverted
 - `zig build test` output must stay free of `failed command:`
-- `zlint` must report no more than 111 `unused-decls` warnings
+- `zlint` `unused-decls` is a ratchet, not a ceiling: it must never rise
+  above the count the previous slice left behind, and each slice records the
+  count it ends on in its commit message. A fixed ceiling lets one slice's
+  orphaned declaration hide inside slack another slice created; Slice 2 was
+  caught only because 112 exceeded 111. Opening count 111 at `38496f4c`,
+  109 after Slice 3.
 - the lazy-analysis probe reports the OSC 8 failure and no other; see
   `phase4-baseline.md`
 

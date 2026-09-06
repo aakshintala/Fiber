@@ -1,6 +1,5 @@
 const std = @import("std");
 const credentials = @import("../auth/credentials.zig");
-const oauth_transport = @import("../auth/oauth_transport.zig");
 const model_capabilities = @import("../config/model_capabilities.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const model_catalog = @import("model_catalog.zig");
@@ -41,10 +40,6 @@ pub const CliModelCatalogProvider = struct {
     ) CliModelCatalogResult {
         return self.fetch_fn(self.context, alloc, input);
     }
-};
-
-pub const Provider = struct {
-    oauth_transport: oauth_transport.Provider,
 };
 
 const CapabilityResolverState = enum {

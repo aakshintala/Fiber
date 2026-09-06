@@ -5,7 +5,6 @@ const app_session_runtime = @import("app_session_runtime.zig");
 const io_mod = @import("../shared/io.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
 const credentials = @import("../auth/credentials.zig");
-const gateway_provider = @import("../gateway/gateway_provider.zig");
 const host = @import("../hosts/host.zig");
 const change_tracker_mod = @import("../workspace/change_tracker.zig");
 const command_router = @import("../slash_commands/command_router.zig");

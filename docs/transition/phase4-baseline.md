@@ -135,7 +135,12 @@ OSC 8 test does fail.
   caused by that slice until fixed or reverted
 - `zig build test` output must stay free of `failed command:`; grep it, do not
   trust the exit status
-- `zlint` must report no more than 111 `unused-decls` warnings
+- `zlint` `unused-decls` is a ratchet, not a ceiling: it must never rise
+  above the count the previous slice left behind, and each slice records the
+  count it ends on in its commit message. A fixed ceiling lets one slice's
+  orphaned declaration hide inside slack another slice created; Slice 2 was
+  caught only because 112 exceeded 111. Opening count 111 at `38496f4c`,
+  109 after Slice 3.
 - the lazy-analysis probe, at the re-audit checkpoint and at phase exit, must
   report the OSC 8 failure and no other
 - E2E is not a Phase 4 signal

@@ -1,7 +1,6 @@
 const std = @import("std");
 
 const oauth_transport = @import("../core/auth/oauth_transport.zig");
-const gateway_provider = @import("../core/gateway/gateway_provider.zig");
 const secret = @import("../core/auth/secret.zig");
 const gateway_client = @import("../gateway/client.zig");
 const io_mod = @import("../core/shared/io.zig");
@@ -12,10 +11,6 @@ const oauth_response_max_bytes: usize = 64 * 1024;
 
 pub const oauth_transport_provider = oauth_transport.Provider{
     .execute_fn = executeOAuthRequest,
-};
-
-pub const provider = gateway_provider.Provider{
-    .oauth_transport = oauth_transport_provider,
 };
 
 /// Codex-only provider bundle used by ACP/CLI test configurations.

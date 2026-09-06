@@ -218,7 +218,7 @@ pub const Config = struct {
     default_agent_step_limit: usize,
     gateway_retry_count: usize,
     gateway_models_path: []const u8,
-    gateway_provider: gateway_provider.Provider,
+    oauth_transport: oauth_transport.Provider,
     provider_set: provider_set.Set,
     process_provider: process_provider.Provider = process_provider.unavailable_provider,
     prompt_policy: prompt_policy.Policy,
@@ -951,7 +951,7 @@ const AskContext = struct {
             .account_id = self.account_id,
             .provider = self.provider,
             .provider_capabilities = provider_capabilities,
-            .oauth_transport = self.cfg.gateway_provider.oauth_transport,
+            .oauth_transport = self.cfg.oauth_transport,
             .model = self.model,
             .gateway_retry_count = self.cfg.gateway_retry_count,
             .gateway_models_path = self.cfg.gateway_models_path,
@@ -1389,7 +1389,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     try checkHeadlessCancellation(options.deps);
     var startup = try options.deps.load_startup_state(
         alloc,
-        cfg.gateway_provider.oauth_transport,
+        cfg.oauth_transport,
         cfg.default_model,
         cfg.default_agent_step_limit,
     );
@@ -1525,7 +1525,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
         const preferred = if (startup.credential) |value| value.source else null;
         const resolution = try credentials.resolveForProvider(
             alloc,
-            cfg.gateway_provider.oauth_transport,
+            cfg.oauth_transport,
             .refresh_if_needed,
             ctx.provider,
             preferred,
@@ -1952,7 +1952,7 @@ fn refreshGatewayCredential(
 ) !?[]u8 {
     const ctx: *AskContext = @ptrCast(@alignCast(raw_ctx));
     return auth_runtime.refreshCredentialTokenForAccount(
-        ctx.cfg.gateway_provider.oauth_transport,
+        ctx.cfg.oauth_transport,
         alloc,
         source,
         mode,
@@ -3847,7 +3847,7 @@ fn testConfig() Config {
         .default_agent_step_limit = 4,
         .gateway_retry_count = 1,
         .gateway_models_path = "/models",
-        .gateway_provider = test_builtin_gateway.provider,
+        .oauth_transport = test_builtin_gateway.oauth_transport_provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .prompt_policy = .{
             .system_prompt = "system",

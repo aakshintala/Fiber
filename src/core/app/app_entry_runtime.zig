@@ -5,7 +5,7 @@ const app_session_runtime = @import("app_session_runtime.zig");
 const auto_upgrade = @import("../upgrade/auto_upgrade.zig");
 const cli_surface = @import("../cli/cli_surface.zig");
 const process_provider = @import("../execution/process_provider.zig");
-const gateway_provider = @import("../gateway/gateway_provider.zig");
+const oauth_transport = @import("../auth/oauth_transport.zig");
 const provider_set = @import("../gateway/provider_set.zig");
 const host = @import("../hosts/host.zig");
 const io_mod = @import("../shared/io.zig");
@@ -63,7 +63,7 @@ pub const Config = struct {
     default_agent_step_limit: usize,
     models_path: []const u8,
     gateway_retry_count: usize,
-    gateway_provider: gateway_provider.Provider,
+    oauth_transport: oauth_transport.Provider,
     provider_set: provider_set.Set,
     process_provider: process_provider.Provider = process_provider.unavailable_provider,
     url_opener: host.UrlOpener,
@@ -376,7 +376,7 @@ fn cliSurfaceConfig(cfg: Config) cli_surface.Config {
         .default_agent_step_limit = cfg.default_agent_step_limit,
         .models_path = cfg.models_path,
         .gateway_retry_count = cfg.gateway_retry_count,
-        .gateway_provider = cfg.gateway_provider,
+        .oauth_transport = cfg.oauth_transport,
         .provider_set = cfg.provider_set,
         .process_provider = cfg.process_provider,
         .url_opener = cfg.url_opener,
@@ -490,7 +490,7 @@ fn testConfig() Config {
         .default_agent_step_limit = 12,
         .models_path = "/models",
         .gateway_retry_count = 2,
-        .gateway_provider = test_builtin_gateway.provider,
+        .oauth_transport = test_builtin_gateway.oauth_transport_provider,
         .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
         .prompt_policy = .{ .system_prompt = "system" },
