@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const build_options = @import("build_options");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
@@ -1282,7 +1281,6 @@ const StdioCreateAttempt = struct {
 };
 
 fn createIdleStdioDispatcherForTest() !*stdio_dispatcher.StdioDispatcher {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
     const child = try std.process.spawn(io_mod.getIo(), .{
         .argv = &.{ "sh", "-c", "while IFS= read -r request; do :; done" },
         .stdin = .pipe,

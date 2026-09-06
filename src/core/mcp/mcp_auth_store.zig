@@ -1060,10 +1060,6 @@ test "credential backend selection is explicit and platform scoped" {
         StorageBackend.profile_file,
         selectStorageBackend(.linux, false, true),
     );
-    try std.testing.expectEqual(
-        StorageBackend.profile_file,
-        selectStorageBackend(.windows, false, true),
-    );
 }
 
 test "credential read decisions preserve the portable store during migration" {

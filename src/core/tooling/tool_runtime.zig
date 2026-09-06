@@ -4522,8 +4522,6 @@ test "command replay policy is decided once from typed execution context" {
 }
 
 test "terminal exec request timeout reaches execution without an ambient timeout" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     const alloc = std.testing.allocator;
     var rt = TestRuntime{};
     defer rt.deinit(alloc);
@@ -4545,8 +4543,6 @@ test "terminal exec request timeout reaches execution without an ambient timeout
 }
 
 test "saved noninteractive terminal exec captures replay by capability" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4655,8 +4651,6 @@ test "registered read_tool_result restores an omitted stored-result suffix" {
 }
 
 test "no-save terminal exec publishes one readable ephemeral replay" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     const runtime_execution_memory = @import("../agent/runtime/execution_memory.zig");
     const read_tool_result = @import("../../tools/session/read_tool_result.zig");
     const alloc = std.testing.allocator;
@@ -4747,8 +4741,6 @@ test "no-save terminal exec publishes one readable ephemeral replay" {
 }
 
 test "required replay spill failure returns recoverable capture failure" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     const alloc = std.testing.allocator;
     var store = command_replay_store.EphemeralStore.initForTesting(
         alloc,
@@ -4778,8 +4770,6 @@ test "required replay spill failure returns recoverable capture failure" {
 }
 
 test "run_command timeout returns model-visible failure" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -5067,8 +5057,6 @@ test "required replay finalizer overrides every recoverable command result" {
 }
 
 test "run_command post-spawn cancellation returns structured evidence in every mode" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -5192,8 +5180,6 @@ test "run_command post-spawn cancellation returns structured evidence in every m
 }
 
 test "run_command success exposes structured foreground metadata" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     var rt = TestRuntime{
         .permission_mode = .auto,
     };
@@ -5223,8 +5209,6 @@ test "run_command success exposes structured foreground metadata" {
 }
 
 test "run_command propagates output callback failure" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     const FailOutput = struct {
         fn write(_: *anyopaque, _: ?types.ToolLifecycleId, _: command_contract.CommandOutputStream, _: []const u8) error{OutOfMemory}!void {
             return error.OutOfMemory;
@@ -5253,8 +5237,6 @@ test "run_command propagates output callback failure" {
 }
 
 test "run_command returns model output and structured metadata" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     var rt = TestRuntime{
         .permission_mode = .auto,
     };
@@ -5284,8 +5266,6 @@ test "run_command returns model output and structured metadata" {
 }
 
 test "run_command nonzero exit returns structured masked failure" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     var rt = TestRuntime{
         .permission_mode = .auto,
     };
@@ -5323,8 +5303,6 @@ test "run_command nonzero exit returns structured masked failure" {
 }
 
 test "run_command huge output exposes truncation and artifact paths without stdout body" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

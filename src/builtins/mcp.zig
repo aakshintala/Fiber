@@ -1228,7 +1228,6 @@ fn tmpPath(alloc: Allocator, root: []const u8, name: []const u8) ![]u8 {
 }
 
 test "saving MCP config replaces the file durably" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1808,7 +1807,6 @@ test "built-in MCP command rejects invalid remote add forms without mutation" {
 }
 
 test "saving MCP config refuses a symlinked target" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1833,7 +1831,6 @@ test "saving MCP config refuses a symlinked target" {
 }
 
 test "built-in MCP command reports a failed save instead of a missing server" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var fixture = ListFixture{ .text = "" };
     var tmp = std.testing.tmpDir(.{});
@@ -1856,7 +1853,6 @@ test "built-in MCP command reports a failed save instead of a missing server" {
 }
 
 test "adding an MCP server creates the profile directory privately" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var fixture = ListFixture{ .text = "" };
     var tmp = std.testing.tmpDir(.{});

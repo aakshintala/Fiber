@@ -94,7 +94,7 @@ pub const Cleanup = struct {
 pub fn prepare(alloc: Allocator, argv: []const []const u8) !Prepared {
     if (!isDirectDockerRun(argv) or hasCidfile(argv)) return .{ .argv = argv };
 
-    const temp_root = temporaryRoot() orelse return .{ .argv = argv };
+    const temp_root = temporaryRoot();
     if (!std.fs.path.isAbsolute(temp_root)) return .{ .argv = argv };
     var nonce: [16]u8 = undefined;
     try std.Io.randomSecure(io_mod.getIo(), &nonce);
@@ -140,11 +140,8 @@ fn hasCidfile(argv: []const []const u8) bool {
     return false;
 }
 
-fn temporaryRoot() ?[]const u8 {
-    return io_mod.getenv("TMPDIR") orelse
-        io_mod.getenv("TEMP") orelse
-        io_mod.getenv("TMP") orelse
-        if (@import("builtin").os.tag == .windows) null else "/tmp";
+fn temporaryRoot() []const u8 {
+    return io_mod.getenv("TMPDIR") orelse "/tmp";
 }
 
 fn readContainerId(alloc: Allocator, path: []const u8) ![]u8 {
