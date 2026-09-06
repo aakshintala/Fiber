@@ -9,7 +9,6 @@ const recv_timeout_sec: i64 = 30;
 const latest_version_max_bytes: usize = 128;
 const checksum_max_bytes: usize = 4096;
 
-const Channel = update_target.Channel;
 const Target = update_target.Target;
 
 fn setRecvTimeout(conn: *std.http.Client.Connection) void {
@@ -66,14 +65,10 @@ fn platformFromTarget() ?[]const u8 {
     return null;
 }
 
-pub fn fetchTarget(alloc: Allocator, channel: Channel, base_url: []const u8) !Target {
-    return switch (channel) {
-        .stable => blk: {
-            const latest = try fetchLatestVersion(alloc, base_url);
-            defer alloc.free(latest);
-            break :blk Target.initStable(alloc, latest) catch return error.FetchFailed;
-        },
-    };
+pub fn fetchTarget(alloc: Allocator, base_url: []const u8) !Target {
+    const latest = try fetchLatestVersion(alloc, base_url);
+    defer alloc.free(latest);
+    return Target.initStable(alloc, latest) catch return error.FetchFailed;
 }
 
 fn fetchLatestVersion(alloc: Allocator, base_url: []const u8) ![]u8 {

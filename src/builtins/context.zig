@@ -1974,32 +1974,6 @@ fn buildTurnContextFragment(arena: Allocator, workspace_root: []const u8) ![]con
     return try out.toOwnedSlice();
 }
 
-fn buildTurnContextFragmentForHost(
-    arena: Allocator,
-    workspace_root: []const u8,
-    host_workspace: ?context_contract.HostWorkspaceContext,
-) ![]const u8 {
-    const workspace = host_workspace orelse
-        return buildTurnContextFragment(arena, workspace_root);
-    const os_text = try host.operatingSystemText(arena);
-    const date_text = try todayUtcText(arena);
-
-    var out: std.Io.Writer.Allocating = .init(arena);
-    defer out.deinit();
-    try out.writer.writeAll("<fiber-turn-context>\nworkspace_root: ");
-    try model_context_encoding.writeScalar(&out.writer, workspace.root);
-    try out.writer.writeAll("\ncurrent_directory: ");
-    try model_context_encoding.writeScalar(&out.writer, workspace.cwd);
-    try out.writer.print("\noperating_system: {s}\nshell_path: just-bash\ndate_utc: {s}\nhome_directory: ", .{ os_text, date_text });
-    try model_context_encoding.writeScalar(&out.writer, workspace.home);
-    try out.writer.writeAll(
-        "\ngit_available: false\n" ++
-            "git_worktree: unavailable\n" ++
-            "</fiber-turn-context>",
-    );
-    return try out.toOwnedSlice();
-}
-
 fn currentWorkingDirectory(arena: Allocator) ![]const u8 {
     return std.process.currentPathAlloc(io_mod.getIo(), arena);
 }
@@ -2656,43 +2630,6 @@ test "turn context reports unknown git worktree outside git repos" {
     try std.testing.expect(std.mem.find(u8, fragment, "git_worktree: unknown") != null);
 }
 
-test "turn context selection is byte identical on the native path" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const native = try buildTurnContextFragment(arena, "/tmp/workspace");
-    const selected = try buildTurnContextFragmentForHost(
-        arena,
-        "/tmp/workspace",
-        null,
-    );
-    try std.testing.expectEqualStrings(native, selected);
-}
-
-test "turn context uses explicit browser workspace and git unavailable state" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-
-    const fragment = try buildTurnContextFragmentForHost(
-        arena_state.allocator(),
-        "/native/path",
-        context_contract.HostWorkspaceContext{
-            .root = "/workspace",
-            .cwd = "/workspace/src",
-            .home = "/home/visitor",
-        },
-    );
-    try expectContains(fragment, "workspace_root: /workspace\n");
-    try expectContains(fragment, "current_directory: /workspace/src\n");
-    try expectContains(fragment, "shell_path: just-bash\n");
-    try expectContains(fragment, "home_directory: /home/visitor\n");
-    try expectContains(fragment, "git_available: false\n");
-    try expectContains(fragment, "git_worktree: unavailable\n");
-    try expectNotContains(fragment, "/native/path");
-    try expectNotContains(fragment, "git_branch:");
-}
-
 test "turn context keeps workspace metadata inside its field" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -2829,11 +2766,7 @@ fn permissionModeContext(permission_mode: types.PermissionMode) []const u8 {
 }
 
 fn appendTransient(input: TransientContextInput, arena: Allocator, messages: *std.ArrayList(ChatMessage)) !void {
-    const turn_context = try buildTurnContextFragmentForHost(
-        arena,
-        input.workspace_root,
-        input.host_workspace,
-    );
+    const turn_context = try buildTurnContextFragment(arena, input.workspace_root);
     const content = if (input.interactive)
         turn_context
     else

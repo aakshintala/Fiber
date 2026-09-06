@@ -274,7 +274,7 @@ pub fn Commands(comptime App: type) type {
                 .model = provider_runtime.model(app),
                 .provider = provider_runtime.provider(app),
                 .update_channel = update_channel_label(app),
-                .build_channel = if (@hasDecl(App, "build_update_channel")) App.build_update_channel.label() else "stable",
+                .build_channel = "stable",
                 .build_revision = if (@hasDecl(App, "build_revision")) App.build_revision else "",
                 .auth = auth,
                 .auth_help = auth.missingHelp(.interactive),

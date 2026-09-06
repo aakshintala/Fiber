@@ -121,7 +121,6 @@ pub fn Runtime(comptime App: type) type {
             logDepthTransition(
                 from,
                 app.shell.transcriptPresentationDepth(),
-                .root,
                 triggerForEvent(event),
             );
         }
@@ -141,7 +140,7 @@ pub fn Runtime(comptime App: type) type {
                 &app.shell,
                 &app.metrics,
             );
-            logDepthTransition(from, .inline_mode, .root, trigger);
+            logDepthTransition(from, .inline_mode, trigger);
         }
 
         fn keyForByte(byte: u8) ?FullTranscriptKey {
@@ -196,7 +195,6 @@ pub fn Runtime(comptime App: type) type {
             }
         }
 
-        const TransitionRoute = enum { root };
         const TransitionTrigger = enum { ctrl_o, left, right, escape, ctrl_c };
 
         fn triggerForEvent(
@@ -212,13 +210,12 @@ pub fn Runtime(comptime App: type) type {
         fn logDepthTransition(
             from: transcript_presentation.Depth,
             to: transcript_presentation.Depth,
-            route: TransitionRoute,
             trigger: TransitionTrigger,
         ) void {
             debug_trace.logf(
                 "full_transcript",
-                "depth_transition from={s} to={s} route={s} trigger={s}",
-                .{ depthName(from), depthName(to), @tagName(route), @tagName(trigger) },
+                "depth_transition from={s} to={s} trigger={s}",
+                .{ depthName(from), depthName(to), @tagName(trigger) },
             );
         }
 

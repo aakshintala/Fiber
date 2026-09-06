@@ -2001,10 +2001,6 @@ pub const DoctorSnapshot = struct {
 pub const UpgradeSnapshot = struct {
     current: []const u8,
     latest: []const u8,
-    channel: []const u8 = "stable",
-    current_channel: []const u8 = "stable",
-    current_revision: []const u8 = "",
-    latest_revision: []const u8 = "",
     status: Status,
     err_message: ?[]const u8 = null,
 
@@ -2041,21 +2037,11 @@ pub const UpgradeSnapshot = struct {
         switch (self.status) {
             .upgraded => {
                 try out.writer.writeAll("upgraded to ");
-                if (std.mem.eql(u8, self.channel, "dev") and self.latest_revision.len > 0) {
-                    try out.writer.print("dev {s} (", .{shortRevision(self.latest_revision)});
-                    try writeVersionWithPrefix(&out.writer, self.latest);
-                    try out.writer.writeByte(')');
-                } else {
-                    try writeVersionWithPrefix(&out.writer, self.latest);
-                }
+                try writeVersionWithPrefix(&out.writer, self.latest);
                 try out.writer.writeByte('\n');
             },
             .up_to_date => {
-                if (std.mem.eql(u8, self.channel, "dev") and self.latest_revision.len > 0) {
-                    try out.writer.print("fiber dev {s} is already up to date (", .{shortRevision(self.latest_revision)});
-                } else {
-                    try out.writer.writeAll("fiber is already up to date (");
-                }
+                try out.writer.writeAll("fiber is already up to date (");
                 try writeVersionWithPrefix(&out.writer, self.latest);
                 try out.writer.writeAll(")\n");
             },
@@ -2082,29 +2068,12 @@ pub const UpgradeSnapshot = struct {
         try std.json.Stringify.value(self.current, .{}, &out.writer);
         try out.writer.writeAll(",\"latest\":");
         try std.json.Stringify.value(self.latest, .{}, &out.writer);
-        if (!std.mem.eql(u8, self.channel, "stable") or
-            !std.mem.eql(u8, self.current_channel, "stable") or
-            self.latest_revision.len > 0)
-        {
-            try out.writer.writeAll(",\"channel\":");
-            try std.json.Stringify.value(self.channel, .{}, &out.writer);
-            try out.writer.writeAll(",\"current_channel\":");
-            try std.json.Stringify.value(self.current_channel, .{}, &out.writer);
-            try out.writer.writeAll(",\"current_revision\":");
-            try std.json.Stringify.value(self.current_revision, .{}, &out.writer);
-            try out.writer.writeAll(",\"latest_revision\":");
-            try std.json.Stringify.value(self.latest_revision, .{}, &out.writer);
-        }
         try out.writer.writeAll(",\"status\":");
         try std.json.Stringify.value(self.status.label(), .{}, &out.writer);
         try out.writer.writeAll("}}");
         return try out.toOwnedSlice();
     }
 };
-
-fn shortRevision(revision: []const u8) []const u8 {
-    return revision[0..@min(revision.len, 12)];
-}
 
 fn writeVersionWithPrefix(writer: *std.Io.Writer, version: []const u8) !void {
     if (version.len == 0 or version[0] != 'v') {
@@ -3298,7 +3267,6 @@ test "core upgrade snapshot renders errors and statuses" {
     const upgraded_json = try (UpgradeSnapshot{
         .current = "0.2.9",
         .latest = "0.2.10",
-        .current_revision = "0123456789ab",
         .status = .upgraded,
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(upgraded_json);
@@ -3338,29 +3306,6 @@ test "core upgrade snapshot renders errors and statuses" {
     try std.testing.expectEqualStrings(
         "{\"ok\":true,\"kind\":\"upgrade\",\"data\":{\"current\":\"0.2.9\",\"latest\":\"0.2.10\",\"status\":\"up_to_date\"}}",
         up_to_date_json,
-    );
-}
-
-test "core upgrade snapshot identifies dev revisions" {
-    const snapshot = UpgradeSnapshot{
-        .current = "0.3.66",
-        .latest = "0.3.66",
-        .channel = "dev",
-        .current_channel = "stable",
-        .current_revision = "111111111111",
-        .latest_revision = "abcdef0123456789abcdef0123456789abcdef01",
-        .status = .upgraded,
-    };
-
-    const text = try snapshot.renderText(std.testing.allocator);
-    defer std.testing.allocator.free(text);
-    try std.testing.expectEqualStrings("upgraded to dev abcdef012345 (v0.3.66)\n", text);
-
-    const json = try snapshot.renderJson(std.testing.allocator);
-    defer std.testing.allocator.free(json);
-    try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"upgrade\",\"data\":{\"current\":\"0.3.66\",\"latest\":\"0.3.66\",\"channel\":\"dev\",\"current_channel\":\"stable\",\"current_revision\":\"111111111111\",\"latest_revision\":\"abcdef0123456789abcdef0123456789abcdef01\",\"status\":\"upgraded\"}}",
-        json,
     );
 }
 

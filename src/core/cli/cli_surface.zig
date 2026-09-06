@@ -136,7 +136,6 @@ const help_usage = "usage: fiber help\n";
 pub const Config = struct {
     version: []const u8 = "",
     revision: []const u8 = "",
-    build_channel: update_target.Channel = .stable,
     command_catalog: CommandCatalog,
     default_model: []const u8,
     default_agent_step_limit: usize,
@@ -746,7 +745,6 @@ fn runNonInteractiveWithDeps(
             defer mcp_inspection.deinit(alloc);
 
             var snapshot = statusSnapshotFromStartupWithBuild(startup, .{
-                .channel = cfg.build_channel,
                 .version = cfg.version,
                 .revision = cfg.revision,
             }, mcp_inspection.profile_diagnostic);
@@ -1085,10 +1083,9 @@ fn runNonInteractiveWithDeps(
             try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
 
             var result = upgrade_runtime.run(alloc, .{
-                .channel = cfg.build_channel,
                 .version = cfg.version,
                 .revision = cfg.revision,
-            }, .stable, switch (opts.format) {
+            }, switch (opts.format) {
                 .text => .text,
                 .json => .json,
             });
@@ -1235,7 +1232,6 @@ fn writeStatusJsonLine(alloc: Allocator, deps: RunDeps, snapshot: output_contrac
 
 fn statusSnapshotFromStartup(startup: app_lifecycle.StartupStatus) output_contracts.StatusSnapshot {
     return statusSnapshotFromStartupWithBuild(startup, .{
-        .channel = .stable,
         .version = "",
         .revision = "",
     }, .clear);
@@ -1256,8 +1252,8 @@ fn statusSnapshotFromStartupWithBuild(
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = startup.agent_step_limit,
-        .update_channel = update_target.Channel.stable.label(),
-        .build_channel = build.channel.label(),
+        .update_channel = "stable",
+        .build_channel = "stable",
         .build_revision = build.revision,
         .mcp_config_error = switch (mcp_config_diagnostic) {
             .clear, .warning => null,

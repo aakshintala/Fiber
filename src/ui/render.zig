@@ -1,5 +1,4 @@
 const std = @import("std");
-const build_options = @import("build_options");
 const io_mod = @import("../core/shared/io.zig");
 const host = @import("../core/hosts/host.zig");
 const display_width = @import("../core/shared/display_width.zig");
@@ -11,7 +10,6 @@ const main = @import("../main.zig");
 const theme_detection = @import("terminal/theme_detection.zig");
 const theme_protocol = @import("terminal/theme_protocol.zig");
 const visual_layout = @import("input/visual_layout.zig");
-const update_target = @import("../core/upgrade/update_target.zig");
 
 pub const input_prefix = "❯ ";
 pub const TerminalRgb = user_message_card.Rgb;
@@ -165,18 +163,11 @@ pub fn buildInputLineForRow(input: []const u8, cursor: usize, line_index: usize,
     };
 }
 
-const build_channel: update_target.Channel = .stable;
 const welcome_build_label_bytes: usize = 96;
-/// Dev builds ship on every merged PR, so the version alone cannot identify the
-/// binary: the header carries the commit and a brighter `[dev]` tag.
 fn writeBuildLabel(
     out: []u8,
-    channel: update_target.Channel,
     version_text: []const u8,
-    revision: []const u8,
 ) ![]const u8 {
-    _ = channel;
-    _ = revision;
     return std.fmt.bufPrint(out, "v{s}", .{version_text});
 }
 
@@ -184,9 +175,7 @@ pub fn welcomeMessage(alloc: std.mem.Allocator) ![]u8 {
     var label_buf: [welcome_build_label_bytes]u8 = undefined;
     const build_label = try writeBuildLabel(
         &label_buf,
-        build_channel,
         main.version,
-        build_options.git_commit,
     );
     return std.fmt.allocPrint(
         alloc,
@@ -879,9 +868,7 @@ test "welcomeMessage keeps only the app name bright" {
     var label_buf: [welcome_build_label_bytes]u8 = undefined;
     const build_label = try writeBuildLabel(
         &label_buf,
-        build_channel,
         main.version,
-        build_options.git_commit,
     );
     const expected = try std.fmt.allocPrint(
         std.testing.allocator,
@@ -895,7 +882,7 @@ test "welcomeMessage keeps only the app name bright" {
 
 test "build label stays bare on the stable channel" {
     var buf: [welcome_build_label_bytes]u8 = undefined;
-    const label = try writeBuildLabel(&buf, .stable, "0.0.4", "abcdef123456");
+    const label = try writeBuildLabel(&buf, "0.0.4");
     try std.testing.expectEqualStrings("v0.0.4", label);
 }
 

@@ -95,7 +95,6 @@ const assistant_presentation = @import("core/agent/assistant_presentation.zig");
 const auto_upgrade = @import("core/upgrade/auto_upgrade.zig");
 const update_target = @import("core/upgrade/update_target.zig");
 
-const compiled_update_channel: update_target.Channel = .stable;
 const shell_process_provider = @import("tools/shell/process_provider.zig");
 const process_provider = @import("core/execution/process_provider.zig");
 const terminal_client_runtime = @import("core/terminal/client.zig");
@@ -353,7 +352,6 @@ const selected_host_profile = host_runtime_profile.native;
 const app_oauth_transport = builtin_gateway.oauth_transport_provider;
 fn currentBuild() update_target.CurrentBuild {
     return .{
-        .channel = compiled_update_channel,
         .version = version,
         .revision = build_options.git_commit,
     };
@@ -363,7 +361,6 @@ const App = struct {
     pub const app_version = version;
     pub const host_profile = selected_host_profile;
     pub const input_limits = paste_framing.default_input_limits;
-    pub const build_update_channel = compiled_update_channel;
     pub const build_revision = build_options.git_commit;
     const Self = @This();
     const AgentAppRuntime = app_agent_runtime.Runtime(Self);
@@ -3358,7 +3355,6 @@ fn fullEntryConfig() app_entry_runtime.Config {
     return .{
         .version = version,
         .revision = build_options.git_commit,
-        .build_channel = compiled_update_channel,
         .command_catalog = builtin_commands.top_level_registry,
         .default_model = default_model,
         .default_agent_step_limit = default_max_agent_steps,
@@ -3393,7 +3389,6 @@ fn localEntryConfig() app_entry_runtime.Config {
     return .{
         .version = version,
         .revision = build_options.git_commit,
-        .build_channel = compiled_update_channel,
         .command_catalog = builtin_commands.top_level_registry,
         .default_model = default_model,
         .default_agent_step_limit = default_max_agent_steps,
@@ -3428,7 +3423,6 @@ fn emptyEntryConfig() app_entry_runtime.Config {
     return .{
         .version = version,
         .revision = build_options.git_commit,
-        .build_channel = compiled_update_channel,
         .command_catalog = builtin_commands.top_level_registry,
         .default_model = "",
         .default_agent_step_limit = 0,

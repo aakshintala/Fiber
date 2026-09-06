@@ -135,7 +135,6 @@ pub const Binding = struct {
     catalog_generation: u64,
     request_generation: u64,
     auth_generation: u64,
-    user_identity: ?[]const u8 = null,
     deadline_ms: i64,
 };
 
@@ -148,7 +147,6 @@ pub const AnswerBinding = struct {
     catalog_generation: u64,
     request_generation: u64,
     auth_generation: u64,
-    user_identity: ?[]const u8 = null,
 };
 
 pub const RequestState = enum {
@@ -170,7 +168,6 @@ const Rejection = enum {
     wrong_catalog_generation,
     wrong_request_generation,
     changed_auth,
-    wrong_user,
     cancelled,
 };
 
@@ -200,7 +197,6 @@ pub fn decideTransition(
     if (expected.catalog_generation != answer.catalog_generation) return .{ .reject = .wrong_catalog_generation };
     if (expected.request_generation != answer.request_generation) return .{ .reject = .wrong_request_generation };
     if (expected.auth_generation != answer.auth_generation) return .{ .reject = .changed_auth };
-    if (!optionalStringEqual(expected.user_identity, answer.user_identity)) return .{ .reject = .wrong_user };
     return .consume;
 }
 
@@ -227,11 +223,6 @@ fn operationEqual(expected: Operation, answer: Operation) bool {
             else => false,
         },
     };
-}
-
-fn optionalStringEqual(left: ?[]const u8, right: ?[]const u8) bool {
-    if (left == null or right == null) return left == null and right == null;
-    return std.mem.eql(u8, left.?, right.?);
 }
 
 pub const Action = enum {
@@ -357,7 +348,6 @@ pub fn decideLegacyUrlCompletion(
             .catalog_generation = notification.catalog_generation,
             .request_generation = expected.request_generation,
             .auth_generation = notification.auth_generation,
-            .user_identity = expected.user_identity,
         },
         now_ms,
         server_present,
@@ -824,7 +814,7 @@ fn parseFieldInto(
         try parseStringConstraints(alloc, &field, schema, limits, wire);
         if (schema.object.get("oneOf")) |choices| {
             if (wire == .legacy_mcp_2025_06) return error.UnsupportedSchema;
-            field.choices = try parseTitledChoices(alloc, choices, limits, false);
+            field.choices = try parseTitledChoices(alloc, choices, limits);
             field.kind = .single_select;
         } else if (schema.object.get("enum")) |choices| {
             field.choices = try parseEnumChoices(alloc, choices, schema.object.get("enumNames"), limits);
@@ -918,7 +908,7 @@ fn parseMultiSelect(
                 return error.UnsupportedSchema;
             }
         }
-        field.choices = try parseTitledChoices(alloc, choices, limits, false);
+        field.choices = try parseTitledChoices(alloc, choices, limits);
     } else if (items.object.get("enum")) |choices| {
         const item_type = items.object.get("type") orelse return error.InvalidSchema;
         if (item_type != .string or !std.mem.eql(u8, item_type.string, "string")) {
@@ -935,7 +925,6 @@ fn parseTitledChoices(
     alloc: Allocator,
     value: std.json.Value,
     limits: Limits,
-    allow_description: bool,
 ) Error![]Choice {
     if (value != .array or value.array.items.len == 0 or value.array.items.len > limits.max_options) {
         return error.InvalidSchema;
@@ -967,20 +956,9 @@ fn parseTitledChoices(
                 return error.InvalidSchema;
             }
         }
-        if (item.object.get("description")) |description| {
-            if (!allow_description) {
-                choices[count].deinit(alloc);
-                return error.UnsupportedSchema;
-            }
-            choices[count].description = copyString(
-                alloc,
-                description,
-                limits.max_label_bytes,
-                error.InvalidSchema,
-            ) catch |err| {
-                choices[count].deinit(alloc);
-                return err;
-            };
+        if (item.object.get("description")) |_| {
+            choices[count].deinit(alloc);
+            return error.UnsupportedSchema;
         }
         count += 1;
     }
@@ -2026,7 +2004,6 @@ test "continuation decisions reject stale cross-owner and duplicate answers" {
         .catalog_generation = 4,
         .request_generation = 5,
         .auth_generation = 6,
-        .user_identity = "user-a",
         .deadline_ms = 100,
     };
     const answer: AnswerBinding = .{
@@ -2038,7 +2015,6 @@ test "continuation decisions reject stale cross-owner and duplicate answers" {
         .catalog_generation = 4,
         .request_generation = 5,
         .auth_generation = 6,
-        .user_identity = "user-a",
     };
     try std.testing.expectEqual(Transition.consume, decideTransition(.pending, expected, answer, 99, true));
     try std.testing.expectEqual(Rejection.duplicate, decideTransition(.consumed, expected, answer, 99, true).reject);

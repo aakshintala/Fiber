@@ -35,16 +35,14 @@ const RunError = error{
 pub fn run(
     alloc: Allocator,
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     format: output_contracts.OutputFormat,
 ) RunResult {
-    return runInner(alloc, current, channel, format) catch |err| failureResult(current, channel, err);
+    return runInner(alloc, current, format) catch |err| failureResult(current, err);
 }
 
 fn runInner(
     alloc: Allocator,
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     format: output_contracts.OutputFormat,
 ) RunError!RunResult {
     var done = std.atomic.Value(bool).init(false);
@@ -52,7 +50,7 @@ fn runInner(
     var worker_result = WorkerResult{};
 
     const show_progress = format == .text;
-    const worker = std.Thread.spawn(.{}, upgradeWorker, .{ alloc, current, channel, &done, &worker_result, &progress, show_progress }) catch
+    const worker = std.Thread.spawn(.{}, upgradeWorker, .{ alloc, current, &done, &worker_result, &progress, show_progress }) catch
         return error.FetchFailed;
 
     if (show_progress) {
@@ -62,13 +60,12 @@ fn runInner(
     }
     if (format == .text) worker.join();
 
-    return completeRunResult(alloc, current, channel, worker_result);
+    return completeRunResult(alloc, current, worker_result);
 }
 
 fn completeRunResult(
     alloc: Allocator,
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     worker_result: WorkerResult,
 ) RunError!RunResult {
     if (worker_result.err) |e| {
@@ -80,18 +77,13 @@ fn completeRunResult(
     }
 
     const target = worker_result.target_owned orelse return error.FetchFailed;
-    const latest = target.version();
-    const latest_revision = target.revision() orelse "";
+    const latest = target.version;
 
     if (!target.shouldInstall(current)) {
         return .{
             .snapshot = .{
                 .current = versionLabel(current.version),
                 .latest = latest,
-                .channel = channel.label(),
-                .current_channel = current.channel.label(),
-                .current_revision = current.revision,
-                .latest_revision = latest_revision,
                 .status = .up_to_date,
             },
             .target_owned = target,
@@ -102,10 +94,6 @@ fn completeRunResult(
         .snapshot = .{
             .current = versionLabel(current.version),
             .latest = latest,
-            .channel = channel.label(),
-            .current_channel = current.channel.label(),
-            .current_revision = current.revision,
-            .latest_revision = latest_revision,
             .status = .upgraded,
         },
         .target_owned = target,
@@ -114,15 +102,11 @@ fn completeRunResult(
 
 fn failureResult(
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     err: RunError,
 ) RunResult {
     return .{ .snapshot = .{
         .current = versionLabel(current.version),
         .latest = "",
-        .channel = channel.label(),
-        .current_channel = current.channel.label(),
-        .current_revision = current.revision,
         .status = .failed,
         .err_message = failureMessage(err),
     } };
@@ -157,14 +141,13 @@ fn workerErrorToRunError(err: UpgradeError) RunError {
 fn upgradeWorker(
     alloc: Allocator,
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     done: *std.atomic.Value(bool),
     result: *WorkerResult,
     progress: *ProgressState,
     show_progress: bool,
 ) void {
     defer done.store(true, .release);
-    upgradeWorkerInner(alloc, current, channel, result, progress, show_progress) catch {
+    upgradeWorkerInner(alloc, current, result, progress, show_progress) catch {
         if (result.err == null) result.err = .out_of_memory;
     };
 }
@@ -172,7 +155,6 @@ fn upgradeWorker(
 fn upgradeWorkerInner(
     alloc: Allocator,
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     result: *WorkerResult,
     progress: *ProgressState,
     show_progress: bool,
@@ -181,7 +163,7 @@ fn upgradeWorkerInner(
         result.err = .fetch_failed;
         return;
     };
-    const fetched_target = helpers.fetchTarget(alloc, channel, cdn_base) catch {
+    const fetched_target = helpers.fetchTarget(alloc, cdn_base) catch {
         result.err = .fetch_failed;
         return;
     };
@@ -421,10 +403,9 @@ test "completeRunResult reports up to date when normalized versions match" {
     const target = try update_target.Target.initStable(alloc, "v0.2.10");
 
     var result = try completeRunResult(alloc, .{
-        .channel = .stable,
         .version = "0.2.10",
         .revision = "0123456789ab",
-    }, .stable, .{ .target_owned = target });
+    }, .{ .target_owned = target });
     defer result.deinit(alloc);
 
     try std.testing.expectEqual(output_contracts.UpgradeSnapshot.Status.up_to_date, result.snapshot.status);
@@ -437,10 +418,9 @@ test "completeRunResult reports upgraded when latest differs" {
     const target = try update_target.Target.initStable(alloc, "0.2.11");
 
     var result = try completeRunResult(alloc, .{
-        .channel = .stable,
         .version = "0.2.10",
         .revision = "0123456789ab",
-    }, .stable, .{ .target_owned = target });
+    }, .{ .target_owned = target });
     defer result.deinit(alloc);
 
     try std.testing.expectEqual(output_contracts.UpgradeSnapshot.Status.upgraded, result.snapshot.status);
@@ -453,10 +433,9 @@ test "completeRunResult reports no update for an older stable target" {
     const target = try update_target.Target.initStable(alloc, "v0.0.1");
 
     var result = try completeRunResult(alloc, .{
-        .channel = .stable,
         .version = "0.0.2",
         .revision = "0123456789ab",
-    }, .stable, .{ .target_owned = target });
+    }, .{ .target_owned = target });
     defer result.deinit(alloc);
 
     try std.testing.expectEqual(output_contracts.UpgradeSnapshot.Status.up_to_date, result.snapshot.status);
@@ -471,10 +450,9 @@ test "completeRunResult maps worker errors and frees latest version" {
     try std.testing.expectError(
         error.DownloadFailed,
         completeRunResult(alloc, .{
-            .channel = .stable,
             .version = "0.2.10",
             .revision = "0123456789ab",
-        }, .stable, .{
+        }, .{
             .target_owned = target,
             .err = .download_failed,
         }),
@@ -483,10 +461,9 @@ test "completeRunResult maps worker errors and frees latest version" {
 
 test "failureResult preserves active error messages" {
     const result = failureResult(.{
-        .channel = .stable,
         .version = "v0.2.10",
         .revision = "0123456789ab",
-    }, .stable, error.ChecksumMismatch);
+    }, error.ChecksumMismatch);
 
     try std.testing.expectEqual(output_contracts.UpgradeSnapshot.Status.failed, result.snapshot.status);
     try std.testing.expectEqualStrings("0.2.10", result.snapshot.current);
