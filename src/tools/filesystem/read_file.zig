@@ -1,7 +1,6 @@
 const std = @import("std");
 const io_mod = @import("../../core/shared/io.zig");
 const pathing = @import("../../core/workspace/pathing.zig");
-const permission_gate = @import("../../core/permissions/permission_gate.zig");
 const read_tracker = @import("../../core/workspace/read_tracker.zig");
 const text_utils = @import("../../core/shared/text_utils.zig");
 const tool_dispatch = @import("../../core/tooling/tool_dispatch.zig");

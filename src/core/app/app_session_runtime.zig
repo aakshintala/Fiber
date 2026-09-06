@@ -2,7 +2,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const question_answer = @import("../agent/question_answer.zig");
 const config_runtime = @import("../config/config_runtime.zig");
-const model_capabilities = @import("../config/model_capabilities.zig");
 const model_provider = @import("../config/model_provider.zig");
 const assistant_presentation = @import("../agent/assistant_presentation.zig");
 const tool_admission = @import("../agent/runtime/tool_admission.zig");

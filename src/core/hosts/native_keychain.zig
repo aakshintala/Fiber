@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const debug_trace = @import("../shared/debug_trace.zig");
-const host = @import("host.zig");
 const io_mod = @import("../shared/io.zig");
 const secret = @import("../auth/secret.zig");
 

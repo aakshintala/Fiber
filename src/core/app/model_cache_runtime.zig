@@ -10,10 +10,6 @@ const io_mod = @import("../shared/io.zig");
 const list_window = @import("../shared/list_window.zig");
 const text_utils = @import("../shared/text_utils.zig");
 const types = @import("../shared/types.zig");
-const test_builtin_gateway = if (@import("builtin").is_test)
-    @import("../../builtins/gateway.zig")
-else
-    struct {};
 
 const Allocator = std.mem.Allocator;
 const e2e_gateway_models_url_env = "FIBER_E2E_GATEWAY_MODELS_URL";

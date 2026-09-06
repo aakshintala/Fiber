@@ -5,7 +5,6 @@ const command_contract = @import("command_contract.zig");
 const command_environment = @import("command_environment.zig");
 const command_runner = @import("command_runner.zig");
 const contract = @import("managed_execution_contract.zig");
-const debug_trace = @import("../shared/debug_trace.zig");
 const execution_router = @import("router.zig");
 const io_mod = @import("../shared/io.zig");
 const types = @import("../shared/types.zig");

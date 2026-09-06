@@ -11,12 +11,10 @@ const app_worker_runtime = @import("app_worker_runtime.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
 const credentials = @import("../auth/credentials.zig");
 const change_tracker = @import("../workspace/change_tracker.zig");
-const file_mutation_contract = @import("../tooling/file_mutation_contract.zig");
 const hooks = @import("../hooks/hooks.zig");
 const io_mod = @import("../shared/io.zig");
 const mcp_elicitation_interaction = @import("../mcp/elicitation_interaction.zig");
 const mcp_model_catalog = @import("../mcp/model_catalog.zig");
-const permission_gate = @import("../permissions/permission_gate.zig");
 const permissions = @import("../permissions/permissions.zig");
 const prompt_policy_contract = @import("../config/prompt_policy.zig");
 const model_provider = @import("../config/model_provider.zig");
@@ -27,7 +25,6 @@ const subagent_agent_adapter = @import("../subagent/agent_adapter.zig");
 const subagent_domain = @import("../subagent/domain.zig");
 const subagent_execution = @import("../subagent/execution.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
-const text_utils = @import("../shared/text_utils.zig");
 const tool_args = @import("../tooling/tool_args.zig");
 const tool_admission = @import("../tooling/tool_admission.zig");
 const tool_projection_mod = @import("../tooling/tool_projection.zig");
@@ -37,10 +34,6 @@ const tool_mcp_runtime = @import("../tooling/tool_mcp_runtime.zig");
 const context_contract = @import("../workspace/context_contract.zig");
 const model_catalog = @import("../gateway/model_catalog.zig");
 const provider_set = @import("../gateway/provider_set.zig");
-const test_builtin_gateway = if (@import("builtin").is_test)
-    @import("../../builtins/gateway.zig")
-else
-    struct {};
 const test_builtin_tools = if (@import("builtin").is_test)
     @import("../../builtins/tools.zig")
 else

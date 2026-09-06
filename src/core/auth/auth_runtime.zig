@@ -4,7 +4,6 @@ const chatgpt_oauth = @import("chatgpt_oauth.zig");
 const login_flow = @import("login_flow.zig");
 const model_provider = @import("../config/model_provider.zig");
 const oauth_transport = @import("oauth_transport.zig");
-const secret = @import("secret.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 

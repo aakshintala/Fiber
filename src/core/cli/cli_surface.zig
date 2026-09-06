@@ -20,7 +20,6 @@ const execution_process_provider = @import("../execution/process_provider.zig");
 const host = @import("../hosts/host.zig");
 const oauth_transport = @import("../auth/oauth_transport.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
-const secret = @import("../auth/secret.zig");
 const output_contracts = @import("../output/output_contracts.zig");
 const permissions = @import("../permissions/permissions.zig");
 const prompt_policy = @import("../config/prompt_policy.zig");
@@ -45,7 +44,6 @@ const mcp_runtime = @import("../mcp/mcp_runtime.zig");
 const text_utils = @import("../shared/text_utils.zig");
 const profile_paths = @import("../shared/profile_paths.zig");
 const tool_set_contract = @import("../tooling/tool_set.zig");
-const workspace_access = @import("../workspace/workspace_access.zig");
 const workspace_commands = @import("../workspace/workspace_commands.zig");
 const usage_cli_runtime = @import("usage_cli_runtime.zig");
 

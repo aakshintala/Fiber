@@ -18,7 +18,6 @@ const composer_insertion = @import("../../core/input/composer_insertion.zig");
 const kill_ring = @import("../../core/input/kill_ring.zig");
 const entity_spans = @import("../../core/shared/entity_spans.zig");
 const input_action = @import("../../core/input/input_action.zig");
-const vertical_navigation = @import("../../core/input/vertical_navigation.zig");
 const visual_layout = @import("visual_layout.zig");
 const escape_parser = @import("escape_parser.zig");
 const shortcuts = @import("shortcuts.zig");

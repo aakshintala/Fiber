@@ -14,7 +14,6 @@ const app_session_runtime = @import("app_session_runtime.zig");
 const app_render_runtime = @import("app_render_runtime.zig");
 const session_permission_state = @import("../permissions/session_permission_state.zig");
 const permission_request = @import("../permissions/permission_request.zig");
-const session = @import("../session/session.zig");
 const interaction_state = @import("../../ui/footer/interaction_state.zig");
 const approval_prompt = @import("../permissions/approval_prompt.zig");
 const render_request = @import("../../ui/render_request.zig");

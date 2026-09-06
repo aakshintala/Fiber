@@ -11,7 +11,6 @@ const workspace_config = @import("../core/mcp/workspace_config.zig");
 const mcp_runtime = @import("../core/mcp/mcp_runtime.zig");
 const config_runtime = @import("../core/config/config_runtime.zig");
 const elicitation = @import("../core/mcp/elicitation.zig");
-const streamable_http = @import("../core/mcp/streamable_http.zig");
 const profile_paths = @import("../core/shared/profile_paths.zig");
 const text_utils = @import("../core/shared/text_utils.zig");
 

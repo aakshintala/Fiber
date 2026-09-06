@@ -4,7 +4,6 @@ const host = @import("../core/hosts/host.zig");
 const display_width = @import("../core/shared/display_width.zig");
 const text_utils = @import("../core/shared/text_utils.zig");
 const types = @import("../core/shared/types.zig");
-const image_attachments = @import("../core/images/image_attachments.zig");
 const assistant_presentation = @import("../core/agent/assistant_presentation.zig");
 const main = @import("../main.zig");
 const theme_detection = @import("terminal/theme_detection.zig");

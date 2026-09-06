@@ -19,7 +19,6 @@ const command_output_content = @import("../../core/tooling/command_output_conten
 const render_engine = @import("../render_engine.zig");
 const source_preparation = @import("source_preparation.zig");
 const transcript_release = @import("../../core/output/transcript_release.zig");
-const transcript_writer = @import("writer.zig");
 const vt_emulator = @import("../../core/terminal/engine.zig");
 
 const Allocator = std.mem.Allocator;

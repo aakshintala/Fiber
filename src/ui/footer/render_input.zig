@@ -28,7 +28,6 @@ const ui_render = @import("../render.zig");
 const render_engine = @import("../render_engine.zig");
 const render_request = @import("../render_request.zig");
 const transcript_runtime = @import("../transcript/runtime.zig");
-const interaction_state = @import("interaction_state.zig");
 
 const activity_overlay = render_engine.activity_overlay;
 const StreamState = types.StreamState;

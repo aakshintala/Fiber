@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const chatgpt_session = @import("chatgpt_session.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const host = @import("../hosts/host.zig");

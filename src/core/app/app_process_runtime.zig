@@ -1,5 +1,4 @@
 const std = @import("std");
-const app_worker_runtime = @import("app_worker_runtime.zig");
 const image_attachments = @import("../images/image_attachments.zig");
 const tool_result_errors = @import("../tooling/tool_result_errors.zig");
 const types = @import("../shared/types.zig");

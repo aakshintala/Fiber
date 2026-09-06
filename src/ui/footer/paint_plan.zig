@@ -1,7 +1,6 @@
 const std = @import("std");
 const question_state = @import("../../core/agent/question_prompt.zig");
 const debug_trace = @import("../../core/shared/debug_trace.zig");
-const display_width = @import("../../core/shared/display_width.zig");
 const permission_request = @import("../../core/permissions/permission_request.zig");
 const approval_prompt = @import("../../core/permissions/approval_prompt.zig");
 const file_index = @import("../../core/workspace/file_index.zig");
@@ -17,7 +16,6 @@ const footer_viewport = @import("viewport.zig");
 const approval_ui = @import("approval_ui.zig");
 const compact_command_menu_presentation = @import("compact_command_menu_presentation.zig");
 const input_presentation = @import("input_presentation.zig");
-const interaction_state = @import("interaction_state.zig");
 const picker_presentation = @import("picker_presentation.zig");
 const model_menu_presentation = @import("model_menu_presentation.zig");
 const skills_menu_presentation = @import("skills_menu_presentation.zig");

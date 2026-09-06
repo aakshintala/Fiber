@@ -7,7 +7,6 @@ const managed_execution = @import("../execution/managed_execution.zig");
 const action_executor = @import("../terminal/action_executor.zig");
 const contracts = @import("../terminal/contracts.zig");
 const identity = @import("../terminal/identity.zig");
-const managed_observer = @import("../terminal/managed_observer.zig");
 const operation = @import("../terminal/operation.zig");
 const shell_resolver = @import("../terminal/shell_resolver.zig");
 

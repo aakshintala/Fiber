@@ -7,7 +7,6 @@ const app_render_runtime = @import("app_render_runtime.zig");
 const app_runtime_setup = @import("app_runtime_setup.zig");
 const app_session_runtime = @import("app_session_runtime.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
-const credentials = @import("../auth/credentials.zig");
 const config_runtime = @import("../config/config_runtime.zig");
 const model_provider = @import("../config/model_provider.zig");
 const host = @import("../hosts/host.zig");

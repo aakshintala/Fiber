@@ -17,7 +17,6 @@ const builtin_commands = @import("../builtins/commands.zig");
 
 const surface_frame = @import("footer/surface_frame.zig");
 const surface_invalidation = @import("footer/surface_invalidation.zig");
-const interaction_state = @import("footer/interaction_state.zig");
 const approval_prompt = @import("../core/permissions/approval_prompt.zig");
 const render_input = @import("footer/render_input.zig");
 const footer_viewport = @import("footer/viewport.zig");

@@ -25,7 +25,6 @@ const Styles = transcript_blocks.Styles;
 const ToolDetailRecord = transcript_blocks.ToolDetailRecord;
 const TranscriptPreparationSource = transcript_runtime.TranscriptPreparationSource;
 const TranscriptRuntime = transcript_runtime.TranscriptRuntime;
-const HardLineStarts = viewport_selection.HardLineStarts;
 const TranscriptBuffer = viewport_selection.TranscriptBuffer;
 const VisibleTranscriptLine = viewport_selection.VisibleTranscriptLine;
 fn renderEntriesToBytes(alloc: Allocator, entries: []const transcript_blocks.TranscriptEntry, cols: u16) ![]u8 {
