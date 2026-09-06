@@ -55,12 +55,6 @@ pub noinline fn decodeOwnedSearchQuery(
     return .{ .input = input };
 }
 
-pub fn destroyOwnedSearchQueryInput(ptr: *anyopaque, alloc: std.mem.Allocator) void {
-    const input: *OwnedSearchQueryInput = @ptrCast(@alignCast(ptr));
-    input.deinit(alloc);
-    alloc.destroy(input);
-}
-
 noinline fn prefixedFailure(
     alloc: std.mem.Allocator,
     prefix: []const u8,

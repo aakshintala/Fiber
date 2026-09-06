@@ -1201,18 +1201,6 @@ fn fuzzGatewayTimestamp(_: void, smith: *std.testing.Smith) !void {
     _ = parseGatewayTimestamp(buffer[0..len]) catch return;
 }
 
-/// Team identifiers reach the gateway as a query value, so reject anything that
-/// would need percent-encoding rather than build a malformed URL. Accepts both
-/// the `team_` id form and the slug form.
-pub fn validGatewayTeam(team: []const u8) bool {
-    if (team.len == 0 or team.len > 128) return false;
-    for (team) |char| switch (char) {
-        'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {},
-        else => return false,
-    };
-    return true;
-}
-
 pub const ProviderCompletionDisposition = enum {
     completed,
     length_limited,

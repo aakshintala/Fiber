@@ -612,10 +612,6 @@ fn buildTestModelToolProjectionForRegistry(alloc: Allocator, tools: []const tool
     return buildModelToolProjectionForSet(alloc, testToolSetForRegistry(tools), options);
 }
 
-fn buildTestReadOnlyModelToolProjection(alloc: Allocator, options: Options) !EffectiveToolProjection {
-    return buildReadOnlyModelToolProjectionForSet(alloc, test_tool_set, options);
-}
-
 pub fn buildModelToolProjectionForSet(alloc: Allocator, tool_set: tool_set_contract.ToolSet, options: Options) !EffectiveToolProjection {
     return buildToolProjection(alloc, tool_set, .full, options);
 }
@@ -739,13 +735,6 @@ fn expectNotContainsName(names: []const []const u8, expected: []const u8) !void 
     for (names) |name| {
         if (std.mem.eql(u8, name, expected)) return error.TestExpectedEqual;
     }
-}
-
-fn indexOfName(names: []const []const u8, expected: []const u8) !usize {
-    for (names, 0..) |name, index| {
-        if (std.mem.eql(u8, name, expected)) return index;
-    }
-    return error.TestExpectedEqual;
 }
 
 fn appendTestMcpTool(runtime: *mcp_runtime.McpRuntime, server_index: usize, name: []const u8) !void {

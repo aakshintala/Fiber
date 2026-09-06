@@ -164,11 +164,6 @@ pub const LegacyUrlConsumeTransition = union(enum) {
     consumed: ?[]u8,
 };
 
-pub const LegacyUrlAcceptStatus = enum {
-    awaiting_completion,
-    completed,
-};
-
 pub const LegacyUrlAcceptTransition = union(enum) {
     missing,
     awaiting_completion,
