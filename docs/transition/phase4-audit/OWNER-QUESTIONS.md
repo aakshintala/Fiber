@@ -54,7 +54,9 @@ except this meta-test, which the probe breaks by construction".
 
 ## Decision 5 — the device-code OAuth polling chain looks dead, and the plan says retain it
 
-Raised at Slice 16, 2026-09-05. **Open. Not acted on.**
+Raised at Slice 16, 2026-09-05. **RESOLVED 2026-09-05: delete it.** Owner
+directed deletion; the inventory's retain line is stale, consistent with the
+three other claims measurement refuted. Executed as Slice 16b.
 
 `simplification-inventory.md` tells Slice 16 to "Retain live Codex token parsing,
 device authorization, polling, credential resolution, catalog parsing, and public
@@ -82,7 +84,11 @@ Slice 16 shipped without touching any of it.
 
 ## Decision 6 — is zlint zero a phase-exit blocker or a target?
 
-Raised at the re-audit checkpoint, 2026-09-05. **Open.**
+Raised at the re-audit checkpoint, 2026-09-05. **RESOLVED 2026-09-05: neither.**
+Owner directed a dedicated slice at the end of the phase to categorize every
+remaining warning and resolve each as appropriate. Added to the inventory as
+Slice 28. Resolution may be deletion, retention with a recorded reason, or a
+zlint suppression, decided per warning rather than in bulk.
 
 Phase exit requires "`zlint` reports zero `unused-decls` warnings". The count is
 106, from 111 at the opening baseline. Most are unused import aliases rather than
@@ -94,7 +100,9 @@ say so and Slice 27 records the remainder as accepted.
 
 ## Decision 7 — a tested privilege-escalation guard with no callers
 
-Raised at Slice 18, 2026-09-05. **Open. Not acted on.**
+Raised at Slice 18, 2026-09-05. **RESOLVED 2026-09-05: leave it alone.** Owner
+directed retention of the guard and its test. The `.yolo` default observation
+below stands as a note for outside Phase 4; no action taken here.
 
 `subagent/authority.zig:23` defines:
 

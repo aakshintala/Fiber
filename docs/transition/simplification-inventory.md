@@ -731,3 +731,26 @@ Phase 4 closes only when:
 - the Phase 4 section of `deferred.md` is empty
 - build, unit, formatting, and smoke gates pass
 - `zig build test` output is free of `failed command:`
+
+### Slice 28: categorize and resolve the zlint unused-decls backlog
+
+Added 2026-09-05 by owner decision, replacing the open question of whether the
+zero-warning phase-exit criterion is a blocker.
+
+`zlint` reports `unused-decls` warnings that no earlier slice owns. The count was
+111 at the opening baseline and 101 after Slice 17; earlier slices lower it as a
+side effect rather than as a deliverable, so run this last, once nothing further
+will add to the pile.
+
+Go through every remaining warning and categorize it. Resolve each as
+appropriate, deciding per warning rather than in bulk:
+
+- **unused import or alias** — delete it
+- **genuinely dead declaration** — delete it, and check whether it was the last
+  reference holding a larger chain alive
+- **deliberately retained** — record the reason in `phase4-audit/CORRECTIONS.md`
+  and suppress the warning at the site, so the retention is visible in the code
+  rather than only in a document
+
+The phase-exit criterion becomes "every `unused-decls` warning is resolved or
+recorded", not "the count is zero".
