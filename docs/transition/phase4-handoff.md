@@ -254,6 +254,14 @@ and `clearPending` plus `encodePage`
 None of these block the phase. All are recorded with evidence in
 `phase4-audit/SEAM-AUDIT.md` and `phase4-audit/CORRECTIONS.md`.
 
+**Rehomed 2026-09-06** so they survive the deletion of these documents. Items 2,
+3, and the `revocation_endpoint` half of item 5 are in
+`../enhancements/pending.md`, "Phase 4 residue", along with item 4 as
+architecture rather than capability. Item 1 and the `credential_source` half of
+item 5 are transition work with an owning phase and went to `deferred.md`:
+`credential_source` to Phase 5, the `src/ui` wrappers to Phase 6. The list below
+is kept as the original statement of each question.
+
 1. **The `src/ui` convenience-wrapper family.** About twenty non-interruptible
    wrappers over interruptible implementations, plus `buildInputLine` and
    `inlineApprovalPanelRows`. Production calls the interruptible form; tests call

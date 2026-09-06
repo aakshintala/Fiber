@@ -40,10 +40,37 @@ Recorded in `plan.md`, not duplicated here:
 - Session-recovery harness — `plan.md`, "Session-recovery harness: what the deleted suite proved".
 - Four retained ACP-driven E2E cases — `plan.md`, "ACP-driven cases retained for conversion". Each still spawns the deleted `fiber acp` subcommand and is red until converted.
 
+Added 2026-09-06 from the Phase 4 residue:
+
+- **Merged-settings `credential_source` is parsed and never read.**
+  `config_runtime.zig:1355` parses it; nothing reads it. It is a documented user
+  setting that selects a preferred credential source and has no effect on which
+  credential is resolved. Inherited, not caused by the transition — the value
+  died at the callee before Slice 9 deleted the plumbing that carried it
+  (`phase4-audit/CORRECTIONS.md`, "The `credential_source` setting is now
+  write-only"). Phase 5 owns it because it is a behavior question this phase's
+  suite may answer directly: either honor the setting or remove it and its
+  documentation. Do not close Phase 5 by deleting the field silently — it is a
+  documented setting, so removing it is a user-visible change.
+
 ## Phase 6: Documentation and naming
 
 All inert. None affects behavior; none is covered by any slice's exit search.
 This is the complete `grep -rni acp src/` residue as of `HEAD`.
+
+**Deferred cleanup**
+
+- **The `src/ui` non-interruptible convenience wrappers.** Added 2026-09-06 from
+  the Phase 4 residue. About twenty `...Interruptible` functions have a simpler
+  twin that only tests call; five are `prod=0` in `src/ui` alone —
+  `wrapLiteralToolOutput`, `renderProjectionViewportSource`,
+  `renderProjectionViewportSourceWithSelector`, `measureProjection`,
+  `buildStyledFocused` — plus `buildInputLine` over `buildInputLineForRow` and
+  `inlineApprovalPanelRows` over `inlineApprovalPanelRowsForCommand`. Deleting
+  them removes no dead weight; it forces every test to thread an extra `null`.
+  Measured in `phase4-audit/CORRECTIONS.md`, "Slice 22: most of the remaining UI
+  surface is wrappers, not dead code". A style call, and resolving it may mean
+  deciding to keep them — this section requires a decision, not a deletion.
 
 **Misleading names**
 

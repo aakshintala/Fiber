@@ -185,3 +185,53 @@ as the CLI, doubling the cost of every contract change.
 If an editor integration is ever wanted, this is a re-implementation against a
 then-current protocol, not a revert. The deletion is recorded in
 `../transition/demolition-inventory.md`.
+
+## Phase 4 residue: the owner's open calls
+
+Phase 4 closed with every audit row resolved, but five of those resolutions were
+"retain, owner decides" rather than delete-or-keep-forever. None blocks anything.
+They are collected here because they outlive the transition documents, which are
+deleted at the end of Phase 6. Full evidence stays in
+[`../transition/phase4-audit/SEAM-AUDIT.md`](../transition/phase4-audit/SEAM-AUDIT.md)
+and [`CORRECTIONS.md`](../transition/phase4-audit/CORRECTIONS.md) until then.
+
+Two of the five went to [`../transition/deferred.md`](../transition/deferred.md)
+instead, as transition work with a named owning phase: merged-settings
+`credential_source` to Phase 5, the `src/ui` convenience wrappers to Phase 6. The
+four below outlive the transition. Three are capability questions and belong here
+on the usual test; the `core -> builtins` composition is architecture with no new
+behavior, kept here because committing Phase 6 to a ten-file refactor would stop
+Phase 6 closing.
+
+**The subagent relationship index — finish or drop.** *Capability.* Production
+opens `relationship-index.bin` for reading at `session_store.zig:3053`; the only
+writer in the repository is a test fixture at `:10368`, and
+`session_relationship_index_codec.encodePage` has no reference at all. The reader
+is harmless — the file never exists, so it takes the not-found path — so this is
+inert but not misleading. Git archaeology is inconclusive: the codec predates the
+fork, so Fiber may never have written the file. Either write the index and finish
+the feature, or delete ~330 lines of codec plus its reader.
+
+**`reportTurnControl` — should a tool be able to end a turn?** *Capability.*
+A complete extension seam missing only its callers: `turn_control_sink` is wired
+at `tool_runtime.zig:740` and the orchestrator acts on the result at
+`orchestrator.zig:8485`, but no tool calls the reporter, so `turn_control` is
+always null and that branch never runs. Wiring a caller is net-new behavior;
+deleting the seam forecloses it.
+
+**`oauth.Metadata.revocation_endpoint` — parsed, never read.** *Capability.*
+Its only reader was `revokeToken`, deleted in Slice 16. Retained because dropping
+a field a live parser still populates changes what the parser accepts. Implement
+token revocation and it has a reader again. Unrelated to `mcp_auth.zig`'s own
+fully live `revocation_endpoint`, which is a different type.
+
+**The `core -> builtins` composition.** *Architecture, no behavior, post-0.0.1.*
+Roughly 14 genuine production import sites across 10 files: `assistant_stream.zig`,
+`tool_presentation.zig`, `tool_preparation.zig`, `app_agent_runtime.zig`,
+`app_commands.zig`, `app_mcp_menu_runtime.zig`, `app_session_runtime.zig`,
+`model_cache_runtime.zig`, `cli_surface.zig`, `command_router.zig`,
+`command_specs.zig`. Two thirds of the apparent violation is already test-guarded
+or test-support code, so the boundary is closer to real than the inventory
+assumed. Moving the rest to `main.zig` composition or a typed dependency is a
+design decision — constructor injection versus a registry passed down — not
+cleanup.
