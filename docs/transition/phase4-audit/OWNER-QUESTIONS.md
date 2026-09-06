@@ -91,3 +91,53 @@ dead logic.
 No slice names this as its deliverable, so Slice 27 inherits all of them by
 default. If it is a real blocker it deserves its own slice; if it is a target,
 say so and Slice 27 records the remainder as accepted.
+
+## Decision 7 — a tested privilege-escalation guard with no callers
+
+Raised at Slice 18, 2026-09-05. **Open. Not acted on.**
+
+`subagent/authority.zig:23` defines:
+
+```zig
+pub fn admitChildPermission(
+    parent: types.PermissionMode,
+    requested: ?types.PermissionMode,
+) PermissionAdmissionError!types.PermissionMode {
+    const child = requested orelse parent;
+    if (permissionRank(child) > permissionRank(parent)) return error.PermissionEscalation;
+    return child;
+}
+```
+
+It refuses to let a child subagent hold a higher permission mode than its
+parent. It has a test. It has **zero production callers**.
+
+Traced before concluding anything. Production never supplies a `requested` mode:
+`tool_host.zig:645` sets the child's mode to `options.parent_permission_mode`
+verbatim, and `agent_adapter.zig` reads `admission.permission_mode` straight
+through. There is no path by which a child asks for a different mode, so there is
+nothing to escalate and the guard is currently redundant rather than bypassed.
+
+That makes it deletable on the evidence, and the inventory does list "dead
+subagent authority" in Slice 18's removal surface. It was still retained, for two
+reasons:
+
+1. Deleting a tested privilege-escalation check is not a call to make from a
+   grep. If a "requested permission mode" is ever threaded through — a plausible
+   feature — this is the guard that should be called, and its absence will not
+   announce itself.
+2. While tracing it, a second thing surfaced that deserves separate eyes.
+
+**Separate observation, worth checking regardless of the decision above.**
+`domain.zig:51`, `domain.zig:80`, and `child_state.zig:55` all default
+`permission_mode` to `.yolo`, the most permissive mode, and
+`authority.zig:290` reads `if (live.permission_mode == .yolo) return .allow;`.
+The construction path visible at `tool_host.zig:640` always overrides the
+default with the parent's real mode, so this is not a demonstrated hole. But a
+struct whose *default* is auto-allow is only safe while every construction path
+sets it, and proving that exhaustively is a security review rather than a
+simplification pass.
+
+**Question:** delete `admitChildPermission` as redundant, wire it into the
+admission path, or leave both as they are? And is the `.yolo` default worth a
+separate look outside Phase 4?
