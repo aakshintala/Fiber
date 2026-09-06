@@ -1,6 +1,7 @@
 # Handoff: Fiber Phase 4 simplification
 
-Rewritten 2026-09-06 after Slice 25. Supersedes every earlier copy.
+Rewritten 2026-09-06 after Slice 28. **All slices are complete and every
+phase-exit criterion is met.** Supersedes every earlier copy.
 
 ## Read first
 
@@ -20,9 +21,15 @@ slice.** Slice 16 proved the inventory wrong in both directions at once.
 
 ## Where the work stands
 
-Slices 0 through 25 are committed on `main`. The working tree is clean.
+Slices 0 through 28 are committed on `main`. The working tree is clean.
 
 ```
+2aa60ccc Slice 28: categorize and clear every zlint warning
+6a76404e Slice 26: close the implementation-seam audit
+31e7fae0 Slice 27c: clear the sweep cascade and retarget the Kimi fixture
+9d7dc063 Slice 27b: sweep dead declarations across the remaining subsystems
+de531d5e Slice 27a: sweep dead session and authentication declarations
+020d204d Update the Phase 4 handoff after Slice 25
 3fe15777 Slice 25: collapse one-value and always-true residue
 6d4cba8e Slice 24b: collapse the cooperative live-session transition
 f6431873 Slice 24a: delete dead app-runtime declarations
@@ -33,10 +40,6 @@ f5cdc9d8 Slice 22a: collapse the dead subagent body mode and delete unreferenced
 83aa7171 Slice 21: delete dead terminal and session code
 2281b408 Fix stale references in the Phase 4 handoff header
 c5133dfa Update the Phase 4 handoff after Slice 20
-1230e87e Slice 20: delete dead MCP declarations
-4ce80e1d Slice 19: retarget the reviewer model and delete dead execution code
-32209fa3 Slice 18: delete dead agent and subagent declarations
-f474e2d4 Slice 16b: delete the dead standalone device-code poll entry point
 ```
 
 Slices 0-9 precede those; `git log --oneline` has them. Each slice's evidence is
@@ -44,11 +47,12 @@ in its own commit message. Read the message before re-deriving anything.
 
 ## Current numbers
 
-| Signal | Opening (`38496f4c`) | Now (`3fe15777`) |
+| Signal | Opening (`38496f4c`) | Final (`2aa60ccc`) |
 | --- | --- | --- |
 | main test binary | 7287 pass, 2 skip, 7289 total | **7226, 2, 7228** |
-| lazy-analysis probe | 7791 total, 502 never analysed | 7744 / 498 at `b20f559c` |
-| `zlint` | 0 errors, 111 warnings, 496 files | 0, **71**, 492 |
+| lazy-analysis probe | 7791 total, 502 never analysed | **7726 / 498**, only the OSC 8 meta-test fails |
+| `zlint` | 0 errors, 111 warnings, 496 files | 0 errors, **0 warnings**, 492 files |
+| Linux cross-builds | ok | ok, both targets, 0 errors |
 | `zig fmt --check src/` | clean | clean |
 | `./scripts/smoke.sh` | ok | ok |
 
@@ -222,51 +226,57 @@ Earlier: decision 4 keeps `buildAgentRequest` and `provider_bundle`; decision 3
 is withdrawn; `CORRECTIONS.md` records that merged-settings `credential_source`
 is parsed and never read, deferred to Slice 25 or 27 as a product decision.
 
-## Next actions
+## Phase exit: every criterion met
 
-Copy the scanners out of the session scratchpad before they vanish:
-`deepscan.py` (use this) and `fastscan.py`. Rewrite from the description above
-if lost.
+Checked against the list at the bottom of `simplification-inventory.md`:
 
-1. **Slice 26**, the implementation-seam audit. It now inherits five
-   measurements, three of them found tonight:
-   - `host.Capabilities.terminal` (Slice 15c)
-   - the model-catalog field question (Slice 16)
-   - `LoginPollDeps.poll_device_token`, a defaulted function pointer with one
-     overriding caller (Slice 16b)
-   - **the subagent relationship index** (Slice 21): production reads
-     `relationship-index.bin` at `session_store.zig:3053` but the only writer in
-     the repository is a test fixture. `encodePage` has no reference at all.
-   - **`reportTurnControl`** (Slice 23): production wires up `turn_control_sink`
-     and the orchestrator acts on the result at `orchestrator.zig:8485`, but no
-     tool ever calls the reporter, so `turn_control` is always null and that
-     branch never runs.
-2. **Slice 27**, the final sweep, and it is now the big one. The deep scanner
-   finds **116 clean kills tree-wide**; Slice 24 took the 32 in `src/core/app`,
-   leaving ~84 across subsystems earlier slices had closed -- 14 in
-   `src/core/session`, 12 in `src/core/auth`, 9 at the `src/` root, 6 each in
-   `src/ui/transcript` and `src/core/mcp`, and a long tail. Re-scan before
-   starting; the number moves as slices land. Slice 27 also still owns
-   retargeting the `"moonshotai/kimi-k3"` fixture data at
-   `app_render_runtime.zig:3395-3397`.
-3. **Slice 28**, the zlint categorization slice the owner added. 71 warnings
-   remain, down from 111.
-4. Re-run the lazy-analysis probe at phase exit; its numbers are stale from
-   `b20f559c`.
-5. Phase exit criteria are at the bottom of `simplification-inventory.md`.
+| Criterion | State |
+| --- | --- |
+| build accepts exactly the 3 retained targets | yes; both Linux cross-builds clean |
+| unsupported platform searches have no unexplained hits | 10 hits remain, all tests passing `.windows` as a **runtime** `os_tag` to functions that take one -- live code, per `REAUDIT.md` |
+| every DEAD / CONFIRMED / TESTED-ONLY row deleted, retracted, or retained | yes, in `CORRECTIONS.md` |
+| every actionable SINGLE-CALLER and false REFUTED row resolved | yes, Slice 25 |
+| every remaining seam has measured retention evidence | yes, `SEAM-AUDIT.md` |
+| no newly exposed dead code remains | 4 `prod=0 test=0` declarations left, all retained on purpose and recorded |
+| `zlint` zero `unused-decls` | **0 errors, 0 warnings, 492 files** |
+| probe fails only the OSC 8 meta-test | yes: 7723 pass, 2 skip, 1 fail |
+| Phase 4 section of `deferred.md` empty | yes |
+| build, unit, formatting, smoke gates pass | yes |
+| `zig build test` free of `failed command:` | yes |
 
-**Two questions need the owner, neither blocking:**
+The four deliberately retained dead declarations: `jsonStringify`
+(`terminal/contracts.zig`), `reportTurnControl` (`tooling/tool_dispatch.zig`),
+and `clearPending` plus `encodePage`
+(`session/session_relationship_index_codec.zig`).
 
-- The `src/ui` convenience-wrapper family (Slice 22, recorded in
-  `CORRECTIONS.md`). About twenty non-interruptible wrappers over interruptible
-  implementations, plus `buildInputLine` and `inlineApprovalPanelRows`.
-  Production calls the interruptible form; tests call the simple twin. Deleting
-  them removes no dead weight, it just forces every test to thread an extra
-  `null`. Style call, not cleanup.
-- The two "parsed but never read" findings,
-  `oauth.Metadata.revocation_endpoint` and merged-settings `credential_source`.
-  Both are inert behind retained seams. Whether the second is a bug is a product
-  question.
+## What is left for the owner
+
+None of these block the phase. All are recorded with evidence in
+`phase4-audit/SEAM-AUDIT.md` and `phase4-audit/CORRECTIONS.md`.
+
+1. **The `src/ui` convenience-wrapper family.** About twenty non-interruptible
+   wrappers over interruptible implementations, plus `buildInputLine` and
+   `inlineApprovalPanelRows`. Production calls the interruptible form; tests call
+   the simple twin. Deleting them removes no dead weight, it forces every test to
+   thread an extra `null`. Style call.
+2. **The subagent relationship index.** Production reads
+   `relationship-index.bin`; nothing writes it. Finish the feature or delete
+   ~330 lines of codec plus its reader.
+3. **`reportTurnControl`.** A complete extension seam letting a tool end a turn,
+   missing only its callers. Product question.
+4. **The `core -> builtins` composition.** ~14 production sites across 10 files,
+   listed in `SEAM-AUDIT.md`. Moving them to `main.zig` or a typed dependency is
+   an architectural decision, not cleanup. Note two thirds of the apparent
+   violation turned out to be test-guarded or test-support code.
+5. **Two parsed-but-never-read fields**, `oauth.Metadata.revocation_endpoint` and
+   merged-settings `credential_source`. Whether the second is a bug is a product
+   question.
+
+## If you resume dead-code work
+
+Copy the scanner out of the session scratchpad before it vanishes: `deepscan.py`. Rewrite from the description above if lost. Re-scan before
+trusting any "nothing left here" claim -- deletions cascade, and a helper whose
+last caller you just removed only appears on the next run.
 
 ## What the last five slices established about the inventory
 
