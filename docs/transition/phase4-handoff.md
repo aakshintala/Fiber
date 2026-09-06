@@ -1,6 +1,6 @@
 # Handoff: Fiber Phase 4 simplification
 
-Rewritten 2026-09-05 after Slice 9. Supersedes every earlier copy. The version
+Rewritten 2026-09-05 after Slice 10. Supersedes every earlier copy. The version
 before this one told you to run the lazy-analysis probe as the next action and
 asserted a test failure that does not exist. Do not work from it.
 
@@ -19,10 +19,11 @@ not.
 
 ## Where the work stands
 
-Slices 0 through 9 are committed on `main`. **Slice 10 is in flight and
-uncommitted** — see "Resuming Slice 10" below.
+Slices 0 through 10 are committed on `main`. The working tree is clean.
 
 ```
+bf936540 Slice 10: remove unsupported execution and process branches
+87c641e7 Record the Phase 4 handoff state after Slice 9
 b99e6d9e Slice 9: close provider-selection discards
 4d21a67e Slice 8: remove workspace_clean completely
 1f3101dc Slice 7: remove deleted-product one-value residue
@@ -43,33 +44,19 @@ re-deriving anything about that slice.
 
 ## Current numbers
 
-| Signal | Opening (`38496f4c`) | Now (`b99e6d9e`) |
+| Signal | Opening (`38496f4c`) | Now (`bf936540`) |
 | --- | --- | --- |
 | main test binary | 7287 pass, 2 skip, 7289 total | 7245 pass, 2 skip, 7247 total |
 | `zlint` | 0 errors, 111 warnings, 496 files | 0 errors, 109 warnings, 493 files |
 | `zig fmt --check src/` | clean | clean |
 | `./scripts/smoke.sh` | ok | ok |
 
-## Resuming Slice 10
+## Slice 10 is done
 
-A Cursor `composer-2.5` job was mid-run at handoff, editing three files:
-
-```
-src/core/execution/command_runner.zig
-src/core/execution/process_tree.zig
-src/core/permissions/direct_command.zig
-```
-
-Check `git status` first.
-
-- **Dirty tree, plausible diff:** review it against the rule below, run the full
-  gate plus both Linux cross-builds, then commit as Slice 10.
-- **Dirty tree, incoherent diff:** `git checkout --` those three files and
-  redelegate. Nothing else depends on partial work.
-
-Slice 10's proof is that `grep -n "windows\|wasi"` returns nothing in those three
-files, and that `zig build -Dtarget=x86_64-linux` and `-Dtarget=aarch64-linux`
-both still build.
+All 84 Windows and WASI mentions are gone from `command_runner.zig`,
+`process_tree.zig`, and `permissions/direct_command.zig`. Not one `.macos` or
+`.linux` line moved, which is the check that matters. Both Linux cross-builds
+pass. Read `bf936540` for the three unwraps that carried real risk.
 
 ## The platform rule — slices 10 through 15 all depend on it
 
@@ -208,11 +195,10 @@ Open entries added this session:
 
 ## Next actions
 
-1. Resolve Slice 10 per "Resuming Slice 10" above.
-2. Slices 11 through 15, one at a time, one commit each, all under the platform
+1. Slices 11 through 15, one at a time, one commit each, all under the platform
    rule. 11 is MCP and tooling, 12 host/terminal/session, 13
    workspace/image/skill, 14 CLI/UI/main/shared I/O, 15 collapses the native host
    profile.
-3. **The re-audit checkpoint** at `simplification-inventory.md:436`. Run the
+2. **The re-audit checkpoint** at `simplification-inventory.md:436`. Run the
    probe and `zlint`, compare against this file's numbers, and re-audit before
    starting the deletion slices at 16.
