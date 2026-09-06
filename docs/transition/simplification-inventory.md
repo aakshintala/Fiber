@@ -110,8 +110,8 @@ Evidence is in `phase4-baseline.md`; the decision is logged in
   orphaned declaration hide inside slack another slice created; Slice 2 was
   caught only because 112 exceeded 111. Opening count 111 at `38496f4c`,
   109 after Slice 3.
-- the lazy-analysis probe reports the OSC 8 failure and no other; see
-  `phase4-baseline.md`
+- the lazy-analysis probe reports no failure except the OSC 8 meta-test, which
+  the probe breaks by construction; see `phase4-baseline.md`
 
 ### Per-slice gate
 
@@ -726,8 +726,8 @@ Phase 4 closes only when:
 - every remaining implementation seam has measured retention evidence
 - no newly exposed dead code remains
 - `zlint` reports zero `unused-decls` warnings
-- the lazy-analysis probe reports the OSC 8 failure and no other; see
-  `phase4-baseline.md`
+- the lazy-analysis probe reports no failure except the OSC 8 meta-test, which
+  the probe breaks by construction; see `phase4-baseline.md`
 - the Phase 4 section of `deferred.md` is empty
 - build, unit, formatting, and smoke gates pass
 - `zig build test` output is free of `failed command:`

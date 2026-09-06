@@ -97,6 +97,8 @@ reverted. Never committed.
 | `zig build test` | 7287 | 2 | 0 | 7289 |
 | probe-augmented | 7788 | 2 | 1 | 7791 |
 
+The single failure is an artefact of the probe itself; see below.
+
 **502 tests exist that the normal suite never executes.** The old handoff's
 figure reproduces exactly. The mechanism is Zig's lazy analysis, not file
 reachability: only 2 of the 490 tracked files under `src/` are never textually
@@ -108,26 +110,44 @@ The probe does not name which 502. Enumerating them costs a per-file bisection
 and buys little; running the probe itself at the re-audit checkpoint and at
 phase exit buys the same coverage for one build.
 
-### The one probe-only failure
+### The probe's one failure is the probe's own doing
 
 ```
 core.agent.runtime.assistant_stream.test.streamed presentation preserves
 ANSI OSC 8 code fence and table spans — expected 0, found 1
 ```
 
-This is the failure the old handoff named. It is real. The Slice 0 correction
-that said it does not fail was measuring the wrong suite: the test never runs
-under `zig build test`, so "0 failures" there says nothing about it.
+That test does not test streaming. It is a meta-test: it re-invokes the compiler
+as a child process,
 
-It is pre-existing, not slice-caused, and sits in a module the gate has never
-covered. Phase 4 does not fix it. It is the probe's known constant: a probe run
-at a later checkpoint is green iff it reports this failure and no other.
+    zig test -lc -Mroot=src/main.zig --test-filter <its own name>
+
+with a fixture environment variable set, and asserts the child exits 0. The
+`expected 0, found 1` is that child's exit code.
+
+The probe appends an import to `src/main.zig`. The child therefore compiled the
+probe file too — through raw `zig test`, which does not supply the generated
+`build_options` module that several modules import. The child failed to build,
+exited 1, and the meta-test reported it. This is the same trap the probe recipe
+already warns about for the parent run; the recipe does not warn that one test
+runs a second, unprotected compilation of its own.
+
+The test passes under `zig build test` and is in the analysed set — it lives in
+`assistant_stream.zig`, whose other tests run normally. It was passing at the
+baseline and it passes now.
+
+**The probe criterion is therefore: no failures except this one, which will fail
+on every probe run for as long as the probe modifies `src/main.zig`.** The 502
+figure is unaffected — that is a count of tests, not of failures.
 
 ## Corrections to the handoff
 
-Both of the previous section's corrections are themselves superseded by the
-probe above. The 502 figure holds; only its stated mechanism was wrong. The
-OSC 8 test does fail.
+The 502 figure holds; only the old handoff's stated mechanism for it was wrong.
+
+On the OSC 8 test the old handoff was right and the Slice 0 correction of it was
+right: it does not fail. The reading that it did was taken from a probe run and
+is retracted above, with the mechanism. Three passes over this one claim landed
+on the same answer the handoff started with.
 
 ## Attribution rules in force
 
@@ -142,5 +162,6 @@ OSC 8 test does fail.
   caught only because 112 exceeded 111. Opening count 111 at `38496f4c`,
   109 after Slice 3.
 - the lazy-analysis probe, at the re-audit checkpoint and at phase exit, must
-  report the OSC 8 failure and no other
+  report no failure except the OSC 8 meta-test, which the probe breaks by
+  construction
 - E2E is not a Phase 4 signal

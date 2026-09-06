@@ -37,44 +37,17 @@ anything. Root cause and fix are in `../phase4-baseline.md` and commit
 **To reverse:** revert `50adab57`. The gate returns to reporting failure on
 every slice.
 
-## 3. The one probe-only test failure is not fixed in Phase 4
+## 3. WITHDRAWN — there was no probe-only test failure
 
-**Decided:** leave
-`core.agent.runtime.assistant_stream.test.streamed presentation preserves ANSI
-OSC 8 code fence and table spans` failing, and treat it as the lazy-analysis
-probe's known constant rather than as work.
+**Withdrawn 2026-09-05, during Slice 6.** This entry decided to leave the OSC 8
+assistant-stream test failing and treat it as the probe's known constant. There
+is nothing to leave failing. The test passes.
 
-**Evidence:** the probe run at `38496f4c` reports 7791 tests against the normal
-suite's 7289 — 502 tests the gate has never executed, one of which fails. The
-failure predates Phase 4 and is not slice-caused. Detail in
-`../phase4-baseline.md`.
+It is a meta-test that re-invokes `zig test -Mroot=src/main.zig` as a child
+process and asserts the child exits 0. The probe appends an import to
+`src/main.zig`, so the child compiled the probe through raw `zig test`, which
+does not supply `build_options`. The child failed to build and the meta-test
+reported its exit code. Mechanism and evidence in `../phase4-baseline.md`.
 
-**Why it was not fixed:** Phase 4 removes code; it does not repair product
-behaviour. Fixing an assertion in live streaming code mid-phase would put a
-behavioural change inside a demolition commit and break slice attribution.
-
-**To reverse:** fix it as its own commit, then change the probe criterion in
-`phase4-baseline.md` and `simplification-inventory.md` from "reports the OSC 8
-failure and no other" to "reports no failures".
-
-## 4. Slice 4 keeps the fake-gateway request serialiser
-
-**Decided:** retain `buildAgentRequest` and its helpers in
-`src/builtins/gateway.zig`, and retain `provider_bundle`, against the
-inventory's Slice 4 removal surface. Delete only the measurably dead surface in
-`src/gateway/agent_request_body.zig`.
-
-**Evidence:** `buildAgentRequest` is what both fake gateways serialise through
-so tests can assert on the request the agent would have sent; about twenty
-retained tests read those captures. `provider_bundle` has three live test-config
-consumers unrelated to request building. Detail and the per-declaration
-reference counts are in `CORRECTIONS.md`.
-
-**Why it was not deleted as written:** the inventory classifies the family as
-test-only, which is true, and infers dead, which is false. The phase's own
-deletion bar is that unreachable code behind a retained seam stays; this code is
-not even unreachable.
-
-**To reverse:** delete the family and every test that asserts on a captured
-request body. That is a coverage decision, not a simplification one, and it
-should be taken deliberately rather than as a side effect of Slice 4.
+No decision was needed and none stands. The probe criterion is now "no failure
+except this meta-test, which the probe breaks by construction".
