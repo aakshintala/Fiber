@@ -512,12 +512,6 @@ fn readOptionalJsonStringDup(scanner: *std.json.Scanner, alloc: Allocator) !?[]u
     }
 }
 
-fn readJsonStringDup(scanner: *std.json.Scanner, alloc: Allocator) ![]u8 {
-    const value = try readJsonString(scanner, alloc);
-    defer value.deinit(alloc);
-    return try alloc.dupe(u8, value.text);
-}
-
 fn readJsonString(scanner: *std.json.Scanner, alloc: Allocator) !JsonStringToken {
     const token = try scanner.nextAlloc(alloc, .alloc_if_needed);
     switch (token) {

@@ -220,15 +220,6 @@ pub const SignInRuntime = struct {
         };
     }
 
-    pub fn submitManualCode(self: *Self, alloc: Allocator, code: []const u8) !bool {
-        self.mutex.lockUncancelable(io_mod.getIo());
-        defer self.mutex.unlock(io_mod.getIo());
-        if (self.state != .polling) return false;
-        const submit = self.deps.submit_manual_code orelse return false;
-        try submit(self.deps.ctx, alloc, code);
-        return true;
-    }
-
     pub fn browserUrlAlloc(self: *Self, alloc: Allocator) !?[]u8 {
         self.mutex.lockUncancelable(io_mod.getIo());
         defer self.mutex.unlock(io_mod.getIo());
@@ -457,11 +448,6 @@ const LoginPollState = struct {
         self.next_poll_at_ms = std.math.add(i64, now_ms, interval_ms) catch
             return oauth.OAuthError.InvalidOAuthResponse;
     }
-
-    fn waitMs(self: LoginPollState, now_ms: i64) u64 {
-        if (now_ms >= self.next_poll_at_ms) return 0;
-        return @intCast(self.next_poll_at_ms - now_ms);
-    }
 };
 
 const LoginPollStep = union(enum) {
@@ -529,29 +515,6 @@ fn poll_interval_ms(interval_seconds: i64) oauth.OAuthError!u64 {
     return interval_ms;
 }
 
-fn waitBetweenPolls(
-    alloc: Allocator,
-    prompt: *BrowserOpenPrompt,
-    deps: LoginPollDeps,
-    interval_ms: u64,
-) error{Cancelled}!void {
-    var remaining_ms = interval_ms;
-    while (remaining_ms > 0) {
-        if (pollCancelled(deps)) return error.Cancelled;
-        const slice_ms = @min(remaining_ms, poll_wait_slice_ms);
-        if (prompt.enabled and !prompt.opened) {
-            if (deps.wait_for_enter(deps.ctx, slice_ms)) {
-                prompt.opened = true;
-                _ = deps.url_opener.open(alloc, prompt.url) catch false;
-            }
-        } else {
-            deps.sleep_ms(deps.ctx, slice_ms);
-        }
-        remaining_ms -= slice_ms;
-    }
-    if (pollCancelled(deps)) return error.Cancelled;
-}
-
 fn pollCancelled(deps: LoginPollDeps) bool {
     if (deps.is_cancelled(deps.ctx)) return true;
     const flag = deps.cancel_flag orelse return false;
@@ -569,14 +532,6 @@ const BrowserOpenPrompt = struct {
             .url = url,
             .enabled = browserOpenEnabled(io_mod.getenv("FIBER_NO_OPEN_BROWSER") != null, stdin_is_tty, host.current()),
         };
-    }
-
-    fn writeWaitingMessage(self: BrowserOpenPrompt) !void {
-        if (self.enabled) {
-            try writeStdout("Waiting for authentication. Press Enter to open this in your browser, or use the URL manually.\n");
-        } else {
-            try writeStdout("Waiting for authentication...\n");
-        }
     }
 };
 
@@ -746,16 +701,6 @@ fn testMetadata() oauth.Metadata {
         .issuer = @constCast("https://vercel.test"),
         .device_authorization_endpoint = @constCast("https://vercel.test/device"),
         .token_endpoint = @constCast("https://vercel.test/token"),
-    };
-}
-
-fn testDevice() oauth.DeviceAuthorization {
-    return .{
-        .device_code = @constCast("device"),
-        .user_code = @constCast("USER-CODE"),
-        .verification_uri = @constCast("https://vercel.test/oauth/device"),
-        .expires_in = 60,
-        .interval = 1,
     };
 }
 

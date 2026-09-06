@@ -582,33 +582,6 @@ pub fn positionsEqual(
         left.through_event_log_bytes == right.through_event_log_bytes;
 }
 
-/// Structural equality of two parsed transitions, including the optional prior
-/// legacy fingerprint.
-pub fn authorityTransitionsEqual(
-    left: AuthorityTransition,
-    right: AuthorityTransition,
-) bool {
-    if (!std.mem.eql(u8, left.session_id, right.session_id) or
-        left.kind != right.kind or
-        !std.mem.eql(u8, &left.authority_id, &right.authority_id) or
-        !positionsEqual(left.proposed, right.proposed) or
-        (left.prior == null) != (right.prior == null))
-    {
-        return false;
-    }
-    if (left.prior) |left_prior| {
-        const right_prior = right.prior.?;
-        return left_prior.schema == right_prior.schema and
-            left_prior.primary_bytes == right_prior.primary_bytes and
-            std.mem.eql(
-                u8,
-                &left_prior.primary_sha256,
-                &right_prior.primary_sha256,
-            );
-    }
-    return true;
-}
-
 /// Deletes an in-session file and fsyncs the directory so the removal is durable.
 pub fn deleteSessionEntry(
     session_dir: *io_mod.VerifiedDir,

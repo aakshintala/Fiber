@@ -207,16 +207,6 @@ pub const PickerView = struct {
         };
     }
 
-    pub fn choiceDescription(self: PickerView, choice: Choice) []const u8 {
-        return switch (choice) {
-            .source => |source| if (self.active_source == source) "current" else "available",
-            .action => |action| switch (action) {
-                .connections => "",
-                .chatgpt_login => if (self.available_sources.contains(.chatgpt_subscription)) "connected" else "",
-            },
-        };
-    }
-
     pub fn choiceEnabled(self: PickerView, choice: Choice) bool {
         _ = self;
         _ = choice;
@@ -472,10 +462,6 @@ pub const Runtime = struct {
         try self.refreshSourceInventoryWithProbe(alloc, self, probeCredentialSource);
     }
 
-    pub fn refreshSourceInventoryForLogout(self: *Self, alloc: Allocator) !void {
-        try self.refreshSourceInventoryWithProbe(alloc, self, probeCredentialSourceForLogout);
-    }
-
     pub fn beginSourceInventoryRefresh(
         self: *Self,
         alloc: Allocator,
@@ -613,20 +599,8 @@ pub const Runtime = struct {
         self.picker_selection = self.pickerView().choiceAt(0);
     }
 
-    pub fn openSignInPicker(self: *Self, alloc: Allocator) !bool {
-        return self.openSignInPickerWithParent(alloc, false);
-    }
-
-    pub fn openSignInPickerFromRoot(self: *Self, alloc: Allocator) !bool {
-        return self.openSignInPickerWithParent(alloc, true);
-    }
-
     pub fn openChatGptSignInPickerFromRoot(self: *Self, alloc: Allocator) !bool {
         return self.openSignInPickerWithParent(alloc, true);
-    }
-
-    pub fn openChatGptSignInPickerForProviderSwitch(self: *Self, alloc: Allocator) !bool {
-        return self.openSignInPickerWithParent(alloc, false);
     }
 
     fn openSignInPickerWithParent(
@@ -646,10 +620,6 @@ pub const Runtime = struct {
 
     pub fn signInEntryActive(self: *const Self) bool {
         return self.picker_active and self.picker_stage == .sign_in;
-    }
-
-    pub fn signInReturnsToRoot(self: *const Self) bool {
-        return self.sign_in_returns_to_root;
     }
 
     pub fn signInBrowserUrlAlloc(self: *Self, alloc: Allocator) !?[]u8 {
@@ -793,21 +763,6 @@ pub const Runtime = struct {
         );
     }
 
-    /// Drops the current selection and reloads the Codex credential.
-    pub fn reselectByPrecedence(self: *Self, alloc: Allocator) !bool {
-        const previous = self.credentialSource();
-        if (self.selected_credential) |*credential| credential.deinit(alloc);
-        self.selected_credential = null;
-        self.credential_refresh_failure_source = null;
-
-        try self.refreshSourceInventory(alloc);
-        if (try self.selectSourceWithLoader(alloc, .chatgpt_subscription, self, loadRuntimeCredentialSource) != null) {
-            return self.credentialSource() != previous;
-        }
-        self.onboarding_skipped = false;
-        return previous != null;
-    }
-
     pub fn reconcileAfterChatGptLogout(self: *Self, alloc: Allocator) !bool {
         const was_available = self.source_inventory.contains(.chatgpt_subscription);
         const was_active = self.credentialSource() == .chatgpt_subscription;
@@ -903,10 +858,6 @@ fn probeCredentialSource(raw_context: ?*anyopaque, _: Allocator, source: credent
     _ = source;
     _ = raw_context;
     return chatgpt_oauth.sourceExists(std.heap.page_allocator) catch false;
-}
-
-fn probeCredentialSourceForLogout(raw_context: ?*anyopaque, alloc: Allocator, source: credentials.Source) !bool {
-    return probeCredentialSource(raw_context, alloc, source);
 }
 
 fn loadRuntimeCredentialSource(_: ?*anyopaque, alloc: Allocator, source: credentials.Source) !?credentials.Credential {

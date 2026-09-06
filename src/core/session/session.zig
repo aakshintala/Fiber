@@ -1832,22 +1832,6 @@ pub const SessionRuntime = struct {
         return self.context_history_start;
     }
 
-    pub fn compactedTurnCount(self: *const SessionRuntime) usize {
-        if (self.agent.history.items.len == 0) return 0;
-        return switch (self.agent.history.items[0]) {
-            .compacted_summary => |entry| entry.removed_turn_count,
-            else => 0,
-        };
-    }
-
-    pub fn compactionCount(self: *const SessionRuntime) usize {
-        if (self.agent.history.items.len == 0) return 0;
-        return switch (self.agent.history.items[0]) {
-            .compacted_summary => |entry| entry.compaction_count,
-            else => 0,
-        };
-    }
-
     pub fn snapshotHistory(self: *const SessionRuntime, alloc: Allocator) ![]HistoryTurn {
         return self.agent.snapshotHistory(alloc);
     }
