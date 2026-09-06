@@ -422,3 +422,57 @@ deleted as dead:
 `shortcutFromControlByte` in `ui/input/runtime.zig` was checked and kept for the
 same reason: unlike the two sibling aliases deleted in Slice 22a, which had zero
 references, it backs four tests in `app_input_runtime.zig`.
+
+## The declaration scanner was blind to nested declarations (found in Slice 24)
+
+**This is a completeness defect, not a correctness one.** Everything deleted in
+Slices 16 through 23 was genuinely dead and every retention argument still
+holds. But the surface those slices measured was roughly a quarter of the real
+one, so "no clean kills left in this subsystem" was never a safe claim.
+
+The scanner's declaration regex was anchored at column 0:
+
+```
+^(?:pub\s+)?(?:fn\s+(\w+)|(?:const|var)\s+(\w+)\s*[:=])
+```
+
+Fiber writes most of its runtime as methods inside `pub fn Runtime(comptime App:
+type) type { return struct { ... } }` generics and inside `pub const Foo = struct
+{ ... }` blocks. Every one of those declarations is indented, so the scanner
+never saw them. `settlePendingLiveSessionTransition` in `app_session_runtime.zig`
+is `pub`, has exactly one reference in the repository -- its own declaration --
+and was invisible to seven consecutive slices.
+
+Allowing leading whitespace (`^[ \t]*`) changes the numbers dramatically:
+
+| Scope | Shallow | Deep |
+| --- | --- | --- |
+| `src/core/app` declarations scanned | 1,416 | 5,569 |
+| `src/core/app` clean kills | 8 | 32 |
+| whole tree declarations scanned | -- | 53,994 |
+| whole tree clean kills (`prod=0 test=0`) | -- | 116 |
+
+The deep scanner is `scratchpad/deepscan.py`; the shallow one is kept as
+`fastscan.py` only for reproducing older numbers. Both were validated
+byte-identical to the original `deadscan.py` on three subsystems before use, so
+the reference counting itself is trusted; only the declaration enumeration was
+narrow.
+
+**Why the counts are still sound.** The concern with scanning nested
+declarations is Fiber's duck-typed generics, which reference methods by string
+through 721 `@hasDecl(App, "methodName")` sites. Those were checked: the
+tokenizer runs over raw file text including string literal contents, so
+`@hasDecl(App, "submitInput")` does produce a `submitInput` token. A `prod=0`
+result means the identifier appears exactly once in all of `src/`, string
+literals included, which remains a sound signal for a nested method.
+
+**Disposition.** Slice 24 takes the 32 in `src/core/app`. The remaining 84 are
+spread across subsystems earlier slices had already closed -- 14 in
+`src/core/session`, 12 in `src/core/auth`, 9 at the `src/` root, 6 each in
+`src/ui/transcript` and `src/core/mcp`, and a long tail. **Routed to Slice 27**,
+the final sweep, which exists for exactly this.
+
+One finding worth a second look rather than a silent deletion:
+`onInnerToolUsage` in `app_callbacks.zig` is a `pub` callback with a vtable-shaped
+signature and no reference of any kind. Its deadness may mean inner-tool usage is
+simply not being reported, which is a product question, not a cleanup one.
