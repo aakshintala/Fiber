@@ -307,3 +307,67 @@ owns it; the analysis above is the whole of it, so it need not be re-derived.
 Note this is distinct from `types.CredentialSource` generally, which is live:
 HTTP failure reporting, checkpoint authority matching, tool runtime, and
 settings persistence all read it.
+
+## Slice 16: the model-catalog half is not dead
+
+2026-09-05. Inventory Slice 16 lists "dead model-picker projection, rank,
+comparison, price, and presentation fields" in its removal surface.
+
+A declaration scan of `src/ui/footer/model_menu_presentation.zig` found **0 dead
+of 41 scanned**. Every container-level declaration has a production reference.
+
+The claim is about struct *fields*, which a declaration scan cannot see. It is
+neither confirmed nor refuted here, only unproven by the method that settled the
+auth half. Slice 26 owns it: its seam audit already has to count production
+adapters per contract, and field-level reachability is the same measurement.
+
+Slice 16 shipped the auth half only.
+
+## Slice 16: a parsed-but-unread field
+
+`oauth.Metadata.revocation_endpoint` is parsed by `parseMetadata`, stored, and
+freed in `deinit`. Its only reader was `revokeToken`, deleted in Slice 16.
+
+Retained. Dropping a field that a retained parser still populates is the
+"inert behind a retained seam" case, and it changes what the parser accepts.
+Slice 25 owns the decision.
+
+Note `mcp_auth.zig` has its own unrelated and fully live `revocation_endpoint`
+handling. They are different types.
+
+## Slice 17: the re-export claim does not survive measurement
+
+2026-09-05. Inventory Slice 17 opens its removal surface with "forwarding
+wrappers and re-exports in `builtins/commands.zig`, `builtins/tools.zig`, and
+`builtins/modes.zig`".
+
+All 22 such re-exports were measured for references outside those three files:
+
+| Re-export | External users |
+| --- | --- |
+| `registry` (tools, modes) | 774 |
+| `SlashRegistry` | 73 |
+| `SlashSpec` | 31 |
+| `SlashPresentationCategory` | 23 |
+| `HelpStyle` | 20 |
+| `TopLevelRegistry` | 18 |
+| `TopLevelKind` | 15 |
+| `SlashKind` | 15 |
+| `advertisement_set` | 14 |
+| `argCompletionAnchor`, `top_level_help_default_width` | 8 |
+| `ModeSpec`, `permissionsArgCompletionPrefix` | 7 |
+| `ToolSpec`, `TopLevelSpec` | 4 |
+| `TopLevelExample`, `TopLevelFlag`, `TopLevelHelpEntry`, `TopLevelHelpGroup` | 3 |
+| `ToolPolicy` | 2 |
+| `TopLevelResource` | 3, all inside the dead resource chain |
+| `argCompletionIndexForLabel` | 1, its own re-export |
+
+Only the last two are dead, and both were deleted in Slice 17. The rest are
+ordinary aliases with real callers. **The claim is retracted.**
+
+"Dead slash help and welcome rendering", also in that slice's surface, matched
+nothing: no `slashHelp`, `welcomeLines`, `renderWelcome`, or `slash_help` symbol
+exists. Help rendering is live. Retracted as unfindable.
+
+"Constant completion-policy fields with no varying spec" likewise matched no
+`completion_policy` or `CompletionPolicy` symbol. Retracted as unfindable.
