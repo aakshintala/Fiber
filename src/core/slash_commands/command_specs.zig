@@ -83,12 +83,6 @@ pub const TopLevelExample = struct {
     description: []const u8,
 };
 
-pub const TopLevelResource = struct {
-    label: []const u8,
-    value: []const u8,
-    link: bool = false,
-};
-
 pub const TopLevelRegistry = struct {
     specs: []const TopLevelSpec = &.{},
     description: []const u8,
@@ -97,7 +91,6 @@ pub const TopLevelRegistry = struct {
     flags: []const TopLevelFlag = &.{},
     examples: []const TopLevelExample = &.{},
     notes: []const []const u8 = &.{},
-    resources: []const TopLevelResource = &.{},
 };
 
 pub const SlashPresentationCategory = enum {
@@ -145,25 +138,6 @@ pub const SlashSpec = struct {
 };
 
 pub const SlashRegistry = mod_registry.CommandRegistry(SlashSpec);
-pub const child_chat_slash_command_count: usize = 3;
-
-pub fn childChatSlashRegistry(
-    registry: SlashRegistry,
-    storage: *[child_chat_slash_command_count]SlashSpec,
-) SlashRegistry {
-    var count: usize = 0;
-    for (registry.commands) |spec| {
-        switch (spec.kind) {
-            .quit, .model, .skills => {
-                std.debug.assert(count < storage.len);
-                storage[count] = spec;
-                count += 1;
-            },
-            else => {},
-        }
-    }
-    return .{ .commands = storage[0..count] };
-}
 
 pub const HelpMenu = struct {
     active: bool = false,
@@ -265,7 +239,6 @@ pub fn renderTopLevelHelpWithStyle(alloc: Allocator, registry: TopLevelRegistry,
     const width = normalizedTopLevelHelpWidth(columns);
     const command_usage_width = maxTopLevelHelpUsageWidth(registry);
     const flag_usage_width = maxTopLevelFlagUsageWidth(registry);
-    const resource_label_width = maxTopLevelResourceLabelWidth(registry);
 
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
@@ -310,9 +283,6 @@ pub fn renderTopLevelHelpWithStyle(alloc: Allocator, registry: TopLevelRegistry,
     }
 
     try out.writer.writeByte('\n');
-    for (registry.resources) |resource| {
-        try writeTopLevelResource(&out.writer, resource, resource_label_width, width, style);
-    }
 
     return try out.toOwnedSlice();
 }
@@ -699,29 +669,6 @@ fn nthWorkspaceArgLabel(query: []const u8, n: usize) ?[]const u8 {
     return full["/workspace ".len..];
 }
 
-/// Returns the index of `label` among the matching arg completions for
-/// the given prefix, or null if the label is not in the filtered set.
-pub fn argCompletionIndexForLabel(prefix: []const u8, label: []const u8) ?usize {
-    if (permissionsArgCompletionPrefix(prefix)) |query| {
-        return indexOfArgLabel(&permissions_arg_completions, "/permissions ".len, query, label);
-    }
-    if (workspaceArgCompletionPrefix(prefix)) |query| {
-        return indexOfArgLabel(&workspace_arg_completions, "/workspace ".len, query, label);
-    }
-    return null;
-}
-
-fn indexOfArgLabel(completions: []const []const u8, command_with_space_len: usize, query: []const u8, label: []const u8) ?usize {
-    var idx: usize = 0;
-    for (completions) |completion| {
-        if (!argCompletionMatches(completion, command_with_space_len, query)) continue;
-        const arg = completion[command_with_space_len..];
-        if (std.mem.eql(u8, arg, label)) return idx;
-        idx += 1;
-    }
-    return null;
-}
-
 fn argCompletionMatches(completion: []const u8, command_with_space_len: usize, query: []const u8) bool {
     const arg = completion[command_with_space_len..];
     return query.len == 0 or std.ascii.startsWithIgnoreCase(arg, query);
@@ -811,14 +758,6 @@ fn maxTopLevelFlagUsageWidth(registry: TopLevelRegistry) usize {
     return width;
 }
 
-fn maxTopLevelResourceLabelWidth(registry: TopLevelRegistry) usize {
-    var width: usize = 0;
-    for (registry.resources) |resource| {
-        width = @max(width, display_width.visibleWidth(resource.label));
-    }
-    return width;
-}
-
 fn writeTopLevelHelpEntry(writer: *std.Io.Writer, registry: TopLevelRegistry, entry: TopLevelHelpEntry, usage_width: usize, columns: usize, style: HelpStyle) !void {
     const spaces = "                                                                ";
     const summary = entry.summary orelse topLevelSpec(registry, entry.kind.?).summary;
@@ -847,15 +786,6 @@ fn writeTopLevelExample(writer: *std.Io.Writer, example: TopLevelExample, column
     try writeWrappedStyledLine(writer, "  ", "  ", example.command, columns, style, .syntax);
     try writeWrappedStyledLine(writer, "      ", "      ", example.description, columns, style, .muted);
     try writer.writeByte('\n');
-}
-
-fn writeTopLevelResource(writer: *std.Io.Writer, resource: TopLevelResource, label_width: usize, columns: usize, style: HelpStyle) !void {
-    const spaces = "                                                                ";
-    const padding = label_width - display_width.visibleWidth(resource.label) + 2;
-    var prefix_buf: [128]u8 = undefined;
-    const prefix = try std.fmt.bufPrint(&prefix_buf, "{s}{s}{s}{s}", .{ styleStart(style, .label), resource.label, styleEnd(style), spaces[0..padding] });
-    const value_role: HelpRole = if (resource.link) .link else .syntax;
-    try writeWrappedStyledLine(writer, prefix, "  ", resource.value, columns, style, value_role);
 }
 
 fn writeSectionHeading(writer: *std.Io.Writer, style: HelpStyle, heading: []const u8) !void {
@@ -1329,18 +1259,6 @@ test "slash specs cover every SlashKind" {
         try std.testing.expect(seen[@intFromEnum(kind)]);
         _ = slashSpec(registry, kind);
     }
-}
-
-test "child chat slash registry exposes only locally handled commands" {
-    var storage: [child_chat_slash_command_count]SlashSpec = undefined;
-    const child = childChatSlashRegistry(testSlashRegistry(), &storage);
-
-    try std.testing.expectEqual(@as(usize, 3), child.commands.len);
-    try std.testing.expect(matchesSlashExact(child, "/quit", .quit));
-    try std.testing.expect(matchesSlashExact(child, "/model", .model));
-    try std.testing.expect(child.matchExact("/models") == null);
-    try std.testing.expect(matchesSlashExact(child, "/skills", .skills));
-    try std.testing.expect(child.matchExact("/help") == null);
 }
 
 test "interactive model command has no plural spelling" {

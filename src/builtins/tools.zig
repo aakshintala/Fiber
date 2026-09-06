@@ -1,6 +1,4 @@
 const std = @import("std");
-const std_builtin = @import("builtin");
-const builtin_gateway = @import("gateway.zig");
 const terminal_contracts = @import("../core/terminal/contracts.zig");
 const managed_execution_contract = @import("../core/execution/managed_execution_contract.zig");
 const model_tool_schema = @import("../core/tooling/model_tool_schema.zig");
@@ -13,8 +11,6 @@ const tool_set_contract = @import("../core/tooling/tool_set.zig");
 const tool_specs = @import("../core/tooling/tool_specs.zig");
 const types = @import("../core/shared/types.zig");
 const lexical_relevance = @import("../core/shared/lexical_relevance.zig");
-const capability_retrieval = @import("../core/tooling/capability_retrieval.zig");
-const permission_gate = @import("../core/permissions/permission_gate.zig");
 const ask_user_question_impl = @import("../tools/agent/ask_user_question.zig");
 const subagent_impl = @import("../tools/agent/subagent.zig");
 const vision_impl = @import("../tools/agent/vision.zig");
@@ -30,15 +26,6 @@ const skill_impl = @import("../tools/skills/skill.zig");
 const capability_search_impl = @import("../tools/capabilities/capability_search.zig");
 const web_fetch_impl = @import("../tools/web/fetch.zig");
 const web_search_impl = @import("../tools/web/search.zig");
-const test_io_mod = if (std_builtin.is_test)
-    @import("../core/shared/io.zig")
-else
-    struct {};
-const test_session_child_store = if (std_builtin.is_test)
-    @import("../core/session/session_child_store.zig")
-else
-    struct {};
-
 const Allocator = std.mem.Allocator;
 
 pub const ToolSpec = tool_specs.ToolSpec;
@@ -948,22 +935,6 @@ fn schemaProperty(schema: model_tool_schema.ObjectSchema, name: []const u8) ?mod
     return null;
 }
 
-fn schemaEnumValues(property: model_tool_schema.Property) []const []const u8 {
-    const shape = property.shape orelse return &.{};
-    return switch (shape.*) {
-        .enum_values => |values| values,
-        else => &.{},
-    };
-}
-
-fn schemaObject(property: model_tool_schema.Property) ?*const model_tool_schema.ObjectSchema {
-    const shape = property.shape orelse return null;
-    return switch (shape.*) {
-        .object => |object| object,
-        else => null,
-    };
-}
-
 fn nameInSet(names: []const []const u8, wanted: []const u8) bool {
     for (names) |name| {
         if (std.mem.eql(u8, name, wanted)) return true;
@@ -1730,12 +1701,6 @@ test "built-in registry uses executable web_fetch implementation" {
     try std.testing.expect(std.mem.find(u8, body, "\"tool_name\":\"web_fetch\"") != null);
     try std.testing.expect(std.mem.find(u8, body, "web_fetch failed") != null);
     try std.testing.expect(std.mem.find(u8, body, "UnsupportedScheme") != null);
-}
-
-fn expectRegisteredNames(names: []const []const u8) !void {
-    for (names) |name| {
-        try std.testing.expect(registry.lookup(name) != null);
-    }
 }
 
 test "built-in read-only tool set matches plan inspection tools" {

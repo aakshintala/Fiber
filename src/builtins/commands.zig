@@ -9,7 +9,6 @@ pub const TopLevelHelpEntry = command_specs.TopLevelHelpEntry;
 pub const TopLevelHelpGroup = command_specs.TopLevelHelpGroup;
 pub const TopLevelFlag = command_specs.TopLevelFlag;
 pub const TopLevelExample = command_specs.TopLevelExample;
-pub const TopLevelResource = command_specs.TopLevelResource;
 pub const TopLevelRegistry = command_specs.TopLevelRegistry;
 pub const HelpStyle = command_specs.HelpStyle;
 pub const SlashKind = command_specs.SlashKind;
@@ -298,8 +297,6 @@ pub const top_level_notes = [_][]const u8{
     "Run `/help` inside an interactive session for slash commands.",
 };
 
-pub const top_level_resources = [_]TopLevelResource{};
-
 pub const top_level_registry = TopLevelRegistry{
     .specs = top_level_specs[0..],
     .description = "Fast, native coding agent for the terminal.",
@@ -308,7 +305,6 @@ pub const top_level_registry = TopLevelRegistry{
     .flags = top_level_flags[0..],
     .examples = top_level_examples[0..],
     .notes = top_level_notes[0..],
-    .resources = top_level_resources[0..],
 };
 
 pub fn matchesTopLevel(token: []const u8, kind: TopLevelKind) bool {
@@ -409,7 +405,6 @@ pub fn slashCompletionHasArgs(command: []const u8) bool {
 }
 
 pub const argCompletionAnchor = command_specs.argCompletionAnchor;
-pub const argCompletionIndexForLabel = command_specs.argCompletionIndexForLabel;
 pub const permissionsArgCompletionPrefix = command_specs.permissionsArgCompletionPrefix;
 
 test "built-in slash commands register exact active order" {
