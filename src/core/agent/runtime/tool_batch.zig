@@ -411,31 +411,6 @@ pub fn processCommittedFileResult(
             .{ tool_call.id, tool_call.name, @errorName(err) },
         );
     };
-    if (execution.deferred_tool_completion) |deferred_completion| {
-        if (hooks.publish_deferred_tool_completion) |publish_deferred| {
-            const outcome = publish_deferred(
-                hooks.ctx,
-                deferred_completion,
-            );
-            if (outcome == .failed) reporting_degraded = true;
-            debug_trace.eventf(
-                "tool",
-                "deferred_tool_completion_publication",
-                step_ctx,
-                "call_id={s} name={s} outcome={s}",
-                .{ tool_call.id, tool_call.name, @tagName(outcome) },
-            );
-        } else {
-            reporting_degraded = true;
-            debug_trace.eventf(
-                "tool",
-                "deferred_tool_completion_publication",
-                step_ctx,
-                "call_id={s} name={s} outcome=missing_publisher",
-                .{ tool_call.id, tool_call.name },
-            );
-        }
-    }
     if (reporting_degraded) {
         hooks.push_system_notice(
             hooks.ctx,

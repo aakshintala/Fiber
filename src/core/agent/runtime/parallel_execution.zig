@@ -309,8 +309,7 @@ fn duplicateParallelToolResult(alloc: Allocator, call: ToolCall, execution: Tool
         execution.selected_dynamic_tool_name != null or
         execution.selected_dynamic_tool_schema_json != null or
         execution.tool_result_memory_prepared or
-        execution.committed_file_handoff != null or
-        execution.deferred_tool_completion != null)
+        execution.committed_file_handoff != null)
     {
         return .{
             .call_id = call_id,

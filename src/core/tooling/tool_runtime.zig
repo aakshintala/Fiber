@@ -138,7 +138,6 @@ pub const Context = struct {
     effort: types.ReasoningEffort = .auto,
     first_call_tool_choice: types.ToolChoice = .auto,
     tool_registry: tool_dispatch.Registry = .{},
-    host_tool_provider: ?tool_dispatch.HostToolProvider = null,
     subagent_host: ?*subagent_tool_host.Runtime = null,
     subagent_caller_id: ?[]const u8 = null,
     permission_mode: PermissionMode,
@@ -197,7 +196,6 @@ pub const Context = struct {
     on_web_search_progress: ?tool_dispatch.WebSearchProgressFn = null,
     web_fetch_progress_ctx: ?*anyopaque = null,
     on_web_fetch_progress: ?tool_dispatch.WebFetchProgressFn = null,
-    host_sandbox_default: tool_admission.HostSandboxDefault = .none,
     model_capability_resolver: ?model_capabilities.Resolver = null,
     /// False when running outside an interactive TUI (e.g. ACP). Tools
     /// that require a live user (like `ask_user_question`) short-circuit
@@ -229,7 +227,6 @@ pub const Context = struct {
             .mcp_runtime = mcpRuntimeCapabilities(self),
             .context_limits = self.context_limits,
             .auto_classifier = self.admissionAutoClassifier(),
-            .host_sandbox_default = self.host_sandbox_default,
         };
         if (self.permission_state_override != null) {
             input.session_permission_state_provider = null;
@@ -867,7 +864,6 @@ fn typedDispatchContext(ctx: Context, arena: Allocator) tool_dispatch.DispatchCo
         .on_web_search_progress = ctx.on_web_search_progress,
         .web_fetch_progress_ctx = ctx.web_fetch_progress_ctx,
         .on_web_fetch_progress = ctx.on_web_fetch_progress,
-        .host_tool_provider = ctx.host_tool_provider,
         .mcp_ctx = ctx.mcp_ctx,
         .mcp_call_tool = ctx.mcp_call_tool,
         .mcp_search_tools = ctx.mcp_search_tools,
@@ -1948,7 +1944,6 @@ const TestRuntime = struct {
     web_fetch_artifact_error: ?anyerror = null,
     web_fetch_progress_ctx: ?*anyopaque = null,
     on_web_fetch_progress: ?tool_dispatch.WebFetchProgressFn = null,
-    host_sandbox_default: tool_admission.HostSandboxDefault = .none,
 
     fn deinit(self: *TestRuntime, alloc: Allocator) void {
         self.worker.deinit(alloc);
@@ -2017,7 +2012,6 @@ const TestRuntime = struct {
             .on_web_search_progress = self.on_web_search_progress,
             .web_fetch_progress_ctx = self.web_fetch_progress_ctx,
             .on_web_fetch_progress = self.on_web_fetch_progress,
-            .host_sandbox_default = self.host_sandbox_default,
             .interactive = self.interactive,
         };
     }

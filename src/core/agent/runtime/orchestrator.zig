@@ -8306,9 +8306,7 @@ fn processQueuedPromptLoop(
                 }
                 continue;
             }
-            if (execution.tool_result_memory_prepared or
-                execution.deferred_tool_completion != null)
-            {
+            if (execution.tool_result_memory_prepared) {
                 return error.InvalidPreparedToolExecutionResult;
             }
             if (successful_vision_route == .text_only) {

@@ -3772,10 +3772,6 @@ test "committed file result is appended before degraded secondary publication" {
         .status = .failure,
         .model_output = model_output,
         .committed_file_handoff = handoff,
-        .deferred_tool_completion = .{
-            .transport_id = "acp-call-write",
-            .content_text = model_output,
-        },
     } }};
     hooks.committed_publication_report = .{
         .diff = .failed,

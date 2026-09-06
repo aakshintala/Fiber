@@ -41,12 +41,6 @@ const PermissionMode = types.PermissionMode;
 const ToolPermissionDecision = types.ToolPermissionDecision;
 const WorkerRuntime = worker_runtime.WorkerRuntime;
 
-pub const HostSandboxDefault = enum {
-    none,
-    allow_sandboxed,
-    prompt,
-};
-
 pub const SessionPermissionStateProvider = struct {
     context: *anyopaque,
     snapshot_fn: *const fn (
@@ -79,7 +73,6 @@ pub const Input = struct {
     mcp_runtime: tool_mcp_runtime.RuntimeCapabilities,
     context_limits: context_limits.Values = .{},
     auto_classifier: permission_auto_classifier.Classifier = .disabled(),
-    host_sandbox_default: HostSandboxDefault = .none,
 };
 
 fn registeredTool(input: Input, name: []const u8) ?*const tool_dispatch.Tool {
@@ -1421,15 +1414,6 @@ fn requestPermissionOutcomeResolved(
         return bindVisionPathExecutionAuthority(
             try permissionOutcomeForDecision(input, arena, call, .once, .session_grant),
             vision_path_authority,
-        );
-    }
-    if (input.host_sandbox_default == .allow_sandboxed and
-        try isRunCommandCall(input, arena, call))
-    {
-        return shellPermissionOutcome(
-            try runCommandContext(input, arena, call),
-            .once,
-            .js_host,
         );
     }
     const resolution = try resolveOrdinaryPermissionOutcome(
@@ -5386,90 +5370,6 @@ test "prepared session deny blocks local file mutation without setup effects" {
         error.FileNotFound,
         tmp.dir.openFile(io_mod.getIo(), "workspace/blocked.txt", .{}),
     );
-}
-
-test "js host workspace sandbox default is lowest priority and prompt disables it" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    var worker: WorkerRuntime = .{};
-    defer worker.deinit(std.testing.allocator);
-    var input = testInputWithClassifier(
-        &worker,
-        permission_auto_classifier.Classifier.disabled(),
-    );
-    input.host_sandbox_default = .allow_sandboxed;
-    const call = ToolCall{
-        .id = "browser-command",
-        .name = "shell",
-        .arguments_json = "{\"action\":\"run\",\"command\":\"touch created.txt\"}",
-    };
-
-    const allowed = try requestPermissionOutcome(
-        input,
-        arena_state.allocator(),
-        call,
-        .auto,
-        &.{},
-    );
-    try std.testing.expectEqual(ToolPermissionDecision.once, allowed.decision);
-    try std.testing.expectEqual(
-        command_admission.ShellAuthorizationSource.js_host,
-        allowed.execution_authority.?.run_command.shell_allowed.source,
-    );
-
-    var rules = [_]types.PermissionRule{.{
-        .permission = @constCast("bash"),
-        .pattern = @constCast("touch *"),
-        .action = .deny,
-    }};
-    input.permission_rules = .{ .rules = &rules };
-    const denied = try requestPermissionOutcome(
-        input,
-        arena_state.allocator(),
-        call,
-        .auto,
-        &.{},
-    );
-    try std.testing.expectEqual(ToolPermissionDecision.policy_denied, denied.decision);
-    try std.testing.expect(denied.execution_authority == null);
-
-    rules[0].action = .ask;
-    const asked = try requestPermissionOutcome(
-        input,
-        arena_state.allocator(),
-        call,
-        .auto,
-        &.{},
-    );
-    try std.testing.expectEqual(ToolPermissionDecision.permission_required, asked.decision);
-    try std.testing.expect(asked.execution_authority == null);
-
-    rules[0].action = .allow;
-    const explicitly_allowed = try requestPermissionOutcome(
-        input,
-        arena_state.allocator(),
-        call,
-        .auto,
-        &.{},
-    );
-    try std.testing.expectEqual(ToolPermissionDecision.once, explicitly_allowed.decision);
-    try std.testing.expectEqual(
-        command_admission.ShellAuthorizationSource.configured_rule,
-        explicitly_allowed.execution_authority.?.run_command.shell_allowed.source,
-    );
-
-    input.permission_rules = .{};
-    input.host_sandbox_default = .prompt;
-    const prompted = try requestPermissionOutcome(
-        input,
-        arena_state.allocator(),
-        call,
-        .auto,
-        &.{},
-    );
-    try std.testing.expectEqual(ToolPermissionDecision.deny, prompted.decision);
-    try std.testing.expectEqual(types.ToolPermissionDenialReason.review_unavailable, prompted.denial_reason.?);
-    try std.testing.expect(prompted.execution_authority == null);
 }
 
 test "built-in structured review sends exact arguments without redundant schema" {
