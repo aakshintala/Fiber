@@ -1,6 +1,6 @@
 # Handoff: Fiber Phase 4 simplification
 
-Rewritten 2026-09-06 after Slice 20. Supersedes every earlier copy.
+Rewritten 2026-09-06 after Slice 25. Supersedes every earlier copy.
 
 ## Read first
 
@@ -20,25 +20,23 @@ slice.** Slice 16 proved the inventory wrong in both directions at once.
 
 ## Where the work stands
 
-Slices 0 through 20 are committed on `main`. The working tree is clean.
+Slices 0 through 25 are committed on `main`. The working tree is clean.
 
 ```
+3fe15777 Slice 25: collapse one-value and always-true residue
+6d4cba8e Slice 24b: collapse the cooperative live-session transition
+f6431873 Slice 24a: delete dead app-runtime declarations
+9c2b3625 Record the declaration scanner's nested-declaration blind spot
+01ad3a6e Slice 23: delete dead skill, filesystem, tooling, and shared helpers
+67f50729 Record the Slice 21 and 22 audit findings
+f5cdc9d8 Slice 22a: collapse the dead subagent body mode and delete unreferenced UI declarations
+83aa7171 Slice 21: delete dead terminal and session code
+2281b408 Fix stale references in the Phase 4 handoff header
+c5133dfa Update the Phase 4 handoff after Slice 20
 1230e87e Slice 20: delete dead MCP declarations
 4ce80e1d Slice 19: retarget the reviewer model and delete dead execution code
 32209fa3 Slice 18: delete dead agent and subagent declarations
 f474e2d4 Slice 16b: delete the dead standalone device-code poll entry point
-89cbe9b6 Record the Slice 16 and 17 audit corrections
-acaa65be Slice 17: delete the empty top-level resource chain and dead command residue
-352d08ea Update the Phase 4 handoff after Slice 16
-8a24bb73 Slice 16: delete the dead OAuth helper family
-00c89f49 Slice 15c: finish the native host profile and record the re-audit
-b20f559c Slice 15: collapse the native host profile
-259fdb51 Slice 14b: collapse the invariant capability constants
-b8b43b4a Slice 14a: remove unsupported CLI, main, and shared I/O branches
-15e9dc75 Slice 13: remove unsupported workspace, image, and skill branches
-520a069d Slice 12: remove unsupported host, terminal, and session branches
-423414b9 Slice 11: remove unsupported MCP and tooling branches
-bf936540 Slice 10: remove unsupported execution and process branches
 ```
 
 Slices 0-9 precede those; `git log --oneline` has them. Each slice's evidence is
@@ -46,11 +44,11 @@ in its own commit message. Read the message before re-deriving anything.
 
 ## Current numbers
 
-| Signal | Opening (`38496f4c`) | Now (`1230e87e`) |
+| Signal | Opening (`38496f4c`) | Now (`3fe15777`) |
 | --- | --- | --- |
-| main test binary | 7287 pass, 2 skip, 7289 total | 7234, 2, 7236 |
+| main test binary | 7287 pass, 2 skip, 7289 total | **7226, 2, 7228** |
 | lazy-analysis probe | 7791 total, 502 never analysed | 7744 / 498 at `b20f559c` |
-| `zlint` | 0 errors, 111 warnings, 496 files | 0, **85**, 492 |
+| `zlint` | 0 errors, 111 warnings, 496 files | 0, **71**, 492 |
 | `zig fmt --check src/` | clean | clean |
 | `./scripts/smoke.sh` | ok | ok |
 
@@ -99,20 +97,39 @@ a slice is caused by that slice until fixed or reverted.
 
 ## How to derive a removal surface
 
-The scanner used for Slices 16 through 20 is at
-`scratchpad/deadscan.py` in the session temp dir; rewrite it if lost. It strips
-`test "..." { }` blocks by brace matching, then for every container-level
-declaration counts references in the production text against references in the
-full text, across all of `src/`. Run it per subsystem, it takes a few minutes.
+**Use `scratchpad/deepscan.py`, not `fastscan.py`.** Both count references the
+same way and both were validated byte-identical to the original `deadscan.py` on
+three subsystems. The difference is which declarations they enumerate.
+
+The original regex was anchored at column 0. Fiber writes most of its runtime as
+methods inside `pub fn Runtime(comptime App: type) type { return struct { ... } }`
+generics and inside `pub const Foo = struct { ... }`, all indented, so Slices 16
+through 23 measured roughly a quarter of the real surface. Allowing `^[ \t]*`
+raised `src/core/app` from 1,416 declarations to 5,569 and its clean kills from
+8 to 32. Nothing those slices deleted was wrong; they were just incomplete.
 
 ```sh
-python3 deadscan.py src/core/auth
+python3 deepscan.py src/core/auth      # a subsystem
+python3 deepscan.py src                # whole tree, about 2 seconds
 ```
 
-`prod=0 test=0` is a clean kill. **`prod=0 test>0` is not.** Those split into
-test fixtures supporting retained tests, which must stay, and production-shaped
+It rewrites the old scanner's O(decls x files x filesize) loop into a single
+tokenizing pass, so a whole-tree scan takes ~2s instead of ~3 minutes per
+subsystem. Re-derive after every slice: deletions cascade, and a helper whose
+last caller you just removed only shows up on the next run.
+
+`prod=0 test=0` is a clean kill. **`prod=0 test>0` is not.** Those split into test
+fixtures supporting retained tests, which must stay, and production-shaped
 functions only tests reach, which are candidates. Read each one. Slice 4 nearly
-deleted a family that about twenty retained tests were asserting through.
+deleted a family that about twenty retained tests were asserting through, and
+Slice 22 found that most of `src/ui`'s remaining population is convenience
+wrappers and test instruments rather than dead code.
+
+**Two things the scan cannot see, both hit in Slice 24.** A mutually-referential
+cluster never reports as dead, because each member is referenced by the others --
+`ApprovalOwnershipBinding` and `ApprovalOwnershipSubagents` had to be read, not
+measured. And a symbol reached only through `@hasDecl(App, "name")` is safe *only*
+because the tokenizer scans raw text including string literals; keep it that way.
 
 `zlint --format json` gives the machine-readable `unused-decls` list, which is a
 different and narrower signal: it only catches unreferenced container-level
@@ -207,24 +224,49 @@ is parsed and never read, deferred to Slice 25 or 27 as a product decision.
 
 ## Next actions
 
-1. **Slice 21**, terminal and session. Scans of `src/core/terminal` and
-   `src/core/session` were running when this was written; rerun them.
-   **This slice has the tightest retention rule in the series:** stop if a
-   candidate participates in serialization, hashing, authority checks, or
-   recovery of a retained record. Those touch persisted session data that must
-   stay readable.
-2. Slices 22-25, each with its surface re-derived before it opens. `REAUDIT.md`
-   lists the merges worth making by subsystem.
-3. Slice 26, the implementation-seam audit. It inherits three measurements:
-   `host.Capabilities.terminal` from Slice 15c, the model-catalog field question
-   from Slice 16, and `LoginPollDeps.poll_device_token` from Slice 16b, a
-   defaulted function pointer with one overriding caller.
-4. Slice 27, the final sweep. Also owns retargeting the
-   `"moonshotai/kimi-k3"` fixture data at `app_render_runtime.zig:3395-3397`.
-5. **Slice 28**, the zlint categorization slice the owner added. 85 warnings
-   remain, down from 111; the deletion slices have been clearing them as a side
-   effect.
-6. Phase exit criteria are at the bottom of `simplification-inventory.md`.
+Copy the scanners out of the session scratchpad before they vanish:
+`deepscan.py` (use this) and `fastscan.py`. Rewrite from the description above
+if lost.
+
+1. **Slice 26**, the implementation-seam audit. It now inherits five
+   measurements, three of them found tonight:
+   - `host.Capabilities.terminal` (Slice 15c)
+   - the model-catalog field question (Slice 16)
+   - `LoginPollDeps.poll_device_token`, a defaulted function pointer with one
+     overriding caller (Slice 16b)
+   - **the subagent relationship index** (Slice 21): production reads
+     `relationship-index.bin` at `session_store.zig:3053` but the only writer in
+     the repository is a test fixture. `encodePage` has no reference at all.
+   - **`reportTurnControl`** (Slice 23): production wires up `turn_control_sink`
+     and the orchestrator acts on the result at `orchestrator.zig:8485`, but no
+     tool ever calls the reporter, so `turn_control` is always null and that
+     branch never runs.
+2. **Slice 27**, the final sweep, and it is now the big one. The deep scanner
+   finds **116 clean kills tree-wide**; Slice 24 took the 32 in `src/core/app`,
+   leaving ~84 across subsystems earlier slices had closed -- 14 in
+   `src/core/session`, 12 in `src/core/auth`, 9 at the `src/` root, 6 each in
+   `src/ui/transcript` and `src/core/mcp`, and a long tail. Re-scan before
+   starting; the number moves as slices land. Slice 27 also still owns
+   retargeting the `"moonshotai/kimi-k3"` fixture data at
+   `app_render_runtime.zig:3395-3397`.
+3. **Slice 28**, the zlint categorization slice the owner added. 71 warnings
+   remain, down from 111.
+4. Re-run the lazy-analysis probe at phase exit; its numbers are stale from
+   `b20f559c`.
+5. Phase exit criteria are at the bottom of `simplification-inventory.md`.
+
+**Two questions need the owner, neither blocking:**
+
+- The `src/ui` convenience-wrapper family (Slice 22, recorded in
+  `CORRECTIONS.md`). About twenty non-interruptible wrappers over interruptible
+  implementations, plus `buildInputLine` and `inlineApprovalPanelRows`.
+  Production calls the interruptible form; tests call the simple twin. Deleting
+  them removes no dead weight, it just forces every test to thread an extra
+  `null`. Style call, not cleanup.
+- The two "parsed but never read" findings,
+  `oauth.Metadata.revocation_endpoint` and merged-settings `credential_source`.
+  Both are inert behind retained seams. Whether the second is a bug is a product
+  question.
 
 ## What the last five slices established about the inventory
 
