@@ -1,6 +1,7 @@
 [
   { "file": "auto-mode-reliability.test.ts", "weight": 4 },
   { "file": "ask-presentation.test.ts", "weight": 5 },
+  { "file": "auth-refresh.test.ts", "weight": 2 },
   { "file": "ci-shards.test.ts", "weight": 15 },
   { "file": "cli.test.ts", "weight": 19 },
   { "file": "config-persistence.test.ts", "weight": 64 },
@@ -51,7 +52,6 @@
   { "file": "web-fetch-live.test.ts", "weight": 1 },
   { "file": "web-fetch-permission-progress.test.ts", "weight": 1 },
   { "file": "web-search-fake-codex.test.ts", "weight": 5 },
-  { "file": "web-search-live.test.ts", "weight": 1 },
   { "file": "web-search-permission-progress.test.ts", "weight": 11 },
   { "file": "yolo-permission-mode.test.ts", "weight": 29 }
 ]
