@@ -20,8 +20,6 @@ pub const LoginError = error{
     NoRefreshToken,
 };
 
-pub const remote_revocation_warning = "Warning: signed out locally, but the remote session could not be revoked.";
-
 pub const LogoutResult = struct {
     session_deleted: bool = false,
     local_durability_failed: bool = false,
@@ -994,105 +992,6 @@ test "sign-in runtime releases an owned provider context exactly once" {
     try std.testing.expect(runtime.cancel(alloc));
     runtime.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 1), cleanup_count);
-}
-
-const WithholdingTokenFixture = struct {
-    io_backend: std.Io.Threaded = .init_single_threaded,
-    server: std.Io.net.Server,
-    thread: ?std.Thread = null,
-    server_open: bool = true,
-    stopping: std.atomic.Value(bool) = .init(false),
-    accepted: std.atomic.Value(bool) = .init(false),
-    failure: ?anyerror = null,
-
-    fn init() !@This() {
-        var fixture: @This() = .{ .server = undefined };
-        var address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
-        fixture.server = try address.listen(fixture.io(), .{ .reuse_address = true });
-        return fixture;
-    }
-
-    fn start(self: *@This()) !void {
-        self.thread = try std.Thread.spawn(.{}, run, .{self});
-    }
-
-    fn deinit(self: *@This()) void {
-        if (!self.server_open) return;
-        const zio = self.io();
-        self.stopping.store(true, .seq_cst);
-        if (self.thread) |thread| {
-            const listener = std.Io.net.Stream{ .socket = self.server.socket };
-            listener.shutdown(zio, .both) catch {};
-            self.wakeAccept();
-            thread.join();
-            self.thread = null;
-        }
-        self.server.deinit(zio);
-        self.server_open = false;
-    }
-
-    fn tokenEndpoint(self: *@This(), alloc: Allocator) ![]u8 {
-        return std.fmt.allocPrint(alloc, "http://127.0.0.1:{d}/oauth/token", .{
-            self.server.socket.address.getPort(),
-        });
-    }
-
-    fn io(self: *@This()) std.Io {
-        return self.io_backend.io();
-    }
-
-    fn wakeAccept(self: *@This()) void {
-        var wake_backend: std.Io.Threaded = .init_single_threaded;
-        const zio = wake_backend.io();
-        const address = std.Io.net.IpAddress{
-            .ip4 = .loopback(self.server.socket.address.getPort()),
-        };
-        var stream = address.connect(zio, .{ .mode = .stream }) catch return;
-        stream.close(zio);
-    }
-
-    fn run(self: *@This()) void {
-        self.runFallible() catch |err| {
-            if (self.stopping.load(.seq_cst) and err == error.SocketNotListening) return;
-            self.failure = err;
-        };
-    }
-
-    fn runFallible(self: *@This()) !void {
-        const zio = self.io();
-        var stream = try self.server.accept(zio);
-        defer stream.close(zio);
-        if (self.stopping.load(.seq_cst)) return;
-        self.accepted.store(true, .seq_cst);
-        while (!self.stopping.load(.seq_cst)) blockingSleep(10);
-    }
-};
-
-fn makeLoopbackPreparedLogin(alloc: Allocator, token_endpoint: []const u8) !PreparedLogin {
-    const issuer = try alloc.dupe(u8, token_endpoint[0..std.mem.lastIndexOfScalar(u8, token_endpoint, '/').?]);
-    errdefer alloc.free(issuer);
-    const device_endpoint = try std.fmt.allocPrint(alloc, "{s}/device", .{issuer});
-    errdefer alloc.free(device_endpoint);
-    const owned_token_endpoint = try alloc.dupe(u8, token_endpoint);
-    errdefer alloc.free(owned_token_endpoint);
-    var device = try oauth.parseDeviceAuthorization(
-        alloc,
-        "{\"device_code\":\"device\",\"user_code\":\"USER-CODE\",\"verification_uri\":\"https://vercel.test/oauth/device\",\"expires_in\":60,\"interval\":1}",
-    );
-    errdefer device.deinit(alloc);
-    return .{
-        .metadata = .{
-            .issuer = issuer,
-            .device_authorization_endpoint = device_endpoint,
-            .token_endpoint = owned_token_endpoint,
-        },
-        .device = device,
-        .client_id = try alloc.dupe(u8, "client"),
-    };
-}
-
-fn elapsedAwakeMs(started: std.Io.Clock.Timestamp) i64 {
-    return started.durationTo(std.Io.Clock.Timestamp.now(io_mod.getIo(), .awake)).raw.toMilliseconds();
 }
 
 test "cooperative sign-in polls once per pulse and shares pending and slow_down timing" {

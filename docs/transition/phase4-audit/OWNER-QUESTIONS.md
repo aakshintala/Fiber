@@ -51,3 +51,43 @@ reported its exit code. Mechanism and evidence in `../phase4-baseline.md`.
 
 No decision was needed and none stands. The probe criterion is now "no failure
 except this meta-test, which the probe breaks by construction".
+
+## Decision 5 — the device-code OAuth polling chain looks dead, and the plan says retain it
+
+Raised at Slice 16, 2026-09-05. **Open. Not acted on.**
+
+`simplification-inventory.md` tells Slice 16 to "Retain live Codex token parsing,
+device authorization, polling, credential resolution, catalog parsing, and public
+model capabilities." Measurement contradicts the polling half.
+
+There is no `pollForToken`. The only implementation is
+`login_flow.pollForTokenWithDeps`, and its callers are eight tests in the same
+file. `LoginPollDeps`, `LoginPollState`, `realPollDeviceToken`, and
+`oauth.pollDeviceTokenBounded` are reachable only through it.
+
+The live sign-in path does not use it. `chatgpt_oauth.zig:80` calls
+`login_flow.SignInRuntime.startPrepared` and supplies its own `CompleteSignInFn`;
+nothing in that path polls a device-code endpoint. The deleted
+`requestDeviceAuthorization` had exactly one caller, a test whose fixture URLs
+were `https://vercel.test`, which suggests the whole device-code flow is
+Vercel-era residue that the Codex cutover left behind.
+
+Roughly 300-400 lines across `login_flow.zig` and `oauth.zig`.
+
+**Question:** delete the chain, or is it retained for a flow not visible in the
+tree? Deleting a whole auth flow against an explicit written retain instruction
+is not a call to make on a grep alone.
+
+Slice 16 shipped without touching any of it.
+
+## Decision 6 — is zlint zero a phase-exit blocker or a target?
+
+Raised at the re-audit checkpoint, 2026-09-05. **Open.**
+
+Phase exit requires "`zlint` reports zero `unused-decls` warnings". The count is
+106, from 111 at the opening baseline. Most are unused import aliases rather than
+dead logic.
+
+No slice names this as its deliverable, so Slice 27 inherits all of them by
+default. If it is a real blocker it deserves its own slice; if it is a target,
+say so and Slice 27 records the remainder as accepted.

@@ -88,15 +88,6 @@ pub const FailureSnapshot = struct {
 
 /// Returns an owned token when the selected provider credential can refresh.
 /// The caller must release it with `secret.zeroAndFree`.
-pub fn refreshCredentialToken(
-    transport: oauth_transport.Provider,
-    alloc: Allocator,
-    source: credentials.Source,
-    mode: CredentialRefreshMode,
-) !?[]u8 {
-    return refreshCredentialTokenForAccount(transport, alloc, source, mode, null);
-}
-
 pub fn refreshCredentialTokenForAccount(
     transport: oauth_transport.Provider,
     alloc: Allocator,
@@ -913,8 +904,6 @@ fn probeCredentialSource(raw_context: ?*anyopaque, _: Allocator, source: credent
     _ = raw_context;
     return chatgpt_oauth.sourceExists(std.heap.page_allocator) catch false;
 }
-
-const unused_local_placeholder = 0;
 
 fn probeCredentialSourceForLogout(raw_context: ?*anyopaque, alloc: Allocator, source: credentials.Source) !bool {
     return probeCredentialSource(raw_context, alloc, source);
