@@ -27,8 +27,6 @@ jobs:
             runner: ubuntu-24.04
           - name: linux-aarch64
             runner: ubuntu-24.04-arm
-          - name: macos-x86_64
-            runner: macos-15-intel
           - name: macos-aarch64
             runner: macos-15
         optimize: [ReleaseSafe]
@@ -84,9 +82,6 @@ jobs:
           - name: linux-aarch64
             runner: ubuntu-24.04-arm
             zig_tarball: zig-aarch64-linux
-          - name: macos-x86_64
-            runner: macos-15-intel
-            zig_tarball: zig-x86_64-macos
           - name: macos-aarch64
             runner: macos-15
             zig_tarball: zig-aarch64-macos
@@ -233,7 +228,6 @@ jobs:
         name:
           - linux-x86_64
           - linux-aarch64
-          - macos-x86_64
           - macos-aarch64
     steps:
       - name: Verify native and E2E matrices

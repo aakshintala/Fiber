@@ -9,6 +9,7 @@ const PgsoArtifact = enum {
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    requireSupportedTarget(target.result);
     const optimize = b.standardOptimizeOption(.{});
     const pgso_artifact = b.option(
         PgsoArtifact,
@@ -273,6 +274,20 @@ pub fn build(b: *std.Build) void {
         );
         pgso_ir_step.dependOn(&missing_artifact.step);
     }
+}
+
+/// Fiber supports macOS arm64, Linux x86_64, and Linux arm64 only. Mirrors the
+/// runtime allowlist in `src/core/upgrade/upgrade_helpers.zig`.
+fn requireSupportedTarget(t: std.Target) void {
+    const supported = switch (t.os.tag) {
+        .macos => t.cpu.arch == .aarch64,
+        .linux => t.cpu.arch == .x86_64 or t.cpu.arch == .aarch64,
+        else => false,
+    };
+    if (!supported) std.process.fatal(
+        "unsupported target {s}-{s}: fiber supports aarch64-macos, x86_64-linux, and aarch64-linux only",
+        .{ @tagName(t.cpu.arch), @tagName(t.os.tag) },
+    );
 }
 
 fn readGitCommit(b: *std.Build) []const u8 {
