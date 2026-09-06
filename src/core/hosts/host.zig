@@ -11,8 +11,6 @@ pub const TerminalSupport = enum {
 };
 
 pub const Capabilities = struct {
-    process_control: bool,
-    url_open: bool,
     native_url_open: bool,
     terminal: TerminalSupport,
 };
@@ -146,8 +144,6 @@ pub fn terminalSupportForOs(os_tag: std.Target.Os.Tag) TerminalSupport {
 
 pub fn nativeForOs(os_tag: std.Target.Os.Tag) Capabilities {
     return .{
-        .process_control = os_tag != .windows and os_tag != .wasi,
-        .url_open = os_tag == .macos or os_tag == .linux,
         .native_url_open = os_tag == .macos,
         .terminal = terminalSupportForOs(os_tag),
     };
@@ -204,24 +200,14 @@ test "unavailable terminal title accepts set and clear" {
     unavailable_terminal_title.clear();
 }
 
-test "native host capabilities expose process and URL support" {
+test "native host capabilities expose native URL and terminal support" {
     const macos = nativeForOs(.macos);
-    try std.testing.expect(macos.process_control);
-    try std.testing.expect(macos.url_open);
     try std.testing.expect(macos.native_url_open);
     try std.testing.expectEqual(TerminalSupport.supported, macos.terminal);
 
     const linux = nativeForOs(.linux);
-    try std.testing.expect(linux.process_control);
-    try std.testing.expect(linux.url_open);
     try std.testing.expect(!linux.native_url_open);
     try std.testing.expectEqual(TerminalSupport.supported, linux.terminal);
-
-    const windows = nativeForOs(.windows);
-    try std.testing.expect(!windows.process_control);
-    try std.testing.expect(!windows.url_open);
-    try std.testing.expect(!windows.native_url_open);
-    try std.testing.expectEqual(TerminalSupport.unsupported, windows.terminal);
 
     try std.testing.expectEqual(
         TerminalSupport.unsupported,

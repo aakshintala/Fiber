@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const host = @import("../../core/hosts/host.zig");
 const io_mod = @import("../../core/shared/io.zig");
 const process_identity = @import("../../core/execution/process_identity.zig");
 const process_provider = @import("../../core/execution/process_provider.zig");
@@ -227,7 +226,6 @@ fn signalProcess(
         .missing, .mismatched => return error.ProcessIdentityMismatch,
         .unavailable => return error.ProcessIdentityIndeterminate,
     }
-    if (!host.current().process_control) return error.Unsupported;
     const pid = std.fmt.parseInt(std.posix.pid_t, pid_text, 10) catch
         return error.InvalidPid;
     var tracker = try process_tree.Tracker.init(alloc);

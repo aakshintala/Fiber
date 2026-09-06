@@ -477,8 +477,6 @@ fn historyResetUsesRisForValues(term_program: ?[]const u8, tmux: ?[]const u8) bo
 fn vminIndex() usize {
     return switch (builtin.os.tag) {
         .linux => 6,
-        .macos, .ios, .tvos, .watchos, .visionos => 16,
-        .freebsd, .netbsd, .dragonfly, .openbsd => 16,
         else => 16,
     };
 }
@@ -486,8 +484,6 @@ fn vminIndex() usize {
 fn vtimeIndex() usize {
     return switch (builtin.os.tag) {
         .linux => 5,
-        .macos, .ios, .tvos, .watchos, .visionos => 17,
-        .freebsd, .netbsd, .dragonfly, .openbsd => 17,
         else => 17,
     };
 }
