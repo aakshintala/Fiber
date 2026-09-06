@@ -606,9 +606,6 @@ fn shouldSignalProcess(
 }
 
 fn inspectProcessGroup(pid: std.posix.pid_t) ProcessGroupState {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return .unavailable;
-    }
     const process_group = getpgid(pid);
     if (process_group >= 0) return .{ .found = process_group };
     return switch (std.c.errno(process_group)) {
