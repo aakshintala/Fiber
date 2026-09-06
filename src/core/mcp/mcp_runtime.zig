@@ -2514,7 +2514,6 @@ pub const ServerState = enum {
     failed,
 };
 
-pub const ToolFreshness = feature_cache.Freshness;
 const DiscoveryState = enum(u8) {
     idle,
     loading,

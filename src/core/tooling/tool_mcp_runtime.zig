@@ -116,14 +116,6 @@ pub const InputOrigin = struct {
     lifecycle_cancel_flag: ?*const std.atomic.Value(bool) = null,
 };
 
-pub const InputIdentityWitness = struct {
-    runtime_generation: u64 = 0,
-    connection_generation: u64,
-    client_generation: u64,
-    catalog_generation: u64,
-    auth_generation: u64,
-};
-
 pub const InputResponder = struct {
     context: *anyopaque,
     capabilities: elicitation.Capabilities = .{},

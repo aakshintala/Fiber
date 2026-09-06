@@ -3333,7 +3333,7 @@ test "core.app_render_runtime keeps configured controls visible while model capa
     );
 }
 
-test "core.app_render_runtime keeps Kimi fast indicator stable across catalog hydration" {
+test "core.app_render_runtime keeps the fast indicator stable across catalog hydration" {
     const cases = [_]struct {
         model: []const u8,
         fast_mode: bool,
@@ -3341,9 +3341,9 @@ test "core.app_render_runtime keeps Kimi fast indicator stable across catalog hy
         supports_fast_mode: bool,
         expected_indicator: bool,
     }{
-        .{ .model = "moonshotai/kimi-k3", .fast_mode = false, .intrinsic_fast = false, .supports_fast_mode = true, .expected_indicator = false },
-        .{ .model = "moonshotai/kimi-k3", .fast_mode = true, .intrinsic_fast = false, .supports_fast_mode = true, .expected_indicator = true },
-        .{ .model = "moonshotai/kimi-k3-fast", .fast_mode = false, .intrinsic_fast = true, .supports_fast_mode = false, .expected_indicator = true },
+        .{ .model = "zai/glm-5.2", .fast_mode = false, .intrinsic_fast = false, .supports_fast_mode = true, .expected_indicator = false },
+        .{ .model = "zai/glm-5.2", .fast_mode = true, .intrinsic_fast = false, .supports_fast_mode = true, .expected_indicator = true },
+        .{ .model = "zai/glm-5.2-fast", .fast_mode = false, .intrinsic_fast = true, .supports_fast_mode = false, .expected_indicator = true },
     };
 
     for (cases) |case| {

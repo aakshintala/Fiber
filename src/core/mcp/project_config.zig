@@ -838,31 +838,6 @@ pub fn authorityNames(
     return names.toOwnedSlice(alloc);
 }
 
-pub fn configRetainsWorkspaceAuthority(
-    current: McpServerConfig,
-    next: []const McpServerConfig,
-    phase: startup_admission.Phase,
-) bool {
-    if (current.source != .workspace or
-        startup_admission.decide(
-            current.enabled,
-            current.required,
-            current.workspace_admission,
-            phase,
-        ) != .connect) return true;
-    for (next) |candidate| {
-        if (candidate.source != .workspace or
-            !std.mem.eql(u8, current.name, candidate.name)) continue;
-        if (startup_admission.decide(
-            candidate.enabled,
-            candidate.required,
-            candidate.workspace_admission,
-            phase,
-        ) == .connect) return true;
-    }
-    return false;
-}
-
 inline fn failServerConfig(err: anytype) @TypeOf(err)!McpServerConfig {
     return @errorCast(failServerConfigDynamic(err));
 }
