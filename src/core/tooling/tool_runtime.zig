@@ -1187,7 +1187,6 @@ fn commandReplayPolicy(
 ) ?command_replay_store.CapturePolicy {
     if (continued) |policy| return policy;
     return switch (environment) {
-        .workspace_clean => null,
         .legacy => if (has_replay_capability or interactive)
             .best_effort
         else
@@ -1772,7 +1771,7 @@ fn callTestCapturedShell(
     };
     defer switch (environment) {
         .clean, .user => |path| ctx.allocator.free(path),
-        .legacy, .workspace_clean => {},
+        .legacy => {},
     };
     return backend.execute(ctx, .{
         .command = input.command,
@@ -4499,12 +4498,6 @@ test "command replay policy is decided once from typed execution context" {
             .has_replay_capability = true,
             .interactive = false,
             .expected = .best_effort,
-        },
-        .{
-            .environment = .workspace_clean,
-            .has_replay_capability = true,
-            .interactive = true,
-            .expected = null,
         },
         .{
             .environment = .{ .clean = "/bin/zsh" },

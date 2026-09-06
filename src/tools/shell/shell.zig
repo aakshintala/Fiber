@@ -321,7 +321,7 @@ fn validateRun(
         );
     };
     if (!input.tty) {
-        _ = commandEnvironment(arena, ctx, input.profile) catch |err| {
+        _ = commandEnvironment(arena, input.profile) catch |err| {
             return try std.fmt.allocPrint(
                 ctx.allocator,
                 "shell run profile is invalid: {s}",
@@ -371,7 +371,6 @@ fn callRun(
     };
     const environment = commandEnvironment(
         request_arena,
-        ctx,
         input.profile,
     ) catch |err| {
         return .{ .failure = try std.fmt.allocPrint(
@@ -1493,13 +1492,8 @@ fn resolveCwd(
 
 fn commandEnvironment(
     alloc: Allocator,
-    ctx: tool_dispatch.DispatchContext,
     profile: ?command_environment.Profile,
 ) !command_environment.Environment {
-    if (ctx.captured_command_host == .workspace_clean) {
-        if (profile != null) return error.InvalidWorkspaceInput;
-        return .workspace_clean;
-    }
     var login_shell_buffer: [4096]u8 = undefined;
     const configured = shell_resolver.configuredLoginShellInto(&login_shell_buffer);
     return shell_resolver.environment(alloc, configured, profile);
@@ -1972,7 +1966,6 @@ test "registered shell run yields and waits through one managed execution" {
     defer environment_arena_state.deinit();
     const environment = try commandEnvironment(
         environment_arena_state.allocator(),
-        .{ .allocator = alloc, .workspace_root = "/tmp" },
         .clean,
     );
     const command_ctx = command_admission.CommandContext{
