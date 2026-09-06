@@ -92,7 +92,7 @@ pub fn collect(
 
     var detailed = config_runtime.loadMergedSettingsDetailed(alloc, snapshot.workspace_root) catch |err| {
         // Settings are unreadable, so no remembered choice is available to honour.
-        snapshot.auth = try auth_runtime.loadStatusSnapshot(alloc, null);
+        snapshot.auth = try auth_runtime.loadStatusSnapshot(alloc);
         try appendConfigLoadFailureCheck(&checks, alloc, "config", "failed to load config", err);
         try appendMcpConfigCheck(&checks, alloc, mcp_config_diagnostic);
         try appendAuthCheck(&checks, alloc, snapshot.auth);
@@ -110,7 +110,6 @@ pub fn collect(
     snapshot.auth = try auth_runtime.loadStatusSnapshotForProvider(
         alloc,
         snapshot.provider,
-        detailed.settings.credential_source,
     );
 
     try appendConfigCheck(&checks, alloc, paths, detailed.diagnostics);

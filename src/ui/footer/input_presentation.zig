@@ -1573,12 +1573,10 @@ test "compose hint row replaces model status with subscription sign-in controls"
     const alloc = std.testing.allocator;
     const cases = [_]struct {
         source: credentials.Source,
-        manual_code_visible: bool,
         expected: []const u8,
     }{
         .{
             .source = .chatgpt_subscription,
-            .manual_code_visible = false,
             .expected = "Enter reopens browser · Esc cancels",
         },
     };

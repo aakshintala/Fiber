@@ -282,3 +282,28 @@ declarations are reached from the retained fixture path.
 
 The stop condition held as written: no production request path imports the
 file. Its only importer is `src/builtins/gateway.zig`.
+
+## The `credential_source` setting is now write-only (2026-09-05, Slice 9)
+
+*measured.* Slice 9 deleted the `preferred: ?Source` parameter from
+`credentials.resolveForProvider` and `auth_runtime.loadStatusSnapshotForProvider`,
+which discarded it. The inventory said every caller passed null. That was wrong:
+five callers passed `settings.credential_source`,
+`detailed.settings.credential_source`, or
+`config.tool_context.credential_source`. All were plain field reads with no side
+effects, and the callee discarded the value, so removing them changed nothing.
+
+The consequence is worth recording. The merged-settings `credential_source` is
+now parsed at `config_runtime.zig:1355` and read nowhere. It is a documented
+user setting that selects a preferred credential source and has no effect on
+which credential is resolved — it had none before this slice either, since the
+value died at the callee.
+
+Not fixed here. It sits on the persisted-config boundary, so removing the key
+affects existing user config files, and that is a product decision rather than a
+simplification. Slice 26's implementation-seam audit or Slice 27's final sweep
+owns it; the analysis above is the whole of it, so it need not be re-derived.
+
+Note this is distinct from `types.CredentialSource` generally, which is live:
+HTTP failure reporting, checkpoint authority matching, tool runtime, and
+settings persistence all read it.

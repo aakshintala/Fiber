@@ -108,7 +108,7 @@ pub fn refreshCredentialTokenForAccount(
 
     var credential = switch (source) {
         .chatgpt_subscription => switch (mode) {
-            .if_needed => (try credentials.resolveForProvider(alloc, transport, .refresh_if_needed, .codex, null)).credential orelse return null,
+            .if_needed => (try credentials.resolveForProvider(alloc, transport, .refresh_if_needed, .codex)).credential orelse return null,
             .force => (try credentials.refreshChatGptCredential(alloc, transport)) orelse return null,
         },
     };
@@ -289,19 +289,14 @@ pub const StatusSnapshot = struct {
     }
 };
 
-pub fn loadStatusSnapshot(
-    alloc: Allocator,
-    preferred: ?credentials.Source,
-) !StatusSnapshot {
-    return loadStatusSnapshotForProvider(alloc, null, preferred);
+pub fn loadStatusSnapshot(alloc: Allocator) !StatusSnapshot {
+    return loadStatusSnapshotForProvider(alloc, null);
 }
 
 pub fn loadStatusSnapshotForProvider(
     alloc: Allocator,
     provider: ?model_provider.ProviderId,
-    preferred: ?credentials.Source,
 ) !StatusSnapshot {
-    _ = preferred;
     const chatgpt_connected = chatgpt_oauth.sourceExists(alloc) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => false,
@@ -314,7 +309,6 @@ pub fn loadStatusSnapshotForProvider(
         oauth_transport.unavailable_provider,
         .stored,
         provider orelse .codex,
-        null,
     ) catch |err| switch (err) {
         error.OutOfMemory => return err,
         else => blk: {
@@ -795,7 +789,9 @@ pub const Runtime = struct {
         alloc: Allocator,
         provider: model_provider.ProviderId,
     ) !?bool {
-        _ = provider;
+        switch (provider) {
+            .codex => {},
+        }
         if (self.credentialSource() == .chatgpt_subscription)
             return false;
         return self.selectSourceWithLoader(
@@ -926,7 +922,7 @@ fn probeCredentialSourceForLogout(raw_context: ?*anyopaque, alloc: Allocator, so
 
 fn loadRuntimeCredentialSource(_: ?*anyopaque, alloc: Allocator, source: credentials.Source) !?credentials.Credential {
     return switch (source) {
-        .chatgpt_subscription => (try credentials.resolveForProvider(alloc, oauth_transport.unavailable_provider, .stored, .codex, null)).credential,
+        .chatgpt_subscription => (try credentials.resolveForProvider(alloc, oauth_transport.unavailable_provider, .stored, .codex)).credential,
     };
 }
 

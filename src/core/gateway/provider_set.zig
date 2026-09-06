@@ -43,7 +43,9 @@ pub const Set = struct {
     codex: Bundle,
 
     pub fn select(self: Set, provider: model_provider.ProviderId) Bundle {
-        _ = provider;
+        switch (provider) {
+            .codex => {},
+        }
         return self.codex;
     }
 };

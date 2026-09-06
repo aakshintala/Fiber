@@ -194,7 +194,6 @@ pub noinline fn composeAuthPickerRow(
         const source_row_index = signInProjectedRowIndex(
             view.sign_in,
             .chatgpt_subscription,
-            false,
             row_index,
             row_count,
         );
@@ -202,8 +201,6 @@ pub noinline fn composeAuthPickerRow(
             alloc,
             view.sign_in,
             .chatgpt_subscription,
-            false,
-            0,
             source_row_index,
             width,
         );
@@ -220,13 +217,11 @@ pub noinline fn composeAuthPickerRow(
 fn signInProjectedRowIndex(
     snapshot: login_flow.SignInSnapshot,
     source: credentials.Source,
-    manual_code_visible: bool,
     row_index: u16,
     row_count: u16,
 ) u16 {
     _ = snapshot;
     _ = source;
-    _ = manual_code_visible;
     const codex_priority = [_]u16{ 2, 0, 3, 1 };
     return prioritizedRowIndex(4, &codex_priority, row_index, row_count);
 }
@@ -329,14 +324,10 @@ fn composeSignInPickerRow(
     alloc: Allocator,
     snapshot: login_flow.SignInSnapshot,
     source: credentials.Source,
-    manual_code_visible: bool,
-    manual_code_mask_count: usize,
     row_index: u16,
     width: u16,
 ) !std.ArrayList(u8) {
     _ = source;
-    _ = manual_code_visible;
-    _ = manual_code_mask_count;
     var row: std.ArrayList(u8) = .empty;
     errdefer row.deinit(alloc);
     if (width == 0) return row;

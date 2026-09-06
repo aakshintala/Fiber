@@ -159,7 +159,7 @@ pub fn resolve(
     transport: oauth_transport.Provider,
     mode: LoadMode,
 ) !Resolution {
-    return resolveForProvider(alloc, transport, mode, .codex, null);
+    return resolveForProvider(alloc, transport, mode, .codex);
 }
 
 pub fn resolveForProvider(
@@ -167,9 +167,7 @@ pub fn resolveForProvider(
     transport: oauth_transport.Provider,
     mode: LoadMode,
     provider: model_provider.ProviderId,
-    preferred: ?Source,
 ) !Resolution {
-    _ = preferred;
     switch (provider) {
         .codex => {
             const credential = switch (mode) {

@@ -407,7 +407,6 @@ fn loadedCatalogStatusText(state: model_cache_runtime.ModelMenuCatalogState) ?[]
         };
     }
     if (state.access_level == .authenticated) {
-        _ = state.source;
         return "Codex catalog: authenticated with a subscription.";
     }
     return null;

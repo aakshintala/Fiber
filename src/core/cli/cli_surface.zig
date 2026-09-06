@@ -553,21 +553,15 @@ fn runNoConfigIfRequestedWithDeps(
     return true;
 }
 
-const ProviderActivationCaller = enum {
-    provider_command,
-    provider_login,
-};
-
 fn writeProviderActivationError(
     alloc: Allocator,
     deps: RunDeps,
-    caller: ProviderActivationCaller,
     detail: []const u8,
 ) !void {
     const message = try std.fmt.allocPrint(
         alloc,
-        "{s}: {s}\n",
-        .{ if (caller == .provider_login) "fiber auth login" else "fiber provider", detail },
+        "fiber auth login: {s}\n",
+        .{detail},
     );
     defer alloc.free(message);
     try writeStderr(deps, message);
@@ -578,25 +572,24 @@ fn activateProviderSelection(
     cfg: Config,
     deps: RunDeps,
     target: model_provider.ProviderId,
-    caller: ProviderActivationCaller,
 ) !bool {
-    _ = caller;
-    _ = target;
+    switch (target) {
+        .codex => {},
+    }
     var resolution = try credentials.resolveForProvider(
         alloc,
         cfg.oauth_transport,
         .refresh_if_needed,
         .codex,
-        null,
     );
     defer if (resolution.credential) |*credential| credential.deinit(alloc);
 
     const credential = if (resolution.credential) |*value| value else {
-        try writeProviderActivationError(alloc, deps, .provider_login, "Codex credential is unavailable");
+        try writeProviderActivationError(alloc, deps, "Codex credential is unavailable");
         return false;
     };
     const catalog_provider = cfg.provider_set.select(.codex).model_catalog orelse {
-        try writeProviderActivationError(alloc, deps, .provider_login, "Codex model catalog is unavailable");
+        try writeProviderActivationError(alloc, deps, "Codex model catalog is unavailable");
         return false;
     };
     const fetch_result = model_catalog.fetchWithPublicFallback(catalog_provider, alloc, .{
@@ -614,14 +607,14 @@ fn activateProviderSelection(
                 .{@tagName(failure.failure.category)},
             );
             defer alloc.free(detail);
-            try writeProviderActivationError(alloc, deps, .provider_login, detail);
+            try writeProviderActivationError(alloc, deps, detail);
             return false;
         },
     };
     defer model_catalog.freeModelCatalog(alloc, &loaded.catalog);
     const saved_model: ?[]const u8 = null;
     const selected_model = selectCatalogModel(loaded.catalog.items, saved_model) orelse {
-        try writeProviderActivationError(alloc, deps, .provider_login, "target model catalog is empty");
+        try writeProviderActivationError(alloc, deps, "target model catalog is empty");
         return false;
     };
     var attempt = config_runtime.attemptUserPreferences(alloc, .{
@@ -631,7 +624,7 @@ fn activateProviderSelection(
     switch (attempt) {
         .failure => |failure| {
             debug_trace.logf("config", "provider selection persistence failed err={s}", .{@errorName(failure.err)});
-            try writeProviderActivationError(alloc, deps, .provider_login, "failed to save the Codex model selection");
+            try writeProviderActivationError(alloc, deps, "failed to save the Codex model selection");
             return false;
         },
         .outcome => {},
@@ -1517,7 +1510,7 @@ fn runProviderLogin(
             };
         },
     }
-    if (!try activateProviderSelection(alloc, cfg, deps, provider, .provider_login)) {
+    if (!try activateProviderSelection(alloc, cfg, deps, provider)) {
         return .handled_failure;
     }
     var out: std.Io.Writer.Allocating = .init(alloc);
@@ -1616,7 +1609,7 @@ fn runTopLevelAuth(
             try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
             return .handled_usage_error;
         };
-        const status = try auth_runtime.loadStatusSnapshotForProvider(alloc, provider, null);
+        const status = try auth_runtime.loadStatusSnapshotForProvider(alloc, provider);
         const text = try (output_contracts.AuthStatusSnapshot{
             .provider = provider,
             .status = status,

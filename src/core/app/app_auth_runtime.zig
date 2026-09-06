@@ -303,7 +303,6 @@ pub fn Runtime(comptime App: type) type {
                 app.auth.oauthTransport(),
                 .refresh_if_needed,
                 .codex,
-                null,
             );
             var credential = resolution.credential orelse {
                 if (app.auth.credentialNeedsRefresh()) return error.CredentialRefreshUnavailable;

@@ -285,7 +285,6 @@ pub fn loadStartupStatus(
     var auth_status = try auth_runtime.loadStatusSnapshotForProvider(
         alloc,
         configured_selection.provider,
-        settings.credential_source,
     );
     errdefer auth_status.deinit(alloc);
 
@@ -369,7 +368,6 @@ fn loadStartupStateFromOwnedWorkspace(
             transport,
             mode,
             state.provider,
-            settings.credential_source,
         );
         state.credential = resolution.credential;
     }

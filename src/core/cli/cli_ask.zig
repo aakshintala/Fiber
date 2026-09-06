@@ -1356,7 +1356,9 @@ fn missingCredentialResult(
     options: RunOptions,
     provider: model_provider.ProviderId,
 ) !PromptRunResult {
-    _ = provider;
+    switch (provider) {
+        .codex => {},
+    }
     const message = credentials.missing_chatgpt_credential_message;
     try options.deps.write_stderr(options.deps.stderr_ctx, "fiber ask: ");
     try options.deps.write_stderr(options.deps.stderr_ctx, message);
@@ -1508,13 +1510,11 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     const credential: *const credentials.Credential = if (startup_matches_final_model)
         &startup.credential.?
     else routed: {
-        const preferred = if (startup.credential) |value| value.source else null;
         const resolution = try credentials.resolveForProvider(
             alloc,
             cfg.oauth_transport,
             .refresh_if_needed,
             ctx.provider,
-            preferred,
         );
         routed_credential = resolution.credential;
         if (routed_credential == null) {
