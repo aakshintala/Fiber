@@ -4368,8 +4368,6 @@ test "initial session grants follow active registry metadata" {
 }
 
 test "processQueuedPrompt once permission binds external mutation grants before prompt returns" {
-    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4434,8 +4432,6 @@ test "processQueuedPrompt once permission binds external mutation grants before 
 }
 
 test "processQueuedPrompt always permission retains external mutation session grants from approved targets" {
-    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

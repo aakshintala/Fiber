@@ -211,18 +211,6 @@ fn openExistingRegularFileWithPolicy(
         return error.DurablePathUnsafe;
     }
 
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        var file = try dir.openFile(getIo(), sub_path, .{
-            .mode = policy.mode,
-            .allow_directory = false,
-            .follow_symlinks = policy.final_symlink == .follow,
-        });
-        errdefer file.close(getIo());
-        const stat = try file.stat(getIo());
-        try verifyOpenedRegularFileWithPolicy(stat, policy);
-        return file;
-    }
-
     var flags: std.posix.O = .{
         .ACCMODE = switch (policy.mode) {
             .read_only => .RDONLY,
@@ -304,9 +292,6 @@ fn makeFileBlocking(file: *std.Io.File) !void {
 }
 
 test "read-only regular files remain valid when atomic replacement unlinks the descriptor" {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -421,13 +406,6 @@ pub fn cloneEnvironMap(
 }
 
 fn getenvFromBlock(block: std.process.Environ.Block, key: []const u8) ?[]const u8 {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .freestanding or builtin.os.tag == .other) {
-        return null;
-    }
-    if (comptime (builtin.os.tag == .wasi or builtin.os.tag == .emscripten) and !builtin.link_libc) {
-        return null;
-    }
-
     const view = block.view();
     for (view.slice) |entry_z| {
         const entry = std.mem.sliceTo(entry_z, 0);
@@ -585,7 +563,6 @@ fn verifyPrivateDirectory(dir: std.Io.Dir) !void {
 /// The handle must come from an `openDir` that requested iteration. Linux returns an
 /// `O_PATH` descriptor otherwise, and `fsync` rejects those with `EBADF`.
 pub fn syncVerifiedDir(dir: std.Io.Dir) !void {
-    if (comptime builtin.os.tag == .windows) return error.OperationUnsupported;
     while (true) {
         const rc = std.c.fsync(dir.handle);
         if (rc == 0) return;

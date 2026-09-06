@@ -1902,11 +1902,7 @@ pub fn Handlers(comptime App: type) type {
 const trace_transcript_max_line_bytes: usize = 300;
 
 fn traceFilePermissions() std.Io.File.Permissions {
-    const builtin = @import("builtin");
-    return switch (builtin.os.tag) {
-        .windows => .default_file,
-        else => std.Io.File.Permissions.fromMode(0o600),
-    };
+    return std.Io.File.Permissions.fromMode(0o600);
 }
 
 fn writeTraceReportFile(alloc: std.mem.Allocator, contents: []const u8) ![]u8 {
@@ -3987,9 +3983,7 @@ test "trace report file uses private randomized markdown path" {
     defer file.close(std.testing.io);
     const stat = try file.stat(std.testing.io);
     try std.testing.expectEqual(@as(u64, 6), stat.size);
-    if (@import("builtin").os.tag != .windows) {
-        try std.testing.expectEqual(@as(std.posix.mode_t, 0), stat.permissions.toMode() & 0o077);
-    }
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0), stat.permissions.toMode() & 0o077);
 }
 
 test "trace auth summary preserves missing and loaded status text" {

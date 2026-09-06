@@ -594,14 +594,7 @@ fn formatConfigPresence(alloc: Allocator, user_exists: bool, repo_exists: bool) 
 }
 
 fn fileExists(path: []const u8) !bool {
-    if (comptime @import("builtin").os.tag != .windows) {
-        return accessPath(path);
-    }
-    std.Io.Dir.accessAbsolute(io_mod.getIo(), path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return false,
-        else => return err,
-    };
-    return true;
+    return accessPath(path);
 }
 
 fn hasGitMetadata(alloc: Allocator, workspace_root: []const u8) !bool {
@@ -642,17 +635,7 @@ fn commandInPathValue(alloc: Allocator, command_name: []const u8, path_env: []co
 }
 
 fn pathExists(path: []const u8) bool {
-    if (comptime @import("builtin").os.tag != .windows) {
-        return accessPath(path) catch false;
-    }
-
-    if (std.fs.path.isAbsolute(path)) {
-        std.Io.Dir.accessAbsolute(io_mod.getIo(), path, .{}) catch return false;
-        return true;
-    }
-
-    std.Io.Dir.cwd().access(io_mod.getIo(), path, .{}) catch return false;
-    return true;
+    return accessPath(path) catch false;
 }
 
 fn accessPath(path: []const u8) !bool {

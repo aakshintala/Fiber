@@ -158,8 +158,6 @@ test "loadSkills loads managed skills under HOME" {
 }
 
 test "loadSkills canonicalizes a symlinked HOME before discovering optional roots" {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

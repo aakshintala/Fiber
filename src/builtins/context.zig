@@ -900,7 +900,6 @@ fn writeTestFile(dir: std.Io.Dir, name: []const u8, content: []const u8) !void {
 }
 
 fn createSymlinkOrSkip(dir: std.Io.Dir, target_path: []const u8, link_path: []const u8) !void {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     if (std.fs.path.dirname(link_path)) |parent| {
         try dir.createDirPath(io_mod.getIo(), parent);
     }

@@ -1277,17 +1277,11 @@ fn doctorSnapshotFromRuntime(snapshot: doctor_runtime.Snapshot) output_contracts
 }
 
 fn writeRealStdout(_: ?*anyopaque, text: []const u8) !void {
-    if (comptime builtin.os.tag != .windows) {
-        return writeFdAll(std.posix.STDOUT_FILENO, text);
-    }
-    try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), text);
+    return writeFdAll(std.posix.STDOUT_FILENO, text);
 }
 
 fn writeRealStderr(_: ?*anyopaque, text: []const u8) !void {
-    if (comptime builtin.os.tag != .windows) {
-        return writeFdAll(std.posix.STDERR_FILENO, text);
-    }
-    try std.Io.File.stderr().writeStreamingAll(io_mod.getIo(), text);
+    return writeFdAll(std.posix.STDERR_FILENO, text);
 }
 
 fn realStdinIsTty(_: ?*anyopaque) bool {

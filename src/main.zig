@@ -3123,12 +3123,12 @@ fn topLevelHelpStyleForValues(is_terminal: bool, no_color: bool, dumb_terminal: 
 }
 
 fn stdoutIsTerminal() bool {
-    if (comptime builtin.os.tag == .windows or !builtin.link_libc) return false;
+    if (comptime !builtin.link_libc) return false;
     return std.c.isatty(std.posix.STDOUT_FILENO) != 0;
 }
 
 fn stdoutTerminalColumns() ?usize {
-    if (comptime builtin.os.tag == .windows or !builtin.link_libc) return null;
+    if (comptime !builtin.link_libc) return null;
 
     var ws: std.posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
     const req: c_int = @intCast(std.c.T.IOCGWINSZ);
@@ -3146,15 +3146,13 @@ fn parseColumnCount(value: []const u8) ?usize {
 
 fn cliArgsFromRaw(raw_args: []const [*:0]const u8, stack_buf: [][:0]const u8) ![]const [:0]const u8 {
     @setRuntimeSafety(false);
-    if (comptime hasPosixArgVector()) {
-        if (raw_args.len <= 1) return &.{};
-        const cli_len = raw_args.len - 1;
-        if (cli_len <= stack_buf.len) {
-            for (raw_args[1..], 0..) |arg, i| {
-                stack_buf[i] = std.mem.sliceTo(arg, 0);
-            }
-            return stack_buf[0..cli_len];
+    if (raw_args.len <= 1) return &.{};
+    const cli_len = raw_args.len - 1;
+    if (cli_len <= stack_buf.len) {
+        for (raw_args[1..], 0..) |arg, i| {
+            stack_buf[i] = std.mem.sliceTo(arg, 0);
         }
+        return stack_buf[0..cli_len];
     }
 
     const args = try argsFromRaw(raw_args).toSlice(processAllocator());
@@ -3173,45 +3171,29 @@ fn processAllocator() Allocator {
 
 fn writeStdoutFast(text: []const u8) !void {
     @setRuntimeSafety(false);
-    if (comptime builtin.os.tag != .windows) {
-        var remaining = text;
-        while (remaining.len > 0) {
-            const written = std.c.write(std.posix.STDOUT_FILENO, remaining.ptr, remaining.len);
-            if (written <= 0) return error.WriteFailed;
-            remaining = remaining[@intCast(written)..];
-        }
-        return;
+    var remaining = text;
+    while (remaining.len > 0) {
+        const written = std.c.write(std.posix.STDOUT_FILENO, remaining.ptr, remaining.len);
+        if (written <= 0) return error.WriteFailed;
+        remaining = remaining[@intCast(written)..];
     }
-    try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), text);
 }
 
 fn writeStderrFast(text: []const u8) !void {
     @setRuntimeSafety(false);
-    if (comptime builtin.os.tag != .windows) {
-        var remaining = text;
-        while (remaining.len > 0) {
-            const written = std.c.write(std.posix.STDERR_FILENO, remaining.ptr, remaining.len);
-            if (written <= 0) return error.WriteFailed;
-            remaining = remaining[@intCast(written)..];
-        }
-        return;
+    var remaining = text;
+    while (remaining.len > 0) {
+        const written = std.c.write(std.posix.STDERR_FILENO, remaining.ptr, remaining.len);
+        if (written <= 0) return error.WriteFailed;
+        remaining = remaining[@intCast(written)..];
     }
-    try std.Io.File.stderr().writeStreamingAll(io_mod.getIo(), text);
 }
 
 fn exitFast(code: u8) noreturn {
-    if (comptime builtin.link_libc and builtin.os.tag != .windows and builtin.os.tag != .wasi) {
+    if (comptime builtin.link_libc) {
         std.c._exit(@intCast(code));
     }
     std.process.exit(code);
-}
-
-fn hasPosixArgVector() bool {
-    return switch (builtin.os.tag) {
-        .windows, .freestanding, .other => false,
-        .wasi => builtin.link_libc,
-        else => true,
-    };
 }
 
 fn needsFullEntryConfig(args: []const [:0]const u8) bool {
