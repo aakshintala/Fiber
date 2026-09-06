@@ -182,13 +182,8 @@ fn hasGlobalPackageFlag(words: []const command_lex.ArgvToken) bool {
     return false;
 }
 
-const PrintfFormatLanguage = enum {
-    portable_literal_newline_percent_string,
-};
-
 const PrintfPolicy = struct {
     executable: []const u8,
-    format_language: PrintfFormatLanguage = .portable_literal_newline_percent_string,
 };
 
 test "known reversible auto commands exclude destructive and hidden effects" {
@@ -235,14 +230,9 @@ test "known reversible auto commands exclude destructive and hidden effects" {
     ));
 }
 
-const LsSymlinkSemantics = enum {
-    platform_default,
-};
-
 const LsPolicy = struct {
     executable: []const u8,
     forced_argv: []const []const u8,
-    symlink_semantics: LsSymlinkSemantics = .platform_default,
 };
 
 pub const ApprovalReason = enum {
@@ -1342,15 +1332,10 @@ test "planner target policies use reviewed absolute executables and argv" {
     for ([_]std.Target.Os.Tag{ .macos, .linux }) |target_os| {
         const printf_policy = printfPolicy(target_os);
         try std.testing.expectEqualStrings("/usr/bin/printf", printf_policy.executable);
-        try std.testing.expectEqual(
-            PrintfFormatLanguage.portable_literal_newline_percent_string,
-            printf_policy.format_language,
-        );
 
         const ls_policy = lsPolicy(target_os);
         try std.testing.expectEqualStrings("/bin/ls", ls_policy.executable);
         try std.testing.expectEqualSlices([]const u8, &.{"-q"}, ls_policy.forced_argv);
-        try std.testing.expectEqual(LsSymlinkSemantics.platform_default, ls_policy.symlink_semantics);
 
         const commands = [_][]const u8{
             "printf x",

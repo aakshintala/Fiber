@@ -476,3 +476,47 @@ One finding worth a second look rather than a silent deletion:
 `onInnerToolUsage` in `app_callbacks.zig` is a `pub` callback with a vtable-shaped
 signature and no reference of any kind. Its deadness may mean inner-tool usage is
 simply not being reported, which is a product question, not a cleanup one.
+
+## Slice 25 dispositions
+
+**Collapsed.** `PrintfFormatLanguage` and `LsSymlinkSemantics` in
+`command_effect.zig` were one-variant enums used only as defaulted struct fields
+and asserted once each in a retained test; enum, field, and assertion went, the
+test keeps its executable and argv assertions. The always-true
+project-instruction switch in `builtins/context.zig` went too:
+`loadsProjectInstructionFiles()` returned a literal `true`, and the field it fed
+defaulted to `true`, so the guarded block was unconditional. That is a leftover
+from this phase's own platform work rather than a live knob. The two tests that
+existed only to exercise it -- one asserting the constant, one forcing the field
+`false` -- went with it.
+
+**Retained: `ShellKind` in `src/tools/shell/shell.zig`.** The inventory asked to
+collapse it while preserving the `"kind":"executable"` contract. It cannot be
+done cheaply: `Input.public_field_names` is computed by reflection over
+`@typeInfo(Input)`, so `ShellInput`'s field set *is* the advertised schema. The
+validation at `tool_admission.zig:2093` and the advertisement at
+`builtins/tools.zig:52` are both string-based and already independent of the
+enum, so the enum costs one declaration and removing it risks the tool schema.
+Not worth it. Note the unrelated `ShellKind` in `terminal/shell_resolver.zig` is
+`enum { bash, zsh }`, genuinely two-valued and live.
+
+**Retained: the discarded `protocol` parameter in
+`mcp/features/common.zig:completeResult`.** Removing the `_ = protocol;` forces
+removing the argument at four call sites, which makes `protocol` an unused
+parameter in `completion.parseResult` -- Zig rejects that -- which forces it out
+of `parseResult`, `parseListPage`, and `parseResourcePage`, the public
+protocol-shaped parse API of four MCP feature modules. `protocol` is live in
+those modules (26 references in `resources.zig`, 12 in `prompts.zig`). Slice 25's
+own rule is not to collapse public provider-shaped contracts, and trading that
+API shape for one discard line is a bad deal.
+
+**Owner decisions, not cleanup.** Two "parsed but never read" findings inherited
+from earlier slices are being left alone, because both are inert data behind a
+retained seam rather than anything that renders, ranks, or misleads:
+
+- `oauth.Metadata.revocation_endpoint` is parsed, owned, and freed but never
+  consumed. It is a standards-defined OAuth metadata field; storing it unused is
+  ordinary, and deleting it would have to be re-added to support revocation.
+- merged-settings `credential_source`. The identifier is live in 92 places; only
+  the merged-settings read is missing. Whether that is a bug or intended is a
+  product question.
