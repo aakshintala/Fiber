@@ -1,80 +1,64 @@
 # Handoff: Fiber Phase 4 simplification
 
-Rewritten 2026-09-05 after Slice 10. Supersedes every earlier copy. The version
-before this one told you to run the lazy-analysis probe as the next action and
-asserted a test failure that does not exist. Do not work from it.
+Rewritten 2026-09-05 after Slice 16. Supersedes every earlier copy.
 
 ## Read first
 
-1. `docs/transition/phase4-baseline.md` — baseline, gate repair, probe result
-2. `docs/transition/phase4-audit/OWNER-QUESTIONS.md` — decisions taken without
-   the owner; decision 3 is **withdrawn**, read why before trusting anything
-   about the probe
-3. `docs/transition/simplification-inventory.md` — the ordered slices
-4. `docs/transition/phase4-audit/CORRECTIONS.md` — retention decisions, with two
-   new entries from this session at the bottom
+1. `phase4-audit/REAUDIT.md` — the re-audit checkpoint, run after Slice 15.
+   Current numbers, the argument that every unsupported-target hit left in
+   `src/` is explained, and the host-capability measurement.
+2. `phase4-audit/OWNER-QUESTIONS.md` — decisions taken without the owner.
+   **Decisions 5 and 6 are open and unanswered.** Decision 3 is withdrawn.
+3. `simplification-inventory.md` — the ordered slices.
+4. `phase4-audit/CORRECTIONS.md` — retention decisions.
 
 `REPORT.md` is raw evidence only. Its arithmetic holds; its scope and triage do
-not.
+not. **The inventory's Slices 17-27 were written at `b26e3d99` and are stale by
+roughly 500 deleted sites. Re-derive every removal surface before opening a
+slice.** Slice 16 proved the inventory wrong in both directions at once.
 
 ## Where the work stands
 
-Slices 0 through 10 are committed on `main`. The working tree is clean.
+Slices 0 through 16 are committed on `main`. The working tree is clean.
 
 ```
+8a24bb73 Slice 16: delete the dead OAuth helper family
+00c89f49 Slice 15c: finish the native host profile and record the re-audit
+b20f559c Slice 15: collapse the native host profile
+259fdb51 Slice 14b: collapse the invariant capability constants
+b8b43b4a Slice 14a: remove unsupported CLI, main, and shared I/O branches
+15e9dc75 Slice 13: remove unsupported workspace, image, and skill branches
+520a069d Slice 12: remove unsupported host, terminal, and session branches
+423414b9 Slice 11: remove unsupported MCP and tooling branches
 bf936540 Slice 10: remove unsupported execution and process branches
-87c641e7 Record the Phase 4 handoff state after Slice 9
-b99e6d9e Slice 9: close provider-selection discards
-4d21a67e Slice 8: remove workspace_clean completely
-1f3101dc Slice 7: remove deleted-product one-value residue
-a14d5cf2 Withdraw decision 3: the probe's only failure was the probe's own doing
-ac2853e8 Slice 6: remove the detached stream-flush switch
-fbaa2d31 Slice 5: remove the unreachable Fiber search backend
-9bc41a85 Slice 4: delete the dead request builders and legacy completion parser
-2ea9c688 Narrow Slice 4: the fake-gateway request serialiser is not dead
-b6e1bc0f Slice 3: flatten the OAuth transport wrapper
-8d7764de Slice 2: remove deleted-host tool completion and sandbox residue
-a346c276 Slice 1: restrict builds and CI to supported targets
-2f42167c Slice 0: record the lazy-analysis probe result
-38496f4c Slice 0: record the Phase 4 baseline, drop E2E from the gate
 ```
 
-Each slice's evidence is in its own commit message. Read the message before
-re-deriving anything about that slice.
+Slices 0-9 precede those; `git log --oneline` has them. Each slice's evidence is
+in its own commit message. Read the message before re-deriving anything.
 
 ## Current numbers
 
-| Signal | Opening (`38496f4c`) | Now (`bf936540`) |
+| Signal | Opening (`38496f4c`) | Now (`8a24bb73`) |
 | --- | --- | --- |
-| main test binary | 7287 pass, 2 skip, 7289 total | 7245 pass, 2 skip, 7247 total |
-| `zlint` | 0 errors, 111 warnings, 496 files | 0 errors, 109 warnings, 493 files |
+| main test binary | 7287 pass, 2 skip, 7289 total | 7241, 2, 7243 |
+| lazy-analysis probe | 7791 total, 502 never analysed | 7744 / 498 at `b20f559c` |
+| `zlint` | 0 errors, 111 warnings, 496 files | 0, 106, 492 |
 | `zig fmt --check src/` | clean | clean |
 | `./scripts/smoke.sh` | ok | ok |
 
-## Slice 10 is done
+## The platform family is done
 
-All 84 Windows and WASI mentions are gone from `command_runner.zig`,
-`process_tree.zig`, and `permissions/direct_command.zig`. Not one `.macos` or
-`.linux` line moved, which is the check that matters. Both Linux cross-builds
-pass. Read `bf936540` for the three unwraps that carried real risk.
+Slices 10-15c removed every reachable `.windows`, `.wasi`, `.emscripten`, and
+`.freestanding` branch, collapsed `supports_headless_interrupt`,
+`supports_resize_signal`, `supports_test_pty`, and `hasPosixArgVector`, deleted
+`runtime_profile.zig` entirely, and cut `host.Capabilities` to the one field
+that still varies. `REAUDIT.md` documents why the remaining `.windows` literals
+in `src/` are explained rather than residue.
 
-## The platform rule — slices 10 through 15 all depend on it
-
-Slice 1 restricted the project to **aarch64-macos, x86_64-linux, aarch64-linux**.
-`build.zig` rejects everything else before configuring. So:
-
-- `builtin.os.tag == .windows` → always **false**, delete the branch
-- `builtin.os.tag == .wasi` → always **false**, delete the branch
-- `!= .windows`, `!= .wasi` → always **true**, unwrap and propagate
-- `== .macos`, `!= .macos`, `== .linux`, `!= .linux` → **still vary, leave alone**
-
-macOS and Linux are both supported. A branch distinguishing them is live. Getting
-this backwards silently breaks process groups, signals, or descendant cleanup on
-a platform the local test run cannot exercise, which is why every slice in this
-family must cross-build both Linux targets, not just build natively.
-
-Architecture is `x86_64` and `aarch64` only; any other `builtin.cpu.arch` branch
-is dead by the same rule.
+**The platform rule, for reference.** `build.zig` accepts only aarch64-macos,
+x86_64-linux, aarch64-linux. `== .windows` / `== .wasi` are false, `!=` are
+true, and `.macos` / `.linux` comparisons still vary and must be left alone.
+Slices touching platform-conditional code must cross-build both Linux targets.
 
 ## Per-slice gate
 
@@ -86,77 +70,90 @@ zig build test -Doptimize=ReleaseSafe --summary all
 zlint
 ```
 
-Plus the slice's own absence greps, and for slices 10-15 the two Linux
-cross-builds. Do not run `bun test`.
+Plus the slice's own absence greps, and the two Linux cross-builds for any slice
+touching platform-conditional code. Do not run `bun test`.
 
 **Read test counts off the `+- run test ... pass, ... skip (... total)` line for
 the main binary.** The `Build Summary` line aggregates a second one-test step and
 is off by one. This has misled a delegate more than once.
 
-**Grep `zig build test` output for `failed command:`.** The exit status lies —
-it has printed that string while exiting 0.
+**Grep `zig build test` output for `failed command:`.** The exit status lies — it
+has printed that string while exiting 0.
 
 **Run `zlint` bare from the repository root.** v0.9.1 silently lints zero files
-when given a directory argument. The binary is at `~/.local/bin/zlint`.
+when given a directory argument. Binary at `~/.local/bin/zlint`.
 
-**`zlint` is now a ratchet, not a ceiling.** It may never rise above what the
-previous slice left, and each slice records the count it ends on in its commit
-message. A fixed ceiling let Slice 2's orphaned alias hide inside slack; the
-count has since fallen to 109, so a ceiling of 111 would now hide two.
+**`zlint` is a ratchet, not a ceiling.** It may never rise above what the
+previous slice left. Each slice records the count it ends on.
 
 Attribution: any formatting, build, unit-test, or smoke failure first seen after
 a slice is caused by that slice until fixed or reverted.
 
+## How to derive a removal surface
+
+The scanner used for Slices 16 and 17 is at
+`scratchpad/deadscan.py` in the session temp dir; rewrite it if lost. It strips
+`test "..." { }` blocks by brace matching, then for every container-level
+declaration counts references in the production text against references in the
+full text, across all of `src/`. Run it per subsystem, it takes a few minutes.
+
+```sh
+python3 deadscan.py src/core/auth
+```
+
+`prod=0 test=0` is a clean kill. **`prod=0 test>0` is not.** Those split into
+test fixtures supporting retained tests, which must stay, and production-shaped
+functions only tests reach, which are candidates. Read each one. Slice 4 nearly
+deleted a family that about twenty retained tests were asserting through.
+
+`zlint --format json` gives the machine-readable `unused-decls` list, which is a
+different and narrower signal: it only catches unreferenced container-level
+declarations, not chains that are dead as a whole.
+
 ## Working with the Cursor delegates
 
-Demolition slices go to `composer-2.5` via `cursor_run`, `capability: "write"`,
-`isolation: CallerProvided` at the repo root, in the background. The pattern that
-has worked:
+Demolition goes to `composer-2.5` via `cursor_run`, `capability: "write"`,
+`isolation: CallerProvided` at the repo root, in the background. What works:
 
-- Name every site by file and line, and state what each one's shape is.
+- Name every site by file and line, and state each one's shape.
 - State the stop condition and tell it to verify rather than trust you.
-- Say explicitly what to retain, not just what to delete.
-- Warn about `if` polarity every time. A condition that is always false means the
-  `else` survives; `if (!always_false)` means the `then` survives.
-- Tell it which test-count line to read.
+- Say explicitly what to retain, not just what to delete, with the evidence.
+- Warn about `if` polarity every time, and separate the `==` sites from the `!=`
+  sites in the brief. Mixing both without flagging it is how Slice 5 broke.
+- Give a specific numeric expectation for the test count, including when it
+  should not move, so a surprise is visible to both of you.
+- Tell it not to hand-roll brace matching in a script.
 
-Verify the diff yourself before committing. Delegates have, in this session:
-reported pre-change test counts as post-change; left an orphaned alias that
-tripped zlint; dropped an assertion from a retained test; and left a discarded
-`_ = ctx` parameter behind. All were caught in review. None were wrong about the
-deletion itself.
+Verify the diff yourself before committing.
 
 **Check your own brief too.** Slice 5's brief told the delegate that removing a
-`@hasField` read left `"/v1/models"` — that was the `else` arm; production took
-the `then` arm and used `""`. The delegate followed instructions and changed live
-behaviour. Slice 9's brief claimed every caller passed null for a parameter; five
-did not, and the delegate said so.
+`@hasField` read left `"/v1/models"`; that was the `else` arm, production took
+the `then` arm, and the delegate faithfully changed live behaviour. Slice 9's
+brief claimed every caller passed null for a parameter; five did not, and the
+delegate was right.
 
 ## Standing traps
 
 **Zig never analyses an unreferenced container-level declaration.** A green build
-does not prove a deleted symbol has no remaining callers. Grep for every name.
+does not prove a deleted symbol has no remaining callers. Grep every name.
 
 **One test compiles the tree a second time.** `assistant_stream.zig`'s
-"streamed presentation preserves ANSI OSC 8 code fence and table spans" is a
-meta-test: it runs `zig test -lc -Mroot=src/main.zig --test-filter <its own
-name>` as a child process and asserts the child exits 0. Anything that modifies
-`src/main.zig` breaks that child, because raw `zig test` does not supply the
-generated `build_options` module. The lazy-analysis probe does exactly that. This
-cost three flips of the same claim before it was understood; see
-`phase4-baseline.md`.
+"streamed presentation preserves ANSI OSC 8 code fence and table spans" runs
+`zig test -lc -Mroot=src/main.zig` as a child and asserts it exits 0. Anything
+that modifies `src/main.zig` breaks that child, because raw `zig test` does not
+supply the generated `build_options` module. The probe does exactly that. This
+cost three flips of the same claim before it was understood.
 
-**502 tests never run under `zig build test`.** The probe measured 7791 against
-7289 at baseline. The cause is Zig's lazy analysis — files whose only `@import`
-sits in a function body nothing analyses. Two files under `src/` are genuinely
-never imported: `benchmark_exports.zig` and `terminal_client_fixture.zig`.
+**About 498 tests never run under `zig build test`.** Lazy analysis: files whose
+only `@import` sits in a function body nothing analyses. `benchmark_exports.zig`
+and `terminal_client_fixture.zig` are genuinely never imported.
 
 **Killing a `bun test` run leaves processes alive.** `tmux kill-server` and
 `pkill -f zig-out/bin/fiber`.
 
 ## The probe
 
-Run at the re-audit checkpoint and at phase exit, never committed:
+Run at checkpoints and at phase exit, never committed:
 
 ```sh
 { echo 'const std = @import("std");'
@@ -168,37 +165,41 @@ zig build test -Doptimize=ReleaseSafe
 git checkout src/main.zig && rm src/zz_refall_probe.zig
 ```
 
-It must run through `zig build`, not `zig test`. It takes several minutes; run it
-in the background. Check `git status` afterwards — a killed run leaves both files
-behind.
+Must run through `zig build`, not `zig test`. Takes several minutes; run it in
+the background and check `git status` afterwards, since a killed run leaves both
+files behind.
 
-**Expected result: no failures except the OSC 8 meta-test, which the probe breaks
-by construction.** That one failure is not a signal.
+**Expected: no failure except the OSC 8 meta-test, which the probe breaks by
+construction.** That failure is not a signal.
 
 ## Decisions standing without the owner
 
-Ratified by the owner on 2026-09-05: E2E is out of Phase 4 entirely (Phase 5 owns
-rewiring the harness onto Codex), and the Slice 0 gate repair stands. The owner
-also authorised autonomous execution: route around anything needing a decision,
-record it in `OWNER-QUESTIONS.md`, and stop only if everything is blocked.
+Ratified 2026-09-05: E2E is out of Phase 4 entirely (Phase 5 owns rewiring the
+harness onto Codex), and the Slice 0 gate repair stands. The owner authorised
+autonomous execution: route around anything needing a decision, record it, and
+stop only if everything is blocked.
 
-Open entries added this session:
+**Open, asked, unanswered:**
 
-- **Decision 4** — Slice 4 keeps `buildAgentRequest` and `provider_bundle`
-  against the inventory's removal surface. They are test-only but not dead;
-  about twenty retained tests assert on captured request bodies.
-- **Decision 3 is withdrawn.** No decision was needed.
-- `CORRECTIONS.md` records that the merged-settings `credential_source` is now
-  parsed and never read — a user setting with no effect. Not fixed: it sits on
-  the persisted-config boundary, so removing the key is a product decision. Slice
-  26 or 27 owns it and the analysis is already written down.
+- **Decision 5** — the device-code OAuth polling chain
+  (`pollForTokenWithDeps`, `LoginPollDeps`, `realPollDeviceToken`,
+  `oauth.pollDeviceTokenBounded`) has no production caller, but the inventory
+  says to retain polling. 300-400 lines. Slice 16 shipped without touching it.
+- **Decision 6** — `zlint` zero `unused-decls` is a phase-exit criterion. The
+  count is 106 and no slice owns it, so Slice 27 inherits all of them. Blocker
+  or target?
+
+Earlier: decision 4 keeps `buildAgentRequest` and `provider_bundle`; decision 3
+is withdrawn; `CORRECTIONS.md` records that merged-settings `credential_source`
+is parsed and never read, deferred to Slice 25 or 27 as a product decision.
 
 ## Next actions
 
-1. Slices 11 through 15, one at a time, one commit each, all under the platform
-   rule. 11 is MCP and tooling, 12 host/terminal/session, 13
-   workspace/image/skill, 14 CLI/UI/main/shared I/O, 15 collapses the native host
-   profile.
-2. **The re-audit checkpoint** at `simplification-inventory.md:436`. Run the
-   probe and `zlint`, compare against this file's numbers, and re-audit before
-   starting the deletion slices at 16.
+1. **Slice 17**, dead command and builtin wrappers. Scan `src/builtins` first.
+2. Slices 18-25, each with its surface re-derived before it opens. `REAUDIT.md`
+   lists the merges worth making by subsystem.
+3. Slice 26, the implementation-seam audit. It inherits the
+   `host.Capabilities.terminal` measurement and the model-catalog field question
+   from Slice 16.
+4. Slice 27, the final sweep, which currently inherits 106 zlint warnings.
+5. Phase exit criteria are at the bottom of `simplification-inventory.md`.
