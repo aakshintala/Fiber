@@ -65,7 +65,6 @@ const builtin_mcp = @import("builtins/mcp.zig");
 const builtin_modes = @import("builtins/modes.zig");
 const builtin_skills = @import("builtins/skills.zig");
 const host = @import("core/hosts/host.zig");
-const host_runtime_profile = @import("core/hosts/runtime_profile.zig");
 const native_host = @import("core/hosts/native.zig");
 const debug_trace = @import("core/shared/debug_trace.zig");
 const display_width = @import("core/shared/display_width.zig");
@@ -348,7 +347,6 @@ test "skill submit snapshot keeps display spans exact while agent bindings dedup
 
 var resize_interlock = shell_runtime.ResizeApprovalInterlock{};
 const default_context_registry = context_contract.Registry{ .default_provider = builtin_context.provider };
-const selected_host_profile = host_runtime_profile.native;
 const app_oauth_transport = builtin_gateway.oauth_transport_provider;
 fn currentBuild() update_target.CurrentBuild {
     return .{
@@ -359,7 +357,6 @@ fn currentBuild() update_target.CurrentBuild {
 
 const App = struct {
     pub const app_version = version;
-    pub const host_profile = selected_host_profile;
     pub const input_limits = paste_framing.default_input_limits;
     pub const build_revision = build_options.git_commit;
     const Self = @This();
@@ -401,10 +398,7 @@ const App = struct {
     }
 
     pub fn urlOpener(_: *const Self) host.UrlOpener {
-        return if (comptime host_profile.url_opening)
-            url_opener.native_opener
-        else
-            host.unavailable_url_opener;
+        return url_opener.native_opener;
     }
 
     pub fn agentStreamProvider(self: *const Self) agent_stream_provider.Provider {
@@ -429,7 +423,7 @@ const App = struct {
     }
 
     pub fn clipboard(_: *const Self) host.Clipboard {
-        return if (comptime host_profile.clipboard) native_host.clipboard else host.unavailable_clipboard;
+        return native_host.clipboard;
     }
 
     pub fn terminalTitle(self: *const Self) host.TerminalTitle {
@@ -549,22 +543,18 @@ const App = struct {
             launch.modifiers.saved_directories_suppressed,
         );
         app.context_limits.applyCommandLine(launch.modifiers.context_limit_overrides);
-        if (comptime host_profile.durable_sessions) {
-            if (app.requested_resume != null) {
-                if (launch.upgrade_relaunch) {
-                    try SessionAppRuntime.resumeRequestedSessionAfterUpgrade(
-                        &app,
-                        app_version,
-                    );
-                } else {
-                    try SessionAppRuntime.resumeRequestedSession(&app);
-                }
-                SessionAppRuntime.syncTerminalTitle(&app);
+        if (app.requested_resume != null) {
+            if (launch.upgrade_relaunch) {
+                try SessionAppRuntime.resumeRequestedSessionAfterUpgrade(
+                    &app,
+                    app_version,
+                );
+            } else {
+                try SessionAppRuntime.resumeRequestedSession(&app);
             }
+            SessionAppRuntime.syncTerminalTitle(&app);
         }
-        if (comptime host_profile.durable_sessions) {
-            SessionAppRuntime.primeSessionPicker(&app);
-        }
+        SessionAppRuntime.primeSessionPicker(&app);
         SessionAppRuntime.syncTerminalTitle(&app);
         return app;
     }
@@ -1752,11 +1742,7 @@ const App = struct {
     }
 
     pub fn providerSet(_: *const App) provider_set.Set {
-        var providers = builtin_providers.native;
-        if (comptime !host_profile.tools) {
-            providers.codex.permission_reviewer = null;
-        }
-        return providers;
+        return builtin_providers.native;
     }
 
     pub fn describeToolAction(self: *App, arena: Allocator, call: ToolCall, display_target: ?[]const u8, advertised_dynamic_tool_names: []const []const u8) ![]const u8 {
@@ -1911,7 +1897,6 @@ const App = struct {
     }
 
     pub fn refreshFileIndex(self: *App) void {
-        if (comptime !host_profile.file_index) return;
         WorkspaceAppRuntime.refreshFileIndex(self);
     }
 
@@ -2620,13 +2605,9 @@ const App = struct {
         }
         try app_commands.Handlers(App).collectMcpAuthenticationFacts(self);
         try app_commands.Handlers(App).collectMcpReloadFacts(self);
-        if (comptime host_profile.native_auth) {
-            try AuthAppRuntime.collectSourceInventoryFacts(self);
-            try AuthAppRuntime.collectSignInFacts(self);
-        }
-        if (comptime host_profile.native_auth) {
-            try app_terminal_runtime.Runtime(App).collectFacts(self);
-        }
+        try AuthAppRuntime.collectSourceInventoryFacts(self);
+        try AuthAppRuntime.collectSignInFacts(self);
+        try app_terminal_runtime.Runtime(App).collectFacts(self);
 
         const cols_before_resize = self.shell.layout.cols;
         if (self.terminal_input_runtime.native_clear_probe.active() or

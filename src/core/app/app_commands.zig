@@ -1,5 +1,4 @@
 const std = @import("std");
-const runtime_profile = @import("../hosts/runtime_profile.zig");
 const app_permission_runtime = @import("app_permission_runtime.zig");
 const app_session_runtime = @import("app_session_runtime.zig");
 const io_mod = @import("../shared/io.zig");
@@ -587,14 +586,6 @@ pub fn Handlers(comptime App: type) type {
 
         fn commandResumeSession(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
-            if (comptime !runtime_profile.allows(App, .durable_sessions)) {
-                try app.writeDomainNotice(.{
-                    .topic = "session",
-                    .tone = .warning,
-                    .body = "Session resume is owned by the embedding SDK for this host.",
-                }, true);
-                return;
-            }
             try app_session_runtime.Runtime(App).openSessionPicker(app);
         }
 
@@ -906,16 +897,6 @@ pub fn Handlers(comptime App: type) type {
 
         fn commandShowUsage(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
-            if (comptime !runtime_profile.allows(App, .profile_usage)) {
-                var usage = try app.session.usage.reportSnapshot(app.alloc);
-                defer usage.deinit(app.alloc);
-                try app.writeDomainNotice(.{
-                    .topic = "usage",
-                    .tone = .neutral,
-                    .body = "Durable profile usage is unavailable in this host; active session usage remains in memory.",
-                }, true);
-                return;
-            }
             if (comptime @hasField(App, "skills")) app.skills.closeMenu();
             if (comptime @hasField(App, "model_cache")) app.model_cache.closeMenu();
             closeHelpMenuIfPresent(app);
@@ -1589,14 +1570,6 @@ pub fn Handlers(comptime App: type) type {
 
         noinline fn commandHandleSkills(ctx: *anyopaque, rest: []const u8) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
-            if (comptime !runtime_profile.allows(App, .skills)) {
-                try app.writeDomainNotice(.{
-                    .topic = "skills",
-                    .tone = .warning,
-                    .body = "Skills are unavailable in this host because filesystem access is not provided.",
-                }, true);
-                return;
-            }
             const provider = app.skillsCommandProvider();
             const command = provider.parseCommand(rest);
 

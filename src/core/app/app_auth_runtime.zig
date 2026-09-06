@@ -1,7 +1,6 @@
 const std = @import("std");
 const debug_trace = @import("../shared/debug_trace.zig");
 const host = @import("../hosts/host.zig");
-const runtime_profile = @import("../hosts/runtime_profile.zig");
 const io_mod = @import("../shared/io.zig");
 const credentials = @import("../auth/credentials.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
@@ -10,10 +9,6 @@ const provider_catalog = @import("../auth/provider_catalog.zig");
 const model_provider = @import("../config/model_provider.zig");
 const provider_runtime = @import("provider_runtime.zig");
 const types = @import("../shared/types.zig");
-
-fn oauthAuthEnabled(comptime App: type) bool {
-    return runtime_profile.allows(App, .native_auth);
-}
 
 pub fn Runtime(comptime App: type) type {
     return struct {
@@ -56,14 +51,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn runLoginCommand(app: *App) !void {
-            if (comptime !oauthAuthEnabled(App)) {
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .warning,
-                    .body = "Authentication is owned by the embedding host for this session.",
-                }, true);
-                return;
-            }
             switch (app.auth.beginSourceInventoryRefresh(app.alloc, .{
                 .provider = provider_runtime.provider(app),
             })) {
@@ -82,14 +69,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn runLogoutCommand(app: *App, target: []const u8) !void {
-            if (comptime !oauthAuthEnabled(App)) {
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .warning,
-                    .body = "Authentication is owned by the embedding host for this session.",
-                }, true);
-                return;
-            }
             const trimmed = std.mem.trim(u8, target, " \t\r\n");
             if (trimmed.len > 0 and !std.ascii.eqlIgnoreCase(trimmed, "codex")) {
                 try writeAuthNotice(app, .{
@@ -138,14 +117,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn applyPickerChoice(app: *App, choice: auth_runtime.Choice) !void {
-            if (comptime !oauthAuthEnabled(App)) {
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .warning,
-                    .body = "Browser authentication is supplied by the embedding host.",
-                }, true);
-                return;
-            }
             switch (choice) {
                 .source => |source| try applySourceChoice(app, source),
                 .action => |action| switch (action) {
@@ -177,7 +148,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn collectSignInFacts(app: *App) !void {
-            if (comptime !oauthAuthEnabled(App)) return;
             app.auth.pulseSignIn(app.alloc);
             switch (app.auth.pollSignInTransition(app.alloc)) {
                 .none => {},
@@ -270,15 +240,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn admitPromptCredential(app: *App) !bool {
-            if (comptime !oauthAuthEnabled(App)) {
-                if (app.auth.apiKey() != null) return true;
-                try app.writeDomainNotice(.{
-                    .topic = "auth",
-                    .tone = .warning,
-                    .body = "Missing FIBER_API_KEY. Supply it through createFxTerminal().",
-                }, true);
-                return false;
-            }
             if (!try ensurePromptCredential(app)) return false;
             return preparePromptCredential(app);
         }

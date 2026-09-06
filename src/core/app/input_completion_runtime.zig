@@ -1,5 +1,4 @@
 const std = @import("std");
-const runtime_profile = @import("../hosts/runtime_profile.zig");
 const edit_contract = @import("../input/editor_state.zig");
 const file_picker_path = @import("../input/file_picker_path.zig");
 const horizontal_navigation = @import("../input/horizontal_navigation.zig");
@@ -368,9 +367,7 @@ pub fn CompletionRuntime(comptime App: type) type {
             if (try routeModelMenuMove(app, delta)) return true;
             if (routeAuthPickerMove(app, delta)) return true;
             if (try routeSkillsMenuMove(app, delta)) return true;
-            if (comptime runtime_profile.allows(App, .durable_sessions)) {
-                if (try routeSessionPickerMove(app, delta)) return true;
-            }
+            if (try routeSessionPickerMove(app, delta)) return true;
             const stream_suppresses_file_picker = app.stream.active and !queueReviewOwnsComposer(app);
             if (!stream_suppresses_file_picker and hasFileQuery(app)) {
                 navigateFilePicker(app, delta);
