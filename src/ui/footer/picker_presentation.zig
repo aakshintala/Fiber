@@ -443,52 +443,6 @@ fn composeSignInPickerRow(
     return row;
 }
 
-fn composeApiKeyPickerRow(
-    alloc: Allocator,
-    mask_count: usize,
-    row_index: u16,
-    width: u16,
-) !std.ArrayList(u8) {
-    var row: std.ArrayList(u8) = .empty;
-    errdefer row.deinit(alloc);
-    if (width == 0) return row;
-
-    try row.appendSlice(alloc, if (row_index == 1)
-        ui_render.selected_completion_style
-    else
-        ui_render.dim_style);
-    switch (row_index) {
-        0 => try row_text.appendClipped(alloc, &row, "   Paste your AI Gateway API key", width),
-        1 => {
-            try row_text.appendClipped(alloc, &row, "   ┃ ", width);
-            if (mask_count == 0) {
-                try row.appendSlice(alloc, ui_render.dim_style);
-                try row_text.appendClipped(alloc, &row, "Paste or type a key", width -| 5);
-            } else {
-                for (0..@min(mask_count, width -| 5)) |_| try row.appendSlice(alloc, "•");
-            }
-        },
-        2 => try row_text.appendClipped(alloc, &row, "   Enter saves · Esc cancels", width),
-        3 => {
-            var label_buf: [128]u8 = undefined;
-            const label = std.fmt.bufPrint(
-                &label_buf,
-                "   Saves to {s}",
-                .{credentials.chatgpt_subscription_backend_label},
-            ) catch "   Saves to configured credential store";
-            try row_text.appendClipped(alloc, &row, label, width);
-        },
-        else => {},
-    }
-    try row.appendSlice(alloc, ui_render.reset_style);
-    return row;
-}
-
-pub fn pickerRowCount(completion_count: usize) u16 {
-    if (completion_count == 0) return 1;
-    return @intCast(@min(completion_count, input_presentation.max_model_picker_rows));
-}
-
 pub fn activeListPickerReservedRows(terminal_rows: u16, input_extra: u16, banner_rows: u16) u16 {
     const fixed_rows: u16 = 5 +| input_extra +| banner_rows;
     const available_rows = terminal_rows -| fixed_rows;

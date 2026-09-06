@@ -3406,11 +3406,6 @@ fn paintTranscriptIntoSurfaceWithLimit(
     };
 }
 
-const TestFullRepaintMode = enum {
-    enabled,
-    diagnostic_wipe_only,
-};
-
 const TestFooterGeometry = struct {
     top: u16 = 0,
 };

@@ -7,7 +7,6 @@ pub const Reason = enum {
     transcript,
     footer,
     modal,
-    subagent_panel,
     animation,
     notification,
     resize,

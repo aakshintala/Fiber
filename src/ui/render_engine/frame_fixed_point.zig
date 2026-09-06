@@ -134,7 +134,6 @@ fn fixedPointTestInput(
     owned_top: u16,
     transcript_rows: u16,
     footer_rows: u16,
-    body_mode: frame_layout.BodyMode,
 ) frame_layout.SolveInput {
     return .{
         .terminal = .{
@@ -153,7 +152,6 @@ fn fixedPointTestInput(
             .max_rows = footer_rows,
         },
         .transcript = .{ .natural_visual_rows = transcript_rows },
-        .body_mode = body_mode,
     };
 }
 
@@ -172,7 +170,7 @@ fn solveFixedPointForTest(
 
 test "frame fixed point releases footer only growth" {
     var ctx = FixedPointTestContext{};
-    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(12, 8, 0, 6, .transcript));
+    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(12, 8, 0, 6));
 
     try std.testing.expectEqual(@as(usize, 1), fixed_point.iterations);
     try std.testing.expectEqual(@as(u16, 7), fixed_point.layout.owned_top);
@@ -182,7 +180,7 @@ test "frame fixed point releases footer only growth" {
 
 test "frame fixed point releases preserved rows before inline advancement" {
     var ctx = FixedPointTestContext{ .inline_advance_rows = 3 };
-    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(12, 5, 1, 3, .transcript));
+    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(12, 5, 1, 3));
 
     try std.testing.expectEqual(@as(usize, 3), fixed_point.iterations);
     try std.testing.expectEqualSlices(u16, &.{ 5, 2, 1 }, ctx.candidate_tops[0..ctx.calls]);
@@ -192,7 +190,7 @@ test "frame fixed point releases preserved rows before inline advancement" {
 
 test "frame fixed point compacts a same-owner prepared projection" {
     var ctx = FixedPointTestContext{ .prepared_occupied_rows = 9 };
-    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(20, 1, 15, 4, .transcript));
+    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(20, 1, 15, 4));
 
     try std.testing.expectEqual(@as(usize, 2), fixed_point.iterations);
     try std.testing.expectEqualSlices(u16, &.{ 1, 1 }, ctx.candidate_tops[0..ctx.calls]);
@@ -209,7 +207,7 @@ test "frame fixed point resolves final extent after merging scroll plan" {
     };
     const fixed_point = try solveFixedPointForTest(
         &ctx,
-        fixedPointTestInput(20, 1, 15, 4, .transcript),
+        fixedPointTestInput(20, 1, 15, 4),
     );
 
     try std.testing.expectEqual(@as(usize, 2), fixed_point.iterations);
@@ -226,7 +224,7 @@ test "frame fixed point compacts prepared extent before target resolution" {
     var ctx = FixedPointTestContext{ .prepared_occupied_rows = 9 };
     const fixed_point = try solveFixedPointForTest(
         &ctx,
-        fixedPointTestInput(20, 1, 15, 4, .transcript),
+        fixedPointTestInput(20, 1, 15, 4),
     );
 
     try std.testing.expectEqual(@as(usize, 2), fixed_point.iterations);
@@ -237,7 +235,7 @@ test "frame fixed point compacts prepared extent before target resolution" {
 
 test "frame fixed point permits document movement beyond terminal height" {
     var ctx = FixedPointTestContext{ .inline_advance_rows = 7 };
-    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(4, 1, 1, 2, .transcript));
+    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(4, 1, 1, 2));
 
     try std.testing.expectEqual(@as(usize, 1), fixed_point.iterations);
     try std.testing.expectEqual(@as(u16, 7), fixed_point.scroll_plan.terminal_scroll_rows);
@@ -248,23 +246,15 @@ test "frame fixed point shared footer growth paths use fixed point release" {
     const footer_rows = [_]u16{ 6, 7, 8, 9, 10 };
     for (footer_rows) |rows| {
         var ctx = FixedPointTestContext{};
-        const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(12, 8, 0, rows, .transcript));
+        const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(12, 8, 0, rows));
         try std.testing.expect(fixed_point.scroll_plan.preserved_release_rows > 0);
         try std.testing.expectEqual(fixed_point.layout.owned_top, fixed_point.scroll_plan.post_scroll_owned_top);
     }
 }
 
-test "frame fixed point subagent growth uses fixed point release" {
-    var ctx = FixedPointTestContext{};
-    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(12, 8, 8, 4, .subagent_panel));
-
-    try std.testing.expect(fixed_point.scroll_plan.preserved_release_rows > 0);
-    try std.testing.expectEqual(fixed_point.layout.owned_top, fixed_point.scroll_plan.post_scroll_owned_top);
-}
-
 test "frame fixed point eager row one path never requests progressive release" {
     var ctx = FixedPointTestContext{};
-    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(12, 1, 12, 6, .transcript));
+    const fixed_point = try solveFixedPointForTest(&ctx, fixedPointTestInput(12, 1, 12, 6));
 
     try std.testing.expectEqual(@as(u16, 1), fixed_point.layout.owned_top);
     try std.testing.expectEqual(@as(u16, 0), fixed_point.scroll_plan.requested_release_rows);

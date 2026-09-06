@@ -1316,7 +1316,6 @@ pub fn Runtime(comptime App: type) type {
                         .footer = neutral_footer,
                         .transcript = transcript_preview,
                         .activity = frame_activity,
-                        .body_mode = .transcript,
                         .prior = active_committed_layout,
                     },
                     FixedPointTranscriptContext(App).prepareCandidate,
@@ -2144,11 +2143,6 @@ fn FramePaintContext(comptime App: type) type {
                         _ = try self.presentation_shell.paintPreparedTranscriptIntoSurface(self.app.alloc, surface, prepared);
                     }
                 },
-                .subagent_panel => |text| {
-                    if (surface.plan.transcript_band.isEmpty() or text.len == 0) return;
-                    const rows = surface.plan.transcript_band.bottom - surface.plan.transcript_band.top + 1;
-                    _ = try surface.writeAnsiBand(surface.plan.transcript_band.top, rows, text, .transcript, .same_owner);
-                },
                 .none => {},
             }
         }
@@ -2303,7 +2297,6 @@ fn fixedPointTestInput(
     owned_top: u16,
     transcript_rows: u16,
     footer_rows: u16,
-    body_mode: render_engine.frame_layout.BodyMode,
 ) render_engine.frame_layout.SolveInput {
     return .{
         .terminal = .{
@@ -2322,7 +2315,6 @@ fn fixedPointTestInput(
             .max_rows = footer_rows,
         },
         .transcript = .{ .natural_visual_rows = transcript_rows },
-        .body_mode = body_mode,
     };
 }
 
@@ -2465,9 +2457,9 @@ test "assistant tail writability changes remain traceable" {
 
 test "core.app_render_runtime fixed point retry resumes after acknowledged release" {
     var first_ctx = FixedPointTestContext{ .inline_advance_rows = 3 };
-    const first = try solveFixedPointForTest(&first_ctx, fixedPointTestInput(12, 5, 1, 3, .transcript));
+    const first = try solveFixedPointForTest(&first_ctx, fixedPointTestInput(12, 5, 1, 3));
     var shell = transcript_runtime.TranscriptRuntime{
-        .layout = fixedPointTestInput(12, 5, 1, 3, .transcript).terminal,
+        .layout = fixedPointTestInput(12, 5, 1, 3).terminal,
         .owned_top_row = 5,
         .viewport_top_row = 5,
     };
@@ -2475,7 +2467,7 @@ test "core.app_render_runtime fixed point retry resumes after acknowledged relea
     try shell.ackPreservedRowRelease(first.scroll_plan, first.scroll_plan.terminal_scroll_rows);
 
     var retry_ctx = FixedPointTestContext{};
-    const retry = try solveFixedPointForTest(&retry_ctx, fixedPointTestInput(12, shell.owned_top_row, 1, 3, .transcript));
+    const retry = try solveFixedPointForTest(&retry_ctx, fixedPointTestInput(12, shell.owned_top_row, 1, 3));
 
     try std.testing.expectEqual(@as(u16, 1), shell.owned_top_row);
     try std.testing.expectEqual(@as(u16, 0), retry.scroll_plan.preserved_release_rows);
@@ -2484,9 +2476,9 @@ test "core.app_render_runtime fixed point retry resumes after acknowledged relea
 
 test "core.app_render_runtime fixed point shrink acknowledgment resumes from normalized ownership" {
     var first_ctx = FixedPointTestContext{};
-    const first = try solveFixedPointForTest(&first_ctx, fixedPointTestInput(5, 9, 0, 5, .transcript));
+    const first = try solveFixedPointForTest(&first_ctx, fixedPointTestInput(5, 9, 0, 5));
     var shell = transcript_runtime.TranscriptRuntime{
-        .layout = fixedPointTestInput(5, 9, 0, 5, .transcript).terminal,
+        .layout = fixedPointTestInput(5, 9, 0, 5).terminal,
         .owned_top_row = 9,
         .viewport_top_row = 9,
     };
@@ -2494,7 +2486,7 @@ test "core.app_render_runtime fixed point shrink acknowledgment resumes from nor
     try shell.ackPreservedRowRelease(first.scroll_plan, 2);
 
     var retry_ctx = FixedPointTestContext{};
-    const retry = try solveFixedPointForTest(&retry_ctx, fixedPointTestInput(5, shell.owned_top_row, 0, 5, .transcript));
+    const retry = try solveFixedPointForTest(&retry_ctx, fixedPointTestInput(5, shell.owned_top_row, 0, 5));
 
     try std.testing.expectEqual(@as(u16, 3), shell.owned_top_row);
     try std.testing.expectEqual(@as(u16, 2), retry.scroll_plan.preserved_release_rows);
