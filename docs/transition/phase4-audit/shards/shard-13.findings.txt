@@ -1,24 +1,24 @@
 Reading the audit brief and shard file list first.
 Auditing shard-13 files for deletable residue. Reading the files and searching for evidence.
-src/core/app/app_entry_runtime.zig:164 | runNoConfigBeforeInteractive | always-was | rg -n 'runNoConfigBeforeInteractive' /Users/aakshintala/work/fiber --glob '*.zig'
-src/core/app/prompt_history_runtime.zig:67 | initializeWithProvider | deleted-product | rg -n 'initializeWithProvider' /Users/aakshintala/work/fiber --glob '*.zig'
-src/core/app/prompt_history_runtime.zig:188 | displayPath | always-was | rg -n 'prompt_history\.displayPath' /Users/aakshintala/work/fiber --glob '*.zig'
-src/core/app/app_terminal_runtime.zig:137 | collectFacts empty stub | always-was | rg -A1 'pub fn collectFacts' /Users/aakshintala/work/fiber/src/core/app/app_terminal_runtime.zig
-src/core/app/app_terminal_runtime.zig:139 | refreshManagedFacts | always-was | rg -n 'refreshManagedFacts' /Users/aakshintala/work/fiber --glob '*.zig'
-src/core/app/app_terminal_runtime.zig:19 | ExitPreparation.deferred variant | always-was | rg -n 'return \.deferred' /Users/aakshintala/work/fiber/src/core/app/app_terminal_runtime.zig
-src/core/app/app_lifecycle.zig:320 | loadStartupStateForWorkspace | always-was | rg -n 'loadStartupStateForWorkspace' /Users/aakshintala/work/fiber --glob '*.zig'
-src/gateway/agent_request_body.zig:13 | GatewayCompletion alias | deleted-product | rg -n 'GatewayCompletion' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'agent_request_body.zig'
-src/gateway/agent_request_body.zig:390 | withRequestUserAgent | deleted-product | rg -n 'withRequestUserAgent' /Users/aakshintala/work/fiber --glob '*.zig'
-src/gateway/agent_request_body.zig:49 | buildGatewayRequestBody | always-was | rg -n 'buildGatewayRequestBody\(' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'agent_request_body.zig'
-src/gateway/agent_request_body.zig:57 | buildGatewayRequestBodyWithOptions | always-was | rg -n 'buildGatewayRequestBodyWithOptions\(' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'agent_request_body.zig'
-src/gateway/agent_request_body.zig:148 | buildGatewayRequiredToolRequestBodyWithOptions | always-was | rg -n 'buildGatewayRequiredToolRequestBodyWithOptions\(' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'agent_request_body.zig'
-src/gateway/agent_request_body.zig:202 | buildGatewayRequiredToolRequestBodyWithMaxOutputTokens | always-was | rg -n 'buildGatewayRequiredToolRequestBodyWithMaxOutputTokens' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'agent_request_body.zig'
-src/gateway/agent_request_body.zig:211 | buildGatewayPendingToolReviewRequestBodyWithMaxOutputTokens | always-was | rg -n 'buildGatewayPendingToolReviewRequestBodyWithMaxOutputTokens' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'agent_request_body.zig'
-src/gateway/agent_request_body.zig:246 | expandPendingToolReviewMessages | always-was | rg -n 'agent_request_body\.expandPendingToolReviewMessages' /Users/aakshintala/work/fiber --glob '*.zig'
-src/gateway/agent_request_body.zig:428 | validatePendingToolReviewMessages | always-was | rg -n 'validatePendingToolReviewMessages' /Users/aakshintala/work/fiber/src/gateway/agent_request_body.zig
-src/gateway/agent_request_body.zig:22 | pending_tool_review_result_text | always-was | rg -n 'pending_tool_review_result_text' /Users/aakshintala/work/fiber/src/gateway/agent_request_body.zig
-src/gateway/agent_request_body.zig:665 | formatGatewayRequestShapeSummary | always-was | rg -n 'formatGatewayRequestShapeSummary' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'agent_request_body.zig'
-src/gateway/agent_request_body.zig:792 | parseGatewayCompletion | deleted-product | rg -n 'parseGatewayCompletion' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'agent_request_body.zig'
-src/gateway/agent_request_body.zig:874 | freeGatewayCompletion | deleted-product | rg -n 'freeGatewayCompletion' /Users/aakshintala/work/fiber --glob '*.zig' | rg -v 'agent_request_body.zig'
+src/core/app/app_entry_runtime.zig:164 | runNoConfigBeforeInteractive | always-was | rg -n 'runNoConfigBeforeInteractive' . --glob '*.zig'
+src/core/app/prompt_history_runtime.zig:67 | initializeWithProvider | deleted-product | rg -n 'initializeWithProvider' . --glob '*.zig'
+src/core/app/prompt_history_runtime.zig:188 | displayPath | always-was | rg -n 'prompt_history\.displayPath' . --glob '*.zig'
+src/core/app/app_terminal_runtime.zig:137 | collectFacts empty stub | always-was | rg -A1 'pub fn collectFacts' src/core/app/app_terminal_runtime.zig
+src/core/app/app_terminal_runtime.zig:139 | refreshManagedFacts | always-was | rg -n 'refreshManagedFacts' . --glob '*.zig'
+src/core/app/app_terminal_runtime.zig:19 | ExitPreparation.deferred variant | always-was | rg -n 'return \.deferred' src/core/app/app_terminal_runtime.zig
+src/core/app/app_lifecycle.zig:320 | loadStartupStateForWorkspace | always-was | rg -n 'loadStartupStateForWorkspace' . --glob '*.zig'
+src/gateway/agent_request_body.zig:13 | GatewayCompletion alias | deleted-product | rg -n 'GatewayCompletion' . --glob '*.zig' | rg -v 'agent_request_body.zig'
+src/gateway/agent_request_body.zig:390 | withRequestUserAgent | deleted-product | rg -n 'withRequestUserAgent' . --glob '*.zig'
+src/gateway/agent_request_body.zig:49 | buildGatewayRequestBody | always-was | rg -n 'buildGatewayRequestBody\(' . --glob '*.zig' | rg -v 'agent_request_body.zig'
+src/gateway/agent_request_body.zig:57 | buildGatewayRequestBodyWithOptions | always-was | rg -n 'buildGatewayRequestBodyWithOptions\(' . --glob '*.zig' | rg -v 'agent_request_body.zig'
+src/gateway/agent_request_body.zig:148 | buildGatewayRequiredToolRequestBodyWithOptions | always-was | rg -n 'buildGatewayRequiredToolRequestBodyWithOptions\(' . --glob '*.zig' | rg -v 'agent_request_body.zig'
+src/gateway/agent_request_body.zig:202 | buildGatewayRequiredToolRequestBodyWithMaxOutputTokens | always-was | rg -n 'buildGatewayRequiredToolRequestBodyWithMaxOutputTokens' . --glob '*.zig' | rg -v 'agent_request_body.zig'
+src/gateway/agent_request_body.zig:211 | buildGatewayPendingToolReviewRequestBodyWithMaxOutputTokens | always-was | rg -n 'buildGatewayPendingToolReviewRequestBodyWithMaxOutputTokens' . --glob '*.zig' | rg -v 'agent_request_body.zig'
+src/gateway/agent_request_body.zig:246 | expandPendingToolReviewMessages | always-was | rg -n 'agent_request_body\.expandPendingToolReviewMessages' . --glob '*.zig'
+src/gateway/agent_request_body.zig:428 | validatePendingToolReviewMessages | always-was | rg -n 'validatePendingToolReviewMessages' src/gateway/agent_request_body.zig
+src/gateway/agent_request_body.zig:22 | pending_tool_review_result_text | always-was | rg -n 'pending_tool_review_result_text' src/gateway/agent_request_body.zig
+src/gateway/agent_request_body.zig:665 | formatGatewayRequestShapeSummary | always-was | rg -n 'formatGatewayRequestShapeSummary' . --glob '*.zig' | rg -v 'agent_request_body.zig'
+src/gateway/agent_request_body.zig:792 | parseGatewayCompletion | deleted-product | rg -n 'parseGatewayCompletion' . --glob '*.zig' | rg -v 'agent_request_body.zig'
+src/gateway/agent_request_body.zig:874 | freeGatewayCompletion | deleted-product | rg -n 'freeGatewayCompletion' . --glob '*.zig' | rg -v 'agent_request_body.zig'
 
 STATUS: DONE

@@ -1,46 +1,46 @@
 Reading shard files and searching the repo for callers and dead code.
-src/core/slash_commands/command_specs.zig:148 | child_chat_slash_command_count constant | deleted-product | rg -n 'child_chat_slash_command_count' /Users/aakshintala/work/fiber/src
-src/core/slash_commands/command_specs.zig:150 | childChatSlashRegistry function | deleted-product | rg -n 'childChatSlashRegistry' /Users/aakshintala/work/fiber/src
-src/core/slash_commands/command_specs.zig:366 | renderSlashHelp function | always-was | rg -n 'renderSlashHelp' /Users/aakshintala/work/fiber/src --glob '!**/command_specs.zig'
-src/core/slash_commands/command_specs.zig:370 | renderSlashWelcome function | always-was | rg -n 'renderSlashWelcome' /Users/aakshintala/work/fiber/src --glob '!**/command_specs.zig'
-src/core/slash_commands/command_specs.zig:730 | renderSlashEntries function | always-was | rg -n 'renderSlashEntries' /Users/aakshintala/work/fiber/src --glob '!**/command_specs.zig'
-src/core/slash_commands/command_specs.zig:141 | SlashSpec.show_in_welcome field | always-was | rg -n 'show_in_welcome' /Users/aakshintala/work/fiber/src
-src/core/slash_commands/command_specs.zig:137 | SlashSpec.show_aliases_in_completion field | always-was | rg -n 'show_aliases_in_completion = false' /Users/aakshintala/work/fiber/src
-src/core/slash_commands/command_specs.zig:704 | argCompletionIndexForLabel function | always-was | rg -n 'argCompletionIndexForLabel\(' /Users/aakshintala/work/fiber/src --glob '!**/command_specs.zig'
-src/core/slash_commands/command_specs.zig:86 | TopLevelResource struct | always-was | rg -n 'TopLevelResource\{' /Users/aakshintala/work/fiber/src
-src/core/slash_commands/command_specs.zig:100 | TopLevelRegistry.resources field | always-was | rg -n '\.resources = top_level_resources' /Users/aakshintala/work/fiber/src
-src/core/slash_commands/command_specs.zig:814 | maxTopLevelResourceLabelWidth helper | always-was | rg -n 'maxTopLevelResourceLabelWidth' /Users/aakshintala/work/fiber/src
-src/core/slash_commands/command_specs.zig:852 | writeTopLevelResource helper | always-was | rg -n 'writeTopLevelResource' /Users/aakshintala/work/fiber/src
-src/core/slash_commands/command_specs.zig:160 | projectResultV4 identity helper | always-was | rg -n 'projectResultV4' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:301 | top_level_resources empty array | always-was | rg -n 'top_level_resources' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:184 | Gateway reports usage detail line | deleted-product | rg -n 'Gateway reports' /Users/aakshintala/work/fiber/src/builtins/commands.zig
-src/builtins/commands.zig:314 | matchesTopLevel wrapper | always-was | rg -n 'builtin_commands\.matchesTopLevel' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:322 | renderTopLevelHelpWithStyle wrapper | always-was | rg -n 'builtin_commands\.renderTopLevelHelpWithStyle' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:326 | renderTopLevelCommandHelp wrapper | always-was | rg -n 'builtin_commands\.renderTopLevelCommandHelp' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:330 | topLevelKindFromToken wrapper | always-was | rg -n 'builtin_commands\.topLevelKindFromToken' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:334 | topLevelUsage wrapper | always-was | rg -n 'builtin_commands\.topLevelUsage' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:363 | matchesSlashExact wrapper | always-was | rg -n 'builtin_commands\.matchesSlashExact' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:367 | isExactSlashCommand wrapper | always-was | rg -n 'builtin_commands\.isExactSlashCommand' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:371 | matchedSlashPrefix wrapper | always-was | rg -n 'builtin_commands\.matchedSlashPrefix' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:375 | renderSlashHelp wrapper | always-was | rg -n 'builtin_commands\.renderSlashHelp' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:379 | renderSlashWelcome wrapper | always-was | rg -n 'builtin_commands\.renderSlashWelcome' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:383 | firstSlashCompletion wrapper | always-was | rg -n 'builtin_commands\.firstSlashCompletion' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:387 | slashCompletionCount wrapper | always-was | rg -n 'builtin_commands\.slashCompletionCount' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:391 | nthSlashCompletion wrapper | always-was | rg -n 'builtin_commands\.nthSlashCompletion' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:395 | nthSlashCompletionLabel wrapper | always-was | rg -n 'builtin_commands\.nthSlashCompletionLabel' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:399 | nthSlashCompletionDescription wrapper | always-was | rg -n 'builtin_commands\.nthSlashCompletionDescription' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:403 | nthSlashCompletionCategory wrapper | always-was | rg -n 'builtin_commands\.nthSlashCompletionCategory' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:407 | slashCompletionHasArgs wrapper | always-was | rg -n 'builtin_commands\.slashCompletionHasArgs' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:411 | argCompletionAnchor re-export | always-was | rg -n 'builtin_commands\.argCompletionAnchor' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:412 | argCompletionIndexForLabel re-export | always-was | rg -n 'builtin_commands\.argCompletionIndexForLabel' /Users/aakshintala/work/fiber/src
-src/builtins/commands.zig:413 | permissionsArgCompletionPrefix re-export | always-was | rg -n 'builtin_commands\.permissionsArgCompletionPrefix' /Users/aakshintala/work/fiber/src
-src/builtins/modes.zig:23 | lookup wrapper function | always-was | rg -n 'builtin_modes\.lookup' /Users/aakshintala/work/fiber/src
-src/core/terminal/ui_projection.zig:12 | Row.attachable field | always-was | rg -n '\.attachable' /Users/aakshintala/work/fiber/src
-src/core/terminal/ui_projection.zig:32 | BackgroundStatus struct | always-was | rg -n 'BackgroundStatus' /Users/aakshintala/work/fiber/src
-src/core/terminal/ui_projection.zig:37 | backgroundStatus function | always-was | rg -n 'backgroundStatus' /Users/aakshintala/work/fiber/src
-src/core/terminal/shell_resolver.zig:220 | formatInvocationCommand function | always-was | rg -n 'formatInvocationCommand\(' /Users/aakshintala/work/fiber/src --glob '!**/shell_resolver.zig'
-src/core/terminal/recovery.zig:6 | RecordEvidence.missing partial corrupt unsupported | always-was | rg -n 'record = \.(missing|partial|corrupt|unsupported)' /Users/aakshintala/work/fiber/src --glob '!**/recovery.zig'
-src/core/terminal/recovery.zig:60 | reconcile invalid-record branch | always-was | rg -n 'record = \.valid' /Users/aakshintala/work/fiber/src/core/terminal/store.zig
-src/core/terminal/recovery.zig:49 | Disposition.isolate_corrupt variant | always-was | rg -n 'isolate_corrupt' /Users/aakshintala/work/fiber/src --glob '!**/recovery.zig'
-src/core/terminal/recovery.zig:15 | HostEvidence.absent variant | always-was | rg -n 'host = \.absent' /Users/aakshintala/work/fiber/src --glob '!**/recovery.zig'
+src/core/slash_commands/command_specs.zig:148 | child_chat_slash_command_count constant | deleted-product | rg -n 'child_chat_slash_command_count' src
+src/core/slash_commands/command_specs.zig:150 | childChatSlashRegistry function | deleted-product | rg -n 'childChatSlashRegistry' src
+src/core/slash_commands/command_specs.zig:366 | renderSlashHelp function | always-was | rg -n 'renderSlashHelp' src --glob '!**/command_specs.zig'
+src/core/slash_commands/command_specs.zig:370 | renderSlashWelcome function | always-was | rg -n 'renderSlashWelcome' src --glob '!**/command_specs.zig'
+src/core/slash_commands/command_specs.zig:730 | renderSlashEntries function | always-was | rg -n 'renderSlashEntries' src --glob '!**/command_specs.zig'
+src/core/slash_commands/command_specs.zig:141 | SlashSpec.show_in_welcome field | always-was | rg -n 'show_in_welcome' src
+src/core/slash_commands/command_specs.zig:137 | SlashSpec.show_aliases_in_completion field | always-was | rg -n 'show_aliases_in_completion = false' src
+src/core/slash_commands/command_specs.zig:704 | argCompletionIndexForLabel function | always-was | rg -n 'argCompletionIndexForLabel\(' src --glob '!**/command_specs.zig'
+src/core/slash_commands/command_specs.zig:86 | TopLevelResource struct | always-was | rg -n 'TopLevelResource\{' src
+src/core/slash_commands/command_specs.zig:100 | TopLevelRegistry.resources field | always-was | rg -n '\.resources = top_level_resources' src
+src/core/slash_commands/command_specs.zig:814 | maxTopLevelResourceLabelWidth helper | always-was | rg -n 'maxTopLevelResourceLabelWidth' src
+src/core/slash_commands/command_specs.zig:852 | writeTopLevelResource helper | always-was | rg -n 'writeTopLevelResource' src
+src/core/slash_commands/command_specs.zig:160 | projectResultV4 identity helper | always-was | rg -n 'projectResultV4' src
+src/builtins/commands.zig:301 | top_level_resources empty array | always-was | rg -n 'top_level_resources' src
+src/builtins/commands.zig:184 | Gateway reports usage detail line | deleted-product | rg -n 'Gateway reports' src/builtins/commands.zig
+src/builtins/commands.zig:314 | matchesTopLevel wrapper | always-was | rg -n 'builtin_commands\.matchesTopLevel' src
+src/builtins/commands.zig:322 | renderTopLevelHelpWithStyle wrapper | always-was | rg -n 'builtin_commands\.renderTopLevelHelpWithStyle' src
+src/builtins/commands.zig:326 | renderTopLevelCommandHelp wrapper | always-was | rg -n 'builtin_commands\.renderTopLevelCommandHelp' src
+src/builtins/commands.zig:330 | topLevelKindFromToken wrapper | always-was | rg -n 'builtin_commands\.topLevelKindFromToken' src
+src/builtins/commands.zig:334 | topLevelUsage wrapper | always-was | rg -n 'builtin_commands\.topLevelUsage' src
+src/builtins/commands.zig:363 | matchesSlashExact wrapper | always-was | rg -n 'builtin_commands\.matchesSlashExact' src
+src/builtins/commands.zig:367 | isExactSlashCommand wrapper | always-was | rg -n 'builtin_commands\.isExactSlashCommand' src
+src/builtins/commands.zig:371 | matchedSlashPrefix wrapper | always-was | rg -n 'builtin_commands\.matchedSlashPrefix' src
+src/builtins/commands.zig:375 | renderSlashHelp wrapper | always-was | rg -n 'builtin_commands\.renderSlashHelp' src
+src/builtins/commands.zig:379 | renderSlashWelcome wrapper | always-was | rg -n 'builtin_commands\.renderSlashWelcome' src
+src/builtins/commands.zig:383 | firstSlashCompletion wrapper | always-was | rg -n 'builtin_commands\.firstSlashCompletion' src
+src/builtins/commands.zig:387 | slashCompletionCount wrapper | always-was | rg -n 'builtin_commands\.slashCompletionCount' src
+src/builtins/commands.zig:391 | nthSlashCompletion wrapper | always-was | rg -n 'builtin_commands\.nthSlashCompletion' src
+src/builtins/commands.zig:395 | nthSlashCompletionLabel wrapper | always-was | rg -n 'builtin_commands\.nthSlashCompletionLabel' src
+src/builtins/commands.zig:399 | nthSlashCompletionDescription wrapper | always-was | rg -n 'builtin_commands\.nthSlashCompletionDescription' src
+src/builtins/commands.zig:403 | nthSlashCompletionCategory wrapper | always-was | rg -n 'builtin_commands\.nthSlashCompletionCategory' src
+src/builtins/commands.zig:407 | slashCompletionHasArgs wrapper | always-was | rg -n 'builtin_commands\.slashCompletionHasArgs' src
+src/builtins/commands.zig:411 | argCompletionAnchor re-export | always-was | rg -n 'builtin_commands\.argCompletionAnchor' src
+src/builtins/commands.zig:412 | argCompletionIndexForLabel re-export | always-was | rg -n 'builtin_commands\.argCompletionIndexForLabel' src
+src/builtins/commands.zig:413 | permissionsArgCompletionPrefix re-export | always-was | rg -n 'builtin_commands\.permissionsArgCompletionPrefix' src
+src/builtins/modes.zig:23 | lookup wrapper function | always-was | rg -n 'builtin_modes\.lookup' src
+src/core/terminal/ui_projection.zig:12 | Row.attachable field | always-was | rg -n '\.attachable' src
+src/core/terminal/ui_projection.zig:32 | BackgroundStatus struct | always-was | rg -n 'BackgroundStatus' src
+src/core/terminal/ui_projection.zig:37 | backgroundStatus function | always-was | rg -n 'backgroundStatus' src
+src/core/terminal/shell_resolver.zig:220 | formatInvocationCommand function | always-was | rg -n 'formatInvocationCommand\(' src --glob '!**/shell_resolver.zig'
+src/core/terminal/recovery.zig:6 | RecordEvidence.missing partial corrupt unsupported | always-was | rg -n 'record = \.(missing|partial|corrupt|unsupported)' src --glob '!**/recovery.zig'
+src/core/terminal/recovery.zig:60 | reconcile invalid-record branch | always-was | rg -n 'record = \.valid' src/core/terminal/store.zig
+src/core/terminal/recovery.zig:49 | Disposition.isolate_corrupt variant | always-was | rg -n 'isolate_corrupt' src --glob '!**/recovery.zig'
+src/core/terminal/recovery.zig:15 | HostEvidence.absent variant | always-was | rg -n 'host = \.absent' src --glob '!**/recovery.zig'
 STATUS: DONE

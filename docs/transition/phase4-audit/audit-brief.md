@@ -4,7 +4,7 @@ Status: historical input. Do not reuse. Its blanket layering premise and
 `deleted-product` versus `always-was` phase boundary were disproved after the
 audit. Use [`CORRECTIONS.md`](CORRECTIONS.md) for current decisions.
 
-Repo root: `/Users/aakshintala/work/fiber`. All paths below are relative to it.
+Repo root: `.`. All paths below are relative to it.
 
 You are auditing ONE SHARD of a Zig codebase for code that can be **deleted**.
 Read-only. Do not edit, create, or commit anything. Do not run build or test commands.

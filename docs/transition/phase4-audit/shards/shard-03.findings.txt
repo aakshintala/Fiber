@@ -1,25 +1,25 @@
 Reading the audit brief and shard file list first.
 Analyzing shard files for deletable residue per the audit brief.
-src/ui/footer/picker_presentation.zig:455 | composeApiKeyPickerRow entire function | deleted-product | rg 'composeApiKeyPickerRow' /Users/aakshintala/work/fiber/src
-src/ui/footer/picker_presentation.zig:19 | authPickerQueryCursorColumn entire function | always-was | rg 'authPickerQueryCursorColumn' /Users/aakshintala/work/fiber/src
-src/ui/footer/paint_plan.zig:930 | authPickerQueryCursorColumn cursor branch | always-was | rg 'authPickerQueryCursorColumn\(ctx' /Users/aakshintala/work/fiber/src
-src/ui/footer/picker_presentation.zig:345 | subscription_source always-true constant | deleted-product | rg 'subscription_source = true' /Users/aakshintala/work/fiber/src
-src/ui/footer/picker_presentation.zig:331 | composeSignInPickerRow source parameter | deleted-product | rg 'composeSignInPickerRow\(' -A3 /Users/aakshintala/work/fiber/src/ui/footer/picker_presentation.zig
-src/ui/footer/picker_presentation.zig:332 | composeSignInPickerRow manual_code_visible parameter | deleted-product | rg '_ = manual_code_visible;' /Users/aakshintala/work/fiber/src/ui/footer/picker_presentation.zig
-src/ui/footer/picker_presentation.zig:333 | composeSignInPickerRow manual_code_mask_count parameter | deleted-product | rg '_ = manual_code_mask_count;' /Users/aakshintala/work/fiber/src/ui/footer/picker_presentation.zig
-src/ui/footer/picker_presentation.zig:222 | signInProjectedRowIndex source parameter | deleted-product | rg 'signInProjectedRowIndex\(' -A1 /Users/aakshintala/work/fiber/src/ui/footer/picker_presentation.zig
-src/ui/footer/picker_presentation.zig:223 | signInProjectedRowIndex manual_code_visible parameter | deleted-product | rg '_ = manual_code_visible;' /Users/aakshintala/work/fiber/src/ui/footer/picker_presentation.zig
-src/ui/footer/picker_presentation.zig:221 | signInProjectedRowIndex snapshot parameter | always-was | rg '_ = snapshot;' /Users/aakshintala/work/fiber/src/ui/footer/picker_presentation.zig
-src/ui/footer/row_text.zig:68 | appendSingleLinePrefixBiasedEllipsized function | always-was | rg 'appendSingleLinePrefixBiasedEllipsized' /Users/aakshintala/work/fiber/src --glob '!**/row_text.zig'
-src/core/cli/cli_surface.zig:558 | ProviderActivationCaller.provider_command variant | deleted-product | rg 'provider_command' /Users/aakshintala/work/fiber/src
-src/core/cli/cli_surface.zig:571 | writeProviderActivationError fiber provider branch | deleted-product | rg 'fiber provider' /Users/aakshintala/work/fiber/src/core/cli/cli_surface.zig
-src/core/cli/cli_surface.zig:581 | activateProviderSelection target parameter | deleted-product | rg '_ = target;' /Users/aakshintala/work/fiber/src/core/cli/cli_surface.zig
-src/core/cli/cli_surface.zig:582 | activateProviderSelection caller parameter | deleted-product | rg '_ = caller;' /Users/aakshintala/work/fiber/src/core/cli/cli_surface.zig
-src/core/cli/cli_surface.zig:1857 | runPermissionsRuleRemove raw_args parameter | always-was | rg '_ = raw_args;' /Users/aakshintala/work/fiber/src/core/cli/cli_surface.zig
-src/ui/footer/viewport.zig:180 | eraseCurrentFrame metrics parameter | always-was | rg '_ = metrics;' /Users/aakshintala/work/fiber/src/ui/footer/viewport.zig
-src/ui/footer/render_input.zig:638 | turnActivityProjection shell parameter | always-was | rg '_ = shell;' /Users/aakshintala/work/fiber/src/ui/footer/render_input.zig
-src/ui/footer/model_menu_presentation.zig:410 | loadedCatalogStatusText state.source read | deleted-product | rg '_ = state.source;' /Users/aakshintala/work/fiber/src/ui/footer/model_menu_presentation.zig
-src/ui/footer/settings_menu_presentation.zig:141 | measureBrowseBody width parameter | always-was | rg '_ = width;' /Users/aakshintala/work/fiber/src/ui/footer/settings_menu_presentation.zig
-src/ui/footer/help_menu_presentation.zig:110 | measureBody width parameter | always-was | rg '_ = width;' /Users/aakshintala/work/fiber/src/ui/footer/help_menu_presentation.zig
-src/ui/footer/compact_command_menu_presentation.zig:195 | composeUsageRow totals binding | always-was | rg '_ = totals;' /Users/aakshintala/work/fiber/src/ui/footer/compact_command_menu_presentation.zig
+src/ui/footer/picker_presentation.zig:455 | composeApiKeyPickerRow entire function | deleted-product | rg 'composeApiKeyPickerRow' src
+src/ui/footer/picker_presentation.zig:19 | authPickerQueryCursorColumn entire function | always-was | rg 'authPickerQueryCursorColumn' src
+src/ui/footer/paint_plan.zig:930 | authPickerQueryCursorColumn cursor branch | always-was | rg 'authPickerQueryCursorColumn\(ctx' src
+src/ui/footer/picker_presentation.zig:345 | subscription_source always-true constant | deleted-product | rg 'subscription_source = true' src
+src/ui/footer/picker_presentation.zig:331 | composeSignInPickerRow source parameter | deleted-product | rg 'composeSignInPickerRow\(' -A3 src/ui/footer/picker_presentation.zig
+src/ui/footer/picker_presentation.zig:332 | composeSignInPickerRow manual_code_visible parameter | deleted-product | rg '_ = manual_code_visible;' src/ui/footer/picker_presentation.zig
+src/ui/footer/picker_presentation.zig:333 | composeSignInPickerRow manual_code_mask_count parameter | deleted-product | rg '_ = manual_code_mask_count;' src/ui/footer/picker_presentation.zig
+src/ui/footer/picker_presentation.zig:222 | signInProjectedRowIndex source parameter | deleted-product | rg 'signInProjectedRowIndex\(' -A1 src/ui/footer/picker_presentation.zig
+src/ui/footer/picker_presentation.zig:223 | signInProjectedRowIndex manual_code_visible parameter | deleted-product | rg '_ = manual_code_visible;' src/ui/footer/picker_presentation.zig
+src/ui/footer/picker_presentation.zig:221 | signInProjectedRowIndex snapshot parameter | always-was | rg '_ = snapshot;' src/ui/footer/picker_presentation.zig
+src/ui/footer/row_text.zig:68 | appendSingleLinePrefixBiasedEllipsized function | always-was | rg 'appendSingleLinePrefixBiasedEllipsized' src --glob '!**/row_text.zig'
+src/core/cli/cli_surface.zig:558 | ProviderActivationCaller.provider_command variant | deleted-product | rg 'provider_command' src
+src/core/cli/cli_surface.zig:571 | writeProviderActivationError fiber provider branch | deleted-product | rg 'fiber provider' src/core/cli/cli_surface.zig
+src/core/cli/cli_surface.zig:581 | activateProviderSelection target parameter | deleted-product | rg '_ = target;' src/core/cli/cli_surface.zig
+src/core/cli/cli_surface.zig:582 | activateProviderSelection caller parameter | deleted-product | rg '_ = caller;' src/core/cli/cli_surface.zig
+src/core/cli/cli_surface.zig:1857 | runPermissionsRuleRemove raw_args parameter | always-was | rg '_ = raw_args;' src/core/cli/cli_surface.zig
+src/ui/footer/viewport.zig:180 | eraseCurrentFrame metrics parameter | always-was | rg '_ = metrics;' src/ui/footer/viewport.zig
+src/ui/footer/render_input.zig:638 | turnActivityProjection shell parameter | always-was | rg '_ = shell;' src/ui/footer/render_input.zig
+src/ui/footer/model_menu_presentation.zig:410 | loadedCatalogStatusText state.source read | deleted-product | rg '_ = state.source;' src/ui/footer/model_menu_presentation.zig
+src/ui/footer/settings_menu_presentation.zig:141 | measureBrowseBody width parameter | always-was | rg '_ = width;' src/ui/footer/settings_menu_presentation.zig
+src/ui/footer/help_menu_presentation.zig:110 | measureBody width parameter | always-was | rg '_ = width;' src/ui/footer/help_menu_presentation.zig
+src/ui/footer/compact_command_menu_presentation.zig:195 | composeUsageRow totals binding | always-was | rg '_ = totals;' src/ui/footer/compact_command_menu_presentation.zig
 STATUS: DONE

@@ -1,20 +1,20 @@
 Auditing shard-15 files for deletable residue. Reading the files and searching for evidence.
-src/core/execution/router.zig:107 | executePlannedCommand function | always-was | rg -n 'executePlannedCommand' /Users/aakshintala/work/fiber/src | rg -v 'router\.zig'
-src/core/execution/managed_execution_contract.zig:128 | initialPresentation function | always-was | rg -n 'initialPresentation' /Users/aakshintala/work/fiber/src | rg -v 'managed_execution_contract\.zig'
-src/core/execution/managed_execution_contract.zig:144 | cancellationDecision function | always-was | rg -n 'cancellationDecision' /Users/aakshintala/work/fiber/src | rg -v 'managed_execution_contract\.zig'
-src/core/execution/managed_execution_contract.zig:206 | toTombstone function | always-was | rg -n 'toTombstone' /Users/aakshintala/work/fiber/src | rg -v 'managed_execution_contract\.zig'
-src/core/execution/managed_execution_contract.zig:200 | Tombstone struct | always-was | rg -n 'managed_execution_contract\.Tombstone|toTombstone' /Users/aakshintala/work/fiber/src | rg -v 'managed_execution_contract\.zig'
-src/core/execution/managed_execution_contract.zig:123 | Presentation enum | always-was | rg -n 'managed_execution_contract\.Presentation|initialPresentation' /Users/aakshintala/work/fiber/src | rg -v 'managed_execution_contract\.zig'
-src/core/execution/managed_execution_contract.zig:132 | CancellationPoint enum | always-was | rg -n 'CancellationPoint' /Users/aakshintala/work/fiber/src | rg -v 'managed_execution_contract\.zig'
-src/core/execution/managed_execution_contract.zig:138 | CancellationDecision enum | always-was | rg -n 'CancellationDecision' /Users/aakshintala/work/fiber/src | rg -v 'managed_execution_contract\.zig'
-src/core/execution/managed_execution_contract.zig:21 | TerminalState enum | always-was | rg -n 'managed_execution_contract\.TerminalState' /Users/aakshintala/work/fiber/src
-src/core/execution/managed_execution_contract.zig:48 | Event.backend_lost variant | always-was | rg -n 'backend_lost' /Users/aakshintala/work/fiber/src | rg -v 'managed_execution_contract\.zig'
-src/core/execution/command_environment.zig:16 | Environment.workspace_clean union variant | deleted-product | rg -n 'captured_command_host\s*=\s*\.workspace_clean' /Users/aakshintala/work/fiber
-src/core/execution/command_environment.zig:136 | Host.workspace_clean enum variant | deleted-product | rg -n 'captured_command_host\s*=\s*\.workspace_clean' /Users/aakshintala/work/fiber
-src/core/execution/command_environment.zig:116 | formatApprovalCommand workspace_clean arm | deleted-product | rg -n 'captured_command_host\s*=\s*\.workspace_clean' /Users/aakshintala/work/fiber
-src/core/execution/command_runner.zig:626 | executeCommandInEnvironment workspace_clean arm | deleted-product | rg -n 'captured_command_host\s*=\s*\.workspace_clean' /Users/aakshintala/work/fiber
-src/core/execution/managed_execution.zig:1425 | dupeEnvironment workspace_clean arm | deleted-product | rg -n 'captured_command_host\s*=\s*\.workspace_clean' /Users/aakshintala/work/fiber
-src/core/execution/command_runner.zig:56 | supports_foreground_session wasi conjunct | deleted-product | rg -n '\.wasi' /Users/aakshintala/work/fiber/src/core/execution/command_runner.zig
-src/core/execution/process_tree.zig:609 | inspectProcessGroup wasi branch | deleted-product | rg -n '\.wasi' /Users/aakshintala/work/fiber/src/core/execution/process_tree.zig
+src/core/execution/router.zig:107 | executePlannedCommand function | always-was | rg -n 'executePlannedCommand' src | rg -v 'router\.zig'
+src/core/execution/managed_execution_contract.zig:128 | initialPresentation function | always-was | rg -n 'initialPresentation' src | rg -v 'managed_execution_contract\.zig'
+src/core/execution/managed_execution_contract.zig:144 | cancellationDecision function | always-was | rg -n 'cancellationDecision' src | rg -v 'managed_execution_contract\.zig'
+src/core/execution/managed_execution_contract.zig:206 | toTombstone function | always-was | rg -n 'toTombstone' src | rg -v 'managed_execution_contract\.zig'
+src/core/execution/managed_execution_contract.zig:200 | Tombstone struct | always-was | rg -n 'managed_execution_contract\.Tombstone|toTombstone' src | rg -v 'managed_execution_contract\.zig'
+src/core/execution/managed_execution_contract.zig:123 | Presentation enum | always-was | rg -n 'managed_execution_contract\.Presentation|initialPresentation' src | rg -v 'managed_execution_contract\.zig'
+src/core/execution/managed_execution_contract.zig:132 | CancellationPoint enum | always-was | rg -n 'CancellationPoint' src | rg -v 'managed_execution_contract\.zig'
+src/core/execution/managed_execution_contract.zig:138 | CancellationDecision enum | always-was | rg -n 'CancellationDecision' src | rg -v 'managed_execution_contract\.zig'
+src/core/execution/managed_execution_contract.zig:21 | TerminalState enum | always-was | rg -n 'managed_execution_contract\.TerminalState' src
+src/core/execution/managed_execution_contract.zig:48 | Event.backend_lost variant | always-was | rg -n 'backend_lost' src | rg -v 'managed_execution_contract\.zig'
+src/core/execution/command_environment.zig:16 | Environment.workspace_clean union variant | deleted-product | rg -n 'captured_command_host\s*=\s*\.workspace_clean' .
+src/core/execution/command_environment.zig:136 | Host.workspace_clean enum variant | deleted-product | rg -n 'captured_command_host\s*=\s*\.workspace_clean' .
+src/core/execution/command_environment.zig:116 | formatApprovalCommand workspace_clean arm | deleted-product | rg -n 'captured_command_host\s*=\s*\.workspace_clean' .
+src/core/execution/command_runner.zig:626 | executeCommandInEnvironment workspace_clean arm | deleted-product | rg -n 'captured_command_host\s*=\s*\.workspace_clean' .
+src/core/execution/managed_execution.zig:1425 | dupeEnvironment workspace_clean arm | deleted-product | rg -n 'captured_command_host\s*=\s*\.workspace_clean' .
+src/core/execution/command_runner.zig:56 | supports_foreground_session wasi conjunct | deleted-product | rg -n '\.wasi' src/core/execution/command_runner.zig
+src/core/execution/process_tree.zig:609 | inspectProcessGroup wasi branch | deleted-product | rg -n '\.wasi' src/core/execution/process_tree.zig
 
 STATUS: DONE
