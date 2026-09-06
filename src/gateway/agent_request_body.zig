@@ -10,7 +10,6 @@ const types = @import("../core/shared/types.zig");
 
 pub const ChatRole = types.ChatRole;
 pub const ChatMessage = types.ChatMessage;
-pub const GatewayCompletion = types.ModelCompletion;
 pub const ToolCall = types.ToolCall;
 
 pub const StructuredResponseFormat = struct {
@@ -18,8 +17,6 @@ pub const StructuredResponseFormat = struct {
     description: []const u8,
     schema: std.json.Value,
 };
-
-const pending_tool_review_result_text = "Tool call has not executed; it is pending permission review.";
 
 pub fn roleName(role: ChatRole) []const u8 {
     return switch (role) {
@@ -44,14 +41,6 @@ pub fn writeChatMessageJsonCached(
     message: ChatMessage,
 ) !void {
     writeChatMessageJsonInner(scratch_alloc, writer, message, true, null, null) catch |err| return err;
-}
-
-pub fn buildGatewayRequestBody(
-    alloc: std.mem.Allocator,
-    tools_json: []const u8,
-    messages: []const ChatMessage,
-) ![]u8 {
-    return buildGatewayRequestBodyWithOptions(alloc, tools_json, messages, .{}, .auto);
 }
 
 pub fn buildGatewayRequestBodyWithOptions(
@@ -145,21 +134,6 @@ pub fn buildGatewayRequestBodyWithVerifiedImagesAndBudget(
     );
 }
 
-pub fn buildGatewayRequiredToolRequestBodyWithOptions(
-    alloc: std.mem.Allocator,
-    tools_json: []const u8,
-    messages: []const ChatMessage,
-    options: model_capabilities.ResolvedProviderOptions,
-) ![]u8 {
-    return buildGatewayRequiredToolRequestBodyWithOptionsAndOutputLimit(
-        alloc,
-        tools_json,
-        messages,
-        options,
-        null,
-    );
-}
-
 pub fn buildGatewayRequiredToolRequestBodyWithOptionsAndOutputLimit(
     alloc: std.mem.Allocator,
     tools_json: []const u8,
@@ -197,85 +171,6 @@ pub fn buildGatewayRequiredToolRequestBodyWithOptionsAndBudget(
         null,
         null,
     );
-}
-
-pub fn buildGatewayRequiredToolRequestBodyWithMaxOutputTokens(
-    alloc: std.mem.Allocator,
-    tools_json: []const u8,
-    messages: []const ChatMessage,
-    max_output_tokens: u32,
-) ![]u8 {
-    return buildGatewayRequestBodyWithSettings(alloc, tools_json, messages, .{}, "required", max_output_tokens);
-}
-
-pub fn buildGatewayPendingToolReviewRequestBodyWithMaxOutputTokens(
-    alloc: std.mem.Allocator,
-    tools_json: []const u8,
-    messages: []const ChatMessage,
-    target_call_id: []const u8,
-    options: model_capabilities.ResolvedProviderOptions,
-    max_output_tokens: u32,
-    deadline: std.Io.Clock.Timestamp,
-    cancel_flag: *std.atomic.Value(bool),
-) ![]u8 {
-    const budget = BuildBudget{ .deadline = deadline, .cancel_flag = cancel_flag };
-    const expanded = try expandPendingToolReviewMessages(
-        alloc,
-        messages,
-        target_call_id,
-        deadline,
-        cancel_flag,
-    );
-    defer alloc.free(expanded);
-
-    return buildGatewayRequestBodyValidated(
-        alloc,
-        tools_json,
-        expanded,
-        options,
-        "required",
-        max_output_tokens,
-        budget,
-        null,
-        null,
-    );
-}
-
-/// Returns an owned message slice that closes the pending tool call before the
-/// reviewer instruction. Message contents remain borrowed from `messages`.
-pub fn expandPendingToolReviewMessages(
-    alloc: std.mem.Allocator,
-    messages: []const ChatMessage,
-    target_call_id: []const u8,
-    deadline: std.Io.Clock.Timestamp,
-    cancel_flag: *std.atomic.Value(bool),
-) ![]ChatMessage {
-    const budget = BuildBudget{ .deadline = deadline, .cancel_flag = cancel_flag };
-    try budget.check();
-    try validatePendingToolReviewMessages(alloc, messages, target_call_id, budget);
-    try budget.check();
-
-    const pending_index = messages.len - 2;
-    const pending = messages[pending_index];
-    const expanded_len = try std.math.add(usize, messages.len, pending.tool_calls.len);
-    const expanded = try alloc.alloc(ChatMessage, expanded_len);
-    errdefer alloc.free(expanded);
-
-    @memcpy(expanded[0 .. pending_index + 1], messages[0 .. pending_index + 1]);
-    for (pending.tool_calls, 0..) |call, i| {
-        try budget.check();
-        expanded[pending_index + 1 + i] = .{
-            .role = .tool,
-            .content = pending_tool_review_result_text,
-            .tool_call_id = call.id,
-            .tool_name = call.name,
-        };
-    }
-    expanded[expanded.len - 1] = messages[messages.len - 1];
-    try budget.check();
-    try validateToolMessageHistory(alloc, expanded);
-    try budget.check();
-    return expanded;
 }
 
 fn buildGatewayRequestBodyWithSettings(
@@ -385,24 +280,6 @@ fn buildGatewayRequestBodyValidated(
     return try out.toOwnedSlice();
 }
 
-/// Returns a new request body with the provider-visible user agent added.
-/// The caller retains ownership of `body` and owns the returned slice.
-pub fn withRequestUserAgent(
-    alloc: std.mem.Allocator,
-    body: []const u8,
-    user_agent: []const u8,
-) ![]u8 {
-    if (body.len == 0 or body[body.len - 1] != '}') return error.InvalidGatewayRequestBody;
-
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    errdefer out.deinit();
-    try out.writer.writeAll(body[0 .. body.len - 1]);
-    try out.writer.writeAll(",\"headers\":{\"user-agent\":");
-    try std.json.Stringify.value(user_agent, .{}, &out.writer);
-    try out.writer.writeAll("}}");
-    return try out.toOwnedSlice();
-}
-
 fn writeStructuredResponseFormat(
     alloc: std.mem.Allocator,
     writer: *std.Io.Writer,
@@ -424,31 +301,6 @@ const VerifiedImageOverride = struct {
     message_index: usize,
     images: []const image_attachments.VerifiedSnapshot,
 };
-
-fn validatePendingToolReviewMessages(
-    alloc: std.mem.Allocator,
-    messages: []const ChatMessage,
-    target_call_id: []const u8,
-    budget: BuildBudget,
-) !void {
-    try budget.check();
-    if (messages.len < 2 or target_call_id.len == 0) return error.InvalidGatewayHistory;
-    const pending = messages[messages.len - 2];
-    const instruction = messages[messages.len - 1];
-    if (pending.role != .assistant or pending.tool_calls.len == 0) return error.InvalidGatewayHistory;
-    if (instruction.role != .system or instruction.content == null) return error.InvalidGatewayHistory;
-    try validateToolMessageHistory(alloc, messages[0 .. messages.len - 2]);
-    try budget.check();
-    try validateAssistantToolCalls(alloc, pending.tool_calls);
-    try budget.check();
-
-    var target_matches: usize = 0;
-    for (pending.tool_calls) |call| {
-        try budget.check();
-        if (std.mem.eql(u8, call.id, target_call_id)) target_matches += 1;
-    }
-    if (target_matches != 1) return error.InvalidGatewayHistory;
-}
 
 pub fn writeProviderOptions(writer: *std.Io.Writer, options: model_capabilities.ResolvedProviderOptions) !void {
     if (!options.fast and options.parallel_tool_calls == null) return;
@@ -536,7 +388,6 @@ pub fn shouldCacheMessage(message: ChatMessage, index: usize, cache_breakpoint_i
 }
 
 const anthropic_cache_meta = ",\"providerOptions\":{\"anthropic\":{\"cacheControl\":{\"type\":\"ephemeral\"}}}";
-const max_prompt_shape_entries: usize = 12;
 
 fn writeChatMessageJsonInner(
     scratch_alloc: std.mem.Allocator,
@@ -662,123 +513,6 @@ fn writeChatMessageJsonInner(
     try writer.writeAll("}");
 }
 
-pub fn formatGatewayRequestShapeSummary(alloc: std.mem.Allocator, payload: []const u8) ![]u8 {
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    errdefer out.deinit();
-
-    try out.writer.print("bytes={d}", .{payload.len});
-
-    var parsed = std.json.parseFromSlice(std.json.Value, alloc, payload, .{}) catch |err| {
-        try out.writer.print(" parse_error={s}", .{@errorName(err)});
-        return try out.toOwnedSlice();
-    };
-    defer parsed.deinit();
-
-    if (parsed.value != .object) {
-        try out.writer.print(" root={s}", .{jsonKindName(parsed.value)});
-        return try out.toOwnedSlice();
-    }
-
-    if (parsed.value.object.get("prompt")) |prompt| {
-        if (prompt == .array) {
-            try out.writer.print(" prompt_count={d}", .{prompt.array.items.len});
-            const limit = @min(prompt.array.items.len, max_prompt_shape_entries);
-            for (prompt.array.items[0..limit], 0..) |entry, i| {
-                try out.writer.print(" prompt.{d}", .{i});
-                if (entry == .object) {
-                    if (entry.object.get("role")) |role_value| {
-                        try out.writer.writeAll(" role=");
-                        if (role_value == .string) {
-                            try appendSafeShapeToken(&out.writer, role_value.string);
-                        } else {
-                            try out.writer.writeAll(jsonKindName(role_value));
-                        }
-                    } else {
-                        try out.writer.writeAll(" role=missing");
-                    }
-                    if (entry.object.get("content")) |content_value| {
-                        try out.writer.print(" content={s}", .{jsonKindName(content_value)});
-                        if (content_value == .array) try out.writer.print(" parts={d}", .{content_value.array.items.len});
-                    } else {
-                        try out.writer.writeAll(" content=missing");
-                    }
-                } else {
-                    try out.writer.print(" entry={s}", .{jsonKindName(entry)});
-                }
-            }
-            if (prompt.array.items.len > limit) {
-                try out.writer.print(" prompt_omitted={d}", .{prompt.array.items.len - limit});
-            }
-        } else {
-            try out.writer.print(" prompt={s}", .{jsonKindName(prompt)});
-        }
-    } else {
-        try out.writer.writeAll(" prompt=missing");
-    }
-
-    if (parsed.value.object.get("tools")) |tools| {
-        try out.writer.print(" tools={s}", .{jsonKindName(tools)});
-        if (tools == .array) try out.writer.print(" tools_count={d}", .{tools.array.items.len});
-    }
-
-    if (parsed.value.object.get("toolChoice")) |tool_choice| {
-        if (tool_choice == .object) {
-            if (tool_choice.object.get("type")) |type_value| {
-                try out.writer.writeAll(" toolChoice=");
-                if (type_value == .string) {
-                    try appendSafeShapeToken(&out.writer, type_value.string);
-                } else {
-                    try out.writer.writeAll(jsonKindName(type_value));
-                }
-            } else {
-                try out.writer.writeAll(" toolChoice=object");
-            }
-        } else {
-            try out.writer.print(" toolChoice={s}", .{jsonKindName(tool_choice)});
-        }
-    }
-
-    if (parsed.value.object.get("providerOptions")) |provider_options| {
-        try out.writer.print(" providerOptions={s}", .{jsonKindName(provider_options)});
-        if (provider_options == .object) try out.writer.print(" providerOptions_count={d}", .{provider_options.object.count()});
-    }
-
-    return try out.toOwnedSlice();
-}
-
-fn appendSafeShapeToken(writer: *std.Io.Writer, raw: []const u8) !void {
-    var wrote = false;
-    var last_was_underscore = false;
-    for (raw) |c| {
-        switch (c) {
-            'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.', '/', '[', ']' => {
-                try writer.writeByte(c);
-                wrote = true;
-                last_was_underscore = c == '_';
-            },
-            else => {
-                if (!last_was_underscore) {
-                    try writer.writeByte('_');
-                    wrote = true;
-                    last_was_underscore = true;
-                }
-            },
-        }
-    }
-    if (!wrote) try writer.writeAll("unknown");
-}
-
-fn jsonKindName(value: std.json.Value) []const u8 {
-    return switch (value) {
-        .null => "null",
-        .bool => "bool",
-        .integer, .float, .number_string => "number",
-        .string => "string",
-        .array => "array",
-        .object => "object",
-    };
-}
-
 fn findCacheBreakpoint(messages: []const ChatMessage) ?usize {
     if (messages.len < 3) return null;
     var i = messages.len - 2;
@@ -787,110 +521,6 @@ fn findCacheBreakpoint(messages: []const ChatMessage) ?usize {
         if (role == .user or role == .assistant) return i;
     }
     return null;
-}
-
-pub fn parseGatewayCompletion(alloc: std.mem.Allocator, body: []const u8) !GatewayCompletion {
-    const parsed = try std.json.parseFromSlice(std.json.Value, alloc, body, .{});
-    defer parsed.deinit();
-
-    const root = parsed.value;
-    if (root != .object) return error.InvalidGatewayResponse;
-
-    const choices = root.object.get("choices") orelse return error.InvalidGatewayResponse;
-    if (choices != .array or choices.array.items.len == 0) return error.InvalidGatewayResponse;
-
-    const choice = choices.array.items[0];
-    if (choice != .object) return error.InvalidGatewayResponse;
-
-    const message_value = choice.object.get("message") orelse return error.InvalidGatewayResponse;
-    if (message_value != .object) return error.InvalidGatewayResponse;
-
-    var output: GatewayCompletion = .{};
-    if (message_value.object.get("content")) |content| {
-        if (content == .string) output.content = try alloc.dupe(u8, content.string);
-    }
-    errdefer freeGatewayCompletion(alloc, output);
-
-    if (choice.object.get("finish_reason")) |finish_reason| {
-        if (finish_reason == .string and finish_reason.string.len > 0) {
-            output.finish_reason = types.ProviderFinishReason.parse_legacy(finish_reason.string) orelse
-                return error.InvalidGatewayResponse;
-        }
-    }
-
-    if (message_value.object.get("tool_calls")) |tool_calls| {
-        if (tool_calls == .array and tool_calls.array.items.len > 0) {
-            const buffer = try alloc.alloc(ToolCall, tool_calls.array.items.len);
-            var count: usize = 0;
-            errdefer {
-                for (buffer[0..count]) |tool_call| {
-                    alloc.free(tool_call.id);
-                    alloc.free(tool_call.name);
-                    alloc.free(tool_call.arguments_json);
-                }
-                alloc.free(buffer);
-            }
-
-            for (tool_calls.array.items) |item| {
-                if (item != .object) continue;
-                const id = item.object.get("id") orelse continue;
-                if (id != .string) continue;
-                const fn_value = item.object.get("function") orelse continue;
-                if (fn_value != .object) continue;
-                const name = fn_value.object.get("name") orelse continue;
-                const args = fn_value.object.get("arguments") orelse continue;
-                if (name != .string or args != .string) continue;
-                if (try types.ToolArgumentIntegrity.classifySerialized(alloc, args.string) == .malformed_json) {
-                    return error.InvalidGatewayResponse;
-                }
-                const id_copy = try alloc.dupe(u8, id.string);
-                errdefer alloc.free(id_copy);
-                const name_copy = try alloc.dupe(u8, name.string);
-                errdefer alloc.free(name_copy);
-                const arguments_copy = try alloc.dupe(u8, args.string);
-                errdefer alloc.free(arguments_copy);
-
-                buffer[count] = .{
-                    .id = id_copy,
-                    .name = name_copy,
-                    .arguments_json = arguments_copy,
-                };
-                count += 1;
-            }
-            if (count == 0) {
-                alloc.free(buffer);
-            } else if (count < buffer.len) {
-                output.tool_calls = try alloc.dupe(ToolCall, buffer[0..count]);
-                alloc.free(buffer);
-            } else {
-                output.tool_calls = buffer;
-            }
-        }
-    }
-
-    return output;
-}
-
-pub fn freeGatewayCompletion(alloc: std.mem.Allocator, completion: GatewayCompletion) void {
-    if (completion.content) |content| alloc.free(content);
-    for (completion.tool_calls) |tool_call| {
-        alloc.free(tool_call.id);
-        alloc.free(tool_call.name);
-        alloc.free(tool_call.arguments_json);
-    }
-    if (completion.tool_calls.len > 0) alloc.free(completion.tool_calls);
-    if (completion.provider_state_json) |state| alloc.free(state);
-}
-
-fn checkParseGatewayCompletionAllocFailures(alloc: std.mem.Allocator) !void {
-    const body = "{\"choices\":[{\"finish_reason\":\"tool_calls\",\"message\":{\"content\":\"hello\",\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{}\"}},{\"id\":\"call_2\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"src/main.zig\\\"}\"}}]}}]}";
-
-    const completion = try parseGatewayCompletion(alloc, body);
-    defer freeGatewayCompletion(alloc, completion);
-
-    try std.testing.expectEqualStrings("hello", completion.content.?);
-    try std.testing.expectEqual(types.ProviderFinishReason.tool_calls, completion.finish_reason.?);
-    try std.testing.expectEqual(@as(usize, 2), completion.tool_calls.len);
 }
 
 test "roleName returns exact gateway role strings" {
@@ -935,7 +565,14 @@ test "gateway request serializes an optional structured response format" {
     try std.testing.expectEqualStrings("Evidence \"only\"", format.object.get("description").?.string);
     try std.testing.expectEqualStrings("object", format.object.get("schema").?.object.get("type").?.string);
 
-    const plain = try buildGatewayRequestBody(alloc, "[]", &messages);
+    const plain = try buildGatewayRequestBodyWithOptionsAndOutputLimit(
+        alloc,
+        "[]",
+        &messages,
+        .{},
+        .none,
+        null,
+    );
     defer alloc.free(plain);
     var plain_parsed = try std.json.parseFromSlice(std.json.Value, alloc, plain, .{});
     defer plain_parsed.deinit();
@@ -1175,119 +812,6 @@ test "buildGatewayRequestBodyWithOptions keeps Anthropic default silent and name
     try std.testing.expect(named_parsed.value.object.get("providerOptions") == null);
 }
 
-test "required gateway request serializes required tool choice and max output" {
-    const alloc = std.testing.allocator;
-    const messages = [_]ChatMessage{
-        .{ .role = .user, .content = "question" },
-    };
-
-    const body = try buildGatewayRequiredToolRequestBodyWithMaxOutputTokens(alloc, "[]", &messages, 4096);
-    defer alloc.free(body);
-
-    try std.testing.expectEqualStrings(
-        "{\"prompt\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"question\"}]}],\"tools\":[],\"toolChoice\":{\"type\":\"required\"},\"maxOutputTokens\":4096}",
-        body,
-    );
-}
-
-test "required gateway request validates history" {
-    const alloc = std.testing.allocator;
-    const messages = [_]ChatMessage{
-        .{ .role = .user, .content = "question" },
-        .{ .role = .tool, .content = "orphan", .tool_call_id = "call_1", .tool_name = "read_file" },
-    };
-
-    try std.testing.expectError(
-        error.InvalidGatewayHistory,
-        buildGatewayRequiredToolRequestBodyWithMaxOutputTokens(alloc, "[]", &messages, 4096),
-    );
-}
-
-test "pending tool review closes the exact assistant step with synthetic pending results" {
-    var cancel = std.atomic.Value(bool).init(false);
-    const deadline = std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
-        .clock = .awake,
-        .raw = .fromMilliseconds(1000),
-    });
-    const messages = [_]ChatMessage{
-        .{ .role = .user, .content = "Install dependencies." },
-        .{ .role = .assistant, .tool_calls = &.{
-            .{ .id = "install", .name = "run_command", .arguments_json = "{\"command\":\"pnpm install\"}" },
-            .{ .id = "read", .name = "read_file", .arguments_json = "{\"path\":\"package.json\"}" },
-        } },
-        .{ .role = .system, .content = "Review only install." },
-    };
-
-    const body = try buildGatewayPendingToolReviewRequestBodyWithMaxOutputTokens(
-        std.testing.allocator,
-        "[]",
-        &messages,
-        "install",
-        .{ .reasoning = types.ReasoningEffort.literal("minimal") },
-        2048,
-        deadline,
-        &cancel,
-    );
-    defer std.testing.allocator.free(body);
-
-    try std.testing.expect(std.mem.find(u8, body, "\"toolCallId\":\"install\"") != null);
-    try std.testing.expect(std.mem.find(u8, body, "\"toolCallId\":\"read\"") != null);
-    try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, body, "\"role\":\"tool\""));
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        std.mem.count(u8, body, "Tool call has not executed; it is pending permission review."),
-    );
-    try std.testing.expect(std.mem.find(u8, body, "\"maxOutputTokens\":2048") != null);
-    try std.testing.expect(std.mem.find(u8, body, "\"reasoning\":\"minimal\"") != null);
-    try std.testing.expectError(
-        error.InvalidGatewayHistory,
-        buildGatewayRequestBody(std.testing.allocator, "[]", &messages),
-    );
-}
-
-test "pending tool review rejects missing or duplicate target ids" {
-    var cancel = std.atomic.Value(bool).init(false);
-    const deadline = std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
-        .clock = .awake,
-        .raw = .fromMilliseconds(1000),
-    });
-    const messages = [_]ChatMessage{
-        .{ .role = .user, .content = "Run this." },
-        .{ .role = .assistant, .tool_calls = &.{
-            .{ .id = "duplicate", .name = "run_command", .arguments_json = "{}" },
-            .{ .id = "duplicate", .name = "read_file", .arguments_json = "{}" },
-        } },
-        .{ .role = .system, .content = "Review it." },
-    };
-
-    try std.testing.expectError(
-        error.InvalidGatewayHistory,
-        buildGatewayPendingToolReviewRequestBodyWithMaxOutputTokens(
-            std.testing.allocator,
-            "[]",
-            &messages,
-            "duplicate",
-            .{},
-            2048,
-            deadline,
-            &cancel,
-        ),
-    );
-    try std.testing.expectError(
-        error.InvalidGatewayHistory,
-        buildGatewayPendingToolReviewRequestBodyWithMaxOutputTokens(
-            std.testing.allocator,
-            "[]",
-            &messages,
-            "missing",
-            .{},
-            2048,
-            deadline,
-            &cancel,
-        ),
-    );
-}
-
 test "buildGatewayRequestBodyWithOptions serializes Gateway Fast provider options" {
     const alloc = std.testing.allocator;
     const messages = [_]ChatMessage{
@@ -1330,55 +854,6 @@ test "buildGatewayRequestBodyWithOptions combines Gateway Fast and xai options" 
     defer alloc.free(body);
 
     try std.testing.expect(std.mem.find(u8, body, "\"providerOptions\":{\"gateway\":{\"speed\":\"fast\"},\"xai\":{\"parallelToolCalls\":true}}") != null);
-}
-
-test "formatGatewayRequestShapeSummary reports content kinds without request content" {
-    const alloc = std.testing.allocator;
-    var calls = [_]ToolCall{.{
-        .id = "call_1",
-        .name = "read_file",
-        .arguments_json = "{\"path\":\"SECRET_TOOL_ARGUMENT_PATH\"}",
-    }};
-    const messages = [_]ChatMessage{
-        .{ .role = .system, .content = "SECRET_SYSTEM_PROMPT" },
-        .{ .role = .user, .content = "SECRET_USER_PROMPT" },
-        .{ .role = .assistant, .tool_calls = calls[0..] },
-        .{ .role = .tool, .content = "SECRET_TOOL_OUTPUT", .tool_call_id = "call_1", .tool_name = "read_file" },
-    };
-
-    const body = try buildGatewayRequestBodyWithOptions(
-        alloc,
-        "[{\"name\":\"SECRET_TOOL_SCHEMA\"}]",
-        &messages,
-        .{},
-        .auto,
-    );
-    defer alloc.free(body);
-
-    const valid_summary = try formatGatewayRequestShapeSummary(alloc, body);
-    defer alloc.free(valid_summary);
-
-    try std.testing.expect(std.mem.find(u8, valid_summary, "prompt_count=4") != null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "prompt.0 role=system content=string") != null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "prompt.1 role=user content=array") != null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "prompt.2 role=assistant content=array") != null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "prompt.3 role=tool content=array") != null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "tools_count=1") != null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "toolChoice=auto") != null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "SECRET_SYSTEM_PROMPT") == null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "SECRET_USER_PROMPT") == null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "SECRET_TOOL_ARGUMENT_PATH") == null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "SECRET_TOOL_OUTPUT") == null);
-    try std.testing.expect(std.mem.find(u8, valid_summary, "SECRET_TOOL_SCHEMA") == null);
-
-    const mutated =
-        \\{"prompt":[{"role":"system","content":[{"type":"text","text":"SECRET_MUTATED_SYSTEM"}]}],"tools":[],"toolChoice":{"type":"auto"}}
-    ;
-    const mutated_summary = try formatGatewayRequestShapeSummary(alloc, mutated);
-    defer alloc.free(mutated_summary);
-
-    try std.testing.expect(std.mem.find(u8, mutated_summary, "prompt.0 role=system content=array") != null);
-    try std.testing.expect(std.mem.find(u8, mutated_summary, "SECRET_MUTATED_SYSTEM") == null);
 }
 
 test "findCacheBreakpoint returns null for short conversations" {
@@ -1595,78 +1070,4 @@ test "gateway request validation rejects mismatched tool result names" {
     };
 
     try std.testing.expectError(error.InvalidGatewayHistory, buildGatewayRequestBodyWithOptions(alloc, "[]", &messages, .{}, .auto));
-}
-
-test "parseGatewayCompletion duplicates returned strings" {
-    const alloc = std.testing.allocator;
-    const body = try alloc.dupe(
-        u8,
-        "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"hello\",\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}}]}}]}",
-    );
-    defer alloc.free(body);
-
-    const completion = try parseGatewayCompletion(alloc, body);
-    defer freeGatewayCompletion(alloc, completion);
-
-    @memset(body, 'x');
-
-    try std.testing.expectEqualStrings("hello", completion.content.?);
-    try std.testing.expectEqual(types.ProviderFinishReason.stop, completion.finish_reason.?);
-    try std.testing.expectEqualStrings("call_1", completion.tool_calls[0].id);
-    try std.testing.expectEqualStrings("read_file", completion.tool_calls[0].name);
-    try std.testing.expectEqualStrings("{}", completion.tool_calls[0].arguments_json);
-}
-
-test "parseGatewayCompletion skips malformed tool call entries" {
-    const alloc = std.testing.allocator;
-    const body =
-        "{\"choices\":[{\"message\":{\"content\":\"ok\",\"tool_calls\":[" ++
-        "42," ++
-        "{\"id\":7,\"function\":{\"name\":\"bad\",\"arguments\":\"{}\"}}," ++
-        "{\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a\\\"}\"}}" ++
-        "]}}]}";
-
-    const completion = try parseGatewayCompletion(alloc, body);
-    defer freeGatewayCompletion(alloc, completion);
-
-    try std.testing.expectEqual(@as(usize, 1), completion.tool_calls.len);
-    try std.testing.expectEqualStrings("call_1", completion.tool_calls[0].id);
-    try std.testing.expectEqualStrings("read_file", completion.tool_calls[0].name);
-    try std.testing.expectEqualStrings("{\"path\":\"a\"}", completion.tool_calls[0].arguments_json);
-}
-
-test "parseGatewayCompletion rejects malformed legacy tool arguments" {
-    const body =
-        "{\"choices\":[{\"finish_reason\":\"tool_calls\",\"message\":{\"tool_calls\":[" ++
-        "{\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{]\"}}" ++
-        "]}}]}";
-
-    try std.testing.expectError(
-        error.InvalidGatewayResponse,
-        parseGatewayCompletion(std.testing.allocator, body),
-    );
-}
-
-test "parseGatewayCompletion rejects duplicate-key legacy tool arguments" {
-    const body =
-        "{\"choices\":[{\"finish_reason\":\"tool_calls\",\"message\":{\"tool_calls\":[" ++
-        "{\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"depth\\\":1,\\\"depth\\\":2}\"}}" ++
-        "]}}]}";
-
-    try std.testing.expectError(
-        error.InvalidGatewayResponse,
-        parseGatewayCompletion(std.testing.allocator, body),
-    );
-}
-
-test "parseGatewayCompletion cleans up allocation failures" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, checkParseGatewayCompletionAllocFailures, .{});
-}
-
-test "freeGatewayCompletion frees parsed completions under testing allocator" {
-    const alloc = std.testing.allocator;
-    const body = "{\"choices\":[{\"finish_reason\":\"tool_calls\",\"message\":{\"content\":\"hello\",\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"write_file\",\"arguments\":\"{}\"}}]}}]}";
-
-    const completion = try parseGatewayCompletion(alloc, body);
-    freeGatewayCompletion(alloc, completion);
 }
