@@ -235,3 +235,46 @@ or test-support code, so the boundary is closer to real than the inventory
 assumed. Moving the rest to `main.zig` composition or a typed dependency is a
 design decision — constructor injection versus a registry passed down — not
 cleanup.
+
+## Randomized session and transcript fuzzing
+
+Fiber fuzzes parsers, not state machines. Sixteen files use `std.testing.fuzz`
+with `std.testing.Smith`, concentrated in `core/mcp` (5), `core/session` (3 —
+`session_codec`, `session_summary_codec`, `session_latest_pointer`),
+`core/shared` (2), and one each in terminal, workspace, skills, tooling, and
+`agent/runtime`. Every one of them answers the same question: given arbitrary
+bytes, does the decoder stay bounded and refuse to crash.
+`terminal/engine.zig`'s "bounded deterministic corrupt checkpoint fuzz" comes
+closest to session-level coverage and still operates on a serialized blob.
+
+Nothing generates a random-but-valid **session** and drives the app through it.
+The codec fuzzers prove a file cannot be corrupted into a crash; what is missing
+proves a sequence of events cannot be ordered into a wrong screen. Those are
+different targets, and the second is where Fiber's inherited state-loss bugs
+live — resize during output, cancellation racing a tool result, approval screens
+over a resumed transcript.
+
+The seams for it already exist, which is why this is smaller than it sounds:
+
+- **The fake gateway** — no network, no model, no cost, no latency. Already the
+  backing for roughly twenty E2E files.
+- **The render tape** — `FXTP`-framed stdout with per-frame deltas, written by
+  `src/ui/event_loop.zig` and friends, read by `tests/e2e/render-lab/tape.ts`.
+  A deterministic record of what the UI actually emitted, replayable offline.
+- **The session boundary hooks** — `FIBER_E2E_SESSION_BOUNDARY` stops the log
+  protocol at a named point, read by `session_test_controls.zig` with the
+  boundary calls at `session_log.zig:2218,3296`.
+
+A generator emitting valid turn sequences against the fake gateway, asserting
+invariants rather than golden output — no turn lost, watermark monotonic,
+replayed tape matches the final grid, cancellation never admits late output —
+attaches to all three.
+
+The reason to build it: Phase 5's TUI state-transition matrix is specified as
+seven hand-written scenarios. Seven cases cannot cover a space whose bugs come
+from event *interleaving*, and each one is expensive to write and slow to run. A
+generator covers the same space by construction and runs without a model.
+
+Deferred deliberately: Phase 5 restores inherited coverage, and this is net-new
+capability. It is the natural successor to that matrix rather than a replacement
+for it.
