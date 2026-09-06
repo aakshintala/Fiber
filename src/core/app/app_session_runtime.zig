@@ -2821,7 +2821,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn suspendToJobControl(app: *App, footer_rows: u16) !void {
-            if (!shell_runtime.supports_resize_signal) return;
             if (!tryBeginIdleSessionPark(app)) {
                 return app_lifecycle.suspendToJobControl(
                     &app.terminal,

@@ -18,22 +18,11 @@ const TranscriptRuntime = transcript_runtime.TranscriptRuntime;
 const TmuxHistoryClearRunner = *const fn (Allocator, []const u8) anyerror!void;
 var tmux_history_clear_test_runner: if (builtin.is_test) ?TmuxHistoryClearRunner else void = if (builtin.is_test) null else {};
 
-const supports_test_pty = switch (builtin.os.tag) {
-    .linux,
-    .macos,
-    .freebsd,
-    .netbsd,
-    .openbsd,
-    => true,
-    else => false,
-};
-
 extern "c" fn posix_openpt(flags: c_int) c_int;
 extern "c" fn grantpt(fd: c_int) c_int;
 extern "c" fn unlockpt(fd: c_int) c_int;
 extern "c" fn ptsname(fd: c_int) ?[*:0]u8;
 
-pub const supports_resize_signal = resize_runtime.supports_resize_signal;
 pub const ResizeHandler = std.posix.Sigaction.handler_fn;
 pub const ResizeApprovalInterlock = resize_runtime.ResizeApprovalInterlock;
 pub const RedrawMode = resize_runtime.RedrawMode;
@@ -126,8 +115,6 @@ pub const TerminalState = struct {
     }
 
     pub fn installResizeSignal(self: *TerminalState, handler: ResizeHandler) void {
-        if (!supports_resize_signal) return;
-
         const act: std.posix.Sigaction = .{
             .handler = .{ .handler = handler },
             .mask = std.posix.sigemptyset(),
@@ -141,7 +128,7 @@ pub const TerminalState = struct {
     }
 
     pub fn uninstallResizeSignal(self: *TerminalState) void {
-        if (!supports_resize_signal or !self.signal_handler_installed) return;
+        if (!self.signal_handler_installed) return;
         if (self.old_winch_action) |old| {
             std.posix.sigaction(std.posix.SIG.WINCH, &old, null);
         }
@@ -555,8 +542,6 @@ fn closeTestFd(fd: std.posix.fd_t) void {
 }
 
 test "enableRawMode preserves already queued input" {
-    if (!supports_test_pty) return error.SkipZigTest;
-
     const pty = try TestPty.open();
     defer pty.close();
 
@@ -598,8 +583,6 @@ test "enableRawMode preserves already queued input" {
 }
 
 test "enableRawMode preserves carriage return input" {
-    if (!supports_test_pty) return error.SkipZigTest;
-
     const pty = try TestPty.open();
     defer pty.close();
 

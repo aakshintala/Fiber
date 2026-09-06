@@ -96,16 +96,11 @@ const WorkerEvent = worker_runtime.WorkerEvent;
 const WorkerRuntime = worker_runtime.WorkerRuntime;
 const McpHasToolFn = tool_mcp_runtime.HasToolFn;
 
-const supports_headless_interrupt = switch (std_builtin.os.tag) {
-    .windows, .wasi, .freestanding => false,
-    else => true,
-};
-
 const HeadlessInterruptInstallError = error{HeadlessInterruptBusy};
 const headless_interrupt_exit_code: u8 = 130;
 const headless_termination_exit_code: u8 = 143;
 
-const headless_interrupt = if (supports_headless_interrupt) struct {
+const headless_interrupt = struct {
     var coordinator_mutex: std.Io.Mutex = .init;
     var coordinator_active = false;
     var cancel_requested = std.atomic.Value(bool).init(false);
@@ -189,24 +184,6 @@ const headless_interrupt = if (supports_headless_interrupt) struct {
 
         fn requested(self: *const Scope) bool {
             return self.installed and cancel_requested.load(.seq_cst);
-        }
-    };
-} else struct {
-    fn exitCode() u8 {
-        return headless_interrupt_exit_code;
-    }
-
-    const Scope = struct {
-        fn install(_: bool) HeadlessInterruptInstallError!Scope {
-            return .{};
-        }
-
-        fn deinit(_: *Scope) void {}
-
-        fn restoreAndRedeliver(_: *Scope) void {}
-
-        fn requested(_: *const Scope) bool {
-            return false;
         }
     };
 };
@@ -764,10 +741,8 @@ const AskContext = struct {
     }
 
     fn cancelFlag(self: *AskContext) *std.atomic.Value(bool) {
-        if (comptime supports_headless_interrupt) {
-            if (self.use_process_interrupt_flag) {
-                return &headless_interrupt.cancel_requested;
-            }
+        if (self.use_process_interrupt_flag) {
+            return &headless_interrupt.cancel_requested;
         }
         return &self.worker.worker_cancel_requested;
     }
@@ -777,11 +752,8 @@ const AskContext = struct {
     }
 
     fn processInterruptRequested(self: *const AskContext) bool {
-        if (comptime supports_headless_interrupt) {
-            return self.use_process_interrupt_flag and
-                headless_interrupt.cancel_requested.load(.seq_cst);
-        }
-        return false;
+        return self.use_process_interrupt_flag and
+            headless_interrupt.cancel_requested.load(.seq_cst);
     }
 
     fn imageSnapshotStorageDir(self: *AskContext) ![]u8 {
@@ -1114,12 +1086,10 @@ fn askElicitationCapabilities(
 }
 
 fn checkHeadlessCancellation(deps: RunDeps) !void {
-    if (comptime supports_headless_interrupt) {
-        if (deps.install_headless_interrupt and
-            headless_interrupt.cancel_requested.load(.seq_cst))
-        {
-            return error.Cancelled;
-        }
+    if (deps.install_headless_interrupt and
+        headless_interrupt.cancel_requested.load(.seq_cst))
+    {
+        return error.Cancelled;
     }
 }
 
@@ -5530,8 +5500,6 @@ test "fiber ask automatic review observes worker cancellation" {
 }
 
 test "headless ask SIGINT sets process-lifetime cancellation storage" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     var scope = try headless_interrupt.Scope.install(true);
     defer scope.deinit();
 
@@ -5541,8 +5509,6 @@ test "headless ask SIGINT sets process-lifetime cancellation storage" {
 }
 
 test "headless ask interrupt installation exposes a typed busy result" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     const InstallResult = @TypeOf(headless_interrupt.Scope.install(true));
     try std.testing.expect(
         std.meta.activeTag(@typeInfo(InstallResult)) == .error_union,
@@ -5562,9 +5528,7 @@ fn testProcessQueuedPromptRaisesSigintAndSucceeds(
     cfg: agent_runtime.Config,
     job: worker_runtime.QueuedPrompt,
 ) !void {
-    if (comptime supports_headless_interrupt) {
-        _ = std.c.raise(std.posix.SIG.INT);
-    }
+    _ = std.c.raise(std.posix.SIG.INT);
     try testProcessQueuedPrompt(
         agent,
         deps,
@@ -5589,9 +5553,7 @@ var test_startup_cancellation_mcp_calls: usize = 0;
 var test_startup_cancellation_process_calls: usize = 0;
 
 fn requestTestHeadlessInterrupt() void {
-    if (comptime supports_headless_interrupt) {
-        headless_interrupt.handle(std.posix.SIG.INT);
-    }
+    headless_interrupt.handle(std.posix.SIG.INT);
 }
 
 fn testLoadStartupStateWithCancellation(
@@ -5682,7 +5644,6 @@ const CrossThreadSigintState = struct {
 };
 
 fn sendRequestedSigints(state: *CrossThreadSigintState) void {
-    if (comptime !supports_headless_interrupt) return;
     while (!state.stop.load(.seq_cst)) {
         if (!state.request.swap(false, .seq_cst)) {
             std.Thread.yield() catch std.atomic.spinLoopHint();
@@ -5696,8 +5657,6 @@ fn sendRequestedSigints(state: *CrossThreadSigintState) void {
 }
 
 test "headless ask rejects concurrent and nested interrupt scopes without overwrite" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     var first = try headless_interrupt.Scope.install(true);
     defer first.deinit();
 
@@ -5729,8 +5688,6 @@ test "headless ask rejects concurrent and nested interrupt scopes without overwr
 }
 
 test "headless ask restores the exact previous SIGINT handler" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     const previous_action: std.posix.Sigaction = .{
         .handler = .{ .handler = testPreviousSigintHandler },
         .mask = std.posix.sigemptyset(),
@@ -5752,8 +5709,6 @@ test "headless ask restores the exact previous SIGINT handler" {
 }
 
 test "headless ask redelivers consumed SIGINT after restoring the previous handler" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     const previous_action: std.posix.Sigaction = .{
         .handler = .{ .handler = testPreviousSigintHandler },
         .mask = std.posix.sigemptyset(),
@@ -5776,8 +5731,6 @@ test "headless ask redelivers consumed SIGINT after restoring the previous handl
 }
 
 test "headless ask returns nonzero when the restored SIGINT handler returns" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     const previous_action: std.posix.Sigaction = .{
         .handler = .{ .handler = testPreviousSigintHandler },
         .mask = std.posix.sigemptyset(),
@@ -5813,8 +5766,6 @@ test "headless ask returns nonzero when the restored SIGINT handler returns" {
 }
 
 test "headless ask startup cancellation prevents later hooks" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     const previous_action: std.posix.Sigaction = .{
         .handler = .{ .handler = testPreviousSigintHandler },
         .mask = std.posix.sigemptyset(),
@@ -5873,8 +5824,6 @@ test "headless ask startup cancellation prevents later hooks" {
 }
 
 test "headless ask resets signal-visible cancellation state for each scope" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     var scope = try headless_interrupt.Scope.install(true);
     headless_interrupt.handle(std.posix.SIG.INT);
     try std.testing.expect(headless_interrupt.cancel_requested.load(.seq_cst));
@@ -5889,8 +5838,6 @@ test "headless ask resets signal-visible cancellation state for each scope" {
 }
 
 test "headless ask preserves signal ordering during install and teardown" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     const previous_action: std.posix.Sigaction = .{
         .handler = .{ .handler = testPreviousSigintHandler },
         .mask = std.posix.sigemptyset(),
@@ -5917,8 +5864,6 @@ test "headless ask preserves signal ordering during install and teardown" {
 }
 
 test "headless ask cross-thread SIGINT teardown and reuse target only the active scope" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     const previous_action: std.posix.Sigaction = .{
         .handler = .{ .handler = testPreviousSigintHandler },
         .mask = std.posix.sigemptyset(),
@@ -5957,8 +5902,6 @@ test "headless ask cross-thread SIGINT teardown and reuse target only the active
 }
 
 test "disabled headless ask scope leaves the interactive SIGINT handler untouched" {
-    if (comptime !supports_headless_interrupt) return error.SkipZigTest;
-
     const previous_action: std.posix.Sigaction = .{
         .handler = .{ .handler = testPreviousSigintHandler },
         .mask = std.posix.sigemptyset(),

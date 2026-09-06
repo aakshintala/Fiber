@@ -77,8 +77,6 @@ fn tmuxAbnormalExitHandler(sig: std.posix.SIG) callconv(.c) void {
 /// fiber restores terminal state before dying. SIGINT is not included
 /// because raw mode disables terminal-generated SIGINT.
 pub fn installAbnormalExitHandlers(tmux: ?[]const u8) void {
-    if (!shell_runtime.supports_resize_signal) return;
-
     const handler: std.posix.Sigaction.handler_fn = if (tmux == null)
         abnormalExitHandler
     else
@@ -99,8 +97,6 @@ pub fn installAbnormalExitHandlers(tmux: ?[]const u8) void {
 }
 
 pub fn uninstallAbnormalExitHandlers() void {
-    if (!shell_runtime.supports_resize_signal) return;
-
     if (old_sigterm_action) |old| {
         std.posix.sigaction(std.posix.SIG.TERM, &old, null);
         old_sigterm_action = null;
@@ -556,16 +552,13 @@ fn suspendTerminalForJobControl(
 }
 
 /// Raise SIGTSTP after restoring cooked mode; on SIGCONT rebuild interactive
-/// terminal state and request a full repaint. Platforms without job-control
-/// signals (same set as `supports_resize_signal`) are a no-op.
+/// terminal state and request a full repaint.
 pub fn suspendToJobControl(
     terminal: *TerminalState,
     shell: *TranscriptRuntime,
     metrics: *Metrics,
     footer_rows: u16,
 ) !void {
-    if (!shell_runtime.supports_resize_signal) return;
-
     suspendTerminalForJobControl(terminal, shell, metrics);
     _ = std.c.raise(std.posix.SIG.TSTP);
     try resumeTerminalAfterJobControl(terminal, shell, metrics, footer_rows);
