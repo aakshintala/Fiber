@@ -253,3 +253,32 @@ git grep -n -E 'is_wasm|host_target' -- src/
 
 Literal prose that describes rejected input may remain only when it is part of a
 retained error contract. Every remaining hit needs a written justification.
+
+## Slice 4 is narrower than the inventory says (2026-09-05)
+
+*measured, not owner-stated.* The inventory's Slice 4 removal surface names
+`provider_bundle`, `buildAgentRequest`, `buildAgentToolsJson`,
+`writeDynamicFunctionTool`, and `toolNameSelected` as a "test-only
+request-building family" to delete. Test-only is true. Dead is not.
+
+`buildAgentRequest` is the request serialiser that both fake gateways use to
+capture what the agent would have sent: `FakeGateway.stream` in
+`src/core/agent/runtime/tests/support.zig` and `VisionGatewayFixture.stream` in
+`src/core/tooling/tool_runtime.zig`. Those captures are asserted on by roughly
+twenty retained tests — the whole of `tests/interruption_flow.zig`'s
+`<turn_aborted>` and aborted-tool-output coverage, and the vision file-part
+assertions in `tool_runtime.zig`. Deleting the family deletes that coverage.
+
+`provider_bundle` has three live consumers that have nothing to do with request
+building: the test configs in `app_entry_runtime.zig`, `cli_surface.zig`, and
+`cli_ask.zig`, plus two provider-identity assertions.
+
+Both are retained. What Slice 4 actually removes is the dead surface inside
+`src/gateway/agent_request_body.zig`, measured by counting references per
+declaration inside and outside test blocks: the legacy completion parser pair
+and the superseded request-builder overloads, with their dependency closure and
+their own tests. `agent_request_body.zig` is not deleted whole — six of its
+declarations are reached from the retained fixture path.
+
+The stop condition held as written: no production request path imports the
+file. Its only importer is `src/builtins/gateway.zig`.

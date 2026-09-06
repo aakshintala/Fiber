@@ -56,3 +56,25 @@ behavioural change inside a demolition commit and break slice attribution.
 **To reverse:** fix it as its own commit, then change the probe criterion in
 `phase4-baseline.md` and `simplification-inventory.md` from "reports the OSC 8
 failure and no other" to "reports no failures".
+
+## 4. Slice 4 keeps the fake-gateway request serialiser
+
+**Decided:** retain `buildAgentRequest` and its helpers in
+`src/builtins/gateway.zig`, and retain `provider_bundle`, against the
+inventory's Slice 4 removal surface. Delete only the measurably dead surface in
+`src/gateway/agent_request_body.zig`.
+
+**Evidence:** `buildAgentRequest` is what both fake gateways serialise through
+so tests can assert on the request the agent would have sent; about twenty
+retained tests read those captures. `provider_bundle` has three live test-config
+consumers unrelated to request building. Detail and the per-declaration
+reference counts are in `CORRECTIONS.md`.
+
+**Why it was not deleted as written:** the inventory classifies the family as
+test-only, which is true, and infers dead, which is false. The phase's own
+deletion bar is that unreachable code behind a retained seam stays; this code is
+not even unreachable.
+
+**To reverse:** delete the family and every test that asserts on a captured
+request body. That is a coverage decision, not a simplification one, and it
+should be taken deliberately rather than as a side effect of Slice 4.
