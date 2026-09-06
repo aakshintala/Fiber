@@ -33,7 +33,6 @@ const testLifecycleContext = test_support.testLifecycleContext;
 const finishCommonAssistantTerminal = runtime_orchestrator.finishCommonAssistantTerminal;
 const expectBodyContains = test_support.expectBodyContains;
 const expectBodyNotContains = test_support.expectBodyNotContains;
-const countText = test_support.countText;
 const countNeedle = test_support.countNeedle;
 const readTraceFile = test_support.readTraceFile;
 const textContains = test_support.textContains;

@@ -5,7 +5,6 @@ const builtin_tools = @import("../../../../builtins/tools.zig");
 const types = @import("../../../shared/types.zig");
 const worker_runtime = @import("../../worker_runtime.zig");
 const session_runtime = @import("../../../session/session.zig");
-const session_codec = @import("../../../session/session_codec.zig");
 const session_child_store = @import("../../../session/session_child_store.zig");
 const result_store = @import("../../../session/result_store.zig");
 const debug_trace = @import("../../../shared/debug_trace.zig");
@@ -13,10 +12,8 @@ const image_attachments = @import("../../../images/image_attachments.zig");
 const io_mod = @import("../../../shared/io.zig");
 const diff = @import("../../../output/diff.zig");
 const file_mutation = @import("../../../tooling/file_mutation.zig");
-const command_result_mapping = @import("../../../tooling/command_result_mapping.zig");
 const tool_dispatch = @import("../../../tooling/tool_dispatch.zig");
 const model_tool_schema = @import("../../../tooling/model_tool_schema.zig");
-const tool_specs = @import("../../../tooling/tool_specs.zig");
 const tool_result_errors = @import("../../../tooling/tool_result_errors.zig");
 const context_contract = @import("../../../workspace/context_contract.zig");
 const lifecycle_hooks = @import("../../../hooks/hooks.zig");
@@ -29,7 +26,6 @@ const runtime_tool_admission = @import("../tool_admission.zig");
 const runtime_tool_batch = @import("../tool_batch.zig");
 const runtime_tool_contracts = @import("../tool_contracts.zig");
 const runtime_tool_presentation = @import("../tool_presentation.zig");
-const runtime_telemetry = @import("../telemetry.zig");
 const command_admission = @import("../../../permissions/command_admission.zig");
 const permission_auto_classifier = @import("../../../permissions/auto_classifier.zig");
 const auto_classifier_context = @import("../../../permissions/auto_classifier_context.zig");
@@ -77,9 +73,7 @@ const PostEffectTerminalFailure = struct {
     }
 };
 
-const read_file_advertised_names = [_][]const u8{"read_file"};
 const terminal_advertised_names = [_][]const u8{"shell"};
-const read_file_advertised_functions = [_]model_tool_schema.FunctionSchema{builtin_tools.read_file.model_schema};
 const terminal_advertised_functions = [_]model_tool_schema.FunctionSchema{builtin_tools.shell.model_schema};
 
 fn makeOwnedVisionCatalog(
@@ -154,19 +148,6 @@ fn expectGrantListsEqual(
             expected_grant.target_path,
             actual_grant.target_path,
         );
-    }
-}
-
-fn expectNoGrantPermission(
-    grants: []const PermissionGrant,
-    permission: []const u8,
-) !void {
-    for (grants) |grant| {
-        try std.testing.expect(!std.mem.eql(
-            u8,
-            grant.tool_name,
-            permission,
-        ));
     }
 }
 

@@ -10,7 +10,6 @@ const io_mod = @import("../../../shared/io.zig");
 
 const test_support = @import("support.zig");
 
-const Allocator = std.mem.Allocator;
 const HistoryTurn = types.HistoryTurn;
 const ToolCall = types.ToolCall;
 

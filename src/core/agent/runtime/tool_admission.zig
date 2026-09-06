@@ -772,15 +772,6 @@ fn permissionDecisionName(decision: ToolPermissionDecision) []const u8 {
     return @tagName(decision);
 }
 
-pub fn retainSessionGrant(hooks: *const AgentRuntimeDeps, arena: Allocator, local_grants: *std.ArrayList(PermissionGrant), permission: []const u8, pattern: []const u8) !void {
-    const grant = PermissionGrant{
-        .tool_name = try arena.dupe(u8, permission),
-        .target_path = try arena.dupe(u8, pattern),
-    };
-    try appendLocalGrant(arena, local_grants, grant);
-    try propagateGrant(hooks, grant);
-}
-
 pub fn repeatedDynamicMcpFailure(
     arena: Allocator,
     current_turn_messages: []const types.ChatMessage,

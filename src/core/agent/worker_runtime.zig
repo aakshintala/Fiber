@@ -3,7 +3,6 @@ const secret = @import("../auth/secret.zig");
 const io_mod = @import("../shared/io.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const diff_mod = @import("../output/diff.zig");
-const file_mutation_contract = @import("../tooling/file_mutation_contract.zig");
 const image_attachments = @import("../images/image_attachments.zig");
 const context_contract = @import("../workspace/context_contract.zig");
 const auto_classifier_context = @import("../permissions/auto_classifier_context.zig");
@@ -2135,22 +2134,6 @@ fn appendGrantToQueuedPrompt(alloc: std.mem.Allocator, prompt: *QueuedPrompt, to
     next[current.len] = .{ .tool_name = tool_name_dup, .target_path = target_path_dup };
     alloc.free(current);
     prompt.grants = next;
-}
-
-fn dupeStringSlice(alloc: std.mem.Allocator, values: []const []const u8) ![][]u8 {
-    if (values.len == 0) return &.{};
-    const copy = try alloc.alloc([]u8, values.len);
-    errdefer alloc.free(copy);
-
-    var filled: usize = 0;
-    errdefer {
-        var i: usize = 0;
-        while (i < filled) : (i += 1) alloc.free(copy[i]);
-    }
-    while (filled < values.len) : (filled += 1) {
-        copy[filled] = try alloc.dupe(u8, values[filled]);
-    }
-    return copy;
 }
 
 fn freeStringSlice(alloc: std.mem.Allocator, values: [][]u8) void {

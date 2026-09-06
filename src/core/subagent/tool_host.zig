@@ -799,24 +799,6 @@ pub const CapabilityPolicy = struct {
     mode: ModePolicy,
 };
 
-pub fn captureHostAuthority(
-    alloc: Allocator,
-    policy: CapabilityPolicy,
-    integration_names: []const []const u8,
-    rules: types.PermissionRuleSet,
-    grants: []const types.PermissionGrant,
-) !authority.HostAuthority {
-    return captureHostAuthorityWithMcpView(
-        alloc,
-        policy,
-        integration_names,
-        rules,
-        grants,
-        .{},
-        null,
-    );
-}
-
 pub fn captureHostAuthorityWithMcpView(
     alloc: Allocator,
     policy: CapabilityPolicy,

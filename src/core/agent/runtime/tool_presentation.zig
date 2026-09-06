@@ -5,7 +5,6 @@ const permission_auto_classifier = @import("../../permissions/auto_classifier.zi
 const types = @import("../../shared/types.zig");
 const text_utils = @import("../../shared/text_utils.zig");
 const tool_dispatch = @import("../../tooling/tool_dispatch.zig");
-const tool_specs = @import("../../tooling/tool_specs.zig");
 const tooling_presentation = @import("../../tooling/tool_presentation.zig");
 const debug_trace = @import("../../shared/debug_trace.zig");
 const diff = @import("../../output/diff.zig");
@@ -811,34 +810,6 @@ fn finishDeferredToolStatus(
     } });
 }
 
-pub fn finishDeniedToolStatusWithResultMemory(
-    hooks: *const AgentRuntimeDeps,
-    arena: Allocator,
-    turn_id: u64,
-    call: ToolCall,
-    status_started: bool,
-    display_target: ?[]const u8,
-    label: []const u8,
-    advertised_dynamic_tool_names: []const []const u8,
-    result: ToolExecutionResult,
-    safe_result: []const u8,
-    result_memory: types.ToolResultMemory,
-) !void {
-    return finishDeniedToolStatusInternal(
-        hooks,
-        arena,
-        turn_id,
-        call,
-        status_started,
-        display_target,
-        label,
-        advertised_dynamic_tool_names,
-        safe_result,
-        result_memory,
-        result.command_result_json,
-    );
-}
-
 fn finishDeniedToolStatusInternal(
     hooks: *const AgentRuntimeDeps,
     arena: Allocator,
@@ -1312,17 +1283,6 @@ fn commandArtifactHandle(
         std.mem.endsWith(u8, handle, ".stderr.log")) return null;
     const owned: []const u8 = try arena.dupe(u8, handle);
     return owned;
-}
-
-pub fn malformedToolArgumentsResult(arena: Allocator, call: ToolCall) !ToolExecutionResult {
-    return .{
-        .status = .failure,
-        .model_output = try tool_result_errors.malformedToolArgumentsJson(
-            arena,
-            call.name,
-        ),
-        .status_detail = "invalid JSON arguments",
-    };
 }
 
 pub fn finishCommittedFileStatus(
