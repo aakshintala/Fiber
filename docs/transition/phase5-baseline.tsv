@@ -1,0 +1,1367 @@
+status	platforms	file	case
+pass	all	acp.test.ts	acp: model catalog authentication > --model flag overrides selected model without inheriting the default Fast mode
+pass	all	acp.test.ts	acp: model catalog authentication > session/new includes team-private model options for seeded team auth
+pass	all	acp.test.ts	acp: model catalog authentication > session/new uses public model options for seeded login without a selected team
+skip	all	acp.test.ts	acp: model-backed protocol > invalid JSON returns parse error -32700
+skip	all	acp.test.ts	acp: model-backed protocol > method before initialize returns error -32600
+skip	all	acp.test.ts	acp: model-backed protocol > no stderr output during normal ACP operation
+skip	all	acp.test.ts	acp: model-backed protocol > session provider changes use Codex credentials without crossing origins
+skip	all	acp.test.ts	acp: model-backed protocol > session provider changes use Grok credentials with byte-identical account-stable replay
+skip	all	acp.test.ts	acp: model-backed protocol > session/cancel does not crash the server
+skip	all	acp.test.ts	acp: model-backed protocol > session/list returns sessions array
+skip	all	acp.test.ts	acp: model-backed protocol > session/load returns configOptions for a known session
+skip	all	acp.test.ts	acp: model-backed protocol > session/new model configOptions has multiple options
+skip	all	acp.test.ts	acp: model-backed protocol > session/new returns sessionId and configOptions
+skip	all	acp.test.ts	acp: model-backed protocol > session/prompt returns response with stopReason
+skip	all	acp.test.ts	acp: model-backed protocol > session/set_config_option updates model and returns configOptions
+skip	all	acp.test.ts	acp: model-backed protocol > session/set_mode updates mode
+skip	all	acp.test.ts	acp: model-backed protocol > unknown method returns error -32601
+pass	all	acp.test.ts	acp: model-independent > ACP EOF cancels a pending direct elicitation without hanging
+pass	all	acp.test.ts	acp: model-independent > ACP HTTP tools and headers are recreated through load and resume
+pass	all	acp.test.ts	acp: model-independent > ACP URL consent completes only after modern MCP retry without prefetching
+pass	all	acp.test.ts	acp: model-independent > ACP added-root reads skip external deferral and added project instructions
+pass	all	acp.test.ts	acp: model-independent > ACP allow-once command approval executes with shared authority
+pass	all	acp.test.ts	acp: model-independent > ACP automatic ask returns to the agent before requesting permission
+pass	all	acp.test.ts	acp: model-independent > ACP bearer headers authenticate HTTP without persisting the credential
+pass	all	acp.test.ts	acp: model-independent > ACP binds an explicitly invoked skill into the prompt
+pass	all	acp.test.ts	acp: model-independent > ACP bounds aggregate remote resource omissions across project content limits
+pass	all	acp.test.ts	acp: model-independent > ACP bounds oversized omission sources independently of project content limits
+pass	all	acp.test.ts	acp: model-independent > ACP cancellation aborts held automatic review and keeps server usable
+pass	all	acp.test.ts	acp: model-independent > ACP cancellation interrupts terminal subagent waiting and keeps the server usable
+pass	all	acp.test.ts	acp: model-independent > ACP capability shapes require explicit non-null modes
+pass	all	acp.test.ts	acp: model-independent > ACP cross-session restore retires reduced project authority before required failure
+pass	all	acp.test.ts	acp: model-independent > ACP executes one direct subagent result with inherited tools
+pass	all	acp.test.ts	acp: model-independent > ACP executes the shared managed shell TTY path
+pass	all	acp.test.ts	acp: model-independent > ACP form elicitation resumes the exact modern MCP operation
+pass	all	acp.test.ts	acp: model-independent > ACP forwards exact Markdown source without rendered duplicates
+pass	all	acp.test.ts	acp: model-independent > ACP keeps duplicate primary server names and excludes a workspace collision
+pass	all	acp.test.ts	acp: model-independent > ACP keeps the session active after repeated advisory cautions
+pass	all	acp.test.ts	acp: model-independent > ACP keeps valid skills when a malformed neighbor is diagnosed
+pass	all	acp.test.ts	acp: model-independent > ACP never sends a URL mode the client did not advertise
+pass	all	acp.test.ts	acp: model-independent > ACP ranks a natural skill match before bounded catalog omission
+pass	all	acp.test.ts	acp: model-independent > ACP rejects an explicitly invoked skill deleted after session startup
+pass	all	acp.test.ts	acp: model-independent > ACP rejects invalid or unsupported MCP config and never loads profile MCP
+pass	all	acp.test.ts	acp: model-independent > ACP rejects redirects, bad status, and bad media types from HTTP MCP
+pass	all	acp.test.ts	acp: model-independent > ACP reload replays pending execution once and clears recovery after completion
+pass	all	acp.test.ts	acp: model-independent > ACP remote authentication never starts an interactive authorization flow
+pass	all	acp.test.ts	acp: model-independent > ACP replacement and close cancel stalled HTTP MCP calls
+pass	all	acp.test.ts	acp: model-independent > ACP reports a paused recovery and continues it only on explicit metadata
+pass	all	acp.test.ts	acp: model-independent > ACP routes legacy HTTP and SSE configs through new load resume and close
+pass	all	acp.test.ts	acp: model-independent > ACP sends a prompt above the old CLI limit with one capability snapshot
+pass	all	acp.test.ts	acp: model-independent > ACP sends continuation text normally with the full tool surface
+pass	all	acp.test.ts	acp: model-independent > ACP session/new calls a supplied modern HTTP MCP server
+pass	all	acp.test.ts	acp: model-independent > ACP session/new keeps rejected and pending workspace MCP inert
+pass	all	acp.test.ts	acp: model-independent > ACP session/new retires reduced active project authority before required failure
+pass	all	acp.test.ts	acp: model-independent > ACP skips pending workspace MCP and loads it after explicit trust
+pass	all	acp.test.ts	acp: model-independent > ACP stdin EOF cancels a stalled HTTP MCP call
+pass	all	acp.test.ts	acp: model-independent > ACP without elicitation capability returns input-required without a direct request
+pass	all	acp.test.ts	acp: model-independent > active ACP session uses typed MCP Resources Prompts and Completion state
+pass	all	acp.test.ts	acp: model-independent > auth failure names the selected source without leaking the provider body
+pass	all	acp.test.ts	acp: model-independent > code mode deterministically gates external missing-parent writes by rule
+pass	all	acp.test.ts	acp: model-independent > context limit warnings use ACP session updates and dedupe for the live session
+pass	all	acp.test.ts	acp: model-independent > declined legacy URL consent suppresses an early completion
+pass	all	acp.test.ts	acp: model-independent > durable mutation sentinel terminates a writable session path
+pass	all	acp.test.ts	acp: model-independent > exact and oversized request frames preserve the ACP connection boundary
+pass	all	acp.test.ts	acp: model-independent > expected prompt validation error preserves -32602 and admits next prompt
+pass	all	acp.test.ts	acp: model-independent > explicit rejection blocks execution with a failed terminal status
+pass	all	acp.test.ts	acp: model-independent > image prompt rejection preserves history and admits the next text prompt
+pass	all	acp.test.ts	acp: model-independent > initialize reports that image prompt blocks are unsupported
+pass	all	acp.test.ts	acp: model-independent > invalid JSON returns parse error without stderr
+pass	all	acp.test.ts	acp: model-independent > invalid initialize requests return invalid_params without poisoning the connection
+pass	all	acp.test.ts	acp: model-independent > legacy URL completion is correlated from the notification listener to ACP
+pass	all	acp.test.ts	acp: model-independent > legacy URL completion waits for ACP consent and publishes exactly once
+pass	all	acp.test.ts	acp: model-independent > malformed local tool arguments recover with a normal final stop
+pass	all	acp.test.ts	acp: model-independent > method before initialize returns error -32600
+pass	all	acp.test.ts	acp: model-independent > missing API key returns JSON-RPC error on initialize
+pass	all	acp.test.ts	acp: model-independent > mode changes during a prompt apply to the next prompt
+pass	all	acp.test.ts	acp: model-independent > negotiated legacy MCP form requests use the versioned direct adapter
+pass	all	acp.test.ts	acp: model-independent > non-retryable prompt failure preserves -32603 and leaves the server usable
+pass	all	acp.test.ts	acp: model-independent > permission requests reuse tool ids and session grants
+pass	all	acp.test.ts	acp: model-independent > project omissions reach ACP session updates and model context
+pass	all	acp.test.ts	acp: model-independent > prompt before session creation returns the canonical no-session error
+pass	all	acp.test.ts	acp: model-independent > provider length after silent tools returns max output tokens without continuation
+pass	all	acp.test.ts	acp: model-independent > provider length with tool calls returns max output tokens without execution
+pass	all	acp.test.ts	acp: model-independent > read_file rejects a FIFO without waiting for a writer
+pass	all	acp.test.ts	acp: model-independent > replacement and close cancel slow MCP calls and reap children
+pass	all	acp.test.ts	acp: model-independent > response waits continue across an internal read slice timeout
+pass	all	acp.test.ts	acp: model-independent > running prompt rejects non-cancel requests
+pass	all	acp.test.ts	acp: model-independent > secret-like form fields are rejected before ACP publication or model exposure
+pass	all	acp.test.ts	acp: model-independent > sequential ACP sessions isolate same-named MCP tools
+pass	all	acp.test.ts	acp: model-independent > session cancellation interrupts a pending MCP elicitation
+pass	all	acp.test.ts	acp: model-independent > session list stays available and session create reports store unavailable without HOME
+pass	all	acp.test.ts	acp: model-independent > session load addresses a special-token ID literally
+pass	all	acp.test.ts	acp: model-independent > session load omits synthetic execution for summary-only turns
+pass	all	acp.test.ts	acp: model-independent > session load replays completed assistant execution before the final answer
+pass	all	acp.test.ts	acp: model-independent > session/cancel requests receive JSON-RPC responses
+pass	all	acp.test.ts	acp: model-independent > session/list exposes bounded titled pages
+pass	all	acp.test.ts	acp: model-independent > session/list leaves an empty home unchanged
+pass	all	acp.test.ts	acp: model-independent > session/list omits legacy sessions without a workspace
+pass	all	acp.test.ts	acp: model-independent > session/list rejects relative cwd
+pass	all	acp.test.ts	acp: model-independent > session/list treats null cwd as omitted
+pass	all	acp.test.ts	acp: model-independent > session/list without cwd returns all sessions and filters by absolute cwd
+pass	all	acp.test.ts	acp: model-independent > session/load reports contention and succeeds after the owner exits
+pass	all	acp.test.ts	acp: model-independent > session/new omits the removed summary command
+pass	all	acp.test.ts	acp: model-independent > session/prompt applies scoped instructions from a local resource target
+pass	all	acp.test.ts	acp: model-independent > session/prompt defers a scoped mutation until its instructions are visible
+pass	all	acp.test.ts	acp: model-independent > session/prompt refreshes project context before each turn
+pass	all	acp.test.ts	acp: model-independent > stdin EOF cancels a stalled MCP call and reaps its child and reader
+pass	all	acp.test.ts	acp: model-independent > stdin shutdown cancels a pending permission request
+pass	all	acp.test.ts	acp: model-independent > stdin shutdown joins a terminal prompt worker before teardown
+pass	all	acp.test.ts	acp: model-independent > supplied stdio tools are recreated through new load and resume
+pass	all	acp.test.ts	acp: model-independent > terminal prompt response admits an immediate second session/prompt
+pass	all	acp.test.ts	acp: model-independent > terminal prompt response admits immediate session/list before worker exit
+pass	all	ask-presentation.test.ts	fx ask presentation > --no-color keeps the TTY layout without fx styles or hyperlinks
+pass	all	ask-presentation.test.ts	fx ask presentation > JSON separates accumulated assistant Markdown from the completed final response
+pass	all	ask-presentation.test.ts	fx ask presentation > TTY Minimal hides context and auto-approval notices
+pass	all	ask-presentation.test.ts	fx ask presentation > TTY output taller than the pane survives in native scrollback
+pass	all	ask-presentation.test.ts	fx ask presentation > TTY prints the header before output and releases while the response is open
+pass	all	ask-presentation.test.ts	fx ask presentation > TTY stdout uses the Minimal transcript and compact tool group
+pass	all	ask-presentation.test.ts	fx ask presentation > TTY wrapped output stays ordered and appears exactly once
+pass	all	ask-presentation.test.ts	fx ask presentation > light theme uses readable syntax colors in TTY code blocks with redirected stdin
+pass	all	ask-presentation.test.ts	fx ask presentation > no-save advertises process-local shell actions and preserves run profiles
+pass	all	ask-presentation.test.ts	fx ask presentation > redirected and JSON stdout preserve raw assistant Markdown
+pass	all	ask-presentation.test.ts	fx ask presentation > redirected command output separates the next tool header
+pass	all	auth-refresh.test.ts	OAuth sessions keep using their saved issuer when configuration changes
+pass	all	auth-refresh.test.ts	fx ask keeps a failed API key selected when login also exists
+pass	all	auth-refresh.test.ts	fx ask refreshes an expired login then forces one refresh and retry after 401
+pass	all	auth-refresh.test.ts	invalid saved OAuth issuers receive no access or refresh token
+pass	all	auth-refresh.test.ts	logout cannot be undone by an in-flight login refresh
+pass	all	auth-refresh.test.ts	saved API-key 401 discards only the new empty session and preserves resume last
+pass	all	auth-refresh.test.ts	status and doctor report an expired login instead of refreshing it
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > a configured safe command bypasses automatic review
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > a first automatic block returns to the agent for a safe replan
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > a mixed caution and success batch keeps the agent active
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > a noninteractive caution stays inside the agent loop and effect free
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > a prompt-capable host also lets the agent recover before asking the user
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > an exact read-only git status bypasses automatic review
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > an explicitly requested unknown wrapper clears contextual review
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > clean TTY reads require shell review before execution
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > clean direct reads bypass review and PATH while destructive commands stay blocked
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > configured wildcard commands cannot absorb shell operators or substitutions
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > contextual command review keeps oversized root history bounded
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > contextual deployment review clears despite conflicting task text
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > different command shapes receive independent advisory reviews
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > existing startup targets remain reviewer owned
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > explicit destructive commands reach the reviewer and clear exact actions
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > git checkout hooks remain reviewer owned
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > git pull post-merge hook remains reviewer owned
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > literal credentials produce one deterministic hold for unchanged startup edits
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > repeated exact cautions are reviewed once without disabling tools
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > requested media rebuild clears while a paraphrased injected action cautions
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > reviewed clean TTY reads execute with shell authority
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > rtk remains reviewer owned as an unresolved executable boundary
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > saved-session allow survives restart and bypasses automatic review
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > saved-session deny is confirmed, enforced over configured allow, listed, and revoked by id
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > standalone quiet stays silent after repeated advisory cautions
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > symbolic credential references remain reviewable in external startup edits
+pass	all	auto-mode-reliability.test.ts	lean auto mode reliability > unresolved destructive commands receive contextual review
+pass	all	ci-shards.test.ts	CI shard planner > an exact relative path does not select a colliding Bun test basename
+pass	all	ci-shards.test.ts	CI shard planner > assigns descending weights to the lightest shard deterministically
+pass	all	ci-shards.test.ts	CI shard planner > assigns the discovered set exactly once
+pass	all	ci-shards.test.ts	CI shard planner > rejects duplicate filenames and invalid weights
+pass	all	ci-shards.test.ts	CI shard planner > rejects invalid shard counts, empty shards, and invalid indices
+pass	all	ci-shards.test.ts	CI shard planner > rejects missing and stale manifest entries
+pass	all	ci-shards.test.ts	CI shard planner > uses filename and shard index to break equal-weight ties
+macos-aarch64=pass;linux-x86_64=skip;linux-aarch64=skip	all	cli.test.ts	cli: Keychain authentication > fx ask reads an existing Keychain credential without onboarding
+pass	all	cli.test.ts	cli: MCP profile add > adds local and HTTP servers without launching either server
+pass	all	cli.test.ts	cli: MCP profile add > canonicalizes alias input and refuses ambiguous server-like keys
+pass	all	cli.test.ts	cli: MCP profile add > fails precisely without HOME or valid add syntax
+pass	all	cli.test.ts	cli: MCP profile add > lists paths and removes profile servers without launching MCP transport
+pass	all	cli.test.ts	cli: MCP profile add > serializes concurrent different-name additions
+pass	all	cli.test.ts	cli: MCP profile add > status and doctor inspect MCP without transport while list --connect discovers it
+pass	all	cli.test.ts	cli: ask input validation > fx ask rejects invalid UTF-8 stdin before Gateway or session effects
+skip	all	cli.test.ts	cli: ask success > fx ask --json --no-save --auto returns valid JSON with output
+pass	all	cli.test.ts	cli: ask success > fx ask binds an explicitly invoked skill into the prompt
+pass	all	cli.test.ts	cli: ask success > fx ask sends catalog-backed portable reasoning
+pass	all	cli.test.ts	cli: ask success > fx ask stdin prompts above the old 1 MiB limit reach Gateway byte-for-byte
+pass	all	cli.test.ts	cli: ask success > fx ask stdin resource overflow has distinct text and JSON errors
+skip	all	cli.test.ts	cli: ask success > live Gateway accepts catalog-backed portable reasoning
+pass	all	cli.test.ts	cli: ask success > saved ask resumes the exact session while no-save creates no durable state
+pass	all	cli.test.ts	cli: ask success > saved ask survives session cache contention and repairs after release
+pass	all	cli.test.ts	cli: credits > fx credits --json preserves Gateway HTTP denial details
+skip	all	cli.test.ts	cli: credits > fx credits --json returns credits JSON or exits non-zero
+pass	all	cli.test.ts	cli: doctor > fx doctor --json bounds session diagnostics without summary cache
+pass	all	cli.test.ts	cli: doctor > fx doctor --json leaves an empty home unchanged
+pass	all	cli.test.ts	cli: doctor > fx doctor --json returns valid doctor JSON
+pass	all	cli.test.ts	cli: error handling > fx ask explains no-save resume conflicts before a model turn
+pass	all	cli.test.ts	cli: error handling > fx ask rejects unknown options before a model turn and -- preserves literal prompt text
+pass	all	cli.test.ts	cli: error handling > fx ask with no prompt exits 1
+pass	all	cli.test.ts	cli: error handling > fx unknown-command exits 1
+pass	all	cli.test.ts	cli: help > fx --help hides developer recording surfaces
+pass	all	cli.test.ts	cli: help > fx --help respects COLUMNS=60
+pass	all	cli.test.ts	cli: help > fx -h hides developer recording surfaces
+pass	all	cli.test.ts	cli: help > fx -h respects COLUMNS=60
+pass	all	cli.test.ts	cli: help > fx acp help documents accepted options
+pass	all	cli.test.ts	cli: help > fx acp rejects unknown options and missing option values
+pass	all	cli.test.ts	cli: help > fx ask help renders documented options through both aliases
+pass	all	cli.test.ts	cli: help > fx help hides developer recording surfaces
+pass	all	cli.test.ts	cli: help > fx help respects COLUMNS=60
+pass	all	cli.test.ts	cli: help > fx rejects the removed record flag as unknown input
+pass	all	cli.test.ts	cli: help > fx replay help describes golden output
+pass	all	cli.test.ts	cli: help > fx session help documents inspect resume migrate and recover
+pass	all	cli.test.ts	cli: help > top-level help aliases render the same accurate navigation page
+pass	all	cli.test.ts	cli: interactive startup > interactive startup without TTY exits one
+pass	all	cli.test.ts	cli: issue > fx issue without gateway auth exits non-zero
+pass	all	cli.test.ts	cli: logout > fx logout deletes only the saved login and keeps environment credentials available
+pass	all	cli.test.ts	cli: logout > fx logout fails when the saved login cannot be deleted
+pass	all	cli.test.ts	cli: logout > fx logout leaves an active API key unchanged when no login exists
+macos-aarch64=pass;linux-x86_64=skip;linux-aarch64=skip	all	cli.test.ts	cli: logout > fx logout leaves the macOS Keychain API key untouched
+pass	all	cli.test.ts	cli: logout > fx logout removes a saved login rejected for unsafe permissions
+pass	all	cli.test.ts	cli: logout > fx logout revokes refresh and access tokens after local deletion
+pass	all	cli.test.ts	cli: logout > fx logout warns once and sends no tokens to an invalid revocation endpoint
+pass	all	cli.test.ts	cli: logout > fx logout warns once and sends no tokens without a revocation endpoint
+pass	all	cli.test.ts	cli: missing durable home > read-only commands tolerate a nonexistent HOME and saved ask bootstraps it
+pass	all	cli.test.ts	cli: missing durable home > session commands fail precisely while doctor remains available without HOME
+pass	all	cli.test.ts	cli: models > cancelling fx models does not retry anonymously
+skip	all	cli.test.ts	cli: models > fx models --json returns valid models JSON
+pass	all	cli.test.ts	cli: models > fx models --json sends an API key so the catalog includes team-private models
+pass	all	cli.test.ts	cli: models > fx models --json sends deployment OIDC so the catalog includes team-private models
+pass	all	cli.test.ts	cli: models > fx models --json uses public access for an expired fx login without refreshing it
+pass	all	cli.test.ts	cli: models > fx models --json uses the anonymous public catalog without a credential
+pass	all	cli.test.ts	cli: models > fx models --json uses the selected fx login team catalog
+pass	all	cli.test.ts	cli: models > fx models preserves a catalog with non-array data without anonymous retry
+pass	all	cli.test.ts	cli: models > fx models preserves a catalog without data without anonymous retry
+pass	all	cli.test.ts	cli: models > fx models preserves a malformed top-level catalog array without anonymous retry
+pass	all	cli.test.ts	cli: models > fx models preserves malformed JSON without anonymous retry
+pass	all	cli.test.ts	cli: models > fx models preserves network and 5xx failures without anonymous retry
+pass	all	cli.test.ts	cli: models > fx models preserves rate limiting without anonymous retry
+pass	all	cli.test.ts	cli: models > fx models rejects E2E gateway redirects without contacting the target
+pass	all	cli.test.ts	cli: models > fx models renders exact text for a rejected credential empty fallback catalog
+pass	all	cli.test.ts	cli: models > fx models renders exact text for an ordinary public empty catalog
+pass	all	cli.test.ts	cli: models > fx models retries a rejected API key exactly once without authentication
+pass	all	cli.test.ts	cli: permissions > fx permissions --json returns valid permissions JSON
+pass	all	cli.test.ts	cli: pr > fx pr without gateway auth exits non-zero
+pass	all	cli.test.ts	cli: read-only no-create matrix > doctor --json leaves an empty home unchanged
+pass	all	cli.test.ts	cli: read-only no-create matrix > session --id missing.valid-id --json leaves an empty home unchanged
+pass	all	cli.test.ts	cli: read-only no-create matrix > session last --json leaves an empty home unchanged
+pass	all	cli.test.ts	cli: read-only no-create matrix > sessions --json leaves an empty home unchanged
+pass	all	cli.test.ts	cli: read-only no-create matrix > status --json leaves an empty home unchanged
+pass	all	cli.test.ts	cli: removed task and background commands > fx task, fx tasks, and fx background are unknown commands
+pass	all	cli.test.ts	cli: removed task and background commands > legacy tasks files are ignored by ordinary session loading
+pass	all	cli.test.ts	cli: replay failures > fx replay --json preserves structured failures for missing and malformed tapes
+pass	all	cli.test.ts	cli: session > fx session with no id exits non-zero or shows usage
+pass	all	cli.test.ts	cli: sessions > exact session flags address special-token and 255-byte IDs literally
+pass	all	cli.test.ts	cli: sessions > expected json failures emit machine-readable stdout
+pass	all	cli.test.ts	cli: sessions > fx sessions --json ignores malformed and oversized list caches
+pass	all	cli.test.ts	cli: sessions > fx sessions --json returns valid sessions JSON
+pass	all	cli.test.ts	cli: sessions > fx sessions text shows named, unnamed, and renamed sessions
+pass	all	cli.test.ts	cli: sessions > profile-wide session discovery recovers sessions after a workspace rename
+pass	all	cli.test.ts	cli: sessions > session discovery reports corrupt records and distinguishes an unreadable latest session
+pass	all	cli.test.ts	cli: sessions > session listing pages a 9001-entry index without scanning session directories
+pass	all	cli.test.ts	cli: sessions > session lists use projections without opening unreadable event logs
+pass	all	cli.test.ts	cli: sessions > workspace-scoped session discovery filters list and last by cwd
+pass	all	cli.test.ts	cli: setup > fx setup is a top-level command and fails cleanly when Keychain is disabled
+pass	all	cli.test.ts	cli: setup > fx setup never invokes the configured Vercel CLI
+pass	all	cli.test.ts	cli: status > a new status process keeps normal credential precedence
+pass	all	cli.test.ts	cli: status > fx status --json defaults permission mode to auto
+pass	all	cli.test.ts	cli: status > fx status --json returns valid status JSON
+pass	all	cli.test.ts	cli: status > fx status reports a persisted dev update channel
+pass	all	cli.test.ts	cli: status > fx upgrade help documents release channels
+pass	all	cli.test.ts	cli: status > project profile-only settings are ignored before parsing and profile overrides win
+pass	all	cli.test.ts	cli: status > special settings files fail closed without blocking CLI startup
+pass	all	cli.test.ts	cli: status > status and doctor apply an exact FX_MAX_AGENT_STEPS override
+pass	all	cli.test.ts	cli: status > status and doctor expose the MCP profile error that blocks ask startup
+pass	all	cli.test.ts	cli: status > status and doctor inspect an expired login without refreshing it
+pass	all	cli.test.ts	cli: status > status and doctor share fx login source, team, and refreshability
+pass	all	cli.test.ts	cli: status > status and doctor share the missing auth snapshot
+macos-aarch64=skip;linux-x86_64=pass;linux-aarch64=pass	all	cli.test.ts	cli: stored key file backend > a 0600 key file resolves, and a loosened one is refused rather than reported absent
+pass	all	cli.test.ts	cli: usage > fx usage distinguishes empty, invalid, corrupt, and unsafe local state
+pass	all	cli.test.ts	cli: usage > fx usage preserves known totals but fails closed when recovery storage is unsafe
+pass	all	cli.test.ts	cli: usage > fx usage preserves known totals when the ledger is incomplete
+pass	all	cli.test.ts	cli: usage > fx usage reads rolling local facts without credentials or profile mutation
+pass	all	cli.test.ts	cli: version > fx --version prints the source version
+pass	all	cli.test.ts	cli: version > fx -v prints the source version
+pass	all	cli.test.ts	cli: workspace access > workspace commands mutate persisted aliases by workspace identity
+pass	all	cli.test.ts	cli: workspace access > workspace commands persist per-primary roots and track availability
+pass	all	cli.test.ts	cli: workspace access > workspace launch modifiers preserve ask help and report friendly option errors
+pass	all	config-persistence.test.ts	config persistence > Escape keeps the model picker dismissed until the model trigger restarts
+pass	all	config-persistence.test.ts	config persistence > Fable 5 xhigh picker selection persists without fast mode
+pass	all	config-persistence.test.ts	config persistence > Fast command rejects an intrinsic Fast alias
+pass	all	config-persistence.test.ts	config persistence > Fast indicator remains stable while model catalog resolves
+pass	all	config-persistence.test.ts	config persistence > GPT 5.6 Sol priority pricing drives the Fast request
+pass	all	config-persistence.test.ts	config persistence > Gateway catalog reasoning drives portable effort requests and persistence
+pass	all	config-persistence.test.ts	config persistence > Opus 4.8 Fast pricing drives picker request and persistence
+pass	all	config-persistence.test.ts	config persistence > concurrent global mutations preserve both values and unknown keys
+pass	all	config-persistence.test.ts	config persistence > config diagnostics preserve invalid, oversized, and unsafe primaries
+pass	all	config-persistence.test.ts	config persistence > legacy output settings remain inert and output text follows prompt admission
+pass	all	config-persistence.test.ts	config persistence > model picker selection persists when a matching skill exists
+pass	all	config-persistence.test.ts	config persistence > settings persistence remains available when session storage is unavailable
+pass	all	config-persistence.test.ts	config persistence > settings reasoning effort changes without mutating the selected model
+pass	all	config-persistence.test.ts	config persistence > stale workspace mutations preserve an ordered remove and add
+pass	all	config-persistence.test.ts	config persistence > unscoped allowlist stays local while explicit user rules cross projects
+pass	all	config-persistence.test.ts	config persistence > user preferences migrate globally and load in another project
+pass	all	config-persistence.test.ts	config persistence > workspace add canonicalizes observed aliases before restart
+pass	all	config-persistence.test.ts	config persistence > workspace add rejects effective capacity without changing settings
+pass	all	config-persistence.test.ts	config persistence > workspace list marks a directory deleted during the session unavailable
+pass	all	config-persistence.test.ts	config persistence > workspace list restores canonical access through a new symlinked ancestor
+pass	all	config-persistence.test.ts	config persistence > workspace removal consumes a concurrent exact canonical replacement
+pass	all	config-persistence.test.ts	config persistence > workspace removal persists after an observed source disappears
+pass	all	config-persistence.test.ts	config persistence > workspace removal persists after an observed source retargets
+pass	all	config-persistence.test.ts	config persistence > workspace removal prefers a concurrent canonical survivor before restart
+pass	all	config-persistence.test.ts	config persistence > workspace removal uses observed identity and preserves an unseen source
+pass	all	config-persistence.test.ts	config persistence > workspace slash mutations persist across restart and remove cleanly
+pass	all	config-persistence.test.ts	config persistence > workspace slash removal explains launch restoration and uses friendly errors
+pass	all	config-persistence.test.ts	config persistence > workspace statusline stays active when user settings cannot be saved
+skip	all	context-limits-live.test.ts	live source context limits > fresh binary sends a bounded real Gateway request and returns normally
+pass	all	file-tool-paths.test.ts	filesystem path handling > active added roots reach read cwd and search admission without loading their instructions
+pass	all	file-tool-paths.test.ts	filesystem path handling > automatic review receives a large prepared overwrite before caution
+pass	all	file-tool-paths.test.ts	filesystem path handling > captured commands write through an active added root
+pass	all	file-tool-paths.test.ts	filesystem path handling > external relative read-only tools resolve their canonical roots
+pass	all	file-tool-paths.test.ts	filesystem path handling > glob pattern cannot escape the separately approved search root
+pass	all	file-tool-paths.test.ts	filesystem path handling > headless automatic review caution returns advice without writing
+skip	all	file-tool-paths.test.ts	filesystem path handling > live Gateway reads an active added root without adopting its instructions
+skip	all	file-tool-paths.test.ts	filesystem path handling > live Gateway uses shell for removed filesystem operations
+pass	all	file-tool-paths.test.ts	filesystem path handling > missing HOME returns HomeNotSet without treating tilde as workspace-relative
+pass	all	file-tool-paths.test.ts	filesystem path handling > read_file expands home and canonicalizes relative and absolute external aliases
+pass	all	file-tool-paths.test.ts	filesystem path handling > registered typed write and edit use one canonical fx ask mutation path
+pass	all	file-tool-paths.test.ts	filesystem path handling > removed filesystem tools are absent and shell completes the fallback flow
+pass	all	file-tool-paths.test.ts	filesystem path handling > retained edit tool honors canonical external permission targets
+pass	all	file-tool-paths.test.ts	filesystem path handling > shell reviews and executes external working-directory aliases
+pass	all	file-tool-paths.test.ts	filesystem path handling > trusted new writes bypass review while external overwrites use exact review
+pass	all	file-tool-permissions.test.ts	external file permissions > fx ask --yolo bypasses a configured write denial without a classifier request
+pass	all	file-tool-permissions.test.ts	external file permissions > fx ask reads external paths and exercises classifier and rule-gated writes
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > CLI continuation prints one complete response after checkpointed partial output
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > HTTP 413 after a local tool surfaces prompt-too-long without replaying the tool
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > OS filesystem access denial reaches the next gateway request
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > SIGKILL during persistent child work keeps parent recovery selectable
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > SIGKILL leaves no named no-save replay output
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > SIGTERM drains an active headless shell command without panic or survivors
+macos-aarch64=skip;linux-x86_64=pass;linux-aarch64=pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > a second headless shell run survives replacing the running fx binary
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > approved long foreground shell run writes its heredoc without signal 9
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > ask fake Gateway exercises one-off and chat-created persistent subagents
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > ask keeps Kimi K3 as the default model with fast mode enabled
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > bounded MCP search selects and executes without model-managed pagination
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > bounded conditional guidance oracle distinguishes capabilities from ordinary prose
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > canonical subagent executes through the current parent MCP adapters
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > capability search ranks natural skill intent and keeps durable model-visible JSON exact after redaction
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > conflicting final tool name cannot inherit streamed arguments
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > contained instruction and skill links reach one ask request
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > content filter does not retry or offer route recovery
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > default ask fails length-truncated tool completion without executing or continuing
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > default ask recovers malformed serialized tool arguments through paired history
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > default ask stops a consecutive malformed argument loop
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > default fx ask recovers after an immediate peer reset
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > default fx ask recovers malformed serialized tool arguments
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > default fx ask regenerates an unstarted streamed tool after provider failure
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > default fx ask retries replay-safe provider errors before success
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > default fx ask returns output-limit failure without committing completed history
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > default fx ask starts fresh network pacing after explicitly timed provider retries
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > dynamic model-context values stay data
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > empty MCP capability search is terminal and does not broaden or execute
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > empty provider finish reason fails closed before tool execution
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > exact advertised skill location loads its matching root
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > exhausted retry budget pauses once and explicit continue preserves context
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > explicit skill reads remain repeatable after manual compaction
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > fx ask projects explicit permission mode on initial and continuing requests
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > indeterminate shell termination reports one truthful result without replaying effects
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > install result keeps skill instructions behind explicit skill calls
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > interactive context notices stay in Ctrl+O and survive long repaint
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > manual context compaction survives restart without changing canonical history
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > missing provider finish recovers across framing and content variants
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > model response budget stops at ten real requests
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > nine saved turns stay canonical while the next request uses bounded context
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > no-save ask sends status text with the process-only shell surface
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > no-save shell timeout returns a readable process-scoped replay handle
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > post-tool provider retry keeps recovery system provider-valid
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > project omission tool notices stay in Ctrl+O
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > project omissions reach ask notices and model context
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > provider error after streamed tool start regenerates without executing it
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > provider error finish reconciles without authorizing local tool execution
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > provider error preserves an executed provider result and suppresses its repeated identity
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > provider error without output retries same route before success
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > quiet HTTP 200 stream remains open through a valid provider finish
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > removed memory tool is absent and stale calls cannot touch persisted bytes
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > required MCP server advertises only its ready count before lazy search
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > same-batch edits refresh prepared filesystem proofs between mutations
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > same-batch writes refresh prepared filesystem proofs between mutations
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > saved SIGINT retains cancelled shell output for resume without re-execution
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > saved ask resume continues one chat-created persistent child
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > saved ask resumes configured model without process override
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > saved malformed recovery resumes without re-executing the historical call
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > saved shell replay handle remains readable after resume without re-execution
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > selected dynamic MCP review cautions with zero sends and clears exactly once
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > selected dynamic MCP tool rejects malformed trailing and schema-invalid arguments without a send
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > shell timeout prevents the default user shell from evaluating trailing statements
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > shell timeout reaps a descendant that escapes with setsid
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > shell timeout reaps env-cleared Bash double-fork descendants
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > sibling subagents start before either terminal result is awaited
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > skill and MCP tool-time context notices stay in Ctrl+O
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > skill progress distinguishes the main document from supporting resources
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > source context limits reach ask with workspace precedence, explicit skill chunks, and CLI off
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > streamed tool calls without finish reconcile without executing the uncertain call
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > subagent call waits for one terminal child result
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > suffixless stored result handle remains readable
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > text and JSON ask defer a newly scoped build target until rules are visible
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > text and JSON ask execute external reads on the first call
+pass	all	gateway-stream-lifecycle.test.ts	gateway stream lifecycle > uncertain tool reconciliation refuses a second tool result
+macos-aarch64=pass;linux-x86_64=skip;linux-aarch64=skip	all	mcp-auth.test.ts	MCP remote authentication lifecycle > MCP auth falls back to the private profile store when HOME has no Keychain
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > MongoDB-like REST authorization document rejects stored credentials
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > OAuth-authenticated MongoDB deployed session error reaches legacy tools
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > OAuth-authenticated MongoDB-like discovery reaches legacy tools
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > TUI cancellation interrupts an in-flight credential refresh before the MCP call
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > active subscription re-establishes with refreshed credentials
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > authorization response issuer mismatch names the response and preserves the trust boundary
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > cache_private_identity partitions or reuses the Tools snapshot after token rotation
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > cache_public_identity partitions or reuses the Tools snapshot after token rotation
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > expired refresh rejection does not send or replay an MCP operation
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > features resource cache orders public lookup before credential refresh
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > features_public resource cache orders public lookup before credential refresh
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > fresh TUI login persists, ask refreshes after restart, and logout revokes
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > fx ask isolates failed-server authentication from healthy tool search
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > fx ask reports an actionable auth requirement without opening a browser
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > interactive browser work releases MCP auth and catalog locks
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > issuer mismatch stays exact and reports the configuration override
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > legacy HTTP+SSE logout joins its reader and deletes stored credentials
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > legacy HTTP+SSE reconnects before a call when credentials enter refresh skew
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > legacy HTTP+SSE refreshes expired credentials before endpoint discovery
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > legacy Streamable HTTP 2025-03-26 reconnects before a call when credentials enter refresh skew
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > legacy Streamable HTTP 2025-06-18 reconnects before a call when credentials enter refresh skew
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > legacy Streamable HTTP 2025-11-25 reconnects before a call when credentials enter refresh skew
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > legacy Streamable HTTP logout closes its session and deletes stored credentials
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > legacy Streamable HTTP refreshes expired credentials before initialization
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > legacy refresh network work releases auth and connection locks
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > logout cannot persist an in-flight legacy credential refresh
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > logout store failure preserves the live server
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > logout without stored credentials preserves the live server
+macos-aarch64=pass;linux-x86_64=skip;linux-aarch64=skip	all	mcp-auth.test.ts	MCP remote authentication lifecycle > macOS migrates MCP credentials to Keychain and logout deletes them
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > no-scope OAuth credentials survive reload and preserve an unrelated server
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > non-JSON authorization metadata is rejected before browser authorization
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > pending browser authentication keeps input responsive and cancels on exit
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > pending workspace authentication is blocked and logout deletes local credentials only
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > private feature catalogs fail closed when refresh after auth rotation fails
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > private feature catalogs rotate with authenticated identity without leaking credentials
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > private pagination restarts from page one after auth rotation
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > public feature and resource-read caches survive an unrelated auth rotation
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > rejected stored credentials report required auth without discovery fallback
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > required resource template authentication failure propagates before read
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > runtime retirement cancels an interactive authorization callback wait
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > scope escalation updates credentials without replaying a modern tool call
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > scoped HTTP authentication effects fail closed across authority changes
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > state mismatch rejects the callback before token exchange or persistence
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > subscription recovers from a scope authentication challenge
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > subscription recovers from a unauthorized authentication challenge
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > top-level MCP auth and logout complete without TUI or Gateway
+pass	all	mcp-auth.test.ts	MCP remote authentication lifecycle > top-level pending workspace auth is blocked and logout stays local
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > /mcp add --transport http persists and reloads a remote server
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > GitMCP-like plain-text discovery error falls back to legacy initialize
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > MongoDB-like session-required discovery falls back to legacy initialize
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > RFC 6570 matches reach resource reads and near misses are rejected before send
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > TUI cancellation closes the in-flight HTTP response
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > cache_fresh uses the expected Tools cache snapshot
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > cache_ttl_expiry uses the expected Tools cache snapshot
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > cache_ttl_negative uses the expected Tools cache snapshot
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > cache_ttl_zero uses the expected Tools cache snapshot
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > deep feature metadata is rejected without crashing the fresh binary
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > delayed pagination preserves the first page absolute expiry
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > empty nextCursor is transmitted unchanged and completes pagination
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > environment-backed headers and bearer references reach modern HTTP
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > failed feature refresh retains stale snapshot and retries with a bound
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > failed subscription refresh retains the last valid stale snapshot
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > feature catalog TTL expiry refreshes the complete paginated snapshot
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > fixed-length json responses complete on one-shot connections
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > fixed-length sse responses complete on one-shot connections
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > fresh fx ask calls the request-scoped JSON fixture
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > fresh fx ask calls the request-scoped SSE fixture
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > fresh fx ask delegates unsupported input and output schema assertions
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > list invalidation before send rejects the frozen old tool
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > live Tools subscription coalesces a storm and atomically exposes the changed tool
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > matching final SSE response closes a held-open response body
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > mixed SSE delimiters complete across chunks without waiting for EOF
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > modern HTTP excludes tools with invalid header projection schemas
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > operation timeout closes a stalled request-scoped SSE response
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > partial subscription acknowledgement closes the listener and falls back to TTL
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > plain-text discovery auth rejection fails closed without aborting fx
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > removed resource and prompt identities fail before transport send
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > resource list-change storms coalesce to one complete refresh
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > server subscription cancellation is traced before TTL fallback
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > stale HTTP resource data never masks a cancelled refresh
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > stalled HTTP completion is deadline-cancelled
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > the TUI resumes a modern HTTP operation after validated form elicitation
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > top-level mcp add persists HTTP and a later ask calls it
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > typed Resources Prompts Completion and resource updates use modern HTTP
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > unexpected subscription acknowledgement filter closes once and falls back to TTL
+pass	all	mcp-http.test.ts	modern MCP Streamable HTTP > workspace MCP expands static HTTP headers without changing profile syntax
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Clerk-like SSE initialization without a session remains searchable
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > HTTP+SSE captures scope challenges without replaying a tool call
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > HTTP+SSE cleans up when discovery is followed by a malformed message
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > HTTP+SSE rejects 2025-03-26 initialize version and closes discovery
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > HTTP+SSE rejects missing initialize version and closes discovery
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > HTTP+SSE routes bare-CR events without waiting for LF
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-03-26 refreshes Tools from its GET listener without reconnect
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-03-26 resumes by GET without replaying tools/call
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-06-18 does not interpret the 2025-11 URL-required error
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-06-18 refreshes Tools from its GET listener without reconnect
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-06-18 resumes by GET without replaying tools/call
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-11-25 polling resumes after an empty priming event
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-11-25 prompts retries only after the matching URL completion
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-11-25 refreshes Tools from its GET listener without reconnect
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-11-25 resources retries only after the matching URL completion
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-11-25 resumes by GET without replaying tools/call
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP 2025-11-25 tools retries only after the matching URL completion
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP accepts an omitted session and skips DELETE
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP completes a final POST event without waiting for stream EOF
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP reinitializes an expired session without replaying the failed call
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > Streamable HTTP releases local session state when DELETE is unsupported
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > TUI cancellation routes HTTP+SSE cancellation to the discovered message endpoint
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > TUI cancellation sends 2025-03-26 cancellation headers and cleans up
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > TUI cancellation sends 2025-06-18 cancellation headers and cleans up
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > TUI cancellation sends 2025-11-25 cancellation headers and cleans up
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > deprecated HTTP+SSE routes live Tools changes through its existing reader
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > fresh fx ask calls Streamable HTTP 2025-03-26 with its lifecycle headers
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > fresh fx ask calls Streamable HTTP 2025-06-18 with its lifecycle headers
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > fresh fx ask calls Streamable HTTP 2025-11-25 with its lifecycle headers
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > fresh fx ask uses explicit HTTP+SSE endpoint discovery and message routing
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > legacy Streamable HTTP captures scope challenges without replaying a tool call
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > legacy Streamable HTTP completes mixed delimiters without waiting for EOF
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > legacy Streamable HTTP keeps tools rejected by modern header projection
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > legacy Streamable HTTP rejects unsafe resumption IDs before GET
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > legacy Streamable HTTP uses typed feature flows and existing list-change listener
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > legacy list-change health reports an installed listener and lazy feature counts truthfully
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > stock SDK uninitialized discovery error falls back to Streamable HTTP initialization
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > stock SDK unsupported-version discovery error falls back to Streamable HTTP initialization
+pass	all	mcp-legacy-remote.test.ts	version-scoped legacy MCP remote transports > stock SDK unsupported-version-string-id discovery error falls back to Streamable HTTP initialization
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > /mcp list renders complete secret-free health after releasing runtime locks
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > /mcp list reports a missing workspace variable without exposing config values
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > Ask preserves exact form values across local label collisions
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > Ask terminal-safes untrusted MCP elicitation display strings
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > Escape suppresses project MCP prompts only for the current process
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > MCP reload keeps queued input responsive and cancels a superseded candidate
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > MCP resource and prompt commands preserve protocol diagnostics
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > TUI preserves exact form values across local label collisions
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > TUI terminal-safes untrusted MCP elicitation display strings
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > a TUI interrupt cancels a pending elicitation without continuing it
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > a blocked write recovers before the next unsent runtime call
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > a failed reconnect leaves the remaining restart budget reachable
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > a queued stale tool cannot cross a recovered connection generation
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > a visible TUI elicitation pauses the server-operation deadline
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > catalog waits preserve operation timeout and cancellation
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > concurrent server recovery preserves whole-runtime tool-name uniqueness
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > configured MCP stdio environment overlays inherited process values
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > direct docker run servers are cleaned through the injected cidfile
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > failed MCP reload retains the callable prior runtime
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > feature MRTR is bounded at the pre-elicitation product boundary
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > feature commands recover a dead stdio server and report truthful health
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > feature tool results preserve resource and prompt protocol diagnostics
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fresh and resumed native sessions reconstruct MCP from the current profile
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask accepts the official legacy SDK Draft 7 tool schema
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask bounds startup timeouts and reaps every attempted child
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask calls the legacy stdio fixture
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask calls the modern stdio fixture
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask cancels a bounded stalled resource read
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask does not start an unused optional MCP server
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask performs one fresh-discovery restart without replaying the failed call
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask rejects invalid legacy Draft 7 arguments before transport
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask reports rejected workspace MCP entries on stderr
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask routes legacy stdio progress
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask routes progress and times out a stalled operation without leaking its child
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask skips pending workspace MCP and uses it after explicit trust
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask skips workspace MCP when profile choices are unreadable
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask stops restarting after the configured stdio budget
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > fx ask uses typed Resources Prompts and Completion flows
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > headless project MCP traces encode hostile server names on recovery
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > implicit MCP reload rejection preserves command success and warns that the prior runtime remains active
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > interactive fx ask can refuse a URL without launching a browser
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > interactive fx ask handles negotiated 2025-06-18 direct elicitation/create
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > interactive fx ask handles negotiated 2025-11-25 direct elicitation/create
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > interactive fx ask retries a URL browser failure without prefetching
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > interactive fx ask validates Unicode patterns, edits, and submits every form field kind
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > interactive fx ask validates and submits a modern MCP form elicitation
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > interactive workspace MCP stays inert until approved and retires after rejection
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > invalid-params discovery falls back through initialize and tools call
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > legacy stdio URL completion outlives the operation deadline
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > legacy stdio cancellation after browser consent never retries
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > legacy stdio consumes an unscoped Tools list change without modern subscription methods
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > legacy stdio ignores malformed URL completions until one valid matching notification
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > legacy stdio initialization walks down a bounded version ladder
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > legacy stdio prompts retries only after matching URL completion
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > legacy stdio resources retries only after matching URL completion
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > legacy stdio waits for every matching URL completion and ignores wrong duplicates
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > live stdio subscription coalesces duplicate changes and refreshes without reconnect
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > malformed stdio response with missing jsonrpc fails deferred activation and reaps the child
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > malformed stdio response with missing result and error fails deferred activation and reaps the child
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > malformed stdio response with result and error together fails deferred activation and reaps the child
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > malformed stdio response with wrong jsonrpc fails deferred activation and reaps the child
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > managed child uses only its captured MCP tools resources prompts and completion view
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > method-not-found discovery negotiates the latest supported legacy stdio version
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > negotiated 2025-06 treats a URL-required error as an ordinary failure
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > negotiated 2025-11 URL-required error retries only after manual confirmation
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > noninteractive fx ask returns typed input-required without fabricating a continuation
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > operation timeout bounds a blocked stdin write and reaps the child
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > optional profile failure allows the TUI turn with degraded health
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > persistent child admits a feature-only MCP server without tool access
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > persistent child with no configured MCP runtime fails closed before transport
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > persistent scoped search refreshes only its admitted stale MCP server
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > repository-local MCP configuration never launches a process or network request
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > required profile startup failure blocks fx ask before any Gateway request
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > required profile startup failure blocks the TUI before any Gateway request
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > revoked persistent authority prevents stdio recovery effects
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > stale resource catalogs survive exhausted stdio recovery
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > stalled recovery preserves startup timeout and local cancellation
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > successful discovery selects the latest legacy version from an oldest-first list
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > terminal fx ask cancels stalled optional MCP startup before its model request
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > terminal fx ask starts an unused optional MCP server before its model request
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > the TUI calls the modern stdio fixture through the shared runtime
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > the TUI cancels a stalled stdio request and accepts a follow-up prompt
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > the TUI cancels stalled recovery without waiting for its operation deadline
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > the TUI exposes namespaced MCP resource prompt and completion commands
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > the TUI resumes exact modern resource and prompt MRTR operations
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > the TUI shows a safe MCP failure detail while preserving model context
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > the TUI shows exact dynamic MCP arguments before human approval
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > the TUI validates and submits a modern MCP form elicitation
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > the first dynamic call after MCP reload returns selection recovery guidance
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > the real dispatcher keeps reversed concurrent responses and progress correlated
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > third equivalent dynamic MCP failure is blocked before transport
+pass	all	mcp-stdio.test.ts	modern MCP stdio compatibility > top-level mcp add persists stdio and a later ask calls it
+pass	all	notifications.test.ts	/sound toggles both events immediately and persists the profile
+pass	all	notifications.test.ts	fx ask correlates permission attention and turn-end notifications
+pass	all	notifications.test.ts	fx ask keeps redirected stdout JSON and stderr byte-clean with notifications enabled
+pass	all	notifications.test.ts	notifications sound handler runs after a real interactive turn
+pass	all	notifications.test.ts	notifications sound handler runs once when a real permission blocks
+macos-aarch64=pass;linux-x86_64=skip;linux-aarch64=skip	all	oauth-keychain-migration.test.ts	OAuth Keychain cleanup survives a failure after migration
+macos-aarch64=pass;linux-x86_64=skip;linux-aarch64=skip	all	oauth-keychain-migration.test.ts	OAuth file migration survives restart and logout in an isolated Keychain account
+pass	all	permission-errors.test.ts	generic permission typed errors > JSON and quiet permission prompting remain fail-closed without a TTY or explicit opt in
+pass	all	permission-errors.test.ts	generic permission typed errors > JSON prompt-permissions approval and denial preserve stdout and exact execution
+pass	all	permission-errors.test.ts	generic permission typed errors > JSON prompt-permissions does not prompt after repeated advisory cautions
+pass	all	permission-errors.test.ts	generic permission typed errors > quiet prompt-permissions approval and denial keep stdout empty
+pass	all	permission-errors.test.ts	generic permission typed errors > returns typed JSON for denied terminal
+pass	all	prompt-history.test.ts	prompt history > accepted prompts and slash commands survive restart
+pass	all	prompt-history.test.ts	prompt history > read-only prompt-history bootstrap does not create state in an unwritable home
+pass	all	prompt-history.test.ts	prompt history > recording can be disabled from settings
+pass	all	prompt-history.test.ts	prompt history > startup scans beyond one mebibyte of newer interleaved workspace records
+pass	all	session-recovery.test.ts	session recovery > cross-workspace recovery preserves both resume-last pointers
+pass	all	session-recovery.test.ts	session recovery > doctor removes only a validated noncurrent watermark
+pass	all	session-recovery.test.ts	session recovery > model commit recovers after process death at after_commit_intent_remove
+pass	all	session-recovery.test.ts	session recovery > model commit recovers after process death at after_commit_intent_sync
+pass	all	session-recovery.test.ts	session recovery > model commit recovers after process death at after_event_append
+pass	all	session-recovery.test.ts	session recovery > model commit recovers after process death at after_event_sync
+pass	all	session-recovery.test.ts	session recovery > model commit recovers after process death at after_target_namespace_sync
+pass	all	session-recovery.test.ts	session recovery > model commit recovers after process death at after_watermark_rename
+pass	all	session-recovery.test.ts	session recovery > process death after authority intent leaves a fenced orphan for writable resolution
+pass	all	session-recovery.test.ts	session recovery > process death at after_event_append leaves an uncommitted orphan
+pass	all	session-recovery.test.ts	session recovery > process death at after_event_sync leaves an uncommitted orphan
+pass	all	session-recovery.test.ts	session recovery > process death at after_watermark_rename leaves an uncommitted orphan
+pass	all	session-recovery.test.ts	session recovery > session recover copies a corrupt-watermark session without changing its source
+pass	all	session-recovery.test.ts	session recovery > writable load confirms proposed authority after after_authority_intent_remove
+pass	all	session-recovery.test.ts	session recovery > writable load confirms proposed authority after after_authority_marker_rename
+pass	all	session-recovery.test.ts	session recovery > writable load confirms proposed authority after after_authority_namespace_sync
+pass	all	terminal-host.test.ts	Bash and zsh preserve trusted normal startup and controlled clean startup
+pass	all	terminal-host.test.ts	accepted operation_execution failure disconnects once and leaves later mutation progress
+pass	all	terminal-host.test.ts	accepted response_encoding failure disconnects once and leaves later mutation progress
+pass	all	terminal-host.test.ts	accepted response_write failure disconnects once and leaves later mutation progress
+pass	all	terminal-host.test.ts	accepted result_allocation failure disconnects once and leaves later mutation progress
+pass	all	terminal-host.test.ts	accepted task_allocation failure disconnects once and leaves later mutation progress
+pass	all	terminal-host.test.ts	accepted worker_start failure disconnects once and leaves later mutation progress
+pass	all	terminal-host.test.ts	alternate-screen host loss keeps tmux facts but reports unprovable modes
+pass	all	terminal-host.test.ts	checked cleanup failure wins over incomplete delivery and retains recovery intent
+pass	all	terminal-host.test.ts	checked tmux close recovery retains cleanup intent until a clean retry
+pass	all	terminal-host.test.ts	client reconciles an idle-retiring host before admitting a request
+pass	all	terminal-host.test.ts	completed sessions recycle capacity and release every native backend resource
+pass	all	terminal-host.test.ts	concurrent sessions survive disconnect and complete waits independently
+pass	all	terminal-host.test.ts	current client permits graceful close and rejects force close on signal limited host
+pass	all	terminal-host.test.ts	current client rejects same revision host without complete signal capability before start
+pass	all	terminal-host.test.ts	direct human leases keep the owning model observational
+pass	all	terminal-host.test.ts	durable authority survives reconnect and rejects every foreign scope
+pass	all	terminal-host.test.ts	explicit tmux backend is isolated and reports exact command exit
+pass	all	terminal-host.test.ts	fatal host drain timeout exits before shared-state teardown
+pass	all	terminal-host.test.ts	force close reaches a background job outside the shell process group
+pass	all	terminal-host.test.ts	force close reports incomplete refresh descendant and shell delivery
+pass	all	terminal-host.test.ts	fresh hidden host is singular, correlated, reconnectable, private, and idle-clean
+pass	all	terminal-host.test.ts	fresh private client reloads owner-scoped authority without retaining proof
+pass	all	terminal-host.test.ts	host crash closes the liveness channel and kills the terminal process group
+pass	all	terminal-host.test.ts	host handshake is ready before slow durable recovery
+pass	all	terminal-host.test.ts	host remains authoritative until natural backend cleanup finishes
+pass	all	terminal-host.test.ts	idle shutdown survives removal of the endpoint directory
+pass	all	terminal-host.test.ts	incompatible live host is preserved and never replaced
+pass	all	terminal-host.test.ts	incompatible tmux fails explicitly without native fallback
+pass	all	terminal-host.test.ts	interactive writes preserve mappings and large output rotates durable segments
+pass	all	terminal-host.test.ts	lazy private client starts once, reconnects, and leaves the host independent
+pass	all	terminal-host.test.ts	long profile homes use distinct private transport roots and retain durable ownership
+pass	all	terminal-host.test.ts	long-home tmux survives host restart with transport-only runtime state
+pass	all	terminal-host.test.ts	long-home transport roots reject symlink and non-private components without mutation
+pass	all	terminal-host.test.ts	malformed close recovery cleans only its tmux owner and preserves a live sibling
+pass	all	terminal-host.test.ts	missing tmux fails explicitly without changing native selection
+pass	all	terminal-host.test.ts	native PTY starts in the requested cwd and reports exact command exit
+pass	all	terminal-host.test.ts	new client to previous host negotiates the highest shared revision
+pass	all	terminal-host.test.ts	official client retains every reserved outcome through the exact capacity boundary
+pass	all	terminal-host.test.ts	owner catalog keeps every matching session after the first exits and closes
+pass	all	terminal-host.test.ts	previous client to new host negotiates the highest shared revision
+pass	all	terminal-host.test.ts	private client replaces an endpoint only after dead identity and free-lock proof
+pass	all	terminal-host.test.ts	private screen snapshots and native cursor replies use the real PTY
+pass	all	terminal-host.test.ts	private screen text grid matches an actual tmux capture
+pass	all	terminal-host.test.ts	private tmux teardown owns partial recovery resources
+pass	all	terminal-host.test.ts	process-token capture failure kills and reaps before returning failure
+pass	all	terminal-host.test.ts	protocol fixtures advertise exact evidence and interoperate in both directions
+pass	all	terminal-host.test.ts	reopened cancellation reports open failure and terminates an abandoned response
+pass	all	terminal-host.test.ts	resized screen checkpoint survives a fresh host without raw reflow
+pass	all	terminal-host.test.ts	revision four client cannot opt into Part 8 tmux recovery
+pass	all	terminal-host.test.ts	revoke and close quiesce writes already queued under stale authority
+pass	all	terminal-host.test.ts	signal reaches a background job outside the shell process group
+macos-aarch64=skip;linux-x86_64=pass;linux-aarch64=pass	all	terminal-host.test.ts	signal reaches a child forked by a non-leader thread
+pass	all	terminal-host.test.ts	startup recovery failure exits before stalled client teardown
+macos-aarch64=skip;linux-x86_64=pass;linux-aarch64=pass	all	terminal-host.test.ts	terminal helpers keep running after the on-disk fx binary is replaced
+pass	all	terminal-host.test.ts	tmux command release completes within the marker acknowledgment window
+pass	all	terminal-host.test.ts	tmux first shell marker can arrive after the acknowledgment-duration boundary
+pass	all	terminal-host.test.ts	tmux foreground handoff failure reaps group and direct-fallback attempts twice
+macos-aarch64=skip;linux-x86_64=pass;linux-aarch64=pass	all	terminal-host.test.ts	tmux foreground handoff resumes a stopped same-group descendant
+pass	all	terminal-host.test.ts	tmux foreground race resumes the exact SIGTTIN group and reports command exit
+pass	all	terminal-host.test.ts	tmux marker and capture peers are deadline-bounded and clean every failed attempt twice
+pass	all	terminal-host.test.ts	tmux recovers every durable starting boundary
+pass	all	terminal-host.test.ts	tmux recovery records one raw gap and refuses an unprovable screen
+pass	all	terminal-host.test.ts	tmux recovery rejects a replaced pane without signaling it
+pass	all	terminal-host.test.ts	tmux recovery retains a prepared session when failure follows release
+pass	all	terminal-host.test.ts	tmux repeated force-close cycles leave no fx server
+pass	all	terminal-host.test.ts	tmux resize checkpoint failures roll back without losing control
+pass	all	terminal-host.test.ts	transient tmux recovery failures preserve the pane and retry state
+pass	all	terminal-host.test.ts	writes resize waits cancellation signals and close remain session-scoped
+pass	all	tmux-helpers.test.ts	held gateway response disposes after its stream starts
+pass	all	tmux-helpers.test.ts	held gateway response disposes before it is requested
+pass	all	tmux-helpers.test.ts	launched process PID parsing requires one direct child
+pass	all	tmux-helpers.test.ts	minimum history lines survive a fresh tmux server restart
+pass	all	tmux-helpers.test.ts	observed command keeps wrapper signal diagnostics out of captured stderr
+pass	all	tmux-helpers.test.ts	pane environment does not poison a shared tmux server
+pass	all	tmux-helpers.test.ts	pane exit matching requires the expected observed status
+pass	all	tmux-helpers.test.ts	tmux launch scrubs stale overrides without storing explicit credentials
+pass	all	tmux-helpers.test.ts	unrequested held gateway response does not keep Bun alive
+pass	all	tmux-helpers.test.ts	volatile token status rows stay narrowly classified
+skip	all	tui-agent.test.ts	tui: agent prompt > agent responds to a simple question
+pass	all	tui-auth-source-selection.test.ts	API key and fx login coexist through selection, restart, login, and logout
+pass	all	tui-auth-source-selection.test.ts	Change team activates and persists fx login ahead of the environment
+pass	all	tui-auth-source-selection.test.ts	ChatGPT response transport cancels blocked HTTP without stopping the shell
+pass	all	tui-auth-source-selection.test.ts	ChatGPT tool loops round-trip encrypted reasoning without Gateway leakage
+pass	all	tui-auth-source-selection.test.ts	Codex CLI browser login fetches raw models and replays one 401 without Gateway leakage
+pass	all	tui-auth-source-selection.test.ts	Codex CLI login preserves durable auth but does not claim success when activation fails
+pass	all	tui-auth-source-selection.test.ts	Codex automatic review uses gpt-5.4-mini while Gateway review stays untouched
+pass	all	tui-auth-source-selection.test.ts	Codex rejects the vision fallback without another provider request
+pass	all	tui-auth-source-selection.test.ts	Codex remains usable beyond Gateway observation capacity in one process
+pass	all	tui-auth-source-selection.test.ts	Codex sign-in renders browser OAuth without a device code and cancels cleanly
+pass	all	tui-auth-source-selection.test.ts	Grok 401 replay refuses a different account before the second provider send
+pass	all	tui-auth-source-selection.test.ts	Grok CLI accepts an authorization code copied from the browser
+pass	all	tui-auth-source-selection.test.ts	Grok CLI browser login fetches subscription models and replays one account-stable 401
+pass	all	tui-auth-source-selection.test.ts	Grok CLI login preserves durable auth but does not claim success when activation fails
+pass	all	tui-auth-source-selection.test.ts	Grok CLI sends verified images directly without advertising the vision fallback
+pass	all	tui-auth-source-selection.test.ts	Grok automatic review reuses the admitted Grok model and never reaches Gateway
+pass	all	tui-auth-source-selection.test.ts	Grok logout removes local credentials when remote revocation fails
+pass	all	tui-auth-source-selection.test.ts	Grok model selection uses provider-advertised context and effort metadata
+pass	all	tui-auth-source-selection.test.ts	Grok rejects the vision fallback because native image input owns OCR
+pass	all	tui-auth-source-selection.test.ts	Grok resource exhaustion stays on-provider and leaves later input usable
+pass	all	tui-auth-source-selection.test.ts	Grok tool loops round-trip encrypted reasoning without Gateway leakage
+pass	all	tui-auth-source-selection.test.ts	HTTP auth failure names the selected source and suppresses provider detail
+pass	all	tui-auth-source-selection.test.ts	direct login persists ahead of the environment until Automatic is selected
+pass	all	tui-auth-source-selection.test.ts	empty model menu renders the ordinary public empty catalog status
+pass	all	tui-auth-source-selection.test.ts	empty model menu renders the rejected credential empty fallback catalog status
+pass	all	tui-auth-source-selection.test.ts	expired login refresh failure keeps one anonymous catalog request and blocks credits
+pass	all	tui-auth-source-selection.test.ts	expired saved login discovers models without refreshing prompt credentials
+pass	all	tui-auth-source-selection.test.ts	expired saved login refreshes for credits without restarting model warmup
+pass	all	tui-auth-source-selection.test.ts	expired selected login preserves the prompt and avoids Gateway before explicit recovery
+pass	all	tui-auth-source-selection.test.ts	first-run Vercel team Escape continues into the setup hub
+pass	all	tui-auth-source-selection.test.ts	fx login bounds invalid OAuth client fallback to two device requests
+pass	all	tui-auth-source-selection.test.ts	fx login does not fall back for another OAuth device error
+pass	all	tui-auth-source-selection.test.ts	fx login falls back once when a custom OAuth client is invalid
+pass	all	tui-auth-source-selection.test.ts	immediately expired refresh keeps model discovery anonymous and later prompts blocked
+pass	all	tui-auth-source-selection.test.ts	inline sign-in renders the device flow and Ctrl+C cancels without a session
+pass	all	tui-auth-source-selection.test.ts	interactive Codex login activates a Codex catalog model
+pass	all	tui-auth-source-selection.test.ts	interactive Grok login activates Grok and setup round-trips without reauthentication
+pass	all	tui-auth-source-selection.test.ts	interactive Grok login auto-expands for a bracketed-paste authorization code
+pass	all	tui-auth-source-selection.test.ts	logout preserves an active API key when fx login is inactive
+pass	all	tui-auth-source-selection.test.ts	logout recalculates auth when local cleanup cannot be completed
+pass	all	tui-auth-source-selection.test.ts	logout rejects an invalid revocation endpoint and removes the active login
+pass	all	tui-auth-source-selection.test.ts	logout removes an fx login rejected for unsafe permissions
+pass	all	tui-auth-source-selection.test.ts	logout with the only credential keeps the shell open and reopens onboarding on the next prompt
+pass	all	tui-auth-source-selection.test.ts	missing auth after deferred onboarding preserves the complete prompt
+pass	all	tui-auth-source-selection.test.ts	model catalog warmup follows auth source changes exactly once
+pass	all	tui-auth-source-selection.test.ts	model discovery remains available before login
+pass	all	tui-auth-source-selection.test.ts	prompt refresh replaces an expired public catalog with the selected team catalog
+pass	all	tui-auth-source-selection.test.ts	ready team catalog downgrades after fx login expiry and refresh failure
+pass	all	tui-auth-source-selection.test.ts	rejected catalog credential renders the degraded public fallback notice
+pass	all	tui-auth-source-selection.test.ts	saved provider switching publishes Gateway, Codex, and Grok usage to one profile ledger
+pass	all	tui-auth-source-selection.test.ts	searched Vercel login team stays open and loads private models
+pass	all	tui-auth-source-selection.test.ts	setup hub exposes each child screen and Escape returns to the hub
+pass	all	tui-auth-source-selection.test.ts	setup provider switch reauthenticates current Codex and replaces an unavailable model
+macos-aarch64=skip;linux-x86_64=pass;linux-aarch64=pass	all	tui-auth-source-selection.test.ts	stored-key setup persists ahead of the environment
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > ACP blocks redirected output before creating a file
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > ACP completes more than twenty-five serial terminal calls when unlimited
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI /permissions ask preserves complete existing scrollback
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI always approval authorizes the matching command for the session
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI auto mode keeps tools active across unavailable reviews
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI automatic caution returns advice without prompting
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI cancellation aborts held automatic review and returns idle
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI completes a large terminal exec after one-time approval
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI control completes the same two-command batch with normal approvals
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI creates a private Markdown trace without a feedback CTA
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI feedback opens fx.sh without creating a trace or touching the clipboard
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI isolates approved foreground commands from terminal ownership
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI keeps amended feedback after a two-command result batch through both resume paths
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI keeps automatic review internal in compact and full transcripts
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI keeps command output exclusive to Ctrl-O through resize and resume
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI one-time approval executes the effectful command
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI preserves completed transcript when a later auto-approved command starts
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI requires approval before an effectful command can create a file
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI slash permission mode survives resume and gates a fresh effectful command
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI user-profile output preserves compact scrollback across slash commands
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI user-profile printf keeps compact output hidden and Ctrl-O complete
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI writes Gateway schema diagnostics to a trace after Gateway 400
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI yolo completes more than twenty-five serial user-profile commands when unlimited
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI yolo executes pwd through the default user profile without prompting
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI yolo returns every repeated user-profile command result to the model
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > TUI yolo user-profile command waits for authoritative arguments after streamed text
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > default fx ask defaults missing permission mode to auto
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask SIGINT during classifier wait terminates before decision or execution
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask and ACP send large automatic review packets before execution
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask automatic review receives the exact delegated command
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask blocks approval-bearing commands before side effects
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask blocks hostile git before any executable or repository access
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask defaults missing permission mode to auto through the classifier
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask does not retry a malformed classifier completion and safely replans
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask keeps parser hardening cases approval-bearing
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask preserves quoted shell metacharacters through the user profile
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask projects hostile ls filenames through the default user profile
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask provider failure never executes or enters malformed recovery
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask returns one malformed classifier completion to the agent without execution
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask terminal automatic caution returns advice without prompting
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask yolo completes more than ten serial user-profile commands when unlimited
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask yolo executes pwd through the default user profile with process-scoped replay
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > fx ask yolo returns repeated user-profile command results to the model
+pass	all	tui-command-permissions.test.ts	effect-aware command permissions > interactive child approval uses the normal parent prompt
+pass	all	tui-command-permissions.test.ts	volatile token status rows normalize before transcript grid comparison
+pass	all	tui-composer-edit-contracts.test.ts	Alt+D stops before an adjacent registered image
+pass	all	tui-composer-edit-contracts.test.ts	CRLF paste reaches Gateway as one logical newline
+pass	all	tui-composer-edit-contracts.test.ts	Ctrl+K and Ctrl+Y restore an image attachment
+pass	all	tui-composer-edit-contracts.test.ts	Ctrl+U and Ctrl+Y preserve oversized paste backing text
+pass	all	tui-composer-edit-contracts.test.ts	Ctrl+U and Ctrl+Y preserve the selected duplicate skill source
+pass	all	tui-composer-edit-contracts.test.ts	Ctrl+U and repeated Ctrl+Y restore image attachments with fresh ids
+pass	all	tui-composer-edit-contracts.test.ts	Home End and control aliases stay on the current logical line
+pass	all	tui-composer-edit-contracts.test.ts	absolute non-image path at prompt start reaches Gateway
+pass	all	tui-composer-edit-contracts.test.ts	active paste keeps a trailing escape sequence out of response parsers
+pass	all	tui-composer-edit-contracts.test.ts	composer shortcuts pressed immediately after Escape preserve input order
+pass	all	tui-composer-edit-contracts.test.ts	direct multiline paste reaches Gateway with boundary whitespace intact
+pass	all	tui-composer-edit-contracts.test.ts	embedded paste terminator cannot execute its same-epoch suffix
+pass	all	tui-composer-edit-contracts.test.ts	expanded paste accepts the exact composer byte limit
+pass	all	tui-composer-edit-contracts.test.ts	expanded paste rejects one byte over the composer limit and recovers
+pass	all	tui-composer-edit-contracts.test.ts	history recall keeps an oversized paste compact and editable
+pass	all	tui-composer-edit-contracts.test.ts	history recall preserves duplicate skill provenance without showing it
+pass	all	tui-composer-edit-contracts.test.ts	history recall preserves the composer when an image snapshot is corrupt
+pass	all	tui-composer-edit-contracts.test.ts	history recall preserves the composer when an image snapshot is deleted
+pass	all	tui-composer-edit-contracts.test.ts	history recall resubmits a real image under a fresh id
+pass	all	tui-composer-edit-contracts.test.ts	image paths keep sentence punctuation and submit a file
+pass	all	tui-composer-edit-contracts.test.ts	multi-megabyte bracketed paste survives edits and resize byte-for-byte
+pass	all	tui-composer-edit-contracts.test.ts	oversized paste edits occur outside the registered placeholder
+pass	all	tui-composer-edit-contracts.test.ts	skill entities survive file completion and stay atomic under word edits
+pass	all	tui-composer-edit-contracts.test.ts	terminal characters stay atomic and Ctrl+K joins at EOL
+pass	all	tui-composer-edit-contracts.test.ts	tiny clipped composer exposes hidden rows and preserves the submitted draft
+pass	all	tui-composer-edit-contracts.test.ts	typed image lookalikes do not alias registered attachments
+pass	all	tui-composer-edit-contracts.test.ts	typed paste lookalikes remain literal
+pass	all	tui-composer-edit-contracts.test.ts	typed prompt above the old 4 KiB limit reaches Gateway byte-for-byte
+pass	all	tui-composer-edit-contracts.test.ts	typed space claims a skill separator before forward deletion
+pass	all	tui-composer-edit-contracts.test.ts	vertical movement stays outside an oversized paste placeholder
+pass	all	tui-cost.test.ts	fx ask gives immediate generation reconciliation a bounded drain
+pass	all	tui-cost.test.ts	fx ask settles authoritative stream usage without delayed reconciliation
+pass	all	tui-cost.test.ts	fx usage reports a missing generation identity as incomplete
+pass	all	tui-cost.test.ts	fx usage reports an unresolved delayed fallback as pending
+pass	all	tui-cost.test.ts	tui: durable session cost > authoritative generation totals survive process resume
+pass	all	tui-cost.test.ts	tui: durable session cost > pending generation reconciliation survives picker resume
+pass	all	tui-cost.test.ts	tui: durable session cost > pending generation reconciliation survives startup resume
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > amended denial follows its denied result without executing the command
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval amendment Ctrl+Y cannot yank into the hidden composer
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval amendment accepts bracketed paste without executing early
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval amendment supports focused editor shortcut alias parity
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval digit submits immediately before ordinary modal input
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval fresh ESC restart keeps CSI-u digit tails isolated
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval hint keeps enter and esc guidance at 60x12
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval ignores encoded digits through resize thrash until a literal digit submits
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval ordinary typing stays modal-owned while Tab still amends
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval paste closes only on exact end markers at boundary cases
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval paste start re-synchronizes after an incomplete generic escape prefix
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval prompt discards bracketed paste controls and nested markers
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > approval raw CSI-u digit tails do not submit
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > command approval switches between inline and review on resize
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > composer paste start resets pending Ctrl+C and Esc gestures
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > exact-command option advertises Tab movement before denial amendment
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > false paste starts do not pin ownership under approval or question prompts
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > generic approval stays inline through resize and denial
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > kitty Escape cancels a question turn before a new prompt
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > long approval amendment keeps its tail and cursor visible before exact denial submission
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > long command approval keeps fragmented mouse scrolling inside the review
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > long command approval renders the complete command before a decision
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > long question content wraps onto aligned continuation rows
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > malformed ask arguments recover without opening a question prompt
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > malformed streamed read arguments never publish their provisional label
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > permission prompt growth preserves displaced transcript history
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > plain arrows edit multiline freeform answers while modified arrows choose options
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > publishes a complete assistant block before an ask-user question and continues after its answer
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question batch tabs navigate every page and out-of-order answers return to unanswered pages
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question digit submits the selected label without Enter
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question freeform Ctrl+P cannot replace a hidden composer draft from history
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question freeform Ctrl+U edits the visible answer without deleting a hidden composer draft
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question freeform Ctrl+Y cannot yank into the hidden composer
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question freeform accepts Cmd-V bracketed paste with newlines
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question freeform answer wraps onto continuation rows as it grows
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question freeform hint keeps enter and esc guidance at 72x16
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question freeform ordinal keeps following digits as text
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question freeform supports focused editor shortcut alias parity
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question freeform survives large paste escape and cursor-edit thrash
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question ordinary typing stays modal-owned while option controls still work
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question prompt discards pasted controls without freeform or composer leaks
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question raw CSI-u digit tails do not select
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > question raw CSI-u digit tails do not type into freeform
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > raw Escape cancels a question turn before a new prompt
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > repeated approval and question cycles reset prompt state in one process
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > resized question cancellation keeps the footer bottom anchored through the first edit
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > valid serialized ask control with matching identity opens the question and continues
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > vertically overflowing command approval exits review on Escape and recovers
+pass	all	tui-decision-prompts.test.ts	tui: decision prompt input isolation > wrapped command approval stays inline when its complete footer fits
+pass	all	tui-direct-write-audit.test.ts	tui: direct-write audit > accepts owned forms and rejects unowned acquisition or writes
+pass	all	tui-direct-write-audit.test.ts	tui: direct-write audit > classifies the real repository with one frame commit
+pass	all	tui-direct-write-audit.test.ts	tui: direct-write audit > keeps one render-request authority and no obsolete scheduler
+pass	all	tui-direct-write-audit.test.ts	tui: direct-write audit > requires exactly one normal interactive frame commit
+skip	all	tui-file-picker.test.ts	@ file picker > browses a home path and submits through the live Gateway
+pass	all	tui-file-picker.test.ts	@ file picker > browses current, parent, home, and absolute filesystem paths
+pass	all	tui-file-picker.test.ts	@ file picker > claims a typed separator after end completion without duplicating it
+pass	all	tui-file-picker.test.ts	@ file picker > keeps duplicate basenames distinguishable at narrow widths
+pass	all	tui-file-picker.test.ts	@ file picker > keeps shared-prefix paths distinguishable at narrow widths
+pass	all	tui-file-picker.test.ts	@ file picker > keeps the completed result visible through rapid large-index refreshes
+pass	all	tui-file-picker.test.ts	@ file picker > middle completion preserves one separator and submits the exact prompt
+pass	all	tui-file-picker.test.ts	@ file picker > omits unsafe filenames while Unicode matches remain selectable
+pass	all	tui-file-picker.test.ts	@ file picker > opens after quotes and parentheses and submits the selected path
+pass	all	tui-file-picker.test.ts	@ file picker > persists a selected plain-text path across two process resume cycles
+pass	all	tui-file-picker.test.ts	@ file picker > refreshes a completed startup index on the first picker episode
+pass	all	tui-file-picker.test.ts	@ file picker > renders and accepts fuzzy results across typed file kind changes
+pass	all	tui-file-picker.test.ts	@ file picker > shows a 50k result and releases zero-match Enter after dismissal
+pass	all	tui-file-picker.test.ts	@ file picker > submits an unmatched file mention without requiring dismissal
+pass	all	tui-file-picker.test.ts	@ file picker > updates tracked and untracked membership while preserving ignores
+pass	all	tui-file-picker.test.ts	@ file picker > workspace mutation exposes absolute added-root files and directories
+skip	all	tui-full-transcript-brutal.test.ts	Ctrl-O extended brutal soak holds under four thousand chat lines and ninety six tools
+pass	all	tui-full-transcript-brutal.test.ts	Ctrl-O fills a viewport taller than the prepared overscan cache
+skip	all	tui-full-transcript-brutal.test.ts	Ctrl-O load test survives a realistic fifty-thousand-line session with large tool sidecars
+skip	all	tui-full-transcript-brutal.test.ts	Ctrl-O profiler captures latency, memory, and native stacks during sustained thrashing
+pass	all	tui-full-transcript-brutal.test.ts	Ctrl-O repeatedly survives mixed long chats, dense tool batches, live output, resize storms, and resume
+pass	all	tui-full-transcript-brutal.test.ts	fx process discovery accepts basename and path process names
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > Ctrl+C exit hint disarms for history recall, bare Escape, and idle expiry
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > Ctrl+C pauses two queued prompts until the visible draft is confirmed
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > Escape during provider recovery backoff cancels without ModelError
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > Escape hides a focused queue editor without cancelling the active stream
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > Fast failure heartbeat preserves exact model identity through its retry budget
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > Fast route failure automatically falls back without changing transcript history
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > HTTP restricted provider error renders sticky status row
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > Up edits a queued card in place and repeated Ctrl+U deletes only the empty draft
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > Up pauses queued admission and commits every edited prompt in FIFO order
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > active /permissions preserves a held post-tool turn and next prompt
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > agent-owned HTTP retry renders the final token counter without markers
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > assistant publishes a complete markdown block before the following tool
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > canonical interleaved tool streams preserve ordering and lifecycle identity
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > complete assistant block precedes a queued user prompt in scrollback
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > confirmed post-cancel queued prompt recovers duplicate-key tool arguments
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > content filter opens local recovery modal without transcript card
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > current compact command summaries hide no-op cwd prefixes and abbreviate the active workspace path
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > current compact view keeps unsupported tool failures visible with supported calls
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > dynamic MCP approval ellipsizes overlong arguments in a narrow terminal
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > dynamic MCP approval shows exact arguments and preserves deny once and session scope
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > empty Enter resumes a hidden paused queue without editing it
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > follow-up input counter excludes retained context and provider input usage
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > full-window output limit is omitted from the agent request
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > idle submitted prompt keeps its canonical row after a completed turn
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > idle submitted prompt stays visible across a first-use context notice
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > launch-row release preserves complete history during a large table append
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > live token counter includes submitted input, reasoning, and streamed text
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > parallel read lifecycle updates preserve current grouped scrollback
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > paused response resumes through slash continue without a second user turn
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > paused tool lifecycle admits resumed tools on the same turn
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > post-cancel hidden queue offers Escape to cancel every queued prompt
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > post-tool HTTP 503 omits empty assistant from follow-up
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > process restart during backoff preserves a direct Fast model ID
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > provider error after assistant output continues the same visible response
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > provider error after streamed tool start regenerates without a recovery modal
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > provider route recovery counts down, times out a silent head, and recovers
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > queue resume preserves streamed scrollback after a settled resize
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > queue resume preserves streamed scrollback at stable geometry
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > queued image yank survives deleting its queue card
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > queued prompt stays pending until active assistant text completes
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > queued review keeps the disabled model picker hidden
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > queued review preserves pasted backing and follows a long draft cursor
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > queued review shows file completions and preserves the accepted path
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > second Ctrl+C exits after active stream cancellation
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > slash continue cannot duplicate an active checkpointed request
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > slash continue does not render checkpointed partial output twice
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > streamed write payload keeps the activity row live
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > streaming model selection applies to the next turn without changing the active request
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > typing during a streamed response leaves the native cursor visible
+pass	all	tui-gateway-stream-lifecycle.test.ts	TUI gateway stream lifecycle > unavailable read_tool_result renders and persists a failed result
+pass	all	tui-gateway-stream-lifecycle.test.ts	generated lifecycle wrapper uses POSIX sh syntax
+pass	all	tui-input-line-delete.test.ts	tui: logical-line deletion > all decoded and raw routes preserve surrounding logical lines
+pass	all	tui-input-navigation.test.ts	Ctrl+L redraws without clearing the draft or session
+pass	all	tui-input-navigation.test.ts	Ctrl+W edit of recalled history preserves the unsent draft
+pass	all	tui-input-navigation.test.ts	Unicode display units repaint after a wide shift and at the right margin
+pass	all	tui-input-navigation.test.ts	a later turn's image keeps its own id in the composer and transcript
+pass	all	tui-input-navigation.test.ts	bracketed-pasted tabs preserve columns across rows and vertical arrows move one row
+pass	all	tui-input-navigation.test.ts	composer aliases edit through raw controls and meta delete
+pass	all	tui-input-navigation.test.ts	composer word editing keeps Option and Ctrl deletion contracts separate
+pass	all	tui-input-navigation.test.ts	current composer and submitted prompt use connected rails
+pass	all	tui-input-navigation.test.ts	delivered Command and Shift+Option keys edit the composer
+pass	all	tui-input-navigation.test.ts	draft-edge movement resets preferred-column intent
+pass	all	tui-input-navigation.test.ts	image line kill and repeated yank preserve captured bytes under fresh ids
+pass	all	tui-input-navigation.test.ts	large tabbed paste keeps frame scroll plan aligned
+pass	all	tui-input-navigation.test.ts	long capped input keeps the cursor-containing rows visible
+pass	all	tui-input-navigation.test.ts	long short long vertical movement restores the original preferred column
+pass	all	tui-input-navigation.test.ts	no-op modified Down at input end resets preferred-column intent
+pass	all	tui-input-navigation.test.ts	pending image commands stay local
+pass	all	tui-input-navigation.test.ts	permission argument picker uses exact rendered columns
+pass	all	tui-input-navigation.test.ts	plain Up and Down move exactly one hard-newline visual row per press
+pass	all	tui-input-navigation.test.ts	plain Up and Down move exactly one narrow-pane soft-wrap row
+pass	all	tui-input-navigation.test.ts	plain arrows navigate recalled multiline history before crossing entries
+pass	all	tui-input-navigation.test.ts	raw control aliases navigate slash completion through submission
+pass	all	tui-input-navigation.test.ts	registered slash command stays local behind a pending image
+pass	all	tui-input-navigation.test.ts	repeated image commands stay local and submit together as one prompt
+pass	all	tui-input-navigation.test.ts	repeated image-path paste cannot grow direct input past the cap and leaves fx alive
+pass	all	tui-input-navigation.test.ts	resize between consecutive vertical moves resets preferred-column intent
+pass	all	tui-input-navigation.test.ts	resize preserves slash routing and wrapped-composer arrow precedence
+pass	all	tui-input-navigation.test.ts	selected slash row ignores the welcome header help hint
+pass	all	tui-input-navigation.test.ts	tab edge wrapping handles final cells, wide runes, and following units
+pass	all	tui-input-navigation.test.ts	tiny pane keeps capped multiline slash picker visible and plain arrows navigate it
+pass	all	tui-input-navigation.test.ts	top-level slash and /mo completion rows stay left anchored
+pass	all	tui-input-navigation.test.ts	typed pasted and slash-command images share the queued Gateway and session contract
+pass	all	tui-input-navigation.test.ts	typed sentences wrap by word and continuation rows never start with a space
+pass	all	tui-input-navigation.test.ts	unknown and overflowing image placeholders stay literal and vertically targetable
+pass	all	tui-input-navigation.test.ts	unknown terminal escape sequences leave the command catalog open
+pass	all	tui-input-navigation.test.ts	wrapped slash picker does not consume selection-modified arrows
+pass	all	tui-input-navigation.test.ts	wrapped slash prefix keeps current rail composer precedence and preserves selection
+pass	all	tui-input-navigation.test.ts	wrapped slash prefix submits its visible selection
+pass	all	tui-interrupt-recovery.test.ts	tui: interrupt recovery > partial output survives cancellation and the next prompt completes
+pass	all	tui-interrupt-recovery.test.ts	tui: interrupt recovery > submitted status text queues behind an active response
+pass	all	tui-interrupt-recovery.test.ts	tui: interrupt recovery > workspace mutation waits for cancelled worker unwind
+skip	all	tui-keybindings.test.ts	tui: key bindings > Ctrl+C once during idle shows exit hint
+skip	all	tui-keybindings.test.ts	tui: key bindings > Ctrl+C twice exits the app
+skip	all	tui-keybindings.test.ts	tui: key bindings > Up arrow recalls previous input after clearing
+pass	all	tui-native-clear-recovery.test.ts	direct healthy screens retain an ordinary burst without resetting
+pass	all	tui-native-clear-recovery.test.ts	direct native-clear recovery resets the view and replays the held draft
+pass	all	tui-native-clear-recovery.test.ts	native-clear replay settles a complete paste before the next key
+pass	all	tui-native-clear-recovery.test.ts	tmux leaves native-clear probing disabled and preserves ordinary input
+skip	all	tui-performance.test.ts	interactive terminal surfaces stay within one frame at p95
+skip	all	tui-performance.test.ts	live provider preserves the fast menu and prepared transcript pipeline
+pass	all	tui-performance.test.ts	overlapping skill commands keep the latest action and the shell alive
+pass	all	tui-performance.test.ts	prompt admission treats missing HOME as an empty optional skill catalog
+pass	all	tui-performance.test.ts	skills refresh discovers SKILL.md added inside an existing candidate directory
+pass	all	tui-performance.test.ts	skills refresh preserves the canonical catalog for a symlinked HOME
+pass	all	tui-permissions.test.ts	tui: file permissions > Esc cancels a file approval turn without writing and leaves the shell usable
+pass	all	tui-permissions.test.ts	tui: file permissions > consolidated tool calls cross the Gateway transport buffer
+pass	all	tui-permissions.test.ts	tui: file permissions > decomposed prompt and file approval remain visible across resize
+pass	all	tui-permissions.test.ts	tui: file permissions > denied and cancelled file tools use current compact outcomes
+pass	all	tui-permissions.test.ts	tui: file permissions > edit preflight failure shows the exact mismatch
+pass	all	tui-permissions.test.ts	tui: file permissions > external missing parents are absent before decision and created only on approval
+pass	all	tui-permissions.test.ts	tui: file permissions > file approval keeps an amended response through resize and delivers it after the result
+pass	all	tui-permissions.test.ts	tui: file permissions > file approval keeps fragmented mouse scrolling inside the review
+pass	all	tui-permissions.test.ts	tui: file permissions > file approval style roles render under light and dark themes
+pass	all	tui-permissions.test.ts	tui: file permissions > file session grant reuses the canonical target without a second prompt
+pass	all	tui-permissions.test.ts	tui: file permissions > five-line file approval context shows fallback hunks and returns to approval controls
+pass	all	tui-permissions.test.ts	tui: file permissions > hostile path stays encoded through approval transcript changes and undo
+pass	all	tui-permissions.test.ts	tui: file permissions > keeps each expanded file diff matched to its Ctrl-O detail
+pass	all	tui-permissions.test.ts	tui: file permissions > maximum-size chunked write stays reviewable and commits exact bytes
+pass	all	tui-permissions.test.ts	tui: file permissions > oversized chunked write fails before approval without touching disk
+pass	all	tui-permissions.test.ts	tui: file permissions > pauses paced assistant text while a file approval is active
+pass	all	tui-permissions.test.ts	tui: file permissions > persistent session reevaluates every write and edit turn
+pass	all	tui-permissions.test.ts	tui: file permissions > read-denied equality uses reveal copy and never changes file bytes
+pass	all	tui-permissions.test.ts	tui: file permissions > short file approval captures wheel input without moving the selected choice
+pass	all	tui-permissions.test.ts	tui: file permissions > stale edit approval preserves external bytes and reports rejection
+pass	all	tui-permissions.test.ts	tui: file permissions > wraps file diff continuations inside their gutters
+pass	all	tui-permissions.test.ts	volatile token status rows normalize before file transcript comparison
+pass	all	tui-render-lab.test.ts	buffer-system frame benchmark writes timing artifact
+pass	all	tui-render-lab.test.ts	buffer-system p95 gate rejects undersampled runs
+pass	all	tui-render-lab.test.ts	native render-lab scenarios require explicit opt-in
+pass	all	tui-render-lab.test.ts	render-lab analyzer enforces active-tool placement and uniqueness
+pass	all	tui-render-lab.test.ts	render-lab analyzer fails when the trace log is missing
+pass	all	tui-render-lab.test.ts	render-lab analyzer flags excess gap before transient activity
+pass	all	tui-render-lab.test.ts	render-lab analyzer flags missing footer and input chrome
+pass	all	tui-render-lab.test.ts	render-lab analyzer flags missing required gap before thinking
+pass	all	tui-render-lab.test.ts	render-lab analyzer recognizes clipped multiline input continuation rows
+pass	all	tui-render-lab.test.ts	render-lab analyzer recognizes compact multiline footer status
+pass	all	tui-render-lab.test.ts	render-lab analyzer recognizes the real fx prompt glyph
+pass	all	tui-render-lab.test.ts	render-lab analyzer recognizes tint footer chrome
+pass	all	tui-render-lab.test.ts	render-lab analyzer rejects a blank multiline footer status row
+pass	all	tui-render-lab.test.ts	render-lab analyzer rejects activity marker corruption
+pass	all	tui-render-lab.test.ts	render-lab analyzer rejects damaged multiline footer with real hint and cursor
+pass	all	tui-render-lab.test.ts	render-lab analyzer rejects duplicate permission UI
+pass	all	tui-render-lab.test.ts	render-lab analyzer rejects expanded command marker corruption
+pass	all	tui-render-lab.test.ts	render-lab analyzer rejects reordered observability scrollback
+pass	all	tui-render-lab.test.ts	render-lab analyzer reports trace counters and rejects quiescent work
+pass	all	tui-render-lab.test.ts	render-lab analyzer treats thinking token counters as activity rows
+pass	all	tui-render-lab.test.ts	render-lab lists gated Plan B native scenarios
+pass	all	tui-render-lab.test.ts	tui: render lab > active tool placement keeps one visible marker across resize states
+pass	all	tui-render-lab.test.ts	tui: render lab > same-shell relaunch artifacts pass analyzer without an API key
+pass	all	tui-render-lab.test.ts	tui: render lab > startup scrollback disabled overflow artifacts pass tape oracle
+pass	all	tui-render-lab.test.ts	tui: render lab > startup scrollback enabled overflow starts eagerly without progressive release
+pass	all	tui-render-lab.test.ts	tui: render lab > user card resize replay keeps one card and one startup banner in scrollback
+skip	all	tui-render-live-stress.test.ts	tui: live render stress > live streaming, tool activity, and resize preserve prompts and keep the footer visible
+pass	all	tui-render-replay.test.ts	tui: render record/replay > automatic recording writes a private tape under the test home
+pass	all	tui-render-replay.test.ts	tui: render record/replay > composer frames omit synchronized updates when disabled
+pass	all	tui-render-replay.test.ts	tui: render record/replay > composer frames restore the visible cursor after synchronized updates
+pass	all	tui-render-replay.test.ts	tui: render record/replay > frame trace scopes are metadata-only during prompt resize and replay
+pass	all	tui-render-replay.test.ts	tui: render record/replay > opt-in input recording captures bracketed paste and Return without changing replay
+pass	all	tui-render-replay.test.ts	tui: render record/replay > recorded stdout and resize bytes replay to a valid final grid
+pass	all	tui-render-replay.test.ts	tui: render record/replay > replays read-only tools capture without layout validation failures
+skip	all	tui-render-replay.test.ts	tui: render record/replay > replays transient activity capture without layout validation failures
+pass	all	tui-render-replay.test.ts	tui: render record/replay > silent automatic recording hides its banner inline but keeps it in Ctrl-O
+pass	all	tui-render-stress.test.ts	tui: render stress > long input, resize, and local transcript writes keep one valid footer
+pass	all	tui-resize.test.ts	selected slash row ignores the welcome header help hint
+pass	all	tui-resize.test.ts	tui: resize > /help remains usable after resize and /quit exits
+pass	all	tui-resize.test.ts	tui: resize > FXC-118 statusline release does not wait for the next edit to reflow
+pass	all	tui-resize.test.ts	tui: resize > FXC-120 help release does not wait for the next edit to reflow
+pass	all	tui-resize.test.ts	tui: resize > FXC-122 workspace Add handoff suppresses only its synthetic completion row
+pass	all	tui-resize.test.ts	tui: resize > FXC-125 cost release does not wait for the next edit to reflow
+pass	all	tui-resize.test.ts	tui: resize > FXC-126 model release does not wait for the next edit to reflow
+pass	all	tui-resize.test.ts	tui: resize > FXC-127 workspace release does not wait for the next edit to reflow
+pass	all	tui-resize.test.ts	tui: resize > FXC-129 file completion release does not wait for the next edit to reflow
+pass	all	tui-resize.test.ts	tui: resize > active activity survives resize
+pass	all	tui-resize.test.ts	tui: resize > active file approval keeps canonical copy and selection across resize
+pass	all	tui-resize.test.ts	tui: resize > active hard-newline input follows height-four recovery
+pass	all	tui-resize.test.ts	tui: resize > active hard-newline input renders normally at height nine
+pass	all	tui-resize.test.ts	tui: resize > active hard-newline input survives tiny valid resize
+pass	all	tui-resize.test.ts	tui: resize > active multiline footer survives resize
+pass	all	tui-resize.test.ts	tui: resize > active soft-wrapped input survives tiny valid resize
+pass	all	tui-resize.test.ts	tui: resize > cancelling a resized command approval keeps one startup banner
+pass	all	tui-resize.test.ts	tui: resize > file approval affirmative enter waits for the resized frame to commit
+pass	all	tui-resize.test.ts	tui: resize > file approval commits a later resize after affirmative acceptance
+pass	all	tui-resize.test.ts	tui: resize > gated assistant chunks remain ordered across shrink and grow
+pass	all	tui-resize.test.ts	tui: resize > gated tmux launch retains an immediate nonzero exit without global option changes
+pass	all	tui-resize.test.ts	tui: resize > gated tmux setup failure cleans the session before releasing the command
+pass	all	tui-resize.test.ts	tui: resize > grow keeps the current composer at the wider terminal width
+pass	all	tui-resize.test.ts	tui: resize > grow with immediate input retains pre-paint resize reconciliation
+pass	all	tui-resize.test.ts	tui: resize > height shrink: footer block remains well-formed
+pass	all	tui-resize.test.ts	tui: resize > idle theme monitoring stays silent and notifications retint the transcript once
+pass	all	tui-resize.test.ts	tui: resize > large skills menu remains canonical across shrink grow and footer settle
+pass	all	tui-resize.test.ts	tui: resize > live command resize preserves current grouped scrollback while output is folded
+pass	all	tui-resize.test.ts	tui: resize > nested Markdown blockquote reflows across a live tmux shrink and grow
+pass	all	tui-resize.test.ts	tui: resize > probe-first resize keeps a terminal reply paste-owned
+pass	all	tui-resize.test.ts	tui: resize > rapid four-skill resize keeps canonical skills menu content
+pass	all	tui-resize.test.ts	tui: resize > rapid resize storm settles into exactly one footer
+pass	all	tui-resize.test.ts	tui: resize > resize below footer_rows does not crash the app
+pass	all	tui-resize.test.ts	tui: resize > resize does not leave stale divider lines from the old size
+pass	all	tui-resize.test.ts	tui: resize > resize keeps the current composer at the new terminal width
+pass	all	tui-resize.test.ts	tui: resize > resize replay keeps one startup banner in full scrollback
+pass	all	tui-resize.test.ts	tui: resize > semantic thematic rule reflows across a live tmux shrink and grow
+pass	all	tui-resize.test.ts	tui: resize > settled resize clears pre-fx scrollback in both startup modes
+pass	all	tui-resize.test.ts	tui: resize > settled resize preserves a multi-megabyte bracketed paste byte-for-byte
+pass	all	tui-resize.test.ts	tui: resize > settled resize replays a long assistant transcript from the header
+pass	all	tui-resize.test.ts	tui: resize > shrink: footer block is well-formed at new size
+pass	all	tui-resize.test.ts	tui: resize > slash picker dismissal restores the resized short transcript boundary
+pass	all	tui-resize.test.ts	tui: resize > structured retention keeps native scrollback complete before resize
+pass	all	tui-resize.test.ts	tui: resize > timed-out cursor probe does not leak a partial private CSI into later paste
+pass	all	tui-resize.test.ts	tui: resize > tmux resize preserves column-one CPR-shaped paste bytes in the submitted prompt
+pass	all	tui-resize.test.ts	tui: resize > typed input survives a shrink and stays visible
+pass	all	tui-resize.test.ts	tui: resize > visibly open slash picker adapts across shrink and grow without losing transcript state
+pass	all	tui-resize.test.ts	tui: resize > welcome header starts at the first terminal row
+pass	all	tui-resize.test.ts	tui: resize > wide user card survives resize without splitting a terminal cell
+skip	all	tui-resume-brutal.test.ts	/resume native profiler captures sustained menu thrashing
+skip	all	tui-resume-brutal.test.ts	/resume survives a fifty-thousand-entry catalog and real fifty-thousand-line tool-heavy session
+pass	all	tui-resume-brutal.test.ts	/resume survives repeated real-chat, tool, scope, pagination, resize, and reopen thrashing
+skip	all	tui-resume-brutal.test.ts	/resume sustains one hundred mixed interaction cycles without resource drift
+pass	all	tui-resume.test.ts	Cmd+R refuses session switching over a draft and opens after explicit clear
+pass	all	tui-resume.test.ts	Ctrl-C closes the Ctrl-O viewer without clearing the unsent draft
+pass	all	tui-resume.test.ts	Ctrl-C leaves Ctrl-O before cancelling a streaming command
+pass	all	tui-resume.test.ts	Ctrl-O expands each parallel read-only tool detail
+pass	all	tui-resume.test.ts	Ctrl-O keeps command output live while the alternate buffer is open
+pass	all	tui-resume.test.ts	Ctrl-O navigation during shell streaming preserves grouped compact rows
+pass	all	tui-resume.test.ts	Ctrl-O opens full retained command output and restores grouped compact output
+pass	all	tui-resume.test.ts	Ctrl-O preserves inline block spacing while expanding tool detail
+pass	all	tui-resume.test.ts	Ctrl-O pressure preserves transcript and modal ownership under deterministic load
+pass	all	tui-resume.test.ts	Ctrl-O renders read_file results as readable content
+pass	all	tui-resume.test.ts	Ctrl-O restores a long Markdown transcript without replaying it into scrollback
+pass	all	tui-resume.test.ts	Ctrl-O viewer preserves hidden composer input while Ctrl-X stays inert
+pass	all	tui-resume.test.ts	Linux tmux fallbacks preserve exact ASCII and replay alignment
+pass	all	tui-resume.test.ts	a file approval takes over Ctrl-O and resolves back to the inline transcript
+pass	all	tui-resume.test.ts	a shell approval handoff does not duplicate a long Ctrl-O transcript in scrollback
+pass	all	tui-resume.test.ts	a shell approval takes over Ctrl-O and accepts its choice inline
+pass	all	tui-resume.test.ts	active command overflow marks Ctrl-O incomplete until terminal replay attaches
+pass	all	tui-resume.test.ts	an ask-user prompt takes over Ctrl-O and accepts its choice inline
+pass	all	tui-resume.test.ts	answered question cards survive flag and picker resume
+pass	all	tui-resume.test.ts	approved-shell command output normalizes controls in Ctrl-O and resume views
+pass	all	tui-resume.test.ts	cancelled below-cap command exposes its TERM tail only through Ctrl-O
+pass	all	tui-resume.test.ts	cancelled cap-crossing command keeps grouped rows stable and Ctrl-O opens its artifact
+pass	all	tui-resume.test.ts	cancelled command presentation survives a distinct-process resume
+pass	all	tui-resume.test.ts	cap-crossing command output stays durable while grouped compact returns to input
+pass	all	tui-resume.test.ts	closing the startup resume picker starts a writable fresh session
+pass	all	tui-resume.test.ts	command output folding survives flag and picker resume
+pass	all	tui-resume.test.ts	contended startup resume stays non-interactive and recovers after release
+pass	all	tui-resume.test.ts	context-deferred scoped tools remain deferred after resume
+pass	all	tui-resume.test.ts	graceful exit prints an exact resume command
+pass	all	tui-resume.test.ts	grouped command status stays compact while Ctrl-O keeps detail
+pass	all	tui-resume.test.ts	interactive /resume highlight reaches bottom before the list scrolls
+pass	all	tui-resume.test.ts	interactive /resume keeps shared-prefix titles distinguishable at narrow widths
+pass	all	tui-resume.test.ts	interactive /resume loads more sessions and dismisses cleanly
+pass	all	tui-resume.test.ts	interactive /resume opens a searchable scoped catalog and resumes the selection
+pass	all	tui-resume.test.ts	interactive /resume refuses a live stream and preserves Escape cancellation
+pass	all	tui-resume.test.ts	interactive resume aliases restore history and return to a live composer
+pass	all	tui-resume.test.ts	interactive resume shows session contention and retries the preserved selection
+pass	all	tui-resume.test.ts	new and resumed sessions drop kill-ring and large-paste backing state
+pass	all	tui-resume.test.ts	new and resumed sessions preserve native terminal scrollback while fx is active
+pass	all	tui-resume.test.ts	paginated semantic field lookup matches values across split cards
+pass	all	tui-resume.test.ts	rapid Ctrl-C during active-turn exit preserves the resume handoff
+pass	all	tui-resume.test.ts	recorded file diffs survive resume and retain their Ctrl-O detail
+pass	all	tui-resume.test.ts	saved fx ask metadata appears after interactive Ctrl-O resume
+pass	all	tui-resume.test.ts	session resume command group opens last and explicit session ids
+pass	all	tui-resume.test.ts	streamed document append preserves native scrollback without ONLCR
+pass	all	tui-resume.test.ts	streaming scroll stays inline while Ctrl-O preserves native selection and ignores horizontal arrows
+pass	all	tui-resume.test.ts	upgrade ctrl-g reloads the background-installed binary and resumes
+pass	all	tui-resume.test.ts	upgrade ctrl-g repairs an exact corrupt boundary and resumes
+pass	all	tui-resume.test.ts	volatile status rows normalize before stable-grid comparison
+pass	all	tui-resume.test.ts	zero-output cancelled command restores its row without an output block
+pass	all	tui-slash-commands.test.ts	tui: no-key slash commands > /permissions shows state before switching usage and leaves a live composer
+pass	all	tui-slash-commands.test.ts	tui: no-key slash commands > /undo reports the exact empty state
+pass	all	tui-slash-commands.test.ts	tui: no-key slash commands > compact status notice preserves native scrollback
+skip	all	tui-slash-commands.test.ts	tui: slash commands > /compact shows compaction message
+skip	all	tui-slash-commands.test.ts	tui: slash commands > /model Enter lists available models inline
+skip	all	tui-slash-commands.test.ts	tui: slash commands > /settings opens the settings catalog
+skip	all	tui-slash-commands.test.ts	tui: slash commands > /status shows session info
+skip	all	tui-slash-commands.test.ts	tui: slash commands > unknown and removed commands show errors
+pass	all	tui-slash-extra.test.ts	tui: active session transitions > active /clear cancels a fake Gateway turn and accepts a follow-up prompt
+pass	all	tui-slash-extra.test.ts	tui: clipboard host > /copy sends exact reply bytes to the host clipboard and reports process failure
+pass	all	tui-slash-extra.test.ts	tui: credits slash command > /credits shows actionable Gateway denial and returns to prompt
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /alias shows alias list
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /clear clears the screen
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /clear resets projected history before the next prompt
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /copy handles empty history gracefully
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /credits shows credit info
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /mcp add and remove stay inside the menu and use the profile owner
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /mcp browses live typed catalogs and inserts a resource preview without submitting
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /mcp opens an inline menu without changing the transcript
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /mcp project trust approval and rejection remain menu-owned
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /new resets to a fresh prompt
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /skills opens the skills menu
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /stats shows session statistics
+skip	all	tui-slash-extra.test.ts	tui: extra slash commands > /usage and /cost open the same compact local usage dashboard
+pass	all	tui-slash-extra.test.ts	tui: skills command recovery > invalid /skills create name reports an inline error and preserves the session
+pass	all	tui-slash-menu.test.ts	slash menu selection index ignores the welcome header help hint
+pass	all	tui-slash-menu.test.ts	tui: slash menu > Escape closes a visible slash menu without cancelling an active stream
+pass	all	tui-slash-menu.test.ts	tui: slash menu > Escape closes slash picker until the slash trigger restarts
+pass	all	tui-slash-menu.test.ts	tui: slash menu > Escape closes the inline skills menu without cancelling an active stream
+pass	all	tui-slash-menu.test.ts	tui: slash menu > command and completion menus stay inline with the composer
+pass	all	tui-slash-menu.test.ts	tui: slash menu > compact catalogs keep their actionable rows visible
+pass	all	tui-slash-menu.test.ts	tui: slash menu > file approval returns to the preserved inline skills menu
+pass	all	tui-slash-menu.test.ts	tui: slash menu > help command filters the catalog and opens selected commands
+pass	all	tui-slash-menu.test.ts	tui: slash menu > large skills list moves through visible rows before scrolling
+pass	all	tui-slash-menu.test.ts	tui: slash menu > linked skill metadata is visible and usable from the skills menu
+pass	all	tui-slash-menu.test.ts	tui: slash menu > linked workspace skill is visible and usable from the skills menu
+pass	all	tui-slash-menu.test.ts	tui: slash menu > model Enter opens an inline provider catalog and selects through the existing model flow
+pass	all	tui-slash-menu.test.ts	tui: slash menu > model inline catalog keeps shared-prefix ids distinguishable at narrow widths
+pass	all	tui-slash-menu.test.ts	tui: slash menu > model picker skips effort stage for reasoning models without declared tiers
+pass	all	tui-slash-menu.test.ts	tui: slash menu > selected dollar skill token stays formatted after submit and reflow
+pass	all	tui-slash-menu.test.ts	tui: slash menu > selected duplicate skill binds one advertised location
+pass	all	tui-slash-menu.test.ts	tui: slash menu > settings can hide slash menu metadata and persist the choice
+pass	all	tui-slash-menu.test.ts	tui: slash menu > settings command opens the inline list and saves selected values
+pass	all	tui-slash-menu.test.ts	tui: slash menu > shell variable with no skill match keeps spaces and submits raw
+pass	all	tui-slash-menu.test.ts	tui: slash menu > skill picker selects a name match before a metadata-only match
+pass	all	tui-slash-menu.test.ts	tui: slash menu > skills catalog keeps direct Ctrl-X and escaped Ctrl-X returns to the composer
+pass	all	tui-slash-menu.test.ts	tui: slash menu > slash menu highlight reaches bottom before the list scrolls
+pass	all	tui-slash-menu.test.ts	tui: slash menu > slash menu remains alive when descriptions clip in a narrow terminal
+pass	all	tui-slash-menu.test.ts	tui: slash menu > slash menu renders its header described rows categories and controls
+pass	all	tui-slash-menu.test.ts	tui: slash menu > slash picker growth preserves displaced transcript history
+pass	all	tui-slash-menu.test.ts	tui: slash menu > slash query lifecycle keeps eligibility projection and submission aligned
+pass	all	tui-slash-menu.test.ts	tui: slash menu > space after matched dollar token inserts and closes the menu
+pass	all	tui-slash-menu.test.ts	tui: slash menu > statusline command toggles independent items from a compact inline panel
+pass	all	tui-slash-menu.test.ts	tui: slash menu > submitting clear from the slash menu does not crash
+pass	all	tui-slash-menu.test.ts	tui: slash menu > terminal tab title follows the session name across rename and resume
+pass	all	tui-slash-menu.test.ts	tui: slash menu > unavailable linked skill reports the failing directory boundary
+pass	all	tui-slash-menu.test.ts	tui: slash menu > usage and cost commands open one compact inline dashboard
+pass	all	tui-slash-menu.test.ts	tui: slash menu > usage dashboard changes scope, selects and expands models, and refreshes
+pass	all	tui-slash-menu.test.ts	tui: slash menu > usage dashboard preserves ledger totals when recovery storage is unsafe
+pass	all	tui-slash-menu.test.ts	tui: slash menu > usage dashboard reaches Session when every rolling scope is unavailable
+pass	all	tui-slash-menu.test.ts	tui: slash menu > usage dashboard reopen discovers usage created after its initial snapshot
+pass	all	tui-slash-menu.test.ts	tui: slash menu > usage dashboard retry recovers after profile initialization becomes safe
+pass	all	tui-slash-menu.test.ts	tui: slash menu > workspace command opens a compact inline manager and prepares existing commands
+pass	all	tui-startup.test.ts	tui: MCP startup > unresponsive MCP discovery does not block startup or shutdown
+pass	all	tui-startup.test.ts	tui: credential onboarding > /setup opens an inline status-first hub
+pass	all	tui-startup.test.ts	tui: credential onboarding > startup shows credential onboarding on the first frame and Escape remains session-only
+pass	all	tui-startup.test.ts	tui: fresh-session commands > /help keeps command descriptions close after a wide-to-narrow resize
+pass	all	tui-startup.test.ts	tui: fresh-session commands > restore the launch header without retaining prior output
+pass	all	tui-startup.test.ts	tui: fresh-session commands > statusline hides the workspace identity by default
+pass	all	tui-startup.test.ts	tui: fresh-session commands > statusline refreshes the working directory and Git branch
+skip	all	tui-startup.test.ts	tui: startup and exit > /help opens the command catalog
+skip	all	tui-startup.test.ts	tui: startup and exit > /quit exits cleanly
+skip	all	tui-startup.test.ts	tui: startup and exit > fx launches and shows prompt
+pass	all	tui-terminal-tool.test.ts	overlapping captured shell handles keep lifecycle output isolated
+pass	all	tui-terminal-tool.test.ts	resumed fx reindexes and stops its durable managed TTY
+pass	all	tui-terminal-tool.test.ts	reused provider call ids start distinct captured commands
+pass	all	tui-terminal-tool.test.ts	running shell survives a model-completed turn without handoff policy
+pass	all	tui-terminal-tool.test.ts	shell TTY execution writes atomically drains final output and closes host state
+pass	all	tui-terminal-tool.test.ts	shell TTY timeout stops the owned process and reports the deadline
+pass	all	tui-terminal-tool.test.ts	shell TTY writes advance one runtime-owned cursor without duplicate output
+pass	all	tui-terminal-tool.test.ts	shell captured execution yields one handle and waits without respawn
+pass	all	tui-terminal-tool.test.ts	shell interact sends exact control characters
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > Vision outage is an ordinary failed tool result with the exact notice
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > catalog failure explains unresolved image capability in text mode
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > catalog failure hides Vision and rejects unresolved image input
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > cold resume rebases image ids and preserves authority across both model-switch directions
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > empty successful Vision provider output is invalid and permits one recovery request
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > fx ask applies image_adapter_output_bytes to Vision provider capture
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > fx ask ends the post-Vision prompt with user decision guidance
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > fx ask executes path-source Vision and cleans transient snapshots without failure telemetry
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > fx ask gates GLM images through Vision without leaking paths
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > fx ask normalizes encoded-oversized native images on macOS and rejects elsewhere
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > fx ask preserves native image parts for Gemini
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > fx ask rejects missing images before Gateway startup in text and JSON modes
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > fx ask uses Kimi native vision without Vision tool
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > legacy zero image ids repair through durable resume and remain readable after model switch
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > malformed Vision provider output retries once before reporting parser failure
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > missing or corrupted owned snapshots fail without a Vision provider request
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > one corrupt first-batch image keeps twenty-image provider batches at seven eight four
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > one corrupt image does not block its healthy sibling from Vision
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > one malformed Vision provider response is retried and recovers the same image
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > one-of-two provider omission preserves evidence without retrying the batch
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > oversized images are rejected once before Gateway startup and the TUI stays alive
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > required Vision rejects read_file and remains required before normal Vision recovery
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > saved unadvertised native Vision rejection recovers and is filtered after resume
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > source replacement deletion and symlink retarget do not change captured Vision bytes
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > text-only Kimi ask resolves capability and hides Vision
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > text-only non-native ask resolves capability and exposes Vision
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux @ home image path attaches and completes the Vision flow
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux path-source Vision accepts hard-linked regular images
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux path-source Vision approval names the canonical image
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux path-source Vision executes the canonical target approved by the user
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux path-source Vision rejects FIFO replacement of the approved canonical target
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux path-source Vision rejects regular-file replacement of the approved canonical target
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux path-source Vision rejects symlink replacement of the approved canonical target
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux path-source Vision returns FIFO failures without waiting for a peer
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux path-source Vision returns Unix socket failures to the model
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux path-source Vision returns directory failures to the model
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux preserves typed permission feedback across a text-only Vision step
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux preserves unresolved image-looking paths as prompt text
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > tmux shows ordinary Vision approval activity failure and exact outage tip
+pass	all	vision-route-fake-gateway.test.ts	Vision route fake Gateway > twenty text-only images use sequential Vision provider batches of eight eight and four
+pass	all	web-fetch-fake-network.test.ts	web_fetch Gateway fixture > ACP explicit deny emits no web_fetch progress or target request
+pass	all	web-fetch-fake-network.test.ts	web_fetch Gateway fixture > auto parallel invalid web_fetch does not suppress a valid read_file sibling
+pass	all	web-fetch-fake-network.test.ts	web_fetch Gateway fixture > default fx ask validates malformed web_fetch before transport
+pass	all	web-fetch-fake-network.test.ts	web_fetch Gateway fixture > default policy validates malformed web_fetch before transport
+pass	all	web-fetch-fake-network.test.ts	web_fetch Gateway fixture > invalid credentialed web_fetch persists no URL credentials
+pass	all	web-fetch-fake-network.test.ts	web_fetch Gateway fixture > parallel fallback emits one invalid web_fetch ACP lifecycle
+pass	all	web-fetch-fake-network.test.ts	web_fetch Gateway fixture > parallel fallback reports invalid web_fetch once in Ask JSON
+pass	all	web-fetch-fake-network.test.ts	web_fetch Gateway fixture > representative providers receive the same strict public web_fetch schema
+skip	all	web-fetch-live.test.ts	live web_fetch public URL > authorized public HTML URL reports progress and cache metadata
+skip	all	web-fetch-live.test.ts	live web_fetch public URL > authorized public binary URL stores a durable artifact without raw bytes in session JSON
+skip	all	web-fetch-live.test.ts	live web_fetch public URL > models endpoint returns non-empty content through the fresh binary
+skip	all	web-fetch-live.test.ts	live web_fetch public URL > robots endpoint returns non-empty content through the fresh binary
+pass	all	web-fetch-permission-progress.test.ts	web_fetch permission progress > default ask emits no native fetch progress before authentication
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > ACP cancel interrupts an active direct provider stream and leaves the server usable
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > ACP completes direct provider search without native progress events
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > ACP policy denial omits direct provider search
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > default ask selects the direct Parallel provider backend
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > default fx ask applies environment model, permission, and step-limit overrides
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > default fx ask unadvertised native web_search cannot start a worker
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > direct provider may return zero results without a worker retry
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > duplicate authoritative tool ids fail before local redispatch
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > explicit ask and deny omit direct provider search
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > fx ask preserves the exact GLM model while sending declared Fast
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > malformed direct provider arguments fail before synthesis
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > malformed direct provider result identity fails before synthesis
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > no-rule default uses direct Exa search and returns a linked source
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > outer effort is preserved across direct provider search
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > stale persisted Anthropic efforts are filtered without mutating settings
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > unadvertised native web_search cannot start a worker
+pass	all	web-search-fake-gateway.test.ts	web_search Gateway fixture > unknown direct provider backend selector fails before a Gateway request
+skip	all	web-search-live.test.ts	live web_search private backends > ai_gateway_exa_search returns a linked cited source with request diagnostics
+skip	all	web-search-live.test.ts	live web_search private backends > ai_gateway_parallel_search returns a linked cited source with request diagnostics
+pass	all	web-search-permission-progress.test.ts	web_search permission progress > default ask emits no native search progress before authentication
+pass	all	web-search-permission-progress.test.ts	web_search permission progress > help does not print the ordinary tool inventory
+pass	all	yolo-permission-mode.test.ts	yolo interactive mode > Shift+Tab applies auto to a later tool call in the active turn
+pass	all	yolo-permission-mode.test.ts	yolo interactive mode > Shift+Tab cycles through yolo and warning time pauses behind menus
+pass	all	yolo-permission-mode.test.ts	yolo interactive mode > Shift+Tab tightening to ask gates a later tool call in the active turn
+pass	all	yolo-permission-mode.test.ts	yolo interactive mode > a pending ctrl+c keeps its quit hint intact and pauses the warning at 60 columns
+pass	all	yolo-permission-mode.test.ts	yolo permission mode > headless mode warns once, bypasses configured denial, and keeps stdout clean
+pass	all	yolo-permission-mode.test.ts	yolo permission mode > legacy sandbox config is inert and ps executes once
+pass	all	yolo-permission-mode.test.ts	yolo permission mode > status omits sandbox while preserving the legacy configured value
