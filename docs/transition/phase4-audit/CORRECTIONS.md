@@ -371,3 +371,54 @@ exists. Help rendering is live. Retracted as unfindable.
 
 "Constant completion-policy fields with no varying spec" likewise matched no
 `completion_policy` or `CompletionPolicy` symbol. Retracted as unfindable.
+
+## Slice 21: the subagent relationship index is a reader without a writer
+
+Not a retraction, a deferral with evidence. Production opens
+`relationship-index.bin` for reading at `session_store.zig:3053`, but the only
+write of that file in the repository is a test fixture at `:10368`.
+`session_relationship_index_codec.encodePage` has no reference anywhere and
+`encodeHeader` only that fixture, while `decodeHeader`, `decodePage`, and
+`pageFileName` are all live on the read path.
+
+So the whole subagent relationship index is a reader for a file Fiber never
+produces. That is a seam question rather than a dead-declaration one, and
+deleting half of a codec pair would answer nothing, so Slice 21 left it intact.
+**Routed to Slice 26.**
+
+## Slice 22: most of the remaining UI surface is wrappers, not dead code
+
+Slice 22a deleted the genuinely dead part: the `subagent_panel` variant in three
+enums, the one-value `BodyMode`, and twenty declarations whose only reference was
+their own definition. After it, `src/ui` had **zero** `prod=0 test=0`
+declarations left.
+
+The inventory's other Slice 22 rows -- "dead transcript preview, reconstruction,
+wrapping, and resume-projection chains", "dead row formatting and resize-reflow
+variants", "dead editor cursor methods duplicated by live navigation functions"
+-- do not resolve to dead code. Measured, the remaining 202 `prod=0 test>0`
+declarations in `src/ui` are dominated by two populations that must not be
+deleted as dead:
+
+1. **Non-interruptible convenience wrappers.** `src/` has 20
+   `...Interruptible` functions. Production calls the interruptible form because
+   it has to yield to input; tests call the simpler twin. Five of those twins are
+   `prod=0` in `src/ui` alone: `wrapLiteralToolOutput`,
+   `renderProjectionViewportSource`, `renderProjectionViewportSourceWithSelector`,
+   `measureProjection`, and `buildStyledFocused`. Same shape without the naming
+   convention: `buildInputLine` over `buildInputLineForRow`, and
+   `inlineApprovalPanelRows` over `inlineApprovalPanelRowsForCommand`. Deleting
+   these does not remove dead weight; it forces every test to thread an extra
+   `null` argument. That is a style decision about whether the convenience
+   overload earns its keep, not a deletion. **Routed to Slice 25**, which owns
+   single-caller residue.
+
+2. **Test instruments.** `stripAnsi` in `code_highlight.zig` and `overlayPlan` in
+   `frame_surface.zig` read as production-shaped but exist so tests can assert
+   against live behaviour -- `stripAnsi` backs three tests that check
+   highlighting leaves code bytes unchanged. These are exactly the family the
+   handoff warns about after Slice 4. **Retained.**
+
+`shortcutFromControlByte` in `ui/input/runtime.zig` was checked and kept for the
+same reason: unlike the two sibling aliases deleted in Slice 22a, which had zero
+references, it backs four tests in `app_input_runtime.zig`.
