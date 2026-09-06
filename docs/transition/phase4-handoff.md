@@ -1,6 +1,6 @@
 # Handoff: Fiber Phase 4 simplification
 
-Rewritten 2026-09-05 after Slice 16. Supersedes every earlier copy.
+Rewritten 2026-09-06 after Slice 20. Supersedes every earlier copy.
 
 ## Read first
 
@@ -19,9 +19,16 @@ slice.** Slice 16 proved the inventory wrong in both directions at once.
 
 ## Where the work stands
 
-Slices 0 through 16 are committed on `main`. The working tree is clean.
+Slices 0 through 20 are committed on `main`. The working tree is clean.
 
 ```
+1230e87e Slice 20: delete dead MCP declarations
+4ce80e1d Slice 19: retarget the reviewer model and delete dead execution code
+32209fa3 Slice 18: delete dead agent and subagent declarations
+f474e2d4 Slice 16b: delete the dead standalone device-code poll entry point
+89cbe9b6 Record the Slice 16 and 17 audit corrections
+acaa65be Slice 17: delete the empty top-level resource chain and dead command residue
+352d08ea Update the Phase 4 handoff after Slice 16
 8a24bb73 Slice 16: delete the dead OAuth helper family
 00c89f49 Slice 15c: finish the native host profile and record the re-audit
 b20f559c Slice 15: collapse the native host profile
@@ -40,9 +47,9 @@ in its own commit message. Read the message before re-deriving anything.
 
 | Signal | Opening (`38496f4c`) | Now (`8a24bb73`) |
 | --- | --- | --- |
-| main test binary | 7287 pass, 2 skip, 7289 total | 7241, 2, 7243 |
+| main test binary | 7287 pass, 2 skip, 7289 total | 7234, 2, 7236 |
 | lazy-analysis probe | 7791 total, 502 never analysed | 7744 / 498 at `b20f559c` |
-| `zlint` | 0 errors, 111 warnings, 496 files | 0, 106, 492 |
+| `zlint` | 0 errors, 111 warnings, 496 files | 0, **85**, 492 |
 | `zig fmt --check src/` | clean | clean |
 | `./scripts/smoke.sh` | ok | ok |
 
@@ -179,15 +186,19 @@ harness onto Codex), and the Slice 0 gate repair stands. The owner authorised
 autonomous execution: route around anything needing a decision, record it, and
 stop only if everything is blocked.
 
-**Open, asked, unanswered:**
+**All resolved by the owner on 2026-09-05:**
 
-- **Decision 5** — the device-code OAuth polling chain
-  (`pollForTokenWithDeps`, `LoginPollDeps`, `realPollDeviceToken`,
-  `oauth.pollDeviceTokenBounded`) has no production caller, but the inventory
-  says to retain polling. 300-400 lines. Slice 16 shipped without touching it.
-- **Decision 6** — `zlint` zero `unused-decls` is a phase-exit criterion. The
-  count is 106 and no slice owns it, so Slice 27 inherits all of them. Blocker
-  or target?
+- **Decision 5** — delete the device-code OAuth chain. **The evidence behind the
+  question was wrong and the scope was corrected before acting.**
+  `LoginPollDeps`, `LoginPollState`, and `realPollDeviceToken` are live:
+  `chatgpt_oauth.zig:80` injects `pollBrowserToken` into the polling machinery
+  rather than bypassing it. Only `pollForTokenWithDeps` was dead. Shipped as
+  Slice 16b, 145 lines, not the 300-400 first claimed.
+- **Decision 6** — neither blocker nor target. A dedicated end-of-phase slice
+  categorizes each remaining `zlint` warning and resolves it individually.
+  Added to the inventory as **Slice 28**.
+- **Decision 7** — leave `admitChildPermission` and its test alone. The `.yolo`
+  default note stands as an observation for outside Phase 4.
 
 Earlier: decision 4 keeps `buildAgentRequest` and `provider_bundle`; decision 3
 is withdrawn; `CORRECTIONS.md` records that merged-settings `credential_source`
@@ -195,11 +206,55 @@ is parsed and never read, deferred to Slice 25 or 27 as a product decision.
 
 ## Next actions
 
-1. **Slice 17**, dead command and builtin wrappers. Scan `src/builtins` first.
-2. Slices 18-25, each with its surface re-derived before it opens. `REAUDIT.md`
+1. **Slice 21**, terminal and session. Scans of `src/core/terminal` and
+   `src/core/session` were running when this was written; rerun them.
+   **This slice has the tightest retention rule in the series:** stop if a
+   candidate participates in serialization, hashing, authority checks, or
+   recovery of a retained record. Those touch persisted session data that must
+   stay readable.
+2. Slices 22-25, each with its surface re-derived before it opens. `REAUDIT.md`
    lists the merges worth making by subsystem.
-3. Slice 26, the implementation-seam audit. It inherits the
-   `host.Capabilities.terminal` measurement and the model-catalog field question
-   from Slice 16.
-4. Slice 27, the final sweep, which currently inherits 106 zlint warnings.
-5. Phase exit criteria are at the bottom of `simplification-inventory.md`.
+3. Slice 26, the implementation-seam audit. It inherits three measurements:
+   `host.Capabilities.terminal` from Slice 15c, the model-catalog field question
+   from Slice 16, and `LoginPollDeps.poll_device_token` from Slice 16b, a
+   defaulted function pointer with one overriding caller.
+4. Slice 27, the final sweep. Also owns retargeting the
+   `"moonshotai/kimi-k3"` fixture data at `app_render_runtime.zig:3395-3397`.
+5. **Slice 28**, the zlint categorization slice the owner added. 85 warnings
+   remain, down from 111; the deletion slices have been clearing them as a side
+   effect.
+6. Phase exit criteria are at the bottom of `simplification-inventory.md`.
+
+## What the last five slices established about the inventory
+
+**It is a good map of where dead code lives and an unreliable one of what is
+dead.** Re-derive every surface before opening a slice. So far:
+
+- Slice 16's model-catalog half: 0 dead of 41 declarations scanned.
+- Slice 17's headline claim, dead re-exports across three builtins files: 20 of
+  22 have real callers, up to 774. Two of its rows named symbols that do not
+  exist in the tree.
+- Slice 16's "retain polling" instruction pointed at code that was partly dead.
+- Slice 19's Kimi row was correct and precise.
+
+All retractions are written into `CORRECTIONS.md` rather than skipped, because
+phase exit requires every audit row to be explicitly resolved.
+
+## Two near-misses worth not repeating
+
+Both were caught before shipping, both were the same failure: **a grep or a scan
+answered a narrower question than the claim being made.**
+
+1. The declaration scanner reports references to a *name*, not reachability.
+   `pollForTokenWithDeps` having no production caller does not make
+   `LoginPollDeps` dead. Dependency injection makes a chain look dead from its
+   default entry point while production reaches it through an injected callback.
+   A defaulted function pointer's only reference is its own field initialiser,
+   which reads as dead while the field is live.
+2. A `grep | head -12` truncated away the MCP PKCE call sites and briefly made
+   it look like MCP ran an OAuth authorization-code flow without PKCE. It does
+   not: `code_challenge` with `S256` at `mcp_auth.zig:1541`, verifier at
+   `:1652`.
+
+Before writing a claim of the form "X is dead" or "Y is missing", run the
+un-truncated grep for every name in the chain.
