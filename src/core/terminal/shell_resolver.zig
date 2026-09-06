@@ -103,7 +103,7 @@ pub fn resolve(
 }
 
 pub fn configuredLoginShellInto(buffer: []u8) ?[]const u8 {
-    if (comptime !builtin.link_libc or builtin.os.tag == .windows or builtin.os.tag == .wasi) {
+    if (comptime !builtin.link_libc) {
         return null;
     }
     var entry: std.c.passwd = undefined;

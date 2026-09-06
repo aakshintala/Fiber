@@ -156,10 +156,6 @@ pub fn nativeForOs(os_tag: std.Target.Os.Tag) Capabilities {
 /// Returns an owned description of the current operating system. The caller
 /// owns the returned slice and must free it with `alloc`.
 pub fn operatingSystemText(alloc: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return alloc.dupe(u8, @tagName(builtin.os.tag));
-    }
-
     const uts = std.posix.uname();
     const sysname = std.mem.sliceTo(&uts.sysname, 0);
     const release = std.mem.sliceTo(&uts.release, 0);
@@ -250,7 +246,4 @@ test "current host describes its operating system" {
     defer std.testing.allocator.free(text);
 
     try std.testing.expect(text.len > 0);
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        try std.testing.expectEqualStrings(@tagName(builtin.os.tag), text);
-    }
 }

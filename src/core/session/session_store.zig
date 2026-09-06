@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const config_runtime = @import("../config/config_runtime.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const image_attachments = @import("../images/image_attachments.zig");
@@ -11867,7 +11866,6 @@ test "missing home is empty for reads and bootstrapped privately for writes" {
 }
 
 test "first write traces and maps shared layout failure" {
-    if (comptime builtin.os.tag == .windows) return;
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

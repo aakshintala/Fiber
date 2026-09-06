@@ -547,9 +547,6 @@ test "MCP Keychain storage round-trips values beyond the security prompt limit" 
 }
 
 test "cancellable MCP Keychain runner interrupts and reaps a stalled child" {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
     const Canceller = struct {
         flag: *std.atomic.Value(bool),
 
@@ -577,9 +574,6 @@ test "cancellable MCP Keychain runner interrupts and reaps a stalled child" {
 }
 
 test "default Keychain availability probe is cancellable" {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
     const Canceller = struct {
         flag: *std.atomic.Value(bool),
 
@@ -606,9 +600,6 @@ test "default Keychain availability probe is cancellable" {
 }
 
 test "cancellable MCP Keychain store wait interrupts a stalled child" {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
     const Canceller = struct {
         flag: *std.atomic.Value(bool),
 

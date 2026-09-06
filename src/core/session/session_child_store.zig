@@ -1317,11 +1317,6 @@ fn countEntries(dir: std.Io.Dir) !usize {
 }
 
 test "private read-only file remains valid after atomic replacement unlinks it" {
-    if (comptime @import("builtin").os.tag == .windows or
-        @import("builtin").os.tag == .wasi)
-    {
-        return error.SkipZigTest;
-    }
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 

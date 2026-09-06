@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const command_output_content = @import("../tooling/command_output_content.zig");
 const io_mod = @import("../shared/io.zig");
 const text_utils = @import("../shared/text_utils.zig");
@@ -162,9 +161,6 @@ pub const EphemeralStore = struct {
         alloc: Allocator,
         stem: []const u8,
     ) !OpenSpool {
-        if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-            return error.EphemeralReplayUnavailable;
-        }
         const handle = try std.fmt.allocPrint(alloc, "{s}.bin", .{stem});
         errdefer alloc.free(handle);
         const temp_name = try std.fmt.allocPrint(alloc, ".{s}.tmp", .{stem});
@@ -223,9 +219,6 @@ pub const EphemeralStore = struct {
 };
 
 fn duplicateFile(file: std.Io.File) !std.Io.File {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.EphemeralReplayUnavailable;
-    }
     const duplicated = std.c.fcntl(file.handle, std.c.F.DUPFD_CLOEXEC, @as(std.c.fd_t, 0));
     if (duplicated < 0) return error.EphemeralReplayUnavailable;
     return .{
