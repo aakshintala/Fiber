@@ -56,7 +56,6 @@ pub const SemanticPresentationSink = struct {
 
 pub const StreamChunkContext = struct {
     hooks: *const AgentRuntimeDeps,
-    flush_assistant_stream_per_content_chunk: bool = false,
     semantic_presentation: ?SemanticPresentationSink = null,
     token_progress: ?*runtime_telemetry.TurnSummaryAccumulator = null,
     turn_id: u64,
@@ -186,9 +185,6 @@ pub fn onStreamContentChunk(ctx: *anyopaque, chunk: []const u8) void {
         };
     }
     streamAssistantChunk(stream_ctx, chunk) catch {};
-    if (stream_ctx.flush_assistant_stream_per_content_chunk) {
-        flushAssistantStream(stream_ctx) catch {};
-    }
 }
 
 pub fn onStreamReasoningChunk(ctx: *anyopaque, chunk: []const u8) void {
@@ -1122,7 +1118,6 @@ test "presented recovery source seeds continuation without rendering twice" {
     var hook_set = capture.hooks();
     var stream_ctx = StreamChunkContext{
         .hooks = &hook_set,
-        .flush_assistant_stream_per_content_chunk = true,
         .turn_id = 1,
         .alloc = alloc,
     };
@@ -1136,6 +1131,7 @@ test "presented recovery source seeds continuation without rendering twice" {
 
     stream_ctx.beginRecoveryAttempt();
     onStreamContentChunk(&stream_ctx, "Partial output before EOF.Recovered final output once.");
+    try flushAssistantStream(&stream_ctx);
 
     try std.testing.expectEqualStrings(
         "Partial output before EOF.Recovered final output once.",

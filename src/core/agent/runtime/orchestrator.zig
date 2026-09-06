@@ -4301,7 +4301,6 @@ fn processQueuedPromptLoop(
 
         var stream_ctx = runtime_assistant_stream.StreamChunkContext{
             .hooks = deps,
-            .flush_assistant_stream_per_content_chunk = deps.flush_assistant_stream_per_content_chunk,
             .semantic_presentation = semantic_presentation,
             .token_progress = &summary_accumulator,
             .turn_id = turn_id,
