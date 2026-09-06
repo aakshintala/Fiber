@@ -54,9 +54,36 @@ except this meta-test, which the probe breaks by construction".
 
 ## Decision 5 — the device-code OAuth polling chain looks dead, and the plan says retain it
 
-Raised at Slice 16, 2026-09-05. **RESOLVED 2026-09-05: delete it.** Owner
-directed deletion; the inventory's retain line is stale, consistent with the
-three other claims measurement refuted. Executed as Slice 16b.
+Raised at Slice 16, 2026-09-05. **RESOLVED 2026-09-05, on corrected evidence.**
+
+**The evidence in the original write-up below was wrong and the scope was
+overstated.** It claimed `LoginPollDeps`, `LoginPollState`, and
+`realPollDeviceToken` had no production caller, at 300-400 lines. They are live.
+
+`chatgpt_oauth.zig:80` calls `startPrepared` with
+`.poll = .{ .ctx = browser.context, .poll_device_token = pollBrowserToken }`.
+`LoginPollDeps` is a field of `SignInRuntimeDeps`, and `startPreparedWithMode`
+calls `LoginPollState.init(deps.poll, prepared.device)`. The browser sign-in path
+does not bypass the polling machinery, it **injects into** it, substituting its
+own poll function for the default. So `LoginPollDeps`, `LoginPollState`,
+`pollCancelled`, the poll-step and wait helpers, and `oauth.PollResult`,
+`Metadata`, `TokenSet`, and `DeviceAuthorization` are all reachable from
+production.
+
+The error was reading "`pollForTokenWithDeps` has no production caller" from the
+declaration scanner and generalising it to the chain it sits in. The scanner
+reports declaration references, not reachability.
+
+Only `pollForTokenWithDeps` itself was dead: a standalone entry point with seven
+tests and no production caller. Deleted in Slice 16b, 145 lines.
+
+`realPollDeviceToken` and `oauth.pollDeviceTokenBounded` are **retained**. They
+are the *default* value of `LoginPollDeps.poll_device_token`, which the one
+production constructor overrides. A defaulted function pointer with a single
+overriding caller is a seam question for Slice 26, not dead code, and removing
+the default would force every caller to populate the field.
+
+Owner confirmed this narrowed scope before it was executed.
 
 `simplification-inventory.md` tells Slice 16 to "Retain live Codex token parsing,
 device authorization, polling, credential resolution, catalog parsing, and public
