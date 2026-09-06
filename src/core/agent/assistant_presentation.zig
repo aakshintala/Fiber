@@ -186,16 +186,6 @@ pub const MarkdownProcessor = struct {
         try self.pushWithCompletions(alloc, input, out, .{});
     }
 
-    pub fn pushWithTableCompletion(
-        self: *MarkdownProcessor,
-        alloc: Allocator,
-        input: []const u8,
-        out: *std.ArrayList(u8),
-        completion: ?*const payload.TableCompletion,
-    ) !void {
-        try self.pushWithCompletions(alloc, input, out, .{ .table = completion });
-    }
-
     pub fn pushWithCompletions(
         self: *MarkdownProcessor,
         alloc: Allocator,
@@ -247,15 +237,6 @@ pub const MarkdownProcessor = struct {
 
     pub fn flush(self: *MarkdownProcessor, alloc: Allocator, out: *std.ArrayList(u8)) !void {
         try self.flushWithCompletions(alloc, out, .{});
-    }
-
-    pub fn flushWithTableCompletion(
-        self: *MarkdownProcessor,
-        alloc: Allocator,
-        out: *std.ArrayList(u8),
-        completion: ?*const payload.TableCompletion,
-    ) !void {
-        try self.flushWithCompletions(alloc, out, .{ .table = completion });
     }
 
     pub fn flushWithCompletions(

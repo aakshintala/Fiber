@@ -1035,58 +1035,6 @@ fn finishCollectedProcess(
     return result;
 }
 
-fn executeProcessWithInput(
-    scratch: Allocator,
-    cfg: Config,
-    argv: []const []const u8,
-    cwd: []const u8,
-    closed_input: bool,
-    isolate_process_group: bool,
-) !CollectedProcess {
-    const started_ms = io_mod.milliTimestamp();
-    var child = try std.process.spawn(io_mod.getIo(), .{
-        .argv = argv,
-        .stdin = if (closed_input) .pipe else .ignore,
-        .stdout = .pipe,
-        .stderr = .pipe,
-        .cwd = .{ .path = cwd },
-        .pgid = if (isolate_process_group) 0 else null,
-    });
-    if (child.stdin) |input| {
-        input.close(io_mod.getIo());
-        child.stdin = null;
-    }
-
-    var output = OutputCollector.init(scratch, cfg);
-    defer output.deinit();
-
-    var child_needs_cleanup = true;
-    errdefer if (child_needs_cleanup) cleanupChild(&child);
-
-    const process_group_id = if (isolate_process_group)
-        child.id
-    else
-        null;
-    child_needs_cleanup = false;
-    const collected = try collectSpawnedProcess(
-        scratch,
-        &child,
-        &output,
-        cfg,
-        null,
-        process_group_id,
-        .process_group,
-    );
-    const duration_ms = elapsedMs(started_ms, io_mod.milliTimestamp());
-
-    return finishCollectedProcess(
-        &output,
-        collected.status,
-        duration_ms,
-        collected.source,
-    );
-}
-
 fn executeProcessWithScript(
     scratch: Allocator,
     cfg: Config,

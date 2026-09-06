@@ -5538,20 +5538,12 @@ const McpFixture = struct {
         return true;
     }
 
-    fn hasFalse(_: *anyopaque, _: []const u8) bool {
-        return false;
-    }
-
     fn validateArguments(raw_ctx: *anyopaque, arena: Allocator, _: []const u8, arguments_json: []const u8, _: tool_mcp_runtime.Access) anyerror!tool_mcp_runtime.ValidationResult {
         if (std.mem.eql(u8, arguments_json, "{\"path\":7}")) {
             return .{ .invalid = try arena.dupe(u8, "path must be a string") };
         }
         const ctx: *CountingContext = @ptrCast(@alignCast(raw_ctx));
         return .{ .valid = ctx.runtime_generation };
-    }
-
-    fn callOk(_: *anyopaque, arena: Allocator, _: []const u8, _: []const u8, _: usize, _: tool_mcp_runtime.CallOptions) anyerror!?tool_mcp_runtime.CallResult {
-        return .{ .model_output = try arena.dupe(u8, "mcp ok") };
     }
 
     fn callCounting(raw_ctx: *anyopaque, arena: Allocator, _: []const u8, _: []const u8, _: usize, _: tool_mcp_runtime.CallOptions) anyerror!?tool_mcp_runtime.CallResult {

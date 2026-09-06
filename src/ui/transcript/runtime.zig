@@ -4370,15 +4370,6 @@ pub const TranscriptRuntime = struct {
         }
     }
 
-    pub fn beginPaintSilent(self: *TranscriptRuntime) void {
-        std.debug.assert(!self.painting);
-        self.painting = true;
-    }
-
-    pub fn endPaintSilent(self: *TranscriptRuntime) void {
-        self.painting = false;
-    }
-
     pub fn assertCanMutateTranscript(self: *TranscriptRuntime) !void {
         if (@import("builtin").is_test and self.painting) return error.PaintGuardViolated;
         std.debug.assert(!self.painting);
@@ -6365,31 +6356,6 @@ pub const TranscriptRuntime = struct {
         self.full_transcript = .from_snapshot(snapshot.presentation);
         self.full_transcript_page_anchor = snapshot.page_anchor;
         self.markTranscriptDirty();
-    }
-
-    pub fn requestTailViewport(
-        self: *TranscriptRuntime,
-        request: viewport_selection.TailViewportPolicy,
-    ) void {
-        const changed = if (self.tail_viewport_request) |current|
-            !std.meta.eql(current, request)
-        else
-            true;
-        self.tail_viewport_request = request;
-        self.tail_viewport_resolution = null;
-        const has_committed_anchor = switch (self.transcript_commit_state) {
-            .invalid => false,
-            .stable, .recovering => true,
-        };
-        if (changed and has_committed_anchor) {
-            self.invalidateTranscriptAnchor("tail viewport changed");
-        }
-    }
-
-    pub fn resolvedTailViewport(
-        self: *const TranscriptRuntime,
-    ) ?viewport_selection.TailOffsetResolution {
-        return self.tail_viewport_resolution;
     }
 
     pub fn closeFullTranscriptState(self: *TranscriptRuntime) void {

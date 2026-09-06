@@ -133,10 +133,6 @@ pub const DownloadProgress = struct {
     update: *const fn (*anyopaque, u64, ?u64) void,
 };
 
-pub fn downloadFileStreaming(client: *std.http.Client, url: []const u8, dest_path: []const u8) !void {
-    return downloadFileStreamingWithProgress(client, url, dest_path, null);
-}
-
 pub fn downloadFileStreamingWithProgress(client: *std.http.Client, url: []const u8, dest_path: []const u8, progress: ?DownloadProgress) !void {
     var file = std.Io.Dir.createFileAbsolute(io_mod.getIo(), dest_path, .{}) catch return error.DownloadFailed;
     defer file.close(io_mod.getIo());

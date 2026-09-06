@@ -129,10 +129,6 @@ pub const Request = struct {
     pub fn init(messages: []const Message) Request {
         return .{ .messages = messages };
     }
-
-    pub fn initWithToolChoice(messages: []const Message, tool_choice: types.ToolChoice) Request {
-        return .{ .messages = messages, .tool_choice = tool_choice };
-    }
 };
 
 /// Frees an owned tool-call slice returned by the gateway.

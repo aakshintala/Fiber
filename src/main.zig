@@ -16,7 +16,6 @@ const usage_dashboard_runtime = @import("core/app/usage_dashboard_runtime.zig");
 const app_auth_runtime = @import("core/app/app_auth_runtime.zig");
 const app_entry_runtime = @import("core/app/app_entry_runtime.zig");
 const app_input_runtime = @import("core/app/app_input_runtime.zig");
-const input_full_transcript_runtime = @import("core/app/input_full_transcript_runtime.zig");
 const input_submit_runtime = @import("core/app/input_submit_runtime.zig");
 const core_input_runtime = @import("core/input/runtime.zig");
 const input_queue_runtime = @import("core/app/input_queue_runtime.zig");
@@ -38,10 +37,8 @@ const app_commands = @import("core/app/app_commands.zig");
 const change_tracker_mod = @import("core/workspace/change_tracker.zig");
 const context_contract = @import("core/workspace/context_contract.zig");
 const statusline_identity = @import("core/workspace/statusline_identity.zig");
-const collections = @import("core/shared/collections.zig");
 const agent_steps = @import("core/config/agent_steps.zig");
 const config_runtime = @import("core/config/config_runtime.zig");
-const model_provider = @import("core/config/model_provider.zig");
 const model_capabilities = @import("core/config/model_capabilities.zig");
 const prompt_policy = @import("core/config/prompt_policy.zig");
 const builtin_commands = @import("builtins/commands.zig");
@@ -50,14 +47,12 @@ const builtin_context = @import("builtins/context.zig");
 const builtin_gateway = @import("builtins/gateway.zig");
 const builtin_providers = @import("builtins/providers.zig");
 const openai_codex_models = @import("gateway/openai_codex_models.zig");
-const openai_codex_permission_reviewer = @import("gateway/openai_codex_permission_reviewer.zig");
 
 // Codex-only runtime: the gateway defaults died with the Vercel provider path.
 const default_model = openai_codex_models.reviewer_model;
 const codex_models_path = "";
 const agent_retry_count: usize = 0;
 const provider_set = @import("core/gateway/provider_set.zig");
-const provider_catalog = @import("core/auth/provider_catalog.zig");
 const model_catalog = @import("core/gateway/model_catalog.zig");
 const agent_stream_provider = @import("core/agent/stream_provider.zig");
 const builtin_hooks = @import("builtins/hooks.zig");
@@ -92,7 +87,6 @@ const auto_classifier_context = @import("core/permissions/auto_classifier_contex
 const agent_runtime = @import("core/agent/agent_runtime.zig");
 const assistant_presentation = @import("core/agent/assistant_presentation.zig");
 const auto_upgrade = @import("core/upgrade/auto_upgrade.zig");
-const update_target = @import("core/upgrade/update_target.zig");
 
 const shell_process_provider = @import("tools/shell/process_provider.zig");
 const process_provider = @import("core/execution/process_provider.zig");
@@ -128,7 +122,6 @@ const registered_entities = @import("core/input/registered_entities.zig");
 const entity_spans = @import("core/shared/entity_spans.zig");
 const ui_render = @import("ui/render.zig");
 const shell_runtime = @import("ui/shell_runtime.zig");
-const ui_terminal = @import("ui/terminal/terminal.zig");
 const cursor_probe = @import("ui/terminal/cursor_probe.zig");
 const transcript_runtime = @import("ui/transcript/runtime.zig");
 const resume_projection = @import("ui/transcript/resume_projection.zig");
@@ -136,14 +129,12 @@ const assistant_pacer = @import("ui/assistant/pacer.zig");
 const approval_prompt = @import("core/permissions/approval_prompt.zig");
 
 const Allocator = std.mem.Allocator;
-const Layout = types.Layout;
 const Metrics = types.Metrics;
 const StreamState = types.StreamState;
 const ToolCall = types.ToolCall;
 const ChatMessage = types.ChatMessage;
 const PermissionMode = types.PermissionMode;
 const ReasoningEffort = types.ReasoningEffort;
-const ToolPermissionDecision = types.ToolPermissionDecision;
 const PermissionGrant = types.PermissionGrant;
 const PermissionEngine = permissions.PermissionEngine;
 const QueuedPrompt = worker_runtime.QueuedPrompt;
@@ -348,12 +339,6 @@ test "skill submit snapshot keeps display spans exact while agent bindings dedup
 var resize_interlock = shell_runtime.ResizeApprovalInterlock{};
 const default_context_registry = context_contract.Registry{ .default_provider = builtin_context.provider };
 const app_oauth_transport = builtin_gateway.oauth_transport_provider;
-fn currentBuild() update_target.CurrentBuild {
-    return .{
-        .version = version,
-        .revision = build_options.git_commit,
-    };
-}
 
 const App = struct {
     pub const app_version = version;
@@ -364,7 +349,6 @@ const App = struct {
     const AuthAppRuntime = app_auth_runtime.Runtime(Self);
     const BootstrapAppRuntime = app_bootstrap_runtime.Runtime(Self);
     const InputAppRuntime = app_input_runtime.Runtime(Self);
-    const InputFullTranscriptRuntime = input_full_transcript_runtime.Runtime(Self);
     const InputSubmitRuntime = input_submit_runtime.SubmitRuntime(Self);
     const NotificationAppRuntime = app_notification_runtime.Runtime(
         Self,
@@ -405,21 +389,6 @@ const App = struct {
         return self.providerSet()
             .select(self.provider_selection.selection().provider)
             .agent_stream_or_unavailable();
-    }
-
-    pub fn fetchProviderCatalog(
-        self: *Self,
-        provider: model_provider.ProviderId,
-        access: credentials.CatalogAccess,
-    ) !model_catalog.ProviderResult {
-        const catalog = self.providerSet().select(provider).model_catalog orelse
-            return error.ModelCatalogUnavailable;
-        return catalog.fetch(self.alloc, .{
-            .access = access,
-            .endpoint = codex_models_path,
-            .cancel_flag = &self.worker.worker_cancel_requested,
-            .view = .picker,
-        });
     }
 
     pub fn clipboard(_: *const Self) host.Clipboard {
@@ -748,39 +717,6 @@ const App = struct {
             &self.metrics,
             self.terminalTitle(),
         );
-    }
-
-    pub fn runExternalInteractive(self: *App, argv: []const []const u8) !void {
-        try self.flushBeforeBlockingExternalWork();
-
-        self.terminal.disableRawMode();
-        var raw_restored = false;
-        defer if (!raw_restored) {
-            self.terminal.enableRawMode() catch {};
-        };
-
-        const io = io_mod.getIo();
-        try std.Io.File.stdout().writeStreamingAll(io, "\n");
-        var child = std.process.spawn(io, .{
-            .argv = argv,
-            .stdin = .inherit,
-            .stdout = .inherit,
-            .stderr = .inherit,
-        }) catch return error.ExternalInteractiveFailed;
-        const term = child.wait(io) catch return error.ExternalInteractiveFailed;
-        try std.Io.File.stdout().writeStreamingAll(io, "\n");
-
-        try self.terminal.captureOriginalTermios();
-        try self.terminal.enableRawMode();
-        raw_restored = true;
-        self.shell.layout = self.terminal.queryLayout(footer_rows) catch self.shell.layout;
-        try self.shell.requestTerminalReset(&self.metrics);
-        self.shell.render_requests.request(.first_frame);
-
-        switch (term) {
-            .exited => |code| if (code != 0) return error.ExternalInteractiveFailed,
-            else => return error.ExternalInteractiveFailed,
-        }
     }
 
     pub fn flushBeforeBlockingExternalWork(self: *App) !void {
@@ -1136,10 +1072,6 @@ const App = struct {
 
     pub fn persistResumeViewAfterFrame(self: *App) void {
         SessionAppRuntime.persistResumeViewAfterFrame(self);
-    }
-
-    pub fn flushDirectTerminalShutdownOutcome(self: *App) !void {
-        try RenderAppRuntime.flushRequestedFrame(@as(*Self, self));
     }
 
     pub fn snapshotAndQueuePromptWithSkillBindings(
@@ -2353,33 +2285,6 @@ const App = struct {
         return true;
     }
 
-    pub fn prepareApiKeyInputBoundary(self: *App) void {
-        if (self.terminal_input_runtime.native_clear_probe.active()) {
-            const discarded = self.terminal_input_runtime.native_clear_probe.settle().len;
-            self.terminal_input_runtime.native_clear_probe.clearSettledInput();
-            debug_trace.logf(
-                "auth",
-                "api key stage discarded native-clear probe input bytes={d}",
-                .{discarded},
-            );
-        }
-
-        self.terminal_input_runtime.terminal_cursor_probe.cancel();
-        var discarded: usize = 0;
-        while (self.terminal_input_runtime.terminal_cursor_probe.takeDeferredByte()) |byte| {
-            _ = byte;
-            std.debug.assert(self.terminal_input_runtime.terminal_cursor_probe.consumeDeferredInputDispatch());
-            discarded += 1;
-        }
-        if (discarded > 0) {
-            debug_trace.logf(
-                "auth",
-                "api key stage discarded cursor-probe input bytes={d}",
-                .{discarded},
-            );
-        }
-    }
-
     fn replayNativeClearProbeInput(self: *App) !void {
         const retained = self.terminal_input_runtime.native_clear_probe.settle();
         defer self.terminal_input_runtime.native_clear_probe.clearSettledInput();
@@ -3155,16 +3060,6 @@ fn writeStdoutFast(text: []const u8) !void {
     var remaining = text;
     while (remaining.len > 0) {
         const written = std.c.write(std.posix.STDOUT_FILENO, remaining.ptr, remaining.len);
-        if (written <= 0) return error.WriteFailed;
-        remaining = remaining[@intCast(written)..];
-    }
-}
-
-fn writeStderrFast(text: []const u8) !void {
-    @setRuntimeSafety(false);
-    var remaining = text;
-    while (remaining.len > 0) {
-        const written = std.c.write(std.posix.STDERR_FILENO, remaining.ptr, remaining.len);
         if (written <= 0) return error.WriteFailed;
         remaining = remaining[@intCast(written)..];
     }

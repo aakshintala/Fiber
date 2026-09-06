@@ -56,50 +56,6 @@ pub const Projection = struct {
             .bytes = bytes,
         } });
     }
-
-    pub fn replaceSuffix(
-        self: *Projection,
-        alloc: std.mem.Allocator,
-        start_index: usize,
-        suffix: *Projection,
-    ) !void {
-        std.debug.assert(start_index <= self.entry_actions.items.len);
-        try self.entry_actions.ensureTotalCapacity(
-            alloc,
-            start_index + suffix.entry_actions.items.len,
-        );
-        var retained_owned_count: usize = 0;
-        for (self.owned_overrides.items) |owned| {
-            if (owned.entry_index < start_index) retained_owned_count += 1;
-        }
-        try self.owned_overrides.ensureTotalCapacity(
-            alloc,
-            retained_owned_count + suffix.owned_overrides.items.len,
-        );
-
-        var retained_index: usize = 0;
-        for (self.owned_overrides.items) |owned| {
-            if (owned.entry_index < start_index) {
-                self.owned_overrides.items[retained_index] = owned;
-                retained_index += 1;
-            } else {
-                alloc.free(owned.bytes);
-            }
-        }
-        self.owned_overrides.items.len = retained_index;
-        self.entry_actions.items.len = start_index;
-        for (suffix.entry_actions.items) |action| {
-            self.entry_actions.appendAssumeCapacity(action);
-        }
-        for (suffix.owned_overrides.items) |owned| {
-            self.owned_overrides.appendAssumeCapacity(.{
-                .entry_index = start_index + owned.entry_index,
-                .bytes = owned.bytes,
-            });
-        }
-        suffix.entry_actions.items.len = 0;
-        suffix.owned_overrides.items.len = 0;
-    }
 };
 
 const OwnedOverride = struct {

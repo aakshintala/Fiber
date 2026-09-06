@@ -1244,12 +1244,6 @@ pub const WorkerRuntime = struct {
         }
     }
 
-    pub fn isProcessing(self: *WorkerRuntime) bool {
-        self.worker_mutex.lockUncancelable(io_mod.getIo());
-        defer self.worker_mutex.unlock(io_mod.getIo());
-        return self.worker_processing;
-    }
-
     pub fn snapshotState(
         self: *WorkerRuntime,
         alloc: std.mem.Allocator,

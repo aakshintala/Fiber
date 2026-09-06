@@ -425,14 +425,6 @@ pub const State = struct {
         }
     }
 
-    pub fn hasAnyInvalidation(self: *const State) bool {
-        return self.hasInvalidation() or
-            self.hasInvalidationFor(.resources) or
-            self.hasInvalidationFor(.prompts) or
-            self.resource_update_generation.load(.acquire) !=
-                self.handled_resource_update_generation.load(.acquire);
-    }
-
     pub fn subscribesToResource(self: *const State, uri: []const u8) bool {
         return containsResourceSubscription(self.resource_subscriptions, uri);
     }
@@ -482,10 +474,6 @@ pub const State = struct {
             .modern_stdio, .modern_http => true,
             .legacy_stdio, .legacy_http, .legacy_sse => false,
         };
-    }
-
-    pub fn startupState(self: *const State) stdio_dispatcher.RequestReadiness.State {
-        return self.startup_readiness.current();
     }
 
     pub fn isUnsupported(self: *const State) bool {

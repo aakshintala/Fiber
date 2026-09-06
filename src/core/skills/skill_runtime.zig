@@ -1415,11 +1415,6 @@ pub const SkillMenu = struct {
         self.setQuery(query_text);
     }
 
-    pub fn openFocused(self: *SkillMenu, items: []const Skill, filter: SkillMenuSourceFilter, index: usize) void {
-        self.beginOpenFocused(filter, index);
-        self.clamp(items);
-    }
-
     fn beginOpenFocused(self: *SkillMenu, filter: SkillMenuSourceFilter, index: usize) void {
         self.active = true;
         self.source_filter = filter;
@@ -1468,12 +1463,6 @@ pub const SkillMenu = struct {
             self.selected_index,
             max_rows,
         );
-        return true;
-    }
-
-    pub fn moveSourceFilter(self: *SkillMenu, items: []const Skill, delta: i32) bool {
-        if (!self.advanceSourceFilter(delta)) return false;
-        self.clamp(items);
         return true;
     }
 

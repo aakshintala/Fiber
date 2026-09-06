@@ -160,10 +160,6 @@ pub const TurnContext = struct {
             try std.fmt.allocPrint(self.alloc, "{s}: {s}", .{ code, safe_detail });
     }
 
-    pub fn failureDiagnostic(self: *const TurnContext) ?[]const u8 {
-        return self.failure_diagnostic;
-    }
-
     pub fn sessionRuntime(self: *TurnContext) *session.SessionRuntime {
         return &self.runtime;
     }

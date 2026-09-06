@@ -56,15 +56,6 @@ pub const Access = union(enum) {
         action_authority_generation: u64 = 0,
     },
 
-    pub fn allowsTool(self: Access, runtime_generation: u64, name: []const u8) bool {
-        return switch (self) {
-            .unrestricted => true,
-            .disabled => false,
-            .scoped => |scope| scope.captured.runtime_generation == runtime_generation and
-                scope.captured.tool(name) != null,
-        };
-    }
-
     pub fn allowsFeatureServer(self: Access, runtime_generation: u64, name: []const u8) bool {
         return switch (self) {
             .unrestricted => true,

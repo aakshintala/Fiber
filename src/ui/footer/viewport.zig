@@ -173,10 +173,6 @@ pub const FooterViewport = struct {
         self.cursor_visible = true;
     }
 
-    pub fn hideCursor(self: *FooterViewport) void {
-        self.cursor_visible = false;
-    }
-
     pub fn eraseCurrentFrame(self: *FooterViewport, shell: anytype, metrics: *Metrics) !void {
         _ = metrics;
         if (!self.has_frame) return;

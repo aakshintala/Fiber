@@ -62,14 +62,6 @@ pub const PermissionEngine = struct {
         self.rules = next_rules;
     }
 
-    pub fn configuredRuleDecision(self: PermissionEngine, alloc: std.mem.Allocator, workspace_root: []const u8, tool_name: []const u8, target_path: []const u8, target_kind: PermissionTargetKind) !RuleDecision {
-        return ruleDecisionFor(alloc, self.rules, workspace_root, tool_name, target_path, target_kind);
-    }
-
-    pub fn formatPermissionsText(self: PermissionEngine, alloc: std.mem.Allocator, workspace_root: []const u8) ![]u8 {
-        return formatPermissionsStatus(alloc, workspace_root, self.mode, self.grants.items, self.rules);
-    }
-
     pub fn formatPermissionsNoticeBody(self: PermissionEngine, alloc: std.mem.Allocator, workspace_root: []const u8) ![]u8 {
         return (output_contracts.PermissionsSnapshot{
             .workspace_root = workspace_root,

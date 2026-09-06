@@ -2830,10 +2830,6 @@ const PromptContextFixture = struct {
             .tracker = self.tracker,
         };
     }
-
-    fn staticInput(self: *PromptContextFixture) StaticContextInput {
-        return .{ .project_context = self.project_context };
-    }
 };
 
 fn expectContains(haystack: []const u8, needle: []const u8) !void {

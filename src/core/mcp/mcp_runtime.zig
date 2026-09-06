@@ -4899,21 +4899,6 @@ pub const McpRuntime = struct {
         return false;
     }
 
-    pub fn workspaceAuthorityReducedAgainstConfigs(
-        self: *const McpRuntime,
-        next: []const McpServerConfig,
-        phase: startup_admission.Phase,
-    ) bool {
-        for (self.servers.items) |current| {
-            if (!project_config.configRetainsWorkspaceAuthority(
-                current.config,
-                next,
-                phase,
-            )) return true;
-        }
-        return false;
-    }
-
     pub fn workspaceAuthorityReducedAgainstNames(
         self: *const McpRuntime,
         next_names: []const []const u8,
@@ -5793,10 +5778,6 @@ pub const McpRuntime = struct {
         }
     }
 
-    fn disconnectAll(self: *McpRuntime) void {
-        for (self.servers.items) |*server| server.disconnect();
-    }
-
     fn lookupTool(self: *McpRuntime, name: []const u8) ?struct { server: *McpServer, tool: McpTool } {
         if (self.isDiscovering()) return null;
         for (self.servers.items) |*server| {
@@ -5901,23 +5882,6 @@ pub const McpRuntime = struct {
         operation_access.refresh() catch return false;
         operation_access.authorize(.{ .tool = name }) catch return false;
         return true;
-    }
-
-    pub fn serverToolFreshness(self: *McpRuntime, name: []const u8) ?ToolFreshness {
-        if (self.isDiscovering()) return null;
-        self.catalog_mutex.lockSharedUncancelable(io_mod.getIo());
-        defer self.catalog_mutex.unlockShared(io_mod.getIo());
-        const server = self.findServer(name) orelse return null;
-        const metadata = server.tool_catalog.metadata orelse return null;
-        if (!catalogAuthPartitionMatches(server, metadata)) return .stale;
-        return feature_cache.effectiveFreshness(
-            metadata,
-            clockMillis(),
-            if (server.tool_subscription) |subscription|
-                subscription.hasInvalidation()
-            else
-                false,
-        );
     }
 
     /// Returns owned names for every currently ready tool not revoked by policy.
@@ -6387,30 +6351,6 @@ pub const McpRuntime = struct {
             max_tool_result_bytes,
             .{},
         );
-    }
-
-    /// Captures only continuation identity while holding the catalog lock.
-    /// Callers perform all transport writes and user waiting after this
-    /// returns; no runtime-owned pointer escapes the lock.
-    pub fn inputIdentityWitness(
-        self: *McpRuntime,
-        server_name: []const u8,
-    ) ?tool_mcp_runtime.InputIdentityWitness {
-        if (self.isDiscovering() or self.retiring.load(.acquire)) return null;
-        self.catalog_mutex.lockSharedUncancelable(io_mod.getIo());
-        defer self.catalog_mutex.unlockShared(io_mod.getIo());
-        const server = self.findServer(server_name) orelse return null;
-        if (server.state != .ready) return null;
-        return .{
-            .runtime_generation = self.legacy_url_runtime_generation,
-            .connection_generation = server.connection_generation,
-            .client_generation = if (server.dispatcher) |dispatcher|
-                dispatcher.connectionGeneration()
-            else
-                server.connection_generation,
-            .catalog_generation = server.catalog_generation,
-            .auth_generation = server.auth_generation.load(.acquire),
-        };
     }
 
     pub fn validateToolArgumentsByName(
