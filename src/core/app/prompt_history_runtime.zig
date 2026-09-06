@@ -64,20 +64,6 @@ pub const PromptHistoryRuntime = struct {
         return .available;
     }
 
-    pub fn initializeWithProvider(
-        self: *PromptHistoryRuntime,
-        enabled: bool,
-        provider: prompt_history_provider.Provider,
-    ) InitializeOutcome {
-        self.enabled = enabled;
-        self.loaded_count = 0;
-        self.append_warning_active = false;
-        self.last_append_error = null;
-        self.provider = provider;
-        self.writes_available = true;
-        return .available;
-    }
-
     pub fn deinit(self: *PromptHistoryRuntime, alloc: Allocator) void {
         if (self.store) |*store| store.deinit(alloc);
         self.* = .{};

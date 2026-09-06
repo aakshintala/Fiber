@@ -1373,24 +1373,6 @@ pub fn Runtime(comptime App: type) type {
             }
         }
 
-        pub fn settlePendingLiveSessionTransition(app: *App) !void {
-            const decision = decideLiveSessionTransition(
-                false,
-                app.worker.isProcessing(),
-                app.session_persistence.pending_live_session_policy,
-                .settle,
-            );
-            app.session_persistence.pending_live_session_policy = decision.pending_policy;
-            switch (decision.action) {
-                .apply_pending => |policy| {
-                    applyIdleLiveSessionTransition(app, policy, .{});
-                    try installFreshLiveSession(app);
-                },
-                .none => {},
-                .apply_now, .cancel_and_defer => unreachable,
-            }
-        }
-
         fn applyLiveSessionTransition(
             app: *App,
             background_policy: BackgroundSessionPolicy,
@@ -3401,27 +3383,6 @@ pub fn Runtime(comptime App: type) type {
                     },
                 }
             }
-        }
-
-        /// Replay canonical session turns into a detached presentation using
-        /// the exact same tool, message, markdown, diff, and command-output
-        /// adapters as ordinary session resume.
-        pub fn appendHistoryToDetachedProjection(
-            app: *App,
-            projection: anytype,
-            history: []const types.HistoryTurn,
-            has_prior_turns: *bool,
-        ) !void {
-            var sink = DetachedHistorySink(@TypeOf(projection.*)){
-                .app = app,
-                .projection = projection,
-            };
-            return replayHistoryToSinkIncremental(
-                app,
-                &sink,
-                history,
-                has_prior_turns,
-            );
         }
 
         fn writeCancelledCommandPresentation(

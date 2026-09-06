@@ -1870,10 +1870,6 @@ pub fn Runtime(comptime App: type) type {
             return false;
         }
 
-        fn catalogMenuActive(app: *const App) bool {
-            return modelMenuActive(app) and !settingsMenuActive(app);
-        }
-
         fn activityProjection(app: *const App) activity_runtime.ActivityProjection {
             return shell_runtime.activityProjection(&app.shell);
         }
@@ -1901,45 +1897,6 @@ pub fn Runtime(comptime App: type) type {
             };
         }
     };
-}
-
-fn managedExecutionProjection(
-    alloc: std.mem.Allocator,
-    runtime: *managed_execution.Runtime,
-) !terminal_ui_projection.Snapshot {
-    const executions = try runtime.list(alloc);
-    defer {
-        for (executions) |*execution| execution.deinit(alloc);
-        alloc.free(executions);
-    }
-    const rows = try alloc.alloc(terminal_ui_projection.Row, executions.len);
-    var initialized: usize = 0;
-    errdefer {
-        for (rows[0..initialized]) |*row| {
-            alloc.free(row.label);
-            alloc.free(row.session_id);
-        }
-        alloc.free(rows);
-    }
-    for (executions, rows) |execution, *row| {
-        const session_id = try alloc.dupe(u8, execution.execution_id);
-        errdefer alloc.free(session_id);
-        row.* = .{
-            .session_id = session_id,
-            .label = try alloc.dupe(u8, execution.command),
-            .lifecycle = switch (execution.state) {
-                .running => .running,
-                .completed => .exited,
-                .stopped => .closed,
-                .lost => .lost,
-            },
-            .attention = .{},
-            .backend = .native,
-            .attachable = execution.backend == .tty,
-        };
-        initialized += 1;
-    }
-    return .{ .alloc = alloc, .rows = rows };
 }
 
 fn renderReasonNames(

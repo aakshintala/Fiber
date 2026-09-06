@@ -78,7 +78,6 @@ const ToolPermissionDecision = types.ToolPermissionDecision;
 
 pub const file_picker_completion_cap = input_completion_runtime.file_picker_completion_cap;
 const ctrl_g_upgrade_byte: u8 = 7;
-const ctrl_x_manager_byte: u8 = 24;
 
 fn classifyResumeFailure(err: anyerror) session_catalog.ResumeFailure {
     return switch (err) {
@@ -1315,11 +1314,6 @@ pub fn Runtime(comptime App: type) type {
             return false;
         }
 
-        fn presentedSubagentApproval(app: *const App) bool {
-            _ = app;
-            return false;
-        }
-
         fn approvalOwnsCurrentSurface(app: *const App) bool {
             return app.approval_prompt.isActive();
         }
@@ -2172,13 +2166,6 @@ pub fn Runtime(comptime App: type) type {
             if (!app.skills.menu.origin.isMention()) return;
             app.skills.closeMenu();
             app.shell.render_requests.request(.footer);
-        }
-
-        fn closeSkillsMenu(app: *App) bool {
-            if (comptime !@hasField(App, "skills")) return false;
-            if (!app.skills.menu.active) return false;
-            app.skills.closeMenu();
-            return true;
         }
 
         fn closeHelpMenu(app: *App, clear_query: bool) bool {
@@ -3185,10 +3172,6 @@ const FakeApprovalCancelApp = struct {
         self.pending_images.clearRetainingCapacity();
     }
 
-    fn ensureTrailingBlankRow(self: *FakeApprovalCancelApp) !void {
-        try self.transcript.appendSlice(self.alloc, "\n\n");
-    }
-
     fn writeTranscript(self: *FakeApprovalCancelApp, content: []const u8, redraw: bool) !void {
         _ = redraw;
         try self.transcript.appendSlice(self.alloc, content);
@@ -3267,46 +3250,8 @@ const RoutingSubagents = struct {
         return self.active;
     }
 
-    pub fn mainApprovalPresented(self: *const RoutingSubagents) bool {
-        return self.main_approval_presented;
-    }
-
     pub fn count(_: *const RoutingSubagents) usize {
         return 0;
-    }
-
-    pub fn panelText(_: *RoutingSubagents, alloc: std.mem.Allocator, _: u16, _: u16, _: transcript_runtime.Styles) ![]u8 {
-        return alloc.dupe(u8, "");
-    }
-
-    pub fn managerPasteActive(self: *const RoutingSubagents) bool {
-        return self.active and self.manager_paste.paste.active();
-    }
-
-    pub fn beginManagerPaste(self: *RoutingSubagents) void {
-        self.manager_paste.paste.begin(.decision_prompt, std.math.maxInt(usize));
-    }
-
-    pub fn consumeManagerPasteByte(
-        self: *RoutingSubagents,
-        alloc: std.mem.Allocator,
-        byte: u8,
-    ) !bool {
-        if (!self.managerPasteActive()) return false;
-        try self.manager_paste.paste.consumeByte(alloc, byte);
-        return true;
-    }
-
-    pub fn settleManagerPasteDeliveryEpoch(
-        self: *RoutingSubagents,
-        _: std.mem.Allocator,
-    ) bool {
-        switch (self.manager_paste.paste.settleDeliveryEpoch()) {
-            .none => return false,
-            .finish => self.manager_paste.paste.resetWithTrace(.decision_prompt_active),
-            .reject => self.manager_paste.paste.resetWithTrace(.unsafe_suffix),
-        }
-        return true;
     }
 };
 
@@ -3911,10 +3856,6 @@ const RoutingFakeApp = struct {
         const depth = self.shell.transcriptPresentationDepth().transition(event);
         _ = try self.shell.setTranscriptPresentationDepth(self.alloc, depth);
         return depth;
-    }
-
-    pub fn writeSubagentSnapshot(self: *RoutingFakeApp) !void {
-        self.subagents.toggle_view_calls += 1;
     }
 
     pub fn admitPendingApprovalResize(self: *RoutingFakeApp) bool {
@@ -10649,46 +10590,6 @@ fn installReadyRoutingFileApproval(app: *RoutingFakeApp) !void {
         .document_scrollable = true,
     });
 }
-
-const ApprovalOwnershipBinding = struct {
-    child_id: []const u8,
-};
-
-const ApprovalOwnershipSubagents = struct {
-    view_active: bool = true,
-    child_id: []const u8 = "selected-child",
-    presented_binding: ?ApprovalOwnershipBinding = null,
-    card_binding: ?ApprovalOwnershipBinding = null,
-
-    pub fn isViewActive(self: *const ApprovalOwnershipSubagents) bool {
-        return self.view_active;
-    }
-
-    pub fn childRouteId(self: *const ApprovalOwnershipSubagents) ?[]const u8 {
-        return self.child_id;
-    }
-
-    pub fn mainApprovalBinding(
-        self: *const ApprovalOwnershipSubagents,
-        _: u64,
-    ) ?ApprovalOwnershipBinding {
-        return self.presented_binding;
-    }
-
-    pub fn mainApprovalCardBinding(
-        self: *const ApprovalOwnershipSubagents,
-        _: u64,
-    ) ?ApprovalOwnershipBinding {
-        return self.card_binding;
-    }
-};
-
-const ApprovalOwnershipApp = struct {
-    approval_prompt: approval_prompt.ApprovalPrompt = .{},
-    approval_screen: interaction_state.ApprovalScreenState = .{},
-    subagents: ApprovalOwnershipSubagents = .{},
-};
-
 test "app_input_runtime consumes legacy X10 reports during active file approval" {
     const alloc = std.testing.allocator;
 

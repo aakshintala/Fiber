@@ -521,10 +521,6 @@ pub fn Bindings(comptime App: type) type {
             app_worker_runtime.Runtime(App).pushWebFetchProgress(app, call_id, progress) catch {};
         }
 
-        pub fn onInnerToolUsage(ctx: *anyopaque, tool_name: []const u8, usage: types.ToolUsage) void {
-            agentReportInnerToolUsage(ctx, tool_name, usage);
-        }
-
         fn agentAppendRuntimeContext(ctx: *anyopaque, arena: Allocator, messages: *std.ArrayList(ChatMessage)) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try app.appendRuntimeContextMessage(arena, messages);
@@ -1171,10 +1167,6 @@ const FakeWorker = struct {
         _ = tool_name;
         _ = target_path;
         self.propagated_grants += 1;
-    }
-
-    pub fn transferActivePromptSnapshots(self: *FakeWorker) void {
-        self.active_snapshot_transfers += 1;
     }
 
     pub fn activeTurnId(self: *FakeWorker) u64 {

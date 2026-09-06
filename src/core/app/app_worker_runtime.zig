@@ -37,13 +37,6 @@ test {
     _ = activity_runtime;
 }
 
-fn allocDimmedTranscriptLine(alloc: std.mem.Allocator, text: []const u8) ![]u8 {
-    if (std.mem.endsWith(u8, text, "\n")) {
-        return std.fmt.allocPrint(alloc, "{s}{s}{s}\n", .{ ui_render.dim_style, text[0 .. text.len - 1], reset_style });
-    }
-    return std.fmt.allocPrint(alloc, "{s}{s}{s}", .{ ui_render.dim_style, text, reset_style });
-}
-
 fn discardTable(_: *anyopaque, table: assistant_presentation.TablePayload) !void {
     var owned = table;
     owned.deinit(std.heap.c_allocator);
@@ -1460,11 +1453,6 @@ const FakePacer = struct {
     flushed: usize = 0,
     completed_assistant_presentation_tail: bool = false,
 
-    fn flushPendingText(self: *FakePacer, callbacks: anytype) !void {
-        _ = callbacks;
-        self.flushed += 1;
-    }
-
     fn hasCompletedAssistantPresentationTail(self: *const FakePacer) bool {
         return self.completed_assistant_presentation_tail;
     }
@@ -1476,28 +1464,8 @@ const FakeSubagents = struct {
     child_shell: FakeShell = .{},
     child_render_requests: render_request.RenderRequestState = .{},
 
-    const ChildPresentationView = struct {
-        chat: struct {
-            busy_value: bool,
-
-            fn busy(self: @This()) bool {
-                return self.busy_value;
-            }
-        },
-    };
-
     fn isViewActive(self: FakeSubagents) bool {
         return self.view_active;
-    }
-
-    fn childPresentationView(self: *FakeSubagents) ?ChildPresentationView {
-        if (!self.view_active) return null;
-        return .{ .chat = .{ .busy_value = self.child_busy } };
-    }
-
-    fn childConversationRuntime(self: *FakeSubagents) ?*FakeShell {
-        if (!self.view_active) return null;
-        return &self.child_shell;
     }
 
     fn activeRenderRequests(self: *FakeSubagents) *render_request.RenderRequestState {

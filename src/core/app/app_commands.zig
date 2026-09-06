@@ -3229,14 +3229,6 @@ fn handleRenameCommand(app: anytype, rest: []const u8) !void {
 
 const StatuslineFeedback = enum { announce, silent };
 
-fn parseStatuslineItem(raw: []const u8) ?config_runtime.StatuslineItem {
-    const trimmed = std.mem.trim(u8, raw, " \t");
-    inline for (std.meta.fields(config_runtime.StatuslineItem)) |field| {
-        if (std.mem.eql(u8, trimmed, field.name)) return @enumFromInt(field.value);
-    }
-    return null;
-}
-
 fn statuslineItemForSetting(setting: settings_catalog.SettingId) ?config_runtime.StatuslineItem {
     return switch (setting) {
         .statusline_context => .context,
@@ -3295,18 +3287,6 @@ fn applyStatuslineItem(
         .silent => try persistUserPreferencesSilently(app, "statusline", patch, runtime_changed),
     }
     app.shell.render_requests.request(.footer);
-}
-
-fn handleStatuslineCommand(app: anytype, rest: []const u8) !void {
-    const item = parseStatuslineItem(rest) orelse {
-        try app.writeDomainNotice(.{
-            .topic = "statusline",
-            .tone = .@"error",
-            .body = "Use: context, session, workspace",
-        }, true);
-        return;
-    };
-    try applyStatuslineItem(app, item, !statuslineItemEnabled(app, item), .announce);
 }
 
 const SoundLevel = enum {
