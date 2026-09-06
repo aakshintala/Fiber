@@ -105,7 +105,8 @@ Evidence is in `phase4-baseline.md`; the decision is logged in
   by that slice until fixed or reverted
 - `zig build test` output must stay free of `failed command:`
 - `zlint` must report no more than 111 `unused-decls` warnings
-- the lazy-analysis probe must compile clean
+- the lazy-analysis probe reports the OSC 8 failure and no other; see
+  `phase4-baseline.md`
 
 ### Per-slice gate
 
@@ -720,7 +721,8 @@ Phase 4 closes only when:
 - every remaining implementation seam has measured retention evidence
 - no newly exposed dead code remains
 - `zlint` reports zero `unused-decls` warnings
-- the lazy-analysis probe compiles clean
+- the lazy-analysis probe reports the OSC 8 failure and no other; see
+  `phase4-baseline.md`
 - the Phase 4 section of `deferred.md` is empty
 - build, unit, formatting, and smoke gates pass
 - `zig build test` output is free of `failed command:`

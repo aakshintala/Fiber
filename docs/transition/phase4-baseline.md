@@ -87,20 +87,47 @@ not at the re-audit checkpoint, not at phase exit. The Zig gate carries
 attribution alone. Logged in `phase4-audit/OWNER-QUESTIONS.md`. Reverse this
 by rewiring the harness first; running it unchanged only reproduces this file.
 
+## Lazy-analysis probe
+
+Run at `38496f4c` with the recipe in `simplification-inventory.md`, then
+reverted. Never committed.
+
+| Suite | pass | skip | fail | total |
+| --- | --- | --- | --- | --- |
+| `zig build test` | 7287 | 2 | 0 | 7289 |
+| probe-augmented | 7788 | 2 | 1 | 7791 |
+
+**502 tests exist that the normal suite never executes.** The old handoff's
+figure reproduces exactly. The mechanism is Zig's lazy analysis, not file
+reachability: only 2 of the 490 tracked files under `src/` are never textually
+imported (`benchmark_exports.zig`, `terminal_client_fixture.zig`). The rest are
+files whose only `@import` sits inside a function body nothing analyzes, so
+their container-level `test` blocks are never compiled.
+
+The probe does not name which 502. Enumerating them costs a per-file bisection
+and buys little; running the probe itself at the re-audit checkpoint and at
+phase exit buys the same coverage for one build.
+
+### The one probe-only failure
+
+```
+core.agent.runtime.assistant_stream.test.streamed presentation preserves
+ANSI OSC 8 code fence and table spans — expected 0, found 1
+```
+
+This is the failure the old handoff named. It is real. The Slice 0 correction
+that said it does not fail was measuring the wrong suite: the test never runs
+under `zig build test`, so "0 failures" there says nothing about it.
+
+It is pre-existing, not slice-caused, and sits in a module the gate has never
+covered. Phase 4 does not fix it. It is the probe's known constant: a probe run
+at a later checkpoint is green iff it reports this failure and no other.
+
 ## Corrections to the handoff
 
-The handoff's claim that 502 tests exist which the normal suite never executes
-is not a file-reachability fact. Only 2 of the 490 tracked files under `src/`
-are never textually imported: `benchmark_exports.zig` and
-`terminal_client_fixture.zig`. The gap is Zig's lazy analysis — files whose
-only `@import` sits inside a function body that nothing analyzes. The
-lazy-analysis probe is the only way to enumerate it.
-
-The handoff directs triage of a failing test,
-`core.agent.runtime.assistant_stream.test.streamed presentation preserves ANSI
-OSC 8 code fence and table spans`. It does not fail. The full suite reports 0
-failures, both under `zig build test` after the repair and when the test binary
-is run directly.
+Both of the previous section's corrections are themselves superseded by the
+probe above. The 502 figure holds; only its stated mechanism was wrong. The
+OSC 8 test does fail.
 
 ## Attribution rules in force
 
@@ -109,5 +136,6 @@ is run directly.
 - `zig build test` output must stay free of `failed command:`; grep it, do not
   trust the exit status
 - `zlint` must report no more than 111 `unused-decls` warnings
-- the lazy-analysis probe must compile clean
+- the lazy-analysis probe, at the re-audit checkpoint and at phase exit, must
+  report the OSC 8 failure and no other
 - E2E is not a Phase 4 signal

@@ -36,3 +36,23 @@ anything. Root cause and fix are in `../phase4-baseline.md` and commit
 
 **To reverse:** revert `50adab57`. The gate returns to reporting failure on
 every slice.
+
+## 3. The one probe-only test failure is not fixed in Phase 4
+
+**Decided:** leave
+`core.agent.runtime.assistant_stream.test.streamed presentation preserves ANSI
+OSC 8 code fence and table spans` failing, and treat it as the lazy-analysis
+probe's known constant rather than as work.
+
+**Evidence:** the probe run at `38496f4c` reports 7791 tests against the normal
+suite's 7289 — 502 tests the gate has never executed, one of which fails. The
+failure predates Phase 4 and is not slice-caused. Detail in
+`../phase4-baseline.md`.
+
+**Why it was not fixed:** Phase 4 removes code; it does not repair product
+behaviour. Fixing an assertion in live streaming code mid-phase would put a
+behavioural change inside a demolition commit and break slice attribution.
+
+**To reverse:** fix it as its own commit, then change the probe criterion in
+`phase4-baseline.md` and `simplification-inventory.md` from "reports the OSC 8
+failure and no other" to "reports no failures".
