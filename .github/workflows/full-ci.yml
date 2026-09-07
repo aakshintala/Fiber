@@ -2,6 +2,14 @@ name: Full CI
 
 on:
   workflow_dispatch:
+    inputs:
+      retry_failed:
+        description: >-
+          Rerun each failed E2E file once. Absorbs flakes when the suite is
+          healthy; pure waste when it is broadly red, which doubles the run and
+          can exhaust the job timeout.
+        type: boolean
+        default: true
   push:
     branches-ignore:
       - main
@@ -71,7 +79,7 @@ jobs:
   e2e:
     name: E2E (${{ matrix.optimize }}, ${{ matrix.platform.name }}, shard ${{ matrix.shard.label }})
     runs-on: ${{ matrix.platform.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -103,6 +111,12 @@ jobs:
       FIBER_REQUIRE_TMUX: "1"
       SHARD_INDEX: ${{ matrix.shard.index }}
       SHARD_COUNT: ${{ matrix.shard.shard_count }}
+      # `inputs` is null on push, and GitHub coerces null and false alike, so
+      # the event has to be checked before the input is trusted. Push keeps the
+      # retry; only an explicit dispatch can turn it off.
+      RETRY_FAILED: >-
+        ${{ (github.event_name == 'workflow_dispatch'
+             && inputs.retry_failed == false) && '0' || '1' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -203,10 +217,14 @@ jobs:
             tmux_tmp_dir="$RUNNER_TEMP/fiber-e2e-tmux-${SHARD_INDEX}-${test_number}"
             mkdir -p "$tmux_tmp_dir"
             if ! TMUX_TMPDIR="$tmux_tmp_dir" bun test --max-concurrency 1 "./$test_file"; then
-              printf 'Retrying failed E2E file after resetting tmux: %s\n' "$test_file"
-              TMUX_TMPDIR="$tmux_tmp_dir" tmux kill-server 2>/dev/null || true
-              if ! TMUX_TMPDIR="$tmux_tmp_dir" bun test --max-concurrency 1 "./$test_file"; then
+              if [ "$RETRY_FAILED" = "0" ]; then
                 shard_status=1
+              else
+                printf 'Retrying failed E2E file after resetting tmux: %s\n' "$test_file"
+                TMUX_TMPDIR="$tmux_tmp_dir" tmux kill-server 2>/dev/null || true
+                if ! TMUX_TMPDIR="$tmux_tmp_dir" bun test --max-concurrency 1 "./$test_file"; then
+                  shard_status=1
+                fi
               fi
             fi
             TMUX_TMPDIR="$tmux_tmp_dir" tmux kill-server 2>/dev/null || true
