@@ -164,15 +164,15 @@ stricter). Residue:
   that arm from `TransportRole` (`{interactive, headless}`), so the client dies
   `InvalidPayload` instead of reaching `authority_denied`. Re-pointed at
   `"headless"` per the plan.md note; passes solo (44 expects).
-- **`reopened cancellation reports open failure` — preserved as repair
-  evidence, PRODUCT SUSPECT.** Replacement host (`idleMs=300`) exits 0 via
-  idle retirement ~deterministically before the final force-close handshake
-  (`connect ENOENT`). Test is byte-identical to the fork (renames only);
-  transition touched the terminal lifecycle only with pure deletions. Either a
-  deletion changed post-failure liveness accounting, or the fork CI won a
-  300ms test-side race this machine loses. The fork-binary experiment is
-  deferred — it needs a binary swap and delegates are running. Do not weaken
-  the case; it covers retained behavior.
+- **`reopened cancellation reports open failure` — test-side race, fixed.**
+  Replacement host (`idleMs=300`) retired before the final force-close
+  handshake whenever scheduling delayed the handshake past the 300ms idle
+  window with no clients or live work: failed solo (idle machine retires
+  promptly), passed in loaded full-file runs (starved idle thread retires
+  late). Product behavior is correct; the case proves force-close-after-
+  failure, not idle timing, so the replacement now uses `idleMs=5000`.
+  Verified 3/3 solo plus the full file green. The earlier "product suspect"
+  call in this addendum was wrong; the fork-binary experiment is moot.
 
 ## Addendum 2026-09-07: mcp delegate residue
 

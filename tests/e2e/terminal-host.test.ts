@@ -194,7 +194,13 @@ async function cleanupOwnedTestResources(
 }
 
 function makeHome(): string {
-  const home = mkdtempSync(join(tmpdir(), "fiber-terminal-host-"));
+  // Keep the profile endpoint (<HOME>/.fiber/terminal-host-v7/host.sock)
+  // under the macOS 104-byte socket limit. tmpdir() on macOS is a ~48-char
+  // /var/folders/... path that pushes the endpoint to ~109 bytes, tripping
+  // the product's NameTooLong fallback (hashed root under /private/tmp).
+  // The fallback is covered by dedicated makeLongHome tests; these tests
+  // exercise the non-fallback layout via hostPaths().
+  const home = mkdtempSync(join("/tmp", "fiber-terminal-host-"));
   chmodSync(home, 0o700);
   const owner = join(home, ".fiber", "sessions", TERMINAL_OWNER_SESSION);
   mkdirSync(owner, { recursive: true, mode: 0o700 });
@@ -249,8 +255,8 @@ function rememberPrivateTmuxIdentities(resource: PrivateTmuxResource): void {
       },
     );
     for (const name of names.trim().split("\n")) {
-      if (name.startsWith("fiber-") && name.length === 35) {
-        resource.identities.add(name.slice(3));
+      if (name.startsWith("fiber-") && name.length === 38) {
+        resource.identities.add(name.slice("fiber-".length));
       }
     }
   } catch {}
@@ -3471,7 +3477,7 @@ test.skipIf(!tmuxAvailable())("private tmux teardown owns partial recovery resou
     ["-S", tmuxSocket, "list-sessions", "-F", "#{session_name}"],
     { encoding: "utf8" },
   ).trim();
-  const backendIdentity = sessionName.slice(3);
+  const backendIdentity = sessionName.slice("fiber-".length);
   const panePid = Number(execFileSync(
     "tmux",
     ["-S", tmuxSocket, "display-message", "-p", "-t", sessionName, "#{pane_pid}"],
@@ -3766,7 +3772,7 @@ test.skipIf(!tmuxAvailable())("tmux recovery rejects a replaced pane without sig
     ["-S", tmuxSocket, "list-sessions", "-F", "#{session_name}"],
     { encoding: "utf8" },
   ).trim();
-  const backendIdentity = sessionName.slice(3);
+  const backendIdentity = sessionName.slice("fiber-".length);
   const oldIdentity = readFileSync(paths.identity, "utf8");
   first.client.close();
   firstHost.kill("SIGKILL");
@@ -3946,7 +3952,7 @@ test("durable authority survives reconnect and rejects every foreign scope", asy
       principal: { ...current.principal, cwd: "/foreign-cwd" },
     }),
     authorityVariant(sessionId, {
-      principal: { ...current.principal, transport_role: "acp" },
+      principal: { ...current.principal, transport_role: "headless" },
     }),
     authorityVariant(sessionId, {
       principal: { ...current.principal, backend: "tmux" },
@@ -6148,7 +6154,11 @@ test(
 
     const trace = join(home, `reopened-cancellation-${error}.log`);
     const barrier = join(home, `reopened-cancellation-${error}`);
-    const replacement = startHost(home, undefined, 300, {
+    const replacement = startHost(home, undefined, 5000, {
+      // 300ms races the final force-close handshake below against idle
+      // retirement once the failed open leaves no clients or live work;
+      // the scheduling lost deterministically on some machines. The case
+      // proves force-close-after-failure, not idle timing.
       FIBER_TRACE_LOG: trace,
       FIBER_TRACE_SCOPES: "terminal_host",
       FIBER_TERMINAL_TEST_ORDER_BARRIER: barrier,
