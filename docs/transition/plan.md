@@ -192,6 +192,13 @@ Separately, `tests/e2e/terminal-host.test.ts:3949` sets
 removed that arm from `TransportRole`, so the case now exercises an unparseable
 role rather than a valid-but-different one. Re-point it at a surviving role.
 
+Phase 5 dispositions (all four converted or retired, helpers gone with them):
+the web_fetch deny converted to a domain-scoped ask deny (`policy_denied`,
+no fetch progress); the web_search deny deleted as a converted-duplicate of
+the ask-based deny case in the same file; the two command-permissions cases
+converted in the codex-queue migration with intents retained; the
+terminal-host role re-pointed at `"headless"`.
+
 Phase exit: the success criteria in the product design are directly exercised, with unavailable external checks recorded as unverified, and the Phase 5 section of [`deferred.md`](deferred.md) is empty.
 
 ## Phase 6: Final documentation and release preparation

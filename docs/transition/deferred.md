@@ -38,7 +38,11 @@ opens with this section empty, as `plan.md` requires.
 Recorded in `plan.md`, not duplicated here:
 
 - Session-recovery harness — `plan.md`, "Session-recovery harness: what the deleted suite proved".
-- Four retained ACP-driven E2E cases — `plan.md`, "ACP-driven cases retained for conversion". Each still spawns the deleted `fiber acp` subcommand and is red until converted.
+- Four retained ACP-driven E2E cases — resolved in Phase 5 (see `plan.md`,
+  "ACP-driven cases retained for conversion", dispositions paragraph):
+  web_fetch deny converted, web_search deny deleted as a converted-duplicate,
+  both command-permissions cases converted, terminal-host role re-pointed.
+  No `fiber acp` spawns remain in the suite.
 
 Added 2026-09-06 from the Phase 4 residue:
 

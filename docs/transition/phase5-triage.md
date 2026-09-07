@@ -461,3 +461,25 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
 - Gap note (not a task): nothing pins loosened-perm refusal for the
   Codex login file (chatgpt-auth.json 0700/0600). tui-auth-source-selection
   covers login/logout/refresh flows only.
+
+## Addendum 2026-09-08: census closeout (owner)
+
+- **Local census green.** 56 files in 4 buckets on ReleaseSafe, this machine:
+  b1 260 tests 0 fail, b2 299 tests 0 fail (after the shard-manifest fix),
+  b3 330 tests 0 fail, b4 205 tests 0 fail. 1094 tests, 0 product failures.
+  Full CI on `transition-main` then passed on all three platforms; a second
+  Full CI on the tip (checkout v5 bump) also passed.
+- **Baseline diff** (`phase5-diff.py` vs `phase5-baseline.tsv`, macos-aarch64):
+  REGRESSED 0; DISAPPEARED 245 (sampled — all migration renames or
+  deletions with in-file/commit evidence: Fast surfaces, gateway wire,
+  provider models, /sound, catalog counts; no silent loss found);
+  NEWLY-SKIP 1 (tui-resume evidence skip, classified); NEW 87 (migration
+  renames/additions); EXPECTED 148 (deleted-file cases).
+- **Unavailable external checks, recorded as unverified:** tui-render-live-
+  stress (live provider + key), tui-performance 2 gated skips, file-picker
+  live-Gateway skip, session-recovery 11–16 evidence skips (src followup).
+- **Phase 5 section of deferred.md:** ACP item struck (resolved). Remaining
+  for owner calls, all src-side: `credential_source` honor-vs-remove,
+  `mcp list` placeholder fields (decided, unimplemented), session 11–16
+  test-controls threading. Phase 5 E2E work is done; these three decide
+  whether the section — and the phase — closes here or moves out.
