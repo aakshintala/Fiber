@@ -11,11 +11,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
-  startFakeGateway,
-  type FakeGatewayResponse,
+  chatGptAccessToken,
+  codexFinalText,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexEnv,
+  startFakeCodex,
+  writeSeededChatGptLogin,
 } from "./tmux-helpers";
 
 const TIMEOUT = 120_000;
@@ -33,6 +35,7 @@ function createIsolatedRoot(prefix: string) {
   const workspace = join(root, "workspace");
   const external = join(root, "external");
   mkdirSync(join(home, ".fiber"), { recursive: true });
+  writeSeededChatGptLogin(home, chatGptAccessToken());
   mkdirSync(workspace, { recursive: true });
   mkdirSync(external, { recursive: true });
   return {
@@ -47,36 +50,55 @@ function parseFxJson(result: { stdout: string; stderr: string; code: number | nu
   if (result.code !== 0) {
     throw new Error(`fiber exited ${result.code}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`);
   }
-  return JSON.parse(result.stdout.trim()) as FxJson;
+  return JSON.parse(result.stdout.trim()).data as FxJson;
 }
 
-async function runWithFakeGateway(
+// Review requests carry the reviewer prompt inline; agent requests never do.
+// Filtering on that marker is the Responses-protocol equivalent of counting
+// the removed Gateway classifier endpoint hits.
+function reviewRequests(codex: ReturnType<typeof startFakeCodex>) {
+  return codex.requests.filter((request) => request.body.includes("<permission_review>"));
+}
+
+// The Codex helper serves one callback instead of a finite queue: answer the
+// single forced permission_decision review call with a clear decision, serve
+// the first agent turn from `first`, and close the turn after tool results.
+function agentRoute(first: () => string, finalText: string) {
+  return (body: string) => {
+    if (body.includes("<permission_review>")) {
+      return codexToolCall("review_decision_1", "permission_decision", {
+        risk: "low",
+        decision: "clear",
+        rationale: "test fixture",
+      });
+    }
+    const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+    if (items.some((item) => item.type === "function_call_output")) {
+      return codexFinalText(finalText);
+    }
+    return first();
+  };
+}
+
+async function runWithFakeCodex(
   root: ReturnType<typeof createIsolatedRoot>,
   args: string[],
-  responses: FakeGatewayResponse[],
+  route: (body: string) => string,
   env: Record<string, string> = {},
 ) {
-  const gateway = startFakeGateway(responses);
+  const codex = startFakeCodex({ route });
   try {
     const result = await runFx(args, {
       cwd: root.workspace,
-      env: {
-        HOME: root.home,
-        AI_GATEWAY_API_KEY: "fake-file-permission-key",
-        VERCEL_OIDC_TOKEN: undefined,
+      env: fakeCodexEnv(root.home, codex, {
+        FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
         ...env,
-        FX_GATEWAY_BASE_URL: gateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-        FIBER_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-        FIBER_E2E_GATEWAY_CREDITS_URL: undefined,
-        FIBER_MODEL: FAKE_GATEWAY_MODEL,
-      },
+      }),
       timeoutMs: TIMEOUT,
     });
-    return { gateway, result };
+    return { codex, result };
   } finally {
-    gateway.stop();
+    codex.stop();
   }
 }
 
@@ -99,7 +121,7 @@ describe("external file permissions", () => {
           }) + "\n",
         );
 
-        const { gateway, result } = await runWithFakeGateway(
+        const { codex, result } = await runWithFakeCodex(
           root,
           [
             "ask",
@@ -108,13 +130,14 @@ describe("external file permissions", () => {
             "--permission-mode", "yolo",
             `Use only the write_file tool to create ${target} with exactly this content: FIBER_E2E_YOLO.`,
           ],
-          [
-            fakeGatewayToolCall("yolo_write_1", "write_file", {
-              path: target,
-              content: "FIBER_E2E_YOLO",
-            }),
-            fakeGatewayFinalText("yolo write complete"),
-          ],
+          agentRoute(
+            () =>
+              codexToolCall("yolo_write_1", "write_file", {
+                path: target,
+                content: "FIBER_E2E_YOLO",
+              }),
+            "yolo write complete",
+          ),
           {
             FIBER_TRACE_LOG: tracePath,
             FIBER_TRACE_SCOPES: "permission",
@@ -133,7 +156,7 @@ describe("external file permissions", () => {
         expect(readFileSync(target, "utf8")).toBe("FIBER_E2E_YOLO");
         const trace = readFileSync(tracePath, "utf8");
         expect(trace).not.toContain("event=auto_review_start");
-        expect(gateway.classifierRequests).toHaveLength(0);
+        expect(reviewRequests(codex)).toHaveLength(0);
         expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
           permission_mode: "ask",
           sandbox: CONFIGURED_SANDBOX,
@@ -159,7 +182,7 @@ describe("external file permissions", () => {
         writeFileSync(classifiedTarget, "before");
         writeFileSync(join(root.home, ".fiber", "settings.json"), "{}");
 
-        const { result: readResult } = await runWithFakeGateway(
+        const { result: readResult } = await runWithFakeCodex(
           root,
           [
             "ask",
@@ -168,17 +191,18 @@ describe("external file permissions", () => {
             "--permission-mode", "auto",
             `Use only the read_file tool to read ${readTarget}, then reply with exactly the file content and nothing else.`,
           ],
-          [
-            fakeGatewayToolCall("external_read_1", "read_file", { path: readTarget }),
-            fakeGatewayFinalText("FIBER_E2E_EXTERNAL_READ"),
-          ],
+          agentRoute(
+            () =>
+              codexToolCall("external_read_1", "read_file", { path: readTarget }),
+            "FIBER_E2E_EXTERNAL_READ",
+          ),
         );
         const read = parseFxJson(readResult);
         expect(read.tool_calls).toContainEqual({ name: "read_file", status: "success" });
         expect(read.output).toContain("FIBER_E2E_EXTERNAL_READ");
 
-        const { gateway: classifiedGateway, result: classifiedResult } =
-          await runWithFakeGateway(
+        const { codex: classifiedCodex, result: classifiedResult } =
+          await runWithFakeCodex(
             root,
             [
               "ask",
@@ -187,13 +211,14 @@ describe("external file permissions", () => {
               "--permission-mode", "auto",
               `Use only the write_file tool to overwrite ${classifiedTarget} with exactly this content: FIBER_E2E_EXTERNAL_CLASSIFIED.`,
             ],
-            [
-              fakeGatewayToolCall("classified_write_1", "write_file", {
-                path: classifiedTarget,
-                content: "FIBER_E2E_EXTERNAL_CLASSIFIED",
-              }),
-              fakeGatewayFinalText("classified write complete"),
-            ],
+            agentRoute(
+              () =>
+                codexToolCall("classified_write_1", "write_file", {
+                  path: classifiedTarget,
+                  content: "FIBER_E2E_EXTERNAL_CLASSIFIED",
+                }),
+              "classified write complete",
+            ),
             {
               FIBER_TRACE_LOG: tracePath,
               FIBER_TRACE_SCOPES: "permission",
@@ -203,7 +228,7 @@ describe("external file permissions", () => {
         expect(trace.match(/event=auto_review_start/g)).toHaveLength(1);
         expect(trace.match(/event=auto_review_result/g)).toHaveLength(1);
         expect(trace).toContain("event=auto_review_result tool_name=write_file decision=clear");
-        expect(classifiedGateway.classifierRequests).toHaveLength(1);
+        expect(reviewRequests(classifiedCodex)).toHaveLength(1);
         const classified = parseFxJson(classifiedResult);
         expect(classified.tool_calls).toContainEqual({ name: "write_file", status: "success" });
         expect(readFileSync(classifiedTarget, "utf-8")).toBe("FIBER_E2E_EXTERNAL_CLASSIFIED");
@@ -219,7 +244,7 @@ describe("external file permissions", () => {
           }),
         );
 
-        const { gateway: allowedGateway, result: allowedResult } = await runWithFakeGateway(
+        const { codex: allowedCodex, result: allowedResult } = await runWithFakeCodex(
           root,
           [
             "ask",
@@ -228,18 +253,19 @@ describe("external file permissions", () => {
             "--permission-mode", "auto",
             `Use only the write_file tool to create ${allowedTarget} with exactly this content: FIBER_E2E_EXTERNAL_ALLOWED.`,
           ],
-          [
-            fakeGatewayToolCall("allowed_write_1", "write_file", {
-              path: allowedTarget,
-              content: "FIBER_E2E_EXTERNAL_ALLOWED",
-            }),
-            fakeGatewayFinalText("allowed write complete"),
-          ],
+          agentRoute(
+            () =>
+              codexToolCall("allowed_write_1", "write_file", {
+                path: allowedTarget,
+                content: "FIBER_E2E_EXTERNAL_ALLOWED",
+              }),
+            "allowed write complete",
+          ),
         );
         const allowed = parseFxJson(allowedResult);
         expect(allowed.tool_calls).toContainEqual({ name: "write_file", status: "success" });
         expect(readFileSync(allowedTarget, "utf-8")).toBe("FIBER_E2E_EXTERNAL_ALLOWED");
-        expect(allowedGateway.classifierRequests).toHaveLength(0);
+        expect(reviewRequests(allowedCodex)).toHaveLength(0);
       } finally {
         rmSync(root.root, { recursive: true, force: true });
       }
