@@ -16,12 +16,13 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIBER_BIN } from "../evals/eval-helpers";
 import {
+  chatGptAccessToken,
+  codexFinalText,
+  codexToolCall,
   composerContains,
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewaySse,
-  fakeShellRun,
-  startFakeGateway,
+  fakeCodexModelsPayload,
+  FAKE_CODEX_DEFAULT_MODEL,
+  seededFakeCodexEnv,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -191,17 +192,205 @@ function summarizeMemory(values: number[]) {
 
 function gatewayEnv(
   home: string,
-  gateway: ReturnType<typeof startFakeGateway>,
+  gateway: ReturnType<typeof startCodexQueue>,
 ) {
-  return {
-    HOME: home,
-    AI_GATEWAY_API_KEY: "fake-full-transcript-brutal-key",
-    VERCEL_OIDC_TOKEN: undefined,
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FIBER_MODEL: FAKE_GATEWAY_MODEL,
+  return seededFakeCodexEnv(home, gateway, {
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
     NO_COLOR: "1",
+  });
+}
+
+type CodexQueueResponse =
+  | string
+  | ((body: string) => string | Promise<string>);
+
+// File-local fake-Codex server, mirroring tui-gateway-stream-lifecycle's
+// serveCodexQueue (models/token/responses endpoints, queued responses).
+function startCodexQueue(responses: CodexQueueResponse[]) {
+  const accountId = "acct_e2e";
+  const refreshedAccessToken = chatGptAccessToken(accountId, "fresh");
+  const requests: Array<{ body: string; headers: Headers }> = [];
+  const classifierRequests: Array<{ body: string; headers: Headers }> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    idleTimeout: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/models") {
+        return Response.json(fakeCodexModelsPayload());
+      }
+      if (url.pathname === "/token") {
+        return Response.json({
+          access_token: refreshedAccessToken,
+          refresh_token: "chatgpt-refresh-next",
+          expires_in: 3600,
+        });
+      }
+      const body = await req.text();
+      const headers = new Headers(req.headers);
+      if (body.includes("<permission_review>")) {
+        classifierRequests.push({ body, headers });
+        return new Response(
+          codexToolCall(
+            `review_decision_${classifierRequests.length}`,
+            "permission_decision",
+            { risk: "low", decision: "clear", rationale: "test fixture" },
+          ),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      requests.push({ body, headers });
+      const queued = responses.shift();
+      if (queued === undefined) {
+        return new Response("unexpected request", { status: 500 });
+      }
+      return new Response(
+        typeof queued === "function" ? await queued(body) : queued,
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  return {
+    requests,
+    classifierRequests,
+    responsesUrl: `${base}/responses`,
+    modelsUrl: `${base}/models`,
+    tokenUrl: `${base}/token`,
+    stop() {
+      server.stop(true);
+    },
   };
+}
+
+// Maps gateway-shaped stream event objects to Codex Responses SSE lines so
+// fixtures keep their delivery semantics on the Codex protocol. Copied from
+// tui-gateway-stream-lifecycle. Tool calls correlate by output_index,
+// assigned in first-seen order.
+type CodexStreamCtx = {
+  indexByCallId: Map<string, number>;
+  nextIndex: number;
+};
+
+function createCodexStreamCtx(): CodexStreamCtx {
+  return { indexByCallId: new Map(), nextIndex: 0 };
+}
+
+function codexIndexForCall(ctx: CodexStreamCtx, id: string): number {
+  const existing = ctx.indexByCallId.get(id);
+  if (existing !== undefined) return existing;
+  const index = ctx.nextIndex;
+  ctx.nextIndex += 1;
+  ctx.indexByCallId.set(id, index);
+  return index;
+}
+
+function codexEventLines(event: Record<string, unknown>, ctx: CodexStreamCtx): string[] {
+  const data = (payload: unknown) => `data: ${JSON.stringify(payload)}\n\n`;
+  switch (event.type) {
+    case "text-delta":
+      return [data({ type: "response.output_text.delta", delta: event.delta })];
+    case "text-start":
+    case "text-end":
+      return [];
+    case "reasoning-start":
+      return [data({
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "reasoning" },
+      })];
+    case "reasoning-delta":
+      return [data({
+        type: "response.reasoning_summary_text.delta",
+        delta: event.delta,
+      })];
+    case "reasoning-end":
+      return [];
+    case "tool-input-start": {
+      const index = codexIndexForCall(ctx, event.id as string);
+      return [data({
+        type: "response.output_item.added",
+        output_index: index,
+        item: { type: "function_call", call_id: event.id, name: event.toolName },
+      })];
+    }
+    case "tool-input-delta": {
+      const index = codexIndexForCall(ctx, event.id as string);
+      return [data({
+        type: "response.function_call_arguments.delta",
+        output_index: index,
+        delta: event.delta,
+      })];
+    }
+    case "tool-input-end":
+      return [];
+    case "tool-call": {
+      const id = event.toolCallId as string;
+      const lines: string[] = [];
+      if (!ctx.indexByCallId.has(id)) {
+        const index = codexIndexForCall(ctx, id);
+        lines.push(data({
+          type: "response.output_item.added",
+          output_index: index,
+          item: { type: "function_call", call_id: id, name: event.toolName },
+        }));
+      }
+      const index = ctx.indexByCallId.get(id)!;
+      const input = typeof event.input === "string"
+        ? event.input
+        : JSON.stringify(event.input);
+      lines.push(data({
+        type: "response.function_call_arguments.done",
+        output_index: index,
+        arguments: input,
+      }));
+      return lines;
+    }
+    case "finish": {
+      const usage = (event.usage ?? {}) as {
+        inputTokens?: { total?: number };
+        outputTokens?: { total?: number };
+      };
+      return [data({
+        type: "response.completed",
+        response: {
+          status: "completed",
+          usage: {
+            input_tokens: usage.inputTokens?.total ?? 4,
+            output_tokens: usage.outputTokens?.total ?? 2,
+          },
+        },
+      })];
+    }
+    case "error":
+      return [data({
+        type: "response.failed",
+        response: { status: "failed", error: event.error },
+      })];
+    default:
+      return [];
+  }
+}
+
+function codexSse(events: Record<string, unknown>[]): string {
+  const ctx = createCodexStreamCtx();
+  return events.flatMap((event) => codexEventLines(event, ctx)).join("");
+}
+
+function codexShellRun(
+  id: string,
+  command: string,
+  options: Record<string, unknown> = {},
+): string {
+  return codexToolCall(id, "shell", {
+    request: {
+      yield_time_ms: 30_000,
+      ...options,
+      action: "run",
+      command,
+    },
+  });
 }
 
 function makeRoot(label: string): StressRoot {
@@ -303,7 +492,7 @@ function realisticChatLine(batch: number, line: number, linesPerBatch: number): 
 function batchResponse(
   batch: number,
   config: StressConfig,
-): Response {
+): string {
   const firstTool = batch * config.toolsPerBatch;
   const chat = Array.from(
     { length: config.chatLinesPerBatch },
@@ -331,12 +520,12 @@ function batchResponse(
     type: "finish",
     finishReason: { unified: "tool-calls", raw: "tool-calls" },
   });
-  return fakeGatewaySse(events);
+  return codexSse(events);
 }
 
 function prepareFixture(config: StressConfig): {
   paths: StressRoot;
-  gateway: ReturnType<typeof startFakeGateway>;
+  gateway: ReturnType<typeof startCodexQueue>;
   totalTools: number;
 } {
   const paths = makeRoot(config.label);
@@ -383,17 +572,17 @@ done
   );
   chmodSync(liveScript, 0o755);
 
-  const responses: Response[] = [];
+  const responses: CodexQueueResponse[] = [];
   for (let batch = 0; batch < config.batches; batch += 1) {
     responses.push(batchResponse(batch, config));
   }
-  responses.push(fakeGatewayFinalText(`${HISTORY_DONE}\n${TAIL_SENTINEL}`));
-  responses.push(fakeShellRun("ctrl-o-brutal-live", "./ctrl-o-live.sh", {
+  responses.push(codexFinalText(`${HISTORY_DONE}\n${TAIL_SENTINEL}`));
+  responses.push(codexShellRun("ctrl-o-brutal-live", "./ctrl-o-live.sh", {
     timeout_ms: 600_000,
   }));
-  responses.push(fakeGatewayFinalText(LIVE_DONE));
+  responses.push(codexFinalText(LIVE_DONE));
 
-  return { paths, gateway: startFakeGateway(responses), totalTools };
+  return { paths, gateway: startCodexQueue(responses), totalTools };
 }
 
 async function waitForScrollback(
@@ -871,7 +1060,7 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
   const primaryRssKib: number[] = [];
   const resumedRssKib: number[] = [];
   let session: TmuxSession | null = null;
-  let resumedGateway: ReturnType<typeof startFakeGateway> | null = null;
+  let resumedGateway: ReturnType<typeof startCodexQueue> | null = null;
   let profiler: ReturnType<typeof Bun.spawn> | null = null;
   let passed = false;
   try {
@@ -931,13 +1120,16 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
       immediateTraceStart,
       [
         "open_request state=pending",
+        "open_request state=ready",
         "depth_transition from=inline to=full route=root trigger=ctrl_o",
+        "depth_transition from=inline to=full trigger=ctrl_o",
       ],
     );
     session.sendKeysImmediate(["Escape"]);
     await waitForAnyTraceAfter(paths.tracePath, immediateTraceStart, [
       "open_request state=cancelled",
       "depth_transition from=full to=inline route=root trigger=escape",
+      "depth_transition from=full to=inline trigger=escape",
     ]);
     await waitForMode(session, "main", DRAFT);
     expect(performance.now() - escapeStarted).toBeLessThan(INPUT_SANITY_BUDGET_MS);
@@ -945,8 +1137,10 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
     const repeatedOpenTraceStart = traceSize(paths.tracePath);
     const repeatedOpenStarted = performance.now();
     session.sendKeysImmediate(["C-o"]);
-    await waitForTraceAfter(paths.tracePath, repeatedOpenTraceStart, [
+    await waitForAnyTraceAfter(paths.tracePath, repeatedOpenTraceStart, [
+      "open_request state=ready",
       "depth_transition from=inline to=full route=root trigger=ctrl_o",
+      "depth_transition from=inline to=full trigger=ctrl_o",
     ]);
     await waitForMode(session, "full", DRAFT);
     expect(performance.now() - repeatedOpenStarted).toBeLessThan(
@@ -982,8 +1176,9 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
       BURST_NAVIGATION_EVENTS,
       "Escape",
     );
-    await waitForTraceAfter(paths.tracePath, burstEscapeTraceStart, [
+    await waitForAnyTraceAfter(paths.tracePath, burstEscapeTraceStart, [
       "depth_transition from=full to=inline route=root trigger=escape",
+      "depth_transition from=full to=inline trigger=escape",
     ]);
     await waitForMode(session, "main", DRAFT);
     expect(performance.now() - burstEscapeStarted).toBeLessThan(
@@ -1119,9 +1314,9 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
     session = null;
 
     if (config.resumeCycles > 0) {
-      resumedGateway = startFakeGateway([]);
+      resumedGateway = startCodexQueue([]);
       session = await TmuxSession.create({
-        cmd: `${FIBER_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} session resume last`,
         cwd: realpathSync(paths.workspace),
         env: {
           ...gatewayEnv(paths.home, resumedGateway),
@@ -1220,7 +1415,7 @@ test.skipIf(!tmuxAvailable())(
         ? tallTail
         : `TALL_TRANSCRIPT_ROW_${String(index).padStart(3, "0")}`,
     ).join("\n");
-    const tallGateway = startFakeGateway([fakeGatewayFinalText(response)]);
+    const tallGateway = startCodexQueue([codexFinalText(response)]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({

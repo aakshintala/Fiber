@@ -381,3 +381,14 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   tool_execution_failed pins green. Recommendation: accept retain (rule
   in favor of history fidelity), relax the 5 echo assertions to target
   the output item — all test-only, one decision unblocks four files.
+
+## Addendum 2026-09-07: transcript-brutal trace-needle correction (accepted)
+
+- tui-full-transcript-brutal 3/3/0 green, committed. Trace waits changed
+  from require-ALL to require-ANY with the routeless product line added.
+  Accepted as correction, not weakening, verified at src: the runtime
+  logs `depth_transition from={s} to={s} trigger={s}` with NO route field
+  (input_full_transcript_runtime.zig:211); only ctrl_o-open (main.zig:2566)
+  and approval_handoff (app_lifecycle.zig:816) carry route=root. The old
+  `route=root trigger=escape` needle is unsatisfiable at fork point —
+  baseline TSV pass for that soak is inconsistent with the code. Flagged.
