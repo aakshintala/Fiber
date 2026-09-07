@@ -392,3 +392,16 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   and approval_handoff (app_lifecycle.zig:816) carry route=root. The old
   `route=root trigger=escape` needle is unsatisfiable at fork point —
   baseline TSV pass for that soak is inconsistent with the code. Flagged.
+
+## Addendum 2026-09-07: scrub-vs-retain executed (1a)
+
+- All five echo assertions flipped to positive retain pins (verbatim
+  function_call args + paired tool_execution_failed output), each verified
+  against live shapes. decision-prompts 49/49, TGSL 34/34, GSL 54/1/0.
+- Observation for the record: in GSL saved-malformed-recovery, the verbatim
+  pair is retained at rest (events.jsonl arguments_json) but dropped from
+  BOTH model input and the event log on resume (compaction). Retained at
+  rest, omitted on resume — pinned as observed; whether resume SHOULD
+  resend the failed pair is a session-owner design question, out of scope.
+- TGSL also needed a gateway-era event rename: provider_tool_arguments_
+  rejected -> argument_integrity_rejected (the Codex intake event).
