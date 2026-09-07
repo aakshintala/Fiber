@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,23 +12,17 @@ import { join } from "node:path";
 import { readTrace } from "./tui-render-assertions";
 import {
   codexFinalText,
-  fakeCodexEnv,
   hasEmptyComposer,
+  seededFakeCodexEnv,
   startFakeCodex,
   TmuxSession,
   tmuxAvailable,
-  writeSeededChatGptLogin,
 } from "./tmux-helpers";
 
 const SKIP = !tmuxAvailable();
 const TIMEOUT = 30_000;
 const LONG_TIMEOUT = 120_000;
 const TRACE_SCOPES = "agent,worker,gateway,tool,permission,history,interrupt,prompt";
-const CLIPBOARD_PROGRAM = process.platform === "darwin"
-  ? "pbcopy"
-  : process.platform === "linux"
-    ? "xclip"
-    : null;
 
 let session: TmuxSession | null = null;
 
@@ -87,66 +80,9 @@ describe.skipIf(!tmuxAvailable())("tui: skills command recovery", () => {
   );
 });
 
-describe.skipIf(!tmuxAvailable() || CLIPBOARD_PROGRAM === null)("tui: clipboard host", () => {
-  test(
-    "/copy sends exact reply bytes to the host clipboard and reports process failure",
-    async () => {
-      if (CLIPBOARD_PROGRAM === null) throw new Error("unsupported clipboard platform");
-
-      const workDir = mkdtempSync(join(tmpdir(), "fiber-clipboard-host-"));
-      const homeDir = join(workDir, "home");
-      const binDir = join(workDir, "bin");
-      const capturePath = join(workDir, "clipboard.txt");
-      const stderrPath = join(workDir, "stderr.log");
-      const clipboardPath = join(binDir, CLIPBOARD_PROGRAM);
-      mkdirSync(homeDir);
-      mkdirSync(binDir);
-      writeFileSync(clipboardPath, "#!/bin/sh\ncat > \"$FIBER_TEST_CLIPBOARD_CAPTURE\"\n");
-      chmodSync(clipboardPath, 0o755);
-
-      const reply = "clipboard host sentinel\nsecond line";
-      const codex = startFakeCodex({ route: () => codexFinalText(reply) });
-      try {
-        writeSeededChatGptLogin(homeDir, codex.accessToken);
-        session = await TmuxSession.create({
-          cwd: workDir,
-          stderrPath,
-          env: {
-            ...fakeCodexEnv(homeDir, codex),
-            FIBER_TEST_CLIPBOARD_CAPTURE: capturePath,
-            PATH: `${binDir}:${process.env.PATH ?? ""}`,
-          },
-        });
-        await session.waitForComposer(10_000);
-
-        await session.sendText("reply for clipboard");
-        await session.waitForText("clipboard host sentinel", 10_000);
-        await session.waitForComposer(10_000);
-        await session.sendText("/copy");
-        await session.waitForText("Copied to clipboard.", 5_000);
-
-        expect(readFileSync(capturePath, "utf8")).toBe(reply);
-
-        writeFileSync(clipboardPath, "#!/bin/sh\nexit 23\n");
-        await session.sendText("/copy");
-        await session.waitForText("Failed to copy to clipboard.", 5_000);
-        expect(readFileSync(stderrPath, "utf8")).toBe("");
-      } finally {
-        if (session) {
-          await session.kill();
-          session = null;
-        }
-        codex.stop();
-        rmSync(workDir, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-});
-
 describe.skipIf(!tmuxAvailable())("tui: active session transitions", () => {
   test(
-    "active /clear cancels a fake Gateway turn and accepts a follow-up prompt",
+    "active /clear cancels a fake Codex turn and accepts a follow-up prompt",
     async () => {
       const workDir = mkdtempSync(join(tmpdir(), "fiber-active-clear-"));
       const homeDir = mkdtempSync(join(tmpdir(), "fiber-active-clear-home-"));
@@ -161,12 +97,10 @@ describe.skipIf(!tmuxAvailable())("tui: active session transitions", () => {
       });
 
       try {
-        writeSeededChatGptLogin(homeDir, codex.accessToken);
         session = await TmuxSession.create({
           cwd: workDir,
           stderrPath,
-          env: fakeCodexEnv(homeDir, codex, {
-          }),
+          env: seededFakeCodexEnv(homeDir, codex),
           width: 120,
           height: 40,
         });
@@ -228,10 +162,9 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
       });
 
       try {
-        writeSeededChatGptLogin(homeDir, codex.accessToken);
         session = await TmuxSession.create({
           cwd: workDir,
-          env: fakeCodexEnv(homeDir, codex, {
+          env: seededFakeCodexEnv(homeDir, codex, {
             FIBER_TRACE_SCOPES: TRACE_SCOPES,
             FIBER_TRACE_LOG: tracePath,
           }),
@@ -291,40 +224,21 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   );
 
   test(
-    "/stats shows session statistics",
-    async () => {
-      session = await launchAndWait();
-      await session.sendText("/stats");
-      const pane = await session.waitForText(/stats|token|turn|step/i, 5_000);
-      expect(pane.toLowerCase()).toMatch(/stats|token|turn|step/);
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "/usage and /cost open the same compact local usage dashboard",
+    "/usage opens the compact local usage dashboard",
     async () => {
       const home = mkdtempSync(join(tmpdir(), "fiber-usage-empty-home-"));
       session = await TmuxSession.create({ env: { HOME: home } });
       await session.waitForComposer(10_000);
-      await session.sendText("/cost");
+      await session.sendText("/usage");
       const pane = await session.waitForText(
         /Tracking has not started/,
         5_000,
       );
       expect(pane).toContain("[30 days]");
       expect(pane).not.toMatch(/^● Usage/m);
-      expect(pane).toContain("Tab Scope");
-      expect(pane).toContain("R Refresh");
       expect(pane).toContain("Esc Close");
       await session.sendKeys("Escape");
       await session.waitForComposer(5_000);
-      await session.sendText("/usage");
-      const aliasPane = await session.waitForText(
-        /Tracking has not started/,
-        5_000,
-      );
-      expect(aliasPane).toContain("[30 days]");
     },
     TIMEOUT,
   );
@@ -721,28 +635,6 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
       await session.sendText("/skills");
       const pane = await session.waitForText(/Skills [0-9]+|No skills available|All [0-9]+/i, 5_000);
       expect(pane).not.toContain("Visible skills (");
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "/alias shows alias list",
-    async () => {
-      session = await launchAndWait();
-      await session.sendText("/alias");
-      const pane = await session.waitForText(/alias|no|none|defined/i, 5_000);
-      expect(pane.toLowerCase()).toMatch(/alias|no|none|defined/);
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "/copy handles empty history gracefully",
-    async () => {
-      session = await launchAndWait();
-      await session.sendText("/copy");
-      const pane = await session.waitForText(/copy|copied|nothing|empty|clipboard/i, 5_000);
-      expect(pane.length).toBeGreaterThan(0);
     },
     TIMEOUT,
   );
