@@ -44,18 +44,17 @@ Recorded in `plan.md`, not duplicated here:
   both command-permissions cases converted, terminal-host role re-pointed.
   No `fiber acp` spawns remain in the suite.
 
-Added 2026-09-06 from the Phase 4 residue:
+Added 2026-09-06 from the Phase 4 residue, resolved 2026-09-08 by owner
+decision (remove):
 
 - **Merged-settings `credential_source` is parsed and never read.**
-  `config_runtime.zig:1355` parses it; nothing reads it. It is a documented user
-  setting that selects a preferred credential source and has no effect on which
-  credential is resolved. Inherited, not caused by the transition — the value
-  died at the callee before Slice 9 deleted the plumbing that carried it
-  (`phase4-audit/CORRECTIONS.md`, "The `credential_source` setting is now
-  write-only"). Phase 5 owns it because it is a behavior question this phase's
-  suite may answer directly: either honor the setting or remove it and its
-  documentation. Do not close Phase 5 by deleting the field silently — it is a
-  documented setting, so removing it is a user-visible change.
+  Removed the setting outright: `Settings.credential_source` field, profile
+  key, parsing, merge, `UserSettingsPatch` fields/application/validation,
+  and its unit test. `types.CredentialSource` stays — it is provenance
+  plumbing (which source served a request), not the preference. Unknown
+  `credential_source` keys in existing settings files are ignored, matching
+  the convention for other retired keys. Full Zig suite, config-persistence
+  24/0, auth-source-selection 4/0, smoke all green.
 
 ## Phase 6: Documentation and naming
 

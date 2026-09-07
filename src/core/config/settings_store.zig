@@ -92,10 +92,6 @@ pub const ProjectMcpMutation = struct {
 pub const UserSettingsPatch = struct {
     model_preference: ?ModelPreferencePatch = null,
     permission_mode: ?types.PermissionMode = null,
-    credential_source: ?types.CredentialSource = null,
-    /// Removes the key entirely so resolution returns to plain precedence.
-    /// Distinct from a null `credential_source`, which means "leave unchanged".
-    clear_credential_source: bool = false,
     yolo_acknowledged: ?bool = null,
     effort: ?types.ReasoningEffort = null,
     slash_menu_categories: ?bool = null,
@@ -110,8 +106,6 @@ pub const UserSettingsPatch = struct {
     fn isEmpty(self: UserSettingsPatch) bool {
         return self.model_preference == null and
             self.permission_mode == null and
-            self.credential_source == null and
-            !self.clear_credential_source and
             self.yolo_acknowledged == null and
             self.effort == null and
             self.slash_menu_categories == null and
@@ -887,26 +881,6 @@ fn validAdditionalDirectoryPath(path: []const u8) bool {
         std.mem.findScalar(u8, path, 0) == null;
 }
 
-test "clearing the credential choice removes the key rather than blanking it" {
-    const alloc = std.testing.allocator;
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    defer arena.deinit();
-
-    var root = try std.json.parseFromSliceLeaky(
-        std.json.Value,
-        arena.allocator(),
-        "{\"model\":\"m\",\"credential_source\":\"fiber_login\"}",
-        .{},
-    );
-    var application = try applyUserPatchToRoot(arena.allocator(), &root, .{ .clear_credential_source = true });
-    try std.testing.expect(application.changed);
-    try std.testing.expect(!root.object.contains("credential_source"));
-    try std.testing.expect(root.object.contains("model"));
-
-    application = try applyUserPatchToRoot(arena.allocator(), &root, .{ .clear_credential_source = true });
-    try std.testing.expect(!application.changed);
-}
-
 test "collapse tool calls user patch writes the profile preference" {
     const alloc = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(alloc);
@@ -970,11 +944,6 @@ fn applyUserPatchToRoot(
         application.changed = try putModelPreference(arena, &root.object, preference) or application.changed;
     }
     if (patch.permission_mode) |value| application.changed = try putString(arena, &root.object, "permission_mode", @tagName(value)) or application.changed;
-    if (patch.credential_source) |value| application.changed = try putString(arena, &root.object, "credential_source", @tagName(value)) or application.changed;
-    if (patch.clear_credential_source and root.object.contains("credential_source")) {
-        _ = root.object.orderedRemove("credential_source");
-        application.changed = true;
-    }
     if (patch.yolo_acknowledged) |value| application.changed = try putBool(arena, &root.object, "yolo_acknowledged", value) or application.changed;
     if (patch.effort) |value| application.changed = try putString(arena, &root.object, "effort", value.label()) or application.changed;
     if (patch.slash_menu_categories) |value| application.changed = try putBool(arena, &root.object, "slash_menu_categories", value) or application.changed;
@@ -1764,11 +1733,6 @@ fn validateKnownSettingsObject(
                 !std.ascii.eqlIgnoreCase(value.string, "auto") and
                 !std.ascii.eqlIgnoreCase(value.string, "yolo")))
         {
-            return error.InvalidSettingsFormat;
-        }
-    }
-    if (object.get("credential_source")) |value| {
-        if (value != .string or types.parseCredentialSource(value.string) == null) {
             return error.InvalidSettingsFormat;
         }
     }

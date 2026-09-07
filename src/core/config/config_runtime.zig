@@ -38,7 +38,6 @@ pub const Paths = struct {
 pub const Settings = struct {
     models: model_preferences.Preferences = .{},
     permission_mode: ?types.PermissionMode = null,
-    credential_source: ?types.CredentialSource = null,
     yolo_acknowledged: ?bool = null,
     max_agent_steps: ?usize = null,
     max_tool_result_bytes: ?usize = null,
@@ -604,7 +603,6 @@ fn isProfileOnlySettingKey(key: []const u8) bool {
         "first_call_tool_choice",
         "auto_upgrade",
         "permission_mode",
-        "credential_source",
         "yolo_acknowledged",
         "permission",
         "additional_directories",
@@ -1350,12 +1348,6 @@ fn parseProfileOnlyFields(
         settings.permission_mode = parsePermissionMode(value.string) orelse return error.InvalidPermissionMode;
     }
 
-    if (root.object.get("credential_source")) |credential_source_value| {
-        if (credential_source_value != .string) return error.InvalidCredentialSourceType;
-        settings.credential_source = types.parseCredentialSource(credential_source_value.string) orelse
-            return error.InvalidCredentialSource;
-    }
-
     if (root.object.get("yolo_acknowledged")) |acknowledged_value| {
         if (acknowledged_value != .bool) return error.InvalidYoloAcknowledgedType;
         settings.yolo_acknowledged = acknowledged_value.bool;
@@ -1488,7 +1480,6 @@ fn parseProjectSafeFields(settings: *Settings, root: std.json.Value) !void {
 fn mergeSettings(target: *Settings, incoming: *Settings, alloc: Allocator) void {
     target.models.mergeOwnedFrom(alloc, &incoming.models);
     if (incoming.permission_mode) |value| target.permission_mode = value;
-    if (incoming.credential_source) |value| target.credential_source = value;
     if (incoming.yolo_acknowledged) |value| target.yolo_acknowledged = value;
     if (incoming.max_agent_steps) |value| target.max_agent_steps = value;
     if (incoming.max_tool_result_bytes) |value| target.max_tool_result_bytes = value;
