@@ -18,14 +18,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIBER_BIN } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewaySse,
-  fakeGatewayToolCall,
-  fakeShellRun,
+  chatGptAccessToken,
+  codexFinalText,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
   hasEmptyComposer,
   paneExitMatches,
-  startFakeGateway,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
   tmuxRawPasteFlags,
@@ -55,6 +55,117 @@ const KEEP_LARGE_SKILL_ARTIFACTS =
 let session: TmuxSession | null = null;
 const tempDirs: string[] = [];
 const gateways: Array<{ stop(): void }> = [];
+let lastCodex: ResizeCodex | null = null;
+
+type CodexQueueResponse =
+  | string
+  | Response
+  | ((body: string) => string | Response | Promise<string | Response>);
+
+type ResizeCodex = {
+  requests: Array<{ body: string; headers: Headers }>;
+  responsesUrl: string;
+  modelsUrl: string;
+  tokenUrl: string;
+  stop(): void;
+};
+
+function codexTextResponse(events: Record<string, unknown>[]): string {
+  return codexFinalText(
+    events
+      .filter((event) => event.type === "text-delta")
+      .map((event) => String(event.delta ?? ""))
+      .join(""),
+  );
+}
+
+function codexShellRun(
+  id: string,
+  command: string,
+  options: Record<string, unknown> = {},
+): string {
+  return codexToolCall(id, "shell", {
+    request: { yield_time_ms: 30_000, ...options, action: "run", command },
+  });
+}
+
+function startCodexQueue(
+  responses: CodexQueueResponse[],
+  options: { extraModels?: string[] } = {},
+): ResizeCodex {
+  const queue = [...responses];
+  const handle = startFakeCodex({ extraModels: options.extraModels });
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    idleTimeout: 0,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/models") {
+        handle.modelRequests.push({
+          path,
+          authorization: req.headers.get("authorization"),
+          url: req.url,
+        });
+        return Response.json({
+          models: [FAKE_CODEX_DEFAULT_MODEL, "gpt-5.4", ...(options.extraModels ?? [])].map((slug) => ({
+            slug,
+            visibility: "list",
+            supported_in_api: true,
+            supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }],
+            additional_speed_tiers: [],
+            input_modalities: ["text"],
+            context_window: 272000,
+          })),
+        });
+      }
+      if (path === "/token") return new Response(JSON.stringify({
+        access_token: chatGptAccessToken("acct_e2e", "fresh"),
+        refresh_token: "chatgpt-refresh-next",
+        expires_in: 3600,
+      }), { headers: { "content-type": "application/json" } });
+      const body = await req.text();
+      if (body.includes("<permission_review>")) {
+        return new Response(
+          codexToolCall(
+            `review_decision_${handle.requests.length + 1}`,
+            "permission_decision",
+            { risk: "low", decision: "clear", rationale: "test fixture" },
+          ),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      const recorded = { body, headers: new Headers(req.headers) };
+      handle.requests.push({ path, authorization: recorded.headers.get("authorization"), body });
+      const response = queue.shift();
+      if (response === undefined) return new Response("unexpected request", { status: 500 });
+      const resolved = typeof response === "function" ? await response(body) : response;
+      return typeof resolved === "string"
+        ? new Response(resolved, { headers: { "content-type": "text/event-stream" } })
+        : resolved;
+    },
+  });
+  const result = {
+    requests: handle.requests as Array<{ body: string; headers: Headers }>,
+    responsesUrl: `http://127.0.0.1:${server.port}/responses`,
+    modelsUrl: `http://127.0.0.1:${server.port}/models`,
+    tokenUrl: `http://127.0.0.1:${server.port}/token`,
+    stop() {
+      server.stop(true);
+      handle.stop();
+    },
+  };
+  lastCodex = result;
+  return result;
+}
+
+function seededResizeEnv(
+  home: string,
+  codex: ResizeCodex,
+  extra: Record<string, string | undefined> = {},
+): Record<string, string | undefined> {
+  return seededFakeCodexEnv(home, codex as ReturnType<typeof startFakeCodex>, extra);
+}
 
 type TmuxCreateOptions = NonNullable<Parameters<typeof TmuxSession.create>[0]>;
 
@@ -69,6 +180,7 @@ async function createResizeSession(
     home = join(root, "home");
     env.HOME = home;
   }
+  if (lastCodex) Object.assign(env, seededResizeEnv(home, lastCodex), env);
 
   const settingsPath = join(home, ".fiber", "settings.json");
   mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -86,6 +198,7 @@ afterEach(async () => {
     session = null;
   }
   for (const gateway of gateways.splice(0)) gateway.stop();
+  lastCodex = null;
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -133,8 +246,6 @@ async function launchRecordedSurfaceSession(
     cwd: workspace,
     env: {
       HOME: home,
-      AI_GATEWAY_API_KEY: undefined,
-      VERCEL_OIDC_TOKEN: undefined,
       FIBER_RECORD: join(root, "session.fibertape"),
       FIBER_RECORD_INPUT: "1",
       NO_COLOR: "1",
@@ -193,8 +304,7 @@ function gatedResizeResponse(
   const event = (delta: string) =>
     encoder.encode(
       `data: ${JSON.stringify({
-        type: "text-delta",
-        id: "resize-stream",
+        type: "response.output_text.delta",
         delta,
       })}\n\n`,
     );
@@ -207,7 +317,7 @@ function gatedResizeResponse(
       new Response(
         new ReadableStream<Uint8Array>({
           start(controller) {
-            sendJson(controller, { type: "text-start", id: "resize-stream" });
+            sendJson(controller, { type: "response.output_item.added", output_index: 0, item: { type: "message", role: "assistant", content: [] } });
             controller.enqueue(event(first));
             timer = setInterval(() => {
               if (!closed) controller.enqueue(encoder.encode(": gated-resize-hold\n\n"));
@@ -219,19 +329,13 @@ function gatedResizeResponse(
               closed = true;
               if (timer) clearInterval(timer);
               controller.enqueue(event(final));
-              sendJson(controller, { type: "text-end", id: "resize-stream" });
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: "finish",
-                    finishReason: { unified: "stop", raw: "stop" },
-                    usage: {
-                      inputTokens: { total: 1 },
-                      outputTokens: { total: 3 },
-                    },
-                  })}\n\ndata: [DONE]\n\n`,
-                ),
-              );
+              sendJson(controller, {
+                type: "response.completed",
+                response: {
+                  status: "completed",
+                  usage: { input_tokens: 1, output_tokens: 3 },
+                },
+              });
               controller.close();
             });
           },
@@ -296,7 +400,7 @@ function selectedSlashRow(escapes: string): string | null {
 
 test("selected slash row ignores the welcome header help hint", () => {
   const header = `${SELECTED_COMPLETION_SGR}fiber\x1b[0m\x1b[38;5;245m v0.3.27 · Run /help for commands`;
-  const command = `${SELECTED_COMPLETION_SGR}  /clear\x1b[38;5;245m start a fresh session and keep background processes`;
+  const command = `${SELECTED_COMPLETION_SGR}  /new\x1b[38;5;245m start a fresh session and keep background processes`;
 
   expect(selectedSlashRow(`${header}\n${command}`)).toBe(command);
 });
@@ -651,8 +755,6 @@ function expectSkillsMenuGrid(
   expect(text).toContain("[All]");
   expect(text).toContain("fiber");
   expect(text).not.toContain("[fiber]");
-  expect(text).toContain("Workspace");
-  expect(text).toContain("Codex");
   expect(text).toContain("fiber · Global");
   expect(names.some((name) => text.includes(name))).toBe(true);
   expect(text).not.toContain("Visible skills (");
@@ -849,7 +951,7 @@ async function waitForQueuedPromptBytes(
 }
 
 async function waitForSubmittedUserText(
-  gateway: ReturnType<typeof startFakeGateway>,
+  gateway: ReturnType<typeof startCodexQueue>,
   tracePath: string,
   stderrPath: string,
   timeoutMs = 60_000,
@@ -868,19 +970,19 @@ async function waitForSubmittedUserText(
   }
 
   const request = JSON.parse(gatewayRequest.body) as {
-    prompt: Array<{
-      role: string;
+    input: Array<{
+      role?: string;
       content?: Array<{ type: string; text?: string }>;
     }>;
   };
-  return [...request.prompt]
+  return [...request.input]
     .reverse()
     .find((message) => message.role === "user")
-    ?.content?.find((part) => part.type === "text")?.text;
+    ?.content?.find((part) => part.type === "input_text")?.text;
 }
 
 async function waitForGatewayRequestCount(
-  gateway: ReturnType<typeof startFakeGateway>,
+  gateway: ReturnType<typeof startCodexQueue>,
   count: number,
   timeoutMs = 10_000,
 ): Promise<void> {
@@ -968,8 +1070,8 @@ function sendRawTmuxBytes(
 }
 
 function startFileApprovalGateway() {
-  const gateway = startFakeGateway([
-    fakeGatewayToolCall(
+  const gateway = startCodexQueue([
+    codexToolCall(
       "resize_file_1",
       "write_file",
       {
@@ -988,7 +1090,7 @@ function startFileApprovalGateway() {
         ].join("\n"),
       },
     ),
-    fakeGatewayFinalText("resize denial complete"),
+    codexFinalText("resize denial complete"),
   ]);
   gateways.push(gateway);
   return gateway;
@@ -1142,8 +1244,6 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
       cwd: fixture.workspace,
       env: {
         HOME: fixture.home,
-        AI_GATEWAY_API_KEY: undefined,
-        VERCEL_OIDC_TOKEN: undefined,
         FIBER_RECORD: tapePath,
         FIBER_RECORD_INPUT: "1",
         FIBER_TRACE_LOG: tracePath,
@@ -1342,8 +1442,6 @@ async function runRapidSkillResizeAttempt(
       cwd: fixture.workspace,
       env: {
         HOME: fixture.home,
-        AI_GATEWAY_API_KEY: undefined,
-        VERCEL_OIDC_TOKEN: undefined,
         FIBER_RECORD: tapePath,
         FIBER_RECORD_INPUT: "1",
         FIBER_TRACE_LOG: tracePath,
@@ -1567,20 +1665,16 @@ describe.skipIf(SKIP)("tui: resize", () => {
             `${marker} keeps this assistant transcript taller than the terminal viewport.`,
         )
         .join("\n");
-      const gateway = startFakeGateway([fakeGatewayFinalText(response)]);
+      const gateway = startCodexQueue([codexFinalText(response)]);
       gateways.push(gateway);
       session = await createResizeSession({
         cmd: `sh -c ${quoteShellPath(
-          `printf 'PRE_FX_MARKER_long_resize\\n'; exec ${quoteShellPath(FIBER_BIN)}`,
+          `printf 'PRE_FIBER_MARKER_long_resize\\n'; exec ${quoteShellPath(FIBER_BIN)}`,
         )}`,
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "fake-long-resize-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "frame_schedule,frame_diff,frame_commit,scroll,resize",
           NO_COLOR: "1",
@@ -1605,7 +1699,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
 
       const scrollback = await waitForScrollbackWithoutText(
         session,
-        "PRE_FX_MARKER_",
+        "PRE_FIBER_MARKER_",
       );
       expect(scrollback.match(/fiber v\d+\.\d+\.\d+\b/g)).toHaveLength(1);
       expect(scrollback.match(/Run \/help for commands/g)).toHaveLength(1);
@@ -1629,7 +1723,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const stderrPath = join(root, "stderr.log");
       const tracePath = join(root, "trace.log");
       const tapePath = join(root, "session.fibertape");
-      const preFxMarker = "PRE_FX_RESIZE_STREAM_MARKER";
+      const preFiberMarker = "PRE_FIBER_RESIZE_STREAM_MARKER";
       const finalResponse = "RESIZE_STREAM_FINAL_RESPONSE";
       tempDirs.push(root);
       mkdirSync(join(home, ".fiber"), { recursive: true });
@@ -1642,24 +1736,19 @@ describe.skipIf(SKIP)("tui: resize", () => {
 
       const command =
         "for i in $(seq 1 96); do printf 'resize-stream-marker %03d\\n' \"$i\"; sleep 0.03; done";
-      const gateway = startFakeGateway([
-        fakeShellRun("resize-live-command", command, { timeout_ms: 600_000 }),
-        fakeGatewayFinalText(finalResponse),
+      const gateway = startCodexQueue([
+        codexShellRun("resize-live-command", command, { timeout_ms: 600_000 }),
+        codexFinalText(finalResponse),
       ]);
       gateways.push(gateway);
       session = await createResizeSession({
         cmd: `sh -c ${quoteShellPath(
-          `printf '${preFxMarker}\\n'; exec ${quoteShellPath(FIBER_BIN)}`,
+          `printf '${preFiberMarker}\\n'; exec ${quoteShellPath(FIBER_BIN)}`,
         )}`,
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "fake-resize-command-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -1686,7 +1775,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       expect(scrollback.match(/fiber v\d+\.\d+\.\d+\b/g)).toHaveLength(1);
       expect(scrollback.match(/Run \/help for commands/g)).toHaveLength(1);
       expect(scrollback).toContain("stream the resize marker command");
-      expect(scrollback).not.toContain(preFxMarker);
+      expect(scrollback).not.toContain(preFiberMarker);
       expect(scrollback).toContain("● 1 tool call · 1 command");
       expect(scrollback).toContain("Ran for i in $(seq 1 96)");
       expect(scrollback).not.toContain("resize-stream-marker 001");
@@ -1737,7 +1826,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         ...afterMarkers,
         end,
       ];
-      const response = fakeGatewaySse([
+      const response = codexTextResponse([
         {
           type: "text-delta",
           id: "retention-text-a",
@@ -1775,8 +1864,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
       ]);
       const command =
         `awk 'BEGIN { for (i = 0; i < 13500; i++) printf "RETENTION_SEED_%05d alpha beta gamma delta epsilon zeta eta theta iota kappa lambda\\n", i }'`;
-      const gateway = startFakeGateway([
-        fakeShellRun("retention-seed", command, { timeout_ms: 600_000 }),
+      const gateway = startCodexQueue([
+        codexShellRun("retention-seed", command, { timeout_ms: 600_000 }),
         response,
       ]);
       gateways.push(gateway);
@@ -1786,12 +1875,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "fake-retention-scrollback-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_MAX_AGENT_STEPS: "4",
           NO_COLOR: "1",
         },
@@ -1874,9 +1958,9 @@ describe.skipIf(SKIP)("tui: resize", () => {
         ].join("\n"),
       );
 
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText(seedMarker),
-        fakeShellRun("approval-cancel-resize", command, { timeout_ms: 600_000 }),
+      const gateway = startCodexQueue([
+        codexFinalText(seedMarker),
+        codexShellRun("approval-cancel-resize", command, { timeout_ms: 600_000 }),
       ]);
       gateways.push(gateway);
       const active = await createResizeSession({
@@ -1884,11 +1968,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "fake-approval-cancel-resize-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -1996,9 +2076,10 @@ describe.skipIf(SKIP)("tui: resize", () => {
       expect(afterCancelScrollback).not.toContain(approvalQuestion);
       expect(gateway.requests).toHaveLength(2);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
-      const replay = JSON.parse(
+      const replayEnvelope = JSON.parse(
         execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], { encoding: "utf8" }),
-      ) as { resize_count: number };
+      ) as { data?: { resize_count: number }; resize_count?: number };
+      const replay = replayEnvelope.data ?? replayEnvelope;
       expect(replay.resize_count).toBe(1);
       expect(active.paneStatus()).toEqual({ dead: false, status: null });
       expect(active.isPaneAlive()).toBe(true);
@@ -2030,19 +2111,15 @@ describe.skipIf(SKIP)("tui: resize", () => {
 
       const before = "THEMATIC_RULE_BEFORE";
       const after = "THEMATIC_RULE_AFTER";
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText(`${before}\n\n---\n${after}`),
+      const gateway = startCodexQueue([
+        codexFinalText(`${before}\n\n---\n${after}`),
       ]);
       gateways.push(gateway);
       session = await createResizeSession({
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "fake-thematic-rule-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           NO_COLOR: "1",
         },
         width: 120,
@@ -2115,8 +2192,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
 
       const sentinel = "NESTED_QUOTE_RESIZE_SENTINEL";
       const lazySentinel = "LAZY_NESTED_QUOTE_RESIZE_SENTINEL";
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText(
+      const gateway = startCodexQueue([
+        codexFinalText(
           `> > ${sentinel} keeps the full nested quote prefix visible while this deliberately long assistant response wraps across multiple terminal rows during the live resize exercise.\n${lazySentinel} keeps both quote rules without repeating the source markers while this continuation also wraps during the live resize exercise.`,
         ),
       ]);
@@ -2125,11 +2202,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "fake-nested-blockquote-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "resize,frame_schedule,scroll",
           NO_COLOR: "1",
@@ -2247,7 +2320,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         `${markers[1]}\n`,
         `${markers[2]}\n`,
       );
-      const gateway = startFakeGateway([gated.response]);
+      const gateway = startCodexQueue([gated.response]);
       gateways.push(gateway);
       writeFileSync(
         join(root, "commands.txt"),
@@ -2270,12 +2343,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "fake-gated-resize-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -2399,8 +2467,6 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: undefined,
-          VERCEL_OIDC_TOKEN: undefined,
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -2421,7 +2487,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
 
       await session.sendLiteral("/");
       await session.waitForText("/help", 10_000);
-      await session.waitForText("/clear", 10_000);
+      await session.waitForText("/new", 10_000);
       await waitForSelectedSlashLabel(session, "/help");
       const openStage = await waitForLiveScrollbackText(
         session,
@@ -2435,7 +2501,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await session.waitForText("/help", 10_000);
       await waitForSelectedSlashLabel(session, "/help");
       const shrinkStage = await session.captureFullScrollback();
-      expect(shrinkStage).toContain("Commands 35 · Type to filter");
+      expect(shrinkStage).toContain("Commands 20 · Type to filter");
       expect(shrinkStage).toContain("1–4");
       writeFileSync(join(root, "scrollback-after-shrink.txt"), shrinkStage);
 
@@ -2529,8 +2595,6 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: undefined,
-          VERCEL_OIDC_TOKEN: undefined,
           NO_COLOR: "1",
         },
         width: 72,
@@ -2583,22 +2647,6 @@ describe.skipIf(SKIP)("tui: resize", () => {
     openSurface(active: TmuxSession): Promise<void>;
   }> = [
     {
-      issue: "FXC-118",
-      label: "statusline",
-      width: 72,
-      height: 16,
-      surfaceMarker: "Status line",
-      editedInput: "x",
-      async openSurface(active) {
-        await active.sendText("/statusline");
-        await active.waitForText("Status line", TIMEOUT);
-        await active.sendKeys("Right");
-        await active.waitForText("off  on", TIMEOUT);
-        await active.sendKeys("Down");
-        await active.sendKeys("Right");
-      },
-    },
-    {
       issue: "FXC-120",
       label: "help",
       width: 72,
@@ -2609,19 +2657,6 @@ describe.skipIf(SKIP)("tui: resize", () => {
         await active.resizeWindow(60, 12, 500);
         await active.sendText("/help");
         await active.waitForText("Enter Open", TIMEOUT);
-      },
-    },
-    {
-      issue: "FXC-125",
-      label: "cost",
-      width: 120,
-      height: 36,
-      surfaceMarker: "[30 days]",
-      editedInput: "x",
-      async openSurface(active) {
-        await active.sendText("/cost");
-        await active.waitForText("[30 days]", TIMEOUT);
-        await active.resizeWindow(60, 12, 500);
       },
     },
     {
@@ -2671,26 +2706,14 @@ describe.skipIf(SKIP)("tui: resize", () => {
       `${surfaceCase.issue} ${surfaceCase.label} release does not wait for the next edit to reflow`,
       async () => {
         const gateway = surfaceCase.fakeModels
-          ? startFakeGateway([], {
-              models: [{
-                id: "provider/model-a",
-                type: "language",
-                released: 1,
-                tags: ["tool-use"],
-              }],
-            })
+          ? startCodexQueue([], { extraModels: ["provider/model-a"] })
           : null;
         if (gateway) gateways.push(gateway);
         const fixture = await launchRecordedSurfaceSession(
           surfaceCase.label.replaceAll(" ", "-"),
           surfaceCase.width,
           surfaceCase.height,
-          gateway
-            ? {
-                FIBER_E2E_GATEWAY_MODELS_URL:
-                  `${gateway.baseUrl}/coding-agent/v1/models`,
-              }
-            : {},
+          {},
         );
         session = fixture.active;
         await surfaceCase.openSurface(session);
@@ -2805,8 +2828,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
 
       const response = "wide user resize response complete";
       const prompt = `${"a".repeat(34)}界🙂`;
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText(response),
+      const gateway = startCodexQueue([
+        codexFinalText(response),
       ]);
       gateways.push(gateway);
       session = await createResizeSession({
@@ -2814,11 +2837,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "fake-wide-user-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -3027,11 +3046,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: root.workspace,
         env: {
           HOME: root.home,
-          AI_GATEWAY_API_KEY: "fake-resize-file-approval-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_RECORD: tapePath,
           NO_COLOR: "1",
         },
@@ -3152,12 +3167,12 @@ describe.skipIf(SKIP)("tui: resize", () => {
         "gate-seven",
         "",
       ].join("\n");
-      const gateway = startFakeGateway([
-        fakeGatewayToolCall("resize_gate_1", "write_file", {
+      const gateway = startCodexQueue([
+        codexToolCall("resize_gate_1", "write_file", {
           path: "resize-gated.txt",
           content,
         }),
-        fakeGatewayFinalText("resize approval complete"),
+        codexFinalText("resize approval complete"),
       ]);
       gateways.push(gateway);
       const stderrPath = join(root.root, "resize-gated-stderr.txt");
@@ -3167,11 +3182,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: root.workspace,
         env: {
           HOME: root.home,
-          AI_GATEWAY_API_KEY: "fake-resize-gate-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           NO_COLOR: "1",
         },
         stderrPath,
@@ -3233,14 +3244,14 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const finalResponseReady = new Promise<void>((resolve) => {
         releaseFinalResponse = () => resolve();
       });
-      const gateway = startFakeGateway([
-        fakeGatewayToolCall("resize_after_approval_1", "write_file", {
+      const gateway = startCodexQueue([
+        codexToolCall("resize_after_approval_1", "write_file", {
           path: "resize-after-approval.txt",
           content,
         }),
         async () => {
           await finalResponseReady;
-          return fakeGatewayFinalText("post-approval resize complete");
+          return codexFinalText("post-approval resize complete");
         },
       ]);
       gateways.push(gateway);
@@ -3252,11 +3263,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: root.workspace,
         env: {
           HOME: root.home,
-          AI_GATEWAY_API_KEY: "fake-post-approval-resize-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "frame_schedule",
           NO_COLOR: "1",
@@ -3301,20 +3308,14 @@ describe.skipIf(SKIP)("tui: resize", () => {
         "resize_activity_continued\n",
         "resize_activity_done\n",
       );
-      const gateway = startFakeGateway([gated.response]);
+      const gateway = startCodexQueue([gated.response]);
       gateways.push(gateway);
       const launched = await launchRecordedSurfaceSession(
         "active-activity",
         120,
         40,
         {
-          AI_GATEWAY_API_KEY: "fake-resize-activity-key",
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-          FIBER_E2E_GATEWAY_CREDITS_URL: undefined,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
         },
       );
       session = launched.active;
@@ -3407,11 +3408,11 @@ describe.skipIf(SKIP)("tui: resize", () => {
     async () => {
       session = await launchAt(120, 40);
       await session.sendText("/help");
-      await session.waitForText("Commands 35", 5_000);
+      await session.waitForText("Commands 20", 5_000);
       await session.resizeWindow(76, 24, 400);
 
       const grid = await session.capturePaneGrid();
-      expect(grid.join("\n")).toContain("Commands 35");
+      expect(grid.join("\n")).toContain("Commands 20");
       expect(findInlineHelpPicker(grid)).not.toBeNull();
 
       await session.sendKeys("Escape");
@@ -3429,7 +3430,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
     async () => {
       session = await launchAt(120, 40);
       await session.sendText("/help");
-      await session.waitForText("Commands 35", 5_000);
+      await session.waitForText("Commands 20", 5_000);
 
       const captureScrollback = () =>
         execSync(`tmux capture-pane -t ${session!.name} -p -S -`, {
@@ -3437,7 +3438,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
           stdio: "pipe",
         });
       const expectHelpCatalog = (grid: string[]) => {
-        expect(grid.join("\n")).toContain("Commands 35");
+        expect(grid.join("\n")).toContain("Commands 20");
         expect(findInlineHelpPicker(grid)).not.toBeNull();
       };
 
@@ -3455,7 +3456,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const restored = captureScrollback();
       expect(restored.match(/fiber v\d+\.\d+\.\d+\b/g)).toHaveLength(1);
       expect(restored.match(/Run \/help for commands/g)).toHaveLength(1);
-      expect(restored).not.toContain("Commands 35");
+      expect(restored).not.toContain("Commands 20");
       expect(findFooter(await session.capturePaneGrid())).not.toBeNull();
     },
     TIMEOUT,
@@ -3473,19 +3474,19 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const tracePath = join(root, "trace.log");
       const tapePath = join(root, "session.fibertape");
       const replayDir = join(root, "replay");
-      const preFxMarker = "PRE_FX_RESIZE_PREPAINT_7319";
+      const preFiberMarker = "PRE_FIBER_RESIZE_PREPAINT_7319";
       const firstMarker = "RESIZE_PREPAINT_TURN_A_COMPLETE";
       const secondMarker = "RESIZE_PREPAINT_TURN_B_COMPLETE";
       const launchCommand =
-        `printf ${quoteShellPath(`${preFxMarker}\n`)}; exec ${quoteShellPath(FIBER_BIN)}`;
+        `printf ${quoteShellPath(`${preFiberMarker}\n`)}; exec ${quoteShellPath(FIBER_BIN)}`;
       mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
       tempDirs.push(root);
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText(
+      const gateway = startCodexQueue([
+        codexFinalText(
           `${"alpha response wraps across the medium terminal width ".repeat(5)}${firstMarker}`,
         ),
-        fakeGatewayFinalText(
+        codexFinalText(
           `${"beta response also wraps across the medium terminal width ".repeat(5)}${secondMarker}`,
         ),
       ]);
@@ -3499,9 +3500,6 @@ describe.skipIf(SKIP)("tui: resize", () => {
         stderrPath,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "test-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -3632,7 +3630,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       expect(countOccurrences(visibleViewport, firstMarker)).toBe(1);
       expect(countOccurrences(visibleViewport, secondMarker)).toBe(1);
       expect(countOccurrences(visibleViewport, "┃ x")).toBe(1);
-      expect(visibleViewport).not.toContain(preFxMarker);
+      expect(visibleViewport).not.toContain(preFiberMarker);
       expect(session.paneStatus()).toEqual({ dead: false, status: null });
       expect(session.isPaneAlive()).toBe(true);
       expectEmptyStderr(stderrPath);
@@ -3647,8 +3645,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
       tempDirs.push(dir);
       const tracePath = join(dir, "trace.log");
       const stderrPath = join(dir, "stderr.log");
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("large paste resize complete"),
+      const gateway = startCodexQueue([
+        codexFinalText("large paste resize complete"),
       ]);
       gateways.push(gateway);
 
@@ -3657,9 +3655,6 @@ describe.skipIf(SKIP)("tui: resize", () => {
         height: 40,
         stderrPath,
         env: {
-          AI_GATEWAY_API_KEY: "test-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "input,worker,resize",
         },
@@ -3707,8 +3702,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
       tempDirs.push(dir);
       const tracePath = join(dir, "trace.log");
       const stderrPath = join(dir, "stderr.log");
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("CPR-shaped paste resize complete"),
+      const gateway = startCodexQueue([
+        codexFinalText("CPR-shaped paste resize complete"),
       ]);
       gateways.push(gateway);
 
@@ -3717,9 +3712,6 @@ describe.skipIf(SKIP)("tui: resize", () => {
         height: 40,
         stderrPath,
         env: {
-          AI_GATEWAY_API_KEY: "test-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "input,worker,resize",
         },
@@ -3789,8 +3781,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
       tempDirs.push(dir);
       const tracePath = join(dir, "trace.log");
       const stderrPath = join(dir, "stderr.log");
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("Late CPR-shaped paste resize complete"),
+      const gateway = startCodexQueue([
+        codexFinalText("Late CPR-shaped paste resize complete"),
       ]);
       gateways.push(gateway);
 
@@ -3799,9 +3791,6 @@ describe.skipIf(SKIP)("tui: resize", () => {
         height: 40,
         stderrPath,
         env: {
-          AI_GATEWAY_API_KEY: "test-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "input,worker,resize",
           TMUX: undefined,
@@ -3900,8 +3889,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
       tempDirs.push(dir);
       const tracePath = join(dir, "trace.log");
       const stderrPath = join(dir, "stderr.log");
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText("probe timeout complete"),
+      const gateway = startCodexQueue([
+        codexFinalText("probe timeout complete"),
       ]);
       gateways.push(gateway);
 
@@ -3910,9 +3899,6 @@ describe.skipIf(SKIP)("tui: resize", () => {
         height: 40,
         stderrPath,
         env: {
-          AI_GATEWAY_API_KEY: "test-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "input,worker,resize",
           TMUX: undefined,
@@ -3949,7 +3935,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         const root = mkdtempSync(join(tmpdir(), "fiber-resize-history-reset-"));
         const home = join(root, "home");
         const workspace = join(root, "workspace");
-        const marker = `PRE_FX_MARKER_${startupScrollback ? "ON" : "OFF"}_6179`;
+        const marker = `PRE_FIBER_MARKER_${startupScrollback ? "ON" : "OFF"}_6179`;
         mkdirSync(join(home, ".fiber"), { recursive: true });
         mkdirSync(workspace, { recursive: true });
         writeFileSync(
@@ -3968,7 +3954,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         expect(await session.captureFullScrollback()).toContain(marker);
 
         await session.sendText("/help");
-        await session.waitForText("Commands 35", 5_000);
+        await session.waitForText("Commands 20", 5_000);
         await session.resizeWindow(84, 28, 500);
 
         const catalog = await session.capturePaneGrid();
@@ -3982,7 +3968,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         );
         const scrollback = await session.captureFullScrollback();
         expect(scrollback).not.toContain(marker);
-        expect(scrollback).not.toContain("Commands 35");
+        expect(scrollback).not.toContain("Commands 20");
         const finalGrid = await session.capturePaneGrid();
         expect(findFooter(finalGrid), finalGrid.join("\n")).not.toBeNull();
 
@@ -4013,11 +3999,11 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const responseFence = textHex("\x1b[?1;2c");
       const darkBackground = textHex("\x1b]11;rgb:0000/0000/0000\x1b\\");
       const lightBackground = textHex("\x1b]11;rgb:ffff/ffff/ffff\x1b\\");
-      const gateway = startFakeGateway([
-        fakeGatewayFinalText(
+      const gateway = startCodexQueue([
+        codexFinalText(
           `THEME_RESET_FIRST_RESPONSE \`${inlineMarker} ${"x".repeat(10_000)}\` ${inlineTailMarker}\n`,
         ),
-        fakeGatewayFinalText("THEME_RESET_SECOND_RESPONSE"),
+        codexFinalText("THEME_RESET_SECOND_RESPONSE"),
       ]);
       gateways.push(gateway);
       session = await createResizeSession({
@@ -4025,11 +4011,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         cwd: workspace,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "fake-theme-reset-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_RECORD: tapePath,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "theme,frame_schedule,frame_commit,resize",
