@@ -58,6 +58,26 @@ Added 2026-09-06 from the Phase 4 residue:
 All inert. None affects behavior; none is covered by any slice's exit search.
 This is the complete `grep -rni acp src/` residue as of `HEAD`.
 
+**Output that outlived its capability** (added 2026-09-06 from the first E2E run)
+
+- **`mcp list` prints fields it can no longer fill.** Every server line still
+  carries `state=`, `auth=`, `protocol=`, `tools=`, `resources=`, `templates=`,
+  `prompts=`, `cache=`, `subscription=`, `discovery=`, and each is now
+  permanently a placeholder — `disconnected`, `unavailable`, `unknown`,
+  `pending` — because `mcp list` no longer opens transports. **Owner decided
+  2026-09-06: stop printing the fields it cannot fill.** This is a source change
+  in the `mcp list` renderer; the E2E assertions follow it rather than the
+  reverse. Phase 5 owns it because it is observable output, not a comment.
+  Related: `../enhancements/pending.md`, `fiber mcp doctor`, which is the
+  deferred replacement that would fill them again.
+
+- **`fiber upgrade` advertises a release channel it does not have.** Both the
+  subcommand help and the top-level command list say "Upgrade fiber on the
+  selected release channel" (`src/builtins/commands.zig:190,260`), while
+  `--channel` is rejected and the usage line is bare `upgrade [--json]`. Found
+  while auditing a deleted E2E case for the dev update channel (Slice 19).
+  Text only, no behavior: Phase 6.
+
 **Deferred cleanup**
 
 - **The `src/ui` non-interruptible convenience wrappers.** Added 2026-09-06 from
