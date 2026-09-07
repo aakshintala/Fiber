@@ -21,15 +21,16 @@ import {
   type ModernHttpMode,
 } from "./fixtures/mcp-modern-http";
 import {
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
-  startDynamicFakeGateway,
-  startFakeGateway,
+  codexFinalText,
+  codexLatestToolResult,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const MODEL = "openai/gpt-5";
 const TOOL_NAME = "mcp_fixture_echo";
 
 let cleanupRoot: string | null = null;
@@ -37,23 +38,56 @@ let fixture: ReturnType<typeof startModernMcpHttpFixture> | null = null;
 let contentLengthFixture: Awaited<
   ReturnType<typeof startContentLengthMcpHttpFixture>
 > | null = null;
-let gateway: ReturnType<typeof startFakeGateway> | null = null;
+type CodexResponse = string | (() => string | Promise<string>);
+
+type CodexQueue = ReturnType<typeof startFakeCodex>;
+
+// The Codex helper serves one callback instead of a finite queue, so scripted
+// multi-step turns pop responses in order, awaiting async fixture steps.
+// MCP tool executions pause for a permission review round-trip; like the
+// gateway harness's default-clear classifier, those answer clear without
+// consuming the scripted queue, and stay out of `requests` so turn indices
+// match the gateway era.
+function startCodexQueue(responses: CodexResponse[]): CodexQueue {
+  const pending = [...responses];
+  const turnRequests: CodexQueue["requests"] = [];
+  let reviews = 0;
+  const codex = startFakeCodex({
+    route: async (body: string) => {
+      if (body.includes("<permission_review>")) {
+        reviews += 1;
+        return codexToolCall(`review_clear_${reviews}`, "permission_decision", {
+          risk: "low",
+          decision: "clear",
+          rationale: "test fixture",
+        });
+      }
+      turnRequests.push({ path: "", authorization: null, body });
+      const next = pending.shift();
+      if (!next) return codexFinalText("unexpected");
+      return typeof next === "function" ? await next() : next;
+    },
+  });
+  return { ...codex, requests: turnRequests };
+}
+
+let codex: CodexQueue | null = null;
 let tui: TmuxSession | null = null;
 
 afterEach(async () => {
   const activeTui = tui;
-  const activeGateway = gateway;
+  const activeCodex = codex;
   const activeFixture = fixture;
   const activeContentLengthFixture = contentLengthFixture;
   const activeCleanupRoot = cleanupRoot;
   tui = null;
-  gateway = null;
+  codex = null;
   fixture = null;
   contentLengthFixture = null;
   cleanupRoot = null;
 
   if (activeTui) await activeTui.kill();
-  activeGateway?.stop();
+  activeCodex?.stop();
   activeFixture?.stop();
   if (activeContentLengthFixture) await activeContentLengthFixture.stop();
   if (activeCleanupRoot) {
@@ -107,53 +141,44 @@ function createEmptyRoot(label: string) {
   return { root, home, workspace, traceLogPath: join(root, "fiber-trace.log") };
 }
 
-function fixtureEnv(
+function fixtureCodexEnv(
   root: ReturnType<typeof createRoot>,
-  activeGateway: ReturnType<typeof startFakeGateway>,
+  activeCodex: CodexQueue,
+  extra: Record<string, string | undefined> = {},
 ) {
-  return {
-    HOME: root.home,
-    AI_GATEWAY_API_KEY: "fake-mcp-http-key",
-    VERCEL_OIDC_TOKEN: undefined,
+  return seededFakeCodexEnv(root.home, activeCodex, {
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
     FIBER_PERMISSION_MODE: "auto",
-    FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
-    FX_E2E_GATEWAY_CHAT_URL: activeGateway.chatUrl,
-    FIBER_MODEL: MODEL,
     FIBER_TRACE_LOG: root.traceLogPath,
     FIBER_TRACE_SCOPES: "mcp",
-  };
-}
-
-function startToolGateway(finalText: string) {
-  return startFakeGateway([
-    fakeGatewayToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
-    fakeGatewayToolCall("call_mcp", TOOL_NAME, { text: "hello" }),
-    fakeGatewayFinalText(finalText),
-  ], {
-    models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
+    ...extra,
   });
 }
 
-function toolResultText(
-  body: string,
-  toolCallId: string,
-  outputType: "text" | "error-text" = "text",
-): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
+// fiber ask --json wraps payloads in {ok, kind, data}: unwrap the envelope.
+function parseFxJson(result: Awaited<ReturnType<typeof runFx>>) {
+  expect(result.code).toBe(0);
+  return (JSON.parse(result.stdout.trim()) as { data: unknown }).data as {
+    output: string;
   };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .find((part) =>
-      part.type === "tool-result" && part.toolCallId === toolCallId
-    );
+}
+
+function startToolCodex(finalText: string) {
+  return startCodexQueue([
+    codexToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
+    codexToolCall("call_mcp", TOOL_NAME, { text: "hello" }),
+    codexFinalText(finalText),
+  ]);
+}
+
+// Tool results ride the Responses input as function_call_output items; the
+// MCP result text itself is transport-independent, so the helper returns the
+// output string directly.
+function toolResultText(body: string, toolCallId: string): string {
+  const result = codexLatestToolResult(body);
   if (!result) throw new Error(`Missing tool result for ${toolCallId}`);
-  const output = result.output as Record<string, unknown>;
-  if (output.type !== outputType || typeof output.value !== "string") {
-    throw new Error(`Invalid tool result for ${toolCallId}`);
-  }
-  return output.value;
+  expect(result.callId).toBe(toolCallId);
+  return result.output;
 }
 
 function preserveHttpFailure(
@@ -161,7 +186,7 @@ function preserveHttpFailure(
   root: ReturnType<typeof createRoot>,
   result: Awaited<ReturnType<typeof runFx>>,
   activeFixture: ReturnType<typeof startModernMcpHttpFixture>,
-  activeGateway: ReturnType<typeof startFakeGateway>,
+  activeCodex: CodexQueue,
   force = false,
 ): void {
   if (result.code === 0 && !force) return;
@@ -174,7 +199,7 @@ function preserveHttpFailure(
       label,
       result,
       fixtureRequests: activeFixture.requests,
-      gatewayRequests: activeGateway.requests.map((request) => request.body),
+      codexRequests: activeCodex.requests.map((request) => request.body),
     }, null, 2),
   );
   throw new Error(`fiber ${label} failed; retained artifacts: ${root.root}`);
@@ -310,16 +335,14 @@ describe("modern MCP Streamable HTTP", () => {
     expect(added.stdout).toContain("Saved MCP server 'fixture'");
     expect(fixture.requests).toHaveLength(0);
 
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("top_level_select", "mcp_select_tool", { name: TOOL_NAME }),
-      fakeGatewayToolCall("top_level_call", TOOL_NAME, { text: "hello" }),
-      fakeGatewayFinalText("TOP_LEVEL_HTTP_MCP_READY"),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+    codex = startCodexQueue([
+      codexToolCall("top_level_select", "mcp_select_tool", { name: TOOL_NAME }),
+      codexToolCall("top_level_call", TOOL_NAME, { text: "hello" }),
+      codexFinalText("TOP_LEVEL_HTTP_MCP_READY"),
+    ]);
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the HTTP MCP echo tool."],
-      { cwd: root.workspace, env: fixtureEnv(root, gateway), timeoutMs: 20_000 },
+      { cwd: root.workspace, env: fixtureCodexEnv(root, codex), timeoutMs: 20_000 },
     );
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("TOP_LEVEL_HTTP_MCP_READY");
@@ -336,7 +359,7 @@ describe("modern MCP Streamable HTTP", () => {
     test(`fixed-length ${responseType} responses complete on one-shot connections`, async () => {
       contentLengthFixture = await startContentLengthMcpHttpFixture(responseType);
       const root = createRoot(`content-length-${responseType}`, contentLengthFixture);
-      gateway = startToolGateway(`Fixed-length ${responseType} complete.`);
+      codex = startToolCodex(`Fixed-length ${responseType} complete.`);
 
       const result = await runFx(
         [
@@ -348,7 +371,7 @@ describe("modern MCP Streamable HTTP", () => {
         ],
         {
           cwd: root.workspace,
-          env: fixtureEnv(root, gateway),
+          env: fixtureCodexEnv(root, codex),
           timeoutMs: 20_000,
         },
       );
@@ -361,10 +384,19 @@ describe("modern MCP Streamable HTTP", () => {
         );
       }
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout).output).toContain(
+      expect(parseFxJson(result).output).toContain(
         `Fixed-length ${responseType} complete.`,
       );
-      expect(contentLengthFixture.failure).toBeUndefined();
+      // Owner ruling (2a): the product returns on first-final-SSE by design
+      // (776f9c84) and closes the connection, so the fixture's trailing 5ms
+      // split write can lose the close race after full delivery. Tolerate
+      // only that exact fallout; any other fixture error still fails.
+      const fixtureFailure = contentLengthFixture.failure;
+      expect(
+        fixtureFailure === undefined ||
+          (fixtureFailure instanceof Error &&
+            (fixtureFailure as NodeJS.ErrnoException).code === "ECONNRESET"),
+      ).toBe(true);
       expect(
         contentLengthFixture.requests.map((entry) => entry.message.method),
       ).toEqual(["server/discover", "tools/list", "tools/call"]);
@@ -379,9 +411,7 @@ describe("modern MCP Streamable HTTP", () => {
     async () => {
       fixture = startModernMcpHttpFixture("json");
       const root = createEmptyRoot("add-command");
-      gateway = startFakeGateway([], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      codex = startCodexQueue([]);
       const stderrPath = join(root.root, "stderr.log");
       tui = await TmuxSession.create({
         isolated: true,
@@ -389,7 +419,7 @@ describe("modern MCP Streamable HTTP", () => {
         width: 150,
         height: 36,
         stderrPath,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
       });
 
       await tui.waitForComposer(15_000);
@@ -426,29 +456,27 @@ describe("modern MCP Streamable HTTP", () => {
   test("resource list-change storms coalesce to one complete refresh", async () => {
     fixture = startModernMcpHttpFixture("features");
     const root = createRoot("feature-update-storm", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("storm_resource_list_initial", "mcp_features", {
+    codex = startCodexQueue([
+      codexToolCall("storm_resource_list_initial", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
       async () => {
         fixture!.stormResourceListChanges(25);
         await Bun.sleep(50);
-        return fakeGatewayToolCall("storm_resource_list_refreshed", "mcp_features", {
+        return codexToolCall("storm_resource_list_refreshed", "mcp_features", {
           action: "resource_list",
           server: "fixture",
         });
       },
-      fakeGatewayFinalText("Resource storm coalesced."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Resource storm coalesced."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Refresh after the MCP resource update storm."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 25_000,
       },
     );
@@ -460,47 +488,45 @@ describe("modern MCP Streamable HTTP", () => {
   test("failed feature refresh retains stale snapshot and retries with a bound", async () => {
     fixture = startModernMcpHttpFixture("features");
     const root = createRoot("feature-failed-refresh", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("failed_resource_list_initial", "mcp_features", {
+    codex = startCodexQueue([
+      codexToolCall("failed_resource_list_initial", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
       async () => {
         fixture!.failNextResourceRefresh();
         await Bun.sleep(25);
-        return fakeGatewayToolCall("failed_resource_list_stale", "mcp_features", {
+        return codexToolCall("failed_resource_list_stale", "mcp_features", {
           action: "resource_list",
           server: "fixture",
         });
       },
-      fakeGatewayToolCall("failed_resource_list_bounded", "mcp_features", {
+      codexToolCall("failed_resource_list_bounded", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
       async () => {
         await Bun.sleep(250);
-        return fakeGatewayToolCall("failed_resource_list_recovered", "mcp_features", {
+        return codexToolCall("failed_resource_list_recovered", "mcp_features", {
           action: "resource_list",
           server: "fixture",
         });
       },
-      fakeGatewayFinalText("Feature refresh recovered."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Feature refresh recovered."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Recover the failed MCP resource refresh."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 25_000,
       },
     );
 
     expect(result.code).toBe(0);
     expect(fixture.resourcesListCalls).toBe(5);
-    const bodies = gateway.requests.map((request) => request.body).join("\n");
+    const bodies = codex.requests.map((request) => request.body).join("\n");
     expect(bodies.match(/custom:\/\/alpha/g)?.length).toBeGreaterThanOrEqual(4);
     const trace = readFileSync(root.traceLogPath, "utf8");
     expect(trace).toContain("feature cache refresh failed server=fixture feature=resources");
@@ -510,28 +536,26 @@ describe("modern MCP Streamable HTTP", () => {
   test("feature catalog TTL expiry refreshes the complete paginated snapshot", async () => {
     fixture = startModernMcpHttpFixture("features_ttl_expiry");
     const root = createRoot("feature-ttl-expiry", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("ttl_resource_list_one", "mcp_features", {
+    codex = startCodexQueue([
+      codexToolCall("ttl_resource_list_one", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
       async () => {
         await Bun.sleep(50);
-        return fakeGatewayToolCall("ttl_resource_list_two", "mcp_features", {
+        return codexToolCall("ttl_resource_list_two", "mcp_features", {
           action: "resource_list",
           server: "fixture",
         });
       },
-      fakeGatewayFinalText("Feature TTL refresh complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Feature TTL refresh complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Refresh the expired MCP resource catalog."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 25_000,
       },
     );
@@ -552,16 +576,16 @@ describe("modern MCP Streamable HTTP", () => {
   test("removed resource and prompt identities fail before transport send", async () => {
     fixture = startModernMcpHttpFixture("features");
     const root = createRoot("removed-feature-identities", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("removed_resource_list", "mcp_features", {
+    codex = startCodexQueue([
+      codexToolCall("removed_resource_list", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("removed_prompt_list", "mcp_features", {
+      codexToolCall("removed_prompt_list", "mcp_features", {
         action: "prompt_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("removed_resource_seed", "mcp_features", {
+      codexToolCall("removed_resource_seed", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "custom://alpha",
@@ -569,34 +593,32 @@ describe("modern MCP Streamable HTTP", () => {
       async () => {
         fixture!.removeFeatureIdentities();
         await Bun.sleep(50);
-        return fakeGatewayToolCall("removed_resource_read", "mcp_features", {
+        return codexToolCall("removed_resource_read", "mcp_features", {
           action: "resource_read",
           server: "fixture",
           uri: "custom://alpha",
         });
       },
-      fakeGatewayToolCall("removed_prompt_get", "mcp_features", {
+      codexToolCall("removed_prompt_get", "mcp_features", {
         action: "prompt_get",
         server: "fixture",
         prompt: "review",
         arguments: { tone: "brief" },
       }),
-      fakeGatewayFinalText("Removed identities rejected."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Removed identities rejected."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Try the removed MCP identities."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 25_000,
       },
     );
 
     expect(result.code).toBe(0);
-    const bodies = gateway.requests.map((request) => request.body).join("\n");
+    const bodies = codex.requests.map((request) => request.body).join("\n");
     expect(bodies).toContain("McpResourceNotFound");
     expect(bodies).toContain("McpPromptNotFound");
     expect(fixture.requests.filter((entry) =>
@@ -610,38 +632,36 @@ describe("modern MCP Streamable HTTP", () => {
   test("RFC 6570 matches reach resource reads and near misses are rejected before send", async () => {
     fixture = startModernMcpHttpFixture("features");
     const root = createRoot("resource-template-near-miss", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("template_catalog", "mcp_features", {
+    codex = startCodexQueue([
+      codexToolCall("template_catalog", "mcp_features", {
         action: "resource_templates",
         server: "fixture",
       }),
-      fakeGatewayToolCall("template_match", "mcp_features", {
+      codexToolCall("template_match", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "db:///users/records/7",
       }),
-      fakeGatewayToolCall("template_near_miss", "mcp_features", {
+      codexToolCall("template_near_miss", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "db:///anything",
       }),
-      fakeGatewayFinalText("Template near miss rejected."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Template near miss rejected."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Reject the invalid MCP resource template match."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 25_000,
       },
     );
 
-    preserveHttpFailure("resource-template-near-miss", root, result, fixture, gateway);
+    preserveHttpFailure("resource-template-near-miss", root, result, fixture, codex);
     expect(result.code).toBe(0);
-    const bodies = gateway.requests.map((request) => request.body).join("\n");
+    const bodies = codex.requests.map((request) => request.body).join("\n");
     expect(bodies).toContain("db:///{table}/records/{id}");
     expect(bodies).toContain("HTTP_RESOURCE_TEXT");
     expect(bodies).toContain("McpResourceNotFound");
@@ -655,27 +675,25 @@ describe("modern MCP Streamable HTTP", () => {
   test("deep feature metadata is rejected without crashing the fresh binary", async () => {
     fixture = startModernMcpHttpFixture("features_deep_nesting");
     const root = createRoot("feature-deep-nesting", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("deep_resource_list", "mcp_features", {
+    codex = startCodexQueue([
+      codexToolCall("deep_resource_list", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
-      fakeGatewayFinalText("Deep feature metadata rejected."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Deep feature metadata rejected."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Read the deeply nested MCP catalog."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 25_000,
       },
     );
 
     expect(result.code).toBe(0);
-    expect(gateway.requests.map((request) => request.body).join("\n")).toContain(
+    expect(codex.requests.map((request) => request.body).join("\n")).toContain(
       "JsonDepthLimitExceeded",
     );
     expect(fixture.resourcesListCalls).toBe(1);
@@ -684,12 +702,12 @@ describe("modern MCP Streamable HTTP", () => {
   test("typed Resources Prompts Completion and resource updates use modern HTTP", async () => {
     fixture = startModernMcpHttpFixture("features");
     const root = createRoot("features", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("http_resource_list", "mcp_features", {
+    codex = startCodexQueue([
+      codexToolCall("http_resource_list", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("http_resource_read_one", "mcp_features", {
+      codexToolCall("http_resource_read_one", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "custom://alpha",
@@ -701,48 +719,46 @@ describe("modern MCP Streamable HTTP", () => {
         }
         fixture!.invalidateResource("custom://alpha");
         await Bun.sleep(50);
-        return fakeGatewayToolCall("http_resource_read_two", "mcp_features", {
+        return codexToolCall("http_resource_read_two", "mcp_features", {
           action: "resource_read",
           server: "fixture",
           uri: "custom://alpha",
         });
       },
-      fakeGatewayToolCall("http_prompt_list", "mcp_features", {
+      codexToolCall("http_prompt_list", "mcp_features", {
         action: "prompt_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("http_prompt_get", "mcp_features", {
+      codexToolCall("http_prompt_get", "mcp_features", {
         action: "prompt_get",
         server: "fixture",
         prompt: "review",
         arguments: { tone: "brief" },
       }),
-      fakeGatewayToolCall("http_prompt_complete", "mcp_features", {
+      codexToolCall("http_prompt_complete", "mcp_features", {
         action: "prompt_complete",
         server: "fixture",
         prompt: "review",
         argument: "tone",
         value: "b",
       }),
-      fakeGatewayFinalText("Modern HTTP MCP features complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Modern HTTP MCP features complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the modern HTTP MCP resource and prompt features."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 25_000,
       },
     );
 
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout).output).toContain(
+    expect(parseFxJson(result).output).toContain(
       "Modern HTTP MCP features complete.",
     );
-    const bodies = gateway.requests.map((request) => request.body).join("\n");
+    const bodies = codex.requests.map((request) => request.body).join("\n");
     expect(bodies).toContain('\\"trust\\":\\"untrusted_external\\"');
     expect(bodies).toContain("HTTP_RESOURCE_TEXT");
     expect(bodies).toContain("HTTP_PROMPT_TEXT");
@@ -783,32 +799,30 @@ describe("modern MCP Streamable HTTP", () => {
   test("stale HTTP resource data never masks a cancelled refresh", async () => {
     fixture = startModernMcpHttpFixture("features_stale_read");
     const root = createRoot("feature-cancel", fixture, 200);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("http_resource_stale_seed", "mcp_features", {
+    codex = startCodexQueue([
+      codexToolCall("http_resource_stale_seed", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "custom://stall",
       }),
-      fakeGatewayToolCall("http_resource_stall", "mcp_features", {
+      codexToolCall("http_resource_stall", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "custom://stall",
       }),
-      fakeGatewayFinalText("Modern HTTP resource cancellation complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Modern HTTP resource cancellation complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Read the stalled HTTP MCP resource."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout).output).toContain(
+    expect(parseFxJson(result).output).toContain(
       "Modern HTTP resource cancellation complete.",
     );
     expect(fixture.cancelledCalls).toBeGreaterThanOrEqual(1);
@@ -820,12 +834,11 @@ describe("modern MCP Streamable HTTP", () => {
       entry.message.method === "resources/read" &&
       entry.message.params?.uri === "custom://stall"
     )).toHaveLength(2);
-    const bodies = gateway.requests.map((request) => request.body).join("\n");
+    const bodies = codex.requests.map((request) => request.body).join("\n");
     expect(bodies).toContain("HTTP_RESOURCE_TEXT");
     const cancelled = toolResultText(
-      gateway.requests.at(-1)!.body,
+      codex.requests.at(-1)!.body,
       "http_resource_stall",
-      "error-text",
     );
     expect(cancelled).toContain("tool_execution_failed");
     expect(cancelled).not.toContain("HTTP_RESOURCE_TEXT");
@@ -834,24 +847,22 @@ describe("modern MCP Streamable HTTP", () => {
   test("stalled HTTP completion is deadline-cancelled", async () => {
     fixture = startModernMcpHttpFixture("features");
     const root = createRoot("completion-cancel", fixture, 200);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("http_completion_stall", "mcp_features", {
+    codex = startCodexQueue([
+      codexToolCall("http_completion_stall", "mcp_features", {
         action: "prompt_complete",
         server: "fixture",
         prompt: "review",
         argument: "tone",
         value: "stall",
       }),
-      fakeGatewayFinalText("Modern HTTP completion cancellation complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Modern HTTP completion cancellation complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Complete the stalled HTTP MCP prompt argument."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
@@ -867,36 +878,34 @@ describe("modern MCP Streamable HTTP", () => {
     fixture = startModernMcpHttpFixture("cache_subscription");
     const root = createRoot("cache-subscription", fixture);
     const freshTool = "mcp_fixture_fresh";
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("activate_subscription", "capability_search", {
+    codex = startCodexQueue([
+      codexToolCall("activate_subscription", "capability_search", {
         query: "echo",
       }),
       async () => {
         await Bun.sleep(100);
-        return fakeGatewayToolCall("search_fresh", "capability_search", {
+        return codexToolCall("search_fresh", "capability_search", {
           query: "fresh",
         });
       },
-      fakeGatewayToolCall("select_fresh", "mcp_select_tool", {
+      codexToolCall("select_fresh", "mcp_select_tool", {
         name: freshTool,
       }),
-      fakeGatewayToolCall("call_fresh", freshTool, { text: "changed" }),
-      fakeGatewayFinalText("Live cache refresh complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexToolCall("call_fresh", freshTool, { text: "changed" }),
+      codexFinalText("Live cache refresh complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the live MCP tool."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
 
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout).output).toContain(
+    expect(parseFxJson(result).output).toContain(
       "Live cache refresh complete.",
     );
     expect(fixture.currentToolName).toBe("fresh");
@@ -909,7 +918,7 @@ describe("modern MCP Streamable HTTP", () => {
     );
     expect(toolCalls).toHaveLength(1);
     expect(toolCalls[0]?.message.params?.name).toBe("fresh");
-    expect(gateway.requests.some((entry) => entry.body.includes(freshTool)))
+    expect(codex.requests.some((entry) => entry.body.includes(freshTool)))
       .toBe(true);
     const trace = readFileSync(root.traceLogPath, "utf8");
     expect(trace).toContain(
@@ -925,36 +934,34 @@ describe("modern MCP Streamable HTTP", () => {
   test("failed subscription refresh retains the last valid stale snapshot", async () => {
     fixture = startModernMcpHttpFixture("cache_failed_refresh");
     const root = createRoot("cache-failed-refresh", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("activate_failed_refresh", "capability_search", {
+    codex = startCodexQueue([
+      codexToolCall("activate_failed_refresh", "capability_search", {
         query: "echo",
       }),
       async () => {
         await Bun.sleep(100);
-        return fakeGatewayToolCall("search_stale", "capability_search", {
+        return codexToolCall("search_stale", "capability_search", {
           query: "echo",
         });
       },
-      fakeGatewayToolCall("select_stale", "mcp_select_tool", {
+      codexToolCall("select_stale", "mcp_select_tool", {
         name: TOOL_NAME,
       }),
-      fakeGatewayToolCall("call_stale", TOOL_NAME, { text: "stale" }),
-      fakeGatewayFinalText("Stale cache fallback complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexToolCall("call_stale", TOOL_NAME, { text: "stale" }),
+      codexFinalText("Stale cache fallback complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use the stale MCP tool."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
 
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout).output).toContain(
+    expect(parseFxJson(result).output).toContain(
       "Stale cache fallback complete.",
     );
     const toolsListRequests = fixture.requests.filter((entry) =>
@@ -964,7 +971,7 @@ describe("modern MCP Streamable HTTP", () => {
     expect(toolsListRequests.length).toBeLessThanOrEqual(3);
     expect(new Set(toolsListRequests.map((entry) => entry.message.id)).size)
       .toBe(toolsListRequests.length);
-    expect(gateway.requests.some((entry) => entry.body.includes(TOOL_NAME)))
+    expect(codex.requests.some((entry) => entry.body.includes(TOOL_NAME)))
       .toBe(true);
     const trace = readFileSync(root.traceLogPath, "utf8");
     expect(trace).toContain(
@@ -980,27 +987,25 @@ describe("modern MCP Streamable HTTP", () => {
     fixture = startModernMcpHttpFixture("cache_partial_ack");
     const root = createRoot("cache-partial-ack", fixture);
     let callsAfterFirstSearch = 0;
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("activate_partial_ack", "capability_search", {
+    codex = startCodexQueue([
+      codexToolCall("activate_partial_ack", "capability_search", {
         query: "echo",
       }),
       async () => {
         callsAfterFirstSearch = fixture!.toolsListCalls;
         await Bun.sleep(100);
-        return fakeGatewayToolCall("search_after_ttl", "capability_search", {
+        return codexToolCall("search_after_ttl", "capability_search", {
           query: "echo",
         });
       },
-      fakeGatewayFinalText("TTL fallback complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("TTL fallback complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use TTL after the unsupported filter."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
@@ -1018,27 +1023,25 @@ describe("modern MCP Streamable HTTP", () => {
     fixture = startModernMcpHttpFixture("cache_server_cancel");
     const root = createRoot("cache-server-cancel", fixture);
     let callsAfterFirstSearch = 0;
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("activate_server_cancel", "capability_search", {
+    codex = startCodexQueue([
+      codexToolCall("activate_server_cancel", "capability_search", {
         query: "echo",
       }),
       async () => {
         callsAfterFirstSearch = fixture!.toolsListCalls;
         await Bun.sleep(100);
-        return fakeGatewayToolCall("search_after_server_cancel", "capability_search", {
+        return codexToolCall("search_after_server_cancel", "capability_search", {
           query: "echo",
         });
       },
-      fakeGatewayFinalText("Server cancellation TTL fallback complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Server cancellation TTL fallback complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use TTL after server cancellation."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
@@ -1059,27 +1062,25 @@ describe("modern MCP Streamable HTTP", () => {
     fixture = startModernMcpHttpFixture("cache_unexpected_ack");
     const root = createRoot("cache-unexpected-ack", fixture);
     let callsAfterFirstSearch = 0;
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("activate_unexpected_ack", "capability_search", {
+    codex = startCodexQueue([
+      codexToolCall("activate_unexpected_ack", "capability_search", {
         query: "echo",
       }),
       async () => {
         callsAfterFirstSearch = fixture!.toolsListCalls;
         await Bun.sleep(100);
-        return fakeGatewayToolCall("search_after_unexpected_ack", "capability_search", {
+        return codexToolCall("search_after_unexpected_ack", "capability_search", {
           query: "echo",
         });
       },
-      fakeGatewayFinalText("Unexpected acknowledgement TTL fallback complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Unexpected acknowledgement TTL fallback complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use TTL after the unexpected filter."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
@@ -1100,32 +1101,30 @@ describe("modern MCP Streamable HTTP", () => {
     fixture = startModernMcpHttpFixture("cache_invalidate_before_send");
     const root = createRoot("cache-invalidate-before-send", fixture);
     const freshTool = "mcp_fixture_fresh";
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("select_old", "mcp_select_tool", {
+    codex = startCodexQueue([
+      codexToolCall("select_old", "mcp_select_tool", {
         name: TOOL_NAME,
       }),
       async () => {
         fixture!.invalidateTools();
         await Bun.sleep(100);
-        return fakeGatewayToolCall("call_old", TOOL_NAME, { text: "old" });
+        return codexToolCall("call_old", TOOL_NAME, { text: "old" });
       },
-      fakeGatewayToolCall("search_fresh", "capability_search", {
+      codexToolCall("search_fresh", "capability_search", {
         query: "fresh",
       }),
-      fakeGatewayToolCall("select_fresh", "mcp_select_tool", {
+      codexToolCall("select_fresh", "mcp_select_tool", {
         name: freshTool,
       }),
-      fakeGatewayToolCall("call_fresh", freshTool, { text: "new" }),
-      fakeGatewayFinalText("Pre-send invalidation complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexToolCall("call_fresh", freshTool, { text: "new" }),
+      codexFinalText("Pre-send invalidation complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Do not send the invalidated tool."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
@@ -1137,10 +1136,10 @@ describe("modern MCP Streamable HTTP", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.message.params?.name).toBe("fresh");
     expect(fixture.toolsListCalls).toBe(2);
-    expect(gateway.requests[2]?.body).toContain(
+    expect(codex.requests[2]?.body).toContain(
       "Unsupported tool: mcp_fixture_echo",
     );
-    expect(gateway.requests.some((entry) => entry.body.includes(freshTool)))
+    expect(codex.requests.some((entry) => entry.body.includes(freshTool)))
       .toBe(true);
     const trace = readFileSync(root.traceLogPath, "utf8");
     expect(
@@ -1159,28 +1158,26 @@ describe("modern MCP Streamable HTTP", () => {
     test(`${cacheCase.mode} uses the expected Tools cache snapshot`, async () => {
       fixture = startModernMcpHttpFixture(cacheCase.mode);
       const root = createRoot(cacheCase.mode, fixture);
-      gateway = startFakeGateway([
-        fakeGatewayToolCall("activate_cache", "capability_search", {
+      codex = startCodexQueue([
+        codexToolCall("activate_cache", "capability_search", {
           query: "echo",
         }),
         ...(cacheCase.delayMs > 0
           ? [async () => {
               await Bun.sleep(cacheCase.delayMs);
-              return fakeGatewayToolCall("search_cache", "capability_search", {
+              return codexToolCall("search_cache", "capability_search", {
                 query: "echo",
               });
             }]
           : []),
-        fakeGatewayFinalText("Cache timing observed."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+        codexFinalText("Cache timing observed."),
+      ]);
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Search the MCP cache."],
         {
           cwd: root.workspace,
-          env: fixtureEnv(root, gateway),
+          env: fixtureCodexEnv(root, codex),
           timeoutMs: 20_000,
         },
       );
@@ -1190,7 +1187,7 @@ describe("modern MCP Streamable HTTP", () => {
         root,
         result,
         fixture,
-        gateway,
+        codex,
         fixture.toolsListCalls !== cacheCase.expectedLists,
       );
       expect(result.code).toBe(0);
@@ -1207,20 +1204,18 @@ describe("modern MCP Streamable HTTP", () => {
   test("delayed pagination preserves the first page absolute expiry", async () => {
     fixture = startModernMcpHttpFixture("cache_delayed_pagination");
     const root = createRoot("cache-delayed-pagination", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("search_delayed_catalog", "capability_search", {
+    codex = startCodexQueue([
+      codexToolCall("search_delayed_catalog", "capability_search", {
         query: "second",
       }),
-      fakeGatewayFinalText("Delayed pagination expiry observed."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Delayed pagination expiry observed."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Search the delayed MCP catalog."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
@@ -1252,20 +1247,18 @@ describe("modern MCP Streamable HTTP", () => {
   test("empty nextCursor is transmitted unchanged and completes pagination", async () => {
     fixture = startModernMcpHttpFixture("cache_empty_cursor");
     const root = createRoot("cache-empty-cursor", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("search_empty_cursor_catalog", "capability_search", {
+    codex = startCodexQueue([
+      codexToolCall("search_empty_cursor_catalog", "capability_search", {
         query: "second",
       }),
-      fakeGatewayFinalText("Empty cursor pagination complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Empty cursor pagination complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Search the empty-cursor MCP catalog."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
@@ -1283,22 +1276,22 @@ describe("modern MCP Streamable HTTP", () => {
     test(`fresh fiber ask calls the request-scoped ${mode.toUpperCase()} fixture`, async () => {
       fixture = startModernMcpHttpFixture(mode);
       const root = createRoot(`ask-${mode}`, fixture);
-      gateway = startToolGateway(`${mode} MCP HTTP complete.`);
+      codex = startToolCodex(`${mode} MCP HTTP complete.`);
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", `Call the ${mode} HTTP fixture.`],
         {
           cwd: root.workspace,
-          env: fixtureEnv(root, gateway),
+          env: fixtureCodexEnv(root, codex),
           timeoutMs: 20_000,
         },
       );
 
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout).output).toContain(
+      expect(parseFxJson(result).output).toContain(
         `${mode} MCP HTTP complete.`,
       );
-      expect(gateway.requests[2]?.body).toContain(
+      expect(codex.requests[2]?.body).toContain(
         `${MODERN_HTTP_TOOL_RESULT}:hello`,
       );
       assertModernWire(fixture);
@@ -1308,13 +1301,13 @@ describe("modern MCP Streamable HTTP", () => {
   test("fresh fiber ask delegates unsupported input and output schema assertions", async () => {
     fixture = startModernMcpHttpFixture("server_authoritative_schema");
     const root = createRoot("server-authoritative-schema", fixture, 5_000, true);
-    gateway = startToolGateway("Server-authoritative schema complete.");
+    codex = startToolCodex("Server-authoritative schema complete.");
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the schema fixture."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
@@ -1324,15 +1317,15 @@ describe("modern MCP Streamable HTTP", () => {
       root,
       result,
       fixture,
-      gateway,
+      codex,
     );
-    expect(JSON.parse(result.stdout).output).toContain(
+    expect(parseFxJson(result).output).toContain(
       "Server-authoritative schema complete.",
     );
-    expect(gateway.requests[2]?.body).toContain(
+    expect(codex.requests[2]?.body).toContain(
       `${MODERN_HTTP_TOOL_RESULT}:hello`,
     );
-    expect(gateway.requests.some((request) =>
+    expect(codex.requests.some((request) =>
       request.body.includes('"pattern":"^(?!blocked$).+$"')
     )).toBe(true);
     expect(fixture.requests[2]?.message.params?.arguments).toEqual({
@@ -1349,7 +1342,7 @@ describe("modern MCP Streamable HTTP", () => {
     async () => {
       fixture = startModernMcpHttpFixture("mrtr_form");
       const root = createRoot("tui-mrtr-form", fixture);
-      gateway = startToolGateway("HTTP form elicitation complete.");
+      codex = startToolCodex("HTTP form elicitation complete.");
       const stderrPath = join(root.root, "stderr.log");
       tui = await TmuxSession.create({
         isolated: true,
@@ -1357,7 +1350,7 @@ describe("modern MCP Streamable HTTP", () => {
         width: 110,
         height: 32,
         stderrPath,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
       });
 
       await tui.waitForComposer(15_000);
@@ -1393,7 +1386,7 @@ describe("modern MCP Streamable HTTP", () => {
       expect(calls[1]?.message.params?._meta?.[
         "io.modelcontextprotocol/clientCapabilities"
       ]).toEqual({ elicitation: { form: {}, url: {} } });
-      expect(gateway.requests[2]?.body).toContain(
+      expect(codex.requests[2]?.body).toContain(
         "HTTP continued after elicitation",
       );
       expect(readFileSync(stderrPath, "utf8")).toBe("");
@@ -1404,22 +1397,22 @@ describe("modern MCP Streamable HTTP", () => {
   test("mixed SSE delimiters complete across chunks without waiting for EOF", async () => {
     fixture = startModernMcpHttpFixture("sse_mixed_delimiters");
     const root = createRoot("mixed-sse-delimiters", fixture, 1_000);
-    gateway = startToolGateway("Mixed SSE delimiters complete.");
+    codex = startToolCodex("Mixed SSE delimiters complete.");
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the mixed SSE fixture."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
 
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout).output).toContain(
+    expect(parseFxJson(result).output).toContain(
       "Mixed SSE delimiters complete.",
     );
-    expect(gateway.requests[2]?.body).toContain(
+    expect(codex.requests[2]?.body).toContain(
       `${MODERN_HTTP_TOOL_RESULT}:hello`,
     );
     const deadline = Date.now() + 5_000;
@@ -1445,14 +1438,14 @@ describe("modern MCP Streamable HTTP", () => {
         },
       }),
     );
-    gateway = startToolGateway("Environment-backed MCP complete.");
+    codex = startToolCodex("Environment-backed MCP complete.");
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the environment-backed fixture."],
       {
         cwd: root.workspace,
         env: {
-          ...fixtureEnv(root, gateway),
+          ...fixtureCodexEnv(root, codex),
           MCP_WORKSPACE: "environment-workspace",
           MCP_BEARER_TOKEN: "environment-bearer-secret",
         },
@@ -1496,9 +1489,9 @@ describe("modern MCP Streamable HTTP", () => {
         },
       }),
     );
-    gateway = startToolGateway("Workspace-expanded HTTP MCP complete.");
+    codex = startToolCodex("Workspace-expanded HTTP MCP complete.");
     const env = {
-      ...fixtureEnv(root, gateway),
+      ...fixtureCodexEnv(root, codex),
       WORKSPACE_HTTP_TOKEN: "workspace-http-secret",
     };
     const trusted = await runFx(
@@ -1529,26 +1522,24 @@ describe("modern MCP Streamable HTTP", () => {
   test("modern HTTP excludes tools with invalid header projection schemas", async () => {
     fixture = startModernMcpHttpFixture("invalid_header_schema");
     const root = createRoot("invalid-header-schema", fixture);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("inspect_invalid_schema", "capability_search", {
+    codex = startCodexQueue([
+      codexToolCall("inspect_invalid_schema", "capability_search", {
         query: "echo",
       }),
-      fakeGatewayFinalText("Invalid modern schema isolated."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Invalid modern schema isolated."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Do not call the invalid tool."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
 
     expect(result.code).toBe(0);
-    expect(gateway.requests.every((request) => !request.body.includes(TOOL_NAME)))
+    expect(codex.requests.every((request) => !request.body.includes(TOOL_NAME)))
       .toBe(true);
     expect(fixture.requests.map((entry) => entry.message.method)).toEqual([
       "server/discover",
@@ -1559,22 +1550,22 @@ describe("modern MCP Streamable HTTP", () => {
   test("matching final SSE response closes a held-open response body", async () => {
     fixture = startModernMcpHttpFixture("held_open_final");
     const root = createRoot("held-open-final", fixture, 1_000);
-    gateway = startToolGateway("Held-open SSE complete.");
+    codex = startToolCodex("Held-open SSE complete.");
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the held-open HTTP fixture."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
 
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout).output).toContain(
+    expect(parseFxJson(result).output).toContain(
       "Held-open SSE complete.",
     );
-    expect(gateway.requests[2]?.body).toContain(
+    expect(codex.requests[2]?.body).toContain(
       `${MODERN_HTTP_TOOL_RESULT}:hello`,
     );
     assertModernWire(fixture);
@@ -1588,19 +1579,19 @@ describe("modern MCP Streamable HTTP", () => {
   test("operation timeout closes a stalled request-scoped SSE response", async () => {
     fixture = startModernMcpHttpFixture("stall_call");
     const root = createRoot("timeout", fixture, 100);
-    gateway = startToolGateway("HTTP timeout recovered.");
+    codex = startToolCodex("HTTP timeout recovered.");
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the stalled HTTP fixture."],
       {
         cwd: root.workspace,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
         timeoutMs: 20_000,
       },
     );
 
     expect(result.code).toBe(0);
-    expect(gateway.requests[2]?.body).toContain("McpRequestTimedOut");
+    expect(codex.requests[2]?.body).toContain("McpRequestTimedOut");
     const deadline = Date.now() + 5_000;
     while (fixture.cancelledCalls === 0 && Date.now() < deadline) {
       await Bun.sleep(25);
@@ -1613,13 +1604,13 @@ describe("modern MCP Streamable HTTP", () => {
     async () => {
       fixture = startModernMcpHttpFixture("stall_call");
       const root = createRoot("cancel", fixture, 30_000);
-      gateway = startToolGateway("Cancelled HTTP MCP complete.");
+      codex = startToolCodex("Cancelled HTTP MCP complete.");
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
         width: 100,
         height: 30,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, codex),
       });
 
       await tui.waitForComposer(15_000);
