@@ -304,3 +304,29 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
 - Ops: a wave-2 delegate's broad pkill clipped a sibling's fixture
   mid-run; composer-edit gets an insurance re-run before the night ends.
   Briefs now say: scope pkill patterns to your own TMPDIR/fixture names.
+
+## Addendum 2026-09-07: capped tui-gateway-stream-lifecycle re-run (50/51 fail)
+
+- Solo ReleaseSafe rerun: 51 tests, 50 fail, 0 skip, 1541s. No data before;
+  now the second wave has its classification base.
+- Signature clusters: 15 auth-blocked (turn dies at Codex login — harness
+  still points at the gateway seam); 19 bare timeouts; rest pane-predicate
+  timeouts on gateway-flavored waits ("held Gateway stream/request",
+  "full-window model catalog", "HTTP retry/restricted provider", token
+  counters, checkpointed-request duplicates, Fast-heartbeat/model-ID cases).
+- File saturates per-case `startFakeGateway` servers (61 helper refs).
+  Briefed as one staged delegate task: (1) mechanical harness swap to
+  fake-codex + seeded env, re-run, report; (2) per-case judgment —
+  gateway-wire/classifier-only deletes with evidence, TUI behavior with a
+  Codex equivalent rewrites, unclassifiable stays red in the report.
+
+## Addendum 2026-09-07: scrub-vs-retain now spans three files
+
+- `tui-gateway-stream-lifecycle` migrated: 33 pass / 1 fail / 0 skip in
+  70s (was 50 fail in 1541s). 17 deletions with in-file ledger
+  (11 gateway transport recovery-arc, 3 standing-Fast, 1 GLM picker,
+  2 /image). Committed.
+- The 1 failure is the duplicate-key scrub assertion — third instance of
+  the pending call alongside decision-prompts x2. Pattern now reads as
+  product truth (retain verbatim model action in function_call; error in
+  the paired output), but the pin stays red until the owner rules.
