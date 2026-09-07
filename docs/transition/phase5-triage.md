@@ -405,3 +405,13 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   resend the failed pair is a session-owner design question, out of scope.
 - TGSL also needed a gateway-era event rename: provider_tool_arguments_
   rejected -> argument_integrity_rejected (the Codex intake event).
+
+## PRODUCT-FOLLOWUP (owner ruling 4a): restore image_unavailable notice on resume
+
+- Live probe (vision-route migration): resuming a session with a corrupted
+  owned image snapshot silently omits the image (exit 0, no request, no
+  tool call). The old image_unavailable tool result is unreachable in the
+  Codex runtime. Owner ruled (a): restore the notice — emit an
+  image_unavailable-equivalent into resumed Codex context (likely a
+  function_call_output or context note) so the model knows instead of
+  proceeding blind. src-side work, session/images code, out of Phase 5.
