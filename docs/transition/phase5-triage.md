@@ -343,3 +343,16 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   baseline-green on CI. Morning options: (a) fixture-tolerance fix
   (test-only — RST after full delivery is expected fallout of the
   by-design early return), (b) quarantine as platform-flake, (c) leave red.
+
+## Addendum 2026-09-07: vision-route 40 -> 10, claim verified at src
+
+- Delegate deleted 30 vision-fallback cases citing a198a07c. Verified the
+  claim independently: builtin_providers.native codex bundle sets no
+  .capabilities (providers.zig:8-17), Bundle.Capabilities defaults
+  vision_fallback=false (provider_set.zig:16-20), and main App HAS
+  providerSet (main.zig:1674/1788) so the true-branches in
+  app_agent_runtime.zig:169/1045 never fire for codex. Vision tool never
+  advertised; deletions legitimate. 10/10 green, committed.
+- Product question for images owner: resuming a session with a corrupted
+  owned snapshot now silently omits the image (exit 0, no request) — old
+  image_unavailable tool result unreachable. Not pinned; needs owner call.
