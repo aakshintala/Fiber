@@ -39,7 +39,7 @@ jobs:
             runner: macos-15
         optimize: [ReleaseSafe]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
@@ -118,7 +118,7 @@ jobs:
         ${{ (github.event_name == 'workflow_dispatch'
              && inputs.retry_failed == false) && '0' || '1' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 

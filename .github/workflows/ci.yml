@@ -21,7 +21,7 @@ jobs:
           - optimize: ReleaseSafe
             test_timeout_seconds: 900
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
@@ -68,7 +68,7 @@ jobs:
       matrix:
         optimize: [ReleaseSafe]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
@@ -208,7 +208,7 @@ jobs:
           - name: macos-aarch64
             target: aarch64-macos
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
@@ -230,7 +230,7 @@ jobs:
     name: Shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Shellcheck Fiber scripts
         run: |
