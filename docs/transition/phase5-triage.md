@@ -287,3 +287,20 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   assertion on the paired error output. Cases: "malformed ask arguments
   recover without opening a question prompt", "malformed streamed read
   arguments never publish their provisional label".
+
+## Addendum 2026-09-07: decision-prompts 47/49, scrub-vs-retain owner call
+
+- Delegate migrated the two malformed cases to Codex-shape error assertions
+  (pass live); no-SyntaxError + tool_execution_failed pins hold (47 green,
+  independently re-verified). File stays dirty, uncommitted.
+- Remaining 2 failures are whole-body `not.toContain` echo checks: Codex
+  follow-up retains verbatim malformed args (`"arguments":"{]"`) in the
+  `function_call` history item beside the paired `function_call_output`
+  error; gateway-era scrubbed to `{}`. Retain reads coherent (the call item
+  is the recorded model action; the output references it by call_id), but
+  scrub-vs-retain in persisted history is a product call. Morning decision:
+  (a) accept retain → relax the two echo assertions to target the output
+  item, or (b) scrub at the pairing site → src change + keep assertions.
+- Ops: a wave-2 delegate's broad pkill clipped a sibling's fixture
+  mid-run; composer-edit gets an insurance re-run before the night ends.
+  Briefs now say: scope pkill patterns to your own TMPDIR/fixture names.
