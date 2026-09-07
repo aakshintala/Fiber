@@ -173,3 +173,17 @@ stricter). Residue:
   300ms test-side race this machine loses. The fork-binary experiment is
   deferred — it needs a binary swap and delegates are running. Do not weaken
   the case; it covers retained behavior.
+
+## Addendum 2026-09-07: mcp delegate residue
+
+`mcp-http` (3 cases) and `mcp-auth` (4 cases) repaired against the
+transport-free list contract and committed (1a0d2176, 44b624f4, $0.019).
+Residue, both out of list-contract scope:
+
+- **ask-based cases in both files still need gateway→codex migration**
+  (~35/39 mcp-http, ~27/48 mcp-auth fail `MissingCredentials`). Steered into
+  the running fake-codex delegate as its follow-up; list assertions already
+  committed, auth plumbing only.
+- **`mcp-auth:2398 "fresh TUI login"`**: `authorizationRequests` 0 vs 1 right
+  after the `/mcp auth fixture` confirm prompt, pre-list, isolated solo run.
+  Unclassified — needs a product-vs-test call once the migration lands.
