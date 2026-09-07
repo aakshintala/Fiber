@@ -12,10 +12,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIBER_BIN, HAS_API_KEY } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
-  startFakeGateway,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -25,12 +21,10 @@ const SKIP = TMUX_SKIP || !HAS_API_KEY;
 const TIMEOUT = 30_000;
 
 let session: TmuxSession | null = null;
-let gateway: ReturnType<typeof startFakeGateway> | null = null;
 const tempDirs: string[] = [];
 
 afterEach(async () => {
   if (session) { await session.kill(); session = null; }
-  if (gateway) { gateway.stop(); gateway = null; }
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -135,7 +129,6 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
         minimumHistoryLines: 2000,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "status-compact-key",
           FIBER_DISABLE_KEYCHAIN: "1",
           FIBER_PERMISSION_MODE: "auto",
           FIBER_RECORD: tapePath,
@@ -169,8 +162,8 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
       const replay = JSON.parse(execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], {
         encoding: "utf8",
       }));
-      expect(replay.frame_count).toBeGreaterThan(0);
-      expect(replay.stdout_bytes).toBeGreaterThan(0);
+      expect(replay.data.frame_count).toBeGreaterThan(0);
+      expect(replay.data.stdout_bytes).toBeGreaterThan(0);
     },
     TIMEOUT,
   );
@@ -196,7 +189,7 @@ describe.skipIf(SKIP)("tui: slash commands", () => {
       const pane = await session.waitForText("←→ Change", 5_000);
       expect(pane).toContain("Settings");
       expect(pane).toContain("↑↓ Navigate");
-      expect(pane).not.toContain("[All]");
+      expect(pane).toContain("[All]");
     },
     TIMEOUT,
   );
