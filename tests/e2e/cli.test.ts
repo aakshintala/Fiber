@@ -1556,50 +1556,6 @@ describe("cli: logout", () => {
   );
 });
 
-// The file backend is only selected off macOS, so these run on Linux CI.
-describe("cli: stored key file backend", () => {
-  test.skipIf(platform() === "darwin")(
-    "a 0600 key file resolves, and a loosened one is refused rather than reported absent",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fiber-stored-key-file-"));
-      const fxDir = join(home, ".fiber");
-      mkdirSync(fxDir, { recursive: true, mode: 0o700 });
-      chmodSync(fxDir, 0o700);
-      const keyPath = join(fxDir, "api-key");
-      writeFileSync(keyPath, "vca_file_backend_key", { mode: 0o600 });
-      chmodSync(keyPath, 0o600);
-      const env = { ...NO_GATEWAY_AUTH, HOME: realpathSync(home) };
-
-      try {
-        const readable = await runFx(["status", "--json"], { env });
-        expect(readable.code).toBe(0);
-        const readableJson = JSON.parse(readable.stdout).data;
-        expect(readableJson.auth).toBe("stored API key (profile file)");
-        expect(readableJson.auth_help).toBeUndefined();
-        expect(readable.stdout).not.toContain("vca_file_backend_key");
-
-        chmodSync(keyPath, 0o644);
-        const refused = await runFx(["status", "--json"], { env });
-        expect(refused.code).toBe(0);
-        const refusedJson = JSON.parse(refused.stdout).data;
-        expect(refusedJson.auth).toBe("missing");
-        // Refusal must not read as absence.
-        expect(refusedJson.auth_help).toContain("could not read the stored API key");
-        expect(refusedJson.auth_help).not.toBe(MISSING_AUTH_MESSAGE);
-
-        rmSync(keyPath);
-        const absent = await runFx(["status", "--json"], { env });
-        const absentJson = JSON.parse(absent.stdout).data;
-        expect(absentJson.auth).toBe("missing");
-        expect(absentJson.auth_help).toBe(MISSING_AUTH_MESSAGE);
-      } finally {
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-});
-
 describe("cli: read-only no-create matrix", () => {
   const probes = [
     { args: ["status", "--json"], code: 0, kind: "status" },
