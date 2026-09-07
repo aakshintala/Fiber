@@ -1573,7 +1573,7 @@ describe("cli: stored key file backend", () => {
       try {
         const readable = await runFx(["status", "--json"], { env });
         expect(readable.code).toBe(0);
-        const readableJson = JSON.parse(readable.stdout);
+        const readableJson = JSON.parse(readable.stdout).data;
         expect(readableJson.auth).toBe("stored API key (profile file)");
         expect(readableJson.auth_help).toBeUndefined();
         expect(readable.stdout).not.toContain("vca_file_backend_key");
@@ -1581,7 +1581,7 @@ describe("cli: stored key file backend", () => {
         chmodSync(keyPath, 0o644);
         const refused = await runFx(["status", "--json"], { env });
         expect(refused.code).toBe(0);
-        const refusedJson = JSON.parse(refused.stdout);
+        const refusedJson = JSON.parse(refused.stdout).data;
         expect(refusedJson.auth).toBe("missing");
         // Refusal must not read as absence.
         expect(refusedJson.auth_help).toContain("could not read the stored API key");
@@ -1589,7 +1589,7 @@ describe("cli: stored key file backend", () => {
 
         rmSync(keyPath);
         const absent = await runFx(["status", "--json"], { env });
-        const absentJson = JSON.parse(absent.stdout);
+        const absentJson = JSON.parse(absent.stdout).data;
         expect(absentJson.auth).toBe("missing");
         expect(absentJson.auth_help).toBe(MISSING_AUTH_MESSAGE);
       } finally {
