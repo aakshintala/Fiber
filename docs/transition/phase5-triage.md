@@ -415,3 +415,12 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   image_unavailable-equivalent into resumed Codex context (likely a
   function_call_output or context note) so the model knows instead of
   proceeding blind. src-side work, session/images code, out of Phase 5.
+
+## PRODUCT-FOLLOWUP (session-recovery 11-16): thread test_controls into turn commit
+
+- Cases 11-16 stay evidence-skipped: the six commit boundaries exist and
+  fire in publishFrames via per-call Options.test_controls, but every
+  production turn-commit site passes empty options; logOptions() is wired
+  only into session open. Threading the controls into the commit is a
+  src-side product change for the session owner. Same staffing bucket as
+  the image-notice followup (4a) — both are session-persistence work.

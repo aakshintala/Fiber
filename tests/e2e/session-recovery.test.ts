@@ -795,6 +795,22 @@ describe("session-recovery", () => {
   // `session_test_controls.logOptions()` into the turn commit is a product
   // change for the session owner; the `FIBER_E2E_SESSION_EXIT_AFTER_WRITABLE_OPEN`
   // fallback from the brief does not exist in `src/` either.
+  // Environmental skip evidence, re-verified by grep 2026-09-07 (no src
+  // edits): all six boundaries exist in `session_log.Boundary`
+  // (session_log.zig:38-44) and fire in the commit machinery
+  // (`publishFrames`, session_log.zig:3276-3520) via the per-call
+  // `Options.test_controls` argument of `appendEvent`/
+  // `commitStateReplacement`. But every production turn-commit call site
+  // passes empty options — `cli_ask.zig` appendEvent :1779/:1923/:2522/:2553
+  // and commitStateReplacement :2565/:2610, plus the `app_session_runtime.zig`
+  // commit sites — and `session_test_controls.logOptions()` (the only env
+  // reader, session_test_controls.zig:8) is wired solely into the session-open
+  // paths (`cli_ask.zig:816,824`). So `FIBER_E2E_SESSION_BOUNDARY` never
+  // pauses the turn commit, and the
+  // `FIBER_E2E_SESSION_EXIT_AFTER_WRITABLE_OPEN` fallback from the brief does
+  // not exist in `src/` either. Threading the controls into the commit is a
+  // product change for the session owner; these skips are the pinned record
+  // of that missing hook, not a deletion of the coverage intent.
   test.skip("case 11: model commit at after_event_append", () => {});
   test.skip("case 12: model commit at after_event_sync", () => {});
   test.skip("case 13: model commit at after_commit_intent_sync", () => {});
