@@ -12,14 +12,36 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeShellRun,
-  startFakeGateway,
+  chatGptAccessToken,
+  codexFinalText,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexEnv,
+  startFakeCodex,
+  writeSeededChatGptLogin,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
-import { expectPermissionModeContext } from "./permission-mode-context";
+// The mode-context sentences are product copy shared with the gateway-era
+// helper; the Codex request carries them in the top-level instructions
+// string, so the equivalent check counts them there instead of in prompt
+// messages.
+const MODE_CONTEXT = {
+  ask: "Runtime context: permission mode is ask. Sensitive tool calls may require user approval unless configured rules or session grants already decide them. Tool admission remains authoritative.",
+  auto: "Runtime context: permission mode is auto. After configured rules, session grants, and deterministic safe-tool authority, fiber sends each unresolved action to a narrow safety reviewer. A clear result authorizes only that exact action. A caution or unavailable result holds only that action and returns advice without opening a permission screen, disabling tools, or ending the turn. Exact cautions are reused for this turn; choose a materially different safe action or explain why no safe path remains. Tool admission and exact live revalidation remain authoritative.",
+  yolo: "Runtime context: permission mode is yolo. fiber permission policy is disabled. Tool lookup, argument validation, execution authority, cancellation, limits, operating-system permissions, and remote authentication remain authoritative.",
+} as const;
+
+function expectCodexPermissionModeContext(body: string, mode: keyof typeof MODE_CONTEXT) {
+  const instructions = (JSON.parse(body) as { instructions?: unknown }).instructions;
+  expect(typeof instructions).toBe("string");
+  const text = instructions as string;
+  expect(text.split(MODE_CONTEXT[mode]).length - 1).toBe(1);
+  for (const [candidate, context] of Object.entries(MODE_CONTEXT)) {
+    if (candidate === mode) continue;
+    expect(text.includes(context)).toBe(false);
+  }
+}
 
 const WARNING = "YOLO enabled: fiber permission checks disabled";
 const COMPACT_WARNING = "YOLO: unrestricted";
@@ -29,7 +51,7 @@ const TIMEOUT = 30_000;
 const CONFIGURED_SANDBOX = process.platform === "darwin" ? "os" : "none";
 
 let session: TmuxSession | null = null;
-let gateway: { stop(): void } | null = null;
+let codex: { stop(): void } | null = null;
 const tempRoots: string[] = [];
 
 afterEach(async () => {
@@ -37,8 +59,8 @@ afterEach(async () => {
     await session.kill();
     session = null;
   }
-  gateway?.stop();
-  gateway = null;
+  codex?.stop();
+  codex = null;
   for (const root of tempRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -50,6 +72,7 @@ function createFixture(prefix: string) {
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace);
+  writeSeededChatGptLogin(home, chatGptAccessToken());
   tempRoots.push(root);
   return {
     root,
@@ -59,17 +82,17 @@ function createFixture(prefix: string) {
   };
 }
 
-async function waitForGatewayRequestCount(
-  fake: { requestCount(): number },
+async function waitForCodexRequestCount(
+  fake: ReturnType<typeof startFakeCodex>,
   expected: number,
 ): Promise<void> {
   const deadline = Date.now() + TIMEOUT;
   while (Date.now() < deadline) {
-    if (fake.requestCount() >= expected) return;
+    if (fake.requests.length >= expected) return;
     await Bun.sleep(25);
   }
   throw new Error(
-    `Timed out waiting for ${expected} Gateway request(s); received ${fake.requestCount()}`,
+    `Timed out waiting for ${expected} Codex request(s); received ${fake.requests.length}`,
   );
 }
 
@@ -90,30 +113,30 @@ describe("yolo permission mode", () => {
         }) + "\n",
       );
 
-      const fake = startFakeGateway([
-        fakeShellRun(
-          "yolo_command",
-          `printf 'YOLO_COMMAND_OK\\n' > ${JSON.stringify(markerPath)}`,
-          { timeout_ms: 600_000 },
-        ),
-        fakeGatewayFinalText("YOLO_HEADLESS_DONE"),
-      ]);
-      gateway = fake;
+      const fake = startFakeCodex({
+        route: (body) => {
+          const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+          if (items.some((item) => item.type === "function_call_output")) {
+            return codexFinalText("YOLO_HEADLESS_DONE");
+          }
+          return codexToolCall("yolo_command", "shell", {
+            action: "run",
+            command: `printf 'YOLO_COMMAND_OK\\n' > ${JSON.stringify(markerPath)}`,
+            timeout_ms: 600_000,
+          });
+        },
+      });
+      codex = fake;
 
       const result = await runFx(
         ["ask", "--permission-mode", "yolo", "--json", "--no-save", "Run the fixture command exactly once."],
         {
           cwd: fixture.workspace,
-          env: {
-            HOME: fixture.home,
-            AI_GATEWAY_API_KEY: "fake-yolo-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_GATEWAY_BASE_URL: fake.baseUrl,
-            FX_GATEWAY_CHAT_URL: fake.chatUrl,
-            FIBER_MODEL: FAKE_GATEWAY_MODEL,
+          env: fakeCodexEnv(fixture.home, fake, {
+            FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
             FIBER_TRACE_LOG: tracePath,
             FIBER_TRACE_SCOPES: "permission",
-          },
+          }),
           timeoutMs: TIMEOUT,
         },
       );
@@ -122,7 +145,7 @@ describe("yolo permission mode", () => {
       expect(result.stderr.startsWith(`${WARNING}\n`)).toBe(true);
       expect(result.stderr.match(new RegExp(WARNING, "g"))).toHaveLength(1);
       expect(result.stdout).not.toContain(WARNING);
-      const output = JSON.parse(result.stdout.trim()) as {
+      const output = JSON.parse(result.stdout.trim()).data as {
         output: string;
         tool_calls: Array<{ name: string; status: string }>;
       };
@@ -133,8 +156,10 @@ describe("yolo permission mode", () => {
         ),
       ).toBe(true);
       expect(readFileSync(markerPath, "utf8")).toBe("YOLO_COMMAND_OK\n");
-      expect(fake.classifierRequests).toHaveLength(0);
-      expectPermissionModeContext(fake.requests[0]!.body, "yolo");
+      expect(
+        fake.requests.filter((request) => request.body.includes("<permission_review>")),
+      ).toHaveLength(0);
+      expectCodexPermissionModeContext(fake.requests[0]!.body, "yolo");
       expect(existsSync(tracePath) ? readFileSync(tracePath, "utf8") : "")
         .not.toContain("event=auto_review_start");
 
@@ -173,7 +198,7 @@ describe("yolo permission mode", () => {
       });
 
       expect(result.code).toBe(0);
-      const status = JSON.parse(result.stdout.trim());
+      const status = JSON.parse(result.stdout.trim()).data;
       expect(status).toMatchObject({ permission_mode: "yolo" });
       expect(status).not.toHaveProperty("sandbox");
       expect(JSON.parse(readFileSync(fixture.settingsPath, "utf8")).sandbox).toBe(
@@ -198,28 +223,28 @@ describe("yolo permission mode", () => {
         }) + "\n",
       );
 
-      const fake = startFakeGateway([
-        fakeShellRun(
-          "legacy_ps",
-          `ps -p $$ -o pid= > ${JSON.stringify(psPath)}; printf x >> ${JSON.stringify(attemptsPath)}`,
-          { timeout_ms: 600_000 },
-        ),
-        fakeGatewayFinalText("LEGACY_PS_DONE"),
-      ]);
-      gateway = fake;
+      const fake = startFakeCodex({
+        route: (body) => {
+          const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+          if (items.some((item) => item.type === "function_call_output")) {
+            return codexFinalText("LEGACY_PS_DONE");
+          }
+          return codexToolCall("legacy_ps", "shell", {
+            action: "run",
+            command: `ps -p $$ -o pid= > ${JSON.stringify(psPath)}; printf x >> ${JSON.stringify(attemptsPath)}`,
+            timeout_ms: 600_000,
+          });
+        },
+      });
+      codex = fake;
 
       const result = await runFx(
         ["ask", "--permission-mode", "yolo", "--json", "--no-save", "Run the ps fixture once."],
         {
           cwd: fixture.workspace,
-          env: {
-            HOME: fixture.home,
-            AI_GATEWAY_API_KEY: "fake-yolo-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_GATEWAY_BASE_URL: fake.baseUrl,
-            FX_GATEWAY_CHAT_URL: fake.chatUrl,
-            FIBER_MODEL: FAKE_GATEWAY_MODEL,
-          },
+          env: fakeCodexEnv(fixture.home, fake, {
+            FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+          }),
           timeoutMs: TIMEOUT,
         },
       );
@@ -227,7 +252,9 @@ describe("yolo permission mode", () => {
       expect(result.code).toBe(0);
       expect(readFileSync(psPath, "utf8").trim()).toMatch(/^\d+$/);
       expect(readFileSync(attemptsPath, "utf8")).toBe("x");
-      expect(fake.classifierRequests).toHaveLength(0);
+      expect(
+        fake.requests.filter((request) => request.body.includes("<permission_review>")),
+      ).toHaveLength(0);
       expect(fake.requests).toHaveLength(2);
     },
     TIMEOUT,
@@ -324,40 +351,45 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
       const toolCallGate = new Promise<void>((resolve) => {
         releaseToolCall = resolve;
       });
-      const fake = startFakeGateway([
-        async () => {
+      const fake = startFakeCodex({
+        route: async (body) => {
+          if (body.includes("<permission_review>")) {
+            return codexToolCall("live_auto_review", "permission_decision", {
+              risk: "low",
+              decision: "clear",
+              rationale: "test fixture",
+            });
+          }
+          const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+          if (items.some((item) => item.type === "function_call_output")) {
+            return codexFinalText("LIVE_AUTO_DONE");
+          }
           await toolCallGate;
-          return fakeShellRun(
-            "live_auto_command",
-            `printf 'LIVE_AUTO_OK\\n' > ${JSON.stringify(markerPath)}`,
-            { timeout_ms: 600_000 },
-          );
+          return codexToolCall("live_auto_command", "shell", {
+            action: "run",
+            command: `printf 'LIVE_AUTO_OK\\n' > ${JSON.stringify(markerPath)}`,
+            timeout_ms: 600_000,
+          });
         },
-        fakeGatewayFinalText("LIVE_AUTO_DONE"),
-      ]);
-      gateway = fake;
+      });
+      codex = fake;
 
       session = await TmuxSession.create({
         cwd: fixture.workspace,
         stderrPath,
         width: 120,
         height: 40,
-        env: {
-          HOME: fixture.home,
-          AI_GATEWAY_API_KEY: "fake-live-permission-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: fake.baseUrl,
-          FX_GATEWAY_CHAT_URL: fake.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+        env: fakeCodexEnv(fixture.home, fake, {
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_PERMISSION_MODE: undefined,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "permission",
-        },
+        }),
       });
 
       await session.waitForText("ask ·", TIMEOUT);
       await session.sendText("Run the requested marker command.");
-      await waitForGatewayRequestCount(fake, 1);
+      await waitForCodexRequestCount(fake, 1);
       await session.sendKeys("BTab");
       await session.waitForText("auto ·", TIMEOUT);
       releaseToolCall?.();
@@ -369,7 +401,9 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
       expect(settledPane).toContain("LIVE_AUTO_DONE");
       expect(settledPane).not.toContain(COMMAND_APPROVAL_PROMPT);
       expect(readFileSync(markerPath, "utf8")).toBe("LIVE_AUTO_OK\n");
-      expect(fake.classifierRequests).toHaveLength(1);
+      expect(
+        fake.requests.filter((request) => request.body.includes("<permission_review>")),
+      ).toHaveLength(1);
       expect(readFileSync(tracePath, "utf8")).toContain(
         "tool_name=shell permission_mode=auto",
       );
@@ -402,40 +436,38 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
       const toolCallGate = new Promise<void>((resolve) => {
         releaseToolCall = resolve;
       });
-      const fake = startFakeGateway([
-        async () => {
+      const fake = startFakeCodex({
+        route: async (body) => {
+          const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+          if (items.some((item) => item.type === "function_call_output")) {
+            return codexFinalText("LIVE_ASK_DONE");
+          }
           await toolCallGate;
-          return fakeShellRun(
-            "live_ask_command",
-            `printf 'LIVE_ASK_WRONG\\n' > ${JSON.stringify(markerPath)}`,
-            { timeout_ms: 600_000 },
-          );
+          return codexToolCall("live_ask_command", "shell", {
+            action: "run",
+            command: `printf 'LIVE_ASK_WRONG\\n' > ${JSON.stringify(markerPath)}`,
+            timeout_ms: 600_000,
+          });
         },
-        fakeGatewayFinalText("LIVE_ASK_DONE"),
-      ]);
-      gateway = fake;
+      });
+      codex = fake;
 
       session = await TmuxSession.create({
         cwd: fixture.workspace,
         stderrPath,
         width: 120,
         height: 40,
-        env: {
-          HOME: fixture.home,
-          AI_GATEWAY_API_KEY: "fake-live-permission-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: fake.baseUrl,
-          FX_GATEWAY_CHAT_URL: fake.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+        env: fakeCodexEnv(fixture.home, fake, {
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_PERMISSION_MODE: undefined,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "permission",
-        },
+        }),
       });
 
       await session.waitForText("auto ·", TIMEOUT);
       await session.sendText("Run the requested marker command.");
-      await waitForGatewayRequestCount(fake, 1);
+      await waitForCodexRequestCount(fake, 1);
       await session.sendKeys("BTab");
       await session.waitForText("YOLO ·", TIMEOUT);
       await session.sendKeys("BTab");
@@ -449,7 +481,9 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
       expect(settledPane).toContain(COMMAND_APPROVAL_PROMPT);
       expect(settledPane).not.toContain("LIVE_ASK_DONE");
       expect(existsSync(markerPath)).toBe(false);
-      expect(fake.classifierRequests).toHaveLength(0);
+      expect(
+        fake.requests.filter((request) => request.body.includes("<permission_review>")),
+      ).toHaveLength(0);
       expect(readFileSync(tracePath, "utf8")).toContain(
         "tool_name=shell permission_mode=ask",
       );
