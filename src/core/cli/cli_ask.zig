@@ -46,6 +46,7 @@ const session_codec = @import("../session/session_codec.zig");
 const session_usage = @import("../session/session_usage.zig");
 const usage_report = @import("../session/usage_report.zig");
 const session_store = @import("../session/session_store.zig");
+const session_test_controls = @import("../session/session_test_controls.zig");
 const skill_contract = @import("../skills/skill_contract.zig");
 const skill_runtime = @import("../skills/skill_runtime.zig");
 const subagent_agent_adapter = @import("../subagent/agent_adapter.zig");
@@ -812,12 +813,16 @@ const AskContext = struct {
                 self.alloc,
                 target,
                 self.workspace_root,
-                .{},
+                .{ .log = session_test_controls.logOptions() },
             )
         else blk: {
             var state = try freshAskState(self, seed_preferences);
             defer state.deinit(self.alloc);
-            break :blk try store.startWritableSession(self.alloc, state);
+            break :blk try store.startWritableSessionWithOptions(
+                self.alloc,
+                state,
+                session_test_controls.logOptions(),
+            );
         };
         var writable_owned = true;
         errdefer if (writable_owned) writable.deinit(self.alloc);

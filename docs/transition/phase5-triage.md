@@ -187,3 +187,18 @@ Residue, both out of list-contract scope:
 - **`mcp-auth:2398 "fresh TUI login"`**: `authorizationRequests` 0 vs 1 right
   after the `/mcp auth fixture` confirm prompt, pre-list, isolated solo run.
   Unclassified — needs a product-vs-test call once the migration lands.
+
+## Addendum 2026-09-07: session-boundary wiring (owner src change)
+
+The session-recovery delegate's finding 1 verified: `logOptions()` had no
+production caller, so 13 of 16 SIGKILL cases were unreachable. Wired
+`session_test_controls.logOptions()` into the `fiber ask` create and resume
+paths (`cli_ask.zig`; `startWritableSessionWithOptions` /
+`ResumeOptions.log`). No env means byte-identical behavior (returns `. {}`).
+Proved live on the binary: `FIBER_E2E_SESSION_BOUNDARY=after_event_append`
+paused the process and wrote the ready file. Note the pause loop ignores
+SIGTERM — kill hung probes with -9, and future harness SIGKILLs must target
+the exact boundary-paused pid. Also noted: the seeded login needs exact
+0700/0600 perms or the credential check fails before session create.
+Finding 3 (`show last` tie-break surfacing the corrupt source) stands as a
+product question for the session owner.
