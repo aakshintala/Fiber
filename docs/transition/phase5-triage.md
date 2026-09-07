@@ -366,3 +366,18 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
 - Owner question (non-blocking): should the pacing hold be re-implemented
   for Codex, or is commit-then-preview the accepted behavior? If the
   latter, nothing to do.
+
+## Addendum 2026-09-07: gateway-stream-lifecycle 52/1/2, held for scrub call
+
+- Split-brief finish worked: cluster 1 was one shared startGateway body
+  fix; clusters 2-3 migrated per case; 1 gateway-only empty-finish test
+  deleted. Owner independently re-ran the FULL file: 52 pass / 1 skip /
+  2 fail in 57s — the delegate's 10-fail intermediate was contention
+  under 4 runners, not product. File stays dirty until the scrub call.
+- Scrub-vs-retain now spans FIVE cases in four files: decision-prompts
+  x2, TGSL duplicate-key, GSL saved-malformed-recovery + malformed-MCP-
+  echo. Every instance identical: verbatim model action retained in
+  function_call, structured error in paired output, no-SyntaxError +
+  tool_execution_failed pins green. Recommendation: accept retain (rule
+  in favor of history fidelity), relax the 5 echo assertions to target
+  the output item — all test-only, one decision unblocks four files.
