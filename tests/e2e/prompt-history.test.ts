@@ -12,34 +12,27 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  FAKE_GATEWAY_MODEL,
   hasEmptyComposer,
   isComposerLine,
-  startDynamicFakeGateway,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
 const TIMEOUT = 20_000;
-const REJECTED_GATEWAY_AUTH = {
-  AI_GATEWAY_API_KEY: "e2e-placeholder",
-  VERCEL_OIDC_TOKEN: "",
-  NO_COLOR: "1",
-};
+
+// Every model call in these suites must fail. The count far exceeds the
+// handful of requests the tests below make; the product refreshes once and
+// then surfaces the repeated 401.
 
 const serialTest = test.serial;
 
-function rejectedGatewayEnv(
+function rejectedCodexEnv(
   home: string,
-  gateway: ReturnType<typeof startDynamicFakeGateway>,
+  codex: ReturnType<typeof startFakeCodex>,
 ) {
-  return {
-    ...REJECTED_GATEWAY_AUTH,
-    HOME: home,
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FIBER_MODEL: FAKE_GATEWAY_MODEL,
-  };
+  return seededFakeCodexEnv(home, codex, { NO_COLOR: "1" });
 }
 
 function currentComposerLine(pane: string): string {
@@ -83,13 +76,13 @@ async function disablePromptHistory(
 
 describe.skipIf(!tmuxAvailable())("prompt history", () => {
   let session: TmuxSession | null = null;
-  let gateway: ReturnType<typeof startDynamicFakeGateway> | null = null;
+  let codex: ReturnType<typeof startFakeCodex> | null = null;
 
   afterEach(async () => {
     await session?.kill();
     session = null;
-    gateway?.stop();
-    gateway = null;
+    codex?.stop();
+    codex = null;
   });
 
   serialTest(
@@ -102,22 +95,17 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
         mkdirSync(home);
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
-        gateway = startDynamicFakeGateway(() =>
-          new Response(JSON.stringify({ error: { message: "rejected" } }), {
-            status: 401,
-            headers: { "content-type": "application/json" },
-          })
-        );
+        codex = startFakeCodex({ unauthorizedResponses: 1_000 });
 
         session = await TmuxSession.create({
           cwd: workspaceRoot,
-          env: rejectedGatewayEnv(home, gateway),
+          env: rejectedCodexEnv(home, codex),
         });
         await session.waitForText("Run /help", TIMEOUT);
         await session.sendText("PLAN10_PROMPT_HISTORY_SENTINEL");
         await session.waitForText("HTTP 401", TIMEOUT);
         await session.sendText("/help");
-        await session.waitForText("Commands 35", TIMEOUT);
+        await session.waitForText("Commands 20", TIMEOUT);
         await session.sendKeys("Escape");
         await session.waitForPane((pane) => !pane.includes("Enter Open"), TIMEOUT);
         await session.sendText("/quit");
@@ -132,7 +120,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
 
         session = await TmuxSession.create({
           cwd: workspaceRoot,
-          env: rejectedGatewayEnv(home, gateway),
+          env: rejectedCodexEnv(home, codex),
         });
         await session.waitForText("Run /help", TIMEOUT);
 
@@ -206,7 +194,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
           session = await TmuxSession.create({
             cwd: realpathSync(workspace),
             env: {
-              ...REJECTED_GATEWAY_AUTH,
+              NO_COLOR: "1",
               HOME: realpathSync(home),
             },
           });
@@ -233,12 +221,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
         mkdirSync(home);
         mkdirSync(workspaceA);
         mkdirSync(workspaceB);
-        gateway = startDynamicFakeGateway(() =>
-          new Response(JSON.stringify({ error: { message: "rejected" } }), {
-            status: 401,
-            headers: { "content-type": "application/json" },
-          })
-        );
+        codex = startFakeCodex({ unauthorizedResponses: 1_000 });
 
         for (const [workspace, prompt] of [
           [workspaceA, "PLAN10_HISTORY_WORKSPACE_A"],
@@ -246,7 +229,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
         ] as const) {
           session = await TmuxSession.create({
             cwd: realpathSync(workspace),
-            env: rejectedGatewayEnv(home, gateway),
+            env: rejectedCodexEnv(home, codex),
           });
           await session.waitForText("Run /help", TIMEOUT);
           await session.sendText(prompt);
@@ -266,7 +249,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
 
         session = await TmuxSession.create({
           cwd: realpathSync(workspaceA),
-          env: rejectedGatewayEnv(home, gateway),
+          env: rejectedCodexEnv(home, codex),
         });
         await session.waitForText("Run /help", TIMEOUT);
         await disablePromptHistory(session, join(home, ".fiber", "settings.json"));
@@ -378,7 +361,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
         session = await TmuxSession.create({
           cwd: workspaceARoot,
           env: {
-            ...REJECTED_GATEWAY_AUTH,
+            NO_COLOR: "1",
             HOME: home,
           },
         });
