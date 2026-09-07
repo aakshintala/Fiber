@@ -85,6 +85,14 @@ pub fn build(b: *std.Build) void {
         "mcp_test_exports",
         mcp_test_exports,
     );
+    json_schema_corpus.root_module.addImport(
+        "json_schema",
+        b.createModule(.{
+            .root_source_file = b.path("src/core/mcp/json_schema.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    );
     const run_json_schema_corpus = b.addRunArtifact(json_schema_corpus);
     if (b.args) |args| run_json_schema_corpus.addArgs(args);
     const json_schema_corpus_step = b.step(

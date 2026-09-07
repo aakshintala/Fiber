@@ -1,5 +1,6 @@
 const std = @import("std");
 const mcp = @import("mcp_test_exports");
+const AccessView = @FieldType(mcp.ResolvedLiveView, "view");
 
 const Allocator = std.mem.Allocator;
 
@@ -390,8 +391,8 @@ fn runRuntimeHttpMrtr(io: std.Io, alloc: Allocator, server_url: []const u8) !voi
 
 const ScopedAuthLiveProvider = struct {
     io: std.Io,
-    captured: *const mcp.AccessView,
-    revoked: *const mcp.AccessView,
+    captured: *const AccessView,
+    revoked: *const AccessView,
     marker_path: []const u8,
     resolutions: usize = 0,
 
@@ -1453,7 +1454,7 @@ fn runRuntimeStaleRecovery(
     }
     const recovered_subscription = runtime.servers.items[0].tool_subscription orelse
         return error.MissingRecoveredSubscription;
-    if (recovered_subscription.startupState() != .committed) {
+    if (recovered_subscription.startup_readiness.current() != .committed) {
         return error.RecoveredSubscriptionNotCommitted;
     }
     const listen_count = try countWireMethod(
