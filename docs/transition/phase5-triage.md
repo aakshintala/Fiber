@@ -424,3 +424,17 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   only into session open. Threading the controls into the commit is a
   src-side product change for the session owner. Same staffing bucket as
   the image-notice followup (4a) — both are session-persistence work.
+
+## Addendum 2026-09-08: wave 1 verify notes (owner)
+
+- **tui-slash-menu flake finding.** Delegate 37/0 twice; owner record run 36/1
+  ("slash picker growth preserves displaced transcript history",
+  waitForPane timeout with an EMPTY last pane — no product assertion
+  evaluated); owner tiebreak rerun 37/0/1134 matching the delegate exactly.
+  Three greens vs one content-free red: classified flaky tmux capture, not
+  product. File stays as-committed (e4157872), no edits by anyone.
+- **Gotcha-list correction: /trace is live.** The handoff removed-list names
+  /trace, but the binary renders `/trace  copy a private diagnostic trace`
+  in the Commands-20 catalog (also pinned by tui-slash-menu.test.ts:1457,
+  passing live). The removed entry was presumably the CLI-era `fiber trace`
+  surface, not the slash command. Do not delete /trace cases.
