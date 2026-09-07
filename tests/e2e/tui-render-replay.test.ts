@@ -92,7 +92,8 @@ function parseReplayJson(output: string): {
   resize_count: number;
   stdout_bytes: number;
 } {
-  return JSON.parse(output.trim());
+  const envelope = JSON.parse(output.trim());
+  return envelope.data ?? envelope;
 }
 
 async function launchAutomaticRecording(options: {
@@ -286,8 +287,8 @@ describe("tui: render record/replay", () => {
       const extractDir = mkdtempSync(join(tmpdir(), "fiber-render-read-only-tools-"));
       workDirs.push(extractDir);
       execFileSync("tar", ["-xzf", READ_ONLY_TOOLS_CAPTURE_TARBALL, "-C", extractDir]);
-      const captureDir = join(extractDir, "fiber-render-bug-20260510-075848");
-      const tapePath = join(captureDir, "bug.fibertape");
+      const captureDir = join(extractDir, "fx-render-bug-20260510-075848");
+      const tapePath = join(captureDir, "bug.fxtape");
       const workDir = mkdtempSync(join(tmpdir(), "fiber-render-read-only-tools-replay-"));
       workDirs.push(workDir);
       const goldenPath = join(workDir, "grid.txt");
