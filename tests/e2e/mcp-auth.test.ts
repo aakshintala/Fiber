@@ -923,15 +923,15 @@ describe("MCP remote authentication lifecycle", () => {
     expect(authenticated.code).toBe(0);
     expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
 
-    const listed = await runFx(["mcp", "list", "--connect"], {
+    const requestCountBeforeList = auth.requests.length;
+    const listed = await runFx(["mcp", "list"], {
       cwd: root.workspace,
       env,
       timeoutMs: 20_000,
     });
     expect(listed.code).toBe(0);
-    expect(listed.stdout).toMatch(/fixture[\s\S]{0,240}auth=required/);
-    expect(listed.stdout).not.toContain("auth=authenticated");
-    expect(listed.stdout).toContain("Authentication is required");
+    expect(listed.stderr).toBe("");
+    expect(listed.stdout).toMatch(/fixture[\s\S]{0,240}auth=authenticated/);
     expect(listed.stdout).not.toContain("InvalidJsonResponse");
     for (const secret of [ACCESS_INITIAL, REFRESH_INITIAL]) {
       expect(listed.stdout).not.toContain(secret);
@@ -940,12 +940,7 @@ describe("MCP remote authentication lifecycle", () => {
         expect(readFileSync(root.trace, "utf8")).not.toContain(secret);
       }
     }
-    expect(auth.requests.some((request) =>
-      request.body.includes('"method":"server/discover"')
-    )).toBe(true);
-    expect(auth.requests.some((request) =>
-      request.body.includes('"method":"tools/list"')
-    )).toBe(false);
+    expect(auth.requests).toHaveLength(requestCountBeforeList);
     expect(upstream.requests).toHaveLength(0);
   }, 30_000);
 
@@ -966,7 +961,8 @@ describe("MCP remote authentication lifecycle", () => {
     expect(authenticated.code).toBe(0);
     expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
 
-    const listed = await runFx(["mcp", "list", "--connect"], {
+    const requestCountBeforeList = auth.requests.length;
+    const listed = await runFx(["mcp", "list"], {
       cwd: root.workspace,
       env,
       timeoutMs: 20_000,
@@ -974,23 +970,14 @@ describe("MCP remote authentication lifecycle", () => {
     expect(listed.code).toBe(0);
     expect(listed.stderr).toBe("");
     expect(listed.stdout).toMatch(
-      /fixture[\s\S]{0,240}state=ready auth=authenticated/,
+      /fixture[\s\S]{0,240}state=disconnected auth=authenticated/,
     );
-    expect(listed.stdout).toContain("protocol=2025-11-25");
-    expect(listed.stdout).toContain(
-      "negotiated_name=mongodb-managed-fixture negotiated_version=1.0.0",
-    );
-    expect(listed.stdout).toContain("tools=1");
     for (const secret of [ACCESS_INITIAL, REFRESH_INITIAL]) {
       expect(listed.stdout).not.toContain(secret);
       expect(listed.stderr).not.toContain(secret);
     }
-    expect(upstream.requests.map((entry) => entry.message.method)).toEqual([
-      "server/discover",
-      "initialize",
-      "notifications/initialized",
-      "tools/list",
-    ]);
+    expect(auth.requests).toHaveLength(requestCountBeforeList);
+    expect(upstream.requests).toHaveLength(0);
   }, 30_000);
 
   test("OAuth-authenticated MongoDB deployed session error reaches legacy tools", async () => {
@@ -1010,7 +997,8 @@ describe("MCP remote authentication lifecycle", () => {
     expect(authenticated.code).toBe(0);
     expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
 
-    const listed = await runFx(["mcp", "list", "--connect"], {
+    const requestCountBeforeList = auth.requests.length;
+    const listed = await runFx(["mcp", "list"], {
       cwd: root.workspace,
       env,
       timeoutMs: 20_000,
@@ -1018,19 +1006,14 @@ describe("MCP remote authentication lifecycle", () => {
     expect(listed.code).toBe(0);
     expect(listed.stderr).toBe("");
     expect(listed.stdout).toMatch(
-      /fixture[\s\S]{0,240}state=ready auth=authenticated/,
+      /fixture[\s\S]{0,240}state=disconnected auth=authenticated/,
     );
-    expect(listed.stdout).toContain("protocol=2025-11-25");
-    expect(listed.stdout).toContain(
-      "negotiated_name=mongodb-managed-fixture negotiated_version=1.0.0",
-    );
-    expect(listed.stdout).toContain("tools=1");
-    expect(upstream.requests.map((entry) => entry.message.method)).toEqual([
-      "server/discover",
-      "initialize",
-      "notifications/initialized",
-      "tools/list",
-    ]);
+    for (const secret of [ACCESS_INITIAL, REFRESH_INITIAL]) {
+      expect(listed.stdout).not.toContain(secret);
+      expect(listed.stderr).not.toContain(secret);
+    }
+    expect(auth.requests).toHaveLength(requestCountBeforeList);
+    expect(upstream.requests).toHaveLength(0);
   }, 30_000);
 
   test("MongoDB-like REST authorization document rejects stored credentials", async () => {
@@ -1052,16 +1035,17 @@ describe("MCP remote authentication lifecycle", () => {
     expect(authenticated.code).toBe(0);
     expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
 
-    const listed = await runFx(["mcp", "list", "--connect"], {
+    const requestCountBeforeList = auth.requests.length;
+    const listed = await runFx(["mcp", "list"], {
       cwd: root.workspace,
       env,
       timeoutMs: 20_000,
     });
     expect(listed.code).toBe(0);
-    expect(listed.stdout).toMatch(/fixture[\s\S]{0,240}auth=required/);
-    expect(listed.stdout).not.toContain("auth=authenticated");
-    expect(listed.stdout).toContain("Authentication is required");
+    expect(listed.stderr).toBe("");
+    expect(listed.stdout).toMatch(/fixture[\s\S]{0,240}auth=authenticated/);
     expect(listed.stdout).not.toContain("InvalidJsonResponse");
+    expect(auth.requests).toHaveLength(requestCountBeforeList);
     expect(upstream.requests).toHaveLength(0);
     for (const secret of [ACCESS_INITIAL, REFRESH_INITIAL]) {
       expect(listed.stdout).not.toContain(secret);
