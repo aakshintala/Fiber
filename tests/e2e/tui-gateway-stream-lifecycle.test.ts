@@ -2440,8 +2440,15 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       const trace = readFileSync(tracePath, "utf8");
       const stderr = readFileSync(stderrPath, "utf8");
 
+      // Owner ruling (scrub-vs-retain): recovery retains the verbatim model
+      // action in function_call; the structured error rides the paired
+      // function_call_output pinned below.
       expect(repairedCalls).toEqual([
-        expect.objectContaining({ input: {} }),
+        expect.objectContaining({
+          type: "function_call",
+          name: "glob_files",
+          arguments: duplicateArguments,
+        }),
       ]);
       expect(repairedResults).toEqual([
         expect.objectContaining({
@@ -2449,7 +2456,9 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         }),
       ]);
       expect(queuedGateway.requests[4].body).not.toContain(duplicateArguments);
-      expect(trace).toContain("event=provider_tool_arguments_rejected");
+      // Codex-era integrity event (replaces the gateway-era
+      // provider_tool_arguments_rejected pin).
+      expect(trace).toContain("event=argument_integrity_rejected");
       expect(trace).toContain("failure=malformed_json");
       expect(trace).toContain("event=queue_review_started");
       expect(trace).toContain("reason=post_cancel");
