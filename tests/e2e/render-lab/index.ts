@@ -296,7 +296,7 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
         `SHELL_A_BEFORE_FIRST_${runId}`,
         `SHELL_A_BETWEEN_LAUNCHES_${runId}`,
       ],
-      submitted: ["permission_mode", "● Version:", "/help"],
+      submitted: ["permission_mode", "permission_mode", "/help"],
     },
     frames: [],
     failures: [],
@@ -352,7 +352,7 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
     );
 
     await launchFx(context, session, "second");
-    await submitSlashCommand(context, session, "/version", "● Version:", "second-version-visible");
+    await submitSlashCommand(context, session, "/status", "permission_mode", "second-status-visible");
     await resize(context, session, 72, 24, "second-resize-narrow");
     await resize(context, session, 132, 42, "second-resize-wide");
     await resize(context, session, 120, 40, "second-resize-restored");
@@ -367,7 +367,7 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
     );
 
     await launchFx(context, session, "third");
-    await submitSlashCommand(context, session, "/help", "/version", "third-help-visible");
+    await submitSlashCommand(context, session, "/help", "show available slash commands", "third-help-visible");
     const finalFrame = await capture(context, session, "final-third-launch-state");
     manifest.finalFrameIndex = finalFrame.index;
 
@@ -1995,7 +1995,8 @@ async function writeReplaySummary(manifest: RenderLabManifest): Promise<void> {
     );
     const jsonLine = output.split(/\r?\n/).find((line) => line.trim().startsWith("{"));
     if (jsonLine) {
-      writeFileSync(manifest.replaySummaryPath, `${jsonLine}\n`);
+      const parsed = JSON.parse(jsonLine) as { data?: unknown };
+      writeFileSync(manifest.replaySummaryPath, `${JSON.stringify(parsed.data ?? parsed)}\n`);
       return;
     }
   } catch (error) {
