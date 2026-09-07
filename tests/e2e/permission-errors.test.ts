@@ -12,11 +12,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewayPermissionDecision,
-  fakeShellRun,
-  startFakeGateway,
+  chatGptAccessToken,
+  codexFinalText,
+  codexLatestToolResult,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexEnv,
+  startFakeCodex,
+  writeSeededChatGptLogin,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -43,6 +46,7 @@ function createIsolatedRoot(prefix: string) {
   const workspace = join(root, "workspace");
   mkdirSync(home, { recursive: true });
   mkdirSync(join(home, ".fiber"), { recursive: true });
+  writeSeededChatGptLogin(home, chatGptAccessToken());
   mkdirSync(workspace, { recursive: true });
   return { root, home, workspace };
 }
@@ -51,38 +55,27 @@ function parseFxJson(result: { stdout: string; stderr: string; code: number | nu
   if (result.code !== 0) {
     throw new Error(`fiber exited ${result.code}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`);
   }
-  return JSON.parse(result.stdout.trim()) as FxJson;
+  return JSON.parse(result.stdout.trim()).data as FxJson;
 }
 
+// Tool results ride the Responses input as function_call_output items. The
+// denial echo itself is transport-independent; only the gateway result
+// framing around it is gone, so the helper returns the echo JSON directly.
 function executionDeniedReason(body: string, toolCallId: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
-  };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .find((part) => part.type === "tool-result" && part.toolCallId === toolCallId);
-  expect(result).toBeDefined();
-  const output = result!.output as Record<string, unknown>;
-  expect(output.type).toBe("execution-denied");
-  expect(typeof output.reason).toBe("string");
-  expect(output.value).toBeUndefined();
-  return output.reason as string;
+  const result = codexLatestToolResult(body);
+  expect(result).not.toBeNull();
+  expect(result!.callId).toBe(toolCallId);
+  return result!.output;
 }
 
 function permissionEnv(
   home: string,
-  gateway: ReturnType<typeof startFakeGateway>,
+  codex: ReturnType<typeof startFakeCodex>,
 ) {
-  return {
-    HOME: home,
-    AI_GATEWAY_API_KEY: "permission-error-fake-key",
-    VERCEL_OIDC_TOKEN: undefined,
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FIBER_MODEL: FAKE_GATEWAY_MODEL,
+  return fakeCodexEnv(home, codex, {
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
     NO_COLOR: "1",
-  };
+  });
 }
 
 async function waitForPaneExit(
@@ -117,18 +110,26 @@ async function runTtyPromptPermissionsCase(
     JSON.stringify({ permission_mode: "ask", sandbox: "none" }),
   );
   writeFileSync(stdoutPath, "");
-  const gateway = startFakeGateway([
-    fakeShellRun(`${decision}_${outputMode}_call`, `touch ${JSON.stringify(marker)}`, {
-      timeout_ms: 600_000,
-    }),
-    fakeGatewayFinalText(`${decision} ${outputMode} complete`),
-  ]);
+  const codex = startFakeCodex({
+    route: (body) => {
+      const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+      if (items.some((item) => item.type === "function_call_output")) {
+        return codexFinalText(`${decision} ${outputMode} complete`);
+      }
+      return codexToolCall(`${decision}_${outputMode}_call`, "shell", {
+        action: "run",
+        command: `touch ${JSON.stringify(marker)}`,
+        yield_time_ms: 30_000,
+        timeout_ms: 600_000,
+      });
+    },
+  });
   let session: TmuxSession | null = null;
   try {
     session = await TmuxSession.create({
       cmd: `${JSON.stringify(FIBER_BIN)} ask --${outputMode} --permission-mode ask --no-save "Run the exact ${outputMode} fixture." > ${JSON.stringify(stdoutPath)}`,
       cwd: root.workspace,
-      env: permissionEnv(root.home, gateway),
+      env: permissionEnv(root.home, codex),
       remainOnExit: true,
     });
     const prompt = await session.waitForText("Approve? [y/N]", TIMEOUT);
@@ -140,7 +141,7 @@ async function runTtyPromptPermissionsCase(
     const stdout = readFileSync(stdoutPath, "utf8");
     expect(stdout).not.toContain("Approve? [y/N]");
     if (outputMode === "json") {
-      const json = JSON.parse(stdout) as FxJson;
+      const json = JSON.parse(stdout).data as FxJson;
       expect(json.exit_code).toBe(0);
       expect(json.tool_calls).toContainEqual(
         expect.objectContaining({
@@ -152,10 +153,10 @@ async function runTtyPromptPermissionsCase(
       expect(stdout).toBe("");
     }
     expect(existsSync(marker)).toBe(decision === "approve");
-    expect(gateway.requests).toHaveLength(2);
+    expect(codex.requests).toHaveLength(2);
   } finally {
     if (session) await session.kill();
-    gateway.stop();
+    codex.stop();
     rmSync(root.root, { recursive: true, force: true });
   }
 }
@@ -167,12 +168,20 @@ describe("generic permission typed errors", () => {
       const root = createIsolatedRoot("fiber-permission-error-");
       const marker = join(root.workspace, "denied-marker.txt");
       const toolCallId = "permission_denied_call";
-      const gateway = startFakeGateway([
-        fakeShellRun(toolCallId, `touch ${JSON.stringify(marker)}`, {
-          timeout_ms: 600_000,
-        }),
-        fakeGatewayFinalText("permission error observed"),
-      ]);
+      const codex = startFakeCodex({
+        route: (body) => {
+          const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+          if (items.some((item) => item.type === "function_call_output")) {
+            return codexFinalText("permission error observed");
+          }
+          return codexToolCall(toolCallId, "shell", {
+            action: "run",
+            command: `touch ${JSON.stringify(marker)}`,
+            yield_time_ms: 30_000,
+            timeout_ms: 600_000,
+          });
+        },
+      });
       try {
         writeFileSync(
           join(root.home, ".fiber", "settings.json"),
@@ -191,25 +200,17 @@ describe("generic permission typed errors", () => {
 
         const result = await runFx(["ask", "--json", "--no-save", "--permission-mode", "auto", "Run the denied command."], {
           cwd: root.workspace,
-          env: {
-            HOME: root.home,
-            AI_GATEWAY_API_KEY: "permission-error-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FIBER_MODEL: FAKE_GATEWAY_MODEL,
-          },
+          env: permissionEnv(root.home, codex),
           timeoutMs: TIMEOUT,
         });
         const json = parseFxJson(result);
         expect(result.stderr).toBe('Running touch "./denied-marker.txt"\n');
         expect(json.tool_calls).toContainEqual({ name: "shell", status: "error" });
         expect(existsSync(marker)).toBe(false);
-        expect(gateway.requests).toHaveLength(2);
+        expect(codex.requests).toHaveLength(2);
 
         const toolResult = JSON.parse(
-          executionDeniedReason(gateway.requests[1]!.body, toolCallId),
+          executionDeniedReason(codex.requests[1]!.body, toolCallId),
         ) as { error: PermissionEcho };
         const echo = toolResult.error;
         expect(echo.type).toBe("tool_permission_denied");
@@ -218,7 +219,7 @@ describe("generic permission typed errors", () => {
         expect(echo.reason).toBe("policy_denied");
         expect(echo.denied).toBe(true);
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root.root, { recursive: true, force: true });
       }
     },
@@ -249,53 +250,63 @@ describe("generic permission typed errors", () => {
         JSON.stringify({ permission_mode: "auto", sandbox: "none" }),
       );
       writeFileSync(stdoutPath, "");
-      const gateway = startFakeGateway(
-        [
-          ...markers.map((marker, index) => (body?: string) => {
-            if (index > 0) expect(body).toContain("review_caution");
-            return fakeShellRun(
-              `auto_call_${index + 1}`,
-              `touch ${JSON.stringify(marker)}`,
-              { timeout_ms: 600_000 },
-            );
-          }),
-          fakeGatewayFinalText("Advisory cautions handled normally."),
-        ],
-        {
-          classifierResponses: Array.from(
-            { length: 4 },
-            (_, index) => fakeGatewayPermissionDecision(
-              "caution",
-              `auto_review_${index + 1}`,
-            ),
-          ),
+      // The caution denial payload serializes transport-independently, so the
+      // follow-up requests still carry the review_caution marker.
+      let reviews = 0;
+      const codex = startFakeCodex({
+        route: (body) => {
+          if (body.includes("<permission_review>")) {
+            reviews += 1;
+            return codexToolCall(`auto_review_${reviews}`, "permission_decision", {
+              risk: "high",
+              decision: "caution",
+              rationale: "test fixture",
+            });
+          }
+          const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+          const done = items.filter((item) => item.type === "function_call_output").length;
+          if (done >= markers.length) {
+            return codexFinalText("Advisory cautions handled normally.");
+          }
+          if (done > 0) expect(body).toContain("review_caution");
+          const marker = markers[done]!;
+          return codexToolCall(`auto_call_${done + 1}`, "shell", {
+            action: "run",
+            command: `touch ${JSON.stringify(marker)}`,
+            yield_time_ms: 30_000,
+            timeout_ms: 600_000,
+          });
         },
-      );
+      });
       let session: TmuxSession | null = null;
       try {
         session = await TmuxSession.create({
           cmd: `${JSON.stringify(FIBER_BIN)} ask --permission-mode auto --json --no-save "Run the advisory caution fixture." > ${JSON.stringify(stdoutPath)}`,
           cwd: root.workspace,
-          env: permissionEnv(root.home, gateway),
+          env: permissionEnv(root.home, codex),
           remainOnExit: true,
         });
         await waitForPaneExit(session, 0);
         const scrollback = await session.captureFullScrollback();
         expect(scrollback).not.toContain("Approve? [y/N]");
         for (const marker of markers) expect(existsSync(marker)).toBe(false);
-        expect(gateway.classifierRequests).toHaveLength(4);
+        expect(
+          codex.requests.filter((request) => request.body.includes("<permission_review>")),
+        ).toHaveLength(4);
 
         const stdout = readFileSync(stdoutPath, "utf8");
         expect(stdout).not.toContain("Approve? [y/N]");
-        const json = JSON.parse(stdout) as FxJson;
+        const json = JSON.parse(stdout).data as FxJson;
         expect(json.output).toContain("Advisory cautions handled normally.");
         expect(json.tool_calls.filter((call) => call.status === "error")).toHaveLength(4);
         expect(json.tool_calls.filter((call) => call.status === "success")).toHaveLength(0);
-        expect(gateway.requests).toHaveLength(5);
-        expect(gateway.classifierRequests).toHaveLength(4);
+        expect(codex.requests.filter((request) => !request.body.includes("<permission_review>"))).toHaveLength(5);
+        expect(
+          codex.requests.filter((request) => request.body.includes("<permission_review>")),
+        ).toHaveLength(4);
       } finally {
         if (session) await session.kill();
-        gateway.stop();
+        codex.stop();
         rmSync(root.root, { recursive: true, force: true });
       }
     },
@@ -331,11 +342,20 @@ describe("generic permission typed errors", () => {
           join(root.home, ".fiber", "settings.json"),
           JSON.stringify({ permission_mode: "ask", sandbox: "none" }),
         );
-        const gateway = startFakeGateway([
-          fakeShellRun("non_tty_call", `touch ${JSON.stringify(marker)}`, {
-            timeout_ms: 600_000,
-          }),
-        ]);
+        const codex = startFakeCodex({
+          route: (body) => {
+            const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+            if (items.some((item) => item.type === "function_call_output")) {
+              return codexFinalText("non-TTY fixture complete");
+            }
+            return codexToolCall("non_tty_call", "shell", {
+              action: "run",
+              command: `touch ${JSON.stringify(marker)}`,
+              yield_time_ms: 30_000,
+              timeout_ms: 600_000,
+            });
+          },
+        });
         try {
           const result = await runFx(
             [
@@ -346,7 +366,7 @@ describe("generic permission typed errors", () => {
             ],
             {
               cwd: root.workspace,
-              env: permissionEnv(root.home, gateway),
+              env: permissionEnv(root.home, codex),
               timeoutMs: TIMEOUT,
             },
           );
@@ -356,17 +376,17 @@ describe("generic permission typed errors", () => {
           expect(result.stderr).toContain("noninteractive_permission_prompt_unavailable");
           expect(result.stderr).not.toContain("Approve? [y/N]");
           if (testCase.mode === "json") {
-            const json = JSON.parse(result.stdout) as FxJson & {
+            const json = JSON.parse(result.stdout).data as FxJson & {
               error: string;
             };
             expect(json.error).toBe("NonInteractivePermissionRequired");
           } else {
             expect(result.stdout).toBe("");
           }
-          expect(gateway.requests).toHaveLength(1);
+          expect(codex.requests.filter((request) => !request.body.includes("<permission_review>"))).toHaveLength(1);
           expect(existsSync(marker)).toBe(false);
         } finally {
-          gateway.stop();
+          codex.stop();
           rmSync(root.root, { recursive: true, force: true });
         }
       }
