@@ -24,6 +24,11 @@ const TIMEOUT = 30_000;
 const EXPIRED_REFRESH_TOKEN = "expired-refresh-token";
 const RETRY_REFRESH_TOKEN = "retry-refresh-token";
 
+// `fiber --json` wraps payloads as {ok, kind, data}; assertions read from data.
+function jsonData(stdout: string): any {
+  return JSON.parse(stdout).data;
+}
+
 function writeChatGptLogin(
   home: string,
   refreshToken: string,
@@ -120,7 +125,7 @@ test(
         result.code,
         `stdout: ${result.stdout}\nstderr: ${result.stderr}`,
       ).toBe(0);
-      expect(JSON.parse(result.stdout).output).toContain("REFRESHED_LOGIN_RESPONSE");
+      expect(jsonData(result.stdout).output).toContain("REFRESHED_LOGIN_RESPONSE");
       expect(requests).toHaveLength(2);
       expect(requests[0]).not.toContain("EXPIRED");
       expect(
@@ -176,14 +181,14 @@ test(
         status.code,
         `stdout: ${status.stdout}\nstderr: ${status.stderr}`,
       ).toBe(0);
-      const statusJson = JSON.parse(status.stdout);
+      const statusJson = jsonData(status.stdout);
       expect(statusJson.auth).toBe("Codex subscription");
       expect(statusJson.auth_expired).toBe(true);
       expect(statusJson.auth_refreshable).toBe(true);
 
       const doctor = await runFx(["doctor", "--json"], { env, timeoutMs: TIMEOUT });
       expect(doctor.code).toBe(0);
-      const doctorJson = JSON.parse(doctor.stdout);
+      const doctorJson = jsonData(doctor.stdout);
       expect(doctorJson.auth).toBe("Codex subscription");
       expect(doctorJson.auth_expired).toBe(true);
       const authCheck = doctorJson.checks.find(
@@ -275,7 +280,7 @@ test(
         `stdout: ${seed.stdout}\nstderr: ${seed.stderr}`,
       ).toBe(0);
       expect(seed.stderr).toBe("");
-      const seedJson = JSON.parse(seed.stdout);
+      const seedJson = jsonData(seed.stdout);
       expect(seedJson.output).toContain(seedText);
       expect(seedJson.session_id.length).toBeGreaterThan(0);
       const seedSessionId = seedJson.session_id as string;
@@ -286,7 +291,7 @@ test(
         { cwd: workspace, env, timeoutMs: TIMEOUT },
       );
       expect(rejected.code).toBe(1);
-      const rejectedJson = JSON.parse(rejected.stdout);
+      const rejectedJson = jsonData(rejected.stdout);
       expect(rejectedJson).toMatchObject({
         exit_code: 1,
         session_id: "",
@@ -302,7 +307,7 @@ test(
       );
       expect(sessionsResult.code).toBe(0);
       expect(sessionsResult.stderr).toBe("");
-      const sessions = JSON.parse(sessionsResult.stdout);
+      const sessions = jsonData(sessionsResult.stdout);
       expect(sessions.count).toBe(1);
       expect(sessions.sessions).toHaveLength(1);
       expect(sessions.sessions[0].id).toBe(seedSessionId);
@@ -313,8 +318,8 @@ test(
           "ask",
           "--json",
           "--permission-mode", "auto",
-          "--resume",
-          "last",
+          "--resume-id",
+          seedSessionId,
           "Resume the seed session.",
         ],
         { cwd: workspace, env, timeoutMs: TIMEOUT },
@@ -324,18 +329,18 @@ test(
         `stdout: ${resumed.stdout}\nstderr: ${resumed.stderr}`,
       ).toBe(0);
       expect(resumed.stderr).toBe("");
-      const resumedJson = JSON.parse(resumed.stdout);
+      const resumedJson = jsonData(resumed.stdout);
       expect(resumedJson.session_id).toBe(seedSessionId);
       expect(resumedJson.output).toContain("RESUMED_SESSION_RESPONSE");
       expect(sessionIdsFromHome(home)).toEqual([seedSessionId]);
 
       const detail = await runFx(
-        ["session", "--id", seedSessionId, "--json"],
+        ["session", "show", "--id", seedSessionId, "--json"],
         { cwd: workspace, env, timeoutMs: TIMEOUT },
       );
       expect(detail.code).toBe(0);
       expect(detail.stderr).toBe("");
-      expect(JSON.parse(detail.stdout).history_len).toBe(2);
+      expect(jsonData(detail.stdout).history_len).toBe(2);
     } finally {
       server.stop(true);
       codex.stop();
