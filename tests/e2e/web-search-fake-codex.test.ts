@@ -44,7 +44,7 @@ function createIsolatedRoot(
 
 function parseFxJson(result: Awaited<ReturnType<typeof runFx>>) {
   expect(result.code).toBe(0);
-  return JSON.parse(result.stdout.trim()) as {
+  return (JSON.parse(result.stdout.trim()) as { data: unknown }).data as {
     output: string;
     tool_calls: Array<{
       name: string;

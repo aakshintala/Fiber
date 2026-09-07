@@ -248,3 +248,26 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   notice, never `HomeNotSet`, stderr clean, no request. Gateway-era success
   of that turn is superseded, not regressed.
 - `tui-performance.test.ts`: 4 pass / 2 gated-skip / 0 fail.
+
+## Addendum 2026-09-07: owner calls, item 3 (second-wave scope approved)
+
+- Owner approved the sketched brief: delete-with-evidence for
+  provider-specific (vision-route), classifier, and SSE-wire cases; migrate
+  the remainder via the Codex `route` callback; file renames stay with owner.
+- Sequencing: re-run capped `tui-gateway-stream-lifecycle` on a delegate-free
+  machine before classifying it. Brief must flag the malformed-tool-arg cases
+  (`gateway-stream-lifecycle:2174,4339`) as re-verify-against-fixed-product,
+  not delete candidates (intake classification landed in
+  `responses_protocol.zig`). Delegates on muse-spark-1.3-contributor.
+
+## Addendum 2026-09-07: owner calls, item 4 (template `.data` envelope)
+
+- **Explained and fixed.** `fiber ask --json` wraps payloads in
+  `{ok, kind, data}` (pinned in `cli_ask.zig:7422`); the template's
+  `parseFxJson` read `output`/`tool_calls` off the top level instead of
+  unwrapping `.data`, so every `ask --json` assertion failed before testing
+  behavior. One-line unwrap; 3/4 green. The remaining case (:297) is the
+  briefed ACP-driver conversion (`AcpClient` spawns removed `fiber acp`),
+  not the envelope — rides with the ACP-conversion work, converts to
+  `seededFakeCodexEnv` when it does.
+- `web-search-fake-codex.test.ts`: 3 pass / 0 skip / 1 fail (ACP leftover).
