@@ -16,12 +16,13 @@ import { join } from "node:path";
 import { FIBER_BIN } from "../evals/eval-helpers";
 import { readTapeFrames, type TapeFrame } from "./render-lab/tape";
 import {
+  codexFinalText,
+  codexToolCall,
   composerContains,
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
   hasEmptyComposer,
-  startFakeGateway,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -479,9 +480,6 @@ test.skipIf(!tmuxAvailable())(
   "prompt admission treats missing HOME as an empty optional skill catalog",
   async () => {
     const fixture = createFixture();
-    const noHomeGateway = startFakeGateway([
-      fakeGatewayFinalText("MISSING_HOME_PROMPT_OK"),
-    ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
@@ -489,11 +487,6 @@ test.skipIf(!tmuxAvailable())(
         cwd: fixture.workspace,
         env: {
           HOME: undefined,
-          AI_GATEWAY_API_KEY: "missing-home-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: noHomeGateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: noHomeGateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
           FIBER_DISABLE_KEYCHAIN: "1",
           FIBER_SKIP_ONBOARDING: "1",
           FIBER_SOUND: "0",
@@ -505,13 +498,11 @@ test.skipIf(!tmuxAvailable())(
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Submit without an optional home directory.");
-      const pane = await active.waitForText("MISSING_HOME_PROMPT_OK", 5_000);
+      const pane = await active.waitForText(/subscription login/i, 5_000);
       expect(pane).not.toContain("HomeNotSet");
-      expect(noHomeGateway.requestCount()).toBe(1);
       expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");
     } finally {
       await active?.kill();
-      noHomeGateway.stop();
       rmSync(fixture.root, { recursive: true, force: true });
     }
   },
@@ -583,26 +574,21 @@ test.skipIf(!tmuxAvailable())(
       "---\nname: global-skill\ndescription: survives canonical home refresh\n---\nbody\n",
     );
     symlinkSync(fixture.home, linkedHome, "dir");
-    const linkedHomeGateway = startFakeGateway([
-      fakeGatewayFinalText("SYMLINKED_HOME_PROMPT_OK"),
-    ]);
+    const codex = startFakeCodex({
+      route: () => codexFinalText("SYMLINKED_HOME_PROMPT_OK"),
+    });
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: fixture.workspace,
-        env: {
-          HOME: linkedHome,
-          AI_GATEWAY_API_KEY: "symlinked-home-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: linkedHomeGateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: linkedHomeGateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+        env: seededFakeCodexEnv(linkedHome, codex, {
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_DISABLE_KEYCHAIN: "1",
           FIBER_SKIP_ONBOARDING: "1",
           FIBER_SOUND: "0",
           NO_COLOR: "1",
-        },
+        }),
         stderrPath: fixture.stderrPath,
         width: 104,
         height: 30,
@@ -619,11 +605,11 @@ test.skipIf(!tmuxAvailable())(
 
       await active.sendText("Submit after canonical home refresh.");
       await active.waitForText("SYMLINKED_HOME_PROMPT_OK", TIMEOUT);
-      expect(linkedHomeGateway.requestCount()).toBe(1);
+      expect(codex.requests).toHaveLength(1);
       expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");
     } finally {
       await active?.kill();
-      linkedHomeGateway.stop();
+      codex.stop();
       rmSync(fixture.root, { recursive: true, force: true });
     }
   },
@@ -639,9 +625,12 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
       "PERF_SECOND_TRANSCRIPT_TAIL",
     );
     let hostedTerminalSessionId = "";
-    const gateway = startFakeGateway([
-      fakeGatewayFinalText(fixture.transcript),
-      fakeGatewayToolCall("performance-question", "ask_user_question", {
+    // The Codex helper serves one callback instead of a finite queue, so the
+    // old response array becomes queue pops inside route. The turn sequence
+    // is strictly linear with no branching, so order is preserved.
+    const queue: Array<string | ((body: string) => string)> = [
+      () => codexFinalText(fixture.transcript),
+      () => codexToolCall("performance-question", "ask_user_question", {
         questions: [{
           question: "Which performance path should I use?",
           options: [
@@ -650,64 +639,59 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
           ],
         }],
       }),
-      fakeGatewayFinalText("PERF_QUESTION_DONE"),
-      fakeGatewayToolCall("performance-approval", "shell", {
-        request: {
-          action: "run",
-          command: "touch performance-approval.txt",
-          profile: "clean",
-          timeout_ms: 600_000,
-        },
+      () => codexFinalText("PERF_QUESTION_DONE"),
+      () => codexToolCall("performance-approval", "shell", {
+        action: "run",
+        command: "touch performance-approval.txt",
+        profile: "clean",
+        timeout_ms: 600_000,
       }),
-      fakeGatewayFinalText("PERF_APPROVAL_DONE"),
-      fakeGatewayToolCall("performance-terminal", "shell", {
-        request: {
-          action: "run",
-          cwd: fixture.workspace,
-          command:
-            "printf 'PERF_TERMINAL_READY\\n'; " +
-            "while :; do sleep 1; done",
-          profile: "clean",
-          tty: true,
-          yield_time_ms: 0,
-        },
+      () => codexFinalText("PERF_APPROVAL_DONE"),
+      () => codexToolCall("performance-terminal", "shell", {
+        action: "run",
+        cwd: fixture.workspace,
+        command:
+          "printf 'PERF_TERMINAL_READY\\n'; " +
+          "while :; do sleep 1; done",
+        profile: "clean",
+        tty: true,
+        yield_time_ms: 0,
       }),
       (body) => {
         hostedTerminalSessionId = findSessionId(JSON.parse(body)) ?? "";
         if (hostedTerminalSessionId.length === 0) {
           throw new Error("terminal start result did not contain a session id");
         }
-        return fakeGatewayFinalText("PERF_TERMINAL_AGENT_READY");
+        return codexFinalText("PERF_TERMINAL_AGENT_READY");
       },
-      () => fakeGatewayToolCall("performance-terminal-close", "shell", {
-        request: {
-          action: "stop",
-          session_id: hostedTerminalSessionId,
-          force: true,
-        },
+      () => codexToolCall("performance-terminal-close", "shell", {
+        action: "stop",
+        session_id: hostedTerminalSessionId,
+        force: true,
       }),
-      fakeGatewayFinalText("PERF_TERMINAL_CLOSED"),
-      fakeGatewayFinalText(secondTranscript),
-    ]);
+      () => codexFinalText("PERF_TERMINAL_CLOSED"),
+      () => codexFinalText(secondTranscript),
+    ];
+    const codex = startFakeCodex({
+      route: (body) => {
+        const next = queue.shift() ?? codexFinalText("unexpected");
+        return typeof next === "function" ? next(body) : next;
+      },
+    });
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: fixture.workspace,
-        env: {
-          HOME: fixture.home,
-          AI_GATEWAY_API_KEY: "fake-performance-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_MODEL: FAKE_GATEWAY_MODEL,
+        env: seededFakeCodexEnv(fixture.home, codex, {
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_PERMISSION_MODE: "ask",
           FIBER_SOUND: "0",
           FIBER_RECORD: fixture.tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TERMINAL_HOST_IDLE_MS: "250",
           NO_COLOR: "1",
-        },
+        }),
         stderrPath: fixture.stderrPath,
         width: 104,
         height: 30,
@@ -1052,7 +1036,7 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
       expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");
     } finally {
       await session?.kill();
-      gateway.stop();
+      codex.stop();
       if (process.env.FIBER_TUI_PERFORMANCE_KEEP !== "1") {
         rmSync(fixture.root, { recursive: true, force: true });
       } else {

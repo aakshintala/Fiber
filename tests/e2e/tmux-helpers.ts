@@ -1455,6 +1455,16 @@ export function startFakeCodex(options: FakeCodexOptions = {}) {
   };
 }
 
+export function seededFakeCodexEnv(
+  home: string,
+  codex: ReturnType<typeof startFakeCodex>,
+  extra: Record<string, string | undefined> = {},
+  accessToken: string = chatGptAccessToken(),
+): Record<string, string | undefined> {
+  writeSeededChatGptLogin(home, accessToken);
+  return fakeCodexEnv(home, codex, extra);
+}
+
 export function fakeCodexEnv(
   home: string,
   codex: ReturnType<typeof startFakeCodex>,

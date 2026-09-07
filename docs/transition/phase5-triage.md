@@ -227,3 +227,24 @@ isolated-HOME credential story, template web-search-fake-codex itself
 red on the .data envelope. Ops note: a pre-crash orphan fiber process
 (2h49m, 8s CPU, notifications fixture) wedged later spot-checks until
 killed — always `pgrep` for strays after a delegate dies mid-run.
+
+## Addendum 2026-09-07: owner calls, item 1 (command-surface residuals)
+
+- **`/sound`: removed, delete-with-evidence.** Transition doc orders the removal; Slice 17a (`420ed0bc`) removed the command; the setting it controlled lives in `/settings` only.
+- **Keep the `[All]` catalog tabs; fix the E2E line.** Tabs are inherited upstream (`52f389b2`), rendered by both catalog presentations (`settings_menu_presentation.zig:190-208`, `help_menu_presentation.zig:212-230`), and pinned by unit test (`settings_menu_presentation.zig:464-491`). The single contradicting line (`tui-slash-commands.test.ts:192`, `not.toContain("[All]")`) flips to `toContain`. Test-only.
+- **Accept Commands 20; update six files 35→20.** The header renders live from catalog size (`help_menu_presentation.zig:206-211`); 20 is correct-by-construction after the doc's removal list. Files: `prompt-history`, `tui-gateway-stream-lifecycle`, `tui-input-navigation`, `tui-render-stress`, `tui-resize` (+1 more holder).
+
+## Addendum 2026-09-07: owner calls, item 2 (isolated-HOME credential story)
+
+- **Bundled into one helper.** `seededFakeCodexEnv` in `tests/e2e/tmux-helpers.ts`
+  seeds the ChatGPT login (0700/0600) and returns `fakeCodexEnv` in one call.
+  Forgetting the seeding surfaced as `MissingCredentials`, indistinguishable
+  from a product regression; the pair is now unforgetable. Other files adopt
+  as touched. Env-credential product fallback ruled out (resurrects the
+  deleted gateway seam; doc requires fresh Fiber auth from HOME).
+- **Missing HOME cannot authenticate: product-correct, pinned.**
+  `tui-performance` "prompt admission treats missing HOME" migrated off the
+  gateway harness: with HOME unset the turn blocks at the subscription-login
+  notice, never `HomeNotSet`, stderr clean, no request. Gateway-era success
+  of that turn is superseded, not regressed.
+- `tui-performance.test.ts`: 4 pass / 2 gated-skip / 0 fail.
