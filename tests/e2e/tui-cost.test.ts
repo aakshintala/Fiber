@@ -5,25 +5,45 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIBER_BIN } from "../evals/eval-helpers";
 import {
-  fakeGatewaySse,
-  startFakeGateway,
+  FAKE_CODEX_DEFAULT_MODEL,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
 const TIMEOUT = 30_000;
-const GENERATION_ID = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV";
-const MODEL = "anthropic/claude-opus-4.8";
 const RESPONSE_TEXT = "COST_ACCOUNTING_COMPLETE";
 const FOLLOW_UP_TEXT = "RESUMED_FOLLOW_UP_COMPLETE";
 
+// Real token counts from the Codex subscription billing path
+// (responses_protocol.zig buildSubscriptionBilling): total_cost is hard-zero
+// and money math is deferred, so every assertion here is tokens only.
+const USAGE_DETAILS = {
+  input_tokens: 130,
+  output_tokens: 25,
+  input_tokens_details: { cached_tokens: 20, cache_write_tokens: 10 },
+  output_tokens_details: { reasoning_tokens: 5 },
+};
+
+// The response.completed `id` gives the turn an exact billing identity; a
+// completed response without an id leaves billing incomplete instead.
+function codexCompletionWithIdentity(text: string, responseId: string): string {
+  return `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n` +
+    `data: ${JSON.stringify({
+      type: "response.completed",
+      response: { id: responseId, status: "completed", usage: USAGE_DETAILS },
+    })}\n\n`;
+}
+
 let session: TmuxSession | null = null;
-let gateway: ReturnType<typeof startFakeGateway> | null = null;
+let codex: ReturnType<typeof startFakeCodex> | null = null;
 let root: string | null = null;
 
 afterEach(async () => {
@@ -31,23 +51,19 @@ afterEach(async () => {
     await session.kill();
     session = null;
   }
-  gateway?.stop();
-  gateway = null;
+  codex?.stop();
+  codex = null;
   if (root) {
     rmSync(root, { recursive: true, force: true });
     root = null;
   }
 });
 
-function gatewayEnvironment(home: string) {
-  if (!gateway) throw new Error("fake gateway not started");
-  return {
-    HOME: home,
-    AI_GATEWAY_API_KEY: "test-key",
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FIBER_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-  };
+function codexEnvironment(home: string) {
+  if (!codex) throw new Error("fake codex not started");
+  return seededFakeCodexEnv(home, codex, {
+    FIBER_PERMISSION_MODE: "auto",
+  });
 }
 
 function eventLogs(directory: string): string[] {
@@ -93,110 +109,68 @@ function latestUsageCheckpoint(events: string): UsageCheckpoint {
   throw new Error("missing usage checkpoint");
 }
 
-function authoritativeGeneration(generationId: string): Response {
-  return Response.json({
-    data: {
-      id: generationId,
-      total_cost: 0.0123,
-      created_at: new Date().toISOString(),
-      model: MODEL,
-      is_byok: false,
-      native_tokens_prompt: 100,
-      native_tokens_completion: 20,
-      native_tokens_reasoning: 5,
-      native_tokens_cached: 20,
-      native_tokens_cache_creation: 10,
-      billable_web_search_calls: 2,
-    },
-  });
-}
-
-async function waitForGenerationRequests(
-  activeGateway: ReturnType<typeof startFakeGateway>,
-  count: number,
-): Promise<void> {
-  const deadline = Date.now() + TIMEOUT;
-  while (
-    activeGateway.generationRequests.length < count &&
-    Date.now() < deadline
-  ) {
-    await Bun.sleep(20);
-  }
-  expect(activeGateway.generationRequests).toHaveLength(count);
-}
-
-async function waitForProfileUsage(
-  home: string,
-  generationId: string,
-): Promise<void> {
-  const deadline = Date.now() + TIMEOUT;
+// The generation fact id is minted by fiber, so wait for the record kind and
+// return the published fact for token assertions.
+async function waitForUsageGeneration(home: string): Promise<{
+  input_tokens: number;
+  output_tokens: number;
+}> {
   const usagePath = join(home, ".fiber", "usage.jsonl");
+  const deadline = Date.now() + TIMEOUT;
   while (Date.now() < deadline) {
     try {
-      if (readFileSync(usagePath, "utf8").includes(generationId)) return;
+      const lines = readFileSync(usagePath, "utf8").trim().split("\n");
+      for (const line of lines) {
+        const record = JSON.parse(line) as {
+          kind?: string;
+          fact?: { input_tokens: number; output_tokens: number };
+        };
+        if (record.kind === "generation" && record.fact) return record.fact;
+      }
     } catch {}
     await Bun.sleep(20);
   }
   throw new Error("Timed out waiting for profile usage publication");
 }
 
+function writePendingUsageStore(home: string): void {
+  const fxDir = join(home, ".fiber");
+  mkdirSync(fxDir, { recursive: true, mode: 0o700 });
+  writeFileSync(
+    join(fxDir, "usage.jsonl"),
+    [
+      JSON.stringify({
+        schema_version: 1,
+        kind: "coverage",
+        started_at_ms: Date.now(),
+      }),
+      JSON.stringify({
+        schema_version: 1,
+        kind: "pending",
+        id: "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        observed_at_ms: Date.now(),
+      }),
+    ].join("\n") + "\n",
+    { mode: 0o600 },
+  );
+  writeFileSync(join(fxDir, "usage.lock"), "", { mode: 0o600 });
+}
+
 test(
-  "fiber ask settles authoritative stream usage without delayed reconciliation",
+  "fiber ask settles subscription usage durably without a reconciliation endpoint",
   async () => {
     root = mkdtempSync(join(tmpdir(), "fiber-cost-ask-exit-"));
     const home = join(root, "home");
     const workspace = join(root, "workspace");
     mkdirSync(home, { recursive: true });
     mkdirSync(workspace, { recursive: true });
-    gateway = startFakeGateway(
-      [
-        fakeGatewaySse([
-          {
-            type: "response-metadata",
-            modelId: MODEL,
-            timestamp: new Date().toISOString(),
-          },
-          {
-            type: "text-start",
-            id: "answer_1",
-            providerMetadata: {
-              gateway: { generationId: GENERATION_ID },
-            },
-          },
-          { type: "text-delta", id: "answer_1", delta: RESPONSE_TEXT },
-          { type: "text-end", id: "answer_1" },
-          {
-            type: "finish",
-            finishReason: { unified: "stop", raw: "stop" },
-            usage: {
-              inputTokens: {
-                total: 130,
-                cacheRead: 20,
-                cacheWrite: 10,
-              },
-              outputTokens: { total: 25, reasoning: 5 },
-            },
-            providerMetadata: {
-              gateway: {
-                generationId: GENERATION_ID,
-                cost: "0.0123",
-                routing: { canonicalSlug: MODEL },
-              },
-            },
-          },
-        ]),
-      ],
-      {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-        generationResponse() {
-          return new Promise<Response>(() => {});
-        },
-      },
-    );
+    codex = startFakeCodex({
+      route: () => codexCompletionWithIdentity(RESPONSE_TEXT, "resp_e2e_settle"),
+    });
 
     const proc = Bun.spawn([FIBER_BIN, "ask", "Reply with the sentinel."], {
       cwd: workspace,
-      env: { ...process.env, ...gatewayEnvironment(home) },
+      env: { ...process.env, ...codexEnvironment(home) },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -210,8 +184,10 @@ test(
     }
 
     expect(exitCode).toBe(0);
-    expect(gateway.generationRequests).toEqual([]);
-    await waitForProfileUsage(home, GENERATION_ID);
+    expect(codex.requests).toHaveLength(1);
+    const fact = await waitForUsageGeneration(home);
+    expect(fact.input_tokens).toBe(130);
+    expect(fact.output_tokens).toBe(25);
     const events = eventLogs(home)
       .map((path) => readFileSync(path, "utf8"))
       .join("\n");
@@ -219,112 +195,25 @@ test(
     const history = events.indexOf('"kind":"history_turn_committed"');
     expect(checkpoint).toBeGreaterThanOrEqual(0);
     expect(checkpoint).toBeLessThan(history);
-    expect(events).toContain(GENERATION_ID);
     const usage = latestUsageCheckpoint(events);
     expect(usage.billing).toBe("complete");
     expect(usage.pending).toEqual([]);
-    expect(usage.total_cost).toBe(0.0123);
     expect(usage.input_tokens).toBe(130);
     expect(usage.output_tokens).toBe(25);
+    expect(usage.models.map((item) => item.model)).toContain(
+      `codex/${FAKE_CODEX_DEFAULT_MODEL}`,
+    );
   },
   10_000,
 );
 
-test("fiber ask gives immediate generation reconciliation a bounded drain", async () => {
-  root = mkdtempSync(join(tmpdir(), "fiber-cost-ask-reconcile-"));
-  const home = join(root, "home");
-  const workspace = join(root, "workspace");
-  mkdirSync(home, { recursive: true });
-  mkdirSync(workspace, { recursive: true });
-  gateway = startFakeGateway(
-    [
-      fakeGatewaySse([
-        { type: "response-metadata", modelId: MODEL },
-        {
-          type: "text-start",
-          id: "answer_1",
-          providerMetadata: {
-            gateway: { generationId: GENERATION_ID },
-          },
-        },
-        { type: "text-delta", id: "answer_1", delta: RESPONSE_TEXT },
-        { type: "text-end", id: "answer_1" },
-        {
-          type: "finish",
-          finishReason: { unified: "stop", raw: "stop" },
-        },
-      ]),
-    ],
-    {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      generationResponse(generationId) {
-        return authoritativeGeneration(generationId);
-      },
-    },
-  );
-
-  const proc = Bun.spawn([FIBER_BIN, "ask", "Reply with the sentinel."], {
-    cwd: workspace,
-    env: { ...process.env, ...gatewayEnvironment(home) },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const exitCode = await proc.exited;
-  const stderr = await new Response(proc.stderr).text();
-  expect(exitCode, stderr).toBe(0);
-  expect(gateway.generationRequests).toEqual([GENERATION_ID]);
-
-  const events = eventLogs(home)
-    .map((path) => readFileSync(path, "utf8"))
-    .join("\n");
-  const usage = latestUsageCheckpoint(events);
-  expect(usage.billing).toBe("complete");
-  expect(usage.total_cost).toBe(0.0123);
-  expect(usage.pending).toEqual([]);
-});
-
-test("fiber usage reports an unresolved delayed fallback as pending", async () => {
+test("fiber usage reports unresolved pending billing as pending", async () => {
   root = mkdtempSync(join(tmpdir(), "fiber-cost-pending-profile-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(home, { recursive: true });
   mkdirSync(workspace, { recursive: true });
-  gateway = startFakeGateway(
-    [
-      fakeGatewaySse([
-        { type: "response-metadata", modelId: MODEL },
-        {
-          type: "text-start",
-          id: "answer_1",
-          providerMetadata: {
-            gateway: { generationId: GENERATION_ID },
-          },
-        },
-        { type: "text-delta", id: "answer_1", delta: RESPONSE_TEXT },
-        { type: "text-end", id: "answer_1" },
-        {
-          type: "finish",
-          finishReason: { unified: "stop", raw: "stop" },
-        },
-      ]),
-    ],
-    {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      generationResponse() {
-        return new Response("unauthorized", { status: 401 });
-      },
-    },
-  );
-
-  const ask = Bun.spawn([FIBER_BIN, "ask", "Reply with the sentinel."], {
-    cwd: workspace,
-    env: { ...process.env, ...gatewayEnvironment(home) },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const askStderr = await new Response(ask.stderr).text();
-  expect(await ask.exited, askStderr).toBe(0);
-  await waitForProfileUsage(home, GENERATION_ID);
+  writePendingUsageStore(home);
 
   const usage = Bun.spawn(
     [FIBER_BIN, "usage", "--period", "24h", "--json"],
@@ -338,10 +227,12 @@ test("fiber usage reports an unresolved delayed fallback as pending", async () =
   const usageStdout = await new Response(usage.stdout).text();
   const usageStderr = await new Response(usage.stderr).text();
   expect(await usage.exited, usageStderr).toBe(0);
-  const report = JSON.parse(usageStdout);
+  const report = (JSON.parse(usageStdout.trim()) as { data: unknown }).data as {
+    completeness: string;
+    totals: { request_count: number };
+  };
   expect(report.completeness).toBe("pending");
   expect(report.totals.request_count).toBe(0);
-  expect(gateway.generationRequests).toEqual([GENERATION_ID]);
 });
 
 test("fiber usage reports a missing generation identity as incomplete", async () => {
@@ -350,32 +241,19 @@ test("fiber usage reports a missing generation identity as incomplete", async ()
   const workspace = join(root, "workspace");
   mkdirSync(home, { recursive: true });
   mkdirSync(workspace, { recursive: true });
-  gateway = startFakeGateway(
-    [
-      fakeGatewaySse([
-        { type: "response-metadata", modelId: MODEL },
-        { type: "text-start", id: "answer_1" },
-        { type: "text-delta", id: "answer_1", delta: RESPONSE_TEXT },
-        { type: "text-end", id: "answer_1" },
-        {
-          type: "finish",
-          finishReason: { unified: "stop", raw: "stop" },
-        },
-      ]),
-    ],
-    {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    },
-  );
+  // Default route: response.completed carries usage but no response id, so
+  // the turn cannot settle an exact billing identity.
+  codex = startFakeCodex();
 
   const ask = Bun.spawn([FIBER_BIN, "ask", "Reply with the sentinel."], {
     cwd: workspace,
-    env: { ...process.env, ...gatewayEnvironment(home) },
+    env: { ...process.env, ...codexEnvironment(home) },
     stdout: "pipe",
     stderr: "pipe",
   });
   const askStderr = await new Response(ask.stderr).text();
   expect(await ask.exited, askStderr).toBe(0);
+  expect(codex.requests).toHaveLength(1);
 
   const usage = Bun.spawn(
     [FIBER_BIN, "usage", "--period", "24h", "--json"],
@@ -389,16 +267,18 @@ test("fiber usage reports a missing generation identity as incomplete", async ()
   const usageStdout = await new Response(usage.stdout).text();
   const usageStderr = await new Response(usage.stderr).text();
   expect(await usage.exited, usageStderr).toBe(0);
-  const report = JSON.parse(usageStdout);
+  const report = (JSON.parse(usageStdout.trim()) as { data: unknown }).data as {
+    completeness: string;
+    totals: { request_count: number };
+  };
   expect(report.completeness).toBe("incomplete");
   expect(report.totals.request_count).toBe(0);
-  expect(gateway.generationRequests).toEqual([]);
 });
 
-describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
+describe.skipIf(!tmuxAvailable())("tui: durable session usage", () => {
   for (const resumeMode of ["startup", "picker"] as const) {
     test(
-      `pending generation reconciliation survives ${resumeMode} resume`,
+      `usage totals survive ${resumeMode} resume`,
       async () => {
         root = mkdtempSync(join(tmpdir(), `fiber-cost-${resumeMode}-resume-`));
         const home = join(root, "home");
@@ -406,67 +286,27 @@ describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
         const stderrPath = join(root, "stderr.log");
         mkdirSync(home, { recursive: true });
         mkdirSync(workspace, { recursive: true });
-
-        let originalGenerationRequests = 0;
-        let releaseResumeGeneration: (() => void) | null = null;
-        const heldResumeGeneration = new Promise<Response>((resolve) => {
-          releaseResumeGeneration = () =>
-            resolve(authoritativeGeneration(GENERATION_ID));
-        });
-        gateway = startFakeGateway(
-          [
-            fakeGatewaySse([
-              { type: "response-metadata", modelId: MODEL },
-              {
-                type: "text-start",
-                id: "answer_1",
-                providerMetadata: {
-                  gateway: { generationId: GENERATION_ID },
-                },
-              },
-              { type: "text-delta", id: "answer_1", delta: RESPONSE_TEXT },
-              { type: "text-end", id: "answer_1" },
-              {
-                type: "finish",
-                finishReason: { unified: "stop", raw: "stop" },
-              },
-            ]),
-            fakeGatewaySse([
-              { type: "text-start", id: "answer_2" },
-              { type: "text-delta", id: "answer_2", delta: FOLLOW_UP_TEXT },
-              { type: "text-end", id: "answer_2" },
-              {
-                type: "finish",
-                finishReason: { unified: "stop", raw: "stop" },
-              },
-            ]),
-          ],
-          {
-            models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-            generationResponse(generationId) {
-              if (generationId !== GENERATION_ID) {
-                return new Response("not found", { status: 404 });
-              }
-              originalGenerationRequests += 1;
-              if (originalGenerationRequests === 1) {
-                return new Promise<Response>(() => {});
-              }
-              return heldResumeGeneration;
-            },
+        let turn = 0;
+        codex = startFakeCodex({
+          route: () => {
+            turn += 1;
+            return codexCompletionWithIdentity(
+              turn === 1 ? RESPONSE_TEXT : FOLLOW_UP_TEXT,
+              `resp_e2e_resume_${turn}`,
+            );
           },
-        );
+        });
 
         const fixture = Bun.spawn(
-          [FIBER_BIN, "ask", "Create pending usage for resume."],
+          [FIBER_BIN, "ask", "Create usage for resume."],
           {
             cwd: workspace,
-            env: { ...process.env, ...gatewayEnvironment(home) },
+            env: { ...process.env, ...codexEnvironment(home) },
             stdout: "pipe",
             stderr: "pipe",
           },
         );
         expect(await fixture.exited).toBe(0);
-        expect(gateway.generationRequests).toEqual([GENERATION_ID]);
 
         const fixtureLogs = eventLogs(home);
         expect(fixtureLogs).toHaveLength(1);
@@ -474,14 +314,13 @@ describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
         const beforeResume = latestUsageCheckpoint(
           readFileSync(resumedEventsPath, "utf8"),
         );
-        expect(beforeResume.billing).toBe("pending");
-        expect(beforeResume.pending.map((item) => item.id))
-          .toEqual([GENERATION_ID]);
+        expect(beforeResume.billing).toBe("complete");
+        expect(beforeResume.pending).toEqual([]);
 
         session = await TmuxSession.create({
-          cmd: resumeMode === "startup" ? `${FIBER_BIN} --resume-last` : FIBER_BIN,
+          cmd: resumeMode === "startup" ? `${FIBER_BIN} continue` : FIBER_BIN,
           cwd: workspace,
-          env: gatewayEnvironment(home),
+          env: codexEnvironment(home),
           stderrPath,
         });
         await session.waitForComposer(TIMEOUT);
@@ -495,27 +334,16 @@ describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
           await session.waitForText("● Session resumed:", TIMEOUT);
         }
 
-        await waitForGenerationRequests(gateway, 2);
-        expect(releaseResumeGeneration).not.toBeNull();
-        releaseResumeGeneration!();
-        await waitForProfileUsage(home, GENERATION_ID);
-
-        await session.sendText("/cost");
-        const cost = await session.waitForText(/\$0\.01 spent/, TIMEOUT);
-        expect(cost).toMatch(/155 tokens/);
-        expect(cost).toMatch(/130 input/);
-        expect(cost).toMatch(/25 output/);
-        expect(cost).toMatch(/20 cache read/);
-        expect(cost).toMatch(/10 cache write/);
-        await session.sendKeys("Escape");
-        await session.waitForComposer(TIMEOUT);
         await session.sendText("Confirm resumed input still works.");
         await session.waitForText(FOLLOW_UP_TEXT, TIMEOUT);
-        await session.sendLiteral("/re");
-        await session.waitForText("/re", TIMEOUT);
-        await session.sendKeys("C-u");
-        await session.waitForPane((pane) => !pane.includes("❯ /re"), TIMEOUT);
-        expect(session.isPaneAlive()).toBe(true);
+        await session.waitForComposer(TIMEOUT);
+
+        await session.sendText("/usage");
+        const usage = await session.waitForText(/310 tokens/, TIMEOUT);
+        expect(usage).toMatch(/260 input/);
+        expect(usage).toMatch(/50 output/);
+        await session.sendKeys("Escape");
+        await session.waitForComposer(TIMEOUT);
         await session.sendText("/quit");
         expect(await session.waitForSessionEnd(TIMEOUT)).toBe(true);
         session = null;
@@ -524,9 +352,9 @@ describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
         const resumedEvents = readFileSync(resumedEventsPath, "utf8");
         const afterResume = latestUsageCheckpoint(resumedEvents);
         expect(afterResume.pending).toEqual([]);
-        expect(afterResume.total_cost).toBe(0.0123);
-        expect(afterResume.models.map((item) => item.model))
-          .toContain(MODEL);
+        expect(afterResume.models.map((item) => item.model)).toContain(
+          `codex/${FAKE_CODEX_DEFAULT_MODEL}`,
+        );
         expect(
           eventRecords(resumedEvents)
             .filter((record) => record.kind === "history_turn_committed"),
@@ -537,71 +365,38 @@ describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
   }
 
   test(
-    "authoritative generation totals survive process resume",
+    "usage dashboard totals survive process resume",
     async () => {
       root = mkdtempSync(join(tmpdir(), "fiber-cost-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       mkdirSync(home, { recursive: true });
       mkdirSync(workspace, { recursive: true });
-      let generationAttempts = 0;
-
-      gateway = startFakeGateway(
-        [
-          fakeGatewaySse([
-            { type: "response-metadata", modelId: MODEL },
-            {
-              type: "text-start",
-              id: "answer_1",
-              providerMetadata: {
-                gateway: { generationId: GENERATION_ID },
-              },
-            },
-            { type: "text-delta", id: "answer_1", delta: RESPONSE_TEXT },
-            { type: "text-end", id: "answer_1" },
-            {
-              type: "finish",
-              finishReason: { unified: "stop", raw: "stop" },
-              usage: {
-                inputTokens: { total: 100 },
-                outputTokens: { total: 20 },
-              },
-            },
-          ]),
-        ],
-        {
-          models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-          generationResponse(generationId) {
-            generationAttempts += 1;
-            if (generationId !== GENERATION_ID) {
-              return new Response("not found", { status: 404 });
-            }
-            if (generationAttempts === 1) {
-              return new Response("not ready", { status: 404 });
-            }
-            return authoritativeGeneration(GENERATION_ID);
-          },
+      let turn = 0;
+      codex = startFakeCodex({
+        route: () => {
+          turn += 1;
+          return codexCompletionWithIdentity(
+            RESPONSE_TEXT,
+            `resp_e2e_totals_${turn}`,
+          );
         },
-      );
+      });
 
       session = await TmuxSession.create({
         cwd: workspace,
-        env: gatewayEnvironment(home),
+        env: codexEnvironment(home),
       });
       await session.waitForComposer(TIMEOUT);
       await session.sendText("Reply with the cost accounting sentinel.");
       await session.waitForText(RESPONSE_TEXT, TIMEOUT);
       await session.waitForComposer(TIMEOUT);
-      await waitForGenerationRequests(gateway, 2);
-      expect(gateway.generationRequests).toEqual([GENERATION_ID, GENERATION_ID]);
-      await Bun.sleep(50);
-      await session.sendText("/cost");
-      const firstCost = await session.waitForText(/\$0\.01 spent/, TIMEOUT);
-      expect(firstCost).toMatch(/155 tokens/);
-      expect(firstCost).toMatch(/130 input/);
-      expect(firstCost).toMatch(/25 output/);
-      expect(firstCost).toMatch(/20 cache read/);
-      expect(firstCost).toMatch(/10 cache write/);
+      await session.sendText("/usage");
+      const firstUsage = await session.waitForText(/155 tokens/, TIMEOUT);
+      expect(firstUsage).toMatch(/130 input/);
+      expect(firstUsage).toMatch(/25 output/);
+      expect(firstUsage).toMatch(/20 cache read/);
+      expect(firstUsage).toMatch(/10 cache write/);
       await session.sendKeys("Left");
       await session.waitForText("[7 days]", TIMEOUT);
       await session.sendKeys("Left");
@@ -617,18 +412,17 @@ describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
       session = null;
 
       session = await TmuxSession.create({
-        cmd: `${FIBER_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} continue`,
         cwd: workspace,
-        env: gatewayEnvironment(home),
+        env: codexEnvironment(home),
       });
       await session.waitForComposer(TIMEOUT);
-      await session.sendText("/cost");
-      const resumedCost = await session.waitForText(/\$0\.01 spent/, TIMEOUT);
-      expect(resumedCost).toMatch(/155 tokens/);
-      expect(resumedCost).toMatch(/130 input/);
-      expect(resumedCost).toMatch(/25 output/);
-      expect(resumedCost).toMatch(/20 cache read/);
-      expect(resumedCost).toMatch(/10 cache write/);
+      await session.sendText("/usage");
+      const resumedUsage = await session.waitForText(/155 tokens/, TIMEOUT);
+      expect(resumedUsage).toMatch(/130 input/);
+      expect(resumedUsage).toMatch(/25 output/);
+      expect(resumedUsage).toMatch(/20 cache read/);
+      expect(resumedUsage).toMatch(/10 cache write/);
       await session.sendKeys("Left");
       await session.waitForText("[7 days]", TIMEOUT);
       await session.sendKeys("Left");
@@ -640,7 +434,6 @@ describe.skipIf(!tmuxAvailable())("tui: durable session cost", () => {
       );
       expect(resumedSession).toMatch(/5 reasoning/);
       expect(resumedSession).toMatch(/1 request/);
-      expect(gateway.generationRequests).toEqual([GENERATION_ID, GENERATION_ID]);
     },
     TIMEOUT * 3,
   );
