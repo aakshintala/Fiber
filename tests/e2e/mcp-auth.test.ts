@@ -23,14 +23,16 @@ import {
 } from "./fixtures/mcp-legacy-remote";
 import { startModernMcpHttpFixture } from "./fixtures/mcp-modern-http";
 import {
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
-  startFakeGateway,
+  codexFinalText,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const MODEL = "openai/gpt-5";
+const MODEL = FAKE_CODEX_DEFAULT_MODEL;
 const TOOL_NAME = "mcp_fixture_echo";
 const ACCESS_INITIAL = "mcp-access-initial-secret";
 const ACCESS_REFRESHED = "mcp-access-refreshed-secret";
@@ -83,7 +85,7 @@ let legacyStreamable:
   | null = null;
 let legacySse: ReturnType<typeof startLegacyHttpSseFixture> | null = null;
 let auth: AuthFixture | null = null;
-let gateway: ReturnType<typeof startFakeGateway> | null = null;
+let gateway: ReturnType<typeof startFakeCodex> | null = null;
 let tui: TmuxSession | null = null;
 
 function runMcpKeychainProbe(
@@ -640,7 +642,6 @@ function baseEnv(root: ReturnType<typeof createRoot>) {
   return {
     HOME: root.home,
     PATH: `${root.bin}${delimiter}${process.env.PATH ?? ""}`,
-    AI_GATEWAY_API_KEY: "fake-mcp-auth-key",
     VERCEL_OIDC_TOKEN: undefined,
     FIBER_PERMISSION_MODE: "auto",
     FIBER_MODEL: MODEL,
@@ -687,52 +688,73 @@ function seedExpiredCredentials(
   return path;
 }
 
-function startToolGateway() {
-  return startFakeGateway([
-    fakeGatewayToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
-    fakeGatewayToolCall("call_mcp", TOOL_NAME, { text: "authenticated" }),
-    fakeGatewayFinalText("Authenticated MCP call complete."),
-  ], {
-    models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
+type CodexQueueResponse =
+  | string
+  | ((body: string) => string | Promise<string>);
+
+// The Codex route serves one callback instead of a finite queue, so the old
+// response array becomes queue pops inside the callback. Permission reviews
+// are answered "clear" without consuming the queue, matching the old
+// gateway harness default.
+function startCodexQueue(responses: CodexQueueResponse[]) {
+  let reviews = 0;
+  return startFakeCodex({
+    route: async (body) => {
+      if (body.includes("<permission_review>")) {
+        reviews += 1;
+        return codexToolCall(`review_decision_${reviews}`, "permission_decision", {
+          risk: "low",
+          decision: "clear",
+          rationale: "test fixture",
+        });
+      }
+      const next = responses.shift();
+      if (next === undefined) return codexFinalText("unexpected request");
+      return typeof next === "function" ? await next(body) : next;
+    },
   });
 }
 
-function startDelayedToolGateway(delayMs: number, finalText: string) {
-  return startFakeGateway([
-    fakeGatewayToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
+function startToolCodex() {
+  return startCodexQueue([
+    codexToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
+    codexToolCall("call_mcp", TOOL_NAME, { text: "authenticated" }),
+    codexFinalText("Authenticated MCP call complete."),
+  ]);
+}
+
+function startDelayedToolCodex(delayMs: number, finalText: string) {
+  return startCodexQueue([
+    codexToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
     async () => {
       await Bun.sleep(delayMs);
-      return fakeGatewayToolCall("call_mcp", TOOL_NAME, {
+      return codexToolCall("call_mcp", TOOL_NAME, {
         text: "authenticated",
       });
     },
-    fakeGatewayFinalText(finalText),
-  ], {
-    models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-  });
+    codexFinalText(finalText),
+  ]);
 }
 
-function startRefreshRecoveryGateway(delayMs: number) {
-  return startFakeGateway([
-    fakeGatewayToolCall("select_cancel", "mcp_select_tool", {
+function startRefreshRecoveryCodex(delayMs: number) {
+  return startCodexQueue([
+    codexToolCall("select_cancel", "mcp_select_tool", {
       name: TOOL_NAME,
     }),
     async () => {
       await Bun.sleep(delayMs);
-      return fakeGatewayToolCall("call_cancel", TOOL_NAME, {
+      return codexToolCall("call_cancel", TOOL_NAME, {
         text: "cancelled",
       });
     },
-    fakeGatewayToolCall("select_recovery", "mcp_select_tool", {
+    codexToolCall("select_recovery", "mcp_select_tool", {
       name: TOOL_NAME,
     }),
-    fakeGatewayToolCall("call_recovery", TOOL_NAME, {
+    codexToolCall("call_recovery", TOOL_NAME, {
       text: "recovered",
     }),
-    fakeGatewayFinalText("Refresh recovery complete."),
-  ], {
-    models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-  });
+    codexFinalText("Refresh recovery complete."),
+  ]);
 }
 
 function collectRegularFiles(root: string): string[] {
@@ -749,25 +771,37 @@ function collectRegularFiles(root: string): string[] {
   return files;
 }
 
-function toolResultText(
+// Gateway-era request arrays excluded permission reviews (separate classifier
+// array); Codex reviews share the requests array, so positional assertions
+// filter them out to preserve the original turn indexing.
+function codexModelBodies(): string[] {
+  return gateway!.requests
+    .map((request) => request.body)
+    .filter((body) => !body.includes("<permission_review>"));
+}
+
+// Tool results ride the Responses input as function_call_output items. The
+// Codex output is a plain content string with no text/error-text framing, so
+// the expected kind asserts on the tool_execution_failed marker instead.
+function codexToolResultText(
   body: string,
   toolCallId: string,
   outputType: "text" | "error-text" = "text",
 ): string {
   const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
+    input?: Array<Record<string, unknown>>;
   };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .find((part) =>
-      part.type === "tool-result" && part.toolCallId === toolCallId
-    );
-  if (!result) throw new Error(`Missing tool result for ${toolCallId}`);
-  const output = result.output as Record<string, unknown>;
-  if (output.type !== outputType || typeof output.value !== "string") {
-    throw new Error(`Invalid tool result for ${toolCallId}`);
+  const result = (request.input ?? []).find((part) =>
+    part.type === "function_call_output" && part.call_id === toolCallId
+  );
+  if (!result || typeof result.output !== "string") {
+    throw new Error(`Missing tool result for ${toolCallId}`);
   }
-  return output.value;
+  const failed = result.output.includes("tool_execution_failed");
+  if (outputType === "error-text" ? !failed : failed) {
+    throw new Error(`Invalid tool result kind for ${toolCallId}`);
+  }
+  return result.output;
 }
 
 function preserveAuthFailure(
@@ -776,7 +810,7 @@ function preserveAuthFailure(
   result: Awaited<ReturnType<typeof runFx>>,
   activeAuth: AuthFixture,
   activeUpstream: ReturnType<typeof startModernMcpHttpFixture>,
-  activeGateway: ReturnType<typeof startFakeGateway>,
+  activeGateway: ReturnType<typeof startFakeCodex>,
 ): void {
   if (result.code === 0) return;
   cleanupRoot = null;
@@ -840,7 +874,6 @@ describe("MCP remote authentication lifecycle", () => {
     const root = createRoot(auth);
     const env = {
       ...baseEnv(root),
-      AI_GATEWAY_API_KEY: undefined,
     };
 
     const authenticated = await runFx(["mcp", "login", "fixture"], {
@@ -912,7 +945,6 @@ describe("MCP remote authentication lifecycle", () => {
     const root = createRoot(auth);
     const env = {
       ...baseEnv(root),
-      AI_GATEWAY_API_KEY: undefined,
     };
 
     const authenticated = await runFx(["mcp", "login", "fixture"], {
@@ -950,7 +982,6 @@ describe("MCP remote authentication lifecycle", () => {
     const root = createRoot(auth);
     const env = {
       ...baseEnv(root),
-      AI_GATEWAY_API_KEY: undefined,
     };
 
     const authenticated = await runFx(["mcp", "login", "fixture"], {
@@ -986,7 +1017,6 @@ describe("MCP remote authentication lifecycle", () => {
     const root = createRoot(auth);
     const env = {
       ...baseEnv(root),
-      AI_GATEWAY_API_KEY: undefined,
     };
 
     const authenticated = await runFx(["mcp", "login", "fixture"], {
@@ -1024,7 +1054,6 @@ describe("MCP remote authentication lifecycle", () => {
     const root = createRoot(auth);
     const env = {
       ...baseEnv(root),
-      AI_GATEWAY_API_KEY: undefined,
     };
 
     const authenticated = await runFx(["mcp", "login", "fixture"], {
@@ -1064,7 +1093,6 @@ describe("MCP remote authentication lifecycle", () => {
       const root = createRoot(auth);
       const env = {
         ...baseEnv(root),
-        AI_GATEWAY_API_KEY: undefined,
         FIBER_DISABLE_KEYCHAIN: undefined,
       };
 
@@ -1124,16 +1152,10 @@ describe("MCP remote authentication lifecycle", () => {
         { mode: 0o600 },
       );
       chmodSync(credentialPath, 0o600);
-      gateway = startFakeGateway([], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startFakeCodex();
 
       try {
-        const env = {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        };
+        const env = seededFakeCodexEnv(root.home, gateway, baseEnv(root));
         tui = await TmuxSession.create({
           isolated: true,
           cwd: root.workspace,
@@ -1189,26 +1211,20 @@ describe("MCP remote authentication lifecycle", () => {
     });
     const root = createRoot(auth);
     seedExpiredCredentials(root, auth, Date.now() + 3_600_000);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("template_auth_read", "mcp_features", {
+    gateway = startCodexQueue([
+      codexToolCall("template_auth_read", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "custom://project/src/main.zig",
       }),
-      fakeGatewayFinalText("Template authentication failure observed."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Template authentication failure observed."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Read an authenticated resource template."],
       {
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         timeoutMs: 25_000,
       },
     );
@@ -1223,10 +1239,10 @@ describe("MCP remote authentication lifecycle", () => {
     );
     expect(result.code).toBe(0);
     const finalBody = gateway.requests.at(-1)!.body;
-    expect(toolResultText(finalBody, "template_auth_read", "error-text")).toContain(
+    expect(codexToolResultText(finalBody, "template_auth_read", "error-text")).toContain(
       "McpAuthenticationRequired",
     );
-    expect(toolResultText(finalBody, "template_auth_read", "error-text")).not.toContain(
+    expect(codexToolResultText(finalBody, "template_auth_read", "error-text")).not.toContain(
       "McpResourceNotFound",
     );
     expect(auth.requests.filter((request) =>
@@ -1245,57 +1261,51 @@ describe("MCP remote authentication lifecycle", () => {
     auth = startAuthFixture(upstream.url);
     const root = createRoot(auth);
     seedExpiredCredentials(root, auth, Date.now() + 65_000);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("auth_resource_list_one", "mcp_features", {
+    gateway = startCodexQueue([
+      codexToolCall("auth_resource_list_one", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
       async () => {
         await Bun.sleep(6_000);
-        return fakeGatewayToolCall("auth_resource_list_two", "mcp_features", {
+        return codexToolCall("auth_resource_list_two", "mcp_features", {
           action: "resource_list",
           server: "fixture",
         });
       },
       async () => {
         await Bun.sleep(500);
-        return fakeGatewayToolCall("auth_resource_read", "mcp_features", {
+        return codexToolCall("auth_resource_read", "mcp_features", {
           action: "resource_read",
           server: "fixture",
           uri: "custom://alpha",
         });
       },
-      fakeGatewayToolCall("auth_prompt_list", "mcp_features", {
+      codexToolCall("auth_prompt_list", "mcp_features", {
         action: "prompt_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("auth_prompt_get", "mcp_features", {
+      codexToolCall("auth_prompt_get", "mcp_features", {
         action: "prompt_get",
         server: "fixture",
         prompt: "review",
         arguments: { tone: "brief" },
       }),
-      fakeGatewayToolCall("auth_prompt_complete", "mcp_features", {
+      codexToolCall("auth_prompt_complete", "mcp_features", {
         action: "prompt_complete",
         server: "fixture",
         prompt: "review",
         argument: "tone",
         value: "b",
       }),
-      fakeGatewayFinalText("Authenticated MCP features complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Authenticated MCP features complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Use authenticated MCP features after rotation."],
       {
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         timeoutMs: 25_000,
       },
     );
@@ -1331,61 +1341,54 @@ describe("MCP remote authentication lifecycle", () => {
     });
     const root = createRoot(auth);
     seedExpiredCredentials(root, auth, Date.now() + 3_600_000);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("private_resource_a", "mcp_features", {
+    gateway = startCodexQueue([
+      codexToolCall("private_resource_a", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("private_templates_a", "mcp_features", {
+      codexToolCall("private_templates_a", "mcp_features", {
         action: "resource_templates",
         server: "fixture",
       }),
-      fakeGatewayToolCall("private_prompts_a", "mcp_features", {
+      codexToolCall("private_prompts_a", "mcp_features", {
         action: "prompt_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("private_read_a", "mcp_features", {
+      codexToolCall("private_read_a", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "custom://alpha",
       }),
-      fakeGatewayToolCall("private_rotate", "mcp_features", {
+      codexToolCall("private_rotate", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "custom://alpha",
       }),
-      fakeGatewayToolCall("private_resource_b", "mcp_features", {
+      codexToolCall("private_resource_b", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("private_templates_b", "mcp_features", {
+      codexToolCall("private_templates_b", "mcp_features", {
         action: "resource_templates",
         server: "fixture",
       }),
-      fakeGatewayToolCall("private_prompts_b", "mcp_features", {
+      codexToolCall("private_prompts_b", "mcp_features", {
         action: "prompt_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("private_read_b", "mcp_features", {
+      codexToolCall("private_read_b", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "custom://alpha",
       }),
-      fakeGatewayFinalText("Private feature rotation failure observed."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Private feature rotation failure observed."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Check private MCP features after failed rotation."],
       {
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
-        },
+        env: seededFakeCodexEnv(root.home, gateway, {...baseEnv(root), FIBER_E2E_MCP_AUTH_AUTOMATE: "1"}),
         timeoutMs: 25_000,
       },
     );
@@ -1403,19 +1406,19 @@ describe("MCP remote authentication lifecycle", () => {
     expect(auth.authorizationRequests).toBe(1);
     expect(auth.tokenExchanges).toBe(1);
     const finalBody = gateway.requests.at(-1)!.body;
-    expect(toolResultText(finalBody, "private_resource_a")).toContain(
+    expect(codexToolResultText(finalBody, "private_resource_a")).toContain(
       "custom://alpha",
     );
-    expect(toolResultText(finalBody, "private_templates_a")).toContain(
+    expect(codexToolResultText(finalBody, "private_templates_a")).toContain(
       "custom://project/{path}",
     );
-    expect(toolResultText(finalBody, "private_prompts_a")).toContain(
+    expect(codexToolResultText(finalBody, "private_prompts_a")).toContain(
       "review",
     );
-    expect(toolResultText(finalBody, "private_read_a")).toContain(
+    expect(codexToolResultText(finalBody, "private_read_a")).toContain(
       "HTTP_RESOURCE_TEXT",
     );
-    expect(toolResultText(finalBody, "private_rotate", "error-text")).toContain(
+    expect(codexToolResultText(finalBody, "private_rotate", "error-text")).toContain(
       "tool_execution_failed",
     );
     for (const callId of [
@@ -1424,7 +1427,7 @@ describe("MCP remote authentication lifecycle", () => {
       "private_prompts_b",
       "private_read_b",
     ]) {
-      const output = toolResultText(finalBody, callId, "error-text");
+      const output = codexToolResultText(finalBody, callId, "error-text");
       expect(output).not.toContain("custom://alpha");
       expect(output).not.toContain("custom://project/{path}");
       expect(output).not.toContain("review");
@@ -1453,64 +1456,58 @@ describe("MCP remote authentication lifecycle", () => {
     });
     const root = createRoot(auth);
     seedExpiredCredentials(root, auth, Date.now() + 65_000);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("public_resource_a", "mcp_features", {
+    gateway = startCodexQueue([
+      codexToolCall("public_resource_a", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("public_templates_a", "mcp_features", {
+      codexToolCall("public_templates_a", "mcp_features", {
         action: "resource_templates",
         server: "fixture",
       }),
-      fakeGatewayToolCall("public_prompts_a", "mcp_features", {
+      codexToolCall("public_prompts_a", "mcp_features", {
         action: "prompt_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("public_read_a", "mcp_features", {
+      codexToolCall("public_read_a", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "custom://alpha",
       }),
-      fakeGatewayToolCall("public_select", "mcp_select_tool", {
+      codexToolCall("public_select", "mcp_select_tool", {
         name: TOOL_NAME,
       }),
       async () => {
         await Bun.sleep(6_000);
-        return fakeGatewayToolCall("public_rotate", TOOL_NAME, {
+        return codexToolCall("public_rotate", TOOL_NAME, {
           text: "rotate",
         });
       },
-      fakeGatewayToolCall("public_resource_b", "mcp_features", {
+      codexToolCall("public_resource_b", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("public_templates_b", "mcp_features", {
+      codexToolCall("public_templates_b", "mcp_features", {
         action: "resource_templates",
         server: "fixture",
       }),
-      fakeGatewayToolCall("public_prompts_b", "mcp_features", {
+      codexToolCall("public_prompts_b", "mcp_features", {
         action: "prompt_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("public_read_b", "mcp_features", {
+      codexToolCall("public_read_b", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "custom://alpha",
       }),
-      fakeGatewayFinalText("Public feature rotation control complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Public feature rotation control complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Reuse public MCP state after auth rotation."],
       {
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         timeoutMs: 30_000,
       },
     );
@@ -1519,18 +1516,18 @@ describe("MCP remote authentication lifecycle", () => {
     expect(auth.refreshes).toBe(1);
     const finalBody = gateway.requests.at(-1)!.body;
     for (const callId of ["public_resource_a", "public_resource_b"]) {
-      expect(toolResultText(finalBody, callId)).toContain("custom://alpha");
+      expect(codexToolResultText(finalBody, callId)).toContain("custom://alpha");
     }
     for (const callId of ["public_templates_a", "public_templates_b"]) {
-      expect(toolResultText(finalBody, callId)).toContain(
+      expect(codexToolResultText(finalBody, callId)).toContain(
         "custom://project/{path}",
       );
     }
     for (const callId of ["public_prompts_a", "public_prompts_b"]) {
-      expect(toolResultText(finalBody, callId)).toContain("review");
+      expect(codexToolResultText(finalBody, callId)).toContain("review");
     }
     for (const callId of ["public_read_a", "public_read_b"]) {
-      expect(toolResultText(finalBody, callId)).toContain("HTTP_RESOURCE_TEXT");
+      expect(codexToolResultText(finalBody, callId)).toContain("HTTP_RESOURCE_TEXT");
     }
     const resourceListRequests = auth.requests.filter((request) =>
       request.body.includes('"resources/list"')
@@ -1576,44 +1573,38 @@ describe("MCP remote authentication lifecycle", () => {
       auth = startAuthFixture(upstream.url, { rejectRefresh: true });
       const root = createRoot(auth);
       seedExpiredCredentials(root, auth, Date.now() + 65_000);
-      gateway = startFakeGateway([
-        fakeGatewayToolCall("ordered_read_a", "mcp_features", {
+      gateway = startCodexQueue([
+        codexToolCall("ordered_read_a", "mcp_features", {
           action: "resource_read",
           server: "fixture",
           uri: "custom://alpha",
         }),
         async () => {
           await Bun.sleep(6_000);
-          return fakeGatewayToolCall("ordered_read_b", "mcp_features", {
+          return codexToolCall("ordered_read_b", "mcp_features", {
             action: "resource_read",
             server: "fixture",
             uri: "custom://alpha",
           });
         },
-        fakeGatewayFinalText("Resource cache ordering observed."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+        codexFinalText("Resource cache ordering observed."),
+      ]);
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Read the same authenticated MCP resource twice."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
           timeoutMs: 25_000,
         },
       );
 
       expect(result.code).toBe(0);
       const finalBody = gateway.requests.at(-1)!.body;
-      expect(toolResultText(finalBody, "ordered_read_a")).toContain(
+      expect(codexToolResultText(finalBody, "ordered_read_a")).toContain(
         "HTTP_RESOURCE_TEXT",
       );
-      const second = toolResultText(
+      const second = codexToolResultText(
         finalBody,
         "ordered_read_b",
         readCacheCase.publicCache ? "text" : "error-text",
@@ -1637,13 +1628,13 @@ describe("MCP remote authentication lifecycle", () => {
     auth = startAuthFixture(upstream.url);
     const root = createRoot(auth);
     seedExpiredCredentials(root, auth, Date.now() + 62_000);
-    gateway = startFakeGateway([
-        fakeGatewayToolCall("search_initial", "capability_search", {
+    gateway = startCodexQueue([
+        codexToolCall("search_initial", "capability_search", {
           query: "echo",
         }),
         async () => {
           await Bun.sleep(3_000);
-          return fakeGatewayToolCall("search_refreshed", "capability_search", {
+          return codexToolCall("search_refreshed", "capability_search", {
             query: "echo",
           });
         },
@@ -1661,25 +1652,19 @@ describe("MCP remote authentication lifecycle", () => {
           expect(readFileSync(root.trace, "utf8")).toContain(
             "tool subscription closed connection_generation=",
           );
-          return fakeGatewayToolCall(
+          return codexToolCall(
             "search_reconnected",
             "capability_search",
             { query: "echo" },
           );
         },
-        fakeGatewayFinalText("Refreshed subscription complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+        codexFinalText("Refreshed subscription complete."),
+    ]);
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Refresh the active authenticated subscription."],
       {
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         timeoutMs: 30_000,
       },
     );
@@ -1708,8 +1693,8 @@ describe("MCP remote authentication lifecycle", () => {
       });
       const root = createRoot(auth);
       seedExpiredCredentials(root, auth, Date.now() + 3_600_000);
-      gateway = startFakeGateway([
-        fakeGatewayToolCall("search_after_challenge", "capability_search", {
+      gateway = startCodexQueue([
+        codexToolCall("search_after_challenge", "capability_search", {
           query: "echo",
         }),
         async () => {
@@ -1721,22 +1706,15 @@ describe("MCP remote authentication lifecycle", () => {
           ) {
             await Bun.sleep(25);
           }
-          return fakeGatewayFinalText("Subscription challenge recovered.");
+          return codexFinalText("Subscription challenge recovered.");
         },
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      ]);
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Recover the subscription."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, {...baseEnv(root), FIBER_E2E_MCP_AUTH_AUTOMATE: "1"}),
           timeoutMs: 20_000,
         },
       );
@@ -1766,25 +1744,18 @@ describe("MCP remote authentication lifecycle", () => {
     });
     const root = createRoot(auth);
     seedExpiredCredentials(root, auth, Date.now() + 3_600_000);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("search_rotated_catalog", "capability_search", {
+    gateway = startCodexQueue([
+      codexToolCall("search_rotated_catalog", "capability_search", {
         query: "fixture",
       }),
-      fakeGatewayFinalText("Private pagination rotation complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Private pagination rotation complete."),
+    ]);
 
     const result = await runFx(
       ["ask", "--json", "--permission-mode", "auto", "--no-save", "Load the rotated private catalog."],
       {
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, {...baseEnv(root), FIBER_E2E_MCP_AUTH_AUTOMATE: "1"}),
         timeoutMs: 20_000,
       },
     );
@@ -1824,33 +1795,27 @@ describe("MCP remote authentication lifecycle", () => {
       auth = startAuthFixture(upstream.url);
       const root = createRoot(auth);
       seedExpiredCredentials(root, auth, Date.now() + 65_000);
-      gateway = startFakeGateway([
-        fakeGatewayToolCall("select_before_refresh", "mcp_select_tool", {
+      gateway = startCodexQueue([
+        codexToolCall("select_before_refresh", "mcp_select_tool", {
           name: TOOL_NAME,
         }),
         async () => {
           await Bun.sleep(6_000);
-          return fakeGatewayToolCall("call_after_skew", TOOL_NAME, {
+          return codexToolCall("call_after_skew", TOOL_NAME, {
             text: "rotate",
           });
         },
-        fakeGatewayToolCall("search_after_rotation", "capability_search", {
+        codexToolCall("search_after_rotation", "capability_search", {
           query: "echo",
         }),
-        fakeGatewayFinalText("Authentication cache partition observed."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+        codexFinalText("Authentication cache partition observed."),
+      ]);
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Exercise the authenticated cache."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
           timeoutMs: 20_000,
         },
       );
@@ -1896,56 +1861,50 @@ describe("MCP remote authentication lifecycle", () => {
           },
         }),
       );
-      gateway = startFakeGateway([
-        fakeGatewayToolCall("search_exact", "capability_search", {
+      gateway = startCodexQueue([
+        codexToolCall("search_exact", "capability_search", {
           query: "Please use mcp_linear_echo for this request",
         }),
-        fakeGatewayToolCall("search_noisy", "capability_search", {
+        codexToolCall("search_noisy", "capability_search", {
           query: "linear issue",
         }),
-        fakeGatewayToolCall("search_auth_collision", "capability_search", {
+        codexToolCall("search_auth_collision", "capability_search", {
           query: "slack data",
         }),
-        fakeGatewayToolCall("search_targeted", "capability_search", {
+        codexToolCall("search_targeted", "capability_search", {
           query: "authenticate slack now",
         }),
-        fakeGatewayToolCall("search_healthy", "capability_search", {
+        codexToolCall("search_healthy", "capability_search", {
           query: "linear echo",
         }),
-        fakeGatewayFinalText("MCP search isolation observed."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+        codexFinalText("MCP search isolation observed."),
+      ]);
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Exercise mixed MCP search."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
           timeoutMs: 20_000,
         },
       );
 
       expect(result.code).toBe(0);
       const finalBody = gateway.requests.at(-1)?.body ?? "";
-      const exact = toolResultText(finalBody, "search_exact");
+      const exact = codexToolResultText(finalBody, "search_exact");
       expect(exact).toContain("mcp_linear_echo");
       expect(exact).not.toContain("authentication_required");
-      const noisy = toolResultText(finalBody, "search_noisy");
+      const noisy = codexToolResultText(finalBody, "search_noisy");
       expect(noisy).toContain("mcp_linear_echo");
       expect(noisy).not.toContain("authentication_required");
-      const collision = toolResultText(finalBody, "search_auth_collision");
+      const collision = codexToolResultText(finalBody, "search_auth_collision");
       expect(collision).toContain("authentication_required");
       expect(collision).toContain('\"server\":\"slack\"');
       expect(collision).not.toContain("mcp_linear_echo");
-      const targeted = toolResultText(finalBody, "search_targeted");
+      const targeted = codexToolResultText(finalBody, "search_targeted");
       expect(targeted).toContain("authentication_required");
       expect(targeted).toContain('\"server\":\"slack\"');
-      expect(toolResultText(finalBody, "search_healthy")).toContain(
+      expect(codexToolResultText(finalBody, "search_healthy")).toContain(
         "mcp_linear_echo",
       );
       expect(auth.authorizationRequests).toBe(0);
@@ -1959,24 +1918,18 @@ describe("MCP remote authentication lifecycle", () => {
       upstream = startModernMcpHttpFixture("json");
       auth = startAuthFixture(upstream.url);
       const root = createRoot(auth, false);
-      gateway = startFakeGateway([
-        fakeGatewayToolCall("search_auth", "capability_search", {
+      gateway = startCodexQueue([
+        codexToolCall("search_auth", "capability_search", {
           query: "fixture",
         }),
-        fakeGatewayFinalText("MCP authentication is required."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+        codexFinalText("MCP authentication is required."),
+      ]);
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Find the protected MCP tool."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
           timeoutMs: 20_000,
         },
       );
@@ -1986,8 +1939,8 @@ describe("MCP remote authentication lifecycle", () => {
       expect(
         auth.requests.filter((request) => request.path === "/mcp"),
       ).toHaveLength(1);
-      expect(gateway.requests[1]?.body).toContain("authentication_required");
-      expect(gateway.requests[1]?.body).toContain(
+      expect(codexModelBodies()[1]).toContain("authentication_required");
+      expect(codexModelBodies()[1]).toContain(
         "Run /mcp auth for this server in an interactive fiber session.",
       );
       expect(
@@ -2024,21 +1977,17 @@ describe("MCP remote authentication lifecycle", () => {
       };
 
       try {
-        gateway = startToolGateway();
+        gateway = startToolCodex();
         const ask = await runFx(
           ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the authenticated MCP fixture."],
           {
             cwd: root.workspace,
-            env: {
-              ...keychainEnv,
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            },
+            env: seededFakeCodexEnv(root.home, gateway, keychainEnv),
             timeoutMs: 20_000,
           },
         );
         expect(ask.code).toBe(0);
-        expect(JSON.parse(ask.stdout).output).toContain(
+        expect(JSON.parse(ask.stdout).data.output).toContain(
           "Authenticated MCP call complete.",
         );
         expect(existsSync(credentialPath)).toBe(false);
@@ -2075,19 +2024,13 @@ describe("MCP remote authentication lifecycle", () => {
         expect(auth.requests).toHaveLength(requestCountBeforeList);
 
         gateway.stop();
-        gateway = startFakeGateway([
-          fakeGatewayFinalText("TUI idle."),
-        ], {
-          models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-        });
+        gateway = startCodexQueue([
+          codexFinalText("TUI idle."),
+        ]);
         tui = await TmuxSession.create({
           isolated: true,
           cwd: root.workspace,
-          env: {
-            ...keychainEnv,
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, keychainEnv),
           width: 110,
           height: 34,
         });
@@ -2127,17 +2070,11 @@ describe("MCP remote authentication lifecycle", () => {
       upstream = startModernMcpHttpFixture("json");
       auth = startAuthFixture(upstream.url);
       const root = createRoot(auth, true, "http", auth.url, false);
-      gateway = startFakeGateway([], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startFakeCodex();
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 110,
         height: 34,
         stderrPath: root.stderr,
@@ -2208,17 +2145,11 @@ describe("MCP remote authentication lifecycle", () => {
         auth,
         Date.now() + 3_600_000,
       );
-      gateway = startFakeGateway([], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startFakeCodex();
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 120,
         height: 34,
         stderrPath: root.stderr,
@@ -2264,7 +2195,6 @@ describe("MCP remote authentication lifecycle", () => {
     );
     const env = {
       ...baseEnv(root),
-      AI_GATEWAY_API_KEY: undefined,
     };
 
     const authentication = await runFx(["mcp", "login", "fixture"], {
@@ -2297,16 +2227,10 @@ describe("MCP remote authentication lifecycle", () => {
       upstream = startModernMcpHttpFixture("json");
       auth = startAuthFixture(upstream.url);
       const root = createRoot(auth);
-      gateway = startFakeGateway([
-        fakeGatewayFinalText("TUI idle."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
-      const tuiEnv = {
-        ...baseEnv(root),
-        FX_GATEWAY_BASE_URL: gateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-      };
+      gateway = startCodexQueue([
+        codexFinalText("TUI idle."),
+      ]);
+      const tuiEnv = seededFakeCodexEnv(root.home, gateway, baseEnv(root));
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
@@ -2363,7 +2287,7 @@ describe("MCP remote authentication lifecycle", () => {
       await tui.kill();
       tui = null;
       gateway.stop();
-      gateway = startToolGateway();
+      gateway = startToolCodex();
       stored.credentials[0].expires_at_ms = 0;
       writeFileSync(credentialPath, JSON.stringify(stored), { mode: 0o600 });
 
@@ -2371,16 +2295,12 @@ describe("MCP remote authentication lifecycle", () => {
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the authenticated MCP fixture."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
           timeoutMs: 20_000,
         },
       );
       expect(ask.code).toBe(0);
-      expect(JSON.parse(ask.stdout).output).toContain(
+      expect(JSON.parse(ask.stdout).data.output).toContain(
         "Authenticated MCP call complete.",
       );
       expect(auth.refreshes).toBe(1);
@@ -2398,19 +2318,13 @@ describe("MCP remote authentication lifecycle", () => {
       expect(stored.credentials[0].refresh_token).toBe(REFRESH_ROTATED);
 
       gateway.stop();
-      gateway = startFakeGateway([
-        fakeGatewayFinalText("TUI idle."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startCodexQueue([
+        codexFinalText("TUI idle."),
+      ]);
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 110,
         height: 34,
       });
@@ -2470,17 +2384,11 @@ describe("MCP remote authentication lifecycle", () => {
         authorizationServerTrailingSlash: true,
       });
       const root = createRoot(auth);
-      gateway = startFakeGateway([], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startFakeCodex();
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 120,
         height: 34,
       });
@@ -2525,17 +2433,11 @@ describe("MCP remote authentication lifecycle", () => {
         authorizationResponseIssuer: returnedIssuer,
       });
       const root = createRoot(auth);
-      gateway = startFakeGateway([], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startFakeCodex();
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 140,
         height: 36,
       });
@@ -2563,19 +2465,13 @@ describe("MCP remote authentication lifecycle", () => {
       upstream = startModernMcpHttpFixture("json");
       auth = startAuthFixture(upstream.url, { wrongState: true });
       const root = createRoot(auth);
-      gateway = startFakeGateway([
-        fakeGatewayFinalText("TUI idle."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startCodexQueue([
+        codexFinalText("TUI idle."),
+      ]);
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 110,
         height: 34,
       });
@@ -2599,19 +2495,13 @@ describe("MCP remote authentication lifecycle", () => {
         authorizationMetadataContentType: "text/plain",
       });
       const root = createRoot(auth);
-      gateway = startFakeGateway([
-        fakeGatewayFinalText("TUI idle."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startCodexQueue([
+        codexFinalText("TUI idle."),
+      ]);
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 110,
         height: 34,
       });
@@ -2749,18 +2639,13 @@ describe("MCP remote authentication lifecycle", () => {
       auth = startAuthFixture(upstream.url, { rejectToolAuth: true });
       const root = createRoot(auth);
       seedExpiredCredentials(root, auth, Date.now() + 3_600_000);
-      gateway = startToolGateway();
+      gateway = startToolCodex();
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the protected MCP fixture."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
-          },
+          env: seededFakeCodexEnv(root.home, gateway, {...baseEnv(root), FIBER_E2E_MCP_AUTH_AUTOMATE: "1"}),
           timeoutMs: 20_000,
         },
       );
@@ -2774,7 +2659,7 @@ describe("MCP remote authentication lifecycle", () => {
           request.message.method === "tools/call"
         ),
       ).toHaveLength(0);
-      expect(gateway.requests[2]?.body).toContain("McpAuthenticationUpdated");
+      expect(codexModelBodies()[2]).toContain("McpAuthenticationUpdated");
     },
     30_000,
   );
@@ -2786,17 +2671,13 @@ describe("MCP remote authentication lifecycle", () => {
       auth = startAuthFixture(legacyStreamable.url);
       const root = createRoot(auth);
       seedExpiredCredentials(root, auth);
-      gateway = startToolGateway();
+      gateway = startToolCodex();
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the protected legacy fixture."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
           timeoutMs: 20_000,
         },
       );
@@ -2821,17 +2702,13 @@ describe("MCP remote authentication lifecycle", () => {
       auth = startAuthFixture(legacySse.url, { transport: "sse" });
       const root = createRoot(auth, true, "sse");
       seedExpiredCredentials(root, auth);
-      gateway = startToolGateway();
+      gateway = startToolCodex();
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the protected SSE fixture."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
           timeoutMs: 20_000,
         },
       );
@@ -3096,7 +2973,7 @@ describe("MCP remote authentication lifecycle", () => {
         auth = startAuthFixture(legacyStreamable.url);
         const root = createRoot(auth);
         seedExpiredCredentials(root, auth, Date.now() + 65_000);
-        gateway = startDelayedToolGateway(
+        gateway = startDelayedToolCodex(
           6_000,
           "Legacy HTTP refresh complete.",
         );
@@ -3105,11 +2982,7 @@ describe("MCP remote authentication lifecycle", () => {
           ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the protected legacy fixture."],
           {
             cwd: root.workspace,
-            env: {
-              ...baseEnv(root),
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            },
+            env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
             timeoutMs: 25_000,
           },
         );
@@ -3139,7 +3012,7 @@ describe("MCP remote authentication lifecycle", () => {
       auth = startAuthFixture(legacySse.url, { transport: "sse" });
       const root = createRoot(auth, true, "sse");
       seedExpiredCredentials(root, auth, Date.now() + 65_000);
-      gateway = startDelayedToolGateway(
+      gateway = startDelayedToolCodex(
         8_000,
         "Legacy SSE refresh complete.",
       );
@@ -3148,11 +3021,7 @@ describe("MCP remote authentication lifecycle", () => {
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Call the protected SSE fixture."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
           timeoutMs: 25_000,
         },
       );
@@ -3189,15 +3058,11 @@ describe("MCP remote authentication lifecycle", () => {
         auth,
         Date.now() + 65_000,
       );
-      gateway = startRefreshRecoveryGateway(8_000);
+      gateway = startRefreshRecoveryCodex(8_000);
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 110,
         height: 34,
       });
@@ -3248,19 +3113,13 @@ describe("MCP remote authentication lifecycle", () => {
         auth,
         Date.now() + 3_600_000,
       );
-      gateway = startFakeGateway([
-        fakeGatewayFinalText("TUI idle."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startCodexQueue([
+        codexFinalText("TUI idle."),
+      ]);
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 110,
         height: 34,
       });
@@ -3285,15 +3144,11 @@ describe("MCP remote authentication lifecycle", () => {
       upstream = startModernMcpHttpFixture("cache_auth_subscription");
       auth = startAuthFixture(upstream.url);
       const root = createRoot(auth, false, "http", upstream.url);
-      gateway = startToolGateway();
+      gateway = startToolCodex();
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 110,
         height: 34,
         stderrPath: join(root.root, "tui-stderr.log"),
@@ -3345,15 +3200,11 @@ describe("MCP remote authentication lifecycle", () => {
       upstream = startModernMcpHttpFixture("cache_auth_subscription");
       auth = startAuthFixture(upstream.url);
       const root = createRoot(auth, false, "http", upstream.url);
-      gateway = startToolGateway();
+      gateway = startToolCodex();
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 110,
         height: 34,
         stderrPath: join(root.root, "tui-stderr.log"),
@@ -3418,19 +3269,13 @@ describe("MCP remote authentication lifecycle", () => {
         auth,
         Date.now() + 3_600_000,
       );
-      gateway = startFakeGateway([
-        fakeGatewayFinalText("TUI idle."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startCodexQueue([
+        codexFinalText("TUI idle."),
+      ]);
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
-        env: {
-          ...baseEnv(root),
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        },
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
         width: 110,
         height: 34,
       });
@@ -3459,24 +3304,18 @@ describe("MCP remote authentication lifecycle", () => {
       auth = startAuthFixture(upstream.url, { rejectRefresh: true });
       const root = createRoot(auth);
       const credentialPath = seedExpiredCredentials(root, auth);
-      gateway = startFakeGateway([
-        fakeGatewayToolCall("inspect_refresh_rejection", "capability_search", {
+      gateway = startCodexQueue([
+        codexToolCall("inspect_refresh_rejection", "capability_search", {
           query: "echo",
         }),
-        fakeGatewayFinalText("Refresh failure handled."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+        codexFinalText("Refresh failure handled."),
+      ]);
 
       const result = await runFx(
         ["ask", "--json", "--permission-mode", "auto", "--no-save", "Check the MCP fixture."],
         {
           cwd: root.workspace,
-          env: {
-            ...baseEnv(root),
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          },
+          env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
           timeoutMs: 20_000,
         },
       );
