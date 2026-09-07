@@ -271,3 +271,19 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   not the envelope — rides with the ACP-conversion work, converts to
   `seededFakeCodexEnv` when it does.
 - `web-search-fake-codex.test.ts`: 3 pass / 0 skip / 1 fail (ACP leftover).
+
+## Addendum 2026-09-07: intake fix verified live, one test-shape leftover
+
+- `responses_protocol.zig` finish classifies each Codex tool call via
+  `ToolArgumentIntegrity.classifySerialized` (single intake point).
+  Full Zig suite: 7228 pass / 2 skip. Live binary (`-t malformed`,
+  tui-decision-prompts): the pane no longer shows SyntaxError and the
+  Codex follow-up pairs `tool_execution_failed` /
+  "Tool arguments were not valid JSON." for `ask_user_question`.
+- Leftover for the file's delegate (test-shape, not product): two cases
+  still assert the gateway-era `'"input":{}'` substring, which has no
+  Codex equivalent (follow-up carries `output:{error:{...}}` in
+  function_call_output history items). Replace with a Codex-shape
+  assertion on the paired error output. Cases: "malformed ask arguments
+  recover without opening a question prompt", "malformed streamed read
+  arguments never publish their provisional label".
