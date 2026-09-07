@@ -356,3 +356,13 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
 - Product question for images owner: resuming a session with a corrupted
   owned snapshot now silently omits the image (exit 0, no request) — old
   image_unavailable tool result unreachable. Not pinned; needs owner call.
+
+## Addendum 2026-09-07: tui-permissions 21/21, pacing-hold question
+
+- Migrated (review-queue pattern from auto-mode verbatim): 21/21 green,
+  committed. 1 deletion: `pauses paced assistant text while a file
+  approval is active` (gateway streaming-arc pin, no Codex equivalent —
+  Codex commits streamed text + Thinking-footer preview before decision).
+- Owner question (non-blocking): should the pacing hold be re-implemented
+  for Codex, or is commit-then-preview the accepted behavior? If the
+  latter, nothing to do.

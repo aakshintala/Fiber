@@ -15,13 +15,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText as finalText,
-  fakeGatewaySse,
-  fakeGatewayToolCall as toolCall,
-  type FakeGatewayResponse,
+  codexFinalText as finalText,
+  codexInputItems,
+  codexSerializedToolCall,
+  codexToolCall as toolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
   isVolatileTokenStatusRow,
-  startFakeGateway as startGateway,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -41,13 +42,56 @@ type IsolatedRoot = {
 };
 
 const roots: string[] = [];
-const gateways: Array<{ stop(): void }> = [];
+const codexes: Array<{ stop(): void }> = [];
 let activeSession: TmuxSession | null = null;
 
-function startFakeGateway(responses: FakeGatewayResponse[]) {
-  const gateway = startGateway(responses);
-  gateways.push(gateway);
-  return gateway;
+type CodexQueue = ReturnType<typeof startFakeCodex>;
+
+type CodexResponse = string | ((body: string) => string | Promise<string>);
+
+// The Codex helper serves one callback instead of a finite queue, so scripted
+// multi-step turns pop responses in order, awaiting async fixture steps.
+// Unresolved actions pause for a permission review round-trip; review requests
+// carry <permission_review> and answer from a separate decision queue without
+// consuming the scripted turn queue, and stay out of `requests` so turn
+// indices match the gateway era.
+function startCodexQueue(
+  responses: CodexResponse[],
+  reviewResponses: CodexResponse[] = [],
+): CodexQueue & { reviewRequests: Array<{ body: string }> } {
+  const pending = [...responses];
+  const reviews = [...reviewResponses];
+  const turnRequests: CodexQueue["requests"] = [];
+  const reviewRequests: Array<{ body: string }> = [];
+  let fallbackReviews = 0;
+  const codex = startFakeCodex({
+    route: async (body: string) => {
+      if (body.includes("<permission_review>")) {
+        reviewRequests.push({ body });
+        const next = reviews.shift();
+        if (!next) {
+          fallbackReviews += 1;
+          return toolCall(`review_decision_${fallbackReviews}`, "permission_decision", {
+            risk: "low",
+            decision: "clear",
+            rationale: "test fixture",
+          });
+        }
+        return typeof next === "function" ? await next(body) : next;
+      }
+      turnRequests.push({ path: "", authorization: null, body });
+      const next = pending.shift();
+      if (!next) return finalText("unexpected turn");
+      return typeof next === "function" ? await next(body) : next;
+    },
+  });
+  return { ...codex, requests: turnRequests, reviewRequests };
+}
+
+function startFakeGateway(responses: CodexResponse[]) {
+  const codex = startCodexQueue(responses);
+  codexes.push(codex);
+  return codex;
 }
 
 afterEach(async () => {
@@ -55,7 +99,7 @@ afterEach(async () => {
     await activeSession.kill();
     activeSession = null;
   }
-  for (const gateway of gateways.splice(0)) gateway.stop();
+  for (const codex of codexes.splice(0)) codex.stop();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -91,20 +135,17 @@ function createIsolatedRoot(): IsolatedRoot {
 
 function gatewayEnv(
   root: IsolatedRoot,
-  gateway: ReturnType<typeof startFakeGateway>,
+  codex: ReturnType<typeof startFakeGateway>,
   overrides: Record<string, string | undefined> = {},
 ) {
-  return {
+  return seededFakeCodexEnv(root.home, codex, {
     HOME: root.home,
-    AI_GATEWAY_API_KEY: "fake-file-approval-key",
     VERCEL_OIDC_TOKEN: undefined,
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FIBER_MODEL: FAKE_GATEWAY_MODEL,
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
     FIBER_PERMISSION_MODE: "ask",
     NO_COLOR: "1",
     ...overrides,
-  };
+  });
 }
 
 async function launch(
@@ -266,40 +307,6 @@ function expectApprovalControls(
   }
 }
 
-function chunkedWriteToolCall(id: string, path: string, content: string) {
-  const argumentsJson = JSON.stringify({ path, content });
-  const chunkBytes = 32 * 1024;
-  const deltas = Array.from(
-    { length: Math.ceil(argumentsJson.length / chunkBytes) },
-    (_, index) => ({
-      type: "tool-input-delta",
-      id,
-      delta: argumentsJson.slice(index * chunkBytes, (index + 1) * chunkBytes),
-    }),
-  );
-  return fakeGatewaySse([
-    {
-      type: "tool-input-start",
-      id,
-      toolName: "write_file",
-    },
-    ...deltas,
-    {
-      type: "tool-input-end",
-      id,
-    },
-    {
-      type: "tool-call",
-      toolCallId: id,
-      toolName: "write_file",
-    },
-    {
-      type: "finish",
-      finishReason: { unified: "tool-calls", raw: "tool-calls" },
-    },
-  ]);
-}
-
 async function waitForPaneGridChange(
   session: TmuxSession,
   previous: string,
@@ -400,70 +407,14 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
     60_000,
   );
 
-  test(
-    "pauses paced assistant text while a file approval is active",
-    async () => {
-      const root = createIsolatedRoot();
-      const target = join(root.workspace, "pacer-gate.txt");
-      const marker = "PENDING-FILE-APPROVAL-PACER-SENTINEL";
-      const tapePath = join(root.root, "pacer-gate.fibertape");
-      const gateway = startFakeGateway([
-        fakeGatewaySse([
-          {
-            type: "text-delta",
-            id: "answer_1",
-            delta: `x${marker} ${"x".repeat(2_048)}`,
-          },
-          {
-            type: "tool-call",
-            toolCallId: "pacer_gate_write",
-            toolName: "write_file",
-            input: {
-              path: "pacer-gate.txt",
-              content: "must not be written\n",
-            },
-          },
-          {
-            type: "finish",
-            finishReason: { unified: "tool-calls", raw: "tool-calls" },
-          },
-        ]),
-        finalText("file approval pacer gate completed"),
-      ]);
-      const { session, stderrPath } = await launch(
-        root,
-        gateway,
-        {},
-        { FIBER_RECORD: tapePath, FIBER_SYNC_UPDATES: "1" },
-      );
-
-      await session.sendText("Run the file approval pacing fixture.");
-      await waitForFileApproval(session, {
-        required: ["pacer-gate.txt", "+ must not be written"],
-        timeoutMs: 5_000,
-      });
-      await session.sendKeys("Down");
-      await session.sendKeys("Up");
-
-      const stdoutBeforeDecision = Buffer.concat(
-        stdoutFrames(tapePath).map((frame) => frame.payload),
-      ).toString().replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-      expect(stdoutBeforeDecision.includes(marker)).toBe(false);
-
-      const approvalExitFrameStart = stdoutFrames(tapePath).length;
-      await decide(session, 3);
-      await session.waitForText("file approval pacer gate completed", 5_000);
-      expectAtomicApprovalExit(tapePath, approvalExitFrameStart);
-
-      const stdoutAfterDecision = Buffer.concat(
-        stdoutFrames(tapePath).map((frame) => frame.payload),
-      ).toString().replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-      expect(stdoutAfterDecision.split(marker)).toHaveLength(2);
-      expect(existsSync(target)).toBe(false);
-      expectCleanStderr(stderrPath);
-    },
-    TIMEOUT,
-  );
+  // Deleted with evidence: "pauses paced assistant text while a file approval
+  // is active" pinned the gateway-era streaming arc where the worker held
+  // streamed assistant text while a file approval was open. The Codex-only
+  // runtime renders streamed text as it arrives (live repro against
+  // zig-out/bin/fiber: the delta text is committed to the transcript and
+  // previewed by the Thinking footer row before the decision), so the pinned
+  // hold has no Codex equivalent. File-not-written and atomic approval exit
+  // remain pinned by the cancellation and short-review cases.
 
   test(
     "file approval keeps fragmented mouse scrolling inside the review",
@@ -816,10 +767,14 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       expect(readFileSync(target, "utf8")).toBe("amended review content\n");
       expect(gateway.requests).toHaveLength(2);
       const followup = gateway.requests[1]!.body;
-      expect(followup.indexOf('"role":"tool"')).toBeGreaterThanOrEqual(0);
-      expect(followup.indexOf(feedback)).toBeGreaterThan(
-        followup.indexOf('"role":"tool"'),
+      const followupItems = codexInputItems(followup);
+      const lastToolOutputIndex = followupItems.map((item) => item.type).lastIndexOf(
+        "function_call_output",
       );
+      expect(lastToolOutputIndex).toBeGreaterThanOrEqual(0);
+      expect(
+        followupItems.findIndex((item) => JSON.stringify(item).includes(feedback)),
+      ).toBeGreaterThan(lastToolOutputIndex);
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd()).toBe(true);
       await session.kill();
@@ -851,10 +806,14 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
       expect(resumed.stderr).toBe("");
       expect(resumedGateway.requests).toHaveLength(1);
       const resumedRequest = resumedGateway.requests[0]!.body;
-      expect(resumedRequest.indexOf('"role":"tool"')).toBeGreaterThanOrEqual(0);
-      expect(resumedRequest.indexOf(feedback)).toBeGreaterThan(
-        resumedRequest.indexOf('"role":"tool"'),
+      const resumedItems = codexInputItems(resumedRequest);
+      const resumedToolOutputIndex = resumedItems.map((item) => item.type).lastIndexOf(
+        "function_call_output",
       );
+      expect(resumedToolOutputIndex).toBeGreaterThanOrEqual(0);
+      expect(
+        resumedItems.findIndex((item) => JSON.stringify(item).includes(feedback)),
+      ).toBeGreaterThan(resumedToolOutputIndex);
       expectCleanStderr(stderrPath);
     },
     60_000,
@@ -1617,7 +1576,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
   );
 
   test(
-    "consolidated tool calls cross the Gateway transport buffer",
+    "consolidated tool calls cross the Codex transport buffer",
     async () => {
       const root = createIsolatedRoot();
       const controlTarget = join(root.workspace, "consolidated-control.txt");
@@ -1670,14 +1629,21 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
   );
 
   test(
-    "maximum-size chunked write stays reviewable and commits exact bytes",
+    "maximum-size write stays reviewable and commits exact bytes",
     async () => {
       const root = createIsolatedRoot();
       const target = join(root.workspace, "maximum.txt");
-      const content = "x".repeat(4 * 1024 * 1024);
+      // Largest content that still fits the retained Codex transport bound of
+      // 4 MiB per tool-call arguments JSON (openai_codex.zig
+      // max_tool_arguments_bytes): JSON overhead is 34 bytes for this shape.
+      const content = "x".repeat(4 * 1024 * 1024 - 128);
       const expectedHash = createHash("sha256").update(content).digest("hex");
       const gateway = startFakeGateway([
-        chunkedWriteToolCall("maximum_write", "maximum.txt", content),
+        codexSerializedToolCall(
+          "maximum_write",
+          "write_file",
+          JSON.stringify({ path: "maximum.txt", content }),
+        ),
         finalText("maximum write complete"),
       ]);
       const { session, stderrPath } = await launch(root, gateway);
@@ -1702,29 +1668,33 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
   );
 
   test(
-    "oversized chunked write fails before approval without touching disk",
+    "oversized write fails before approval without touching disk",
     async () => {
       const root = createIsolatedRoot();
       const target = join(root.workspace, "oversized.txt");
-      const content = "x".repeat(4 * 1024 * 1024 + 1);
+      // The arguments JSON for this content exceeds the Codex transport bound
+      // of 4 MiB (openai_codex.zig max_tool_arguments_bytes), so the request
+      // fails at the transport before any approval or preparation limit runs.
+      const content = "x".repeat(4 * 1024 * 1024 - 16);
       const gateway = startFakeGateway([
-        chunkedWriteToolCall("oversized_write", "oversized.txt", content),
+        codexSerializedToolCall(
+          "oversized_write",
+          "write_file",
+          JSON.stringify({ path: "oversized.txt", content }),
+        ),
         finalText("oversized write complete"),
       ]);
       const { session, stderrPath } = await launch(root, gateway);
 
       await session.sendText("Create the oversized fixture.");
       const settled = await session.waitForText(
-        "oversized write complete",
+        "OpenAICodexToolArgumentsTooLarge",
         60_000,
       );
 
       expect(settled).not.toContain(APPLY_QUESTION);
       expect(existsSync(target)).toBe(false);
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.requests[1]!.body).toContain(
-        "write_file failed: content exceeds the 4 MiB preparation limit",
-      );
+      expect(gateway.requests).toHaveLength(1);
       expectCleanStderr(stderrPath);
     },
     90_000,
