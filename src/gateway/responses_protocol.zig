@@ -427,6 +427,10 @@ pub const Reducer = struct {
                 .id = tool.id,
                 .name = tool.name,
                 .arguments_json = arguments,
+                .argument_integrity = types.ToolArgumentIntegrity.classifySerialized(alloc, arguments) catch |err| {
+                    alloc.free(arguments);
+                    return err;
+                },
             };
             tool.id = &.{};
             tool.name = &.{};
