@@ -330,3 +330,16 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   the pending call alongside decision-prompts x2. Pattern now reads as
   product truth (retain verbatim model action in function_call; error in
   the paired output), but the pin stays red until the owner rules.
+
+## Addendum 2026-09-07: mcp-http 38/39, ECONNRESET residue
+
+- Migrated tree verified as-is on resume (no new edits needed): 38 pass /
+  1 fail, 9s. Independently re-verified, same single failure. Stays dirty.
+- `fixed-length sse responses complete on one-shot connections`: every
+  product assertion passes (exit 0, output, methods, connection:close);
+  only the fixture-health assert fails (`read ECONNRESET`). Evidence:
+  return-on-first-final-SSE is by design (776f9c84); fixture's 5ms split
+  write races the client close; streamable_http.zig fork-identical;
+  baseline-green on CI. Morning options: (a) fixture-tolerance fix
+  (test-only — RST after full delivery is expected fallout of the
+  by-design early return), (b) quarantine as platform-flake, (c) leave red.
