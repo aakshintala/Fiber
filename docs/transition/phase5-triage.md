@@ -202,3 +202,28 @@ the exact boundary-paused pid. Also noted: the seeded login needs exact
 0700/0600 perms or the credential check fails before session create.
 Finding 3 (`show last` tie-break surfacing the corrupt source) stands as a
 product question for the session owner.
+
+## Addendum 2026-09-07: fake-codex wave 1 lands (15 files, $0.67)
+
+First delegate done: 7 files full-green, independently re-verified and
+committed (cli, file-tool-permissions, permission-errors,
+yolo-permission-mode, tui-interrupt-recovery, ask-presentation,
+tui-resume-brutal). 8 files migrated with classified residuals (left dirty,
+not committed): notifications (4/5), prompt-history (3/4),
+tui-slash-commands (6/8), tui-decision-prompts (47/49),
+tui-composer-edit-contracts (28/30), tui-performance (3/1 + 2 gated),
+tui-file-picker (15 + 1 live-skip); tui-cost unmigratable (no edits);
+tui-input-navigation harness converted, image-paste case mid-debug.
+Untouched: mcp-legacy-remote, tui-command-permissions,
+tui-full-transcript-brutal, tui-permissions, tui-resize, tui-resume,
+tui-slash-menu, tui-terminal-tool (+ mcp-http/auth gateway follow-up).
+Residual findings needing owner calls: /sound removed (Slice 17?),
+`debug replay --json` frame_count gone, /settings [All] tab, /help
+Commands 20 vs 35, cost always 0 (no Codex generation reconciliation),
+malformed ask_user_question kills turn (SyntaxError, no recovery),
+malformed-call arg echo without tool_execution_failed envelope,
+missing-HOME sessions cannot authenticate, tui-performance has no
+isolated-HOME credential story, template web-search-fake-codex itself
+red on the .data envelope. Ops note: a pre-crash orphan fiber process
+(2h49m, 8s CPU, notifications fixture) wedged later spot-checks until
+killed — always `pgrep` for strays after a delegate dies mid-run.
