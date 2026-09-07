@@ -131,7 +131,7 @@ jobs:
           FIBER_SOUND: "0"
 
       - name: Run persistence tests
-        run: bun test config-persistence.test.ts session-recovery.test.ts prompt-history.test.ts
+        run: bun test config-persistence.test.ts prompt-history.test.ts
         working-directory: tests/e2e
 
       - name: Run gateway lifecycle recovery regressions

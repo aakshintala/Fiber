@@ -124,3 +124,52 @@ without a single line of product change. Triage by signature, not by case.
 The corollary matters for scheduling: repairing the fake-gateway cluster is one
 piece of work that turns hundreds of cases green at once, and it should happen
 before anything is measured again.
+
+## Addendum 2026-09-07: held gateway-protocol files (second delegate wave)
+
+The fake-codex delegate owns the 24 mechanical files. These four are held for
+one reason each; none is mechanical.
+
+- **`vision-route-fake-gateway.test.ts`** (3057 lines, one `describe`). Every
+  case parameterizes over non-Codex providers (`zai/glm-5.2-fast`,
+  `google/gemini-2.5-flash`). Precedent `764533fa` deleted the Grok provider
+  surfaces rather than migrating them. Expect the same here: provider-specific
+  cases delete with slice evidence, any provider-agnostic route remainder
+  migrates. File rename goes in the owner rename pass.
+- **`gateway-stream-lifecycle.test.ts`** (6562 lines) and
+  **`tui-gateway-stream-lifecycle.test.ts`** (5942 lines). Built on gateway SSE
+  wire shapes (`fakeGatewaySse`, `fakeGatewaySerializedToolCall`,
+  `fakeGatewayToolCall`) plus gateway classifier decisions. The classifier was
+  already deleted as superseded in `764533fa`; SSE-wire assertions have no Codex
+  equivalent (different protocol) and delete or rewrite against
+  `codexFinalText`/`codexToolCall` stream shapes. Per-test judgment, not
+  mechanical — delegate with the delete-with-evidence rule.
+- **`tui-gateway-stream-lifecycle` must be re-run before triage.** It is one of
+  the four 900s-capped files with no results; unobserved failures cannot be
+  classified. Re-run when the machine is free of delegates.
+- **`auto-mode-reliability.test.ts`** (1816 lines). `classifierRequests`
+  assertions (lines ~225-501) test the removed classifier — delete with
+  evidence per `764533fa`. The lean reliability remainder migrates via the
+  codex `route` callback. Delegate-able once the classifier rule is explicit
+  in the brief.
+
+## Addendum 2026-09-07: terminal-host residue (2 cases, owner-classified)
+
+The terminal-host delegate left the file at 64 pass / 3 skip / 2 fail ($0.026).
+Both edits verified clean (+11/-5, matcher ratio unchanged, second fix strictly
+stricter). Residue:
+
+- **`durable authority survives reconnect` — test was wrong, fixed.** The 5th
+  foreign claim used `transport_role: "acp"`, unparseable since Slice 22 cut
+  that arm from `TransportRole` (`{interactive, headless}`), so the client dies
+  `InvalidPayload` instead of reaching `authority_denied`. Re-pointed at
+  `"headless"` per the plan.md note; passes solo (44 expects).
+- **`reopened cancellation reports open failure` — preserved as repair
+  evidence, PRODUCT SUSPECT.** Replacement host (`idleMs=300`) exits 0 via
+  idle retirement ~deterministically before the final force-close handshake
+  (`connect ENOENT`). Test is byte-identical to the fork (renames only);
+  transition touched the terminal lifecycle only with pure deletions. Either a
+  deletion changed post-failure liveness accounting, or the fork CI won a
+  300ms test-side race this machine loses. The fork-binary experiment is
+  deferred — it needs a binary swap and delegates are running. Do not weaken
+  the case; it covers retained behavior.
