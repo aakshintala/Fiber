@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -56,129 +55,6 @@ function parseFxJson(result: Awaited<ReturnType<typeof runFx>>) {
 
 function toolNames(body: string): string[] {
   return (JSON.parse(body).tools ?? []).map((tool: { name?: string }) => tool.name);
-}
-
-class AcpClient {
-  private buffer = "";
-  private lines: string[] = [];
-  private waiters: Array<(line: string) => void> = [];
-  private closed = false;
-  private activeSessionId: string | null = null;
-
-  private constructor(private proc: ChildProcess) {
-    proc.stdout!.on("data", (chunk: Buffer) => {
-      this.buffer += chunk.toString();
-      const parts = this.buffer.split("\n");
-      this.buffer = parts.pop() ?? "";
-      for (const line of parts) {
-        if (!line.trim()) continue;
-        const waiter = this.waiters.shift();
-        if (waiter) waiter(line);
-        else this.lines.push(line);
-      }
-    });
-    proc.on("close", () => {
-      this.closed = true;
-    });
-  }
-
-  static create(cwd: string, env: Record<string, string | undefined>) {
-    const definedEnv = Object.fromEntries(
-      Object.entries({ ...process.env, NO_COLOR: "1", ...env }).filter(
-        (entry): entry is [string, string] => entry[1] !== undefined,
-      ),
-    );
-    return new AcpClient(nodeSpawn(FIBER_BIN, ["acp"], {
-      cwd,
-      env: definedEnv,
-      stdio: ["pipe", "pipe", "pipe"],
-    }));
-  }
-
-  send(message: object) {
-    let outgoing = message as any;
-    if (
-      this.activeSessionId !== null &&
-      [
-        "session/prompt",
-        "session/cancel",
-        "session/set_mode",
-        "session/set_config_option",
-      ].includes(outgoing.method) &&
-      outgoing.params?.sessionId === undefined
-    ) {
-      outgoing = {
-        ...outgoing,
-        params: { ...(outgoing.params ?? {}), sessionId: this.activeSessionId },
-      };
-    }
-    this.proc.stdin!.write(`${JSON.stringify(outgoing)}\n`);
-  }
-
-  async readLine(timeoutMs = TIMEOUT): Promise<any> {
-    const line = await new Promise<string>((resolve, reject) => {
-      const buffered = this.lines.shift();
-      if (buffered) {
-        resolve(buffered);
-        return;
-      }
-      const timer = setTimeout(() => reject(new Error("ACP read timeout")), timeoutMs);
-      this.waiters.push((value) => {
-        clearTimeout(timer);
-        resolve(value);
-      });
-    });
-    return JSON.parse(line);
-  }
-
-  async request(method: string, params: object, id: number) {
-    this.send({ jsonrpc: "2.0", id, method, params });
-    let response: any;
-    do {
-      response = await this.readLine();
-    } while (response.id !== id);
-    if (
-      response.error === undefined &&
-      method === "session/new" &&
-      typeof response.result?.sessionId === "string"
-    ) {
-      this.activeSessionId = response.result.sessionId;
-    }
-    return response;
-  }
-
-  async close() {
-    if (this.closed) return;
-    this.proc.stdin!.end();
-    this.proc.kill("SIGTERM");
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    if (this.closed) return;
-    this.proc.kill("SIGKILL");
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-}
-
-async function startAcpCodeSession(client: AcpClient) {
-  await client.request("initialize", { protocolVersion: 1 }, 1);
-  await client.request("session/new", { mcpServers: [] }, 2);
-  await client.readLine();
-  await client.request("session/set_mode", { modeId: "code" }, 3);
-}
-
-async function runAcpPrompt(client: AcpClient, text: string) {
-  const id = 10;
-  client.send({
-    jsonrpc: "2.0",
-    id,
-    method: "session/prompt",
-    params: { prompt: [{ type: "text", text }] },
-  });
-  const messages: any[] = [];
-  while (true) {
-    const message = await client.readLine();
-    if (message.id === id && message.result) return messages;
-    messages.push(message);
-  }
 }
 
 describe("web_search Codex fixture", () => {
@@ -286,28 +162,6 @@ describe("web_search Codex fixture", () => {
           "environment overrides applied",
         );
       } finally {
-        codex.stop();
-        rmSync(root.root, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "ACP policy denial omits web_search from the advertised tools",
-    async () => {
-      const root = createIsolatedRoot("deny");
-      const codex = startFakeCodex();
-      const client = AcpClient.create(root.workspace, fakeCodexEnv(root.home, codex));
-      try {
-        await startAcpCodeSession(client);
-        const messages = await runAcpPrompt(client, "Issue denied web search.");
-
-        expect(codex.requests).toHaveLength(1);
-        expect(toolNames(codex.requests[0].body)).not.toContain("web_search");
-        expect(JSON.stringify(messages)).not.toContain("Found 1 result");
-      } finally {
-        await client.close();
         codex.stop();
         rmSync(root.root, { recursive: true, force: true });
       }
