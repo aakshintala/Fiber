@@ -11,7 +11,7 @@ opening measurement, first repairs, and first delegation.
   ticket02-runaway-reference cacbf093        2 orphan commits, deliberately kept
 ```
 
-One worktree, `/Users/aakshintala/work/fiber`, on `transition-main`. All Phase 5
+One worktree, `/Users/<you>/work/fiber`, on `transition-main`. All Phase 5
 work continues there; a PR to `main` opens at the end of the transition.
 **Do not push to `origin/main`.** Pushing any other branch triggers Full CI.
 

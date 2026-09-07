@@ -10,7 +10,7 @@ need is in this worktree. Read this file completely before editing anything.
   `tests/e2e/node_modules` is already installed.
 - **Do not push.** A push to any non-main branch triggers Full CI, which would
   cancel a baseline run currently in flight. Commit locally and stop.
-- **Do not touch the main checkout** at `/Users/aakshintala/work/fiber`. Another
+- **Do not touch the main checkout** at `/Users/<you>/work/fiber`. Another
   session is running the full suite there.
 
 ## The one rule that matters
