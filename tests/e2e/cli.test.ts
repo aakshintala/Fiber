@@ -29,9 +29,7 @@ import {
   codexFinalText,
   FAKE_CODEX_DEFAULT_MODEL,
   fakeCodexEnv,
-  fakeGatewayFinalText,
   startFakeCodex,
-  startFakeGateway,
   writeSeededChatGptLogin,
 } from "./tmux-helpers";
 
@@ -2790,7 +2788,7 @@ describe("cli: replay failures", () => {
 
 describe("cli: ask input validation", () => {
   test(
-    "fiber ask rejects invalid UTF-8 stdin before Gateway or session effects",
+    "fiber ask rejects invalid UTF-8 stdin before network or session effects",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-invalid-utf8-"));
       const home = join(root, "home");
@@ -2815,7 +2813,7 @@ describe("cli: ask input validation", () => {
             HOME: realpathSync(home),
             AI_GATEWAY_API_KEY: "invalid-utf8-proof-key",
             FIBER_DISABLE_KEYCHAIN: "1",
-            FX_E2E_GATEWAY_CHAT_URL: `http://127.0.0.1:${server.port}/ai/v1/chat/completions`,
+            FIBER_E2E_OPENAI_CODEX_RESPONSES_URL: `http://127.0.0.1:${server.port}/responses`,
           },
           stdin: Uint8Array.from([0xff, 0xfe, 0x80, 0x68, 0x69]),
           timeoutMs: TIMEOUT,
@@ -3510,7 +3508,7 @@ describe("cli: error handling", () => {
       const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-resume-no-save-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
-      const gateway = startFakeGateway([]);
+      const codex = startFakeCodex();
       try {
         mkdirSync(home);
         mkdirSync(workspace);
@@ -3538,9 +3536,9 @@ describe("cli: error handling", () => {
             "usage: fiber ask [--permission-mode <ask|auto|yolo>]",
           );
         }
-        expect(gateway.requests).toHaveLength(0);
+        expect(codex.requests).toHaveLength(0);
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
