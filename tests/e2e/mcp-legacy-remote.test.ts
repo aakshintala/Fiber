@@ -19,14 +19,15 @@ import {
   type LegacyStreamableVersion,
 } from "./fixtures/mcp-legacy-remote";
 import {
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
-  startFakeGateway,
+  codexFinalText,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const MODEL = "openai/gpt-5";
 const TOOL_NAME = "mcp_fixture_echo";
 const REPO_ROOT = realpathSync(join(import.meta.dirname, "..", ".."));
 const VERSIONS: LegacyStreamableVersion[] = [
@@ -38,7 +39,11 @@ const VERSIONS: LegacyStreamableVersion[] = [
 let cleanupRoot: string | null = null;
 let streamable: ReturnType<typeof startLegacyStreamableHttpFixture> | null = null;
 let legacySse: ReturnType<typeof startLegacyHttpSseFixture> | null = null;
-let gateway: ReturnType<typeof startFakeGateway> | null = null;
+type CodexResponse = string | (() => string | Promise<string>);
+
+type CodexQueue = ReturnType<typeof startFakeCodex>;
+
+let gateway: CodexQueue | null = null;
 let tui: TmuxSession | null = null;
 
 afterEach(async () => {
@@ -99,37 +104,68 @@ function createRoot(
   return { root, home, workspace, traceLogPath: join(root, "fiber-trace.log") };
 }
 
-function fixtureEnv(
+// The Codex helper serves one callback instead of a finite queue, so scripted
+// multi-step turns pop responses in order, awaiting async fixture steps.
+// MCP tool executions pause for a permission review round-trip; like the
+// gateway harness's default-clear classifier, those answer clear without
+// consuming the scripted queue, and stay out of `requests` so turn indices
+// match the gateway era.
+function startCodexQueue(responses: CodexResponse[]): CodexQueue {
+  const pending = [...responses];
+  const turnRequests: CodexQueue["requests"] = [];
+  let reviews = 0;
+  const codex = startFakeCodex({
+    route: async (body: string) => {
+      if (body.includes("<permission_review>")) {
+        reviews += 1;
+        return codexToolCall(`review_clear_${reviews}`, "permission_decision", {
+          risk: "low",
+          decision: "clear",
+          rationale: "test fixture",
+        });
+      }
+      turnRequests.push({ path: "", authorization: null, body });
+      const next = pending.shift();
+      if (!next) return codexFinalText("unexpected");
+      return typeof next === "function" ? await next() : next;
+    },
+  });
+  return { ...codex, requests: turnRequests };
+}
+
+function fixtureCodexEnv(
   root: ReturnType<typeof createRoot>,
-  activeGateway: ReturnType<typeof startFakeGateway>,
+  activeCodex: CodexQueue,
+  extra: Record<string, string | undefined> = {},
 ) {
-  return {
-    HOME: root.home,
-    AI_GATEWAY_API_KEY: "fake-mcp-legacy-key",
-    VERCEL_OIDC_TOKEN: undefined,
+  return seededFakeCodexEnv(root.home, activeCodex, {
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
     FIBER_PERMISSION_MODE: "auto",
-    FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
-    FX_E2E_GATEWAY_CHAT_URL: activeGateway.chatUrl,
-    FIBER_MODEL: MODEL,
     FIBER_TRACE_LOG: root.traceLogPath,
     FIBER_TRACE_SCOPES: "mcp",
+    ...extra,
+  });
+}
+
+// fiber ask --json wraps payloads in {ok, kind, data}: unwrap the envelope.
+function parseFxJson(result: Awaited<ReturnType<typeof runFx>>) {
+  expect(result.code).toBe(0);
+  return (JSON.parse(result.stdout.trim()) as { data: unknown }).data as {
+    output: string;
   };
 }
 
-function startToolGateway(finalText: string) {
-  return startFakeGateway([
-    fakeGatewayToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
-    fakeGatewayToolCall("call_mcp", TOOL_NAME, { text: "hello" }),
-    fakeGatewayFinalText(finalText),
-  ], {
-    models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-  });
+function startToolCodex(finalText: string) {
+  return startCodexQueue([
+    codexToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
+    codexToolCall("call_mcp", TOOL_NAME, { text: "hello" }),
+    codexFinalText(finalText),
+  ]);
 }
 
 async function runAsk(
   root: ReturnType<typeof createRoot>,
-  activeGateway: ReturnType<typeof startFakeGateway>,
+  activeGateway: CodexQueue,
   prompt: string,
   extraEnv: Record<string, string> = {},
 ) {
@@ -138,7 +174,7 @@ async function runAsk(
     {
       cwd: root.workspace,
       env: {
-        ...fixtureEnv(root, activeGateway),
+        ...fixtureCodexEnv(root, activeGateway),
         ...extraEnv,
       },
       timeoutMs: 20_000,
@@ -151,7 +187,7 @@ function preserveLegacyFailure(
   root: ReturnType<typeof createRoot>,
   result: Awaited<ReturnType<typeof runAsk>>,
   activeFixture: ReturnType<typeof startLegacyHttpSseFixture>,
-  activeGateway: ReturnType<typeof startFakeGateway>,
+  activeGateway: CodexQueue,
 ): void {
   cleanupRoot = null;
   writeFileSync(join(root.root, "fiber-stdout.log"), result.stdout);
@@ -165,7 +201,7 @@ function preserveLegacyFailure(
       discoveryGets: activeFixture.discoveryGets,
       toolsListCalls: activeFixture.toolsListCalls,
       streamCancelled: activeFixture.streamCancelled,
-      gatewayRequests: activeGateway.requests.map((request) => request.body),
+      codexRequests: activeGateway.requests.map((request) => request.body),
     }, null, 2),
   );
   throw new Error(`fiber ${label} failed; retained artifacts: ${root.root}`);
@@ -182,7 +218,7 @@ describe("version-scoped legacy MCP remote transports", () => {
         sdkDiscoveryError,
       });
       const root = createRoot(`sdk-discovery-${sdkDiscoveryError}`, "http", streamable.url);
-      gateway = startToolGateway("Stock SDK fallback complete.");
+      gateway = startToolCodex("Stock SDK fallback complete.");
 
       const result = await runAsk(root, gateway, "Use the legacy MCP tool.");
 
@@ -211,15 +247,13 @@ describe("version-scoped legacy MCP remote transports", () => {
         sdkDiscoveryError: "uninitialized",
       });
       const root = createRoot("legacy-health", "http", streamable.url);
-      gateway = startFakeGateway([fakeGatewayFinalText("unused")], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+      gateway = startCodexQueue([codexFinalText("unused")]);
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
         width: 160,
         height: 34,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, gateway),
       });
 
       await tui.waitForComposer(15_000);
@@ -241,44 +275,42 @@ describe("version-scoped legacy MCP remote transports", () => {
       features: true,
     });
     const root = createRoot("features", "http", streamable.url);
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("legacy_resource_list_one", "mcp_features", {
+    gateway = startCodexQueue([
+      codexToolCall("legacy_resource_list_one", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
       async () => {
         await Bun.sleep(200);
-        return fakeGatewayToolCall("legacy_resource_list_two", "mcp_features", {
+        return codexToolCall("legacy_resource_list_two", "mcp_features", {
           action: "resource_list",
           server: "fixture",
         });
       },
-      fakeGatewayToolCall("legacy_resource_read", "mcp_features", {
+      codexToolCall("legacy_resource_read", "mcp_features", {
         action: "resource_read",
         server: "fixture",
         uri: "legacy://alpha",
       }),
-      fakeGatewayToolCall("legacy_prompt_list", "mcp_features", {
+      codexToolCall("legacy_prompt_list", "mcp_features", {
         action: "prompt_list",
         server: "fixture",
       }),
-      fakeGatewayToolCall("legacy_prompt_get", "mcp_features", {
+      codexToolCall("legacy_prompt_get", "mcp_features", {
         action: "prompt_get",
         server: "fixture",
         prompt: "review",
         arguments: { tone: "brief" },
       }),
-      fakeGatewayToolCall("legacy_prompt_complete", "mcp_features", {
+      codexToolCall("legacy_prompt_complete", "mcp_features", {
         action: "prompt_complete",
         server: "fixture",
         prompt: "review",
         argument: "tone",
         value: "b",
       }),
-      fakeGatewayFinalText("Legacy MCP features complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Legacy MCP features complete."),
+    ]);
 
     const result = await runAsk(root, gateway, "Use the legacy MCP features.");
 
@@ -307,24 +339,22 @@ describe("version-scoped legacy MCP remote transports", () => {
       });
       const root = createRoot(`list-changed-${version}`, "http", streamable.url);
       const freshTool = "mcp_fixture_fresh";
-      gateway = startFakeGateway([
-        fakeGatewayToolCall("activate_listener", "capability_search", {
+      gateway = startCodexQueue([
+        codexToolCall("activate_listener", "capability_search", {
           query: "echo",
         }),
         async () => {
           await Bun.sleep(100);
-          return fakeGatewayToolCall("search_fresh", "capability_search", {
+          return codexToolCall("search_fresh", "capability_search", {
             query: "fresh",
           });
         },
-        fakeGatewayToolCall("select_fresh", "mcp_select_tool", {
+        codexToolCall("select_fresh", "mcp_select_tool", {
           name: freshTool,
         }),
-        fakeGatewayToolCall("call_fresh", freshTool, { text: "changed" }),
-        fakeGatewayFinalText(`${version} live refresh complete.`),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+        codexToolCall("call_fresh", freshTool, { text: "changed" }),
+        codexFinalText(`${version} live refresh complete.`),
+      ]);
 
       const result = await runAsk(root, gateway, "Use the changed legacy tool.");
 
@@ -368,24 +398,22 @@ describe("version-scoped legacy MCP remote transports", () => {
     legacySse = startLegacyHttpSseFixture({ listChanged: true });
     const root = createRoot("sse-list-changed", "sse", legacySse.url);
     const freshTool = "mcp_fixture_fresh";
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("activate_sse_reader", "capability_search", {
+    gateway = startCodexQueue([
+      codexToolCall("activate_sse_reader", "capability_search", {
         query: "echo",
       }),
       async () => {
         await Bun.sleep(100);
-        return fakeGatewayToolCall("search_fresh", "capability_search", {
+        return codexToolCall("search_fresh", "capability_search", {
           query: "fresh",
         });
       },
-      fakeGatewayToolCall("select_fresh", "mcp_select_tool", {
+      codexToolCall("select_fresh", "mcp_select_tool", {
         name: freshTool,
       }),
-      fakeGatewayToolCall("call_fresh", freshTool, { text: "changed" }),
-      fakeGatewayFinalText("HTTP+SSE live refresh complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexToolCall("call_fresh", freshTool, { text: "changed" }),
+      codexFinalText("HTTP+SSE live refresh complete."),
+    ]);
 
     const result = await runAsk(root, gateway, "Use the changed SSE tool.");
 
@@ -414,12 +442,12 @@ describe("version-scoped legacy MCP remote transports", () => {
     test(`fresh fiber ask calls Streamable HTTP ${version} with its lifecycle headers`, async () => {
       streamable = startLegacyStreamableHttpFixture(version);
       const root = createRoot(`ask-${version}`, "http", streamable.url);
-      gateway = startToolGateway(`${version} complete.`);
+      gateway = startToolCodex(`${version} complete.`);
 
       const result = await runAsk(root, gateway, `Call the ${version} fixture.`);
 
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout).output).toContain(`${version} complete.`);
+      expect(parseFxJson(result).output).toContain(`${version} complete.`);
       expect(gateway.requests[2]?.body).toContain(
         `${LEGACY_REMOTE_TOOL_RESULT}:hello`,
       );
@@ -459,7 +487,7 @@ describe("version-scoped legacy MCP remote transports", () => {
     test(`Streamable HTTP ${version} resumes by GET without replaying tools/call`, async () => {
       streamable = startLegacyStreamableHttpFixture(version, { mode: "resume" });
       const root = createRoot(`resume-${version}`, "http", streamable.url);
-      gateway = startToolGateway(`${version} resumed.`);
+      gateway = startToolCodex(`${version} resumed.`);
 
       const result = await runAsk(root, gateway, `Resume the ${version} fixture.`);
 
@@ -491,7 +519,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       session: false,
     });
     const root = createRoot("no-session", "http", streamable.url);
-    gateway = startToolGateway("No session complete.");
+    gateway = startToolCodex("No session complete.");
 
     const result = await runAsk(root, gateway, "Call the no-session fixture.");
 
@@ -509,7 +537,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       session: false,
     });
     const root = createRoot("clerk-like-sse-no-session", "http", streamable.url);
-    gateway = startToolGateway("Clerk-like search complete.");
+    gateway = startToolCodex("Clerk-like search complete.");
 
     const result = await runAsk(
       root,
@@ -532,7 +560,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       mode: "mixed_delimiters",
     });
     const root = createRoot("legacy-mixed-delimiters", "http", streamable.url, 1_000);
-    gateway = startToolGateway("Legacy mixed delimiters complete.");
+    gateway = startToolCodex("Legacy mixed delimiters complete.");
 
     const result = await runAsk(root, gateway, "Call the mixed delimiter fixture.");
 
@@ -552,7 +580,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       mode: "unsafe_resume_id",
     });
     const root = createRoot("unsafe-resume-id", "http", streamable.url);
-    gateway = startToolGateway("Unsafe resumption ID rejected.");
+    gateway = startToolCodex("Unsafe resumption ID rejected.");
 
     const result = await runAsk(root, gateway, "Call the unsafe resumption fixture.");
 
@@ -567,7 +595,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       deleteStatus: 405,
     });
     const root = createRoot("delete-unsupported", "http", streamable.url);
-    gateway = startToolGateway("DELETE unsupported complete.");
+    gateway = startToolCodex("DELETE unsupported complete.");
 
     const result = await runAsk(root, gateway, "Call the DELETE fixture.");
 
@@ -580,7 +608,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       mode: "poll",
     });
     const root = createRoot("poll", "http", streamable.url);
-    gateway = startToolGateway("Polling complete.");
+    gateway = startToolCodex("Polling complete.");
 
     const result = await runAsk(root, gateway, "Call the polling fixture.");
 
@@ -624,40 +652,38 @@ describe("version-scoped legacy MCP remote transports", () => {
             );
             chmodSync(openPath, 0o755);
           }
-          gateway = startFakeGateway([
+          gateway = startCodexQueue([
             ...(operation === "tools"
               ? [
-                  fakeGatewayToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
-                  fakeGatewayToolCall("call_mcp", TOOL_NAME, { text: "hello" }),
+                  codexToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
+                  codexToolCall("call_mcp", TOOL_NAME, { text: "hello" }),
                 ]
               : operation === "resources"
               ? [
-                  fakeGatewayToolCall("legacy_resource_list", "mcp_features", {
+                  codexToolCall("legacy_resource_list", "mcp_features", {
                     action: "resource_list",
                     server: "fixture",
                   }),
-                  fakeGatewayToolCall("legacy_resource_read", "mcp_features", {
+                  codexToolCall("legacy_resource_read", "mcp_features", {
                     action: "resource_read",
                     server: "fixture",
                     uri: "legacy://alpha",
                   }),
                 ]
               : [
-                  fakeGatewayToolCall("legacy_prompt_list", "mcp_features", {
+                  codexToolCall("legacy_prompt_list", "mcp_features", {
                     action: "prompt_list",
                     server: "fixture",
                   }),
-                  fakeGatewayToolCall("legacy_prompt_get", "mcp_features", {
+                  codexToolCall("legacy_prompt_get", "mcp_features", {
                     action: "prompt_get",
                     server: "fixture",
                     prompt: "review",
                     arguments: { tone: "brief" },
                   }),
                 ]),
-            fakeGatewayFinalText(`Legacy HTTP ${operation} URL-required complete.`),
-          ], {
-            models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-          });
+            codexFinalText(`Legacy HTTP ${operation} URL-required complete.`),
+          ]);
           const binary = join(REPO_ROOT, "zig-out", "bin", "fiber");
           tui = await TmuxSession.create({
             isolated: true,
@@ -667,7 +693,7 @@ describe("version-scoped legacy MCP remote transports", () => {
             cmd: `${JSON.stringify(binary)} ask --permission-mode auto --no-save ${JSON.stringify("Call the legacy HTTP URL-required fixture.")}`,
             remainOnExit: true,
             env: {
-              ...fixtureEnv(root, gateway),
+              ...fixtureCodexEnv(root, gateway),
               PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
               FIBER_E2E_OPEN_LOG: openLog,
             },
@@ -760,7 +786,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       elicitationUrl: "https://example.test/unsupported-version",
     });
     const root = createRoot("url-required-version-gate", "http", streamable.url);
-    gateway = startToolGateway("Legacy HTTP URL-required version gate complete.");
+    gateway = startToolCodex("Legacy HTTP URL-required version gate complete.");
 
     const result = await runAsk(root, gateway, "Call the version-gated legacy fixture.");
 
@@ -774,7 +800,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       mode: "hold_open_call",
     });
     const root = createRoot("held-open-post", "http", streamable.url, 1_000);
-    gateway = startToolGateway("Held-open POST complete.");
+    gateway = startToolCodex("Held-open POST complete.");
 
     const result = await runAsk(root, gateway, "Call the held-open fixture.");
 
@@ -806,14 +832,12 @@ describe("version-scoped legacy MCP remote transports", () => {
         bearer_token_env: "MCP_LEGACY_BEARER",
       },
     );
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
-      fakeGatewayToolCall("expired_call", TOOL_NAME, { text: "expired" }),
-      fakeGatewayToolCall("recovered_call", TOOL_NAME, { text: "recovered" }),
-      fakeGatewayFinalText("Session recovery complete."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+    gateway = startCodexQueue([
+      codexToolCall("select_mcp", "mcp_select_tool", { name: TOOL_NAME }),
+      codexToolCall("expired_call", TOOL_NAME, { text: "expired" }),
+      codexToolCall("recovered_call", TOOL_NAME, { text: "recovered" }),
+      codexFinalText("Session recovery complete."),
+    ]);
 
     const result = await runAsk(
       root,
@@ -826,7 +850,7 @@ describe("version-scoped legacy MCP remote transports", () => {
     );
 
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout).output).toContain(
+    expect(parseFxJson(result).output).toContain(
       "Session recovery complete.",
     );
     expect(gateway.requests[2]?.body).toContain("tool_execution_failed");
@@ -867,7 +891,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       invalidModernHeaderSchema: true,
     });
     const root = createRoot("legacy-schema-isolation", "http", streamable.url);
-    gateway = startToolGateway("Legacy schema isolation complete.");
+    gateway = startToolCodex("Legacy schema isolation complete.");
 
     const result = await runAsk(
       root,
@@ -893,7 +917,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       5_000,
       { oauth: { resource: streamable.url } },
     );
-    gateway = startToolGateway("Legacy authentication required.");
+    gateway = startToolCodex("Legacy authentication required.");
 
     const result = await runAsk(
       root,
@@ -920,7 +944,7 @@ describe("version-scoped legacy MCP remote transports", () => {
         bearer_token_env: "MCP_SSE_BEARER",
       },
     );
-    gateway = startToolGateway("HTTP+SSE complete.");
+    gateway = startToolCodex("HTTP+SSE complete.");
 
     const result = await runAsk(
       root,
@@ -972,7 +996,7 @@ describe("version-scoped legacy MCP remote transports", () => {
       5_000,
       { oauth: { resource: legacySse.url } },
     );
-    gateway = startToolGateway("HTTP+SSE authentication required.");
+    gateway = startToolCodex("HTTP+SSE authentication required.");
 
     const result = await runAsk(
       root,
@@ -993,7 +1017,7 @@ describe("version-scoped legacy MCP remote transports", () => {
   test("HTTP+SSE routes bare-CR events without waiting for LF", async () => {
     legacySse = startLegacyHttpSseFixture({ bareCr: true });
     const root = createRoot("sse-bare-cr", "sse", legacySse.url, 1_000);
-    gateway = startToolGateway("HTTP+SSE bare CR complete.");
+    gateway = startToolCodex("HTTP+SSE bare CR complete.");
 
     const result = await runAsk(root, gateway, "Call the bare-CR SSE fixture.");
 
@@ -1023,14 +1047,12 @@ describe("version-scoped legacy MCP remote transports", () => {
         protocolVersion: selectedVersion,
       });
       const root = createRoot(`sse-version-${label}`, "sse", legacySse.url);
-      gateway = startFakeGateway([
-        fakeGatewayToolCall("inspect_invalid_sse", "capability_search", {
+      gateway = startCodexQueue([
+        codexToolCall("inspect_invalid_sse", "capability_search", {
           query: "echo",
         }),
-        fakeGatewayFinalText("Invalid SSE version isolated."),
-      ], {
-        models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-      });
+        codexFinalText("Invalid SSE version isolated."),
+      ]);
 
       const result = await runAsk(
         root,
@@ -1060,14 +1082,12 @@ describe("version-scoped legacy MCP remote transports", () => {
       "sse",
       legacySse.url,
     );
-    gateway = startFakeGateway([
-      fakeGatewayToolCall("inspect_malformed_sse", "capability_search", {
+    gateway = startCodexQueue([
+      codexToolCall("inspect_malformed_sse", "capability_search", {
         query: "echo",
       }),
-      fakeGatewayFinalText("Malformed SSE startup isolated."),
-    ], {
-      models: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-    });
+      codexFinalText("Malformed SSE startup isolated."),
+    ]);
 
     const result = await runAsk(
       root,
@@ -1098,13 +1118,13 @@ describe("version-scoped legacy MCP remote transports", () => {
           streamable.url,
           30_000,
         );
-        gateway = startToolGateway("Cancelled legacy HTTP complete.");
+        gateway = startToolCodex("Cancelled legacy HTTP complete.");
         tui = await TmuxSession.create({
           isolated: true,
           cwd: root.workspace,
           width: 100,
           height: 30,
-          env: fixtureEnv(root, gateway),
+          env: fixtureCodexEnv(root, gateway),
         });
 
         await tui.waitForComposer(15_000);
@@ -1163,13 +1183,13 @@ describe("version-scoped legacy MCP remote transports", () => {
     async () => {
       legacySse = startLegacyHttpSseFixture({ stallCall: true });
       const root = createRoot("cancel-sse", "sse", legacySse.url, 30_000);
-      gateway = startToolGateway("Cancelled HTTP+SSE complete.");
+      gateway = startToolCodex("Cancelled HTTP+SSE complete.");
       tui = await TmuxSession.create({
         isolated: true,
         cwd: root.workspace,
         width: 100,
         height: 30,
-        env: fixtureEnv(root, gateway),
+        env: fixtureCodexEnv(root, gateway),
       });
 
       await tui.waitForComposer(15_000);
