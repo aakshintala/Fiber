@@ -447,3 +447,17 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   are both pinned by unit tests (command_specs.zig:1382-1383) and render in
   the Commands-20 catalog. The handoff removed-list is stale on both; it
   remains correct on standalone `/reset` (only `/permissions reset` survives).
+
+## Addendum 2026-09-08: gateway file-backend test deleted (CI Linux finding)
+
+- Full CI on transition-main failed only on E2E linux shard 1/4 (both
+  archs): `cli: stored key file backend` expected
+  `auth: "stored API key (profile file)"`, got `"missing"`. Verified at
+  src: no `api-key` file backend exists (only dummy unit-test tokens) and
+  the expected strings survive nowhere outside the test — the Vercel
+  gateway file backend was deleted with the gateway seam. Case deleted
+  with that evidence (44-line test-only deletion). It was skipIf darwin,
+  which is why the macOS census never saw it.
+- Gap note (not a task): nothing pins loosened-perm refusal for the
+  Codex login file (chatgpt-auth.json 0700/0600). tui-auth-source-selection
+  covers login/logout/refresh flows only.
