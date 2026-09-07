@@ -438,3 +438,12 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   in the Commands-20 catalog (also pinned by tui-slash-menu.test.ts:1457,
   passing live). The removed entry was presumably the CLI-era `fiber trace`
   surface, not the slash command. Do not delete /trace cases.
+
+## Addendum 2026-09-08: gotcha-list correction extended (/undo also live)
+
+- tui-resume delegate live-probed `/undo` → `Undo: Nothing to undo`
+  (not `Unknown command`). Confirmed at src: `/undo` ("undo the latest
+  tracked file operation") and `/trace` ("copy a private diagnostic trace")
+  are both pinned by unit tests (command_specs.zig:1382-1383) and render in
+  the Commands-20 catalog. The handoff removed-list is stale on both; it
+  remains correct on standalone `/reset` (only `/permissions reset` survives).
