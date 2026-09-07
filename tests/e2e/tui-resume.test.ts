@@ -18,16 +18,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewaySerializedToolCall,
-  fakeGatewaySse,
-  fakeGatewayToolCall,
+  chatGptAccessToken,
+  codexFinalText,
+  codexSerializedToolCall,
+  codexToolCall,
+  fakeCodexModelsPayload,
+  FAKE_CODEX_DEFAULT_MODEL,
   hasEmptyComposer,
   isEmptyComposerLine,
   isVolatileTokenStatusRow,
   paneExitMatches,
-  startFakeGateway,
+  seededFakeCodexEnv,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -42,8 +43,8 @@ function fakeShellRun(
   callId: string,
   command: string,
   options: Record<string, unknown> = {},
-): Response {
-  return fakeGatewayToolCall(callId, "shell", {
+): string {
+  return codexToolCall(callId, "shell", {
     request: {
       action: "run",
       command,
@@ -65,6 +66,10 @@ function sessionIdFromHome(home: string): string {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function parseReplayData(stdout: string): Record<string, number> {
+  return JSON.parse(stdout).data as Record<string, number>;
 }
 
 function startUpgradeServer(
@@ -111,19 +116,184 @@ exec ${shellQuote(FIBER_BIN)} "$@"
   };
 }
 
-function gatewayEnv(
-  home: string,
-  gateway: ReturnType<typeof startFakeGateway>,
+type CodexQueueResponse =
+  | string
+  | Response
+  | ((body: string) => string | Response | Promise<string | Response>);
+
+type CodexQueueRequest = { body: string; headers: Headers };
+
+// File-local fake-Codex server. startFakeCodex only serves whole SSE strings,
+// but this suite paces delivery with held streams, so the route also passes
+// Response streams through. Protocol endpoints mirror startFakeCodex.
+function serveCodexQueue(
+  next: (body: string) => string | Response | Promise<string | Response>,
+  options: { models?: Array<{ id: string }> } = {},
 ) {
+  const accountId = "acct_e2e";
+  const refreshedAccessToken = chatGptAccessToken(accountId, "fresh");
+  const requests: CodexQueueRequest[] = [];
+  const classifierRequests: CodexQueueRequest[] = [];
+  const modelRequests: Array<{ path: string; authorization: string | null; url: string }> = [];
+  const tokenRequests: Array<{ path: string; authorization: string | null; body: string }> = [];
+  const extraModels = (options.models ?? []).map((model) => model.id);
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    idleTimeout: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/models") {
+        modelRequests.push({
+          path: url.pathname,
+          authorization: req.headers.get("authorization"),
+          url: req.url,
+        });
+        return Response.json(fakeCodexModelsPayload(extraModels));
+      }
+      if (url.pathname === "/token") {
+        tokenRequests.push({
+          path: url.pathname,
+          authorization: req.headers.get("authorization"),
+          body: await req.text(),
+        });
+        return Response.json({
+          access_token: refreshedAccessToken,
+          refresh_token: "chatgpt-refresh-next",
+          expires_in: 3600,
+        });
+      }
+      const body = await req.text();
+      const headers = new Headers(req.headers);
+      if (body.includes("<permission_review>")) {
+        classifierRequests.push({ body, headers });
+        return new Response(
+          codexToolCall(
+            `review_decision_${classifierRequests.length}`,
+            "permission_decision",
+            { risk: "low", decision: "clear", rationale: "test fixture" },
+          ),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      requests.push({ body, headers });
+      const resolved = await next(body);
+      if (typeof resolved === "string") {
+        return new Response(resolved, {
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return resolved;
+    },
+  });
+  const base = `http://127.0.0.1:${server.port}`;
   return {
-    HOME: home,
-    AI_GATEWAY_API_KEY: "fake-tui-resume-key",
-    VERCEL_OIDC_TOKEN: undefined,
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FIBER_MODEL: FAKE_GATEWAY_MODEL,
-    NO_COLOR: "1",
+    requests,
+    classifierRequests,
+    modelRequests,
+    tokenRequests,
+    responsesUrl: `${base}/responses`,
+    modelsUrl: `${base}/models`,
+    tokenUrl: `${base}/token`,
+    stop() {
+      server.stop(true);
+    },
   };
+}
+
+function startCodexQueue(
+  responses: CodexQueueResponse[],
+  options: { models?: Array<{ id: string }> } = {},
+) {
+  return serveCodexQueue(async (body) => {
+    const queued = responses.shift();
+    if (queued === undefined) return new Response("unexpected request", { status: 500 });
+    return typeof queued === "function" ? await queued(body) : queued;
+  }, options);
+}
+
+type CodexStreamCtx = { indexByCallId: Map<string, number>; nextIndex: number };
+
+function createCodexStreamCtx(): CodexStreamCtx {
+  return { indexByCallId: new Map(), nextIndex: 0 };
+}
+
+function codexIndexForCall(ctx: CodexStreamCtx, id: string): number {
+  const existing = ctx.indexByCallId.get(id);
+  if (existing !== undefined) return existing;
+  const index = ctx.nextIndex;
+  ctx.nextIndex += 1;
+  ctx.indexByCallId.set(id, index);
+  return index;
+}
+
+// Translate legacy event fixtures to Codex Responses SSE while preserving
+// event order and pacing.
+function codexEventLines(event: Record<string, unknown>, ctx: CodexStreamCtx): string[] {
+  const data = (payload: unknown) => `data: ${JSON.stringify(payload)}\n\n`;
+  switch (event.type) {
+    case "text-delta":
+      return [data({ type: "response.output_text.delta", delta: event.delta })];
+    case "text-start":
+    case "text-end":
+    case "reasoning-end":
+    case "tool-input-end":
+      return [];
+    case "reasoning-start":
+      return [data({ type: "response.output_item.added", output_index: 0, item: { type: "reasoning" } })];
+    case "reasoning-delta":
+      return [data({ type: "response.reasoning_summary_text.delta", delta: event.delta })];
+    case "tool-input-start": {
+      const index = codexIndexForCall(ctx, event.id as string);
+      return [data({
+        type: "response.output_item.added",
+        output_index: index,
+        item: { type: "function_call", call_id: event.id, name: event.toolName },
+      })];
+    }
+    case "tool-input-delta": {
+      const index = codexIndexForCall(ctx, event.id as string);
+      return [data({ type: "response.function_call_arguments.delta", output_index: index, delta: event.delta })];
+    }
+    case "tool-call": {
+      const id = event.toolCallId as string;
+      const lines: string[] = [];
+      if (!ctx.indexByCallId.has(id)) {
+        const index = codexIndexForCall(ctx, id);
+        lines.push(data({
+          type: "response.output_item.added",
+          output_index: index,
+          item: { type: "function_call", call_id: id, name: event.toolName },
+        }));
+      }
+      const index = ctx.indexByCallId.get(id)!;
+      lines.push(data({
+        type: "response.function_call_arguments.done",
+        output_index: index,
+        arguments: typeof event.input === "string" ? event.input : JSON.stringify(event.input),
+      }));
+      return lines;
+    }
+    case "finish": {
+      const usage = (event.usage ?? {}) as { inputTokens?: { total?: number }; outputTokens?: { total?: number } };
+      return [data({
+        type: "response.completed",
+        response: {
+          status: "completed",
+          usage: { input_tokens: usage.inputTokens?.total ?? 4, output_tokens: usage.outputTokens?.total ?? 2 },
+        },
+      })];
+    }
+    case "error":
+      return [data({ type: "response.failed", response: { status: "failed", error: event.error } })];
+    default:
+      return [];
+  }
+}
+
+function codexSse(events: Record<string, unknown>[]): string {
+  const ctx = createCodexStreamCtx();
+  return events.flatMap((event) => codexEventLines(event, ctx)).join("");
 }
 
 async function waitForScrollback(
@@ -185,18 +355,15 @@ type HoldState = {
   cancelled: boolean;
 };
 
-function heldGatewayResponse(state: HoldState): Response {
+function heldCodexResponse(state: HoldState): Response {
   const encoder = new TextEncoder();
   let timer: ReturnType<typeof setInterval> | undefined;
   return new Response(
     new ReadableStream<Uint8Array>({
       start(controller) {
         state.started = true;
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({ type: "text-delta", id: "held", delta: "SESSION_PICKER_ACTIVE_STREAM" })}\n\n`,
-          ),
-        );
+        const initial = codexFinalText("SESSION_PICKER_ACTIVE_STREAM").split("\n\n")[0]! + "\n\n";
+        controller.enqueue(encoder.encode(initial));
         timer = setInterval(() => {
           controller.enqueue(encoder.encode(": keep-alive\n\n"));
         }, 100);
@@ -216,26 +383,14 @@ function streamedTextResponse(text: string): Response {
     new ReadableStream<Uint8Array>({
       async start(controller) {
         for (let offset = 0; offset < text.length; offset += 24) {
-          const delta = text.slice(offset, offset + 24);
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "text-delta", id: "answer_1", delta })}\n\n`,
-            ),
-          );
+          controller.enqueue(encoder.encode(codexEventLines({
+            type: "text-delta",
+            delta: text.slice(offset, offset + 24),
+          }, createCodexStreamCtx())[0]!));
           await Bun.sleep(10);
         }
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              type: "finish",
-              finishReason: { unified: "stop", raw: "stop" },
-              usage: {
-                inputTokens: { total: 3 },
-                outputTokens: { total: 5 },
-              },
-            })}\n\ndata: [DONE]\n\n`,
-          ),
-        );
+        const completion = codexFinalText("").split("\n\n")[1]! + "\n\n";
+        controller.enqueue(encoder.encode(completion));
         controller.close();
       },
     }),
@@ -770,24 +925,24 @@ test.skipIf(!tmuxAvailable())(
 
     const prompt = "Persist this fiber ask metadata.";
     const answer = "FIBER_ASK_METADATA_COMPLETE";
-    const askGateway = startFakeGateway([fakeGatewayFinalText(answer)]);
+    const askGateway = startCodexQueue([codexFinalText(answer)]);
     let active: TmuxSession | null = null;
     try {
       const ask = await runFx(["ask", "--json", "--permission-mode", "auto", prompt], {
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, askGateway),
+        env: seededFakeCodexEnv(home, askGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         timeoutMs: TIMEOUT,
       });
       expect(ask.code).toBe(0);
       expect(ask.stderr).toBe("");
-      expect(JSON.parse(ask.stdout).session_id).toBeTruthy();
+      expect(JSON.parse(ask.stdout).data.session_id).toBeTruthy();
 
-      const resumeGateway = startFakeGateway([]);
+      const resumeGateway = startCodexQueue([]);
       try {
         active = await TmuxSession.create({
-          cmd: `${FIBER_BIN} --resume-last`,
+          cmd: `${FIBER_BIN} continue`,
           cwd: realpathSync(workspace),
-          env: gatewayEnv(home, resumeGateway),
+          env: seededFakeCodexEnv(home, resumeGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           stderrPath,
           width: 100,
           height: 32,
@@ -799,7 +954,7 @@ test.skipIf(!tmuxAvailable())(
           (pane) =>
             pane.includes("Full detail · ctrl o close") &&
             pane.includes("UTC · Usage") &&
-            /\(↑\d+ ↓5\)/.test(pane),
+            /\(↑\d+ ↓2\)/.test(pane),
           TIMEOUT,
         );
         expect(full).toContain(prompt);
@@ -834,14 +989,14 @@ test.skipIf(!tmuxAvailable())(
     writeFileSync(exactStderrPath, "");
     writeFileSync(lastStderrPath, "");
 
-    const seedGateway = startFakeGateway([fakeGatewayFinalText(marker)]);
-    const resumeGateway = startFakeGateway([]);
+    const seedGateway = startCodexQueue([codexFinalText(marker)]);
+    const resumeGateway = startCodexQueue([]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, seedGateway),
+        env: seededFakeCodexEnv(home, seedGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: seedStderrPath,
         width: 100,
         height: 30,
@@ -869,7 +1024,7 @@ test.skipIf(!tmuxAvailable())(
         active = await TmuxSession.create({
           cmd: resumeCase.command,
           cwd: realpathSync(workspace),
-          env: gatewayEnv(home, resumeGateway),
+          env: seededFakeCodexEnv(home, resumeGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           stderrPath: resumeCase.stderrPath,
           width: 100,
           height: 30,
@@ -961,18 +1116,18 @@ printf '${trailingMarker}   '
     );
     chmodSync(scriptPath, 0o755);
 
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun("terminal-safety-command", "./command-output-controls.sh"),
-      fakeGatewayFinalText(doneMarker),
+      codexFinalText(doneMarker),
     ]);
     let active: TmuxSession | null = null;
-    let resumedGateway: ReturnType<typeof startFakeGateway> | null = null;
+    let resumedGateway: ReturnType<typeof startCodexQueue> | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, gateway),
+          ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -1078,11 +1233,11 @@ printf '${trailingMarker}   '
       await active.kill();
       active = null;
 
-      resumedGateway = startFakeGateway([]);
+      resumedGateway = startCodexQueue([]);
       active = await TmuxSession.create({
-        cmd: `${FIBER_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} continue`,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, resumedGateway),
+        env: seededFakeCodexEnv(home, resumedGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: resumedStderrPath,
         width: 72,
         height: 24,
@@ -1148,16 +1303,16 @@ test.skipIf(!tmuxAvailable())(
     const command =
       "awk 'BEGIN { for (i = 1; i <= 100; i++) printf \"FULL_CTRL_O_LINE_%04d\\n\", i }'" +
       ` # ${"argument-padding-".repeat(8)}${commandArgumentTail}`;
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun("ctrl-o-command", command),
-      fakeGatewayFinalText("FULL_CTRL_O_DONE"),
+      codexFinalText("FULL_CTRL_O_DONE"),
     ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, gateway), FIBER_RECORD: tapePath },
+        env: { ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }), FIBER_RECORD: tapePath },
         stderrPath,
         width: 100,
         height: 32,
@@ -1288,9 +1443,9 @@ test.skipIf(!tmuxAvailable())(
       `printf "CAP_STDERR_%05d_%s\\n", i, pad > "/dev/stderr" } }'; ` +
       `printf '${stdoutTail}\\n'; sleep 0.05; printf '${stderrTail}\\n' >&2`;
     const finalMarker = "CAP_CROSSING_DONE";
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun("cap-crossing-command", command),
-      fakeGatewayFinalText(finalMarker),
+      codexFinalText(finalMarker),
     ]);
     let active: TmuxSession | null = null;
     let passed = false;
@@ -1299,7 +1454,7 @@ test.skipIf(!tmuxAvailable())(
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, gateway),
+          ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -1338,7 +1493,7 @@ test.skipIf(!tmuxAvailable())(
       });
       expect(replay.code).toBe(0);
       expect(replay.stderr).toBe("");
-      const replayJson = JSON.parse(replay.stdout);
+      const replayJson = parseReplayData(replay.stdout);
       expect(replayJson.frame_count).toBeGreaterThan(0);
       expect(replayJson.stdout_bytes).toBeGreaterThan(0);
       expect(readFileSync(tracePath, "utf8")).toContain(
@@ -1415,10 +1570,10 @@ printf '${tailMarker}\\n'
         ? historicalSentinel
         : `ACTIVE_OVERFLOW_HISTORY_${String(index + 1).padStart(3, "0")}`
     );
-    const gateway = startFakeGateway([
-      fakeGatewayFinalText(historicalRows.join("\n")),
+    const gateway = startCodexQueue([
+      codexFinalText(historicalRows.join("\n")),
       fakeShellRun("active-overflow-command", "./active-overflow.sh"),
-      fakeGatewayFinalText(doneMarker),
+      codexFinalText(doneMarker),
     ]);
     let active: TmuxSession | null = null;
     let passed = false;
@@ -1427,7 +1582,7 @@ printf '${tailMarker}\\n'
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, gateway),
+          ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES:
             "agent,core,tool,worker,render,transcript,command_output,transcript_retention,session",
@@ -1612,10 +1767,10 @@ while :; do :; done
     let releaseNextResponse: (() => void) | null = null;
     const nextResponse = new Promise<Response>((resolve) => {
       releaseNextResponse = () => resolve(
-        fakeGatewayFinalText(`${nextMarker}\n${"N".repeat(8 * 1024)}`),
+        codexFinalText(`${nextMarker}\n${"N".repeat(8 * 1024)}`),
       );
     });
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun(callId, "./cancel-cap.sh"),
       () => nextResponse,
     ]);
@@ -1626,7 +1781,7 @@ while :; do :; done
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, gateway),
+          ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -1727,20 +1882,16 @@ while :; do :; done
       );
 
       const followRequest = JSON.parse(gateway.requests[1]!.body) as {
-        prompt: Array<{ role: string; content: unknown }>;
+        input: Array<Record<string, unknown>>;
       };
-      const parts = followRequest.prompt.flatMap((message) =>
-        Array.isArray(message.content) ? message.content : []
-      ) as Array<Record<string, unknown>>;
-      const calls = parts.filter((part) =>
-        part.type === "tool-call" &&
-        part.toolCallId === callId &&
-        part.toolName === "shell"
+      const calls = followRequest.input.filter((part) =>
+        part.type === "function_call" &&
+        part.call_id === callId &&
+        part.name === "shell"
       );
-      const results = parts.filter((part) =>
-        part.type === "tool-result" &&
-        part.toolCallId === callId &&
-        part.toolName === "shell"
+      const results = followRequest.input.filter((part) =>
+        part.type === "function_call_output" &&
+        part.call_id === callId
       );
       expect(calls).toHaveLength(1);
       expect(results).toHaveLength(1);
@@ -1773,8 +1924,8 @@ while :; do :; done
       });
       expect(replayJson.code).toBe(0);
       expect(replayJson.stderr).toBe("");
-      expect(JSON.parse(replayJson.stdout).frame_count).toBeGreaterThan(0);
-
+      expect(parseReplayData(replayJson.stdout).frame_count).toBeGreaterThan(0);
+ 
       const trace = readFileSync(tracePath, "utf8");
       const interruptIndex = trace.indexOf("event=interrupt_persisted");
       expect(trace).toContain("route=approved_shell");
@@ -1851,7 +2002,7 @@ while :; do :; done
     );
     chmodSync(scriptPath, 0o755);
 
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun("cancelled-below-cap-command", "./cancel-below.sh"),
     ]);
     let active: TmuxSession | null = null;
@@ -1861,7 +2012,7 @@ while :; do :; done
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, gateway),
+          ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -2005,9 +2156,9 @@ test.skipIf(!tmuxAvailable())(
       const transcriptRegion = scrollback.slice(statusIndex, doneIndex);
       expect(countOccurrences(transcriptRegion, outputLine)).toBe(0);
     };
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun("order-repro-pwd", "pwd"),
-      fakeGatewayFinalText(finalMarker),
+      codexFinalText(finalMarker),
     ]);
     let active: TmuxSession | null = null;
     let passed = false;
@@ -2016,7 +2167,7 @@ test.skipIf(!tmuxAvailable())(
         cmd: FIBER_BIN,
         cwd: workspace,
         env: {
-          ...gatewayEnv(home, gateway),
+          ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -2061,7 +2212,7 @@ test.skipIf(!tmuxAvailable())(
       writeFileSync(replayJsonPath, replay.stdout);
       expect(replay.code).toBe(0);
       expect(replay.stderr).toBe("");
-      const replayJson = JSON.parse(replay.stdout);
+      const replayJson = parseReplayData(replay.stdout);
       expect(replayJson.frame_count).toBeGreaterThan(0);
       expect(replayJson.stdout_bytes).toBeGreaterThan(0);
       expect(readFileSync(stderrPath, "utf8")).not.toContain("AnsiBandOverflow");
@@ -2117,7 +2268,7 @@ test.skipIf(!tmuxAvailable())(
     try {
       for (const stty of terminalModes) {
         writeFileSync(stderrPath, "");
-        const gateway = startFakeGateway([
+        const gateway = startCodexQueue([
           () => streamedTextResponse(response),
         ]);
         const launch = `${stty}; exec ${shellQuote(FIBER_BIN)}`;
@@ -2126,7 +2277,7 @@ test.skipIf(!tmuxAvailable())(
           active = await TmuxSession.create({
             cmd: `zsh -lc ${shellQuote(launch)}`,
             cwd: realpathSync(workspace),
-            env: gatewayEnv(home, gateway),
+            env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
             stderrPath,
             width: 48,
             height: 12,
@@ -2251,13 +2402,13 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(stderrPath, "");
 
-    const gateway = startFakeGateway([fakeGatewayFinalText(saved)]);
+    const gateway = startCodexQueue([codexFinalText(saved)]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 30,
@@ -2324,16 +2475,16 @@ test.skipIf(!tmuxAvailable())(
     );
     writeFileSync(stderrPath, "");
 
-    const gateway = startFakeGateway([
-      fakeGatewayFinalText(firstDone),
-      fakeGatewayFinalText(followUpDone),
+    const gateway = startCodexQueue([
+      codexFinalText(firstDone),
+      codexFinalText(followUpDone),
     ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -2358,11 +2509,11 @@ test.skipIf(!tmuxAvailable())(
       await active.sendKeys("Enter");
       await active.waitForText(followUpDone, TIMEOUT);
       const followUpBody = gateway.requests[1]?.body ?? "";
-      const messages = JSON.parse(followUpBody).prompt as Array<{
+      const messages = JSON.parse(followUpBody).input as Array<{
         role: string;
         content: Array<{ type: string; text?: string }>;
       }>;
-      const finalUser = messages[messages.length - 1];
+      const finalUser = messages.filter((message) => message.role === "user").at(-1);
       expect(finalUser?.role).toBe("user");
       expect(finalUser?.content[0]?.text).toBe(fullViewDraft);
       const afterSubmit = await active.capturePane();
@@ -2408,7 +2559,7 @@ test.skipIf(!tmuxAvailable())(
     writeFileSync(stderrPath, "");
 
     const command = `sh -c 'while :; do printf "${streamMarker}\\n"; sleep 0.1; done'`;
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun("ctrl-o-cancel-command", command),
     ]);
     let active: TmuxSession | null = null;
@@ -2416,7 +2567,7 @@ test.skipIf(!tmuxAvailable())(
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, gateway), FIBER_RECORD: tapePath },
+        env: { ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }), FIBER_RECORD: tapePath },
         stderrPath,
         width: 100,
         height: 32,
@@ -2474,16 +2625,16 @@ test.skipIf(!tmuxAvailable())(
     const firstMarker = "CTRL_O_LIVE_HEAD";
     const tailMarker = "CTRL_O_LIVE_TAIL";
     const command = "sh -c 'printf \"CTRL_O_LIVE_HEAD\\n\"; sleep 1; printf \"CTRL_O_LIVE_TAIL\\n\"'";
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun("ctrl-o-live-command", command),
-      fakeGatewayFinalText("CTRL_O_LIVE_DONE"),
+      codexFinalText("CTRL_O_LIVE_DONE"),
     ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -2540,9 +2691,9 @@ test.skipIf(!tmuxAvailable())(
     const lineMarker = "STREAM_SCROLL_INLINE";
     const doneMarker = "STREAM_SCROLL_INLINE_DONE";
     const command = `zsh -lc 'for i in {1..80}; do printf "${lineMarker} %03d\\n" "$i"; done; sleep 2; for i in {81..160}; do printf "${lineMarker} %03d\\n" "$i"; done; : > ${shellQuote(phaseTwoComplete)}'`;
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun("stream-scroll-handoff", command),
-      fakeGatewayFinalText(doneMarker),
+      codexFinalText(doneMarker),
     ]);
     let active: TmuxSession | null = null;
     try {
@@ -2550,7 +2701,7 @@ test.skipIf(!tmuxAvailable())(
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, gateway),
+          ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
           FIBER_TRACE_LOG: tracePath,
@@ -2627,7 +2778,7 @@ test.skipIf(!tmuxAvailable())(
         if (/^│  \d+ output lines$/.test(row)) return "<output count>";
         if (/^│  \d+ more lines · → to expand$/.test(row)) return "<fold count>";
         if (row.includes("enter queue ·")) return "<status line>";
-        if (/^(?:auto · )?gpt-5$/.test(row)) return "<status line>";
+        if (/^auto · gpt-5\.4-mini$/.test(row)) return "<status line>";
         return row;
       });
       const normalizedBefore = normalizeLiveMetadata(readingBefore);
@@ -2709,19 +2860,19 @@ test.skipIf(!tmuxAvailable())(
     const lineCount = 200;
     const commandMarker = "CTRL_O_NAV_REPEAT";
     const doneMarker = "CTRL_O_NAVIGATION_DONE";
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun(
         "ctrl-o-navigation-command",
         `zsh -lc 'for i in {1..100}; do printf "${commandMarker} %05d\\n" "$i"; done; sleep 2; for i in {101..${lineCount}}; do printf "${commandMarker} %05d\\n" "$i"; done'`,
       ),
-      fakeGatewayFinalText(doneMarker),
+      codexFinalText(doneMarker),
     ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -2788,12 +2939,12 @@ test.skipIf(!tmuxAvailable())(
     const commandMarker = "CTRL_O_QUESTION_COMMAND_RUNNING";
     const questionMarker = "CTRL_O_QUESTION_PROMPT";
     const doneMarker = "CTRL_O_QUESTION_DONE";
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun(
         "ctrl-o-question-command",
         `sh -c 'printf "${commandMarker}\\n"; sleep 1'`,
       ),
-      fakeGatewayToolCall("ctrl-o-question", "ask_user_question", {
+      codexToolCall("ctrl-o-question", "ask_user_question", {
         questions: [
           {
             question: questionMarker,
@@ -2804,14 +2955,14 @@ test.skipIf(!tmuxAvailable())(
           },
         ],
       }),
-      fakeGatewayFinalText(doneMarker),
+      codexFinalText(doneMarker),
     ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, gateway), FIBER_RECORD: tapePath },
+        env: { ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }), FIBER_RECORD: tapePath },
         stderrPath,
         width: 100,
         height: 32,
@@ -2868,8 +3019,8 @@ test.skipIf(!tmuxAvailable())(
     const outputMarker = "CTRL_O_SPACING_OUTPUT";
     const afterMarker = "CTRL_O_SPACING_AFTER";
     const command = `printf '${outputMarker}\\n'`;
-    const gateway = startFakeGateway([
-      fakeGatewaySerializedToolCall(
+    const gateway = startCodexQueue([
+      codexSerializedToolCall(
         "ctrl-o-spacing-command",
         "shell",
         JSON.stringify({
@@ -2882,14 +3033,14 @@ test.skipIf(!tmuxAvailable())(
         }),
         beforeMarker,
       ),
-      fakeGatewayFinalText(afterMarker),
+      codexFinalText(afterMarker),
     ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 40,
@@ -2998,13 +3149,13 @@ test.skipIf(!tmuxAvailable())(
       "",
       doneMarker,
     ].join("\n\n");
-    const gateway = startFakeGateway([fakeGatewayFinalText(markdown)]);
+    const gateway = startCodexQueue([codexFinalText(markdown)]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 12,
@@ -3057,16 +3208,16 @@ test.skipIf(!tmuxAvailable())(
     );
     writeFileSync(stderrPath, "");
 
-    const gateway = startFakeGateway([
-      fakeGatewayToolCall("ctrl-o-read", "read_file", { path: "README.md" }),
-      fakeGatewayFinalText("CTRL_O_READ_DONE"),
+    const gateway = startCodexQueue([
+      codexToolCall("ctrl-o-read", "read_file", { path: "README.md" }),
+      codexFinalText("CTRL_O_READ_DONE"),
     ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -3116,20 +3267,20 @@ test.skipIf(!tmuxAvailable())(
     writeFileSync(join(workspace, "LIST_FULL_DETAIL_MARKER"), "");
     writeFileSync(stderrPath, "");
 
-    const gateway = startFakeGateway([
-      fakeGatewaySse([
+    const gateway = startCodexQueue([
+      codexSse([
         { type: "tool-call", toolCallId: "parallel-glob", toolName: "glob_files", input: { pattern: "*" } },
         { type: "tool-call", toolCallId: "parallel-read", toolName: "read_file", input: { path: "README.md" } },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
-      fakeGatewayFinalText("PARALLEL_DETAIL_DONE"),
+      codexFinalText("PARALLEL_DETAIL_DONE"),
     ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -3194,10 +3345,10 @@ test.skipIf(!tmuxAvailable())(
       { length: 80 },
       () => "The denied write remains visible while this streamed assistant response advances the compact transcript window.",
     ).join(" ")} CTRL_O_HANDOFF_DONE`;
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun("ctrl-o-handoff-prior", priorCommand),
-      fakeGatewayFinalText(priorSummary),
-      fakeGatewaySse([
+      codexFinalText(priorSummary),
+      codexSse([
         {
           type: "tool-call",
           toolCallId: "ctrl-o-handoff-command",
@@ -3222,7 +3373,7 @@ test.skipIf(!tmuxAvailable())(
         },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
-      fakeGatewayFinalText(finalReply),
+      codexFinalText(finalReply),
     ]);
     let active: TmuxSession | null = null;
     let passed = false;
@@ -3230,7 +3381,7 @@ test.skipIf(!tmuxAvailable())(
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, gateway), FIBER_RECORD: tapePath },
+        env: { ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }), FIBER_RECORD: tapePath },
         stderrPath,
         width: 100,
         height: 30,
@@ -3318,7 +3469,7 @@ test.skipIf(!tmuxAvailable())(
     );
     writeFileSync(stderrPath, "");
 
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       async () => {
         await Bun.sleep(300);
         return fakeShellRun(
@@ -3326,14 +3477,14 @@ test.skipIf(!tmuxAvailable())(
           "sh -c 'printf \"CTRL_O_SHELL_APPROVAL_RAN\\n\"'",
         );
       },
-      fakeGatewayFinalText("CTRL_O_SHELL_APPROVAL_DONE"),
+      codexFinalText("CTRL_O_SHELL_APPROVAL_DONE"),
     ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -3422,25 +3573,24 @@ test.skipIf(!tmuxAvailable())(
       return new Response(
         new ReadableStream<Uint8Array>({
           async start(controller) {
+            const ctx = createCodexStreamCtx();
             for (const chunk of chunks) {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "text-delta", id: "answer_1", delta: chunk })}\n\n`));
+              controller.enqueue(encoder.encode(codexEventLines({ type: "text-delta", delta: chunk }, ctx)[0]!));
               await Bun.sleep(10);
             }
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            controller.enqueue(encoder.encode(codexEventLines({
               type: "finish",
-              finishReason: { unified: "stop", raw: "stop" },
               usage: { inputTokens: { total: 3 }, outputTokens: { total: 5 } },
-            })}\n\n`));
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            }, ctx)[0]!));
             controller.close();
           },
         }),
         { headers: { "content-type": "text/event-stream" } },
       );
     };
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       streamedMarkdown,
-      fakeGatewaySse([
+      codexSse([
         {
           type: "tool-call",
           toolCallId: "ctrl-o-handoff-first",
@@ -3469,14 +3619,14 @@ test.skipIf(!tmuxAvailable())(
         },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
-      fakeGatewayFinalText("CTRL_O_HANDOFF_SCROLLBACK_DONE"),
+      codexFinalText("CTRL_O_HANDOFF_SCROLLBACK_DONE"),
     ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 30,
@@ -3599,7 +3749,7 @@ test.skipIf(!tmuxAvailable())(
     });
     const gatedQuestion = async () => {
       await questionGate;
-      return fakeGatewayToolCall("ctrl-o-pressure-question", "ask_user_question", {
+      return codexToolCall("ctrl-o-pressure-question", "ask_user_question", {
         questions: [
           {
             question: questionMarker,
@@ -3611,10 +3761,10 @@ test.skipIf(!tmuxAvailable())(
         ],
       });
     };
-    const gateway = startFakeGateway([
+    const gateway = startCodexQueue([
       fakeShellRun("ctrl-o-pressure-setup", setupCommand),
-      fakeGatewayFinalText(`${assistantHistory}\n${setupSentinel}`),
-      fakeGatewaySse([
+      codexFinalText(`${assistantHistory}\n${setupSentinel}`),
+      codexSse([
         {
           type: "tool-call",
           toolCallId: "ctrl-o-pressure-command",
@@ -3637,7 +3787,7 @@ test.skipIf(!tmuxAvailable())(
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
       gatedQuestion,
-      fakeGatewayFinalText(finalSentinel),
+      codexFinalText(finalSentinel),
     ]);
 
     const tapeText = () => existsSync(tapePath) ? readFileSync(tapePath).toString("latin1") : "";
@@ -3661,7 +3811,7 @@ test.skipIf(!tmuxAvailable())(
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, gateway),
+          ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_RECORD: tapePath,
           FIBER_RECORD_INPUT: "1",
         },
@@ -3941,8 +4091,8 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     const workspaceRoot = realpathSync(workspace);
     const savedMarker = "CONTENDED_RESUME_SAVED_MARKER";
-    const ownerGateway = startFakeGateway([fakeGatewayFinalText(savedMarker)]);
-    const retryGateway = startFakeGateway([]);
+    const ownerGateway = startCodexQueue([codexFinalText(savedMarker)]);
+    const retryGateway = startCodexQueue([]);
     let owner: TmuxSession | null = null;
     let contender: TmuxSession | null = null;
     let retry: TmuxSession | null = null;
@@ -3953,7 +4103,7 @@ test.skipIf(!tmuxAvailable())(
       owner = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, ownerGateway),
+        env: seededFakeCodexEnv(home, ownerGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: ownerStderrPath,
       });
       await owner.waitForComposer(TIMEOUT);
@@ -3963,10 +4113,10 @@ test.skipIf(!tmuxAvailable())(
 
       writeFileSync(contenderStderrPath, "");
       contender = await TmuxSession.create({
-        cmd: `${FIBER_BIN} --resume`,
+        cmd: `${FIBER_BIN} resume last`,
         cwd: workspaceRoot,
         env: {
-          ...gatewayEnv(home, ownerGateway),
+          ...seededFakeCodexEnv(home, ownerGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_RECORD: contenderTapePath,
           FIBER_RECORD_INPUT: "1",
         },
@@ -4012,9 +4162,9 @@ test.skipIf(!tmuxAvailable())(
 
       writeFileSync(retryStderrPath, "");
       retry = await TmuxSession.create({
-        cmd: `${FIBER_BIN} --resume`,
+        cmd: `${FIBER_BIN} resume last`,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, retryGateway),
+        env: seededFakeCodexEnv(home, retryGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: retryStderrPath,
       });
       await retry.waitForComposer(TIMEOUT);
@@ -4069,8 +4219,8 @@ test.skipIf(!tmuxAvailable())(
     const workspaceRoot = realpathSync(workspace);
     const savedMarker = "INTERACTIVE_CONTENTION_SAVED_MARKER";
     const savedTitle = "Save the interactive contention fixture.";
-    const ownerGateway = startFakeGateway([fakeGatewayFinalText(savedMarker)]);
-    const contenderGateway = startFakeGateway([]);
+    const ownerGateway = startCodexQueue([codexFinalText(savedMarker)]);
+    const contenderGateway = startCodexQueue([]);
     let owner: TmuxSession | null = null;
     let contender: TmuxSession | null = null;
 
@@ -4079,7 +4229,7 @@ test.skipIf(!tmuxAvailable())(
       owner = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, ownerGateway),
+        env: seededFakeCodexEnv(home, ownerGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: ownerStderrPath,
         width: 100,
         height: 30,
@@ -4092,7 +4242,7 @@ test.skipIf(!tmuxAvailable())(
       contender = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, contenderGateway),
+        env: seededFakeCodexEnv(home, contenderGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: contenderStderrPath,
         width: 100,
         height: 30,
@@ -4105,7 +4255,7 @@ test.skipIf(!tmuxAvailable())(
       await contender.sendKeys("Enter");
       await contender.waitForPane(
         (pane) => stripAnsi(pane).includes(
-          "This session is open in another fx. Close it there, then press Enter to retry.",
+          "This session is open in another fiber. Close it there, then press Enter to retry.",
         ),
         1_000,
       );
@@ -4114,7 +4264,7 @@ test.skipIf(!tmuxAvailable())(
       const contendedPicker = stripAnsi(await contender.capturePane());
       expect(contendedPicker).toContain(savedTitle);
       expect(contendedPicker).toContain(
-        "This session is open in another fx. Close it there, then press Enter to retry.",
+        "This session is open in another fiber. Close it there, then press Enter to retry.",
       );
       expect(contendedPicker).not.toContain("SessionBusy");
       const contendedEntries = visibleSessionPickerEntries(
@@ -4181,8 +4331,8 @@ test.skipIf(!tmuxAvailable())(
     const command = "printf 'effectful payload\\n' > output.txt";
     const failureCommand = "printf 'ordinary-failure-control\\n' >&2; exit 7";
     const finalMarker = "DEFERRED_TOOL_RESUME_COMPLETE";
-    const gateway = startFakeGateway([
-      fakeGatewaySse([
+    const gateway = startCodexQueue([
+      codexSse([
         { type: "tool-input-start", id: "deferred-read", toolName: "read_file" },
         {
           type: "tool-input-delta",
@@ -4227,7 +4377,7 @@ test.skipIf(!tmuxAvailable())(
         },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
-      fakeGatewaySse([
+      codexSse([
         {
           type: "tool-call",
           toolCallId: "reissued-read",
@@ -4263,9 +4413,9 @@ test.skipIf(!tmuxAvailable())(
         },
         { type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" } },
       ]),
-      fakeGatewayFinalText(finalMarker),
+      codexFinalText(finalMarker),
     ]);
-    const resumeGateway = startFakeGateway([]);
+    const resumeGateway = startCodexQueue([]);
     let active: TmuxSession | null = null;
 
     function expectDeferredPresentation(scrollback: string): void {
@@ -4289,7 +4439,7 @@ test.skipIf(!tmuxAvailable())(
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: liveStderrPath,
         width: 120,
         height: 60,
@@ -4316,7 +4466,7 @@ test.skipIf(!tmuxAvailable())(
       active = await TmuxSession.create({
         cmd: `${FIBER_BIN} resume last`,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, resumeGateway),
+        env: seededFakeCodexEnv(home, resumeGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: resumeStderrPath,
         width: 120,
         height: 60,
@@ -4366,10 +4516,10 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(home);
     mkdirSync(workspace);
     writeFileSync(stderrPath, "");
-    const gateway = startFakeGateway([
-      fakeGatewayFinalText("SESSION_INPUT_RESET_SAVED"),
-      fakeGatewayFinalText("SESSION_INPUT_RESET_NEW_OK"),
-      fakeGatewayFinalText("SESSION_INPUT_RESET_RESUME_OK"),
+    const gateway = startCodexQueue([
+      codexFinalText("SESSION_INPUT_RESET_SAVED"),
+      codexFinalText("SESSION_INPUT_RESET_NEW_OK"),
+      codexFinalText("SESSION_INPUT_RESET_RESUME_OK"),
     ]);
     let active: TmuxSession | null = null;
 
@@ -4398,7 +4548,7 @@ test.skipIf(!tmuxAvailable())(
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 30,
@@ -4448,11 +4598,11 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(home);
     mkdirSync(workspace);
     mkdirSync(binDir);
-    symlinkSync(FIBER_BIN, join(binDir, "fx"));
+    symlinkSync(FIBER_BIN, join(binDir, "fiber"));
     writeFileSync(stderrPath, "");
     writeFileSync(resumedStderrPath, "");
-    const initialGateway = startFakeGateway([fakeGatewayFinalText(marker)]);
-    const resumedGateway = startFakeGateway([]);
+    const initialGateway = startCodexQueue([codexFinalText(marker)]);
+    const resumedGateway = startCodexQueue([]);
     const path = `${binDir}:${process.env.PATH ?? ""}`;
     let active: TmuxSession | null = null;
     let passed = false;
@@ -4462,7 +4612,7 @@ test.skipIf(!tmuxAvailable())(
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, initialGateway),
+          ...seededFakeCodexEnv(home, initialGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           PATH: path,
           FIBER_RECORD: tapePath,
           FIBER_THEME: "dark",
@@ -4486,7 +4636,7 @@ test.skipIf(!tmuxAvailable())(
       expect(paneExitMatches(active.paneStatus(), 0)).toBe(true);
       const scrollback = stripAnsi(await active.captureFullScrollback());
       const ansiScrollback = await active.captureFullScrollbackEscapes();
-      const expected = `Continue session with: fiber --resume ${sessionId}`;
+      const expected = `Continue session with: fiber resume ${sessionId}`;
       expect(scrollback).toContain(expected);
       expect(scrollback).not.toContain("To continue this session, run:");
       expect(ansiScrollback).toContain(`\x1b[38;5;245m${expected}\x1b[39m`);
@@ -4500,14 +4650,14 @@ test.skipIf(!tmuxAvailable())(
         .map((line) => line.trim())
         .find((line) => line === expected);
       const printedCommand = handoffLine?.slice("Continue session with: ".length);
-      expect(printedCommand).toBe(`fiber --resume ${sessionId}`);
+      expect(printedCommand).toBe(`fiber resume ${sessionId}`);
 
       await active.kill();
       active = await TmuxSession.create({
         cmd: printedCommand!,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, resumedGateway),
+          ...seededFakeCodexEnv(home, resumedGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           PATH: path,
         },
         stderrPath: resumedStderrPath,
@@ -4550,7 +4700,7 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     writeFileSync(stderrPath, "");
     const hold: HoldState = { started: false, cancelled: false };
-    const initialGateway = startFakeGateway([() => heldGatewayResponse(hold)]);
+    const initialGateway = startCodexQueue([() => heldCodexResponse(hold)]);
     let active: TmuxSession | null = null;
     let passed = false;
 
@@ -4559,7 +4709,7 @@ test.skipIf(!tmuxAvailable())(
         cmd: FIBER_BIN,
         cwd: workspace,
         env: {
-          ...gatewayEnv(home, initialGateway),
+          ...seededFakeCodexEnv(home, initialGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "input,worker,gateway,session",
         },
@@ -4590,7 +4740,7 @@ test.skipIf(!tmuxAvailable())(
         "the rapid Ctrl-C exit pane to stop",
       );
       const scrollback = stripAnsi(await active.captureFullScrollback());
-      const expected = `Continue session with: fiber --resume ${sessionId}`;
+      const expected = `Continue session with: fiber resume ${sessionId}`;
       expect(countOccurrences(scrollback, expected)).toBe(1);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       await active.kill();
@@ -4610,8 +4760,13 @@ test.skipIf(!tmuxAvailable())(
 );
 
 test.skipIf(!tmuxAvailable())(
-  "closing the startup resume picker starts a writable fresh session",
+  "closing the /resume picker starts a writable fresh session",
   async () => {
+    // The CLI startup picker alias (`-r`, ResumeTarget.pick) was removed by
+    // Slice 14 (11614c9b); bare `session resume` now resumes last directly and
+    // exits with "fiber: no saved sessions for this workspace" when none exist
+    // (verified live). The picker surface that survives is the in-TUI /resume
+    // command, so this case pins Esc-close-to-fresh-writable through it.
     const root = realpathSync(
       mkdtempSync(join(tmpdir(), "fiber-tui-resume-picker-cancel-")),
     );
@@ -4621,18 +4776,20 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(home);
     mkdirSync(workspace);
     const marker = "fresh session after closing the resume picker";
-    const gateway = startFakeGateway([fakeGatewayFinalText(marker)]);
+    const gateway = startCodexQueue([codexFinalText(marker)]);
     let active: TmuxSession | null = null;
     let passed = false;
 
     try {
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FIBER_BIN} -r`,
+        cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
       });
+      await active.waitForComposer(TIMEOUT);
+      await active.sendText("/resume");
       const picker = stripAnsi(
         await active.waitForPane(
           (pane) =>
@@ -4678,19 +4835,19 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(workspace);
     const workspaceRoot = realpathSync(workspace);
     let active: TmuxSession | null = null;
-    const gateways: Array<ReturnType<typeof startFakeGateway>> = [];
+    const gateways: Array<ReturnType<typeof startCodexQueue>> = [];
 
     try {
       const initialMarker = "distinctive saved resume history";
-      const initialGateway = startFakeGateway([
-        fakeGatewayFinalText(initialMarker),
+      const initialGateway = startCodexQueue([
+        codexFinalText(initialMarker),
       ]);
       gateways.push(initialGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, initialGateway),
+        env: seededFakeCodexEnv(home, initialGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -4715,41 +4872,16 @@ test.skipIf(!tmuxAvailable())(
       expect(existsSync(resumeViewPath)).toBe(true);
       const initialResumeView = readFileSync(resumeViewPath);
 
-      const pickerGateway = startFakeGateway([]);
-      gateways.push(pickerGateway);
-      writeFileSync(stderrPath, "");
-      active = await TmuxSession.create({
-        cmd: `${FIBER_BIN} -r`,
-        cwd: workspaceRoot,
-        env: gatewayEnv(home, pickerGateway),
-        stderrPath,
-      });
-      const picker = await active.waitForPane(
-        (pane) =>
-          pane.includes("Sessions 1") &&
-          pane.includes("Save a turn for resume.") &&
-          pane.includes("Enter Resume"),
-        TIMEOUT,
-      );
-      expect(picker).toContain("Save a turn for resume.");
-      await active.sendKeys("Enter");
-      await active.waitForComposer(TIMEOUT);
-      expect(await waitForScrollback(active, initialMarker)).toContain(initialMarker);
-      expect(sessionIdFromHome(home)).toBe(sessionId);
-      await active.sendText("/quit");
-      expect(await active.waitForSessionEnd()).toBe(true);
-      await active.kill();
-      active = null;
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
+      // The fork-point picker leg used the `-r` alias (ResumeTarget.pick),
+      // removed by Slice 14 (11614c9b). Bare `session resume` now resumes last
+      // directly, and picker-Enter resume is pinned by the question-card and
+      // command-folding cases via the in-TUI /resume command. The alias
+      // coverage below is the surviving surface for this case.
       writeFileSync(resumeViewPath, initialResumeView);
 
       const invocations = [
-        ["-c"],
-        ["--continue"],
-        ["--resume"],
-        ["--resume-last"],
-        [`--resume-${sessionId}`],
-        ["resume", "--resume", "--last"],
+        ["session resume last"],
+        [`session resume --id ${sessionId}`],
       ];
       for (const [index, args] of invocations.entries()) {
         const restoredMarker =
@@ -4757,21 +4889,21 @@ test.skipIf(!tmuxAvailable())(
         const followUp = `resume follow-up ${index}`;
         const tapePath = join(root, `startup-resume-${index}.fibertape`);
         const tracePath = join(root, `startup-resume-${index}.trace.log`);
-        const gateway = startFakeGateway([fakeGatewayFinalText(followUp)]);
+        const gateway = startCodexQueue([codexFinalText(followUp)]);
         gateways.push(gateway);
         writeFileSync(stderrPath, "");
         active = await TmuxSession.create({
           cmd: `${FIBER_BIN} ${args.join(" ")}`,
           cwd: workspaceRoot,
           env: {
-            ...gatewayEnv(home, gateway),
+            ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
             FIBER_RECORD: tapePath,
             FIBER_TRACE_LOG: tracePath,
             FIBER_TRACE_SCOPES: "session",
           },
           stderrPath,
-          width: args[0] === `--resume-${sessionId}` ? 42 : 100,
-          height: args[0] === `--resume-${sessionId}` ? 16 : 32,
+          width: args[0] === `session resume --id ${sessionId}` ? 42 : 100,
+          height: args[0] === `session resume --id ${sessionId}` ? 16 : 32,
         });
         await active.waitForComposer(TIMEOUT);
         const scrollback = await waitForScrollback(active, restoredMarker);
@@ -4855,13 +4987,13 @@ test.skipIf(!tmuxAvailable())(
         "    return True",
         "```",
       ].join("\n");
-      const markdownGateway = startFakeGateway([fakeGatewayFinalText(markdown)]);
+      const markdownGateway = startCodexQueue([codexFinalText(markdown)]);
       gateways.push(markdownGateway);
       writeFileSync(markdownStderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(markdownWorkspace),
-        env: { ...gatewayEnv(markdownHome, markdownGateway), FIBER_RECORD: markdownTapePath },
+        env: { ...seededFakeCodexEnv(markdownHome, markdownGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }), FIBER_RECORD: markdownTapePath },
         stderrPath: markdownStderrPath,
         width: 72,
         height: 32,
@@ -4899,13 +5031,13 @@ test.skipIf(!tmuxAvailable())(
       expectSemanticTableRows(liveReplay.stdout, "replay");
       expectAlignedSemanticCards(liveReplay.stdout, "replay");
 
-      const resumedMarkdownGateway = startFakeGateway([]);
+      const resumedMarkdownGateway = startCodexQueue([]);
       gateways.push(resumedMarkdownGateway);
       writeFileSync(markdownStderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FIBER_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} continue`,
         cwd: realpathSync(markdownWorkspace),
-        env: { ...gatewayEnv(markdownHome, resumedMarkdownGateway), FIBER_RECORD: resumedMarkdownTapePath },
+        env: { ...seededFakeCodexEnv(markdownHome, resumedMarkdownGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }), FIBER_RECORD: resumedMarkdownTapePath },
         stderrPath: markdownStderrPath,
         width: 42,
         height: 32,
@@ -4956,16 +5088,16 @@ test.skipIf(!tmuxAvailable())(
       );
       const toolWorkspaceRoot = realpathSync(toolWorkspace);
       const toolReply = "TOOL_RESUME_FINAL_REPLY";
-      const toolGateway = startFakeGateway([
+      const toolGateway = startCodexQueue([
         fakeShellRun("resume_pwd", "pwd"),
-        fakeGatewayFinalText(toolReply),
+        codexFinalText(toolReply),
       ]);
       gateways.push(toolGateway);
       writeFileSync(toolStderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: toolWorkspaceRoot,
-        env: gatewayEnv(toolHome, toolGateway),
+        env: seededFakeCodexEnv(toolHome, toolGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: toolStderrPath,
         width: 80,
         height: 24,
@@ -4984,19 +5116,21 @@ test.skipIf(!tmuxAvailable())(
 
       const toolSessionId = sessionIdFromHome(toolHome);
       const toolInvocations = [
-        ["--resume"],
-        ["--resume-last"],
-        [`--resume-${toolSessionId}`],
+        // `--resume` was removed by Slice 14 (11614c9b); `resume last` is the
+        // retained top-level alias for the same resume-last behavior.
+        ["resume", "last"],
+        ["continue"],
+        [`session resume --id ${toolSessionId}`],
       ];
       for (const [index, args] of toolInvocations.entries()) {
         const followUp = `tool resume follow-up ${index}`;
-        const gateway = startFakeGateway([fakeGatewayFinalText(followUp)]);
+        const gateway = startCodexQueue([codexFinalText(followUp)]);
         gateways.push(gateway);
         writeFileSync(toolStderrPath, "");
         active = await TmuxSession.create({
           cmd: `${FIBER_BIN} ${args.join(" ")}`,
           cwd: toolWorkspaceRoot,
-          env: gatewayEnv(toolHome, gateway),
+          env: seededFakeCodexEnv(toolHome, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           stderrPath: toolStderrPath,
           width: 80,
           height: 24,
@@ -5036,43 +5170,37 @@ test.skipIf(!tmuxAvailable())(
 );
 
 test.skipIf(!tmuxAvailable())(
-  "upgrade ctrl-g reloads the background-installed binary and resumes",
+  "upgrade ctrl-g without an upgrade producer reports no installed upgrade and stays writable",
   async () => {
+    // Slice 19 (4b51f28a) removed the auto-upgrade producer outright: the CDN
+    // background loop (auto_upgrade.zig runLoop/runOnce/start) and the
+    // App.startAutoUpgrade call-site decl are deleted, so no path ever sets
+    // AutoUpgrade.state = .ready and the ctrl+g reload of a
+    // background-installed binary is permanently unreached until Phase 6
+    // wires a new producer (demolition-inventory.md, Slice 19). The ctrl+g
+    // machinery itself is retained, so this case pins the live disabled
+    // behavior: ctrl+g answers with the neutral notice and the writable
+    // session continues. Live-probed against zig-out/bin/fiber.
     const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-upgrade-ctrl-g-")));
     const home = join(root, "home");
-    const freshHome = join(root, "fresh-home");
     const workspace = join(root, "workspace");
-    const installDir = join(root, "install");
     const stderrPath = join(root, "stderr.log");
-    const freshStderrPath = join(root, "fresh-stderr.log");
-    const argvLogPath = join(root, "upgrade-argv.log");
     mkdirSync(home);
-    mkdirSync(freshHome);
     mkdirSync(workspace);
-    mkdirSync(installDir);
     const workspaceRoot = realpathSync(workspace);
-    const installedFx = join(installDir, "fx");
-    copyFileSync(FIBER_BIN, installedFx);
-    chmodSync(installedFx, 0o755);
 
     let active: TmuxSession | null = null;
-    let fresh: TmuxSession | null = null;
-    const gateway = startFakeGateway([
-      fakeGatewayFinalText("UPGRADE_CTRL_G_INITIAL_DONE"),
-      fakeGatewayFinalText("UPGRADE_CTRL_G_FOLLOWUP_DONE"),
+    const gateway = startCodexQueue([
+      codexFinalText("UPGRADE_CTRL_G_INITIAL_DONE"),
+      codexFinalText("UPGRADE_CTRL_G_FOLLOWUP_DONE"),
     ]);
-    const release = startUpgradeServer(root, argvLogPath);
 
     try {
       writeFileSync(stderrPath, "");
-      writeFileSync(freshStderrPath, "");
       active = await TmuxSession.create({
-        cmd: shellQuote(installedFx),
+        cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: {
-          ...gatewayEnv(home, gateway),
-          FIBER_E2E_UPGRADE_BASE_URL: release.baseUrl,
-        },
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 110,
         height: 32,
@@ -5081,77 +5209,55 @@ test.skipIf(!tmuxAvailable())(
       await active.sendText("Save a turn before upgrade handoff.");
       await active.waitForText("UPGRADE_CTRL_G_INITIAL_DONE", TIMEOUT);
       await active.waitForComposer(TIMEOUT);
-      const sessionId = sessionIdFromHome(home);
 
-      await active.waitForText(
-        "update ready: ctrl+g to reload",
-        UPGRADE_TIMEOUT,
-      );
-      expect(readFileSync(installedFx, "utf8")).toContain(argvLogPath);
-
-      fresh = await TmuxSession.create({
-        cmd: shellQuote(installedFx),
-        cwd: workspaceRoot,
-        env: gatewayEnv(freshHome, gateway),
-        stderrPath: freshStderrPath,
-        width: 110,
-        height: 32,
-      });
-      await fresh.waitForComposer(TIMEOUT);
-      expect(readFileSync(argvLogPath, "utf8").trim().split("\n")).toEqual([
-        installedFx,
-      ]);
-      expect(await fresh.capturePane()).not.toContain("update ready: ctrl+g to reload");
-      await fresh.sendText("/quit");
-      expect(await fresh.waitForSessionEnd()).toBe(true);
-      await fresh.kill();
-      fresh = null;
-
-      const version = (await runFx(["--version"])).stdout.trim();
       await active.sendHexBytes(["07"]);
-
-      const updatedNotice = `● fiber has been updated to v${version}`;
-      await active.waitForText(updatedNotice, TIMEOUT);
-      const resumed = await waitForScrollback(active, "UPGRADE_CTRL_G_INITIAL_DONE");
-      expect(resumed).toContain("UPGRADE_CTRL_G_INITIAL_DONE");
-      expect(resumed).toContain(updatedNotice);
-      expect(resumed).not.toContain("● Session resumed:");
-      expect(resumed).not.toContain("● Session: resumed:");
-
-      const argvLines = readFileSync(argvLogPath, "utf8").trim().split("\n");
-      expect(argvLines).toEqual([
-        installedFx,
-        `${installedFx}\tresume\t${sessionId}\t--upgrade-relaunch`,
-      ]);
+      await active.waitForText(
+        "● Upgrade: no installed upgrade is ready",
+        TIMEOUT,
+      );
+      const pane = stripAnsi(await active.capturePane());
+      expect(pane).not.toContain("update ready: ctrl+g to reload");
 
       await active.sendText("Continue after upgrade handoff.");
       await active.waitForText("UPGRADE_CTRL_G_FOLLOWUP_DONE", TIMEOUT);
       const stderr = readFileSync(stderrPath, "utf8");
       expect(stderr).not.toContain("relaunch failed");
       expect(stderr).not.toContain("AnsiBandOverflow");
-      expect(readFileSync(freshStderrPath, "utf8")).toBe("");
 
       await active.sendText("/quit");
       expect(await active.waitForSessionEnd()).toBe(true);
       await active.kill();
       active = null;
     } finally {
-      if (fresh) await fresh.kill();
       if (active) {
         try {
           await active.sendText("/quit");
         } catch {}
         await active.kill();
       }
-      release.stop();
       gateway.stop();
       rmSync(root, { recursive: true, force: true });
     }
   },
-  UPGRADE_TIMEOUT * 2,
+  TIMEOUT * 2,
 );
 
-test.skipIf(!tmuxAvailable())(
+// Gated skip with evidence: the exact corrupt-boundary repair this case
+// pinned happens only during the upgrade relaunch resume
+// (applyReadyUpgrade -> prepareResumeHandoff -> `resume --upgrade-relaunch`).
+// Slice 19 (4b51f28a) removed the only producer that ever sets
+// AutoUpgrade.state = .ready — the CDN background loop in auto_upgrade.zig
+// (runLoop/runOnce/start) and the App.startAutoUpgrade decl — so the
+// relaunch-resume path is retained but permanently unreached until Phase 6
+// wires a new producer (demolition-inventory.md, Slice 19). No E2E equivalent
+// exists: without a relaunch there is no boundary to repair (live probe: a
+// corrupted commit watermark makes the ordinary follow-up turn fail
+// InvalidSessionFormat). The retained machinery is unit-covered in
+// app_session_runtime.zig (corruptActiveWatermark + prepareResumeHandoff
+// tests). Restore when Phase 6 lands an upgrade producer.
+const upgradeRelaunchProducerRemoved = true;
+
+test.skipIf(!tmuxAvailable() || upgradeRelaunchProducerRemoved)(
   "upgrade ctrl-g repairs an exact corrupt boundary and resumes",
   async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-upgrade-corrupt-")));
@@ -5169,9 +5275,9 @@ test.skipIf(!tmuxAvailable())(
     chmodSync(installedFx, 0o755);
 
     let active: TmuxSession | null = null;
-    const gateway = startFakeGateway([
-      fakeGatewayFinalText("UPGRADE_CORRUPT_INITIAL_DONE"),
-      fakeGatewayFinalText("UPGRADE_CORRUPT_FOLLOWUP_DONE"),
+    const gateway = startCodexQueue([
+      codexFinalText("UPGRADE_CORRUPT_INITIAL_DONE"),
+      codexFinalText("UPGRADE_CORRUPT_FOLLOWUP_DONE"),
     ]);
     const release = startUpgradeServer(root, argvLogPath);
 
@@ -5181,7 +5287,7 @@ test.skipIf(!tmuxAvailable())(
         cmd: shellQuote(installedFx),
         cwd: workspaceRoot,
         env: {
-          ...gatewayEnv(home, gateway),
+          ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_E2E_UPGRADE_BASE_URL: release.baseUrl,
         },
         stderrPath,
@@ -5251,7 +5357,7 @@ test.skipIf(!tmuxAvailable())(
     const completion = "RESUME_QUESTION_COMPLETED";
     const flagFollowUp = "RESUME_QUESTION_FLAG_FOLLOW_UP";
     const pickerFollowUp = "RESUME_QUESTION_PICKER_FOLLOW_UP";
-    const gateways: Array<ReturnType<typeof startFakeGateway>> = [];
+    const gateways: Array<ReturnType<typeof startCodexQueue>> = [];
     let active: TmuxSession | null = null;
 
     const expectCompactQuestion = (scrollback: string) => {
@@ -5274,8 +5380,8 @@ test.skipIf(!tmuxAvailable())(
     };
 
     try {
-      const initialGateway = startFakeGateway([
-        fakeGatewayToolCall("resume_question", "ask_user_question", {
+      const initialGateway = startCodexQueue([
+        codexToolCall("resume_question", "ask_user_question", {
           questions: [
             {
               question: questionMarker,
@@ -5286,14 +5392,14 @@ test.skipIf(!tmuxAvailable())(
             },
           ],
         }),
-        fakeGatewayFinalText(completion),
+        codexFinalText(completion),
       ]);
       gateways.push(initialGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, initialGateway),
+        env: seededFakeCodexEnv(home, initialGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -5310,13 +5416,13 @@ test.skipIf(!tmuxAvailable())(
       await active.kill();
       active = null;
 
-      const flagGateway = startFakeGateway([fakeGatewayFinalText(flagFollowUp)]);
+      const flagGateway = startCodexQueue([codexFinalText(flagFollowUp)]);
       gateways.push(flagGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FIBER_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} continue`,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, flagGateway),
+        env: seededFakeCodexEnv(home, flagGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -5333,13 +5439,13 @@ test.skipIf(!tmuxAvailable())(
       await active.kill();
       active = null;
 
-      const pickerGateway = startFakeGateway([fakeGatewayFinalText(pickerFollowUp)]);
+      const pickerGateway = startCodexQueue([codexFinalText(pickerFollowUp)]);
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, pickerGateway),
+        env: seededFakeCodexEnv(home, pickerGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -5395,25 +5501,25 @@ test.skipIf(!tmuxAvailable())(
     );
     writeFileSync(stderrPath, "");
 
-    const initialGateway = startFakeGateway([
-      fakeGatewayToolCall("resume_file_diff", "write_file", {
+    const initialGateway = startCodexQueue([
+      codexToolCall("resume_file_diff", "write_file", {
         path: "first-large.md",
         content: `${firstLines.join("\n")}\n`,
       }),
-      fakeGatewayFinalText(firstCompletion),
-      fakeGatewayToolCall("resume_second_file_diff", "write_file", {
+      codexFinalText(firstCompletion),
+      codexToolCall("resume_second_file_diff", "write_file", {
         path: "second-large.md",
         content: `${secondLines.join("\n")}\n`,
       }),
-      fakeGatewayFinalText(secondCompletion),
+      codexFinalText(secondCompletion),
     ]);
-    const resumedGateway = startFakeGateway([]);
+    const resumedGateway = startCodexQueue([]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, initialGateway), FIBER_RECORD: initialTapePath },
+        env: { ...seededFakeCodexEnv(home, initialGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }), FIBER_RECORD: initialTapePath },
         stderrPath,
         width: 120,
         height: 32,
@@ -5457,9 +5563,9 @@ test.skipIf(!tmuxAvailable())(
       expect(eventsJsonl).not.toContain("sk-abcdefghijklmnop");
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FIBER_BIN} --resume-${sessionId}`,
+        cmd: `${FIBER_BIN} session resume --id ${sessionId}`,
         cwd: realpathSync(workspace),
-        env: { ...gatewayEnv(home, resumedGateway), FIBER_RECORD: resumedTapePath },
+        env: { ...seededFakeCodexEnv(home, resumedGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }), FIBER_RECORD: resumedTapePath },
         stderrPath,
         width: 120,
         height: 32,
@@ -5569,7 +5675,7 @@ printf '${stdoutTail2}\\n'
     for (const marker of orderedTailMarkers) expect(fixtureCommand).not.toContain(marker);
     const firstMarker = "RESUME_COMMAND_LINE_000";
     const completion = "RESUME_COMMAND_OUTPUT_COMPLETE";
-    const gateways: Array<ReturnType<typeof startFakeGateway>> = [];
+    const gateways: Array<ReturnType<typeof startCodexQueue>> = [];
     let active: TmuxSession | null = null;
 
     function expectCompactCommandOutput(pane: string): void {
@@ -5622,16 +5728,16 @@ printf '${stdoutTail2}\\n'
     }
 
     try {
-      const initialGateway = startFakeGateway([
+      const initialGateway = startCodexQueue([
         fakeShellRun("resume_long_command", fixtureCommand),
-        fakeGatewayFinalText(completion),
+        codexFinalText(completion),
       ]);
       gateways.push(initialGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: { ...gatewayEnv(home, initialGateway), FIBER_PERMISSION_MODE: "ask" },
+        env: { ...seededFakeCodexEnv(home, initialGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }), FIBER_PERMISSION_MODE: "ask" },
         stderrPath,
         width: 100,
         height: 32,
@@ -5650,13 +5756,13 @@ printf '${stdoutTail2}\\n'
       active = null;
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
-      const flagGateway = startFakeGateway([]);
+      const flagGateway = startCodexQueue([]);
       gateways.push(flagGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
-        cmd: `${FIBER_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} continue`,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, flagGateway),
+        env: seededFakeCodexEnv(home, flagGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -5673,13 +5779,13 @@ printf '${stdoutTail2}\\n'
       active = null;
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
-      const pickerGateway = startFakeGateway([]);
+      const pickerGateway = startCodexQueue([]);
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, pickerGateway),
+        env: seededFakeCodexEnv(home, pickerGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 32,
@@ -5723,17 +5829,17 @@ test.skipIf(!tmuxAvailable())(
     const workspaceBRoot = realpathSync(workspaceB);
     const workspaceAMarker = "SESSION_PICKER_WORKSPACE_A_ONLY";
     const workspaceBMarker = "SESSION_PICKER_WORKSPACE_B_FOREIGN";
-    const gateways: Array<ReturnType<typeof startFakeGateway>> = [];
+    const gateways: Array<ReturnType<typeof startCodexQueue>> = [];
     let active: TmuxSession | null = null;
 
     try {
-      const workspaceAGateway = startFakeGateway([fakeGatewayFinalText(workspaceAMarker)]);
+      const workspaceAGateway = startCodexQueue([codexFinalText(workspaceAMarker)]);
       gateways.push(workspaceAGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceARoot,
-        env: gatewayEnv(home, workspaceAGateway),
+        env: seededFakeCodexEnv(home, workspaceAGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 30,
@@ -5746,13 +5852,13 @@ test.skipIf(!tmuxAvailable())(
       await active.kill();
       active = null;
 
-      const workspaceBGateway = startFakeGateway([fakeGatewayFinalText(workspaceBMarker)]);
+      const workspaceBGateway = startCodexQueue([codexFinalText(workspaceBMarker)]);
       gateways.push(workspaceBGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceBRoot,
-        env: gatewayEnv(home, workspaceBGateway),
+        env: seededFakeCodexEnv(home, workspaceBGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 30,
@@ -5765,13 +5871,13 @@ test.skipIf(!tmuxAvailable())(
       await active.kill();
       active = null;
 
-      const pickerGateway = startFakeGateway([]);
+      const pickerGateway = startCodexQueue([]);
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceARoot,
-        env: gatewayEnv(home, pickerGateway),
+        env: seededFakeCodexEnv(home, pickerGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 160,
         height: 30,
@@ -5852,12 +5958,12 @@ test.skipIf(!tmuxAvailable())(
       (suffix) =>
         `Shared production composer regression investigation session ${suffix}`,
     );
-    const gateways: Array<ReturnType<typeof startFakeGateway>> = [];
+    const gateways: Array<ReturnType<typeof startCodexQueue>> = [];
     let active: TmuxSession | null = null;
 
     try {
-      const sessionGateway = startFakeGateway(
-        titles.map((_, index) => fakeGatewayFinalText(`SESSION_TITLE_${index}`)),
+      const sessionGateway = startCodexQueue(
+        titles.map((_, index) => codexFinalText(`SESSION_TITLE_${index}`)),
       );
       gateways.push(sessionGateway);
       for (let index = 0; index < titles.length; index += 1) {
@@ -5865,7 +5971,7 @@ test.skipIf(!tmuxAvailable())(
         active = await TmuxSession.create({
           cmd: FIBER_BIN,
           cwd: workspaceRoot,
-          env: gatewayEnv(home, sessionGateway),
+          env: seededFakeCodexEnv(home, sessionGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           stderrPath,
           width: 80,
           height: 24,
@@ -5880,13 +5986,13 @@ test.skipIf(!tmuxAvailable())(
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       }
 
-      const pickerGateway = startFakeGateway([]);
+      const pickerGateway = startCodexQueue([]);
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, pickerGateway),
+        env: seededFakeCodexEnv(home, pickerGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 40,
         height: 24,
@@ -5929,20 +6035,20 @@ test.skipIf(!tmuxAvailable())(
       { length: 12 },
       (_, index) => `SESSION_PICKER_ROW_${index}`,
     );
-    const gateways: Array<ReturnType<typeof startFakeGateway>> = [];
+    const gateways: Array<ReturnType<typeof startCodexQueue>> = [];
     let active: TmuxSession | null = null;
 
     try {
       for (const marker of savedMarkers) {
         const responseMarker = `${marker}_SAVED`;
-        const gateway = startFakeGateway([fakeGatewayFinalText(responseMarker)]);
+        const gateway = startCodexQueue([codexFinalText(responseMarker)]);
         gateways.push(gateway);
         writeFileSync(stderrPath, "");
         active = await TmuxSession.create({
           cmd: FIBER_BIN,
           cwd: workspaceRoot,
           env: {
-            ...gatewayEnv(home, gateway),
+            ...seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
             FIBER_THEME: "dark",
             NO_COLOR: undefined,
           },
@@ -5960,14 +6066,14 @@ test.skipIf(!tmuxAvailable())(
         active = null;
       }
 
-      const pickerGateway = startFakeGateway([]);
+      const pickerGateway = startCodexQueue([]);
       gateways.push(pickerGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: {
-          ...gatewayEnv(home, pickerGateway),
+          ...seededFakeCodexEnv(home, pickerGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_THEME: "dark",
           NO_COLOR: undefined,
         },
@@ -6065,19 +6171,19 @@ test.skipIf(!tmuxAvailable())(
       { length: 11 },
       (_, index) => `SESSION_PICKER_HISTORY_${index}`,
     );
-    const gateways: Array<ReturnType<typeof startFakeGateway>> = [];
+    const gateways: Array<ReturnType<typeof startCodexQueue>> = [];
     let active: TmuxSession | null = null;
 
     try {
       for (const marker of savedMarkers) {
         const responseMarker = `${marker}_SAVED`;
-        const gateway = startFakeGateway([fakeGatewayFinalText(responseMarker)]);
+        const gateway = startCodexQueue([codexFinalText(responseMarker)]);
         gateways.push(gateway);
         writeFileSync(stderrPath, "");
         active = await TmuxSession.create({
           cmd: FIBER_BIN,
           cwd: workspaceRoot,
-          env: gatewayEnv(home, gateway),
+          env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           stderrPath,
           width: 100,
           height: 30,
@@ -6092,13 +6198,13 @@ test.skipIf(!tmuxAvailable())(
         active = null;
       }
 
-      const gateway = startFakeGateway([]);
+      const gateway = startCodexQueue([]);
       gateways.push(gateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, gateway),
+        env: seededFakeCodexEnv(home, gateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
         width: 100,
         height: 15,
@@ -6196,18 +6302,18 @@ test.skipIf(!tmuxAvailable())(
     lines.unshift(earlyMarker);
     lines.push(lateMarker);
     const transcript = lines.join("\n");
-    const gateways: Array<ReturnType<typeof startFakeGateway>> = [];
+    const gateways: Array<ReturnType<typeof startCodexQueue>> = [];
     let active: TmuxSession | null = null;
 
     try {
-      const initialGateway = startFakeGateway([fakeGatewayFinalText(transcript)]);
+      const initialGateway = startCodexQueue([codexFinalText(transcript)]);
       gateways.push(initialGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
         env: {
-          ...gatewayEnv(home, initialGateway),
+          ...seededFakeCodexEnv(home, initialGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_RECORD: initialTapePath,
         },
         stderrPath,
@@ -6227,14 +6333,14 @@ test.skipIf(!tmuxAvailable())(
       active = null;
 
       const sessionId = sessionIdFromHome(home);
-      const resumedGateway = startFakeGateway([]);
+      const resumedGateway = startCodexQueue([]);
       gateways.push(resumedGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: `${FIBER_BIN} resume ${sessionId}`,
         cwd: workspaceRoot,
         env: {
-          ...gatewayEnv(home, resumedGateway),
+          ...seededFakeCodexEnv(home, resumedGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_RECORD: tapePath,
         },
         stderrPath,
@@ -6275,17 +6381,17 @@ test.skipIf(!tmuxAvailable())(
     mkdirSync(home);
     mkdirSync(workspace);
     const workspaceRoot = realpathSync(workspace);
-    const gateways: Array<ReturnType<typeof startFakeGateway>> = [];
+    const gateways: Array<ReturnType<typeof startCodexQueue>> = [];
     let active: TmuxSession | null = null;
 
     try {
-      const savedGateway = startFakeGateway([fakeGatewayFinalText("saved session")]);
+      const savedGateway = startCodexQueue([codexFinalText("saved session")]);
       gateways.push(savedGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, savedGateway),
+        env: seededFakeCodexEnv(home, savedGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
       });
       await active.waitForComposer(TIMEOUT);
@@ -6297,13 +6403,13 @@ test.skipIf(!tmuxAvailable())(
       active = null;
 
       const hold: HoldState = { started: false, cancelled: false };
-      const heldGateway = startFakeGateway([() => heldGatewayResponse(hold)]);
+      const heldGateway = startCodexQueue([() => heldCodexResponse(hold)]);
       gateways.push(heldGateway);
       writeFileSync(stderrPath, "");
       active = await TmuxSession.create({
         cmd: FIBER_BIN,
         cwd: workspaceRoot,
-        env: gatewayEnv(home, heldGateway),
+        env: seededFakeCodexEnv(home, heldGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath,
       });
       await active.waitForComposer(TIMEOUT);
@@ -6369,8 +6475,8 @@ while :; do sleep 1; done
     );
     chmodSync(scriptPath, 0o755);
 
-    const initialGateway = startFakeGateway([
-      fakeGatewaySerializedToolCall(
+    const initialGateway = startCodexQueue([
+      codexSerializedToolCall(
         "resume-cancelled-command",
         "shell",
         JSON.stringify({
@@ -6383,9 +6489,9 @@ while :; do sleep 1; done
         }),
         assistantMarker,
       ),
-      fakeGatewayFinalText(followUpMarker),
+      codexFinalText(followUpMarker),
     ]);
-    const resumedGateway = startFakeGateway([]);
+    const resumedGateway = startCodexQueue([]);
     let active: TmuxSession | null = null;
     let passed = false;
     try {
@@ -6393,7 +6499,7 @@ while :; do sleep 1; done
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, initialGateway),
+          ...seededFakeCodexEnv(home, initialGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "session,agent,tool,worker,interrupt,command_output,transcript",
         },
@@ -6456,7 +6562,7 @@ while :; do sleep 1; done
       active = await TmuxSession.create({
         cmd: `${FIBER_BIN} resume last`,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, resumedGateway),
+        env: seededFakeCodexEnv(home, resumedGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: resumedStderrPath,
         width: 120,
         height: 40,
@@ -6534,10 +6640,10 @@ test.skipIf(!tmuxAvailable())(
     );
     chmodSync(scriptPath, 0o755);
 
-    const initialGateway = startFakeGateway([
+    const initialGateway = startCodexQueue([
       fakeShellRun("resume-zero-output-command", "./z.sh"),
     ]);
-    const resumedGateway = startFakeGateway([]);
+    const resumedGateway = startCodexQueue([]);
     let active: TmuxSession | null = null;
     let passed = false;
     try {
@@ -6545,7 +6651,7 @@ test.skipIf(!tmuxAvailable())(
         cmd: FIBER_BIN,
         cwd: realpathSync(workspace),
         env: {
-          ...gatewayEnv(home, initialGateway),
+          ...seededFakeCodexEnv(home, initialGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "session,agent,tool,worker,interrupt,command_output,transcript",
         },
@@ -6577,7 +6683,7 @@ test.skipIf(!tmuxAvailable())(
       active = await TmuxSession.create({
         cmd: `${FIBER_BIN} resume last`,
         cwd: realpathSync(workspace),
-        env: gatewayEnv(home, resumedGateway),
+        env: seededFakeCodexEnv(home, resumedGateway, { FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL, NO_COLOR: "1" }),
         stderrPath: resumedStderrPath,
         width: 100,
         height: 32,
