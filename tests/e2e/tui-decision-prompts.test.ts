@@ -19,9 +19,14 @@ import {
   visibleText,
 } from "./tui-render-assertions";
 import {
-  fakeGatewayFinalText,
-  fakeGatewayPermissionDecision,
-  fakeGatewaySerializedToolCall,
+  chatGptAccessToken,
+  codexFinalText,
+  codexSerializedToolCall,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexEnv,
+  startFakeCodex,
+  writeSeededChatGptLogin,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -29,7 +34,6 @@ import { stdoutFrames } from "./render-lab/tape";
 
 const SKIP = !tmuxAvailable();
 const TIMEOUT = 30_000;
-const OUTER_MODEL = "openai/gpt-5";
 const APPROVAL_PROMPT = "Would you like to run the following command?";
 const DEFAULT_COMMAND_APPROVAL_REASON =
   "Reason: fiber needs your approval before running this shell command.";
@@ -108,12 +112,11 @@ const RESTARTED_CSI_U_DIGIT_ONE = [
   "75",
 ] as const;
 
-type GatewayRequest = {
+type HarnessRequest = {
   body: string;
-  headers: Headers;
 };
 
-type GatewayResponse = Response | (() => Response | Promise<Response>);
+type HarnessResponse = string | (() => string | Promise<string>);
 type ClassifierDecision = (body: string) => "clear" | "caution";
 
 type IsolatedRoot = {
@@ -124,42 +127,44 @@ type IsolatedRoot = {
 
 let session: TmuxSession | null = null;
 const roots: string[] = [];
-const gateways: Array<{ stop(): void }> = [];
+const servers: Array<{ stop(): void }> = [];
 
 afterEach(async () => {
   if (session) {
     await session.kill();
     session = null;
   }
-  for (const gateway of gateways.splice(0)) gateway.stop();
+  for (const server of servers.splice(0)) server.stop();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-function sse(events: object[], done = true) {
-  return new Response(
-    events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") +
-      (done ? "data: [DONE]\n\n" : ""),
-    { headers: { "content-type": "text/event-stream" } },
-  );
-}
+// The Codex helper serves one callback instead of a finite queue, and the
+// Responses protocol carries parallel calls in one body, so the old per-call
+// gateway SSE builders become one multi-call SSE string with a single
+// trailing completed event.
 
 function outerToolCalls(calls: Array<{ id: string; name: string; input: object }>) {
-  return sse(
-    [
-      ...calls.map((call) => ({
-        type: "tool-call",
-        toolCallId: call.id,
-        toolName: call.name,
-        input: call.input,
-      })),
-      {
-        type: "finish",
-        finishReason: { unified: "tool-calls", raw: "tool-calls" },
-      },
-    ],
+  const parts: string[] = [];
+  for (const [index, call] of calls.entries()) {
+    parts.push(
+      `data: ${JSON.stringify({
+        type: "response.output_item.added",
+        output_index: index,
+        item: { type: "function_call", call_id: call.id, name: call.name },
+      })}\n\n` +
+        `data: ${JSON.stringify({
+          type: "response.function_call_arguments.done",
+          output_index: index,
+          arguments: JSON.stringify(call.input),
+        })}\n\n`,
+    );
+  }
+  parts.push(
+    'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":4,"output_tokens":2}}}\n\n',
   );
+  return parts.join("");
 }
 
 function outerCommandCall() {
@@ -168,12 +173,10 @@ function outerCommandCall() {
       id: "command_outer_1",
       name: "shell",
       input: {
-        request: {
-          action: "run",
-          command: "touch generic-preview-accepted.txt",
-          yield_time_ms: 30_000,
-          timeout_ms: 600_000,
-        },
+        action: "run",
+        command: "touch generic-preview-accepted.txt",
+        yield_time_ms: 30_000,
+        timeout_ms: 600_000,
       },
     },
   ]);
@@ -194,12 +197,10 @@ function outerLongCommandCall() {
       id: "long_command_outer_1",
       name: "shell",
       input: {
-        request: {
-          action: "run",
-          command,
-          yield_time_ms: 30_000,
-          timeout_ms: 600_000,
-        },
+        action: "run",
+        command,
+        yield_time_ms: 30_000,
+        timeout_ms: 600_000,
       },
     },
   ]);
@@ -218,12 +219,10 @@ function outerScrollableLongCommandCall() {
       id: "scrollable_long_command_outer_1",
       name: "shell",
       input: {
-        request: {
-          action: "run",
-          command,
-          yield_time_ms: 30_000,
-          timeout_ms: 600_000,
-        },
+        action: "run",
+        command,
+        yield_time_ms: 30_000,
+        timeout_ms: 600_000,
       },
     },
   ]);
@@ -238,12 +237,10 @@ function outerFittingCommandCall() {
       id: "fitting_command_outer_1",
       name: "shell",
       input: {
-        request: {
-          action: "run",
-          command,
-          yield_time_ms: 30_000,
-          timeout_ms: 600_000,
-        },
+        action: "run",
+        command,
+        yield_time_ms: 30_000,
+        timeout_ms: 600_000,
       },
     },
   ]);
@@ -333,20 +330,10 @@ function outerLongQuestionAnswerCall() {
 }
 
 function outerText(text: string) {
-  return sse([
-    { type: "text-delta", id: "answer_1", delta: text },
-    {
-      type: "finish",
-      finishReason: { unified: "stop", raw: "stop" },
-      usage: {
-        inputTokens: { total: 3 },
-        outputTokens: { total: 5 },
-      },
-    },
-  ]);
+  return codexFinalText(text);
 }
 
-function controlledGatewayResponse(response: Response) {
+function controlledResponse(sseText: string) {
   let signalRequested!: () => void;
   let releaseResponse!: () => void;
   const requested = new Promise<void>((resolve) => signalRequested = resolve);
@@ -357,46 +344,46 @@ function controlledGatewayResponse(response: Response) {
     next: async () => {
       signalRequested();
       await released;
-      return response;
+      return sseText;
     },
   };
 }
 
-function startFakeGateway(
-  responses: GatewayResponse[],
+// The Codex helper serves one callback instead of a finite queue: review
+// calls (forced permission_decision) are answered from the classifier
+// decision, and agent turns pop the response queue in order.
+function startFakeCodexQueue(
+  responses: HarnessResponse[],
   classifierDecision: ClassifierDecision = () => "clear",
 ) {
-  const requests: GatewayRequest[] = [];
-  const classifierRequests: GatewayRequest[] = [];
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === "/coding-agent/v1/models") {
-        return Response.json({
-          data: [{ id: OUTER_MODEL, type: "language", tags: ["tool-use"] }],
-        });
+  const requests: HarnessRequest[] = [];
+  const classifierRequests: HarnessRequest[] = [];
+  const codex = startFakeCodex({
+    route: async (body) => {
+      if (body.includes("<permission_review>")) {
+        classifierRequests.push({ body });
+        const decision = classifierDecision(body);
+        return codexToolCall(
+          `review_decision_${classifierRequests.length}`,
+          "permission_decision",
+          decision === "clear"
+            ? { risk: "low", decision: "clear", rationale: "test fixture" }
+            : { risk: "high", decision: "caution", rationale: "test fixture" },
+        );
       }
-      if (req.method !== "POST") return new Response("not found", { status: 404 });
-      const body = await req.text();
-      if (body.includes('"permission_decision"')) {
-        classifierRequests.push({ body, headers: req.headers });
-        return fakeGatewayPermissionDecision(classifierDecision(body));
-      }
-      requests.push({ body, headers: req.headers });
+      requests.push({ body });
       const next = responses.shift();
-      if (!next) return new Response("unexpected request", { status: 500 });
+      if (!next) return codexFinalText("unexpected");
       return typeof next === "function" ? await next() : next;
     },
   });
 
   return {
-    chatUrl: `http://127.0.0.1:${server.port}/v3/ai/language-model`,
-    baseUrl: `http://127.0.0.1:${server.port}`,
+    codex,
     requests,
     classifierRequests,
     stop() {
-      server.stop(true);
+      codex.stop();
     },
   };
 }
@@ -410,6 +397,7 @@ function createIsolatedRoot(
   const workspace = join(root, "workspace");
   mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
+  writeSeededChatGptLogin(home, chatGptAccessToken());
   writeFileSync(
     join(home, ".fiber", "settings.json"),
     JSON.stringify({ permission_mode: permissionMode, permission }),
@@ -424,24 +412,20 @@ function definedStringEnv(env: Record<string, string | undefined>) {
   );
 }
 
-function fakeGatewayEnv(
+function codexEnv(
   root: IsolatedRoot,
-  gateway: ReturnType<typeof startFakeGateway>,
+  harness: ReturnType<typeof startFakeCodexQueue>,
   extra: Record<string, string | undefined> = {},
 ) {
-  return {
-    HOME: root.home,
-    AI_GATEWAY_API_KEY: "fake-e2e-key",
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FIBER_MODEL: OUTER_MODEL,
+  return fakeCodexEnv(root.home, harness.codex, {
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
     NO_COLOR: "1",
     ...extra,
-  };
+  });
 }
 
 async function launchScenario(
-  responses: GatewayResponse[],
+  responses: HarnessResponse[],
   traceScopes = "input",
   env: Record<string, string | undefined> = {},
   permissionMode: "ask" | "auto" = "ask",
@@ -449,8 +433,8 @@ async function launchScenario(
   permission: Record<string, unknown> = {},
 ) {
   const root = createIsolatedRoot(permissionMode, permission);
-  const gateway = startFakeGateway(responses, classifierDecision);
-  gateways.push(gateway);
+  const harness = startFakeCodexQueue(responses, classifierDecision);
+  servers.push(harness);
   const tracePath = join(root.root, "trace.log");
   const stderrPath = join(root.root, "stderr.log");
   writeFileSync(stderrPath, "");
@@ -458,7 +442,7 @@ async function launchScenario(
   session = await TmuxSession.create({
     cmd: `env -u VERCEL_OIDC_TOKEN ${FIBER_BIN} 2>${stderrPath}`,
     cwd: root.workspace,
-    env: definedStringEnv(fakeGatewayEnv(root, gateway, {
+    env: definedStringEnv(codexEnv(root, harness, {
       FIBER_TRACE_LOG: tracePath,
       FIBER_TRACE_SCOPES: traceScopes,
       ...env,
@@ -467,7 +451,7 @@ async function launchScenario(
     height: 40,
   });
   await session.waitForComposer(TIMEOUT);
-  return { root, gateway, tracePath, stderrPath, session };
+  return { root, codex: harness, tracePath, stderrPath, session };
 }
 
 function readFilesRecursively(path: string): string {
@@ -487,7 +471,7 @@ function readFilesRecursively(path: string): string {
 async function openApprovalPrompt(
   label: string,
   env: Record<string, string | undefined> = {},
-  extraResponses: Response[] = [],
+  extraResponses: HarnessResponse[] = [],
 ) {
   const ctx = await launchScenario(
     [outerCommandCall(), outerText(`${label} handled`), ...extraResponses],
@@ -500,7 +484,7 @@ async function openApprovalPrompt(
   return ctx;
 }
 
-async function openQuestionPrompt(label: string, extraResponses: Response[] = []) {
+async function openQuestionPrompt(label: string, extraResponses: HarnessResponse[] = []) {
   const ctx = await launchScenario([
     outerQuestionCall(),
     outerText(`${label} handled`),
@@ -528,7 +512,7 @@ async function exerciseQuestionHiddenDraftControl(options: {
   handledMarker: string;
   draftMarker: string;
 }) {
-  const delayedQuestion = controlledGatewayResponse(outerQuestionCall());
+  const delayedQuestion = controlledResponse(outerQuestionCall());
   const ctx = await launchScenario([
     delayedQuestion.next,
     outerText(options.handledMarker),
@@ -564,13 +548,13 @@ async function exerciseQuestionHiddenDraftControl(options: {
 
   await ctx.session.sendKeys("Enter");
   await ctx.session.waitForText(options.draftMarker, TIMEOUT);
-  expect(ctx.gateway.requests).toHaveLength(3);
+  expect(ctx.codex.requests).toHaveLength(3);
   expect(requestContainsExactString(
-    ctx.gateway.requests[1]!.body,
+    ctx.codex.requests[1]!.body,
     submittedAnswer,
   )).toBe(true);
   expect(requestContainsExactString(
-    ctx.gateway.requests[2]!.body,
+    ctx.codex.requests[2]!.body,
     options.hiddenDraft,
   )).toBe(true);
   await assertProcessAliveAndClean(ctx);
@@ -888,13 +872,13 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
     async () => {
       const ctx = await launchScenario(
         [
-          fakeGatewaySerializedToolCall(
+          codexSerializedToolCall(
             ARGUMENT_RECOVERY_CALL_ID,
             ARGUMENT_RECOVERY_TOOL_NAME,
             VALID_QUESTION_ARGUMENTS,
             VALID_QUESTION_PREAMBLE,
           ),
-          fakeGatewayFinalText("Valid question continued."),
+          codexFinalText("Valid question continued."),
         ],
         "agent,gateway,input",
       );
@@ -917,10 +901,10 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(finalPane).toContain(VALID_QUESTION_PREAMBLE);
       expect(finalPane).not.toContain("SyntaxError");
       expect(finalPane).not.toContain("Request failed");
-      expect(ctx.gateway.requests).toHaveLength(2);
-      const followup = ctx.gateway.requests[1].body;
-      expect(followup).toContain(`"toolCallId":"${ARGUMENT_RECOVERY_CALL_ID}"`);
-      expect(followup).toContain(`"toolName":"${ARGUMENT_RECOVERY_TOOL_NAME}"`);
+      expect(ctx.codex.requests).toHaveLength(2);
+      const followup = ctx.codex.requests[1].body;
+      expect(followup).toContain(`"call_id":"${ARGUMENT_RECOVERY_CALL_ID}"`);
+      expect(followup).toContain(`"name":"${ARGUMENT_RECOVERY_TOOL_NAME}"`);
       expect(followup).toContain("Run tests");
       expect(followup).not.toContain("tool_execution_failed");
       await assertProcessAliveAndClean(ctx);
@@ -937,13 +921,13 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
     async () => {
       const ctx = await launchScenario(
         [
-          fakeGatewaySerializedToolCall(
+          codexSerializedToolCall(
             ARGUMENT_RECOVERY_CALL_ID,
             ARGUMENT_RECOVERY_TOOL_NAME,
             MALFORMED_ARGUMENTS,
             "I need one detail before continuing.",
           ),
-          fakeGatewayFinalText("Malformed question recovered."),
+          codexFinalText("Malformed question recovered."),
         ],
         "agent,gateway,input",
       );
@@ -955,13 +939,20 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(pane).not.toContain(APPROVAL_PROMPT);
       expect(pane).not.toContain("SyntaxError");
       expect(pane).not.toContain("Request failed");
-      expect(ctx.gateway.requests).toHaveLength(2);
-      expect(ctx.gateway.requests[1].body).toContain(
-        `"toolCallId":"${ARGUMENT_RECOVERY_CALL_ID}"`,
+      expect(ctx.codex.requests).toHaveLength(2);
+      expect(ctx.codex.requests[1].body).toContain(
+        `"call_id":"${ARGUMENT_RECOVERY_CALL_ID}"`,
       );
-      expect(ctx.gateway.requests[1].body).toContain('"input":{}');
-      expect(ctx.gateway.requests[1].body).toContain("tool_execution_failed");
-      expect(ctx.gateway.requests[1].body).not.toContain(MALFORMED_ARGUMENTS);
+      expect(ctx.codex.requests[1].body).toContain(
+        '\\"tool_name\\":\\"ask_user_question\\",\\"message\\":\\"Tool arguments were not valid JSON.\\"',
+      );
+      expect(ctx.codex.requests[1].body).toContain("tool_execution_failed");
+      // Owner ruling (scrub-vs-retain): the follow-up retains the verbatim
+      // model action in function_call; the structured error rides the paired
+      // function_call_output pinned above.
+      expect(ctx.codex.requests[1].body).toContain(
+        `"arguments":"${MALFORMED_ARGUMENTS}"`,
+      );
       await assertProcessAliveAndClean(ctx);
 
       await ctx.session.sendText("/quit");
@@ -970,7 +961,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       const sessions = readFilesRecursively(join(ctx.root.home, ".fiber", "sessions"));
       expect(readFileSync(ctx.stderrPath, "utf8")).toBe("");
       expect(trace).not.toContain(MALFORMED_ARGUMENTS);
-      expect(sessions).not.toContain(MALFORMED_ARGUMENTS);
+      // Owner ruling (scrub-vs-retain): persisted history retains the verbatim
+      // model action as arguments_json beside the paired failure output.
+      expect(sessions).toContain('"arguments_json":"{]"');
       expect(sessions).toContain("tool_execution_failed");
     },
     TIMEOUT,
@@ -982,30 +975,14 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       const malformedCallId = "malformed_streamed_read_1";
       const ctx = await launchScenario(
         [
-          sse([
-            {
-              type: "text-delta",
-              id: "text_before",
-              delta: "I need to inspect one file before continuing.",
-            },
-            {
-              type: "tool-input-start",
-              id: malformedCallId,
-              toolName: "read_file",
-            },
-            {
-              type: "tool-input-delta",
-              id: malformedCallId,
-              delta: MALFORMED_STREAMED_ARGUMENTS,
-            },
-            { type: "tool-input-end", id: malformedCallId },
-            { type: "tool-call", toolCallId: malformedCallId },
-            {
-              type: "finish",
-              finishReason: { unified: "tool-calls", raw: "tool-calls" },
-            },
-          ]),
-          fakeGatewayFinalText("Malformed streamed read recovered."),
+          [
+            `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "I need to inspect one file before continuing." })}\n\n`,
+            `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 0, item: { type: "function_call", call_id: malformedCallId, name: "read_file" } })}\n\n`,
+            `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", output_index: 0, delta: MALFORMED_STREAMED_ARGUMENTS })}\n\n`,
+            `data: ${JSON.stringify({ type: "response.function_call_arguments.done", output_index: 0, arguments: MALFORMED_STREAMED_ARGUMENTS })}\n\n`,
+            'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":4,"output_tokens":2}}}\n\n',
+          ].join(""),
+          codexFinalText("Malformed streamed read recovered."),
         ],
         "agent,gateway,input",
       );
@@ -1022,16 +999,21 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(pane).not.toContain(QUESTION_PROMPT);
       expect(pane).not.toContain("SyntaxError");
       expect(pane).not.toContain("Request failed");
-      expect(ctx.gateway.requests).toHaveLength(2);
-      expect(ctx.gateway.requests[1].body).toContain(
-        `"toolCallId":"${malformedCallId}"`,
+      expect(ctx.codex.requests).toHaveLength(2);
+      expect(ctx.codex.requests[1].body).toContain(
+        `"call_id":"${malformedCallId}"`,
       );
-      expect(ctx.gateway.requests[1].body).toContain('"input":{}');
-      expect(ctx.gateway.requests[1].body).toContain("tool_execution_failed");
-      expect(ctx.gateway.requests[1].body).not.toContain(
+      expect(ctx.codex.requests[1].body).toContain(
+        '\\"tool_name\\":\\"read_file\\",\\"message\\":\\"Tool arguments were not valid JSON.\\"',
+      );
+      expect(ctx.codex.requests[1].body).toContain("tool_execution_failed");
+      expect(ctx.codex.requests[1].body).not.toContain(
         MALFORMED_STREAMED_ARGUMENTS,
       );
-      expect(ctx.gateway.requests[1].body).not.toContain(
+      // Owner ruling (scrub-vs-retain): the follow-up retains the verbatim
+      // streamed arguments (sentinel path) in function_call; the structured
+      // error rides the paired function_call_output pinned above.
+      expect(ctx.codex.requests[1].body).toContain(
         MALFORMED_LABEL_SENTINEL,
       );
       await assertProcessAliveAndClean(ctx);
@@ -1044,7 +1026,10 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(trace).not.toContain(MALFORMED_STREAMED_ARGUMENTS);
       expect(trace).not.toContain(MALFORMED_LABEL_SENTINEL);
       expect(sessions).not.toContain(MALFORMED_STREAMED_ARGUMENTS);
-      expect(sessions).not.toContain(MALFORMED_LABEL_SENTINEL);
+      // Owner ruling (scrub-vs-retain): persisted history retains the verbatim
+      // streamed arguments as arguments_json beside the paired failure output.
+      expect(sessions).toContain('"arguments_json":"{\\"path\\"');
+      expect(sessions).toContain(MALFORMED_LABEL_SENTINEL);
       expect(sessions).toContain("tool_execution_failed");
     },
     TIMEOUT,
@@ -1077,39 +1062,28 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       const tapePath = process.env.FIBER_RECORD ?? join(tapeRoot!, "question.fibertape");
       const ctx = await launchScenario(
         [
-          sse([
-            {
-              type: "text-delta",
-              id: "answer_1",
-              delta: markdown,
-            },
-            {
-              type: "tool-call",
-              toolCallId: "pacer_gate_question",
-              toolName: "ask_user_question",
-              input: {
-                questions: [
-                  {
-                    question: QUESTION_PROMPT,
-                    options: [
-                      {
-                        label: "Inspect repo state",
-                        description: "Review local files first.",
-                      },
-                      {
-                        label: "Run tests",
-                        description: "Start with verification.",
-                      },
-                    ],
-                  },
-                ],
-              },
-            },
-            {
-              type: "finish",
-              finishReason: { unified: "tool-calls", raw: "tool-calls" },
-            },
-          ]),
+          codexSerializedToolCall(
+            "pacer_gate_question",
+            "ask_user_question",
+            JSON.stringify({
+              questions: [
+                {
+                  question: QUESTION_PROMPT,
+                  options: [
+                    {
+                      label: "Inspect repo state",
+                      description: "Review local files first.",
+                    },
+                    {
+                      label: "Run tests",
+                      description: "Start with verification.",
+                    },
+                  ],
+                },
+              ],
+            }),
+            markdown,
+          ),
           outerText(postAnswer),
         ],
         "input",
@@ -1142,7 +1116,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(activeQuestion).toBeGreaterThan(activeEnd);
       const activeGrid = await ctx.session.capturePaneGrid();
       expectBlankRowAboveQuestionPanel(activeGrid, QUESTION_PROMPT);
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.resizeWindow(60, 12);
       await waitForQuestionPane(
@@ -1164,8 +1138,8 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(finalPreEnd).toBeGreaterThan(finalPreStart);
       expect(finalQuestion).toBeGreaterThan(finalPreEnd);
       expect(finalPostAnswer).toBeGreaterThan(finalQuestion);
-      expect(ctx.gateway.requests).toHaveLength(2);
-      expect(ctx.gateway.requests[1]!.body).toContain("Run tests");
+      expect(ctx.codex.requests).toHaveLength(2);
+      expect(ctx.codex.requests[1]!.body).toContain("Run tests");
       await assertProcessAliveAndClean(ctx);
       await ctx.session.sendText("/quit");
       expect(await ctx.session.waitForSessionEnd(TIMEOUT)).toBe(true);
@@ -1338,7 +1312,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
 
       await ctx.session.sendLiteralText("1");
       await ctx.session.waitForText("long command fragmented approval complete", TIMEOUT);
-      expect(ctx.gateway.requests).toHaveLength(2);
+      expect(ctx.codex.requests).toHaveLength(2);
       const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: ctx.root.workspace,
         env: { HOME: ctx.root.home },
@@ -1423,7 +1397,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         TIMEOUT,
       );
       expect(recovered).not.toContain(APPROVAL_PROMPT);
-      expect(ctx.gateway.requests).toHaveLength(2);
+      expect(ctx.codex.requests).toHaveLength(2);
 
       const stdout = Buffer.concat(stdoutFrames(tapePath).map((frame) => frame.payload));
       expect(stdout.includes(Buffer.from("\x1b[?1049h"))).toBe(true);
@@ -1509,7 +1483,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       for (const marker of markers) {
         expect(beforeApproval.split(marker).length - 1).toBe(1);
       }
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendText("Create the generic approval acceptance fixture.");
       const pane = await ctx.session.waitForText(
@@ -1550,14 +1524,14 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(promptCommit).toMatch(
         /planned_scroll_rows=([1-9][0-9]*) committed_scroll_rows=\1 .*unplanned_scroll_rows=0/,
       );
-      expect(ctx.gateway.classifierRequests).toHaveLength(0);
-      expect(ctx.gateway.requests).toHaveLength(2);
+      expect(ctx.codex.classifierRequests).toHaveLength(0);
+      expect(ctx.codex.requests).toHaveLength(2);
 
       await ctx.session.sendLiteralText("1");
       await ctx.session.waitForText(finalMarker, TIMEOUT);
       expect(existsSync(join(ctx.root.workspace, "generic-preview-accepted.txt"))).toBe(true);
       expect(await ctx.session.capturePane()).not.toContain(APPROVAL_PROMPT);
-      expect(ctx.gateway.requests).toHaveLength(3);
+      expect(ctx.codex.requests).toHaveLength(3);
 
       const afterApproval = await waitForVisibleScrollback(
         ctx.session,
@@ -1608,8 +1582,8 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("amended generic denial handled", TIMEOUT);
       expect(existsSync(join(ctx.root.workspace, "generic-preview-accepted.txt"))).toBe(false);
-      expect(ctx.gateway.requests).toHaveLength(2);
-      const followup = ctx.gateway.requests[1]!.body;
+      expect(ctx.codex.requests).toHaveLength(2);
+      const followup = ctx.codex.requests[1]!.body;
       expect(requestContainsExactString(
         followup,
         "inspect the file before changing it",
@@ -1658,8 +1632,8 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("long approval amendment handled", TIMEOUT);
       expect(existsSync(join(ctx.root.workspace, "generic-preview-accepted.txt"))).toBe(false);
-      expect(ctx.gateway.requests).toHaveLength(2);
-      expect(requestContainsExactString(ctx.gateway.requests[1]!.body, expected)).toBe(true);
+      expect(ctx.codex.requests).toHaveLength(2);
+      expect(requestContainsExactString(ctx.codex.requests[1]!.body, expected)).toBe(true);
       await assertProcessAliveAndClean(ctx);
     },
     TIMEOUT,
@@ -1698,7 +1672,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       await ctx.session.waitForText("exact-command tab contract handled", TIMEOUT);
       expect(existsSync(join(ctx.root.workspace, "generic-preview-accepted.txt"))).toBe(false);
       expect(requestContainsExactString(
-        ctx.gateway.requests[1]!.body,
+        ctx.codex.requests[1]!.body,
         "use a safer command",
       )).toBe(true);
       await assertProcessAliveAndClean(ctx);
@@ -1730,7 +1704,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         (value) => hasApprovalSelection(value, 1, COMMAND_YES_AMENDMENT),
       );
       expectApprovalSelection(pane, 1, COMMAND_YES_AMENDMENT);
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendKeys("Down");
       await ctx.session.sendLiteralText("3");
@@ -1752,7 +1726,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         (value) => hasApprovalSelection(value, 1, COMMAND_YES_AMENDMENT),
       );
       expectApprovalSelection(pane, 1, COMMAND_YES_AMENDMENT);
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendKeys("Down");
       await ctx.session.sendLiteralText("3");
@@ -1779,7 +1753,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         TIMEOUT,
       );
       expectApprovalSelection(pane, 1, COMMAND_YES_CHOICE);
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       for (let batch = 0; batch < 4; batch += 1) {
         await ctx.session.sendHexBytes(repeatHex(CSI_U_DIGIT_ONE, 32));
@@ -1791,7 +1765,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         (value) => hasApprovalSelection(value, 1, COMMAND_YES_AMENDMENT),
       );
       expectApprovalSelection(pane, 1, COMMAND_YES_AMENDMENT);
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendKeys("Down");
       await ctx.session.sendLiteralText("3");
@@ -1833,7 +1807,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
             TIMEOUT,
           );
         }
-        expect(ctx.gateway.requests).toHaveLength(index * 2 + 1);
+        expect(ctx.codex.requests).toHaveLength(index * 2 + 1);
 
         if (approval) {
           await ctx.session.sendLiteralText("3");
@@ -1842,7 +1816,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         }
 
         await ctx.session.waitForText(`decision cycle ${index} handled`, TIMEOUT);
-        expect(ctx.gateway.requests).toHaveLength(index * 2 + 2);
+        expect(ctx.codex.requests).toHaveLength(index * 2 + 2);
         await assertProcessAliveAndClean(ctx);
       }
     },
@@ -1858,7 +1832,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       const modalPane = await waitForPaneState(ctx.session, "approval ignores ordinary typing", (value) =>
         value.includes(APPROVAL_PROMPT),
       );
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
       expectNoForbiddenComposerText(modalPane);
 
       await ctx.session.sendKeys("Tab");
@@ -1877,11 +1851,11 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(terminalTool).toBeGreaterThanOrEqual(0);
       expect(feedbackCard).toBeGreaterThan(terminalTool);
       expect(requestContainsExactString(
-        ctx.gateway.requests[1]!.body,
+        ctx.codex.requests[1]!.body,
         "summarize the command output",
       )).toBe(true);
-      expect(ctx.gateway.requests).toHaveLength(2);
-      expect(ctx.gateway.requests.some((request) =>
+      expect(ctx.codex.requests).toHaveLength(2);
+      expect(ctx.codex.requests.some((request) =>
         requestContainsExactString(request.body, FORBIDDEN_TYPING)
       )).toBe(false);
       await assertProcessAliveAndClean(ctx);
@@ -1939,7 +1913,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("approval shortcut alias parity handled", TIMEOUT);
       expect(existsSync(join(ctx.root.workspace, "generic-preview-accepted.txt"))).toBe(false);
-      expect(requestContainsExactString(ctx.gateway.requests[1]!.body, "l")).toBe(true);
+      expect(requestContainsExactString(ctx.codex.requests[1]!.body, "l")).toBe(true);
       await assertProcessAliveAndClean(ctx);
     },
     TIMEOUT,
@@ -1976,13 +1950,13 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("approval shortcut isolation handled", TIMEOUT);
       expect(existsSync(join(ctx.root.workspace, "generic-preview-accepted.txt"))).toBe(false);
-      expect(requestContainsExactString(ctx.gateway.requests[1]!.body, amendment)).toBe(true);
+      expect(requestContainsExactString(ctx.codex.requests[1]!.body, amendment)).toBe(true);
 
       await ctx.session.sendText(probe);
       await ctx.session.waitForText("approval composer probe handled", TIMEOUT);
-      expect(ctx.gateway.requests).toHaveLength(3);
-      expect(requestContainsExactString(ctx.gateway.requests[2]!.body, probe)).toBe(true);
-      expect(ctx.gateway.requests.some((request) =>
+      expect(ctx.codex.requests).toHaveLength(3);
+      expect(requestContainsExactString(ctx.codex.requests[2]!.body, probe)).toBe(true);
+      expect(ctx.codex.requests.some((request) =>
         requestContainsExactString(request.body, sentinel)
       )).toBe(false);
       await assertProcessAliveAndClean(ctx);
@@ -2014,7 +1988,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       );
       expectApprovalSelection(amended, 1, `Yes, ${expected}`);
       expectNoForbiddenComposerText(amended);
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
       expectNoDropTrace(ctx.tracePath);
       expect(readTrace(ctx.tracePath)).not.toContain("approval amendment paste dropped");
 
@@ -2023,8 +1997,8 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       const finalPane = await ctx.session.capturePane();
       expect(finalPane).toContain(expected);
       expect(finalPane).toContain("Ran touch generic-preview-accepted.txt");
-      expect(ctx.gateway.requests).toHaveLength(2);
-      expect(requestContainsExactString(ctx.gateway.requests[1]!.body, expected)).toBe(true);
+      expect(ctx.codex.requests).toHaveLength(2);
+      expect(requestContainsExactString(ctx.codex.requests[1]!.body, expected)).toBe(true);
       await assertProcessAliveAndClean(ctx);
     },
     TIMEOUT,
@@ -2227,13 +2201,13 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       );
       await expectQuestionSelection(ctx.session, 1, "Inspect repo state");
       expectNoForbiddenComposerText(pane);
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await resolveQuestionWithSecondOption(ctx.session);
       await ctx.session.waitForText("question typing handled", TIMEOUT);
-      expect(requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", "Run tests")).toBe(true);
-      expect(ctx.gateway.requests).toHaveLength(2);
-      expect(ctx.gateway.requests.some((request) =>
+      expect(requestContainsExactString(ctx.codex.requests[1]?.body ?? "", "Run tests")).toBe(true);
+      expect(ctx.codex.requests).toHaveLength(2);
+      expect(ctx.codex.requests.some((request) =>
         requestContainsExactString(request.body, QUESTION_TYPING)
       )).toBe(false);
       await assertProcessAliveAndClean(ctx);
@@ -2268,13 +2242,13 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
 
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("question shortcut isolation handled", TIMEOUT);
-      expect(requestContainsExactString(ctx.gateway.requests[1]!.body, answer)).toBe(true);
+      expect(requestContainsExactString(ctx.codex.requests[1]!.body, answer)).toBe(true);
 
       await ctx.session.sendText(probe);
       await ctx.session.waitForText("question composer probe handled", TIMEOUT);
-      expect(ctx.gateway.requests).toHaveLength(3);
-      expect(requestContainsExactString(ctx.gateway.requests[2]!.body, probe)).toBe(true);
-      expect(ctx.gateway.requests.some((request) =>
+      expect(ctx.codex.requests).toHaveLength(3);
+      expect(requestContainsExactString(ctx.codex.requests[2]!.body, probe)).toBe(true);
+      expect(ctx.codex.requests.some((request) =>
         requestContainsExactString(request.body, sentinel)
       )).toBe(false);
       await assertProcessAliveAndClean(ctx);
@@ -2344,7 +2318,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
 
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("question shortcut alias parity handled", TIMEOUT);
-      expect(requestContainsExactString(ctx.gateway.requests[1]!.body, "l")).toBe(true);
+      expect(requestContainsExactString(ctx.codex.requests[1]!.body, "l")).toBe(true);
       await assertProcessAliveAndClean(ctx);
     },
     TIMEOUT,
@@ -2438,7 +2412,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
 
       await ctx.session.sendLiteralText("2");
       await ctx.session.waitForText(finalMarker, TIMEOUT);
-      const followup = ctx.gateway.requests[1]?.body ?? "";
+      const followup = ctx.codex.requests[1]?.body ?? "";
       expect(requestContainsExactString(followup, "Focused")).toBe(true);
       expect(requestContainsExactString(followup, "No")).toBe(true);
       expect(requestContainsExactString(followup, "Details")).toBe(true);
@@ -2472,9 +2446,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       const pane = await ctx.session.waitForText("raw question cancellation completed", TIMEOUT);
 
       expect(pane).not.toContain(QUESTION_PROMPT);
-      expect(ctx.gateway.requests).toHaveLength(2);
-      expect(requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", nextPrompt)).toBe(true);
-      expect(requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", "(user cancelled the question)")).toBe(false);
+      expect(ctx.codex.requests).toHaveLength(2);
+      expect(requestContainsExactString(ctx.codex.requests[1]?.body ?? "", nextPrompt)).toBe(true);
+      expect(requestContainsExactString(ctx.codex.requests[1]?.body ?? "", "(user cancelled the question)")).toBe(false);
       await assertProcessAliveAndClean(ctx);
     },
     TIMEOUT,
@@ -2546,7 +2520,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(editedFooter).toEqual(cancelledFooter);
       expect(countOccurrences(editedGrid.join("\n"), "■ Cancelled")).toBe(1);
       expect(editedGrid.join("\n")).not.toContain(QUESTION_PROMPT);
-      expect(ctx.gateway.requests).toHaveLength(2);
+      expect(ctx.codex.requests).toHaveLength(2);
       await assertProcessAliveAndClean(ctx);
     },
     90_000,
@@ -2568,9 +2542,9 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       const pane = await ctx.session.waitForText("kitty question cancellation completed", TIMEOUT);
 
       expect(pane).not.toContain(QUESTION_PROMPT);
-      expect(ctx.gateway.requests).toHaveLength(2);
-      expect(requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", nextPrompt)).toBe(true);
-      expect(requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", "(user cancelled the question)")).toBe(false);
+      expect(ctx.codex.requests).toHaveLength(2);
+      expect(requestContainsExactString(ctx.codex.requests[1]?.body ?? "", nextPrompt)).toBe(true);
+      expect(requestContainsExactString(ctx.codex.requests[1]?.body ?? "", "(user cancelled the question)")).toBe(false);
       await assertProcessAliveAndClean(ctx);
     },
     TIMEOUT,
@@ -2583,7 +2557,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
 
       await ctx.session.sendLiteralText("2");
       await ctx.session.waitForText("question digits handled", TIMEOUT);
-      expect(requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", "Run tests")).toBe(true);
+      expect(requestContainsExactString(ctx.codex.requests[1]?.body ?? "", "Run tests")).toBe(true);
       expect(currentFooterText(await ctx.session.capturePaneGrid())).not.toContain(QUESTION_PROMPT);
       const scrollback = visibleText(await ctx.session.captureFullScrollbackEscapes());
       expect(scrollback).toContain(visibleText(`1) ${QUESTION_PROMPT}`));
@@ -2607,11 +2581,11 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         hasQuestionSelection(value, 3, "42"),
       );
       await expectQuestionSelection(ctx.session, 3, "42");
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("question freeform digits handled", TIMEOUT);
-      const body = ctx.gateway.requests[1]?.body ?? "";
+      const body = ctx.codex.requests[1]?.body ?? "";
       expect(requestContainsExactString(body, "42")).toBe(true);
       await assertProcessAliveAndClean(ctx);
     },
@@ -2672,7 +2646,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       await ctx.session.sendLiteralText("1");
       await ctx.session.waitForText(finalMarker, TIMEOUT);
       expect(
-        requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", LONG_QUESTION_ANSWER),
+        requestContainsExactString(ctx.codex.requests[1]?.body ?? "", LONG_QUESTION_ANSWER),
       ).toBe(true);
       await assertProcessAliveAndClean(ctx);
     },
@@ -2699,11 +2673,11 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         (value) => visibleText(value).includes(answer),
       );
       expect(visibleText(pane)).toContain(answer);
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("question freeform wraps handled", TIMEOUT);
-      expect(requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", answer)).toBe(true);
+      expect(requestContainsExactString(ctx.codex.requests[1]?.body ?? "", answer)).toBe(true);
       await assertProcessAliveAndClean(ctx);
     },
     TIMEOUT,
@@ -2729,7 +2703,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(pane).toContain(
         "↑↓ Cursor · Shift+↑↓ Options · Tab Questions · Enter Answer · Esc Cancel",
       );
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("question freeform narrow hint handled", TIMEOUT);
@@ -2787,11 +2761,11 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(pane).toContain(first);
       expect(pane).toContain(second);
       expectNoDropTrace(ctx.tracePath);
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("question freeform paste handled", TIMEOUT);
-      expect(requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", answer)).toBe(true);
+      expect(requestContainsExactString(ctx.codex.requests[1]?.body ?? "", answer)).toBe(true);
       const scrollback = visibleText(stripAnsi(
         await ctx.session.captureFullScrollbackEscapes(),
       ));
@@ -2826,7 +2800,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         hasQuestionSelection(value, 3, "") && stripAnsi(value).includes("xy!"),
       );
       expect(edited).toContain("line-three");
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendHexBytes(["1b", "5b", "31", "3b", "32", "41"]);
       const predefined = await waitForQuestionPane(ctx.session, "question modified up", (value) =>
@@ -2850,8 +2824,8 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("question freeform vertical movement handled", TIMEOUT);
       const answer = "line-one\nxy!\nline-three";
-      expect(requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", answer)).toBe(true);
-      expect(requestContainsExactString(ctx.gateway.requests[1]?.body ?? "", pasted)).toBe(false);
+      expect(requestContainsExactString(ctx.codex.requests[1]?.body ?? "", answer)).toBe(true);
+      expect(requestContainsExactString(ctx.codex.requests[1]?.body ?? "", pasted)).toBe(false);
       await assertProcessAliveAndClean(ctx);
     },
     TIMEOUT,
@@ -2868,7 +2842,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         (value) => hasQuestionSelection(value, 1, "Inspect repo state"),
       );
       await expectQuestionSelection(ctx.session, 1, "Inspect repo state");
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendKeys("Down");
       pane = await waitForQuestionPane(ctx.session, "question raw down", (value) =>
@@ -2897,11 +2871,11 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
         hasQuestionSelection(value, 3, "x"),
       );
       await expectQuestionSelection(ctx.session, 3, "x");
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("question freeform raw csi-u handled", TIMEOUT);
-      const body = ctx.gateway.requests[1]?.body ?? "";
+      const body = ctx.codex.requests[1]?.body ?? "";
       expect(requestContainsExactString(body, "x")).toBe(true);
       expect(requestContainsExactString(body, "1x")).toBe(false);
       await assertProcessAliveAndClean(ctx);
@@ -2926,19 +2900,19 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       await ctx.session.sendLiteralText(paste_flood);
       await ctx.session.sendHexBytes(PASTE_END);
       await waitForFreeformLimitTrace(ctx.tracePath, paste_flood.length);
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendLiteralText(typed);
       await ctx.session.sendHexBytes(repeatHex(["1b", "5b", "44"], 32));
       await ctx.session.sendHexBytes(repeatHex(["7f"], 16));
       await ctx.session.sendLiteralText("42");
-      expect(ctx.gateway.requests).toHaveLength(1);
+      expect(ctx.codex.requests).toHaveLength(1);
 
       await ctx.session.sendKeys("Enter");
       await ctx.session.waitForText("question freeform stress handled", TIMEOUT);
 
       const expected = `${typed.slice(0, typed.length - 48)}42${typed.slice(typed.length - 32)}`;
-      const body = ctx.gateway.requests[1]?.body ?? "";
+      const body = ctx.codex.requests[1]?.body ?? "";
       expect(requestContainsExactString(body, expected)).toBe(true);
       expect(requestContainsExactString(body, paste_flood)).toBe(false);
       await assertProcessAliveAndClean(ctx);
@@ -2962,7 +2936,7 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
 
       await resolveQuestionWithSecondOption(ctx.session);
       await ctx.session.waitForText("question paste handled", TIMEOUT);
-      expect(ctx.gateway.requests[1]?.body ?? "").toContain("Run tests");
+      expect(ctx.codex.requests[1]?.body ?? "").toContain("Run tests");
       const finalGrid = await ctx.session.capturePaneGrid();
       expect(currentFooterText(finalGrid)).not.toContain("yp123 hjkl");
       await assertProcessAliveAndClean(ctx);
