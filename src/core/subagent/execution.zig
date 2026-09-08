@@ -18,6 +18,7 @@ const session_child_store = @import("../session/session_child_store.zig");
 const session_codec = @import("../session/session_codec.zig");
 const session_permission_state = @import("../permissions/session_permission_state.zig");
 const session_store = @import("../session/session_store.zig");
+const session_test_controls = @import("../session/session_test_controls.zig");
 const text_utils = @import("../shared/text_utils.zig");
 const tool_dispatch = @import("../tooling/tool_dispatch.zig");
 const types = @import("../shared/types.zig");
@@ -406,7 +407,7 @@ pub const TurnContext = struct {
             } },
             timestamp_ms,
             .retry_expected_tail,
-            .{},
+            session_test_controls.logOptions(),
         ) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.SessionCommitFailed,
@@ -424,7 +425,7 @@ pub const TurnContext = struct {
             .{ .recovery_checkpoint_set = .{ .checkpoint = checkpoint } },
             timestamp_ms,
             .retry_expected_tail,
-            .{},
+            session_test_controls.logOptions(),
         ) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.SessionCommitFailed,

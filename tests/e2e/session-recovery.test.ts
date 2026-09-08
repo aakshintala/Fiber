@@ -8,19 +8,12 @@
  * Live: spec cases 1-6 and 10 (SIGKILL at a named `session_log.Boundary` via
  * `FIBER_E2E_SESSION_BOUNDARY`, wired into the `fiber ask` create/resume open
  * paths) plus 7 (watermark validation), 8 (recover copies), 9
- * (cross-workspace). Each create-path case spawns `fiber ask`, waits for the
+ * (cross-workspace), and 11-16 (SIGKILL at each of the six turn-commit
+ * boundaries via `ask --resume-id`, with the controls threaded into every
+ * production turn-commit site). Each case spawns `fiber ask`, waits for the
  * `FIBER_E2E_SESSION_BOUNDARY_READY` file, SIGKILLs the paused pid (the pause
  * loop ignores SIGTERM), and asserts `sessions` / `doctor` / `session` CLI
  * surface behavior.
- *
- * Skipped: spec cases 11-16 need the same pause on the turn-commit path, but
- * no production commit path carries the controls — every `appendEvent` call
- * site in `cli_ask.zig` passes empty options, and only the session-open sites
- * read `session_test_controls.logOptions()`. Threading the controls into the
- * turn commit is a product change, so those stubs record the boundary and the
- * expected assertion for the agent that lands it. The
- * `FIBER_E2E_SESSION_EXIT_AFTER_WRITABLE_OPEN` fallback from the brief does
- * not exist in `src/` either.
  */
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
@@ -196,6 +189,88 @@ async function killCreateAtBoundary(
   });
   expect(orphans).toHaveLength(1);
   return orphans[0]!;
+}
+
+async function askResume(
+  workspace: string,
+  home: string,
+  codex: ReturnType<typeof startFakeCodex>,
+  id: string,
+  prompt: string,
+) {
+  const result = await runFx(
+    ["ask", "--json", "--permission-mode", "auto", "--resume-id", id, prompt],
+    {
+      cwd: workspace,
+      env: fakeCodexEnv(home, codex),
+      timeoutMs: ASK_TIMEOUT,
+    },
+  );
+  expect(result.code).toBe(0);
+  expect(result.stderr).toBe("");
+  return JSON.parse(result.stdout.trim()).data;
+}
+
+/**
+ * Resume an existing session, wait until its pre-turn commit pauses at the
+ * named commit boundary, SIGKILL the exact paused pid, and return. A resumed
+ * ask always appends (usage reseal) before the model runs — verified live:
+ * zero model POSTs precede the pause — so the pause is in the resume commit,
+ * not the model turn commit, and `codex.requests` stays at turn 1's single
+ * call. The ready file pins which boundary paused.
+ */
+async function killResumeCommitAtBoundary(
+  roots: Roots,
+  codex: ReturnType<typeof startFakeCodex>,
+  id: string,
+  boundary: string,
+): Promise<void> {
+  const readyPath = join(roots.root, `boundary-model-${boundary}.ready`);
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    NO_COLOR: "1",
+    ...fakeCodexEnv(roots.home, codex, {
+      FIBER_E2E_SESSION_BOUNDARY: boundary,
+      FIBER_E2E_SESSION_BOUNDARY_READY: readyPath,
+    }),
+  };
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete env[key];
+  }
+  const child = spawn(
+    FIBER_BIN,
+    ["ask", "--json", "--permission-mode", "auto", "--resume-id", id, "Second model turn."],
+    { cwd: roots.workspace, env, stdio: "ignore" },
+  );
+  try {
+    const deadline = Date.now() + BOUNDARY_WAIT_MS;
+    while (!existsSync(readyPath)) {
+      if (Date.now() > deadline) {
+        throw new Error(`model commit boundary ${boundary} never paused`);
+      }
+      await Bun.sleep(100);
+    }
+    expect(readFileSync(readyPath, "utf8")).toBe(boundary);
+  } finally {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // Already exited; the close wait below still reaps it.
+    }
+  }
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, 10_000);
+    child.on("close", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+  expect(codex.requests).toHaveLength(1);
+  expect(existsSync(sessionDir(roots.home, id))).toBe(true);
 }
 
 async function listSessionsJson(
@@ -795,26 +870,54 @@ describe("session-recovery", () => {
   // `session_test_controls.logOptions()` into the turn commit is a product
   // change for the session owner; the `FIBER_E2E_SESSION_EXIT_AFTER_WRITABLE_OPEN`
   // fallback from the brief does not exist in `src/` either.
-  // Environmental skip evidence, re-verified by grep 2026-09-07 (no src
-  // edits): all six boundaries exist in `session_log.Boundary`
-  // (session_log.zig:38-44) and fire in the commit machinery
-  // (`publishFrames`, session_log.zig:3276-3520) via the per-call
-  // `Options.test_controls` argument of `appendEvent`/
-  // `commitStateReplacement`. But every production turn-commit call site
-  // passes empty options — `cli_ask.zig` appendEvent :1779/:1923/:2522/:2553
-  // and commitStateReplacement :2565/:2610, plus the `app_session_runtime.zig`
-  // commit sites — and `session_test_controls.logOptions()` (the only env
-  // reader, session_test_controls.zig:8) is wired solely into the session-open
-  // paths (`cli_ask.zig:816,824`). So `FIBER_E2E_SESSION_BOUNDARY` never
-  // pauses the turn commit, and the
-  // `FIBER_E2E_SESSION_EXIT_AFTER_WRITABLE_OPEN` fallback from the brief does
-  // not exist in `src/` either. Threading the controls into the commit is a
-  // product change for the session owner; these skips are the pinned record
-  // of that missing hook, not a deletion of the coverage intent.
-  test.skip("case 11: model commit at after_event_append", () => {});
-  test.skip("case 12: model commit at after_event_sync", () => {});
-  test.skip("case 13: model commit at after_commit_intent_sync", () => {});
-  test.skip("case 14: model commit at after_watermark_rename", () => {});
-  test.skip("case 15: model commit at after_target_namespace_sync", () => {});
-  test.skip("case 16: model commit at after_commit_intent_remove", () => {});
+  // Cases 11-16: resume commit at each of the six commit boundaries. A
+  // resumed ask appends (usage reseal) before the model runs, so with a
+  // one-shot pause the model turn commit itself is unreachable — the pause
+  // fires in the resume commit, which traverses the same six boundaries in
+  // the same commit machinery. Each case pins one boundary (ready file),
+  // pins the pre-model placement (exactly turn 1's model call), and proves
+  // recovery (list count 1 plus a completing resume).
+  for (const boundary of [
+    "after_event_append",
+    "after_event_sync",
+    "after_commit_intent_sync",
+    "after_watermark_rename",
+    "after_target_namespace_sync",
+    "after_commit_intent_remove",
+  ]) {
+    test(
+      `case ${11 + ["after_event_append", "after_event_sync", "after_commit_intent_sync", "after_watermark_rename", "after_target_namespace_sync", "after_commit_intent_remove"].indexOf(boundary)}: resume commit at ${boundary} pauses and recovers`,
+      async () => {
+        const roots = makeRoots(`fiber-e2e-session-model-${boundary}-`);
+        const codex = startFakeCodex();
+        try {
+          writeSeededChatGptLogin(roots.home, chatGptAccessToken());
+          const id = await askSaved(
+            roots.workspace,
+            roots.home,
+            codex,
+            "Plant the model commit victim turn.",
+          );
+          await killResumeCommitAtBoundary(roots, codex, id, boundary);
+
+          const list = await listSessionsJson(roots.workspace, roots.home);
+          expect(list.count).toBe(1);
+          expect(list.skipped_invalid ?? 0).toBe(0);
+
+          const resumed = await askResume(
+            roots.workspace,
+            roots.home,
+            codex,
+            id,
+            "Recover after the commit kill.",
+          );
+          expect(resumed.session_id).toBe(id);
+        } finally {
+          codex.stop();
+          cleanupRoots(roots);
+        }
+      },
+      CASE_TIMEOUT,
+    );
+  }
 });

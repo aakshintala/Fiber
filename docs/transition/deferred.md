@@ -37,7 +37,11 @@ opens with this section empty, as `plan.md` requires.
 
 Recorded in `plan.md`, not duplicated here:
 
-- Session-recovery harness — `plan.md`, "Session-recovery harness: what the deleted suite proved".
+- Session-recovery harness — resolved in Phase 5: cases 1-10 restored,
+  cases 11-16 live as resume-commit boundary pauses (see `plan.md`,
+  "Session-recovery harness: what the deleted suite proved", plus the
+  `session-recovery.test.ts` header on why model-turn pauses are
+  unreachable with one-shot pause semantics).
 - Four retained ACP-driven E2E cases — resolved in Phase 5 (see `plan.md`,
   "ACP-driven cases retained for conversion", dispositions paragraph):
   web_fetch deny converted, web_search deny deleted as a converted-duplicate,

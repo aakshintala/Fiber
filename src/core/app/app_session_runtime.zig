@@ -32,6 +32,7 @@ const captured_command = @import("../tooling/captured_command.zig");
 const tool_result_errors = @import("../tooling/tool_result_errors.zig");
 const session_display_metadata = @import("../session/session_display_metadata.zig");
 const session_log = @import("../session/session_log.zig");
+const session_test_controls = @import("../session/session_test_controls.zig");
 const session_resume_view = @import("../session/session_resume_view.zig");
 const session_store = @import("../session/session_store.zig");
 const session_summary_codec = @import("../session/session_summary_codec.zig");
@@ -1934,7 +1935,7 @@ pub fn Runtime(comptime App: type) type {
                 .{ .usage_checkpointed = .{ .usage = snapshot } },
                 recovery_checkpoint.timestamp_ms,
                 .retry_expected_tail,
-                .{ .checkpoint_interval = 0 },
+                .{ .checkpoint_interval = 0, .test_controls = session_test_controls.logOptions().test_controls },
             );
             try store.finishUsageRecoveryCheckpoint(
                 loaded.active_id,
@@ -1955,14 +1956,14 @@ pub fn Runtime(comptime App: type) type {
                 value
             else
                 return error.SessionPersistenceUnavailable;
-            try convergeDegraded(app, loaded, .{});
+            try convergeDegraded(app, loaded, session_test_controls.logOptions());
             const now_ms = io_mod.milliTimestamp();
             _ = loaded.appendEvent(
                 app.alloc,
                 .{ .recovery_checkpoint_set = .{ .checkpoint = checkpoint } },
                 now_ms,
                 .retry_expected_tail,
-                .{},
+                session_test_controls.logOptions(),
             ) catch |err| switch (err) {
                 error.EventFrameTooLarge => {
                     var current = try snapshotCurrentState(app, loaded.state, now_ms);
@@ -1974,7 +1975,7 @@ pub fn Runtime(comptime App: type) type {
                         current,
                         .compaction,
                         .retry_expected_tail,
-                        .{},
+                        session_test_controls.logOptions(),
                     );
                 },
                 else => return err,
@@ -2174,7 +2175,7 @@ pub fn Runtime(comptime App: type) type {
                 turn,
                 app.worker.active_prompt_is_root_authority,
             );
-            convergeDegraded(app, loaded, .{}) catch |err| {
+            convergeDegraded(app, loaded, session_test_controls.logOptions()) catch |err| {
                 return switch (mode) {
                     .strict => err,
                     .visual_epoch => blk: {
@@ -2198,14 +2199,14 @@ pub fn Runtime(comptime App: type) type {
                 } },
                 io_mod.milliTimestamp(),
                 .retry_expected_tail,
-                .{},
+                session_test_controls.logOptions(),
             ) catch |err| switch (err) {
                 error.EventFrameTooLarge => {
                     commitCurrentStateReplacement(
                         app,
                         loaded,
                         .compaction,
-                        .{},
+                        session_test_controls.logOptions(),
                         true,
                     ) catch |replacement_err| {
                         return switch (mode) {
@@ -2241,8 +2242,8 @@ pub fn Runtime(comptime App: type) type {
                 value
             else
                 return;
-            try convergeDegraded(app, loaded, .{});
-            try commitCurrentStateReplacement(app, loaded, .compaction, .{}, false);
+            try convergeDegraded(app, loaded, session_test_controls.logOptions());
+            try commitCurrentStateReplacement(app, loaded, .compaction, session_test_controls.logOptions(), false);
         }
 
         pub fn commitRuntimePreferences(
@@ -2290,7 +2291,7 @@ pub fn Runtime(comptime App: type) type {
             else
                 return result;
             if (result.session_error != null) return result;
-            convergeDegraded(app, loaded, .{}) catch |err| {
+            convergeDegraded(app, loaded, session_test_controls.logOptions()) catch |err| {
                 result.session_error = err;
                 return result;
             };
@@ -2307,7 +2308,7 @@ pub fn Runtime(comptime App: type) type {
                 } },
                 io_mod.milliTimestamp(),
                 .retry_expected_tail,
-                .{},
+                session_test_controls.logOptions(),
             ) catch |err| {
                 result.session_error = err;
                 warnDegraded(app, err) catch {};
@@ -4121,7 +4122,7 @@ pub fn Runtime(comptime App: type) type {
                 current,
                 .compaction,
                 .retry_expected_tail,
-                .{},
+                session_test_controls.logOptions(),
             );
         }
 

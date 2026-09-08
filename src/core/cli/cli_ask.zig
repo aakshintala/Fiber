@@ -1781,7 +1781,7 @@ fn finalizeFreshAuthSession(ctx: *AskContext, result: *PromptRunResult) void {
             .{ .recovery_checkpoint_cleared = .{} },
             io_mod.milliTimestamp(),
             .retry_expected_tail,
-            .{},
+            session_test_controls.logOptions(),
         ) catch |err| {
             debug_trace.logf(
                 "ask",
@@ -1917,7 +1917,7 @@ fn persistUsageCheckpoint(
         try writable.retryDegradedWithStateReplacement(
             ctx.alloc,
             current,
-            .{},
+            session_test_controls.logOptions(),
         );
     }
     _ = try writable.appendEvent(
@@ -1925,7 +1925,7 @@ fn persistUsageCheckpoint(
         .{ .usage_checkpointed = .{ .usage = snapshot } },
         recovery_checkpoint.timestamp_ms,
         .retry_expected_tail,
-        .{ .checkpoint_interval = 0 },
+        .{ .checkpoint_interval = 0, .test_controls = session_test_controls.logOptions().test_controls },
     );
     try store.finishUsageRecoveryCheckpoint(
         writable.active_id,
@@ -2515,7 +2515,7 @@ fn propagateHistoryTurn(raw_ctx: *anyopaque, turn: HistoryTurn) !void {
         try writable.retryDegradedWithStateReplacement(
             ctx.alloc,
             current,
-            .{},
+            session_test_controls.logOptions(),
         );
     }
 
@@ -2529,7 +2529,7 @@ fn propagateHistoryTurn(raw_ctx: *anyopaque, turn: HistoryTurn) !void {
         } },
         io_mod.milliTimestamp(),
         .retry_expected_tail,
-        .{},
+        session_test_controls.logOptions(),
     ) catch |err| switch (err) {
         error.EventFrameTooLarge => {
             try commitAskStateReplacement(ctx, writable, true);
@@ -2555,7 +2555,7 @@ fn setRecoveryCheckpoint(
         .{ .recovery_checkpoint_set = .{ .checkpoint = checkpoint } },
         now_ms,
         .retry_expected_tail,
-        .{},
+        session_test_controls.logOptions(),
     ) catch |err| switch (err) {
         error.EventFrameTooLarge => {
             var current = try currentAskState(ctx, writable, now_ms);
@@ -2567,7 +2567,7 @@ fn setRecoveryCheckpoint(
                 current,
                 .compaction,
                 .retry_expected_tail,
-                .{},
+                session_test_controls.logOptions(),
             );
         },
         else => return err,
@@ -2612,7 +2612,7 @@ fn commitAskStateReplacement(
         state,
         .compaction,
         .retry_expected_tail,
-        .{},
+        session_test_controls.logOptions(),
     );
     if (state.usage) |usage| {
         ctx.session.usage.markClean(usage);
