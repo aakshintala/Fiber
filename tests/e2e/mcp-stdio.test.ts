@@ -480,7 +480,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain(
-      "fixture source=profile scope=profile policy=optional transport=stdio state=disconnected auth=none",
+      "fixture source=profile scope=profile policy=optional transport=stdio auth=none",
     );
     expect(existsSync(dockerLaunchLog)).toBe(false);
     expect(existsSync(cleanupLog)).toBe(false);
@@ -506,7 +506,7 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
     expect(timedOut.code).toBe(0);
     expect(timedOut.stderr).toBe("");
     expect(timedOut.stdout).toContain(
-      "fixture source=profile scope=profile policy=optional transport=stdio state=disconnected auth=none",
+      "fixture source=profile scope=profile policy=optional transport=stdio auth=none",
     );
     expect(existsSync(dockerLaunchLog)).toBe(false);
     expect(existsSync(cleanupLog)).toBe(false);

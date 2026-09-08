@@ -4414,8 +4414,8 @@ test "top-level MCP list loads configuration without discovery and remove uses i
         try std.testing.expect(std.mem.find(
             u8,
             capture.stdout.written(),
-            "state=disconnected",
-        ) != null);
+            "state=",
+        ) == null);
         try std.testing.expectEqualStrings("", capture.stderr.written());
     }
 

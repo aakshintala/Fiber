@@ -1001,7 +1001,7 @@ describe("MCP remote authentication lifecycle", () => {
     expect(listed.code).toBe(0);
     expect(listed.stderr).toBe("");
     expect(listed.stdout).toMatch(
-      /fixture[\s\S]{0,240}state=disconnected auth=authenticated/,
+      /fixture[\s\S]{0,240}auth=authenticated/,
     );
     for (const secret of [ACCESS_INITIAL, REFRESH_INITIAL]) {
       expect(listed.stdout).not.toContain(secret);
@@ -1036,7 +1036,7 @@ describe("MCP remote authentication lifecycle", () => {
     expect(listed.code).toBe(0);
     expect(listed.stderr).toBe("");
     expect(listed.stdout).toMatch(
-      /fixture[\s\S]{0,240}state=disconnected auth=authenticated/,
+      /fixture[\s\S]{0,240}auth=authenticated/,
     );
     for (const secret of [ACCESS_INITIAL, REFRESH_INITIAL]) {
       expect(listed.stdout).not.toContain(secret);

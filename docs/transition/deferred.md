@@ -63,16 +63,16 @@ This is the complete `grep -rni acp src/` residue as of `HEAD`.
 
 **Output that outlived its capability** (added 2026-09-06 from the first E2E run)
 
-- **`mcp list` prints fields it can no longer fill.** Every server line still
-  carries `state=`, `auth=`, `protocol=`, `tools=`, `resources=`, `templates=`,
-  `prompts=`, `cache=`, `subscription=`, `discovery=`, and each is now
-  permanently a placeholder — `disconnected`, `unavailable`, `unknown`,
-  `pending` — because `mcp list` no longer opens transports. **Owner decided
-  2026-09-06: stop printing the fields it cannot fill.** This is a source change
-  in the `mcp list` renderer; the E2E assertions follow it rather than the
-  reverse. Phase 5 owns it because it is observable output, not a comment.
-  Related: `../enhancements/pending.md`, `fiber mcp doctor`, which is the
-  deferred replacement that would fill them again.
+- **`mcp list` prints fields it can no longer fill.** Resolved 2026-09-08
+  by owner decision (implement): `health.render` omits `state=` when the
+  connection is `.disconnected` (transport never opened). The renderer
+  already suppressed every other transport-product line in that path, and
+  `auth=`/`admission=` stay — both are config-derived and real. Live:
+  `demo source=workspace scope=workspace policy=optional transport=stdio
+  auth=none`. TUI discovery states (`ready`, `connecting`, …) are untouched.
+  E2E list assertions in mcp-http, mcp-stdio, mcp-auth, and cli follow the
+  new line. Related: `../enhancements/pending.md`, `fiber mcp doctor`,
+  which is the deferred replacement that would fill them again.
 
 - **`fiber upgrade` advertises a release channel it does not have.** Both the
   subcommand help and the top-level command list say "Upgrade fiber on the

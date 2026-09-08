@@ -257,7 +257,7 @@ describe("modern MCP Streamable HTTP", () => {
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain(
-      "fixture source=profile scope=profile policy=optional transport=http state=disconnected auth=none",
+      "fixture source=profile scope=profile policy=optional transport=http auth=none",
     );
     expect(fixture.requests).toHaveLength(0);
   }, 25_000);
@@ -284,7 +284,7 @@ describe("modern MCP Streamable HTTP", () => {
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain(
-      "fixture source=profile scope=profile policy=optional transport=http state=disconnected auth=none",
+      "fixture source=profile scope=profile policy=optional transport=http auth=none",
     );
     expect(fixture.requests).toHaveLength(0);
   }, 25_000);
@@ -311,7 +311,7 @@ describe("modern MCP Streamable HTTP", () => {
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain(
-      "fixture source=profile scope=profile policy=optional transport=http state=disconnected auth=none",
+      "fixture source=profile scope=profile policy=optional transport=http auth=none",
     );
     expect(result.stdout).not.toContain("InvalidJsonResponse");
     expect(fixture.requests).toHaveLength(0);

@@ -3871,7 +3871,7 @@ describe("cli: MCP profile add", () => {
 
       const passive = await runFx(["mcp", "list"], { cwd: workspace, env });
       expect(passive.code).toBe(0);
-      expect(passive.stdout).toContain("state=disconnected");
+      expect(passive.stdout).not.toContain("state=");
       expect(existsSync(pidPath)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });

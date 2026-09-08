@@ -224,18 +224,35 @@ pub fn render(alloc: Allocator, snapshot: Snapshot) ![]u8 {
         });
     }
     for (snapshot.servers) |server| {
-        try out.writer.print(
-            "  {s} source={s} scope={s} policy={s} transport={s} state={s} auth={s}\n",
-            .{
-                server.configured_name,
-                @tagName(server.source),
-                @tagName(server.scope),
-                if (server.required) "required" else "optional",
-                @tagName(server.transport),
-                @tagName(server.connection),
-                @tagName(server.authentication),
-            },
-        );
+        // `disconnected` means no transport was ever opened, so the field
+        // carries no information in the transport-free list path and is
+        // omitted. Every other connection value is a real observation.
+        if (server.connection == .disconnected) {
+            try out.writer.print(
+                "  {s} source={s} scope={s} policy={s} transport={s} auth={s}\n",
+                .{
+                    server.configured_name,
+                    @tagName(server.source),
+                    @tagName(server.scope),
+                    if (server.required) "required" else "optional",
+                    @tagName(server.transport),
+                    @tagName(server.authentication),
+                },
+            );
+        } else {
+            try out.writer.print(
+                "  {s} source={s} scope={s} policy={s} transport={s} state={s} auth={s}\n",
+                .{
+                    server.configured_name,
+                    @tagName(server.source),
+                    @tagName(server.scope),
+                    if (server.required) "required" else "optional",
+                    @tagName(server.transport),
+                    @tagName(server.connection),
+                    @tagName(server.authentication),
+                },
+            );
+        }
         if (server.workspace_admission) |admission| {
             try out.writer.print("    admission={s}\n", .{@tagName(admission)});
         }
@@ -481,7 +498,7 @@ test "health rendering omits transport-product lines before discovery" {
     defer alloc.free(output);
     try std.testing.expectEqualStrings(
         "MCP health (1 server):\n" ++
-            "  fixture source=profile scope=profile policy=optional transport=http state=disconnected auth=authenticated\n",
+            "  fixture source=profile scope=profile policy=optional transport=http auth=authenticated\n",
         output,
     );
 }
