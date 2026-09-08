@@ -35,30 +35,14 @@ opens with this section empty, as `plan.md` requires.
 
 ## Phase 5: Repair and verification
 
-Recorded in `plan.md`, not duplicated here:
-
-- Session-recovery harness — resolved in Phase 5: cases 1-10 restored,
-  cases 11-16 live as resume-commit boundary pauses (see `plan.md`,
-  "Session-recovery harness: what the deleted suite proved", plus the
-  `session-recovery.test.ts` header on why model-turn pauses are
-  unreachable with one-shot pause semantics).
-- Four retained ACP-driven E2E cases — resolved in Phase 5 (see `plan.md`,
-  "ACP-driven cases retained for conversion", dispositions paragraph):
-  web_fetch deny converted, web_search deny deleted as a converted-duplicate,
-  both command-permissions cases converted, terminal-host role re-pointed.
-  No `fiber acp` spawns remain in the suite.
-
-Added 2026-09-06 from the Phase 4 residue, resolved 2026-09-08 by owner
-decision (remove):
-
-- **Merged-settings `credential_source` is parsed and never read.**
-  Removed the setting outright: `Settings.credential_source` field, profile
-  key, parsing, merge, `UserSettingsPatch` fields/application/validation,
-  and its unit test. `types.CredentialSource` stays — it is provenance
-  plumbing (which source served a request), not the preference. Unknown
-  `credential_source` keys in existing settings files are ignored, matching
-  the convention for other retired keys. Full Zig suite, config-persistence
-  24/0, auth-source-selection 4/0, smoke all green.
+Cleared 2026-09-08. All four entries resolved during the phase; their rationale
+lives in [`plan.md`](plan.md) ("Session-recovery harness: what the deleted suite
+proved" and the "ACP-driven cases retained for conversion" dispositions
+paragraph) and in [`phase5-triage.md`](phase5-triage.md), which carries the
+census closeout, the baseline diff, and the unavailable external checks recorded
+as unverified. The `credential_source` removal and the session-recovery 11-16
+test-controls threading landed as their own gated slices. Phase 5 closes with
+this section empty, as `plan.md` requires.
 
 ## Phase 6: Documentation and naming
 

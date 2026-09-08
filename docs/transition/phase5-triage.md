@@ -483,3 +483,15 @@ killed — always `pgrep` for strays after a delegate dies mid-run.
   `mcp list` placeholder fields (decided, unimplemented), session 11–16
   test-controls threading. Phase 5 E2E work is done; these three decide
   whether the section — and the phase — closes here or moves out.
+
+## Addendum 2026-09-08: Phase 5 closed (owner)
+
+- Phase 5 section of `deferred.md` cleared; all four entries resolved in-phase
+  (session-recovery harness, four ACP-driven cases, `credential_source`,
+  and — under Phase 6's section — `mcp list` unfillable fields). With the
+  census closeout above and Full CI green on the tip, `plan.md`'s Phase 5
+  exit criteria are met. Phase 5 is closed.
+- **Unrouted at close:** PRODUCT-FOLLOWUP ruling 4a (restore `image_unavailable`
+  notice on resume) still lives only in this file. It is product work, not doc
+  residue, so it does not belong in `deferred.md`'s Phase 6 section. Phase 6
+  decides its destination — most likely `docs/enhancements/pending.md`.
