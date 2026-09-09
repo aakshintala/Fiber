@@ -353,6 +353,15 @@ if any workflow run attempts to create a tag or release.
 - Remove `update_channel` and `build_channel` from status text and JSON. Fiber
   has no release channels or configured release source. Retain build revision
   provenance.
+- Remove the stale `-Dupdate-channel` plumbing from PGSO. Slice 19 deleted the
+  build option from `build.zig` but left `build_options.addOption(...,
+  "update_channel", "stable")` and every caller, so
+  `zig build -Dupdate-channel=stable` now fails with `invalid option`. The
+  callers are `scripts/pgso/pipeline.py`, `scripts/pgso/__main__.py`,
+  `scripts/pgso/README.md`, `.github/workflows/pgso-macos-arm64.yml`, and the
+  assertion in `scripts/pgso/tests/test_pipeline.py`. PGSO has been broken since
+  Slice 19; it went unnoticed because that workflow runs only on pull requests
+  against its own paths and Phase 5 opened none. Slice 1 surfaced it.
 - Keep Ctrl+G consistent with the disabled default: with no producer and
   automatic upgrade disabled, it reports `auto-upgrade is disabled` and leaves
   the session writable. Rewrite the retained E2E comments that claim Phase 6
