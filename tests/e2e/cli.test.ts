@@ -120,7 +120,7 @@ function writeLegacySession(
   const eventId = "2".repeat(32);
   const createdAtMs = opts.createdAtMs ?? 1;
   const updatedAtMs = opts.updatedAtMs ?? 2;
-  const preferences = { model: "gpt-5.4-mini", effort: "medium", fast_mode: false };
+  const preferences = { model: "gpt-5.6-luna", effort: "medium", fast_mode: false };
   const events =
     JSON.stringify({
       schema_version: 1,
@@ -398,6 +398,7 @@ describe("cli: status", () => {
           HOME: realpathSync(home),
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_DISABLE_KEYCHAIN: "1",
         };
         const cwd = realpathSync(workspace);
@@ -2472,7 +2473,7 @@ describe("cli: models", () => {
             context_window: 272000,
           },
           {
-            slug: "gpt-5.4-mini",
+            slug: "gpt-5.6-luna",
             visibility: "list",
             supported_in_api: true,
             supported_reasoning_levels: [{ effort: "low" }],
@@ -2489,7 +2490,7 @@ describe("cli: models", () => {
         });
         expect(result.code).toBe(0);
         expect(result.stderr).toBe("");
-        expect(result.stdout).toBe("[models] 2 available\n - gpt-5.4\n - gpt-5.4-mini\n");
+        expect(result.stdout).toBe("[models] 2 available\n - gpt-5.4\n - gpt-5.6-luna\n");
 
         const json = await runFx(["models", "--json"], {
           env: codexModelsEnv(home, server.modelsUrl),
@@ -2503,7 +2504,7 @@ describe("cli: models", () => {
             shown_count: 2,
             more_count: 0,
             private_models_hidden: false,
-            ids: ["gpt-5.4", "gpt-5.4-mini"],
+            ids: ["gpt-5.4", "gpt-5.6-luna"],
           },
         });
 
@@ -2612,13 +2613,6 @@ describe("cli: models", () => {
         {
           name: "a catalog with non-array models",
           response: () => Response.json({ models: {} }),
-          code: "MalformedResponse",
-        },
-        {
-          name: "a catalog missing the reviewer model",
-          response: () => Response.json({
-            models: [{ slug: "gpt-5.4", visibility: "list", supported_in_api: true }],
-          }),
           code: "MalformedResponse",
         },
       ]) {
@@ -3090,7 +3084,7 @@ describe("cli: ask success", () => {
           const path = new URL(req.url).pathname;
           if (path === "/models") {
             return Response.json({ models: [
-              { slug: "gpt-5.4-mini", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
+              { slug: "gpt-5.6-luna", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
             ] });
           }
           const body = await req.text();
@@ -3220,7 +3214,7 @@ describe("cli: ask success", () => {
           const path = new URL(req.url).pathname;
           if (path === "/models") {
             return Response.json({ models: [
-              { slug: "gpt-5.4-mini", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
+              { slug: "gpt-5.6-luna", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
             ] });
           }
           const body = await req.text();

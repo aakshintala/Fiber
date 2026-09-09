@@ -2304,7 +2304,7 @@ describe("effect-aware command permissions", () => {
         minimumHistoryLines: 1_000,
       });
 
-      await activeSession.waitForText("auto · gpt-5.4-mini", TIMEOUT);
+      await activeSession.waitForText("auto · gpt-5.6-luna", TIMEOUT);
       await activeSession.sendText("Render the fixed scrollback fixture.");
       await activeSession.waitForText(expectedMarkers.at(-1)!, TIMEOUT);
       expect(codex.requests).toHaveLength(1);
@@ -2335,7 +2335,7 @@ describe("effect-aware command permissions", () => {
 
       await activeSession.sendText("/permissions ask");
       await activeSession.waitForText("mode set to ask", TIMEOUT);
-      await activeSession.waitForText("ask · gpt-5.4-mini", TIMEOUT);
+      await activeSession.waitForText("ask · gpt-5.6-luna", TIMEOUT);
 
       const commandTrace = await waitForTraceSlice(
         tracePath,
@@ -2473,14 +2473,14 @@ describe("effect-aware command permissions", () => {
         finalText("permission resume seed complete"),
       ]);
 
-      await harness.initialSession.waitForText("auto · gpt-5.4-mini", TIMEOUT);
+      await harness.initialSession.waitForText("auto · gpt-5.6-luna", TIMEOUT);
       await harness.initialSession.sendText("Save a turn before changing permission mode.");
       await harness.initialSession.waitForText("permission resume seed complete", TIMEOUT);
       expect(harness.initialCodex.requests).toHaveLength(1);
 
       await harness.initialSession.sendText("/permissions ask");
       await harness.initialSession.waitForText("mode set to ask", TIMEOUT);
-      await harness.initialSession.waitForText("ask · gpt-5.4-mini", TIMEOUT);
+      await harness.initialSession.waitForText("ask · gpt-5.6-luna", TIMEOUT);
       const initialScrollback = await harness.initialSession.captureFullScrollback();
       expect(initialScrollback).toContain("permission resume seed complete");
       expect(initialScrollback).toContain("mode set to ask");
@@ -2491,7 +2491,7 @@ describe("effect-aware command permissions", () => {
         finalText("permission resume denial complete"),
       ]);
       await resumed.session.waitForText("● Session resumed", TIMEOUT);
-      await resumed.session.waitForText("ask · gpt-5.4-mini", TIMEOUT);
+      await resumed.session.waitForText("ask · gpt-5.6-luna", TIMEOUT);
       await resumed.session.sendText("Create the marker after resuming.");
 
       const approvalPane = await resumed.session.waitForText(COMMAND_APPROVAL_PROMPT, TIMEOUT);

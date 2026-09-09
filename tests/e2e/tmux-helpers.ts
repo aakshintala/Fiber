@@ -1295,7 +1295,7 @@ export function tmuxAvailable(): boolean {
 // and POST /token for the ChatGPT OAuth refresh grant.
 // ---------------------------------------------------------------------------
 
-export const FAKE_CODEX_DEFAULT_MODEL = "gpt-5.4-mini";
+export const FAKE_CODEX_DEFAULT_MODEL = "gpt-5.6-luna";
 
 export function chatGptAccessToken(
   accountId = "acct_e2e",
@@ -1472,6 +1472,7 @@ export function fakeCodexEnv(
 ): Record<string, string | undefined> {
   return {
     HOME: home,
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
     FIBER_E2E_OPENAI_CODEX_RESPONSES_URL: codex.responsesUrl,
     FIBER_E2E_OPENAI_CODEX_MODELS_URL: codex.modelsUrl,
     FIBER_E2E_CHATGPT_TOKEN_URL: codex.tokenUrl,

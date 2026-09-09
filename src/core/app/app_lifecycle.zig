@@ -349,9 +349,16 @@ fn loadStartupStateFromOwnedWorkspace(
 
     const configured_selection = try configuredProviderSelection(default_model, settings);
     state.provider = configured_selection.provider;
-    state.configured_model = try alloc.dupe(u8, configured_selection.model);
     state.model_source = detailed.model_source orelse .compiled_default;
     state.selected_model = try loadInitialModel(alloc, configured_selection.model, null);
+    // FIBER_MODEL supplies a model without writing one to the profile. With no
+    // compiled-in default behind it, the profile setting can be empty while the
+    // effective model is not, and the session store rejects an empty durable
+    // model. The durable seed follows the effective model in that case.
+    state.configured_model = try alloc.dupe(u8, if (configured_selection.model.len > 0)
+        configured_selection.model
+    else
+        state.selected_model);
     if (hasProcessModelOverride()) state.model_source = .process_override;
     state.config_diagnostics = detailed.diagnostics;
     detailed.diagnostics = &.{};

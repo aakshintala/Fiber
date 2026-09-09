@@ -91,7 +91,7 @@ test(
         const path = new URL(req.url).pathname;
         if (path === "/models") {
           return Response.json({ models: [
-            { slug: "gpt-5.4-mini", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
+            { slug: "gpt-5.6-luna", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
           ] });
         }
         requests.push(await req.text());
@@ -240,7 +240,7 @@ test(
         const path = new URL(req.url).pathname;
         if (path === "/models") {
           return Response.json({ models: [
-            { slug: "gpt-5.4-mini", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
+            { slug: "gpt-5.6-luna", visibility: "list", supported_in_api: true, supported_reasoning_levels: [{ effort: "low" }], additional_speed_tiers: [], input_modalities: ["text"], context_window: 128000 },
           ] });
         }
         if (path === "/token") {
