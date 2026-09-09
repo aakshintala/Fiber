@@ -58,6 +58,9 @@ jobs:
       - name: Validate PGSO corpus classification
         run: python3 -m scripts.pgso.corpus --manifest scripts/pgso/corpus.json --list
 
+      - name: Test the release decision
+        run: python3 -m unittest scripts.tests.test_release_decision -v
+
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
 

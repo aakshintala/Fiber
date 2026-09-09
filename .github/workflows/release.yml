@@ -23,23 +23,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The decision lives in scripts/release_decision.py so it can be tested
+      # without a live publication. A prerelease is refused before the tag is
+      # ever consulted, so a lookup failure cannot become a publication.
       - name: Check if release needed
         id: check
         run: |
-          VERSION=$(grep 'pub const version' src/main.zig | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::src/main.zig version is not strict SemVer"
-            exit 1
-          fi
-          TAG="v${VERSION}"
-          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-            echo "Tag ${TAG} exists, no release needed"
-          else
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-            echo "Tag ${TAG} missing, release needed"
-          fi
+          python3 -m scripts.release_decision \
+            --source src/main.zig \
+            --github-output "$GITHUB_OUTPUT"
 
   build-linux:
     needs: check-version

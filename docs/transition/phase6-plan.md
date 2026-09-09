@@ -373,6 +373,21 @@ if any workflow run attempts to create a tag or release.
 - Rewrite `scripts/smoke.sh`'s transition-only header as the permanent offline
   repository smoke gate without changing its coverage.
 
+### Disposition rule for updater material
+
+Update support lands before `v0.0.1`. Nothing this slice touches may be deleted
+merely because it is currently unreachable. Order of preference:
+
+1. Keep it live. A seam, struct field, or function that still compiles is
+   type-checked against later edits; commented-out code is not.
+2. If it cannot stay live, comment it out with a pointer to what restores it.
+3. Delete only what a GitHub Releases updater will never want: Vercel CDN
+   wording, `ai-gateway.vercel.sh` endpoints, and claims about release channels
+   Fiber will not have.
+
+Removing a false user-facing claim is not deletion of the mechanism behind it.
+Prefer changing what the code reports over removing what the code can do.
+
 ### Retained invariants
 
 - The loopback-only upgrade test seam remains available to deterministic tests.
@@ -479,7 +494,8 @@ transition.
 
 Compare every runnable instruction with `./zig-out/bin/fiber`. Search for
 `full-ci`, `Full CI`, `bench.yml`, `binary-size.yml`, and `Full suite`, all of
-which name workflows Slice 1 deleted. Search for the
+which name workflows Slice 1 deleted. Search for `background --json`, a command
+that no longer exists; `CONTRIBUTING.md` still lists it in a latency table. Search for the
 removed transition links, `fiber login codex`, nonexistent ship gates,
 macOS x86_64 Full CI claims, removed commands and flags, inherited marketing,
 and false install, upgrade, embedding, or size claims. Check every retained
@@ -528,7 +544,22 @@ upstream-harvest candidates, and the `fiber models` defect observed during Slice
 `src/core/gateway/model_catalog.zig`. The JSON envelope is correct, so this is a
 catalog or provider-response defect rather than an output-contract one.
 `scripts/smoke.sh` only reaches this path on a credentialed profile, so CI
-cannot catch it. This list is a floor, not a substitute for the
+cannot catch it.
+
+The release-preparation issue must carry the changelog system prompt from the
+deleted `prepare-release.yml`, pasted into the issue body. Retrieve it with:
+
+```sh
+git show 993688a5:.github/workflows/prepare-release.yml | sed -n '75,90p'
+```
+
+The commit is `main`'s own pre-transition tip, not a branch commit, so it still
+resolves after this PR is squashed and `transition-main` is deleted.
+
+Harvest the prompt only. Its delivery path is fx machinery and does not come
+across: the Vercel AI Gateway endpoint, `AI_GATEWAY_API_KEY`, the
+`vercel-labs/fx` referer, and a pinned model id that is already stale. The one
+fx-specific instruction is the product-name rule, which becomes Fiber. This list is a floor, not a substitute for the
 inventory.
 
 Commit the completed ledger only after every candidate has an owner ruling and

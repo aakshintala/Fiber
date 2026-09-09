@@ -11,7 +11,6 @@ LINUX_BUDGETS = {
     "fiber (startup)": 0.002,
     "fiber help": 0.002,
     "fiber status --json": 0.002,
-    "fiber background --json": 0.002,
     "fiber doctor --json": 0.002,
     "fiber sessions --json": 0.002,
 }
