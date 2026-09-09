@@ -2,24 +2,6 @@
 
 Instructions for AI coding agents working with this codebase.
 
-## Temporary Fiber transition process
-
-When implementing [`docs/ideas/fiber-product-transition.md`](docs/ideas/fiber-product-transition.md), follow [`docs/transition/plan.md`](docs/transition/plan.md) and the ordered slices in [`docs/transition/demolition-inventory.md`](docs/transition/demolition-inventory.md). This section overrides conflicting fiber-era process, CI, release, platform, naming, authentication, and completion guidance elsewhere in this file or in `CONTRIBUTING.md` until the final documentation phase replaces it.
-
-Run one slice at a time, start to finish, on `main`. No parallel slices, no
-concurrent worktrees, no fanning slices out to multiple agents. The slices share
-command registries, `src/main.zig`, and test files; running two at once turns a
-stop condition into a merge conflict and destroys the evidence trail that makes
-a slice reviewable.
-
-During demolition, work in one subsystem or about 15 files at a time. Define the removal surface, retained invariants, exact searches, and stop conditions before editing. Use compilation and unit tests as the interim gate; defer routine E2E, live-model, editor, and exhaustive product verification to the repair phase.
-
-For each demolition slice, run `zig fmt --check src/`, `zig build -Doptimize=ReleaseSafe`, `zig build test -Doptimize=ReleaseSafe`, exact searches for removed references, and `./scripts/smoke.sh`. The smoke script finds `fiber` or `fiber` on its own, so it needs no change at the identity cutover. Report every command and exit status. Classify tests that exclusively cover removed behavior for deletion; preserve failures covering retained behavior as repair evidence.
-
-Review each slice for accidental additions, compatibility paths, and resurrection of removed code. Keep slices independently reviewable.
-
-Commit exactly one commit per slice, on `main`, after that slice's gate passes. Name the slice in the subject (`Slice 7: remove remaining WASI target branches`). A slice that hits a stop condition is not committed; return to the orchestrator with the evidence instead. Do not merge, push, open a pull request, publish, or tag unless the orchestrator explicitly requests it. The inherited feature-branch, Full CI, ship-gate, release, and macOS Intel requirements do not apply during the transition.
-
 ## Declaring Work Ready
 
 Do not say the work is "ready", "done", "good to go", "complete", or similar until you have personally run the binary and exercised the change on its happy path. A passing test suite is necessary, not sufficient — tests in this repo do not always construct the full runtime, attach a TTY, or spawn background threads, so they will not catch startup crashes, render regressions, or thread-lifetime bugs.
@@ -28,23 +10,20 @@ Before reporting the work as ready:
 
 1. Build succeeds.
 2. Focused tests for the changed path pass locally.
-3. The **Full CI** run for the exact current commit passes on every required Linux and macOS runner.
+3. The `CI` check passes for the exact current commit on the pull request.
 4. Run the built binary locally and drive at least one real interaction that exercises the change end to end.
 5. Confirm the process did not abort, stderr is clean, and the behavior matches what you are about to tell the user.
+6. Update the documents listed under **Documentation** if behavior changed.
 
 If you cannot run the binary in your environment, say so explicitly and ask the user to verify. Do not silently skip this step and declare the work ready. "The tests pass" is not a substitute for running the app.
 
 ### Always use the built binary in this repo
 
-When running fiber for verification, **always use the freshly-built binary at** **`./zig-out/bin/fiber`** from this checkout. Never run `fiber` from `PATH`, never rely on whatever is at `~/.fiber/bin/fiber`, and never assume an installed copy reflects your change.
+Verify with the freshly-built binary at `./zig-out/bin/fiber` from this checkout. It is the only binary that contains your change; `zig build` writes nothing else. A `fiber` on `PATH` is some other build, and once installation exists it will live in `~/.local/bin/`.
 
-* The user may have an older `fiber` on their PATH (e.g. installed via `fiber upgrade` or the CDN install script). Running that one will not exercise your edits.
+In every shell invocation, tmux included, use `./zig-out/bin/fiber` or its absolute path. Bare `fiber` is always wrong for verification.
 
-* `zig build` writes to `zig-out/bin/fiber`. That is the only binary that contains your latest change.
-
-* When a user reports "still not working" after you believe you fixed something, do not assume they are running the wrong binary. Assume your fix is incomplete and investigate further. If you genuinely suspect a PATH mismatch, ask — do not silently copy binaries into `~/.fiber/bin/`.
-
-* In any shell invocation — tmux, direct run, scripts — reference fiber as `/Users/<you>/path/to/repo/zig-out/bin/fiber` (absolute) or `./zig-out/bin/fiber` (when cwd is the repo root). Bare `fiber` is always wrong for dev verification.
+When a user reports "still not working", assume your fix is incomplete and keep investigating. If you genuinely suspect a PATH mismatch, ask; copying binaries into their install directory hides the problem instead of finding it.
 
 ## Language and Toolchain
 
@@ -142,7 +121,7 @@ Config precedence (highest wins):
 4. `<workspace>/.fiber.json` (committed project defaults)
 5. Built-in defaults
 
-Project `.fiber.json` accepts only repo-safe defaults: `sandbox`, `max_agent_steps`, `max_tool_result_bytes`, and `context`. Profile-owned keys such as `model`, `effort`, `fast_mode`, `slash_menu_categories`, `startup_scrollback`, `prompt_history`, `statusLine`, `skill_match_fuzzy`, `first_call_tool_choice`, `auto_upgrade`, `permission_mode`, `credential_source`, and `permission` are ignored from project config before their values are parsed.
+Project `.fiber.json` accepts only repo-safe defaults: `sandbox`, `max_agent_steps`, `max_tool_result_bytes`, and `context`. Profile-owned keys such as `model`, `effort`, `slash_menu_categories`, `startup_scrollback`, `prompt_history`, `statusLine`, `skill_match_fuzzy`, `first_call_tool_choice`, `auto_upgrade`, `permission_mode`, and `permission` are ignored from project config before their values are parsed.
 
 Runtime state lives under `~/.fiber/sessions/<session-id>/` (`session.json`, `background/`, `subagent/`, `logs/`). Sessions are global and portable across workspaces. Each session tracks its `workspace_root`, which updates when resumed in a different workspace. A subagent child is an internal ordinary session with its own history. Its parent owns one bounded `subagent/children.json` registry, and the child carries only an immutable owner marker. Child sessions stay out of ordinary session discovery and cannot be resumed directly. A first `subagent.message` creates a named persistent child in that parent; later messages continue it, and optional instructions replace only its child-specific system overlay.
 
@@ -226,7 +205,7 @@ Do not bypass the permission system for new tools.
 
 * Zig unit tests go inside the source file they test, using `test "description" { ... }` blocks.
 
-* Run the narrowest relevant tests while developing. The complete `zig build test` suite runs in ReleaseSafe in **Full CI** after the feature branch is pushed, and it must pass before the draft PR is marked ready.
+* Run the narrowest relevant tests while developing. The complete `zig build test` suite runs in ReleaseSafe on every pull request, and must pass before the pull request is marked ready.
 
 * Use `std.testing.expect`, `std.testing.expectEqual`, `std.testing.expectEqualStrings` for assertions.
 
@@ -259,41 +238,84 @@ cd tests/e2e && bun test tui-*.test.ts               # just TUI tests (requires 
 
 TUI tests use tmux to drive the interactive terminal. They require `tmux` to be installed.
 
-## Pull Request Classification
+## Continuous integration
 
-Every pull request must have exactly one `type:` label, chosen by its primary intent:
+Do not run the complete deterministic suite locally as the default loop. Run the
+focused test for the changed path, build, and exercise that path with
+`./zig-out/bin/fiber`.
 
-* `type: bug`: fixes incorrect behavior
+Then commit, push the branch, and open a draft pull request. `ci.yml` is the only
+entrypoint, and scope follows the pull request's state:
 
-* `type: feature`: adds a new user-facing capability
+* **Draft** runs Linux x86_64 formatting, the public-surface audit, PGSO corpus
+  validation, the release-decision tests, build, unit tests, and smoke. Fast
+  feedback while the work is still moving.
+* **Ready** adds the three-platform native matrix (`ubuntu-24.04`,
+  `ubuntu-24.04-arm`, `macos-15`), four duration-balanced ReleaseSafe E2E shards
+  per platform, benchmarks, the three-platform binary size comparison, and the
+  isolated MCP conformance package.
 
-* `type: improvement`: improves existing user-facing behavior
+A push does not trigger CI. A branch with no pull request has nothing to gate,
+and `release.yml` owns `main`.
 
-* `type: docs`: changes documentation only
+One job, `aggregate`, emits the single required check. It is named `CI` on a
+pull request and `Manual CI` on a `workflow_dispatch`, because GitHub matches a
+required check by name on the head commit and ignores which event produced it.
+It fails if any selected job failed or was cancelled, and passes when unselected
+jobs are skipped.
 
-* `type: maintenance`: changes internal tooling, dependencies, CI, or implementation structure without a user-facing behavior change
+Marking a pull request ready re-runs CI on the same commit, so the ready-scope
+result supersedes the draft one. Evidence comes only from the current run: a
+result from an ancestor commit does not count.
 
-* `type: release`: prepares or repairs a release
+A failed check is evidence. Repair it in a new commit and let CI run again;
+never rerun a failed test to green. Live model evals stay separate because they
+need credentials and are not deterministic.
 
-* `type: security`: fixes or hardens a security boundary
+## Merge authority
 
-Assign the label when the PR is opened and keep it accurate when the PR changes. If the authenticated contributor cannot manage labels, state the required label and keep the PR in draft until a maintainer or repository agent applies it. For a mixed PR, choose the label that describes the primary reason the PR exists. If that is ambiguous, ask before applying or changing the label.
+Open a draft pull request as soon as the branch is pushed, and mark it ready once
+the gate passes.
 
-Keep PR titles as clean imperative sentences, such as `Restore feedback report file clipboard`. Do not add bracketed prefixes such as `[bug]`, `[feature]`, or `[improvement]`. Type belongs in the label, not the title.
+Land a ready pull request without asking when all of these hold:
 
-## Full CI on Feature Branches
+* It is small, reversible, and test-backed.
+* It implements an approved contract or existing behavior rather than inventing
+  new behavior.
+* It adds no dependency.
+* It touches no security, permission, authentication, persistence, release, CI,
+  ruleset, or public compatibility boundary.
+* Independent standards and spec review left no unresolved blocker or concern.
 
-Do not run the complete deterministic test suite locally as the default development loop. Run the focused test for the changed path, build the binary, and exercise that path with `./zig-out/bin/fiber`.
+Everything else waits for the owner: new behavior, ambiguous defects, scope
+changes, and destructive work.
 
-After the focused checks pass, create a clean checkpoint commit, push the non-`main` feature branch, and open a draft PR immediately. `.github/workflows/full-ci.yml` runs the following on all three supported native runner architectures:
+The boundary list is the point. Agents act through the owner's GitHub account, so
+a review approval carries no independent signal and the ruleset requires zero
+approvals. Owner judgement is the only real check on those surfaces, which is why
+they are named explicitly rather than left to taste.
 
-* `ubuntu-24.04` (x86_64)
-* `ubuntu-24.04-arm` (aarch64)
-* `macos-15` (aarch64)
+## Future work
 
-The native matrix builds, tests, and smoke-tests ReleaseSafe on every platform; formatting and the public-surface audit run in those ReleaseSafe jobs. The E2E matrix runs four duration-balanced, isolated ReleaseSafe shards per platform with Bun and tmux. Checked-in weights assign every test file to exactly one shard on each platform, and files inside each shard run sequentially in separate Bun processes so terminal fixtures and process state cannot leak between files. A failed file receives one bounded retry after its tmux server is reset. Live model evals remain separate because they require credentials and are not deterministic.
+Anything worth doing later belongs in a GitHub issue, recorded as the user
+outcome, the evidence, and the constraints worth preserving.
 
-A Full CI result is valid only when it belongs to the exact current commit and all three `Full suite (...)` jobs succeed. Each platform aggregate requires its ReleaseSafe native check plus all four ReleaseSafe E2E shards. Do not mark the draft PR ready or request review from a stale, partial, queued, cancelled, skipped, or failed run. If Full CI fails, make the smallest repair, rerun the focused local proof, push the new commit to the same draft PR, and wait for Full CI on the new exact commit. After CI passes, run the final ship gate and mark the PR ready only when it reports `SHIP` for that exact commit.
+Keep it there rather than in a local planning document, backlog file, or ideas
+directory. A file in the repo drifts from the code as soon as it is written, and
+only whoever opens that file ever sees it.
+
+## Upstream harvest
+
+`vercel-labs/fx` is the upstream Fiber forked from. Its remote is fetch-only, and
+its push URL is set to `no-push`.
+
+Read upstream freely for ideas. Reimplement anything worth taking under Fiber's
+current contracts, and attribute it.
+
+Never merge or cherry-pick upstream history. The fork diverged deliberately:
+fx's identity, release machinery, CDN distribution, and provider surface are all
+things Fiber removed on purpose, so upstream commits carry that machinery back in
+with whatever else they bring.
 
 ## Reproducing Render Bugs
 
@@ -340,14 +362,14 @@ When a tmux or tape-based scenario exposes a bug, reproduce it as a Zig unit tes
 
 ## Benchmarks
 
-Startup latency benchmarks live in `benchmarks/` and run in CI via `.github/workflows/bench.yml`.
+Startup latency benchmarks live in `benchmarks/` and run as the `bench` job of `ci.yml` on ready pull requests.
 
 ```bash
 ./benchmarks/startup.sh            # full run (100 iterations, builds ReleaseSafe, needs hyperfine)
 ./benchmarks/startup.sh --quick    # quick run (20 iterations)
 ```
 
-The CI workflow builds a ReleaseSafe binary, measures six CLI paths with hyperfine, and enforces per-command latency budgets. PRs that exceed a budget fail the check. On `main`, results are uploaded to Vercel Blob for historical tracking.
+The job builds a ReleaseSafe binary, measures the startup path plus `help`, `status --json`, `doctor --json`, and `sessions --json` with hyperfine, and enforces per-command latency budgets. A pull request that exceeds a budget fails the check. Budgets are absolute, so no baseline from `main` is needed and none is stored.
 
 The startup benchmark uses `FIBER_BENCH=1`, an environment variable that runs through arg parsing and CLI dispatch, then exits before TTY initialization. This lives in `src/core/app/app_entry_runtime.zig`.
 
@@ -365,8 +387,8 @@ When adding features, consider their impact on startup latency. The `fiber help`
 
 ## Binary Size Observability
 
-Every pull request runs `.github/workflows/binary-size.yml` across Linux x86_64,
-Linux arm64, macOS x86_64, and macOS arm64. Each matrix job builds the pull
+Every ready pull request runs the `binary-size` job of `ci.yml` across Linux
+x86_64, Linux arm64, and macOS arm64. Each matrix job builds the pull
 request merge commit and its base commit as stripped ReleaseSafe binaries on
 the same native runner, then reports the exact byte and MiB delta plus ELF or
 Mach-O section changes.
@@ -390,29 +412,21 @@ Do not document intended behavior as if it already exists.
 
 ## Releasing
 
-Releases use a two-workflow pipeline. The maintainer controls the changelog voice and format.
+Fiber publishes no releases yet. The version is `0.0.1-dev`, and
+`release.yml` refuses to publish any SemVer prerelease, so merging to `main`
+cannot cut a release. There is no installation or upgrade path: `fiber upgrade`
+fails with `UpgradeUnavailable` until a release source exists. Building
+distribution is tracked as a GitHub issue, not attempted here.
 
-### Automated flow (preferred)
+When a stable release does happen, `release.yml` owns it. On a push to `main` it
+reads the version from `src/main.zig` through `scripts/release_decision.py`. A
+prerelease is refused before the tag is ever consulted. A stable version whose
+tag is missing cross-compiles the platform binaries, creates the tag, and
+publishes a GitHub Release whose body is the content between the
+`<!-- release:start -->` and `<!-- release:end -->` markers in `CHANGELOG.md`.
 
-1. Go to **Actions > Prepare Release** on GitHub
-2. Select the bump type (`patch`, `minor`, or `major`) and run the workflow
-3. The workflow bumps the version, feeds the actual `git diff` to an LLM to draft the changelog, and opens a PR
-4. Review the PR — edit the AI-drafted changelog if needed — then merge
-5. The existing `release.yml` detects the version change and handles build, publish, tagging, and the GitHub Release
-
-The `prepare-release.yml` workflow uses the Vercel AI Gateway (`AI_GATEWAY_API_KEY` secret) to generate the changelog from the real code diff, not from commit messages or PR descriptions.
-
-### Manual flow
-
-To prepare a release by hand:
-
-1. Create a branch (e.g. `prepare-v0.3.0`)
-2. Bump `pub const version` in `src/main.zig`
-3. Write the changelog entry in `CHANGELOG.md` at the top, under a new `## <version>` heading, wrapped in `<!-- release:start -->` and `<!-- release:end -->` markers. Remove the markers from the previous release entry so only the new release has them.
-4. Update `README.md` install example version
-5. Open a PR and merge to `main`
-
-When the PR merges, CI compares the version tag to what exists in git. If the tag is missing, it cross-compiles all platform binaries, creates the git tag, and publishes a GitHub Release with the binaries attached. The release body is extracted from the content between the `<!-- release:start -->` and `<!-- release:end -->` markers in `CHANGELOG.md`.
+Never create a version tag by hand; the workflow owns tag creation. Leave the
+`build.zig.zon` version alone, it is a placeholder.
 
 ### Writing the changelog
 
@@ -465,18 +479,4 @@ The canonical repository is `aakshintala/Fiber` on GitHub. All URLs, links, and 
 
 * Do not add dependencies outside the Zig standard library without discussion
 
-* Do not use `@import` with runtime-computed paths — Zig imports are comptime only
-
-* Do not ignore `zig fmt` failures
-
 * Do not create git tags manually (the release workflow owns tag creation)
-
-* Do not report work as ready without running the binary. See **Declaring Work Ready**.
-
-## Before Marking a PR Ready
-
-1. Run `zig fmt --check src/` and the focused tests for the changed path.
-2. Build and exercise the change locally with `./zig-out/bin/fiber`.
-3. Push a clean checkpoint commit and open a draft PR immediately.
-4. Require **Full CI** and the final ship gate to pass on the exact current commit across all three native runners.
-5. Update docs if behavior changed.

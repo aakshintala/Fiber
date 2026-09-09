@@ -273,7 +273,17 @@ check after the PR is marked ready, or release can no longer call PGSO.
 
 ## Repository checkpoint: protect `main`
 
-After Slice 1, temporarily mark the transition PR ready with auto-merge still
+Partly done. Ruleset `main` (id 22607901) was created active after Slice 3 with
+`pull_request` (zero approvals, resolved threads, squash only),
+`non_fast_forward`, `deletion`, and `required_linear_history`, and no bypass
+actor. Verified through the GitHub API. None of those rules need a check name,
+so they did not wait for a ready run.
+
+What remains is the one rule that does: add `required_status_checks` with the
+`CI` context, strict, selected from the actual successful check rather than a
+guessed string.
+
+To finish it, temporarily mark the transition PR ready with auto-merge still
 disabled. Let the full scope finish, record the actual `CI` context string as
 GitHub reports it, and return the PR to draft before Slice 2. Ask the owner
 before changing repository rules. Then create an active `main` ruleset with:
