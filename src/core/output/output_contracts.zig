@@ -44,6 +44,7 @@ pub const Kind = enum {
     mcp_logout,
     mcp_trust,
     models,
+    models_use,
     doctor,
     session_list,
     session_show,
@@ -74,6 +75,7 @@ pub const Kind = enum {
             .mcp_logout => "mcp.logout",
             .mcp_trust => "mcp.trust",
             .models => "models",
+            .models_use => "models.use",
             .doctor => "doctor",
             .session_list => "session.list",
             .session_show => "session.show",
@@ -1741,6 +1743,44 @@ pub const SessionDetailSnapshot = struct {
         }
 
         try out.writer.writeAll("]}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const ModelUseSnapshot = struct {
+    model: []const u8,
+    /// False when the catalog could not be reached, so the id went in
+    /// unchecked. Provisioning an unauthenticated or offline machine is a
+    /// legitimate reason to set a model fiber cannot verify yet.
+    verified: bool,
+
+    pub fn render(self: ModelUseSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: ModelUseSnapshot, alloc: Allocator) ![]u8 {
+        if (self.verified) {
+            return std.fmt.allocPrint(alloc, "[models] default {s}\n", .{self.model});
+        }
+        return std.fmt.allocPrint(
+            alloc,
+            "[models] default {s} (unverified: the model catalog was unreachable)\n",
+            .{self.model},
+        );
+    }
+
+    pub fn renderJson(self: ModelUseSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"model\":",
+            .{Kind.models_use.jsonName()},
+        );
+        try std.json.Stringify.value(self.model, .{}, &out.writer);
+        try out.writer.print(",\"verified\":{}}}}}", .{self.verified});
         return try out.toOwnedSlice();
     }
 };

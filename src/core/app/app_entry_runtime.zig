@@ -273,6 +273,13 @@ fn runInteractiveWithDeps(comptime App: type, alloc: Allocator, launch: *cli_sur
         return err;
     };
     app.startModelCacheWarmup();
+    if (@hasDecl(App, "openModelPickerIfUnselected")) {
+        app.openModelPickerIfUnselected() catch |err| {
+            app.releaseTerminal();
+            reportUnexpectedInteractiveError(deps, err);
+            return err;
+        };
+    }
 
     app.run() catch |err| {
         app.releaseTerminal();

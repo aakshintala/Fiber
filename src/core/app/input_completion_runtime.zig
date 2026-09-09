@@ -1104,6 +1104,22 @@ pub fn CompletionRuntime(comptime App: type) type {
             return buf[idx];
         }
 
+        /// fiber ships no compiled-in default model, so a profile that has
+        /// never chosen one reaches the shell with nothing selected. Rather
+        /// than wait for the user to discover /model, open its picker.
+        ///
+        /// Not without a credential: the catalog needs one, so the picker
+        /// would render "unable to load models" over a composer the user
+        /// still has to clear. Signing in comes first, and the connections
+        /// prompt already asks for that.
+        pub fn openModelPickerIfUnselected(app: *App) !void {
+            if (provider_runtime.model(app).len > 0) return;
+            if (comptime @hasDecl(App, "hasCredentialSource")) {
+                if (!app.hasCredentialSource()) return;
+            }
+            try openCurrentModelPicker(app);
+        }
+
         pub fn openCurrentModelPicker(app: *App) !void {
             try app.input_runtime.textReplacementState().replace(app.alloc, "/model ");
             app.input_runtime.picker.model_completion_anchor_current = true;

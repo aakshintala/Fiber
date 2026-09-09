@@ -48,8 +48,16 @@ can reach:
 ./zig-out/bin/fiber models
 ```
 
-Choose one with `/model` in the interactive shell and Fiber remembers it. For a
-single command, pass `--model <id>` or set `FIBER_MODEL`.
+Set the default without opening the shell:
+
+```bash
+./zig-out/bin/fiber models use <id>
+```
+
+Or choose one with `/model` in the interactive shell. Either way Fiber
+remembers it. With no model set, the shell opens the picker for you.
+
+For a single command, pass `--model <id>` or set `FIBER_MODEL`.
 
 ## Run it
 

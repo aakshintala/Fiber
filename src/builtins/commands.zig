@@ -112,9 +112,17 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .models,
         .token = "models",
-        .usage = "models [--json]",
-        .summary = "List available models",
+        .usage = "models [use <id>] [--json]",
+        .summary = "List available models, or set the default",
         .options = &.{json_option},
+        .details = &.{
+            "Commands:",
+            "  fiber models              List available models",
+            "  fiber models use <id>     Set the profile default model",
+            "",
+            "`use` checks the id against the catalog when it can reach one, and",
+            "warns instead of failing when it cannot.",
+        },
     },
     .{
         .kind = .doctor,

@@ -2526,6 +2526,93 @@ describe("cli: models", () => {
   );
 
   test(
+    "fiber models use writes the profile default and checks the catalog when it can",
+    async () => {
+      const home = createIsolatedTestHome();
+      writeSeededChatGptLogin(home, chatGptAccessToken());
+      const catalog = {
+        models: [
+          {
+            slug: "gpt-5.6-luna",
+            visibility: "list",
+            supported_in_api: true,
+            supported_reasoning_levels: [{ effort: "low" }],
+            additional_speed_tiers: [],
+            input_modalities: ["text"],
+            context_window: 128000,
+          },
+        ],
+      };
+      const server = startCodexModelsServer(() => Response.json(catalog));
+      const settingsPath = join(home, ".fiber", "settings.json");
+      try {
+        const accepted = await runFx(["models", "use", "gpt-5.6-luna"], {
+          env: codexModelsEnv(home, server.modelsUrl),
+        });
+        expect(accepted.code).toBe(0);
+        expect(accepted.stderr).toBe("");
+        expect(accepted.stdout).toBe("[models] default gpt-5.6-luna\n");
+        expect(JSON.parse(readFileSync(settingsPath, "utf8")).models).toEqual({
+          codex: "gpt-5.6-luna",
+        });
+
+        // An id the catalog does not carry is refused, and the stored default
+        // is left alone rather than overwritten with something unusable.
+        const rejected = await runFx(["models", "use", "gpt-does-not-exist"], {
+          env: codexModelsEnv(home, server.modelsUrl),
+        });
+        expect(rejected.code).toBe(1);
+        expect(rejected.stderr).toContain("unknown model: gpt-does-not-exist");
+        expect(JSON.parse(readFileSync(settingsPath, "utf8")).models).toEqual({
+          codex: "gpt-5.6-luna",
+        });
+
+        const json = await runFx(
+          ["models", "use", "gpt-5.6-luna", "--json"],
+          { env: codexModelsEnv(home, server.modelsUrl) },
+        );
+        expect(json.code).toBe(0);
+        expect(JSON.parse(json.stdout.trim())).toEqual({
+          kind: "models.use",
+          ok: true,
+          data: { model: "gpt-5.6-luna", verified: true },
+        });
+      } finally {
+        server.stop();
+        cleanupIsolatedTestHome(home);
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "fiber models use stores an unverified default when the catalog is unreachable",
+    async () => {
+      const home = createIsolatedTestHome();
+      writeSeededChatGptLogin(home, chatGptAccessToken());
+      // Port 1 refuses immediately, standing in for an offline or
+      // unauthenticated machine being provisioned ahead of first use.
+      const unreachable = "http://127.0.0.1:1/models";
+      try {
+        const result = await runFx(["models", "use", "openai/preset"], {
+          env: codexModelsEnv(home, unreachable),
+        });
+        expect(result.code).toBe(0);
+        expect(result.stdout).toContain("[models] default openai/preset");
+        expect(result.stdout).toContain("unverified");
+        expect(
+          JSON.parse(
+            readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
+          ).models,
+        ).toEqual({ codex: "openai/preset" });
+      } finally {
+        cleanupIsolatedTestHome(home);
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
     "fiber models rejects redirects without contacting the target",
     async () => {
       const home = createIsolatedTestHome();

@@ -194,6 +194,7 @@ describe("yolo permission mode", () => {
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
           FIBER_PERMISSION_MODE: undefined,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
         },
       });
 
@@ -287,6 +288,7 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
           FIBER_PERMISSION_MODE: undefined,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
         },
       });
 
@@ -382,6 +384,7 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
         env: fakeCodexEnv(fixture.home, fake, {
           FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_PERMISSION_MODE: undefined,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "permission",
         }),
@@ -460,6 +463,7 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
         env: fakeCodexEnv(fixture.home, fake, {
           FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_PERMISSION_MODE: undefined,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           FIBER_TRACE_LOG: tracePath,
           FIBER_TRACE_SCOPES: "permission",
         }),
@@ -524,6 +528,7 @@ describe.skipIf(!tmuxAvailable())("yolo interactive mode", () => {
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
           FIBER_PERMISSION_MODE: undefined,
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
         },
       });
 

@@ -176,6 +176,120 @@ fn parseLoginProvider(rest: []const [:0]const u8) !?model_provider.ProviderId {
     return provider_catalog.parse(rest[0]) orelse error.InvalidLoginProviderArgs;
 }
 
+/// `fiber models use <id>` is the only way to set the default model without a
+/// terminal. The catalog is advisory: an unreachable one warns rather than
+/// blocking, so a model can be preset on an unauthenticated or offline machine.
+fn runModelsUse(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    var requested: ?[]const u8 = null;
+    var format: output_contracts.OutputFormat = .text;
+    for (rest) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            format = .json;
+            continue;
+        }
+        if (requested != null) {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .models);
+            return .handled_usage_error;
+        }
+        requested = arg;
+    }
+    const model = requested orelse {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .models);
+        return .handled_usage_error;
+    };
+    if (model.len == 0 or !std.mem.eql(u8, model, std.mem.trim(u8, model, " \t\r\n"))) {
+        try writeModelsUseError(alloc, deps, format, "InvalidModelId", "model id must not be empty or padded with whitespace");
+        return .handled_failure;
+    }
+
+    var startup = try deps.load_catalog_startup_state(
+        alloc,
+        cfg.default_model,
+        cfg.default_agent_step_limit,
+    );
+    defer startup.deinit(alloc);
+    try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+
+    // An unreachable catalog leaves the id unverified rather than refusing it.
+    var verified = false;
+    if (cfg.provider_set.select(startup.provider).cli_model_catalog) |catalog_provider| {
+        switch (catalog_provider.fetch(alloc, .{
+            .access = startup.modelCatalogAccess(),
+            .endpoint = cfg.models_path,
+        })) {
+            .loaded => |loaded| {
+                var ids = loaded.ids;
+                defer collections.freeStringList(alloc, &ids);
+                for (ids.items) |id| {
+                    if (std.mem.eql(u8, id, model)) {
+                        verified = true;
+                        break;
+                    }
+                }
+                if (!verified) {
+                    const detail = try std.fmt.allocPrint(
+                        alloc,
+                        "unknown model: {s}; run fiber models to see what is available",
+                        .{model},
+                    );
+                    defer alloc.free(detail);
+                    try writeModelsUseError(alloc, deps, format, "UnknownModel", detail);
+                    return .handled_failure;
+                }
+            },
+            .failure => {},
+        }
+    }
+
+    var attempt = config_runtime.attemptUserPreferences(alloc, .{
+        .model_preference = .{ .provider = startup.provider, .model = model },
+    });
+    defer attempt.deinit(alloc);
+    switch (attempt) {
+        .failure => |failure| {
+            debug_trace.logf("config", "models use persistence failed err={s}", .{@errorName(failure.err)});
+            try writeModelsUseError(alloc, deps, format, @errorName(failure.err), "failed to save the default model");
+            return .handled_failure;
+        },
+        .outcome => {},
+    }
+
+    const text = try (output_contracts.ModelUseSnapshot{
+        .model = model,
+        .verified = verified,
+    }).render(alloc, format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, format);
+    return .handled_success;
+}
+
+fn writeModelsUseError(
+    alloc: Allocator,
+    deps: RunDeps,
+    format: output_contracts.OutputFormat,
+    code: []const u8,
+    message: []const u8,
+) !void {
+    if (format == .json) {
+        try writeJsonCommandFailureCode(
+            alloc,
+            deps,
+            output_contracts.Kind.models_use.jsonName(),
+            code,
+            message,
+        );
+        return;
+    }
+    try writeStderr(deps, "fiber models use: ");
+    try writeStderr(deps, message);
+    try writeStderr(deps, "\n");
+}
+
 fn selectCatalogModel(
     entries: []const model_catalog.ModelCatalogEntry,
     saved: ?[]const u8,
@@ -779,6 +893,9 @@ fn runNonInteractiveWithDeps(
             return runTopLevelMcp(alloc, rest, cfg, deps);
         },
         .models => |rest| {
+            if (rest.len > 0 and std.mem.eql(u8, rest[0], "use")) {
+                return runModelsUse(alloc, rest[1..], cfg, deps);
+            }
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .models, output_contracts.Kind.models.jsonName(), err, rest);
                 return .handled_usage_error;

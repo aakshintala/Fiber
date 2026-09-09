@@ -25,6 +25,7 @@ const app_process_runtime = @import("core/app/app_process_runtime.zig");
 const managed_execution = @import("core/execution/managed_execution.zig");
 const prompt_history_runtime = @import("core/app/prompt_history_runtime.zig");
 const app_agent_runtime = @import("core/app/app_agent_runtime.zig");
+const input_completion_runtime = @import("core/app/input_completion_runtime.zig");
 const app_runtime_setup = @import("core/app/app_runtime_setup.zig");
 const app_render_runtime = @import("core/app/app_render_runtime.zig");
 const app_session_runtime = @import("core/app/app_session_runtime.zig");
@@ -351,6 +352,7 @@ const App = struct {
     const AuthAppRuntime = app_auth_runtime.Runtime(Self);
     const BootstrapAppRuntime = app_bootstrap_runtime.Runtime(Self);
     const InputAppRuntime = app_input_runtime.Runtime(Self);
+    const CompletionAppRuntime = input_completion_runtime.CompletionRuntime(Self);
     const InputSubmitRuntime = input_submit_runtime.SubmitRuntime(Self);
     const NotificationAppRuntime = app_notification_runtime.Runtime(
         Self,
@@ -1763,6 +1765,14 @@ const App = struct {
             self.providerSet().select(self.provider_selection.selection().provider).model_catalog orelse unreachable,
             codex_models_path,
         );
+    }
+
+    pub fn hasCredentialSource(self: *App) bool {
+        return self.auth.credentialSource() != null;
+    }
+
+    pub fn openModelPickerIfUnselected(self: *App) !void {
+        return CompletionAppRuntime.openModelPickerIfUnselected(self);
     }
 
     pub fn startModelCacheWarmup(self: *App) void {

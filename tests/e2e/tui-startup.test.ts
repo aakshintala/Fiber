@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { FIBER_BIN } from "../evals/eval-helpers";
 import {
   chatGptAccessToken,
+  FAKE_CODEX_DEFAULT_MODEL,
   hasEmptyComposer,
   TmuxSession,
   tmuxAvailable,
@@ -89,6 +90,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
             HOME: home,
             FIBER_DISABLE_KEYCHAIN: "1",
             FIBER_SKIP_ONBOARDING: "1",
+            FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           },
           stderrPath,
           width: 100,
@@ -194,6 +196,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
             HOME: home,
             FIBER_DISABLE_KEYCHAIN: "1",
             FIBER_SKIP_ONBOARDING: "1",
+            FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           },
           stderrPath,
           width: 100,

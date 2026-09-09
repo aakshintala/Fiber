@@ -1070,7 +1070,7 @@ test "top-level help renders flags as compact aligned rows" {
     try std.testing.expect(lineContainsBoth(wide, "--context-limit <spec>", "Set name=bytes|off; repeatable"));
     try std.testing.expect(lineContainsBoth(wide, "--add-dir <path>", "Add a workspace directory; repeatable"));
     try std.testing.expect(std.mem.find(u8, wide, "Print the fiber version and exit\n\nExamples:") != null);
-    try std.testing.expect(std.mem.find(u8, wide, "List available models\n\n  usage") != null);
+    try std.testing.expect(std.mem.find(u8, wide, "List available models, or set the default\n\n  usage") != null);
     try expectAllLinesFit(narrow, 60);
 }
 
