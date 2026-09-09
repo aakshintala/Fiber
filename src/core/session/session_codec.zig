@@ -554,7 +554,7 @@ fn validateStateWithPermissionMigration(
     try validateWorkspaceRoot(state.workspace_root);
     if (state.created_at_ms < 0 or state.updated_at_ms < 0) return error.InvalidDurableField;
     try validateConversationLanguage(state.conversation_language);
-    try validateModel(state.preferences.model);
+    try validateOptionalModel(state.preferences.model);
     if (state.context_history_start > state.history.len) return error.InvalidDurableField;
     if (state.last_subagent_work_id) |id| {
         session.validateWorkId(id) catch return error.InvalidDurableField;
@@ -2224,6 +2224,15 @@ fn validateWorkspaceRoot(value: []const u8) !void {
     }
 }
 
+/// Session preferences may carry no model. fiber ships no compiled-in default,
+/// so a profile that has never selected one opens the shell with an empty
+/// model and the user picks it with /model. Rejecting that made every
+/// first-run session non-durable.
+fn validateOptionalModel(value: []const u8) !void {
+    if (value.len == 0) return;
+    return validateModel(value);
+}
+
 fn validateModel(value: []const u8) !void {
     if (value.len == 0 or value.len > 1024 or !std.unicode.utf8ValidateSlice(value)) {
         return error.InvalidDurableField;
@@ -2753,6 +2762,41 @@ test "current history duplicate-key repair preserves allocation failures" {
         checkCurrentToolArgumentRepairAllocationFailures,
         .{},
     );
+}
+
+test "an unselected model persists but a checkpoint authority still requires one" {
+    const alloc = std.testing.allocator;
+    const unselected =
+        "{\"id\":\"fresh\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\"," ++
+        "\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\"," ++
+        "\"preferences\":{\"model\":\"\",\"effort\":\"auto\",\"fast_mode\":false}," ++
+        "\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}";
+    var source = std.Io.Reader.fixed(unselected);
+    var decoded = try decodeState(alloc, &source, .{});
+    defer decoded.deinit(alloc);
+    try std.testing.expectEqualStrings("", decoded.preferences.model);
+
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    _ = try encodeState(decoded, &encoded.writer);
+    try std.testing.expect(std.mem.find(u8, encoded.written(), "\"model\":\"\"") != null);
+
+    // A blank model is only ever a not-yet-chosen one. A turn cannot be in
+    // flight without a model, so the checkpoint authority stays strict.
+    var blank_authority = decoded;
+    blank_authority.recovery_checkpoint = .{
+        .turn_id = 1,
+        .user = .{ .text = @constCast("prompt") },
+        .assistant_source = @constCast(""),
+        .cause = .network_interrupted,
+        .action = .retrying_request,
+        .authority = .{ .provider = .codex, .model = @constCast("") },
+        .requested_fast_mode = false,
+        .fast_mode = false,
+        .max_provider_attempts = 1,
+        .consumed_provider_attempts = 0,
+    };
+    try std.testing.expectError(error.InvalidDurableField, validateState(blank_authority));
 }
 
 test "legacy durable state defaults context history start to zero" {
