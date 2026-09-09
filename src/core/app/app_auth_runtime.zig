@@ -303,6 +303,16 @@ pub fn Runtime(comptime App: type) type {
             if (comptime @hasDecl(App, "startModelCacheWarmup")) {
                 app.startModelCacheWarmup();
             }
+            // Signing in is the other half of first-run setup: the catalog only
+            // becomes reachable here, so this is the first moment a profile with
+            // no model can pick one. Every route a credential arrives by funnels
+            // through this call. The picker declines when a model is already
+            // chosen, and after a logout, when the credential is gone.
+            if (comptime @hasDecl(App, "openModelPickerIfUnselected")) {
+                app.openModelPickerIfUnselected() catch |err| {
+                    debug_trace.logf("auth", "model picker after credential change failed err={s}", .{@errorName(err)});
+                };
+            }
         }
 
         fn writeLoginError(app: *App, err: anyerror) !void {

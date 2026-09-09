@@ -290,18 +290,6 @@ fn writeModelsUseError(
     try writeStderr(deps, "\n");
 }
 
-fn selectCatalogModel(
-    entries: []const model_catalog.ModelCatalogEntry,
-    saved: ?[]const u8,
-) ?[]const u8 {
-    if (saved) |candidate| {
-        for (entries) |entry| {
-            if (std.mem.eql(u8, entry.id, candidate)) return entry.id;
-        }
-    }
-    return if (entries.len > 0) entries[0].id else null;
-}
-
 const UpgradeOptions = struct {
     format: output_contracts.OutputFormat = .text,
 };
@@ -696,50 +684,15 @@ fn activateProviderSelection(
     );
     defer if (resolution.credential) |*credential| credential.deinit(alloc);
 
-    const credential = if (resolution.credential) |*value| value else {
+    // Confirms the credential OAuth just wrote is actually resolvable. It does
+    // not choose a model: catalog order is the provider's, not a ranking, so
+    // adopting the first entry bound the user to an arbitrary model and made
+    // login fail outright whenever the catalog was unreachable. `fiber models
+    // use <id>` is the deliberate choice, and the shell opens its picker for
+    // the same reason.
+    if (resolution.credential == null) {
         try writeProviderActivationError(alloc, deps, "Codex credential is unavailable");
         return false;
-    };
-    const catalog_provider = cfg.provider_set.select(.codex).model_catalog orelse {
-        try writeProviderActivationError(alloc, deps, "Codex model catalog is unavailable");
-        return false;
-    };
-    const fetch_result = model_catalog.fetchWithPublicFallback(catalog_provider, alloc, .{
-        .access = credentials.catalogAccessAt(credential.*, io_mod.milliTimestamp()),
-        .endpoint = cfg.models_path,
-        .view = .picker,
-    });
-    var loaded = switch (fetch_result) {
-        .loaded => |loaded| loaded,
-        .failed => |failure| {
-            debug_trace.logf("catalog", "provider selection catalog failed provider=codex category={s}", .{@tagName(failure.failure.category)});
-            const detail = try std.fmt.allocPrint(
-                alloc,
-                "could not load the target model catalog ({s})",
-                .{@tagName(failure.failure.category)},
-            );
-            defer alloc.free(detail);
-            try writeProviderActivationError(alloc, deps, detail);
-            return false;
-        },
-    };
-    defer model_catalog.freeModelCatalog(alloc, &loaded.catalog);
-    const saved_model: ?[]const u8 = null;
-    const selected_model = selectCatalogModel(loaded.catalog.items, saved_model) orelse {
-        try writeProviderActivationError(alloc, deps, "target model catalog is empty");
-        return false;
-    };
-    var attempt = config_runtime.attemptUserPreferences(alloc, .{
-        .model_preference = .{ .provider = .codex, .model = selected_model },
-    });
-    defer attempt.deinit(alloc);
-    switch (attempt) {
-        .failure => |failure| {
-            debug_trace.logf("config", "provider selection persistence failed err={s}", .{@errorName(failure.err)});
-            try writeProviderActivationError(alloc, deps, "failed to save the Codex model selection");
-            return false;
-        },
-        .outcome => {},
     }
     return true;
 }
@@ -1646,7 +1599,10 @@ fn runProviderLogin(
     }
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
-    try out.writer.print("Signed in with {s}.\n", .{provider_name});
+    try out.writer.print(
+        "Signed in with {s}.\nRun fiber models to see what is available, then fiber models use <id>.\n",
+        .{provider_name},
+    );
     try writeStdout(deps, out.written());
     return .handled_success;
 }
