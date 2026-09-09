@@ -111,7 +111,7 @@ pub fn catalogAccessForCredential(
 
 pub const missing_credential_message = missing_chatgpt_credential_message;
 pub const missing_interactive_credential_message = missing_chatgpt_interactive_credential_message;
-pub const missing_chatgpt_credential_message = "fiber needs a Codex subscription login for this model. Run fiber login codex.";
+pub const missing_chatgpt_credential_message = "fiber needs a Codex subscription login for this model. Run fiber auth login codex.";
 pub const missing_chatgpt_interactive_credential_message = "Codex needs a subscription login. Run /login, open Connections, then choose Codex subscription.";
 
 test "public credential guidance spells fiber lowercase" {

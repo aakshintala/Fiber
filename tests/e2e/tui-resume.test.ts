@@ -5170,17 +5170,16 @@ test.skipIf(!tmuxAvailable())(
 );
 
 test.skipIf(!tmuxAvailable())(
-  "upgrade ctrl-g without an upgrade producer reports no installed upgrade and stays writable",
+  "upgrade ctrl-g reports auto-upgrade is disabled and stays writable",
   async () => {
-    // Slice 19 (4b51f28a) removed the auto-upgrade producer outright: the CDN
-    // background loop (auto_upgrade.zig runLoop/runOnce/start) and the
-    // App.startAutoUpgrade call-site decl are deleted, so no path ever sets
-    // AutoUpgrade.state = .ready and the ctrl+g reload of a
-    // background-installed binary is permanently unreached until Phase 6
-    // wires a new producer (demolition-inventory.md, Slice 19). The ctrl+g
-    // machinery itself is retained, so this case pins the live disabled
-    // behavior: ctrl+g answers with the neutral notice and the writable
-    // session continues. Live-probed against zig-out/bin/fiber.
+    // Slice 19 (4b51f28a) removed the auto-upgrade producer: the background
+    // loop and the App.startAutoUpgrade call site are gone, so nothing ever
+    // sets AutoUpgrade.state = .ready. Automatic upgrade also now defaults off,
+    // so ctrl+g stops at the earlier branch and answers "auto-upgrade is
+    // disabled" rather than "no installed upgrade is ready". The ctrl+g
+    // machinery is retained either way, and this case pins what matters: the
+    // notice is neutral and the session stays writable.
+    // Live-probed against zig-out/bin/fiber.
     const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-upgrade-ctrl-g-")));
     const home = join(root, "home");
     const workspace = join(root, "workspace");
@@ -5212,7 +5211,7 @@ test.skipIf(!tmuxAvailable())(
 
       await active.sendHexBytes(["07"]);
       await active.waitForText(
-        "● Upgrade: no installed upgrade is ready",
+        "● Upgrade: auto-upgrade is disabled",
         TIMEOUT,
       );
       const pane = stripAnsi(await active.capturePane());
@@ -5248,13 +5247,13 @@ test.skipIf(!tmuxAvailable())(
 // Slice 19 (4b51f28a) removed the only producer that ever sets
 // AutoUpgrade.state = .ready — the CDN background loop in auto_upgrade.zig
 // (runLoop/runOnce/start) and the App.startAutoUpgrade decl — so the
-// relaunch-resume path is retained but permanently unreached until Phase 6
-// wires a new producer (demolition-inventory.md, Slice 19). No E2E equivalent
+// relaunch-resume path is retained but unreached until update support lands
+// (demolition-inventory.md, Slice 19). No E2E equivalent
 // exists: without a relaunch there is no boundary to repair (live probe: a
 // corrupted commit watermark makes the ordinary follow-up turn fail
 // InvalidSessionFormat). The retained machinery is unit-covered in
 // app_session_runtime.zig (corruptActiveWatermark + prepareResumeHandoff
-// tests). Restore when Phase 6 lands an upgrade producer.
+// tests). Restore when update support lands an upgrade producer.
 const upgradeRelaunchProducerRemoved = true;
 
 test.skipIf(!tmuxAvailable() || upgradeRelaunchProducerRemoved)(

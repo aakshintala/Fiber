@@ -509,6 +509,10 @@ pub const McpLocalSnapshot = struct {
 pub const StatusSnapshot = struct {
     model: []const u8,
     provider: model_provider.ProviderId = .codex,
+    // Not rendered. Fiber publishes no releases and therefore has no channels,
+    // so reporting one was a constant lie. The fields stay so update support,
+    // which lands before v0.0.1, has somewhere to put a real value; restoring
+    // them means restoring the print and JSON lines that named them.
     update_channel: []const u8 = "stable",
     build_channel: []const u8 = "stable",
     build_revision: []const u8 = "",
@@ -536,8 +540,6 @@ pub const StatusSnapshot = struct {
 
         try out.writer.print("[status] model={s}\n", .{self.model});
 
-        try out.writer.print("[status] update_channel={s}\n", .{self.update_channel});
-        try out.writer.print("[status] build_channel={s}\n", .{self.build_channel});
         if (self.build_revision.len > 0) {
             try out.writer.print("[status] build_revision={s}\n", .{self.build_revision});
         }
@@ -582,8 +584,6 @@ pub const StatusSnapshot = struct {
 
         try out.writer.print("model={s}\n", .{self.model});
 
-        try out.writer.print("update_channel={s}\n", .{self.update_channel});
-        try out.writer.print("build_channel={s}\n", .{self.build_channel});
         if (self.build_revision.len > 0) {
             try out.writer.print("build_revision={s}\n", .{self.build_revision});
         }
@@ -614,10 +614,6 @@ pub const StatusSnapshot = struct {
         try writer.print("{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"model\":", .{Kind.status.jsonName()});
         try std.json.Stringify.value(self.model, .{}, writer);
 
-        try writer.writeAll(",\"update_channel\":");
-        try std.json.Stringify.value(self.update_channel, .{}, writer);
-        try writer.writeAll(",\"build_channel\":");
-        try std.json.Stringify.value(self.build_channel, .{}, writer);
         try writer.writeAll(",\"build_revision\":");
         try std.json.Stringify.value(self.build_revision, .{}, writer);
         if (self.mcp_config_error) |error_name| {
@@ -2324,7 +2320,7 @@ test "command failure snapshot renders stable escaped json" {
 test "core status snapshot text and json stay stable" {
     const snapshot = StatusSnapshot{
         .model = "alpha",
-        .auth_help = "fiber needs a Codex subscription login for this model. Run fiber login codex.",
+        .auth_help = "fiber needs a Codex subscription login for this model. Run fiber auth login codex.",
         .permission_mode = .ask,
         .workspace_root = "/tmp/fiber",
         .history_turns = 3,
@@ -2335,14 +2331,14 @@ test "core status snapshot text and json stay stable" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=missing\n[status] connected_providers=none\n[status] auth_refreshable=false\n[status] auth_help=fiber needs a Codex subscription login for this model. Run fiber login codex.\n[status] permission_mode=ask\n[status] workspace=/tmp/fiber\n[status] history_turns=3\n[status] session_permission_grants=1\n[status] agent_step_limit=24\n",
+        "[status] model=alpha\n[status] auth=missing\n[status] connected_providers=none\n[status] auth_refreshable=false\n[status] auth_help=fiber needs a Codex subscription login for this model. Run fiber auth login codex.\n[status] permission_mode=ask\n[status] workspace=/tmp/fiber\n[status] history_turns=3\n[status] session_permission_grants=1\n[status] agent_step_limit=24\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}}",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"alpha\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber auth login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}}",
         json,
     );
 }
@@ -2361,14 +2357,14 @@ test "core status snapshot renders codex auth without team state" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=Codex subscription\n[status] connected_providers=Codex\n[status] auth_refreshable=true\n[status] permission_mode=ask\n[status] workspace=/tmp/fiber\n[status] history_turns=0\n[status] session_permission_grants=0\n[status] agent_step_limit=24\n",
+        "[status] model=alpha\n[status] auth=Codex subscription\n[status] connected_providers=Codex\n[status] auth_refreshable=true\n[status] permission_mode=ask\n[status] workspace=/tmp/fiber\n[status] history_turns=0\n[status] session_permission_grants=0\n[status] agent_step_limit=24\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"Codex subscription\",\"connected_providers\":[\"codex\"],\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}}",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"alpha\",\"build_revision\":\"\",\"auth\":\"Codex subscription\",\"connected_providers\":[\"codex\"],\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}}",
         json,
     );
 }

@@ -2514,8 +2514,9 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
 
       const cancelStartedAt = Date.now();
       await tui.sendKeys("C-c");
-      // fx restores and re-delivers SIGINT after cleanup, so tmux records a
-      // signal exit without a numeric pane status.
+      // Fiber restores the previous SIGINT handler and re-delivers the signal
+      // after cleanup, so tmux records a signal exit without a numeric pane
+      // status. Pinned by the headless-ask SIGINT tests in cli_ask.zig.
       await waitForTtyAskExit(tui, null, 5_000);
       expect(Date.now() - cancelStartedAt).toBeLessThan(5_000);
       expect(activeGateway.requests).toHaveLength(0);

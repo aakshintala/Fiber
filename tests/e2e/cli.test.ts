@@ -39,7 +39,7 @@ const NO_GATEWAY_AUTH = {
   VERCEL_OIDC_TOKEN: undefined,
 };
 const MISSING_AUTH_MESSAGE =
-  "fiber needs a Codex subscription login for this model. Run fiber login codex.";
+  "fiber needs a Codex subscription login for this model. Run fiber auth login codex.";
 const MODERN_MCP_FIXTURE = join(
   import.meta.dirname,
   "fixtures",
@@ -691,8 +691,10 @@ describe("cli: status", () => {
       expect(json.data).toHaveProperty("permission_mode");
       expect(json.data).toHaveProperty("history_turns");
       expect(json.data).toHaveProperty("agent_step_limit");
-      expect(json.data.update_channel).toBe("stable");
-      expect(json.data.build_channel).toBe("stable");
+      // No update_channel or build_channel: Fiber publishes no releases and has
+      // no channels, so status stopped reporting a constant "stable".
+      expect(json.data).not.toHaveProperty("update_channel");
+      expect(json.data).not.toHaveProperty("build_channel");
       expect(json.data.build_revision).toMatch(/^[0-9a-f]{12}$/);
     },
     TIMEOUT,

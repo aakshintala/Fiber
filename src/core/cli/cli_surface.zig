@@ -1081,6 +1081,28 @@ fn runNonInteractiveWithDeps(
                 .json => .json,
             });
             defer result.deinit(alloc);
+
+            // A failed upgrade reports through the shared command-failure
+            // contract. Rendering the snapshot here would put the error inside
+            // an ok:true data object, which no other command does.
+            if (result.snapshot.status == .failed) {
+                const message = result.snapshot.err_message orelse upgrade_runtime.unavailable_message;
+                if (opts.format == .json) {
+                    try writeJsonCommandFailureCode(
+                        alloc,
+                        deps,
+                        output_contracts.Kind.upgrade.jsonName(),
+                        upgrade_runtime.unavailable_code,
+                        message,
+                    );
+                } else {
+                    const line = try std.fmt.allocPrint(alloc, "fiber upgrade: {s}\n", .{message});
+                    defer alloc.free(line);
+                    try writeStderr(deps, line);
+                }
+                return .handled_failure;
+            }
+
             const text = result.snapshot.render(alloc, switch (opts.format) {
                 .text => .text,
                 .json => .json,
@@ -1091,7 +1113,7 @@ fn runNonInteractiveWithDeps(
             defer alloc.free(text);
             try writeStdout(deps, text);
             if (opts.format == .json) try writeStdout(deps, "\n");
-            return if (result.snapshot.status == .failed) .handled_failure else .handled_success;
+            return .handled_success;
         },
         .debug => |rest| {
             return runTopLevelDebug(alloc, rest, cfg, deps);
@@ -4967,7 +4989,7 @@ test "runIfRequested local json success appends exactly one newline" {
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--json") }, testConfig(), deps);
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"auto\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42,\"mcp\":{\"connection_check\":\"not_checked\",\"servers\":[],\"configuration_issues\":[],\"inspection_error\":null}}}\n",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"test-model\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber auth login codex.\",\"permission_mode\":\"auto\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42,\"mcp\":{\"connection_check\":\"not_checked\",\"servers\":[],\"configuration_issues\":[],\"inspection_error\":null}}}\n",
         capture.stdout.written(),
     );
     try std.testing.expect(!std.mem.endsWith(u8, capture.stdout.written(), "\n\n"));
@@ -5056,7 +5078,7 @@ test "writeRenderedJsonLine falls back to heap and appends exactly one newline" 
     );
 
     try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}}\n",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"test-model\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber auth login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}}\n",
         capture.stdout.written(),
     );
 }

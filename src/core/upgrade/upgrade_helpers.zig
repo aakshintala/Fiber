@@ -17,7 +17,13 @@ fn setRecvTimeout(conn: *std.http.Client.Connection) void {
     std.posix.setsockopt(sock, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&timeout)) catch {};
 }
 
-pub fn resolveCdnBase() ?[]const u8 {
+/// Returns the base URL to fetch releases from, or null when this build has no
+/// release source at all.
+///
+/// Slice 19 removed the inherited CDN, so today the only source is the loopback
+/// address the deterministic E2E tests serve. That seam is deliberately kept:
+/// update support lands before v0.0.1 and will need somewhere to point.
+pub fn resolveReleaseBase() ?[]const u8 {
     if (io_mod.getenv("FIBER_E2E_UPGRADE_BASE_URL")) |url| {
         if (isLoopbackE2eUpgradeBase(url)) return url;
     }
@@ -305,7 +311,7 @@ test "E2E upgrade base accepts only explicit IPv4 loopback origins" {
 }
 
 test "production upgrade base returns null without E2E override" {
-    try std.testing.expect(resolveCdnBase() == null);
+    try std.testing.expect(resolveReleaseBase() == null);
 }
 
 test "extractChecksumHex parses sha256sum format" {

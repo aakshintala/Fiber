@@ -126,7 +126,7 @@ pub const StartupState = struct {
     fast_mode_model_bound: bool = false,
     slash_menu_categories: bool = true,
     collapse_tool_calls: bool = false,
-    auto_upgrade: bool = true,
+    auto_upgrade: bool = false,
     startup_scrollback: bool = true,
     prompt_history_enabled: bool = true,
     prompt_history_store_allowed: bool = true,
@@ -377,7 +377,7 @@ fn loadStartupStateFromOwnedWorkspace(
     state.fast_mode_model_bound = false;
     state.slash_menu_categories = settings.slash_menu_categories orelse true;
     state.collapse_tool_calls = settings.collapse_tool_calls orelse false;
-    state.auto_upgrade = settings.auto_upgrade orelse true;
+    state.auto_upgrade = settings.auto_upgrade orelse false;
     state.startup_scrollback = settings.startup_scrollback orelse true;
     state.effort = settings.effort orelse .auto;
     state.first_call_tool_choice = settings.first_call_tool_choice orelse .auto;

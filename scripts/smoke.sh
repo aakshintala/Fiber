@@ -1,8 +1,9 @@
 #!/usr/bin/env sh
-# Offline smoke gate for the Fiber transition. No auth, no network, no fixture.
+# Offline smoke gate for Fiber. No auth, no network, no fixture.
 # Exercises the entry path, session store, config, catalog, permissions, MCP
 # config, workspace, and models -- the subsystems `help` alone misses.
-# Exit codes only: output shifts constantly during demolition and the rename.
+# Checks exit codes and JSON envelopes rather than exact output, so it stays
+# useful as wording changes.
 set -u
 BIN="${1:-zig-out/bin/fiber}"
 [ -x "$BIN" ] || { echo "smoke: no binary (build first, or pass a path)"; exit 2; }

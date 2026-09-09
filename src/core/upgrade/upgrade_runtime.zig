@@ -22,6 +22,7 @@ pub const RunResult = struct {
 };
 
 const RunError = error{
+    NoReleaseSource,
     FetchFailed,
     DownloadFailed,
     ChecksumFetchFailed,
@@ -45,6 +46,10 @@ fn runInner(
     current: update_target.CurrentBuild,
     format: output_contracts.OutputFormat,
 ) RunError!RunResult {
+    // Refuse before spawning a worker so the answer is deterministic and costs
+    // no thread or network timing. The worker keeps its own guard as defence.
+    if (helpers.resolveReleaseBase() == null) return error.NoReleaseSource;
+
     var done = std.atomic.Value(bool).init(false);
     var progress = ProgressState{};
     var worker_result = WorkerResult{};
@@ -112,11 +117,19 @@ fn failureResult(
     } };
 }
 
+/// Fiber publishes no releases yet, so `fiber upgrade` fails with exactly this
+/// message rather than pretending a fetch was attempted.
+pub const unavailable_message =
+    "no release source is configured; upgrade is unavailable until releases are published";
+
+pub const unavailable_code = "UpgradeUnavailable";
+
 fn failureMessage(err: RunError) []const u8 {
     return switch (err) {
-        error.FetchFailed => "failed to fetch latest version from CDN",
+        error.NoReleaseSource => unavailable_message,
+        error.FetchFailed => "failed to fetch latest version from the release server",
         error.DownloadFailed => "failed to download release archive",
-        error.ChecksumFetchFailed => "failed to fetch checksum from CDN",
+        error.ChecksumFetchFailed => "failed to fetch checksum from the release server",
         error.ChecksumMismatch => "downloaded archive failed integrity check",
         error.ExtractionFailed => "failed to extract release archive",
         error.SelfExeNotFound => "could not determine path of running binary",
@@ -159,11 +172,11 @@ fn upgradeWorkerInner(
     progress: *ProgressState,
     show_progress: bool,
 ) !void {
-    const cdn_base = helpers.resolveCdnBase() orelse {
+    const release_base = helpers.resolveReleaseBase() orelse {
         result.err = .fetch_failed;
         return;
     };
-    const fetched_target = helpers.fetchTarget(alloc, cdn_base) catch {
+    const fetched_target = helpers.fetchTarget(alloc, release_base) catch {
         result.err = .fetch_failed;
         return;
     };
@@ -190,7 +203,7 @@ fn upgradeWorkerInner(
     const archive_path = try std.fmt.allocPrint(alloc, "{s}/fiber.tar.gz", .{tmp_dir});
     defer alloc.free(archive_path);
 
-    const archive_url = try std.fmt.allocPrint(alloc, "{s}/{s}/fiber-{s}.tar.gz", .{ cdn_base, target.artifactRef(), helpers.platform });
+    const archive_url = try std.fmt.allocPrint(alloc, "{s}/{s}/fiber-{s}.tar.gz", .{ release_base, target.artifactRef(), helpers.platform });
     defer alloc.free(archive_url);
 
     var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
@@ -206,7 +219,7 @@ fn upgradeWorkerInner(
     };
     progress.markFinishing();
 
-    const checksum_url = try std.fmt.allocPrint(alloc, "{s}/{s}/fiber-{s}.tar.gz.sha256", .{ cdn_base, target.artifactRef(), helpers.platform });
+    const checksum_url = try std.fmt.allocPrint(alloc, "{s}/{s}/fiber-{s}.tar.gz.sha256", .{ release_base, target.artifactRef(), helpers.platform });
     defer alloc.free(checksum_url);
 
     helpers.verifyChecksum(&client, archive_path, checksum_url) catch |err| {

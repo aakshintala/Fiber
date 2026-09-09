@@ -41,7 +41,7 @@ describe("web_search permission progress", () => {
       ]);
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain("fiber needs a Codex subscription login for this model. Run fiber login codex.");
+      expect(result.stderr).toContain("fiber needs a Codex subscription login for this model. Run fiber auth login codex.");
       expectNoSearchProgress(result.stderr);
     },
     TIMEOUT,

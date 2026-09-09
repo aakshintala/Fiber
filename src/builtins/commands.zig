@@ -187,7 +187,7 @@ pub const top_level_specs = [_]TopLevelSpec{
         .kind = .upgrade,
         .token = "upgrade",
         .usage = "upgrade [--json]",
-        .summary = "Upgrade fiber on the selected release channel",
+        .summary = "Upgrade fiber to the latest release",
         .options = &.{
             json_option,
         },
@@ -257,7 +257,7 @@ pub const top_level_help_groups = [_]TopLevelHelpGroup{
         .{ .kind = .mcp, .usage = "mcp <command> ..." },
         .{ .kind = .permissions, .usage = "permissions" },
         .{ .kind = .workspace, .usage = "workspace" },
-        .{ .kind = .upgrade, .usage = "upgrade", .summary = "Upgrade fiber on the selected release channel" },
+        .{ .kind = .upgrade, .usage = "upgrade", .summary = "Upgrade fiber to the latest release" },
         .{ .kind = .help, .usage = "help" },
     } },
 };

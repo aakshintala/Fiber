@@ -3527,7 +3527,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         ["display-message", "-p", "-t", session.name, "#{pane_tty}"],
         { encoding: "utf8", stdio: "pipe" },
       ).trim();
-      // Drift the terminal position without updating fx's shadow grid. Tmux
+      // Drift the terminal position without updating Fiber's shadow grid. Tmux
       // can then answer the resize probe while reconciliation is still blocked.
       writeFileSync(paneTty, "\x1b[3A");
       await session.resizeWindow(120, 40, 0);

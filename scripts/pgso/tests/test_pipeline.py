@@ -200,7 +200,8 @@ class PgsoPipelineTests(unittest.TestCase):
         self.assertNotIn("pgso-ir", control)
         self.assertIn("-Dtarget=aarch64-macos", control)
         self.assertIn("-Doptimize=ReleaseSafe", control)
-        self.assertIn("-Dupdate-channel=stable", control)
+        # build.zig has no -Dupdate-channel option; passing one fails the build.
+        self.assertNotIn("-Dupdate-channel=stable", control)
         self.assertIn("pgso-ir", ir)
         self.assertIn("-Dpgso-artifact=fiber", ir)
         self.assertNotEqual(
