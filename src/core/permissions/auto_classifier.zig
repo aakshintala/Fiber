@@ -17,7 +17,7 @@ const max_review_packet_bytes: usize = 16 * 1024;
 /// passes `openai_codex_models.reviewer_model`. Kept as a literal rather than an
 /// import so `core` does not depend on `gateway`; a test in
 /// `gateway/openai_codex_permission_reviewer.zig` fails if the two drift apart.
-pub const default_reviewer_model = "gpt-5.4-mini";
+pub const default_reviewer_model = "codex-auto-review";
 
 pub const Risk = enum {
     low,

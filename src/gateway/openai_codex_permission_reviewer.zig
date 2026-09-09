@@ -44,8 +44,18 @@ fn sendPrepared(
     return openai_codex.streamPrepared(alloc, request, payload);
 }
 
-test "Codex reviewer model remains catalog-selected gpt-5.4-mini" {
-    try std.testing.expectEqualStrings("gpt-5.4-mini", openai_codex_models.reviewer_model);
+test "Codex reviewer targets the server-side review alias" {
+    try std.testing.expectEqualStrings("codex-auto-review", openai_codex_models.reviewer_model);
+}
+
+test "Codex reviewer model is distinct from the default chat model" {
+    // These were one constant. Retargeting the reviewer then retargeted every
+    // user turn, so the separation is the behavior under test.
+    try std.testing.expect(!std.mem.eql(
+        u8,
+        openai_codex_models.reviewer_model,
+        openai_codex_models.default_model,
+    ));
 }
 
 test "auto-classifier fallback reviewer model tracks the Codex reviewer model" {
@@ -55,7 +65,7 @@ test "auto-classifier fallback reviewer model tracks the Codex reviewer model" {
     );
 }
 
-test "Codex reviewer builds a direct Responses request with gpt-5.4-mini" {
+test "Codex reviewer builds a direct Responses request with the review alias" {
     const messages = [_]types.ChatMessage{
         .{ .role = .user, .content = "User requested the change." },
         .{
@@ -83,7 +93,7 @@ test "Codex reviewer builds a direct Responses request with gpt-5.4-mini" {
     );
     defer std.testing.allocator.free(body);
 
-    try std.testing.expect(std.mem.find(u8, body, "\"model\":\"gpt-5.4-mini\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"model\":\"codex-auto-review\"") != null);
     try std.testing.expect(std.mem.find(u8, body, "\"tool_choice\":\"required\"") != null);
     try std.testing.expect(std.mem.find(u8, body, "\"type\":\"function_call_output\"") != null);
     try std.testing.expect(std.mem.find(u8, body, "ai-gateway") == null);

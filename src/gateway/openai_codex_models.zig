@@ -15,7 +15,14 @@ const default_models_endpoint = "https://chatgpt.com/backend-api/codex/models";
 const e2e_models_endpoint_env = "FIBER_E2E_OPENAI_CODEX_MODELS_URL";
 
 pub const protocol_client_version = "0.148.0";
-pub const reviewer_model = "gpt-5.4-mini";
+/// Server-side alias that resolves to whatever model OpenAI currently uses for
+/// permission review. Aliases outlive slugs: the catalog retired `gpt-5.4-mini`
+/// without notice, so a pinned slug is a scheduled outage.
+pub const reviewer_model = "codex-auto-review";
+
+/// Default chat model. Separate from `reviewer_model` on purpose; they were one
+/// constant, so retargeting the reviewer silently retargeted every user turn.
+pub const default_model = "gpt-5.4-mini";
 
 pub const model_catalog_provider = model_catalog.Provider{
     .fetch_fn = fetchCatalogForProvider,
@@ -102,21 +109,14 @@ fn fetchCatalogForProvider(
     if (response.status != .ok) {
         return .{ .failure = model_catalog.failureForHttpStatus(response.status) };
     }
-    var catalog = parseCatalog(alloc, response.body) catch |err| {
+    // The catalog is the list of models a user may pick. It is not a health
+    // check on the reviewer: `parseCatalog` keeps only `visibility == "list"`
+    // entries, and a reviewer model is published hidden, so requiring one here
+    // rejected every well-formed response the server has ever sent.
+    const catalog = parseCatalog(alloc, response.body) catch |err| {
         if (err == error.OutOfMemory) return error.OutOfMemory;
         return .{ .failure = .{ .category = .malformed_response, .http_status = .ok } };
     };
-    var reviewer_available = false;
-    for (catalog.items) |entry| {
-        if (std.mem.eql(u8, entry.id, reviewer_model)) {
-            reviewer_available = true;
-            break;
-        }
-    }
-    if (!reviewer_available) {
-        model_catalog.freeModelCatalog(alloc, &catalog);
-        return .{ .failure = .{ .category = .malformed_response, .http_status = .ok } };
-    }
     return .{ .catalog = catalog };
 }
 
