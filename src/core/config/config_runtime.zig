@@ -16,6 +16,19 @@ const Allocator = std.mem.Allocator;
 const max_settings_bytes: usize = 64 * 1024;
 pub const default_permission_mode: types.PermissionMode = .auto;
 
+/// Shown when no model is selected. fiber ships no compiled-in default model:
+/// a pinned slug is retired by the provider sooner or later, and falling back
+/// to one hides that from the user until the request fails for another reason.
+pub const missing_model_message =
+    "no model is selected. Run fiber models to see what is available, then pass --model <id>, set FIBER_MODEL, or choose one with /model in the interactive shell.";
+
+test "missing model guidance spells fiber lowercase and names a way to fix it" {
+    try std.testing.expect(std.mem.startsWith(u8, missing_model_message, "no model is selected"));
+    try std.testing.expect(std.mem.find(u8, missing_model_message, "fiber models") != null);
+    try std.testing.expect(std.mem.find(u8, missing_model_message, "--model") != null);
+    try std.testing.expect(std.mem.find(u8, missing_model_message, "FIBER_MODEL") != null);
+}
+
 pub const Paths = struct {
     home_dir: ?[]u8 = null,
     user_settings: ?[]u8 = null,

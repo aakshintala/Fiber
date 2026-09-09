@@ -20,10 +20,6 @@ pub const protocol_client_version = "0.148.0";
 /// without notice, so a pinned slug is a scheduled outage.
 pub const reviewer_model = "codex-auto-review";
 
-/// Default chat model. Separate from `reviewer_model` on purpose; they were one
-/// constant, so retargeting the reviewer silently retargeted every user turn.
-pub const default_model = "gpt-5.4-mini";
-
 pub const model_catalog_provider = model_catalog.Provider{
     .fetch_fn = fetchCatalogForProvider,
 };

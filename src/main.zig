@@ -48,7 +48,11 @@ const builtin_providers = @import("builtins/providers.zig");
 const openai_codex_models = @import("gateway/openai_codex_models.zig");
 
 // Codex-only runtime: the gateway defaults died with the Vercel provider path.
-const default_model = openai_codex_models.default_model;
+// No compiled-in default model. A pinned slug is retired by the provider
+// sooner or later, and a fallback hides that until the request fails for some
+// other reason. The model comes from --model, FIBER_MODEL, or the profile
+// setting; when none is set, the command says so.
+const default_model = "";
 const codex_models_path = "";
 const agent_retry_count: usize = 0;
 const provider_set = @import("core/gateway/provider_set.zig");

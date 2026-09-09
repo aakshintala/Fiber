@@ -48,16 +48,6 @@ test "Codex reviewer targets the server-side review alias" {
     try std.testing.expectEqualStrings("codex-auto-review", openai_codex_models.reviewer_model);
 }
 
-test "Codex reviewer model is distinct from the default chat model" {
-    // These were one constant. Retargeting the reviewer then retargeted every
-    // user turn, so the separation is the behavior under test.
-    try std.testing.expect(!std.mem.eql(
-        u8,
-        openai_codex_models.reviewer_model,
-        openai_codex_models.default_model,
-    ));
-}
-
 test "auto-classifier fallback reviewer model tracks the Codex reviewer model" {
     try std.testing.expectEqualStrings(
         openai_codex_models.reviewer_model,

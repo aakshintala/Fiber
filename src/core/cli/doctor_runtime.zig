@@ -219,10 +219,22 @@ fn appendResolvedStartupCheck(
     snapshot.permission_mode = try resolvePermissionMode(settings.permission_mode);
     snapshot.agent_step_limit = try resolveAgentStepLimit(default_agent_step_limit, settings.max_agent_steps);
 
+    // An unset model is the one startup value fiber cannot substitute for, so
+    // doctor names it rather than reporting a blank resolved model.
+    if (snapshot.model.len == 0) {
+        try appendCheck(checks, alloc, "model", .warn, config_runtime.missing_model_message);
+    } else {
+        try appendCheck(checks, alloc, "model", .ok, "a model is selected");
+    }
+
     const detail = try std.fmt.allocPrint(
         alloc,
         "resolved model={s}, permission_mode={s}, agent_step_limit={d}",
-        .{ snapshot.model, permissionModeLabel(snapshot.permission_mode), snapshot.agent_step_limit },
+        .{
+            if (snapshot.model.len == 0) "<not set>" else snapshot.model,
+            permissionModeLabel(snapshot.permission_mode),
+            snapshot.agent_step_limit,
+        },
     );
     try appendCheckOwned(checks, alloc, "startup", .ok, detail);
 }

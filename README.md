@@ -39,6 +39,18 @@ Codex OAuth:
 Your session is stored at `~/.fiber/chatgpt-auth.json` and refreshed when
 needed.
 
+## Choose a model
+
+Fiber has no built-in default model, so you pick one. List what your account
+can reach:
+
+```bash
+./zig-out/bin/fiber models
+```
+
+Choose one with `/model` in the interactive shell and Fiber remembers it. For a
+single command, pass `--model <id>` or set `FIBER_MODEL`.
+
 ## Run it
 
 Start Fiber from the project you want to work on:

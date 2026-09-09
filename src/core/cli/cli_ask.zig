@@ -1295,6 +1295,17 @@ fn preflightAskImages(
     return true;
 }
 
+fn missingModelResult(alloc: Allocator, options: RunOptions) !PromptRunResult {
+    try options.deps.write_stderr(options.deps.stderr_ctx, "fiber ask: ");
+    try options.deps.write_stderr(options.deps.stderr_ctx, config_runtime.missing_model_message);
+    try options.deps.write_stderr(options.deps.stderr_ctx, "\n");
+    return .{
+        .exit_code = 1,
+        .assistant_output = try alloc.dupe(u8, ""),
+        .error_code = "NoModelSelected",
+    };
+}
+
 fn missingCredentialResult(
     alloc: Allocator,
     options: RunOptions,
@@ -1401,6 +1412,14 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
         ctx.model = model;
         ctx.seed_model = model;
     }
+    // Every source of a model has now been consulted: --model, FIBER_MODEL, and
+    // the profile setting. There is no compiled-in fallback behind them, so an
+    // empty model here means the user has not chosen one.
+    if (ctx.model.len == 0) return missingModelResult(alloc, options);
+    // FIBER_MODEL supplies a model without writing one to the profile, so the
+    // durable seed follows the effective model rather than an empty setting,
+    // which the session store rejects as an invalid durable field.
+    if (ctx.seed_model.len == 0) ctx.seed_model = ctx.model;
     if (options.effort_override) |effort| ctx.effort = effort;
     if (options.fast_override) ctx.fast_mode = true;
     ctx.first_call_tool_choice = startup.first_call_tool_choice;
@@ -8149,6 +8168,54 @@ test "fiber ask JSON clips ask_user_question text at a UTF-8 boundary" {
     if (question != .string) return error.TestUnexpectedResult;
     try std.testing.expect(std.unicode.utf8ValidateSlice(question.string));
     try std.testing.expectEqual(@as(usize, 255), question.string.len);
+}
+
+test "ask without a selected model stops with actionable guidance" {
+    const alloc = std.testing.allocator;
+    var stdout_capture: TestCapture = .{};
+    defer stdout_capture.deinit(alloc);
+    var stderr_capture: TestCapture = .{};
+    defer stderr_capture.deinit(alloc);
+
+    var cfg = testConfig();
+    cfg.default_model = "";
+    const exit_code = try runWithDeps(
+        alloc,
+        &.{"hello"},
+        cfg,
+        testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup),
+    );
+
+    try std.testing.expectEqual(@as(u8, 1), exit_code);
+    try std.testing.expectEqualStrings(
+        "fiber ask: " ++ config_runtime.missing_model_message ++ "\n",
+        stderr_capture.bytes.items,
+    );
+}
+
+test "ask with --model runs when the profile selects no model" {
+    const alloc = std.testing.allocator;
+    var stdout_capture: TestCapture = .{};
+    defer stdout_capture.deinit(alloc);
+    var stderr_capture: TestCapture = .{};
+    defer stderr_capture.deinit(alloc);
+
+    var cfg = testConfig();
+    cfg.default_model = "";
+    _ = try runWithDeps(
+        alloc,
+        &.{ "--model", "gpt-5.6-luna", "hello" },
+        cfg,
+        testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup),
+    );
+
+    // --model is consulted after startup, so it must satisfy the guard rather
+    // than be rejected alongside an unset profile.
+    try std.testing.expect(std.mem.find(
+        u8,
+        stderr_capture.bytes.items,
+        config_runtime.missing_model_message,
+    ) == null);
 }
 
 test "json run with missing API key prints diagnostic then final object" {
