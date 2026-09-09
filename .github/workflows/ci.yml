@@ -115,6 +115,31 @@ jobs:
       - name: Smoke test fresh binary
         run: ./scripts/smoke.sh
 
+  # Draft runs Linux x86_64 E2E. Ready and manual dispatch add the other
+  # platforms. A planner job emits that list so extra OS legs are never queued.
+  e2e-platforms:
+    name: Select E2E platforms
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      platforms: ${{ steps.select.outputs.platforms }}
+    steps:
+      - name: Select platforms for this scope
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          set -euo pipefail
+          linux='{"name":"linux-x86_64","runner":"ubuntu-24.04","zig_tarball":"zig-x86_64-linux"}'
+          extra='[{"name":"linux-aarch64","runner":"ubuntu-24.04-arm","zig_tarball":"zig-aarch64-linux"},{"name":"macos-aarch64","runner":"macos-15","zig_tarball":"zig-aarch64-macos"}]'
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$IS_DRAFT" = "false" ]; then
+            platforms="$(jq -c --argjson linux "$linux" --argjson extra "$extra" -n '[$linux] + $extra')"
+          else
+            platforms="$(jq -c --argjson linux "$linux" -n '[$linux]')"
+          fi
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+
   # The isolated MCP conformance package is its own npm project under
   # tests/e2e/conformance, so the root-level shard planner never discovers it.
   conformance:
@@ -151,22 +176,13 @@ jobs:
 
   e2e:
     name: E2E (${{ matrix.platform.name }}, shard ${{ matrix.shard.label }})
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    needs: e2e-platforms
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - name: linux-x86_64
-            runner: ubuntu-24.04
-            zig_tarball: zig-x86_64-linux
-          - name: linux-aarch64
-            runner: ubuntu-24.04-arm
-            zig_tarball: zig-aarch64-linux
-          - name: macos-aarch64
-            runner: macos-15
-            zig_tarball: zig-aarch64-macos
+        platform: ${{ fromJSON(needs.e2e-platforms.outputs.platforms) }}
         shard:
           - index: 0
             shard_count: 4
@@ -514,6 +530,7 @@ jobs:
       - native-linux
       - native-extra
       - conformance
+      - e2e-platforms
       - e2e
       - bench
       - binary-size

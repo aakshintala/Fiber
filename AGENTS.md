@@ -223,12 +223,13 @@ Then commit, push the branch, and open a draft pull request. `ci.yml` is the onl
 entrypoint, and scope follows the pull request's state:
 
 * **Draft** runs Linux x86_64 formatting, the public-surface audit, PGSO corpus
-  validation, the release-decision tests, build, unit tests, and smoke. Fast
-  feedback while the work is still moving.
-* **Ready** adds the three-platform native matrix (`ubuntu-24.04`,
-  `ubuntu-24.04-arm`, `macos-15`), four duration-balanced ReleaseSafe E2E shards
-  per platform, benchmarks, the three-platform binary size comparison, and the
-  isolated MCP conformance package.
+  validation, the release-decision tests, build, unit tests, smoke, and the four
+  duration-balanced Linux x86_64 E2E shards. Fast feedback while the work is
+  still moving; agents should use this instead of running the suite locally.
+* **Ready** adds the remaining native platforms (`ubuntu-24.04-arm`,
+  `macos-15`), the same four E2E shards on those platforms, benchmarks, the
+  three-platform binary size comparison, and the isolated MCP conformance
+  package.
 
 A push does not trigger CI. A branch with no pull request has nothing to gate,
 and `release.yml` owns `main`.

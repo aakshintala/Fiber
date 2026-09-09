@@ -62,10 +62,11 @@ pull request runs no continuous integration.
 pull request:
 
 - a draft runs Linux x86_64 formatting, the public-surface audit, PGSO corpus
-  validation, release-decision tests, build, unit tests, and smoke
-- a ready pull request adds the three-platform native matrix, four end-to-end
-  shards per platform, benchmarks, binary-size comparison, and the isolated MCP
-  conformance package
+  validation, release-decision tests, build, unit tests, smoke, and the four
+  Linux x86_64 end-to-end shards
+- a ready pull request adds the remaining native platforms, the same four
+  end-to-end shards on Linux aarch64 and macOS arm64, benchmarks, binary-size
+  comparison, and the isolated MCP conformance package
 
 One check, `CI`, aggregates the result. It is the only check `main` requires.
 
