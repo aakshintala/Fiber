@@ -171,10 +171,16 @@ selector. Draft versus ready is the only scope axis:
 
 - Draft `pull_request`: Linux x86_64 formatting, public-surface, PGSO corpus,
   shellcheck, build, unit, and smoke checks.
-- Ready `pull_request`: the full deterministic matrix. ReleaseSafe native checks
-  and all four E2E shards on Linux x86_64, Linux aarch64, and macOS arm64, plus
-  benchmarks, the three-platform ReleaseSafe size comparison, the isolated MCP
-  conformance package, and macOS arm64 PGSO qualification.
+- Ready `pull_request`: the full deterministic matrix. ReleaseSafe native
+  checks and all four E2E shards on Linux x86_64, Linux aarch64, and macOS
+  arm64, plus benchmarks, the three-platform ReleaseSafe size comparison, and
+  the isolated MCP conformance package.
+
+`pgso-macos-arm64.yml` is not touched. It keeps its own path-filtered
+`pull_request` trigger and its `workflow_call` entry for `release.yml`. Its
+`paths:` filter is safe because that check is not required, and folding a
+macOS-15 qualification run into every ready PR would cost far more than the
+duplicate entrypoint saves.
 - `workflow_dispatch`: the same jobs as a ready PR, for diagnostics. Its
   aggregate is named `Manual CI`, which the ruleset never accepts.
 
@@ -261,8 +267,8 @@ check after the PR is marked ready, or release can no longer call PGSO.
   deterministic platform coverage.
 - Benchmark, size, corpus, shell, conformance, and PGSO evidence survives the
   merge of the workflows.
-- `.github/workflows/` contains `ci.yml`, `release.yml`, and
-  `pgso-macos-arm64.yml` and nothing else.
+- After Slice 2 removes `prepare-release.yml`, `.github/workflows/` contains
+  `ci.yml`, `release.yml`, and `pgso-macos-arm64.yml` and nothing else.
 - No workflow runs on a `push` except `release.yml` on `main`.
 
 ## Repository checkpoint: protect `main`
@@ -462,7 +468,9 @@ transition.
 
 ### Verification
 
-Compare every runnable instruction with `./zig-out/bin/fiber`. Search for the
+Compare every runnable instruction with `./zig-out/bin/fiber`. Search for
+`full-ci`, `Full CI`, `bench.yml`, `binary-size.yml`, and `Full suite`, all of
+which name workflows Slice 1 deleted. Search for the
 removed transition links, `fiber login codex`, nonexistent ship gates,
 macOS x86_64 Full CI claims, removed commands and flags, inherited marketing,
 and false install, upgrade, embedding, or size claims. Check every retained
@@ -505,7 +513,13 @@ The triage must include the known post-closeout release needs and the known
 release defect that pushes a tag before validating changelog markers. It must
 also cover every local idea file, every heading in `pending.md`, the resume
 `image_unavailable` follow-up, upgrade prerelease comparison, live/eval defects,
-and upstream-harvest candidates. This list is a floor, not a substitute for the
+upstream-harvest candidates, and the `fiber models` defect observed during Slice
+1: with real `~/.fiber` credentials the command exits 1 with
+`could not list models: MalformedResponse` from
+`src/core/gateway/model_catalog.zig`. The JSON envelope is correct, so this is a
+catalog or provider-response defect rather than an output-contract one.
+`scripts/smoke.sh` only reaches this path on a credentialed profile, so CI
+cannot catch it. This list is a floor, not a substitute for the
 inventory.
 
 Commit the completed ledger only after every candidate has an owner ruling and
@@ -580,16 +594,24 @@ candidate remains, or the deletion changes product behavior.
 5. If any required job fails, return the PR to draft. Repair it in a new,
    reviewable commit, run focused diagnostics, then mark it ready for a fresh
    full gate.
-6. When the final tree is reviewed, current, and green, present the owner with
+6. Rewrite the PR description so it stands alone as the squash commit message
+   on `main`. It must describe what the transition changed for someone reading
+   `main`'s history, not the slice sequence, the plan, or this phase's process.
+   Remove any session or tooling URL that does not resolve for a reader of the
+   public repository.
+7. When the final tree is reviewed, current, and green, present the owner with
    the PR URL, head commit, tree ID, CI run, review findings, issue URLs, and
    release-safety proof. Obtain explicit approval for the transition merge.
-7. Only after approval, enable squash auto-merge. Do not push, rebase, amend, or
-   otherwise change the branch after the approved full run.
-8. Fetch `main` after merge and verify its tree ID equals the approved
+8. Only after approval, enable squash auto-merge. Confirm the squash commit
+   message GitHub will use is the rewritten description, not the accumulated
+   slice subjects. Do not push, rebase, amend, or otherwise change the branch
+   after the approved full run.
+9. Fetch `main` after merge and verify its tree ID equals the approved
    `transition-main` tree ID. The squash commit ID is expected to differ.
-9. Inspect the `release.yml` run for the squash commit. Confirm the version check
-   reports `needed=false` and every tag, build, sign, and publish job is skipped.
-10. Confirm no `v0.0.1` tag or GitHub Release was created and the merged branch
+10. Inspect the `release.yml` run for the squash commit. Confirm the version
+    check reports `needed=false` and every tag, build, sign, and publish job is
+    skipped.
+11. Confirm no `v0.0.1` tag or GitHub Release was created and the merged branch
     was deleted.
 
 Stop before auto-merge if the tested tree cannot be identified, a review concern
