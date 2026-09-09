@@ -87,6 +87,19 @@ async function disablePromptHistory(
   );
 }
 
+// NO_AUTH clears FIBER_MODEL, so these fixtures start from a profile with a
+// credential and no model chosen. That is the first-run shape, and fiber opens
+// the model picker there rather than leaving the user to discover /model, which
+// seeds "/model " into the composer. So a test types the filter alone instead of
+// the whole command.
+async function filterStartupModelPicker(
+  session: TmuxSession,
+  filter: string,
+): Promise<void> {
+  await session.waitForPane((pane) => pane.includes("/model"), TIMEOUT);
+  await session.sendLiteral(filter);
+}
+
 function tree(root: string, relative = ""): string[] {
   const path = relative ? join(root, relative) : root;
   const entries = readdirSync(path, { withFileTypes: true });
@@ -714,7 +727,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           stderrPath,
         });
         await session.waitForText("Run /help", TIMEOUT);
-        await session.sendLiteral("/model sol");
+        await filterStartupModelPicker(session, "sol");
         await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
         await session.sendKeys("Enter");
         await session.waitForText("default", TIMEOUT);
@@ -766,8 +779,8 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           }),
           stderrPath,
         });
-        await session.waitForComposer(TIMEOUT);
-        await session.sendLiteral("/model sol");
+        await session.waitForText("Run /help", TIMEOUT);
+        await filterStartupModelPicker(session, "sol");
         const pickerPane = await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
         expect(pickerPane).toContain(CODEX_PICKER_MODEL);
         await session.sendKeys("Enter");
@@ -831,7 +844,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           stderrPath,
         });
         await session.waitForText("Run /help", TIMEOUT);
-        await session.sendLiteral("/model sol");
+        await filterStartupModelPicker(session, "sol");
         await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
         await session.sendKeys("Enter");
         const autoEffortPicker = await session.waitForText("default", TIMEOUT);
