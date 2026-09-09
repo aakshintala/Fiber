@@ -175,7 +175,7 @@ Release notes are public product copy. Describe what a user can observe, spell
 the product Fiber, and leave out contributor attribution, tracker references,
 infrastructure work, continuous integration and test detail, branch history, and
 refactors with no visible outcome. Use commits and pull requests as research,
-not as copy. Formatting rules are in [AGENTS.md](AGENTS.md).
+not as copy. Formatting rules are in [`docs/releasing.md`](docs/releasing.md).
 
 ## Future work
 

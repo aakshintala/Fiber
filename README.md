@@ -3,8 +3,11 @@
 Fiber is a coding agent you run in your terminal. It is written in Zig and
 builds to a single native binary.
 
-Its output aims to read like a Unix shell rather than a full-screen terminal
-IDE. Most work happens inline, in your scrollback.
+Fiber writes into your scrollback instead of taking over the screen. Your
+prompts and its replies stay above your last command, so you can scroll back
+through them, copy them, and search them like any other terminal output. Fiber
+uses the full screen only to review a permission request, show the whole
+transcript, or pick from a menu.
 
 Status: experimental. There are no published releases yet, so you build it from
 source. Use it at your own risk.

@@ -1,4 +1,4 @@
-# AGENTS.md
+# Fiber agent instructions
 
 Instructions for AI coding agents working with this codebase.
 
@@ -213,31 +213,6 @@ Do not bypass the permission system for new tools.
 
 * Use `io_mod.dirRealpathAlloc(alloc, dir, sub_path)` to resolve paths within `std.testing.tmpDir()`.
 
-## Testing (TypeScript)
-
-Two test suites live under `tests/`, both using Bun:
-
-### `tests/evals/` — LLM Evals
-
-Eval scenarios that exercise the agent through `fiber ask --json`. Require `AI_GATEWAY_API_KEY`.
-
-```bash
-cd tests/evals && bun install && bun test           # run all evals
-cd tests/evals && bun run eval:matrix               # cross-model matrix run
-```
-
-### `tests/e2e/` — End-to-End Tests
-
-Deterministic runtime tests (CLI commands, TUI via tmux). No API key needed for most.
-
-```bash
-cd tests/e2e && bun install && bun test              # run all e2e tests
-cd tests/e2e && bun test cli.test.ts                 # just CLI tests
-cd tests/e2e && bun test tui-*.test.ts               # just TUI tests (requires tmux)
-```
-
-TUI tests use tmux to drive the interactive terminal. They require `tmux` to be installed.
-
 ## Continuous integration
 
 Do not run the complete deterministic suite locally as the default loop. Run the
@@ -317,88 +292,16 @@ fx's identity, release machinery, CDN distribution, and provider surface are all
 things Fiber removed on purpose, so upstream commits carry that machinery back in
 with whatever else they bring.
 
-## Reproducing Render Bugs
+## Reference
 
-fiber's rendering is inline by default and deliberately emits a small ANSI subset. Three owner classes are the narrow exceptions, and each takes the alternate buffer exclusively through `AlternateScreenOwner` in `src/ui/shell_runtime.zig`: interactive permission review, the full-transcript screen, and catalog menus. Only one class may own the buffer at a time, and each must leave it and restore the main grid, composer, cursor, paste, mouse, focus, and keyboard modes when it closes. Transcript rendering, question prompts, command-output expansion, and subagent delegation remain inline. Three tools exist for reproducing and regression-proofing render bugs:
+Read the matching file when the work calls for it. Each is the single source of
+truth for its area.
 
-### tmux (live TTY repros)
-
-Best for resize and SIGWINCH interactions. The helper in `tests/e2e/tmux-helpers.ts` exposes `resizeWindow(cols, rows)`, `capturePaneGrid()`, and `capturePaneEscapes()`. See `tests/e2e/tui-resize.test.ts` for the canonical resize matrix.
-
-```bash
-cd tests/e2e && bun test tui-resize.test.ts
-```
-
-### Debug terminal recording and replay
-
-Set `FIBER_DEBUG_RECORD=1` to create an automatic private tape under
-`~/.fiber/recordings/`. Set `FIBER_DEBUG_RECORD_SILENT_BANNER=1` as well when the
-developer-only recording notice must stay out of the inline transcript during
-a screen share. The notice remains available in the Ctrl+O full transcript.
-Use `FIBER_RECORD=<path>` when a test or investigation needs an exact destination.
-Recording dumps every byte fiber writes and every resize into a framed binary tape.
-Replay the tape through the built-in virtual terminal:
-
-```bash
-FIBER_DEBUG_RECORD=1 ./zig-out/bin/fiber
-FIBER_RECORD=/tmp/bug.fxtape ./zig-out/bin/fiber
-./zig-out/bin/fiber replay /tmp/bug.fxtape
-./zig-out/bin/fiber replay /tmp/bug.fxtape --frames
-./zig-out/bin/fiber replay /tmp/bug.fxtape --json
-./zig-out/bin/fiber replay /tmp/bug.fxtape --golden out.txt
-```
-
-The tape is deterministic — any reviewer can replay it without a TTY, and a golden file can be checked in as a regression test.
-
-### Shared terminal engine (sub-second unit tests)
-
-`src/core/terminal/engine.zig` is the shared bounded text-terminal engine for hosted terminal sessions, recovery, replay, and deterministic rendering tests. `src/ui/resize_tests.zig` drives `TranscriptRuntime` against it in process so resize behavior can be exercised with no fd or timing dependence.
-
-```bash
-zig build test                      # runs every VT and resize test
-```
-
-When a tmux or tape-based scenario exposes a bug, reproduce it as a Zig unit test in `resize_tests.zig` (or a new sibling) before fixing. The test lands the fix as a regression.
-
-## Benchmarks
-
-Startup latency benchmarks live in `benchmarks/` and run as the `bench` job of `ci.yml` on ready pull requests.
-
-```bash
-./benchmarks/startup.sh            # full run (100 iterations, builds ReleaseSafe, needs hyperfine)
-./benchmarks/startup.sh --quick    # quick run (20 iterations)
-```
-
-The job builds a ReleaseSafe binary, measures the startup path plus `help`, `status --json`, `doctor --json`, and `sessions --json` with hyperfine, and enforces per-command latency budgets. A pull request that exceeds a budget fails the check. Budgets are absolute, so no baseline from `main` is needed and none is stored.
-
-The startup benchmark uses `FIBER_BENCH=1`, an environment variable that runs through arg parsing and CLI dispatch, then exits before TTY initialization. This lives in `src/core/app/app_entry_runtime.zig`.
-
-Current raw wall-clock contract:
-
-* Linux CI: 2ms for every command
-* Non-Linux local runs: informational raw means
-
-The Linux CI runner is the authoritative product budget. Local macOS process
-and dynamic-loader floors vary enough to exceed 2ms independently of fiber, so
-local runs report raw means without assigning a substitute product budget. The
-process baseline is diagnostic only and is never subtracted.
-
-When adding features, consider their impact on startup latency. The `fiber help` path is the baseline cold-start benchmark.
-
-## Binary Size Observability
-
-Every ready pull request runs the `binary-size` job of `ci.yml` across Linux
-x86_64, Linux arm64, and macOS arm64. Each matrix job builds the pull
-request merge commit and its base commit as stripped ReleaseSafe binaries on
-the same native runner, then reports the exact byte and MiB delta plus ELF or
-Mach-O section changes.
-
-Each platform check is informational. An increase of at least 52,429 bytes
-(0.050000 MiB) emits a warning and retains that platform's binaries for
-investigation, but does not reject the pull request. Investigate notable
-unexplained growth before changing the threshold. The full macOS arm64 PGSO
-release qualification remains authoritative for the 7.800 MiB production
-ceiling and performance gates.
+* Rendering defects, tmux repros, tape recording and replay: [`docs/render-bugs.md`](docs/render-bugs.md)
+* Bun suites under `tests/e2e/` and `tests/evals/`: [`tests/README.md`](tests/README.md)
+* Startup latency budgets and binary size deltas: [`benchmarks/README.md`](benchmarks/README.md)
+* Cutting a release, writing the changelog: [`docs/releasing.md`](docs/releasing.md)
+* PGSO corpus classification, pinned toolchain, local reproduction: [`scripts/pgso/README.md`](scripts/pgso/README.md)
 
 ## Documentation
 
@@ -409,59 +312,6 @@ When adding or changing user-facing features, update **all** relevant files:
 3. `CONTRIBUTING.md` — if build steps, config, or collaboration rules change
 
 Do not document intended behavior as if it already exists.
-
-## Releasing
-
-Fiber publishes no releases yet. The version is `0.0.1-dev`, and
-`release.yml` refuses to publish any SemVer prerelease, so merging to `main`
-cannot cut a release. There is no installation or upgrade path: `fiber upgrade`
-fails with `UpgradeUnavailable` until a release source exists. Building
-distribution is tracked as a GitHub issue, not attempted here.
-
-When a stable release does happen, `release.yml` owns it. On a push to `main` it
-reads the version from `src/main.zig` through `scripts/release_decision.py`. A
-prerelease is refused before the tag is ever consulted. A stable version whose
-tag is missing cross-compiles the platform binaries, creates the tag, and
-publishes a GitHub Release whose body is the content between the
-`<!-- release:start -->` and `<!-- release:end -->` markers in `CHANGELOG.md`.
-
-Never create a version tag by hand; the workflow owns tag creation. Leave the
-`build.zig.zon` version alone, it is a placeholder.
-
-### Writing the changelog
-
-Whether automated or manual, the changelog is public product copy. Describe observable user behavior, not the engineering process behind it. Use the diff, commits, and merged pull requests as research evidence only.
-
-Public changelog entries must:
-
-* Spell the product name `fiber`. Preserve different casing only when it is part of an exact code identifier such as `FIBER_MODEL`.
-* Use only relevant sections from `### Breaking Changes`, `### New Features`, `### Improvements`, `### Bug Fixes`, and `### Security`. Omit empty sections.
-* Bold a short feature or fix name, then describe the user-visible change after a colon.
-* Omit pull request numbers, issue numbers, commit hashes, contributor names, and author attribution.
-* Omit internal details such as repository moves, website or marketing work, CDN layout, CI workflows, test fixtures, branch history, and implementation-only refactors. Translate relevant work into its public user outcome or leave it out.
-* Avoid forcing every merged change into the notes. A change without a public user outcome does not need a bullet.
-
-Only the current release should have markers; remove `<!-- release:start -->` and `<!-- release:end -->` from any previous entry:
-
-```markdown
-## 0.3.0
-
-<!-- release:start -->
-### New Features
-
-- **Interactive terminal startup:** Start an interactive shell when the `terminal` tool receives an empty command
-<!-- release:end -->
-
-## 0.2.5
-
-### Improvements
-
-- **Inline rendering:** Keep the active conversation visible in terminal scrollback
-```
-
-Do not add a `### Contributors` section or tracker references. Use descriptive section names.
-
-Do not create version tags manually. Do not change `build.zig.zon` version (it is a placeholder).
 
 ## Repository and License
 
