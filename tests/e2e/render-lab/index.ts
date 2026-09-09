@@ -16,6 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import { FIBER_BIN, REPO_ROOT } from "../../evals/eval-helpers";
 import {
   chatGptAccessToken,
+  FAKE_CODEX_DEFAULT_MODEL,
   fakeCodexModelsPayload,
   isVolatileTokenStatusRow,
   writeSeededChatGptLogin,
@@ -1645,6 +1646,10 @@ async function launchFx(
   options: FxLaunchOptions = {},
 ): Promise<void> {
   const environment = [
+    // The scenarios never choose a model, and fiber has shipped no compiled-in
+    // default since e3e29241. Without this the shell opens the model picker over
+    // the frame every scenario is here to photograph.
+    `FIBER_MODEL=${shQuote(FAKE_CODEX_DEFAULT_MODEL)}`,
     options.codexResponsesUrl ? `FIBER_E2E_OPENAI_CODEX_RESPONSES_URL=${shQuote(options.codexResponsesUrl)}` : null,
     options.codexModelsUrl ? `FIBER_E2E_OPENAI_CODEX_MODELS_URL=${shQuote(options.codexModelsUrl)}` : null,
     options.codexTokenUrl ? `FIBER_E2E_CHATGPT_TOKEN_URL=${shQuote(options.codexTokenUrl)}` : null,
