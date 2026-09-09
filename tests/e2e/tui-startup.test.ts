@@ -134,8 +134,15 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
 
         await session.waitForComposer(10_000);
         await session.sendText("/help");
+        // The inline slash-completion menu carries the same command and
+        // description as the catalog /help prints, so match the executed
+        // command instead: only that clears the composer. Measuring the
+        // completion menu reads a column padded to "help" rather than to the
+        // catalog's widest name.
         const wide = await session.waitForPane(
-          (pane) => pane.includes("/help") && pane.includes("show available slash commands"),
+          (pane) => hasEmptyComposer(pane) &&
+            pane.includes("/help") &&
+            pane.includes("show available slash commands"),
           5_000,
         );
         const wideHelp = wide.split("\n").find(
