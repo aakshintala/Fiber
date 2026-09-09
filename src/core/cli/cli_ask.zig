@@ -1944,7 +1944,7 @@ fn persistUsageCheckpoint(
         .{ .usage_checkpointed = .{ .usage = snapshot } },
         recovery_checkpoint.timestamp_ms,
         .retry_expected_tail,
-        .{ .checkpoint_interval = 0, .test_controls = session_test_controls.logOptions().test_controls },
+        .{ .checkpoint_interval = 0 },
     );
     try store.finishUsageRecoveryCheckpoint(
         writable.active_id,
@@ -2574,7 +2574,7 @@ fn setRecoveryCheckpoint(
         .{ .recovery_checkpoint_set = .{ .checkpoint = checkpoint } },
         now_ms,
         .retry_expected_tail,
-        session_test_controls.logOptions(),
+        .{},
     ) catch |err| switch (err) {
         error.EventFrameTooLarge => {
             var current = try currentAskState(ctx, writable, now_ms);
@@ -2586,7 +2586,7 @@ fn setRecoveryCheckpoint(
                 current,
                 .compaction,
                 .retry_expected_tail,
-                session_test_controls.logOptions(),
+                .{},
             );
         },
         else => return err,

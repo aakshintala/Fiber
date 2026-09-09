@@ -6,14 +6,15 @@
  * in-process (session_log.zig, session_store.zig) and are not re-proved here.
  *
  * Live: spec cases 1-6 and 10 (SIGKILL at a named `session_log.Boundary` via
- * `FIBER_E2E_SESSION_BOUNDARY`, wired into the `fiber ask` create/resume open
- * paths) plus 7 (watermark validation), 8 (recover copies), 9
- * (cross-workspace), and 11-16 (SIGKILL at each of the six turn-commit
- * boundaries via `ask --resume-id`, with the controls threaded into every
- * production turn-commit site). Each case spawns `fiber ask`, waits for the
+ * `FIBER_E2E_SESSION_BOUNDARY`, wired into the `fiber ask` create path) plus 7
+ * (watermark validation), 8 (recover copies), 9 (cross-workspace), and 11-16
+ * (SIGKILL at each of the six `history_turn_committed` boundaries via
+ * `ask --resume-id`). Each case spawns `fiber ask`, waits for the
  * `FIBER_E2E_SESSION_BOUNDARY_READY` file, SIGKILLs the paused pid (the pause
  * loop ignores SIGTERM), and asserts `sessions` / `doctor` / `session` CLI
- * surface behavior.
+ * surface behavior. Usage-checkpoint and recovery-checkpoint commits do not
+ * honor the boundary pause, so cases 11-16 reach `history_turn_committed`
+ * instead of an earlier reseal.
  */
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
@@ -108,6 +109,32 @@ async function showLastId(workspace: string, home: string): Promise<string> {
   expect(result.stderr).toBe("");
   return JSON.parse(result.stdout.trim()).data.id as string;
 }
+
+const COMMIT_BOUNDARIES = [
+  "after_event_append",
+  "after_event_sync",
+  "after_commit_intent_sync",
+  "after_watermark_rename",
+  "after_target_namespace_sync",
+  "after_commit_intent_remove",
+] as const;
+
+type CommitBoundary = (typeof COMMIT_BOUNDARIES)[number];
+
+const PENDING_AFTER_KILL: readonly CommitBoundary[] = [
+  "after_commit_intent_sync",
+  "after_watermark_rename",
+  "after_target_namespace_sync",
+];
+
+const TURN_SURVIVES: readonly CommitBoundary[] = [
+  "after_watermark_rename",
+  "after_target_namespace_sync",
+  "after_commit_intent_remove",
+];
+
+const VICTIM_PROMPT = "Second model turn.";
+const RESOLVE_PROMPT = "Recover after the commit kill.";
 
 const ORPHAN_RECOVERY =
   "rerun fiber doctor after active writers exit; cleanup is guarded";
@@ -212,18 +239,16 @@ async function askResume(
 }
 
 /**
- * Resume an existing session, wait until its pre-turn commit pauses at the
- * named commit boundary, SIGKILL the exact paused pid, and return. A resumed
- * ask always appends (usage reseal) before the model runs — verified live:
- * zero model POSTs precede the pause — so the pause is in the resume commit,
- * not the model turn commit, and `codex.requests` stays at turn 1's single
- * call. The ready file pins which boundary paused.
+ * Resume an existing session, wait until `history_turn_committed` pauses at
+ * the named commit boundary, SIGKILL the exact paused pid, and return. Usage
+ * and recovery checkpoints do not honor the boundary pause, so the ready
+ * file appears after the second model POST.
  */
 async function killResumeCommitAtBoundary(
   roots: Roots,
   codex: ReturnType<typeof startFakeCodex>,
   id: string,
-  boundary: string,
+  boundary: CommitBoundary,
 ): Promise<void> {
   const readyPath = join(roots.root, `boundary-model-${boundary}.ready`);
   const env: Record<string, string | undefined> = {
@@ -239,7 +264,7 @@ async function killResumeCommitAtBoundary(
   }
   const child = spawn(
     FIBER_BIN,
-    ["ask", "--json", "--permission-mode", "auto", "--resume-id", id, "Second model turn."],
+    ["ask", "--json", "--permission-mode", "auto", "--resume-id", id, VICTIM_PROMPT],
     { cwd: roots.workspace, env, stdio: "ignore" },
   );
   try {
@@ -269,8 +294,23 @@ async function killResumeCommitAtBoundary(
       resolve();
     });
   });
-  expect(codex.requests).toHaveLength(1);
+  expect(codex.requests).toHaveLength(2);
   expect(existsSync(sessionDir(roots.home, id))).toBe(true);
+}
+
+async function showSessionJson(
+  workspace: string,
+  home: string,
+  id: string,
+): Promise<{ history_len: number; history: Array<{ user?: { text?: string } }> }> {
+  const result = await runFx(["session", "show", "--id", id, "--json"], {
+    cwd: workspace,
+    env: { HOME: home },
+    timeoutMs: CLI_TIMEOUT,
+  });
+  expect(result.code).toBe(0);
+  expect(result.stderr).toBe("");
+  return JSON.parse(result.stdout.trim()).data;
 }
 
 async function listSessionsJson(
@@ -858,35 +898,12 @@ describe("session-recovery", () => {
     CASE_TIMEOUT,
   );
 
-  // Cases 11-16: model commit recovery at after_event_append,
-  // after_event_sync, after_commit_intent_sync, after_watermark_rename,
-  // after_target_namespace_sync, after_commit_intent_remove. Expect a second
-  // load to always clear commit.pending.json, with the new model surviving
-  // only for the last three. Drive the resolve with `ask --resume-id` against
-  // startFakeCodex and assert `history_turn_committed`. Still blocked: no
-  // production turn-commit path carries the boundary controls (every
-  // `appendEvent` call site in `cli_ask.zig` passes empty options), so the
-  // victim turn completes without pausing. Threading
-  // `session_test_controls.logOptions()` into the turn commit is a product
-  // change for the session owner; the `FIBER_E2E_SESSION_EXIT_AFTER_WRITABLE_OPEN`
-  // fallback from the brief does not exist in `src/` either.
-  // Cases 11-16: resume commit at each of the six commit boundaries. A
-  // resumed ask appends (usage reseal) before the model runs, so with a
-  // one-shot pause the model turn commit itself is unreachable — the pause
-  // fires in the resume commit, which traverses the same six boundaries in
-  // the same commit machinery. Each case pins one boundary (ready file),
-  // pins the pre-model placement (exactly turn 1's model call), and proves
-  // recovery (list count 1 plus a completing resume).
-  for (const boundary of [
-    "after_event_append",
-    "after_event_sync",
-    "after_commit_intent_sync",
-    "after_watermark_rename",
-    "after_target_namespace_sync",
-    "after_commit_intent_remove",
-  ]) {
+  // Cases 11-16: kill `history_turn_committed` at each of the six commit
+  // boundaries. A second writable load always clears commit.pending.json;
+  // the victim turn survives only after watermark publish (the last three).
+  for (const [index, boundary] of COMMIT_BOUNDARIES.entries()) {
     test(
-      `case ${11 + ["after_event_append", "after_event_sync", "after_commit_intent_sync", "after_watermark_rename", "after_target_namespace_sync", "after_commit_intent_remove"].indexOf(boundary)}: resume commit at ${boundary} pauses and recovers`,
+      `case ${11 + index}: history_turn_committed recovers after process death at ${boundary}`,
       async () => {
         const roots = makeRoots(`fiber-e2e-session-model-${boundary}-`);
         const codex = startFakeCodex();
@@ -900,6 +917,11 @@ describe("session-recovery", () => {
           );
           await killResumeCommitAtBoundary(roots, codex, id, boundary);
 
+          const intentPath = join(sessionDir(roots.home, id), "commit.pending.json");
+          if (PENDING_AFTER_KILL.includes(boundary)) {
+            expect(existsSync(intentPath)).toBe(true);
+          }
+
           const list = await listSessionsJson(roots.workspace, roots.home);
           expect(list.count).toBe(1);
           expect(list.skipped_invalid ?? 0).toBe(0);
@@ -909,9 +931,20 @@ describe("session-recovery", () => {
             roots.home,
             codex,
             id,
-            "Recover after the commit kill.",
+            RESOLVE_PROMPT,
           );
           expect(resumed.session_id).toBe(id);
+          expect(existsSync(intentPath)).toBe(false);
+
+          const detail = await showSessionJson(roots.workspace, roots.home, id);
+          const userTexts = detail.history.map((turn) => turn.user?.text);
+          const survives = TURN_SURVIVES.includes(boundary);
+          expect(detail.history_len).toBe(survives ? 3 : 2);
+          if (survives) {
+            expect(userTexts).toContain(VICTIM_PROMPT);
+          } else {
+            expect(userTexts).not.toContain(VICTIM_PROMPT);
+          }
         } finally {
           codex.stop();
           cleanupRoots(roots);
