@@ -465,7 +465,14 @@ jobs:
               --cache-dir "$RUNNER_TEMP/fiber-base-cache" \
               --global-cache-dir "$RUNNER_TEMP/fiber-global-cache"
           )
-          cp "$base_worktree/zig-out/bin/fiber" "$evidence_dir/base-fiber"
+          # The base may predate the current executable name, so compare
+          # against whatever single executable it installs.
+          base_bins=("$base_worktree"/zig-out/bin/*)
+          if [ "${#base_bins[@]}" -ne 1 ] || [ ! -f "${base_bins[0]}" ]; then
+            echo "expected one base executable, found: ${base_bins[*]}" >&2
+            exit 1
+          fi
+          cp "${base_bins[0]}" "$evidence_dir/base-fiber"
           file "$evidence_dir/base-fiber" > "$evidence_dir/base-file.txt"
           cat "$evidence_dir/base-file.txt"
           grep -Eq "$EXPECTED_FILE" "$evidence_dir/base-file.txt"

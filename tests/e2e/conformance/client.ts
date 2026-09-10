@@ -10,10 +10,10 @@ import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
-  startFakeGateway,
+  codexFinalText,
+  codexToolCall,
+  seededFakeCodexEnv,
+  startFakeCodex,
 } from "../tmux-helpers";
 
 const serverUrl = process.argv[2];
@@ -119,24 +119,24 @@ writeFileSync(
   }),
 );
 
-const gatewaySteps = toolCalls.flatMap((call, index) => {
+const codexSteps = toolCalls.flatMap((call, index) => {
   const name = `mcp_conformance_${call.name}`;
   return [
-    fakeGatewayToolCall(`select_conformance_tool_${index}`, "mcp_select_tool", {
+    codexToolCall(`select_conformance_tool_${index}`, "mcp_select_tool", {
       name,
     }),
-    fakeGatewayToolCall(`call_conformance_tool_${index}`, name, call.arguments),
+    codexToolCall(`call_conformance_tool_${index}`, name, call.arguments),
   ];
 });
 if (toolCalls.length === 0) {
-  gatewaySteps.push(fakeGatewayToolCall(
+  codexSteps.push(codexToolCall(
     "search_conformance_server",
     "capability_search",
     { query: "conformance" },
   ));
 }
-gatewaySteps.push(fakeGatewayFinalText("MCP conformance client finished."));
-const gateway = startFakeGateway(gatewaySteps);
+const finalStep = codexFinalText("MCP conformance client finished.");
+const codex = startFakeCodex({ route: () => codexSteps.shift() ?? finalStep });
 
 try {
   const child = Bun.spawn(
@@ -152,9 +152,7 @@ try {
       cwd: workspace,
       env: {
         ...process.env,
-        HOME: home,
-        AI_GATEWAY_API_KEY: "mcp-conformance-placeholder",
-        VERCEL_OIDC_TOKEN: "",
+        ...seededFakeCodexEnv(home, codex),
         FIBER_DISABLE_KEYCHAIN: "1",
         FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
         ...(scenarioContext.client_secret
@@ -163,9 +161,6 @@ try {
                 scenarioContext.client_secret,
             }
           : {}),
-        FX_GATEWAY_BASE_URL: gateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        FIBER_MODEL: FAKE_GATEWAY_MODEL,
         FIBER_SKIP_ONBOARDING: "1",
         FIBER_SOUND: "0",
         NO_COLOR: "1",
@@ -183,7 +178,7 @@ try {
   process.stderr.write(stderr);
   process.exitCode = exitCode;
 } finally {
-  gateway.stop();
+  codex.stop();
   await legacyProbeProxy?.stop();
   rmSync(root, { recursive: true, force: true });
 }
