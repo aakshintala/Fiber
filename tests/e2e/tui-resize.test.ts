@@ -1893,21 +1893,28 @@ describe.skipIf(SKIP)("tui: resize", () => {
         60_000,
       );
 
-      const assertMarkersExactlyOnce = (scrollback: string) => {
+      const assertMarkersExactlyOnce = (phase: string, scrollback: string) => {
         for (const marker of markers) {
-          expect(countOccurrences(scrollback, marker)).toBe(1);
+          const count = countOccurrences(scrollback, marker);
+          if (count !== 1) {
+            console.error(`[${phase}] scrollback dump (${scrollback.length} chars):\n${scrollback}`);
+            throw new Error(
+              `${phase}: expected marker ${marker} exactly once, found ${count} ` +
+                `(scrollback length ${scrollback.length})`,
+            );
+          }
         }
       };
       const beforeResize = await session.captureFullScrollback();
-      assertMarkersExactlyOnce(beforeResize);
+      assertMarkersExactlyOnce("before resize", beforeResize);
 
       await session.resizeWindow(72, 24, 700);
       await waitForSettledFooter(session);
-      assertMarkersExactlyOnce(await session.captureFullScrollback());
+      assertMarkersExactlyOnce("after resize to 72x24", await session.captureFullScrollback());
 
       await session.resizeWindow(120, 40, 700);
       const grid = await waitForSettledFooter(session);
-      assertMarkersExactlyOnce(await session.captureFullScrollback());
+      assertMarkersExactlyOnce("after resize back to 120x40", await session.captureFullScrollback());
       expect(findFooterBlocks(grid)).toHaveLength(1);
       expect(gateway.requests).toHaveLength(2);
       expect(session.isPaneAlive()).toBe(true);

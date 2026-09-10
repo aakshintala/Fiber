@@ -37,7 +37,10 @@ const LOCAL_BUDGETS_MS = { p50: 8, p90: 12, p95: 17 } as const;
 const BACKGROUND_WORK_BUDGETS_MS = { p50: 12, p90: 17, p95: 17 } as const;
 const EXTERNAL_REFRESH_BUDGETS_MS = { p50: 17, p90: 17, p95: 17 } as const;
 const APP_PANE_BUDGETS_MS = { p50: 12, p90: 17, p95: 17 } as const;
-const ACTIVE_TURN_DESCRIPTOR_BUDGET = 7;
+// Observed peak-over-postWarmup descriptor deltas range 6-8 across CI runs on
+// identical code (after == post in every case, so it's peak-sampling noise,
+// not a leak). Budget set above that spread with headroom.
+const ACTIVE_TURN_DESCRIPTOR_BUDGET = 10;
 const TIMEOUT = 60_000;
 
 const LOCAL_MENU_ACTIONS = [

@@ -82,7 +82,9 @@ jobs, so a fix pushed to a draft is never checked by the job that failed.
 
 The macOS arm64 PGSO candidate workflow does not run on pull requests. If you
 change `build.zig` or `scripts/pgso/`, run it by hand with `workflow_dispatch`
-on your branch, and merge only after it passes. It produces size, behavior, and
+on your branch only after the ready run passes — it uses `cancel-in-progress`
+on the branch ref, so dispatching earlier just gets cancelled by the next push
+— and merge only after it passes. It produces size, behavior, and
 performance evidence and changes no release artifact. Its pinned toolchain, local reproduction command,
 and failure rules are in
 [`scripts/pgso/README.md`](scripts/pgso/README.md).

@@ -2778,7 +2778,8 @@ test.skipIf(!tmuxAvailable())(
         if (/^│  \d+ output lines$/.test(row)) return "<output count>";
         if (/^│  \d+ more lines · → to expand$/.test(row)) return "<fold count>";
         if (row.includes("enter queue ·")) return "<status line>";
-        if (/^auto · gpt-5\.4-mini$/.test(row)) return "<status line>";
+        // The idle status line once the turn ends between the two readings.
+        if (row === `auto · ${FAKE_CODEX_DEFAULT_MODEL}`) return "<status line>";
         return row;
       });
       const normalizedBefore = normalizeLiveMetadata(readingBefore);

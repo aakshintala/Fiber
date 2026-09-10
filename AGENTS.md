@@ -253,8 +253,10 @@ ready-only jobs, so a fix pushed to a draft pull request is never checked by the
 job that failed. Push the fix to the ready pull request and read the new run.
 
 The macOS arm64 PGSO candidate workflow does not run on pull requests. When a
-change touches `build.zig` or `scripts/pgso/`, run it with `workflow_dispatch`
-on the pull request's head commit, and do not merge until that run passes.
+change touches `build.zig` or `scripts/pgso/`, dispatch it with
+`workflow_dispatch` on the pull request's head commit only after the ready run
+passes — it uses `cancel-in-progress` on the branch ref, so dispatching earlier
+just gets cancelled by the next push — and do not merge until that run passes.
 
 ## Merge authority
 
