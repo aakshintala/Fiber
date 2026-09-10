@@ -702,7 +702,7 @@ describe("cli: status", () => {
   );
 
   test(
-    "fiber upgrade help documents release channels",
+    "fiber upgrade help offers no channel option",
     async () => {
       const result = await runFx(["upgrade", "--help"]);
       expect(result.code).toBe(0);
