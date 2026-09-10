@@ -473,7 +473,7 @@ pub fn captureInlineImageBytes(
         .{ image_id, random_suffix },
     );
     defer alloc.free(source_name);
-    defer deleteSnapshotFile(snapshot_dir_handle, source_name, "capture_acp_source");
+    defer deleteSnapshotFile(snapshot_dir_handle, source_name, "capture_source");
 
     {
         var source = try snapshot_dir_handle.createFile(
