@@ -1548,27 +1548,6 @@ async function launchRouteRecoveryTui(
 }
 
 describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
-  // Stage-2 deleted cases (all asserted removed products; evidence from the
-  // stage-1 codex-harness run, where every one died at a terminal
-  // `System: request failed: OpenAICodexResponseFailed` instead of the
-  // gateway retry/backoff/recovery UI it waited on):
-  // - Gateway transport recovery arc, deleted with the Vercel host-stream
-  //   provider (docs/ideas/fiber-product-transition.md): "agent-owned HTTP
-  //   retry", "HTTP restricted provider error" (Vercel team allowlist),
-  //   "post-tool HTTP 503", "provider route recovery counts down",
-  //   "paused response resumes through slash continue", "slash continue
-  //   cannot duplicate an active checkpointed request", "paused tool
-  //   lifecycle", "Escape during provider recovery backoff", "slash
-  //   continue does not render checkpointed partial output twice",
-  //   "provider error after assistant output", "provider error after
-  //   streamed tool start".
-  // - Standing Fast mode, now a per-request tier (same doc): "Fast failure
-  //   heartbeat", "process restart during backoff", "Fast route failure
-  //   automatically falls back" (also pinned non-Codex zai/glm-5.2).
-  // - Non-Codex provider model identity: "streaming model selection"
-  //   (zai/glm-5.2, ai-language-model-id headers, gateway settings shape).
-  // - Removed /image family (same doc): "queued prompt stays pending until
-  //   active assistant text completes" and "queued image yank".
   test(
     "full-window output limit is omitted from the agent request",
     async () => {

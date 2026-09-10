@@ -1,5 +1,5 @@
 /**
- * Session-recovery E2E (rebuild brief Task 1, plan.md "Session-recovery harness").
+ * Session-recovery E2E.
  *
  * Uniquely end-to-end here: the `doctor` / `sessions` / `session` CLI text and
  * real recovery copies. events.jsonl survival and checkpoint replay are covered

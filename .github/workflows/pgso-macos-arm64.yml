@@ -3,8 +3,8 @@ name: macOS arm64 PGSO candidate
 # No pull_request trigger. GitHub evaluates path filters for that event against
 # the whole pull request diff rather than the push, so a long-lived branch that
 # once touched build.zig or scripts/pgso keeps matching on every later push, and
-# a one-line test edit re-ran 54 macOS jobs. Draft CI runs the E2E shards since
-# a87972cf, ready scope adds macOS, and release.yml calls this workflow directly.
+# a one-line test edit re-ran 54 macOS jobs. Draft CI runs the E2E shards,
+# ready scope adds macOS, and release.yml calls this workflow directly.
 # Run it by hand with workflow_dispatch when the corpus or the build changes.
 on:
   workflow_call:

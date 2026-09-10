@@ -833,13 +833,8 @@ async function waitForMcpServerReady(
 }
 
 describe("gateway stream lifecycle", () => {
-  // Phase 5 deletion ledger: these cases asserted the removed Vercel Gateway
-  // transport/recovery arc (11), standing Fast mode (3), a non-Codex model
-  // picker (1), and the removed /image family (2). Evidence: the Codex-only
-  // boundary in docs/ideas/fiber-product-transition.md and the transition
-  // slice that removed the Gateway classifier/decider and SSE wire.
-  // The retained malformed-argument cases below are intentionally migrated,
-  // not deleted: they pin the no-SyntaxError + tool_execution_failed fix.
+  // The malformed-argument cases below pin the no-SyntaxError +
+  // tool_execution_failed fix.
   test("bounded conditional guidance oracle distinguishes capabilities from ordinary prose", () => {
     const fixture = (
       systemText: string,

@@ -283,8 +283,8 @@ def zig_build_argv(
         (
             f"-Dtarget={spec.target}",
             f"-Doptimize={spec.optimize}",
-            # No -Dupdate-channel: Slice 19 removed that build option from
-            # build.zig, so passing it fails the build outright. spec.update_channel
+            # No -Dupdate-channel: build.zig no longer has that option, so
+            # passing it fails the build outright. spec.update_channel
             # and the identity plumbing around it are kept, so restoring update
             # support means restoring this one line.
             "--prefix",

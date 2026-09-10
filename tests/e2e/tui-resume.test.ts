@@ -4762,9 +4762,8 @@ test.skipIf(!tmuxAvailable())(
 test.skipIf(!tmuxAvailable())(
   "closing the /resume picker starts a writable fresh session",
   async () => {
-    // The CLI startup picker alias (`-r`, ResumeTarget.pick) was removed by
-    // Slice 14 (11614c9b); bare `session resume` now resumes last directly and
-    // exits with "fiber: no saved sessions for this workspace" when none exist
+    // There is no CLI startup picker alias (the old `-r`, ResumeTarget.pick);
+    // bare `session resume` resumes last directly and exits with "fiber: no saved sessions for this workspace" when none exist
     // (verified live). The picker surface that survives is the in-TUI /resume
     // command, so this case pins Esc-close-to-fresh-writable through it.
     const root = realpathSync(
@@ -4872,9 +4871,8 @@ test.skipIf(!tmuxAvailable())(
       expect(existsSync(resumeViewPath)).toBe(true);
       const initialResumeView = readFileSync(resumeViewPath);
 
-      // The fork-point picker leg used the `-r` alias (ResumeTarget.pick),
-      // removed by Slice 14 (11614c9b). Bare `session resume` now resumes last
-      // directly, and picker-Enter resume is pinned by the question-card and
+      // The fork-point picker leg used the removed `-r` alias
+      // (ResumeTarget.pick). Bare `session resume` resumes last directly, and picker-Enter resume is pinned by the question-card and
       // command-folding cases via the in-TUI /resume command. The alias
       // coverage below is the surviving surface for this case.
       writeFileSync(resumeViewPath, initialResumeView);
@@ -5116,8 +5114,8 @@ test.skipIf(!tmuxAvailable())(
 
       const toolSessionId = sessionIdFromHome(toolHome);
       const toolInvocations = [
-        // `--resume` was removed by Slice 14 (11614c9b); `resume last` is the
-        // retained top-level alias for the same resume-last behavior.
+        // There is no `--resume` flag; `resume last` is the top-level alias
+        // for the same resume-last behavior.
         ["resume", "last"],
         ["continue"],
         [`session resume --id ${toolSessionId}`],
@@ -5172,8 +5170,8 @@ test.skipIf(!tmuxAvailable())(
 test.skipIf(!tmuxAvailable())(
   "upgrade ctrl-g reports auto-upgrade is disabled and stays writable",
   async () => {
-    // Slice 19 (4b51f28a) removed the auto-upgrade producer: the background
-    // loop and the App.startAutoUpgrade call site are gone, so nothing ever
+    // There is no auto-upgrade producer: the background loop and the
+    // App.startAutoUpgrade call site were removed, so nothing ever
     // sets AutoUpgrade.state = .ready. Automatic upgrade also now defaults off,
     // so ctrl+g stops at the earlier branch and answers "auto-upgrade is
     // disabled" rather than "no installed upgrade is ready". The ctrl+g
@@ -5244,11 +5242,10 @@ test.skipIf(!tmuxAvailable())(
 // Gated skip with evidence: the exact corrupt-boundary repair this case
 // pinned happens only during the upgrade relaunch resume
 // (applyReadyUpgrade -> prepareResumeHandoff -> `resume --upgrade-relaunch`).
-// Slice 19 (4b51f28a) removed the only producer that ever sets
-// AutoUpgrade.state = .ready — the CDN background loop in auto_upgrade.zig
-// (runLoop/runOnce/start) and the App.startAutoUpgrade decl — so the
-// relaunch-resume path is retained but unreached until update support lands
-// (demolition-inventory.md, Slice 19). No E2E equivalent
+// The only producer that ever set AutoUpgrade.state = .ready — the CDN
+// background loop in auto_upgrade.zig (runLoop/runOnce/start) and the
+// App.startAutoUpgrade decl — was removed, so the relaunch-resume path is
+// retained but unreached until update support lands (#46). No E2E equivalent
 // exists: without a relaunch there is no boundary to repair (live probe: a
 // corrupted commit watermark makes the ordinary follow-up turn fail
 // InvalidSessionFormat). The retained machinery is unit-covered in

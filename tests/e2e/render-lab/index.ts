@@ -1646,8 +1646,8 @@ async function launchFx(
   options: FxLaunchOptions = {},
 ): Promise<void> {
   const environment = [
-    // The scenarios never choose a model, and fiber has shipped no compiled-in
-    // default since e3e29241. Without this the shell opens the model picker over
+    // The scenarios never choose a model, and fiber has no compiled-in
+    // default. Without this the shell opens the model picker over
     // the frame every scenario is here to photograph.
     `FIBER_MODEL=${shQuote(FAKE_CODEX_DEFAULT_MODEL)}`,
     options.codexResponsesUrl ? `FIBER_E2E_OPENAI_CODEX_RESPONSES_URL=${shQuote(options.codexResponsesUrl)}` : null,

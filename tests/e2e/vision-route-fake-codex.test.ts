@@ -27,77 +27,15 @@ import {
 const TIMEOUT = 15_000;
 const IMAGE_PATH = join(REPO_ROOT, "tests/e2e/fixtures/placeholder-logo.png");
 
-// Deletion ledger for cases removed with this migration. Evidence:
-//
-// The Vercel AI Gateway provider bundle (the only source of
-// `vision_fallback = true`) was deleted when the runtime became Codex-only
-// (commit a198a07c, "Make the runtime Codex-only"). The Codex provider bundle
-// ships `capabilities.vision_fallback = false` (src/builtins/providers.zig),
-// so the vision tool is never advertised in a Codex turn and the Gemini vision
-// provider is unreachable. Probed against zig-out/bin/fiber:
+// The Codex provider bundle ships `capabilities.vision_fallback = false`
+// (src/builtins/providers.zig), so the vision tool is never advertised:
 //
 // - Text-only model + attached image -> `SubscriptionNativeImageUnavailable`
-//   before any provider request (CLI and TUI); the Vision fallback route no
-//   longer exists.
+//   before any provider request (CLI and TUI).
 // - Image-capable model (`input_modalities` with "image") -> native
 //   `input_image` parts in the Codex request; an unadvertised model-initiated
 //   `vision` call is rejected with `tool_execution_failed` /
 //   "Vision is unavailable for this request." without execution.
-//
-// Deleted cases and their evidence:
-//
-// - "fiber ask gates GLM images through Vision without leaking paths",
-//   "fiber ask uses Kimi native vision without Vision tool",
-//   "text-only non-native ask resolves capability and exposes Vision",
-//   "text-only Kimi ask resolves capability and hides Vision": multi-provider
-//   catalog routing (GLM/Gemini/Kimi model ids and vision tags) was part of
-//   the deleted gateway provider set (a198a07c). The retained native-parts and
-//   never-advertised-vision invariants are pinned by the migrated cases below.
-// - "fiber ask recovers when the model rejects the post-Vision prompt as
-//   assistant prefill": gateway HTTP prefill rejection has no Codex Responses
-//   equivalent (same rationale as the classifier/SSE-wire deletions in
-//   tui-gateway-stream-lifecycle).
-// - "fiber ask executes path-source Vision and cleans transient snapshots",
-//   "source replacement deletion and symlink retarget do not change captured
-//   Vision bytes", "required Vision rejects read_file and remains required",
-//   "fiber ask applies image_adapter_output_bytes to Vision provider capture":
-//   the vision tool is never advertised, so required/optional Vision rounds,
-//   path-source capture, and provider capture limits are unreachable.
-// - "Vision outage is an ordinary failed tool result with the exact notice":
-//   the outage tip came from vision provider execution; unreachable.
-// - "cold resume rebases image ids and preserves authority across both
-//   model-switch directions", "legacy zero image ids repair through durable
-//   resume and remain readable after model switch": cross-model vision routing
-//   is gone; legacy repair also depended on schema-v2 sessions, and only
-//   schema-v3 sessions are readable now (src/core/session/session_discovery.zig).
-// - "missing or corrupted owned snapshots fail without a Vision provider
-//   request": the `image_unavailable` vision-tool result is unreachable. The
-//   observed Codex-native replacement silently omits a corrupt snapshot from
-//   the resumed request (no request, exit 0, no tool calls); pinning that
-//   silence is a product question, not a mechanical migration.
-// - "empty successful Vision provider output is invalid", "malformed Vision
-//   provider output retries once", "one malformed Vision provider response is
-//   retried and recovers the same image", "one-of-two provider omission
-//   preserves evidence without retrying the batch", "one corrupt image does
-//   not block its healthy sibling from Vision", "one corrupt first-batch image
-//   keeps twenty-image provider batches at seven eight four", "twenty
-//   text-only images use sequential Vision provider batches of eight eight and
-//   four": vision provider response validation and batching; unreachable.
-// - "tmux path-source Vision approval names the canonical image", "tmux
-//   path-source Vision accepts hard-linked regular images", "tmux path-source
-//   Vision executes the canonical target approved by the user", "tmux
-//   path-source Vision rejects regular-file replacement of the approved
-//   canonical target", "tmux path-source Vision rejects symlink replacement of
-//   the approved canonical target", "tmux path-source Vision rejects FIFO
-//   replacement of the approved canonical target", "tmux path-source Vision
-//   returns directory failures to the model", "tmux path-source Vision returns
-//   FIFO failures without waiting for a peer", "tmux path-source Vision
-//   returns Unix socket failures to the model": vision-paths authority flow
-//   requires the advertised vision tool; unreachable.
-// - "tmux preserves typed permission feedback across a text-only Vision step",
-//   "tmux shows ordinary Vision approval activity failure and exact outage
-//   tip": driven by the removed `/image` slash command (Slice 16, ca8b34a3)
-//   plus the unreachable vision provider.
 
 type CodexQueue = ReturnType<typeof startFakeCodex>;
 

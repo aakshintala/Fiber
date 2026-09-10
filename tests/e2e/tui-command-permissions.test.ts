@@ -1403,7 +1403,7 @@ describe("effect-aware command permissions", () => {
       const beforeSlashCommands = await activeSession.captureFullScrollback();
       expect(extractResponses(beforeSlashCommands)).toEqual(responseRows);
 
-      // /sound was removed (Slice 17a); an unknown slash with arguments now
+      // /sound was removed; an unknown slash with arguments now
       // routes to the model, so only retained slash commands exercise this path.
       await activeSession.sendText("/settings");
       await activeSession.waitForText("←→ Change", TIMEOUT);
