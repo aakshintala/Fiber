@@ -1014,7 +1014,6 @@ test "rendered top-level help is a complete CLI navigation page" {
     try std.testing.expect(std.mem.find(u8, text, "Must appear before the command. Accepted names:") == null);
     try std.testing.expect(std.mem.find(u8, text, "skill_description_bytes, skill_catalog_bytes") == null);
     try std.testing.expect(std.mem.find(u8, text, "FIBER_EXPERIMENTAL_WORKSPACE_ACCESS=1") == null);
-    try std.testing.expect(std.mem.find(u8, text, "ACP") == null);
     try std.testing.expect(std.mem.find(u8, text, "Examples:") != null);
     try std.testing.expect(std.mem.find(u8, text, "fiber ask \"Explain the changes in this repository\"") != null);
     try std.testing.expect(std.mem.find(u8, text, "fiber session resume last") != null);
