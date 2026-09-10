@@ -248,6 +248,14 @@ A failed check is evidence. Repair it in a new commit and let CI run again;
 never rerun a failed test to green. Live model evals stay separate because they
 need credentials and are not deterministic.
 
+A ready pull request stays ready while you repair it. Draft scope skips the
+ready-only jobs, so a fix pushed to a draft pull request is never checked by the
+job that failed. Push the fix to the ready pull request and read the new run.
+
+The macOS arm64 PGSO candidate workflow does not run on pull requests. When a
+change touches `build.zig` or `scripts/pgso/`, run it with `workflow_dispatch`
+on the pull request's head commit, and do not merge until that run passes.
+
 ## Merge authority
 
 Open a draft pull request as soon as the branch is pushed, and mark it ready once

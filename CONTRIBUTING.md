@@ -77,9 +77,13 @@ passing run on an earlier commit does not count.
 If a check fails, that is the answer. Fix the cause in a new commit and let it
 run again. Do not rerun a failed test hoping for green.
 
-Changes to `build.zig` or `scripts/pgso/` also run the macOS arm64 PGSO
-candidate workflow. It produces size, behavior, and performance evidence and
-changes no release artifact. Its pinned toolchain, local reproduction command,
+Keep a ready pull request ready while you fix it. A draft skips the ready-only
+jobs, so a fix pushed to a draft is never checked by the job that failed.
+
+The macOS arm64 PGSO candidate workflow does not run on pull requests. If you
+change `build.zig` or `scripts/pgso/`, run it by hand with `workflow_dispatch`
+on your branch, and merge only after it passes. It produces size, behavior, and
+performance evidence and changes no release artifact. Its pinned toolchain, local reproduction command,
 and failure rules are in
 [`scripts/pgso/README.md`](scripts/pgso/README.md).
 
