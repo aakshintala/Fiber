@@ -47,7 +47,6 @@ const LOCAL_MENU_ACTIONS = [
   { name: "resumeOpen", command: "/resume", marker: "Sessions " },
   { name: "mcpOpen", command: "/mcp", marker: "[Servers]" },
   { name: "usageOpen", command: "/usage", marker: "[30 days]" },
-  { name: "statuslineOpen", command: "/statusline", marker: "Status line" },
   { name: "workspaceOpen", command: "/workspace", marker: "Enter Use" },
 ] as const;
 

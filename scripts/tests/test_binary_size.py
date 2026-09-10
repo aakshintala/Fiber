@@ -17,7 +17,7 @@ from scripts.binary_size import (
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "binary-size.yml"
+WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 class BinarySizeCliTests(unittest.TestCase):

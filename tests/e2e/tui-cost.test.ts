@@ -136,19 +136,23 @@ async function waitForUsageGeneration(home: string): Promise<{
 function writePendingUsageStore(home: string): void {
   const fxDir = join(home, ".fiber");
   mkdirSync(fxDir, { recursive: true, mode: 0o700 });
+  // Backdated: fiber treats a marker at or after its own snapshot time as
+  // unknown (incomplete), and a runner clock can step between this write and
+  // the spawned report.
+  const observedAtMs = Date.now() - 60_000;
   writeFileSync(
     join(fxDir, "usage.jsonl"),
     [
       JSON.stringify({
         schema_version: 1,
         kind: "coverage",
-        started_at_ms: Date.now(),
+        started_at_ms: observedAtMs,
       }),
       JSON.stringify({
         schema_version: 1,
         kind: "pending",
         id: "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        observed_at_ms: Date.now(),
+        observed_at_ms: observedAtMs,
       }),
     ].join("\n") + "\n",
     { mode: 0o600 },
