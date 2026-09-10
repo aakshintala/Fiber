@@ -127,8 +127,8 @@ pub const Context = struct {
     permission_state_override: ?*const session_permission_state.State = null,
     worker: *WorkerRuntime,
     /// Sole prompt capability admission consults. When null, admission never
-    /// prompts: it resolves by rule, automatic review, or fail-closed denial
-    /// (e.g. ACP hosts prompt over JSON-RPC by setting this).
+    /// prompts: it resolves by rule, automatic review, or fail-closed denial.
+    /// Hosts that can prompt provide one here.
     permission_prompter: ?permission_prompter.Prompter = null,
     cancel_flag: ?*std.atomic.Value(bool) = null,
     session: *SessionRuntime,
@@ -177,7 +177,7 @@ pub const Context = struct {
     web_fetch_progress_ctx: ?*anyopaque = null,
     on_web_fetch_progress: ?tool_dispatch.WebFetchProgressFn = null,
     model_capability_resolver: ?model_capabilities.Resolver = null,
-    /// False when running outside an interactive TUI (e.g. ACP). Tools
+    /// False when running outside an interactive TUI (e.g. a non-interactive host). Tools
     /// that require a live user (like `ask_user_question`) short-circuit
     /// in that case.
     interactive: bool = true,
@@ -709,7 +709,6 @@ const DispatchMetadata = struct {
     web_fetch_completion: ?types.WebFetchCompletion = null,
     tool_result_memory: ?types.ToolResultMemory = null,
     command_result_json: ?[]const u8 = null,
-    turn_control: ?tool_dispatch.TurnControl = null,
 
     fn attach(self: *DispatchMetadata, ctx: *tool_dispatch.DispatchContext) void {
         ctx.inner_usage_sink = &self.inner_usage;
@@ -717,7 +716,6 @@ const DispatchMetadata = struct {
         ctx.web_fetch_completion_sink = &self.web_fetch_completion;
         ctx.tool_result_memory_sink = &self.tool_result_memory;
         ctx.command_result_json_sink = &self.command_result_json;
-        ctx.turn_control_sink = &self.turn_control;
     }
 };
 
@@ -734,7 +732,6 @@ fn toolExecutionResultFromDispatch(
             .web_fetch_completion = metadata.web_fetch_completion,
             .tool_result_memory = metadata.tool_result_memory,
             .command_result_json = metadata.command_result_json,
-            .turn_control = metadata.turn_control,
         },
         .failure => .{
             .status = .failure,
@@ -745,7 +742,6 @@ fn toolExecutionResultFromDispatch(
             .web_fetch_completion = metadata.web_fetch_completion,
             .tool_result_memory = metadata.tool_result_memory,
             .command_result_json = metadata.command_result_json,
-            .turn_control = metadata.turn_control,
         },
     };
 }

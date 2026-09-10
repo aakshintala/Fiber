@@ -4187,7 +4187,6 @@ fn processQueuedPromptLoop(
     }
     var pending_image_ids: []const usize = initial_pending_image_ids;
     var configured_first_tool_choice_pending = true;
-    var return_to_user_pending = false;
     var active_presentation_group_id: ?types.ToolPresentationGroupId = null;
     const restored_attempts = if (job.recovery_checkpoint) |checkpoint|
         restoredConsumedAttempts(checkpoint)
@@ -4559,8 +4558,6 @@ fn processQueuedPromptLoop(
             const provider_opts = model_capabilities.resolveProviderOptionsForCapabilities(request_capabilities, config.effort, route_fast_mode);
             runtime_telemetry.traceGatewayProviderOptions(step_ctx, gateway_model, route_fast_mode, config.effort, provider_opts);
             const tool_choice: types.ToolChoice = if (recovery_strategy == .reconcile_tool)
-                .none
-            else if (return_to_user_pending)
                 .none
             else if (configured_first_tool_choice_pending and vision_mode != .required)
                 config.first_call_tool_choice
@@ -5642,7 +5639,6 @@ fn processQueuedPromptLoop(
             successful_recovery_strategy = recovery_strategy;
             retainCompletedResultInTurnArena(&stream_result);
             if (vision_mode != .required) configured_first_tool_choice_pending = false;
-            return_to_user_pending = false;
             break;
         }
         defer if (stream_result_set) stream_result.deinit(arena);
@@ -8482,9 +8478,6 @@ fn processQueuedPromptLoop(
                 try commit.commit();
                 result_commit_pending = false;
             }
-            if (execution.turn_control) |control| switch (control) {
-                .return_to_user => return_to_user_pending = true,
-            };
             replay_handed_off = true;
             if (execution.system_notice) |notice| {
                 try within_turn_suffix.append(arena, .{ .role = .system, .content = notice });
