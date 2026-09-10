@@ -1037,8 +1037,8 @@ pub fn validateResponse(
 }
 
 /// Produces the smallest response safe to place on the originating MCP wire.
-/// In particular, ignored ACP fields and content attached to decline/cancel or
-/// URL consent are never forwarded to the MCP server.
+/// In particular, extra fields and content attached to decline/cancel or
+/// URL accept responses are never forwarded to the MCP server.
 pub fn canonicalResponse(
     alloc: Allocator,
     request: Request,

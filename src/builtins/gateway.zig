@@ -13,7 +13,7 @@ pub const oauth_transport_provider = oauth_transport.Provider{
     .execute_fn = executeOAuthRequest,
 };
 
-/// Codex-only provider bundle used by ACP/CLI test configurations.
+/// Codex-only provider bundle used by CLI and app-entry test configurations.
 pub const provider_bundle = @import("../core/gateway/provider_set.zig").Bundle{
     .presentation = @import("../core/auth/provider_catalog.zig").find(.codex),
     .auth_strategy = .chatgpt,

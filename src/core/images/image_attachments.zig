@@ -469,7 +469,7 @@ pub fn captureInlineImageBytes(
     io_mod.getIo().random(std.mem.asBytes(&random_suffix));
     const source_name = try std.fmt.allocPrint(
         alloc,
-        "image-{d}.acp-source.{x}",
+        "image-{d}.source.{x}",
         .{ image_id, random_suffix },
     );
     defer alloc.free(source_name);

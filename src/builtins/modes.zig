@@ -24,7 +24,7 @@ pub fn lookup(id: []const u8) ?*const ModeSpec {
     return registry.lookup(id);
 }
 
-test "built-in modes register exact ACP order and permission policy" {
+test "built-in modes register exact mode order and permission policy" {
     const expected_ids = [_][]const u8{ "code", "ask" };
     try std.testing.expectEqual(expected_ids.len, all.len);
     for (expected_ids, all) |expected, mode| {

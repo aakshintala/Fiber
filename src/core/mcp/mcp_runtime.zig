@@ -14690,7 +14690,7 @@ test "legacy URL completions require an established unique candidate before repl
             const self: *@This() = @ptrCast(@alignCast(raw));
             if (!self.available) return .missing;
             self.consumed += 1;
-            return .{ .consumed = self.alloc.dupe(u8, "acp-early") catch null };
+            return .{ .consumed = self.alloc.dupe(u8, "early-completion") catch null };
         }
 
         fn publish(raw: *anyopaque, id: []u8) void {
