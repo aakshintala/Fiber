@@ -12,7 +12,6 @@ const result_store = @import("result_store.zig");
 const session = @import("session.zig");
 const session_codec = @import("session_codec.zig");
 const session_child_store = @import("session_child_store.zig");
-const relationship_index_codec = @import("session_relationship_index_codec.zig");
 const session_event = @import("session_event.zig");
 const session_json = @import("session_json.zig");
 const session_layout = @import("session_layout.zig");
@@ -2736,7 +2735,7 @@ pub const Store = struct {
     }
 
     /// Scans session directories into summaries. `probe_managed_children`
-    /// controls whether each session's subagent relationship index is opened to
+    /// controls whether each session's children.json is opened to
     /// resolve `has_managed_children`. Callers that persist summaries via
     /// `writeSessionIndex` or filter with `resumable_only` must pass true;
     /// list-only consumers that never read the field should pass false.
@@ -2901,53 +2900,6 @@ pub const Store = struct {
                 return error.InvalidSubagentState;
             }
             return children.array.items.len != 0;
-        }
-        var header_file = capability.openFileReadOnly(
-            alloc,
-            .subagent_control,
-            session_child_store.subagent_relationship_index_file,
-        ) catch |err| switch (err) {
-            error.FileNotFound => return false,
-            else => return err,
-        };
-        defer header_file.deinit();
-        const header_bytes = try header_file.readToEnd(
-            alloc,
-            relationship_index_codec.max_header_bytes,
-        );
-        defer alloc.free(header_bytes);
-        const header = try relationship_index_codec.decodeHeader(header_bytes);
-        if (header.active_count_known) return header.active_count != 0;
-
-        var page_number: u64 = 0;
-        var offset: u64 = 0;
-        while (offset < header.high_watermark) : (page_number += 1) {
-            const page_name = relationship_index_codec.pageFileName(page_number);
-            var page_file = try capability.openFileReadOnly(
-                alloc,
-                .subagent_control,
-                &page_name,
-            );
-            defer page_file.deinit();
-            const page_bytes = try page_file.readToEnd(
-                alloc,
-                relationship_index_codec.max_page_bytes,
-            );
-            defer alloc.free(page_bytes);
-            const page = try relationship_index_codec.decodePage(
-                page_bytes,
-                page_number,
-                header.storage_epoch,
-            );
-            const remaining = header.high_watermark - offset;
-            const slots_to_read: usize = @intCast(@min(
-                remaining,
-                relationship_index_codec.page_slots,
-            ));
-            for (page.slots[0..slots_to_read]) |slot| {
-                if (slot.occupied) return true;
-            }
-            offset += @intCast(slots_to_read);
         }
         return false;
     }
@@ -10211,20 +10163,15 @@ test "session scan probes managed children only when requested" {
     defer state.deinit(alloc);
     var writable = try ctx.store.startWritableSession(alloc, state);
     {
-        const header_bytes = try relationship_index_codec.encodeHeader(alloc, .{
-            .high_watermark = 1,
-            .active_count = 1,
-        });
-        defer alloc.free(header_bytes);
         var capability = try writable.childCapability();
-        var header_file = try capability.createExclusiveFile(
+        var children_file = try capability.createExclusiveFile(
             alloc,
             .subagent_control,
-            session_child_store.subagent_relationship_index_file,
+            "children.json",
         );
-        defer header_file.deinit();
-        try header_file.writeAll(header_bytes);
-        try header_file.sync();
+        defer children_file.deinit();
+        try children_file.writeAll("{\"children\":[{\"id\":\"managed-child-probe-child\"}]}");
+        try children_file.sync();
     }
     writable.deinit(alloc);
 

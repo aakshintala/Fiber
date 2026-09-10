@@ -6,8 +6,6 @@ const Allocator = std.mem.Allocator;
 const private_dir_permissions = std.Io.File.Permissions.fromMode(0o700);
 const private_file_permissions = std.Io.File.Permissions.fromMode(0o600);
 
-pub const subagent_relationship_index_file = "relationship-index.bin";
-
 pub const ManagedChildKind = enum {
     background_records,
     background_logs,
