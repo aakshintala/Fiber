@@ -19,12 +19,6 @@ pub const LoginError = error{
     NoRefreshToken,
 };
 
-pub const LogoutResult = struct {
-    session_deleted: bool = false,
-    local_durability_failed: bool = false,
-    remote_revocation_failed: bool = false,
-};
-
 pub const SignInState = enum {
     idle,
     polling,

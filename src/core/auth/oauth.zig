@@ -24,13 +24,11 @@ pub const Metadata = struct {
     issuer: []u8,
     device_authorization_endpoint: []u8,
     token_endpoint: []u8,
-    revocation_endpoint: ?[]u8 = null,
 
     pub fn deinit(self: *Metadata, alloc: Allocator) void {
         alloc.free(self.issuer);
         alloc.free(self.device_authorization_endpoint);
         alloc.free(self.token_endpoint);
-        if (self.revocation_endpoint) |value| alloc.free(value);
         self.* = undefined;
     }
 };
@@ -127,13 +125,10 @@ pub fn parseMetadata(alloc: Allocator, bytes: []const u8) !Metadata {
     errdefer alloc.free(device_authorization_endpoint);
     const token_endpoint = try dupeRequiredString(alloc, object, "token_endpoint");
     errdefer alloc.free(token_endpoint);
-    const revocation_endpoint = try dupeOptionalString(alloc, object, "revocation_endpoint");
-    errdefer if (revocation_endpoint) |value| alloc.free(value);
     return .{
         .issuer = issuer_value,
         .device_authorization_endpoint = device_authorization_endpoint,
         .token_endpoint = token_endpoint,
-        .revocation_endpoint = revocation_endpoint,
     };
 }
 
@@ -275,7 +270,7 @@ fn requiredInteger(object: std.json.ObjectMap, key: []const u8) !i64 {
 fn check_metadata_allocation_failures(alloc: Allocator) !void {
     var metadata = try parseMetadata(
         alloc,
-        "{\"issuer\":\"https://vercel.com\",\"device_authorization_endpoint\":\"https://vercel.com/device\",\"token_endpoint\":\"https://vercel.com/token\",\"revocation_endpoint\":\"https://vercel.com/revoke\"}",
+        "{\"issuer\":\"https://vercel.com\",\"device_authorization_endpoint\":\"https://vercel.com/device\",\"token_endpoint\":\"https://vercel.com/token\"}",
     );
     defer metadata.deinit(alloc);
 }
