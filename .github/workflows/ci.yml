@@ -342,7 +342,46 @@ jobs:
               printf '  %s\n' "${retried_files[@]}"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+          # Always written (possibly blank): flake-watch collects these.
+          printf '%s\n' "${retried_files[@]}" > "$RUNNER_TEMP/fiber-flake-retries.txt"
           exit "$shard_status"
+
+      - name: Upload retry report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flake-retries-${{ matrix.platform.name }}-shard-${{ matrix.shard.index }}
+          path: ${{ runner.temp }}/fiber-flake-retries.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Non-blocking watcher: fails loudly when any shard passed after retry,
+  # so green-with-retries stays visible. Deliberately NOT in the aggregate
+  # CI job's needs: it must never block merging, only demand flake issues.
+  flake-watch:
+    name: Flake watch (non-blocking)
+    if: always() && contains(fromJSON('["success", "failure"]'), needs.e2e.result)
+    needs: e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Download retry reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: flake-retries-*
+          merge-multiple: true
+          path: flake-retries
+      - name: Fail on passed-after-retry
+        shell: bash
+        run: |
+          flakes=$(grep -h . flake-retries/* 2>/dev/null || true)
+          if [ -z "$flakes" ]; then
+            echo "No E2E retries; nothing flaky observed."
+            exit 0
+          fi
+          printf '::error::E2E passed after retry (flaky tests observed):\n%s\n' "$flakes"
+          echo "File or update a flake issue for each listed test (deflake by rewrite)."
+          exit 1
 
   bench:
     name: Performance gates
