@@ -72,7 +72,7 @@ const shell_interact_properties = [_]model_tool_schema.Property{
     .{ .name = "action", .json_type = .string, .shape = &.{ .enum_values = &.{"interact"} } },
     .{ .name = "session_id", .json_type = .string, .description = "Owned execution handle returned by shell.run." },
     .{ .name = "chars", .json_type = .string, .bounds = &.{ .max_length = terminal_contracts.max_write_bytes }, .description = "Exact characters to send to tty=true work before observing it. Omit or send an empty string to only observe. Observe application readiness before sending control characters. Use \\n for Enter and JSON escapes such as \\u0003 for control characters." },
-    .{ .name = "yield_time_ms", .json_type = .integer, .bounds = &.{ .minimum = 0, .maximum = managed_execution_contract.max_wait_ceiling_ms }, .description = "Observation window after optional input. Defaults to 5000; use 0 for an immediate snapshot. If the process remains running, interact with the same session_id again; never rerun it." },
+    .{ .name = "yield_time_ms", .json_type = .integer, .bounds = &.{ .minimum = 0, .maximum = managed_execution_contract.max_wait_ceiling_ms }, .description = "Observation window after optional input. Defaults to 5000. Observing without input waits at least 5000; use 0 for an immediate snapshot only when sending input. If the process remains running, interact with the same session_id again; never rerun it." },
 };
 
 const shell_stop_properties = [_]model_tool_schema.Property{
@@ -905,7 +905,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "613e12cadb4423b9ad8691903dcb30d8835875a841b0c1f7605d211aa6bb6cb8",
+        "c77b2e5687c871b489ec5f2023d0f0c86173a6a720ed4db28e82e17b79891cd9",
         &actual_hex,
     );
 }
