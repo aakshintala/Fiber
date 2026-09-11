@@ -1626,6 +1626,8 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     defer explicit_skills.deinit(alloc);
     if (explicit_skills.notice) |notice| try pushContextNotice(@ptrCast(&ctx), notice);
     if (explicit_skills.diagnostic_notice) |notice| try pushContextNotice(@ptrCast(&ctx), notice);
+    if (explicit_skills.load_notice) |notice| try pushSystemNotice(@ptrCast(&ctx), notice.body);
+    if (explicit_skills.load_details) |details| try pushSystemNotice(@ptrCast(&ctx), details);
     ctx.subagent_skills_prompt = try alloc.dupe(u8, skills_section);
     ctx.subagent_explicit_skills_prompt = try alloc.dupe(u8, explicit_skills.text);
     const context_history = try ctx.session.snapshotContextHistory(alloc);

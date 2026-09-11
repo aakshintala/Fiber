@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin_skills = @import("../../builtins/skills.zig");
+const skill_contract = @import("../../core/skills/skill_contract.zig");
 const skill_invocation = @import("../../core/skills/skill_invocation.zig");
 const skill_runtime = @import("../../core/skills/skill_runtime.zig");
 const tool_args = @import("../../core/tooling/tool_args.zig");
@@ -89,10 +90,10 @@ pub fn validate(_: tool_dispatch.DispatchContext, _: tool_dispatch.ToolInput) to
 }
 
 pub fn presentation(args: std.json.ObjectMap) ?tool_dispatch.CallPresentation {
-    const resource = if (args.get("resource")) |value| resource: {
-        if (value != .string or value.string.len == 0) return null;
+    const resource = skill_contract.resource_path_or_main(if (args.get("resource")) |value| resource: {
+        if (value != .string) return null;
         break :resource value.string;
-    } else "SKILL.md";
+    } else null);
     const offset = if (args.get("offset")) |value| offset: {
         if (value != .integer or value.integer < 0) return null;
         break :offset std.math.cast(usize, value.integer) orelse return null;
@@ -102,7 +103,7 @@ pub fn presentation(args: std.json.ObjectMap) ?tool_dispatch.CallPresentation {
         .activity_kind = .read,
         .action_label = "Reading skill resource",
         .completed_action_label = "Read skill resource",
-        .label_arg_kind = .resource,
+        .label_arg_kind = if (std.mem.eql(u8, resource, "SKILL.md")) .none else .resource,
         .label_arg_default = "SKILL.md",
     };
 }
@@ -270,20 +271,30 @@ test "skill presentation distinguishes the initial document from resource reads"
         expected: ?struct {
             active: []const u8,
             completed: []const u8,
+            kind: tool_dispatch.LabelArgKind,
             value: []const u8,
         },
     };
     const cases = [_]Case{
         .{ .args = "{\"name\":\"workflow\"}", .expected = null },
         .{ .args = "{\"name\":\"workflow\",\"resource\":\"SKILL.md\",\"offset\":0}", .expected = null },
+        .{ .args = "{\"name\":\"workflow\",\"resource\":\"\",\"offset\":0}", .expected = null },
         .{ .args = "{\"name\":\"workflow\",\"resource\":\"references/contract-design.md\"}", .expected = .{
             .active = "Reading skill resource",
             .completed = "Read skill resource",
+            .kind = .resource,
             .value = "references/contract-design.md",
         } },
         .{ .args = "{\"name\":\"workflow\",\"offset\":128}", .expected = .{
             .active = "Reading skill resource",
             .completed = "Read skill resource",
+            .kind = .none,
+            .value = "SKILL.md",
+        } },
+        .{ .args = "{\"name\":\"workflow\",\"resource\":\"\",\"offset\":128}", .expected = .{
+            .active = "Reading skill resource",
+            .completed = "Read skill resource",
+            .kind = .none,
             .value = "SKILL.md",
         } },
     };
@@ -296,7 +307,7 @@ test "skill presentation distinguishes the initial document from resource reads"
             const value = resolved orelse return error.TestExpectedEqual;
             try std.testing.expectEqualStrings(expected.active, value.action_label);
             try std.testing.expectEqualStrings(expected.completed, value.completed_action_label);
-            try std.testing.expectEqual(tool_dispatch.LabelArgKind.resource, value.label_arg_kind);
+            try std.testing.expectEqual(expected.kind, value.label_arg_kind);
             try std.testing.expectEqualStrings(
                 expected.value,
                 tool_dispatch.presentationLabelValue(value, parsed.value.object) orelse value.label_arg_default,

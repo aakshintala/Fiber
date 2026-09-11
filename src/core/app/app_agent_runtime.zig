@@ -866,6 +866,17 @@ pub fn Runtime(comptime App: type) type {
             if (explicit_skills.diagnostic_notice) |notice| {
                 try appendClaimedContextNotice(app, &postflight_context_notices.writer, notice);
             }
+            if (explicit_skills.load_notice) |notice| {
+                try app_worker_runtime.Runtime(App).pushSemanticNotice(app, notice);
+            }
+            if (explicit_skills.load_details) |details| {
+                try app_worker_runtime.Runtime(App).pushSemanticNotice(app, .{
+                    .topic = "skills",
+                    .tone = .warning,
+                    .body = details,
+                    .visibility = .full_only,
+                });
+            }
             if (preflight_context_notices.written().len > 0) {
                 try app_worker_runtime.Runtime(App).pushSemanticNotice(app, .{
                     .topic = "context",
