@@ -1577,6 +1577,10 @@ fn cleanupOwnedEmptyFallbackDir(
     // Remove through the parent handle and only when its entry is still the
     // validated directory, so a same-UID rename or replacement between the
     // checks above and the removal cannot redirect the delete elsewhere.
+    // Identity is the portable inode number from std.Io stat (libc fstat has
+    // no Linux binding, so raw fstat is not an option here). The original
+    // directory still exists while we hold its handle, so no new directory
+    // can reuse its inode number; any swap or replacement fails the check.
     const parent_path = std.fs.path.dirname(transport_root_path) orelse return;
     const name = std.fs.path.basename(transport_root_path);
     var parent = std.Io.Dir.openDirAbsolute(zio, parent_path, .{
@@ -1584,41 +1588,12 @@ fn cleanupOwnedEmptyFallbackDir(
         .follow_symlinks = false,
     }) catch return;
     defer parent.close(zio);
-    const wanted = dirHandleIdentity(transport.dir) catch return;
-    const current = dirEntryIdentity(parent, name) catch return;
-    if (wanted.dev != current.dev or wanted.ino != current.ino) return;
+    const wanted = transport.dir.stat(zio) catch return;
+    const current = parent.statFile(zio, name, .{ .follow_symlinks = false }) catch return;
+    if (wanted.inode != current.inode) return;
     parent.deleteDir(zio, name) catch return;
     transport.close();
     transport_dir.* = null;
-}
-
-const DirIdentity = struct {
-    dev: std.c.dev_t,
-    ino: std.c.ino_t,
-};
-
-fn dirHandleIdentity(dir: std.Io.Dir) !DirIdentity {
-    var native = std.mem.zeroes(std.c.Stat);
-    while (true) {
-        switch (std.c.errno(std.c.fstat(dir.handle, &native))) {
-            .SUCCESS => return .{ .dev = native.dev, .ino = native.ino },
-            .INTR => {},
-            else => return error.RuntimeDirectoryOwnershipUnavailable,
-        }
-    }
-}
-
-fn dirEntryIdentity(parent: std.Io.Dir, name: []const u8) !DirIdentity {
-    const zio = io_mod.getIo();
-    var child = parent.openDir(zio, name, .{
-        .iterate = true,
-        .follow_symlinks = false,
-    }) catch |err| switch (err) {
-        error.SymLinkLoop, error.NotDir => return error.RuntimeDirectoryUnsafe,
-        else => return err,
-    };
-    defer child.close(zio);
-    return dirHandleIdentity(child);
 }
 
 fn isOwnedFallbackTransportRoot(path: []const u8, uid: std.c.uid_t) bool {
