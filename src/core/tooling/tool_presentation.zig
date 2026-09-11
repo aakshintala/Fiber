@@ -25,6 +25,7 @@ pub const ToolActionInput = struct {
     workspace_root: []const u8 = "",
     display_target: ?[]const u8 = null,
     is_available_dynamic_mcp_tool: bool = false,
+    completed: bool = false,
 };
 
 pub const RunCommandActivity = struct {
@@ -36,7 +37,7 @@ pub const RunCommandActivity = struct {
 /// completed rows derive from the typed lifecycle state; failed rows derive
 /// from the typed execution status and interrupted rows from the typed
 /// cancellation signal. Display labels never participate.
-pub const SubagentActionState = union(enum) {
+pub const SubagentActionState = enum {
     active,
     completed,
     failed,
@@ -126,8 +127,17 @@ pub fn formatSubagentStatusLine(alloc: Allocator, action: SubagentAction) ![]u8 
     return std.fmt.allocPrint(alloc, "● {s}\x1b[0m \x1b[38;5;245m{s}\x1b[0m", .{ action.label, action.detail });
 }
 
+/// Projects one styled subagent transcript row, or null for other tools.
+/// Callers use this instead of repeating the project-and-style sequence.
+/// The caller owns the returned row.
+pub fn subagentStatusLine(alloc: Allocator, call: ToolCall, state: SubagentActionState) Allocator.Error!?[]u8 {
+    const action = try subagentAction(alloc, call, state) orelse return null;
+    defer action.deinit(alloc);
+    return try formatSubagentStatusLine(alloc, action);
+}
+
 /// The caller owns the returned plain subagent row.
-pub fn formatSubagentPlainAction(alloc: Allocator, call: ToolCall, state: SubagentActionState) Allocator.Error!?[]u8 {
+fn formatSubagentPlainAction(alloc: Allocator, call: ToolCall, state: SubagentActionState) Allocator.Error!?[]u8 {
     const action = try subagentAction(alloc, call, state) orelse return null;
     defer action.deinit(alloc);
     return try std.fmt.allocPrint(alloc, "{s}{s}{s}", .{ action.label, if (action.detail.len == 0) "" else " ", action.detail });
@@ -177,6 +187,25 @@ test "subagent plain and styled rows share one projection" {
     const styled = try formatSubagentStatusLine(alloc, action);
     defer alloc.free(styled);
     try std.testing.expectEqualStrings("● reviewer replied\x1b[0m \x1b[38;5;245m· Check replay\x1b[0m", styled);
+}
+
+test "plain subagent rows thread the completed state" {
+    // cli_ask.describeToolActionCompleted routes completed rows through
+    // formatPlainAction: a finished subagent renders finished/replied,
+    // not working.
+    const alloc = std.testing.allocator;
+    const registry = tool_dispatch.Registry{ .tools = &.{test_builtin_tools.subagent} };
+    const call: ToolCall = .{ .id = "child", .name = "subagent", .arguments_json = "{\"request\":{\"action\":\"message\",\"agent\":\"reviewer\",\"message\":\"Check replay\"}}" };
+    const active = try formatPlainAction(alloc, .{ .tool_registry = registry, .call = call });
+    defer alloc.free(active);
+    try std.testing.expectEqualStrings("reviewer working · Check replay", active);
+    const completed = try formatPlainAction(alloc, .{ .tool_registry = registry, .call = call, .completed = true });
+    defer alloc.free(completed);
+    try std.testing.expectEqualStrings("reviewer replied · Check replay", completed);
+    const one_off: ToolCall = .{ .id = "run", .name = "subagent", .arguments_json = "{\"request\":{\"action\":\"run\",\"task\":\"Check cleanup\"}}" };
+    const one_off_completed = try formatPlainAction(alloc, .{ .tool_registry = registry, .call = one_off, .completed = true });
+    defer alloc.free(one_off_completed);
+    try std.testing.expectEqualStrings("Subagent finished · Check cleanup", one_off_completed);
 }
 
 pub fn isProviderSearchAlias(name: []const u8) bool {
@@ -434,9 +463,7 @@ fn formatTerminalDisplayTarget(
 /// The caller owns the returned allocation and must free it with `alloc`.
 pub fn formatPlainAction(alloc: Allocator, input: ToolActionInput) ![]const u8 {
     const call = input.call;
-    if (input.tool_registry.lookup(call.name) != null) {
-        if (try formatSubagentPlainAction(alloc, call, .active)) |line| return line;
-    }
+    if (try formatSubagentPlainAction(alloc, call, if (input.completed) .completed else .active)) |line| return line;
     if (file_mutation_contract.isToolName(call.name)) {
         const spec = input.tool_registry.lookup(call.name) orelse
             return std.fmt.allocPrint(alloc, "Working: {s}", .{call.name});

@@ -1131,10 +1131,7 @@ fn formatToolAction(
         .denied => null,
     };
     if (subagent_state) |terminal_state| {
-        if (try tool_presentation.subagentAction(arena, call, terminal_state)) |action| {
-            defer action.deinit(arena);
-            return formatToolActionValue(arena, action.label, action.detail);
-        }
+        if (try tool_presentation.subagentStatusLine(arena, call, terminal_state)) |line| return line;
     }
     const args = tool_args.parseToolArgsObject(arena, call.arguments_json) catch {
         return formatInvalidArgsToolAction(arena, state, denied_label);

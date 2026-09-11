@@ -871,10 +871,7 @@ pub fn finishCancelledToolStatus(
     else
         "Cancelled";
     // The cancel path itself is the typed interruption signal.
-    const line = if (try tooling_presentation.subagentAction(arena, call, .interrupted)) |action| blk: {
-        defer action.deinit(arena);
-        break :blk try tooling_presentation.formatSubagentStatusLine(arena, action);
-    } else try hooks.describe_tool_action_denied(
+    const line = (try tooling_presentation.subagentStatusLine(arena, call, .interrupted)) orelse try hooks.describe_tool_action_denied(
         hooks.ctx,
         arena,
         call,
@@ -984,9 +981,8 @@ pub fn finishExecutedToolStatus(
         .failure => blk: {
             // Typed execution status distinguishes failure from interruption
             // without matching display labels or reply text.
-            if (try tooling_presentation.subagentAction(arena, call, if (result.cancelled) .interrupted else .failed)) |action| {
-                defer action.deinit(arena);
-                break :blk try tooling_presentation.formatSubagentStatusLine(arena, action);
+            if (try tooling_presentation.subagentStatusLine(arena, call, if (result.cancelled) .interrupted else .failed)) |line| {
+                break :blk line;
             }
             const base = try hooks.describe_tool_action_denied(
                 hooks.ctx,
