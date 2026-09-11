@@ -2038,6 +2038,8 @@ fn dupeImageAttachment(alloc: Allocator, src: ImageAttachment) !ImageAttachment 
         .media_type = media_type,
         .snapshot_path = snapshot_path,
         .snapshot_sha256 = snapshot_sha256,
+        .width_px = src.width_px,
+        .height_px = src.height_px,
     };
 }
 /// Deep-copies one history turn; caller owns the returned turn and frees with freeHistoryTurn.
@@ -3243,11 +3245,21 @@ fn formatToolResultEvidenceLine(arena: Allocator, result: core_types.PersistedTo
 fn estimateHistoryTurnTokens(turn: HistoryTurn) usize {
     return switch (turn) {
         .compacted_summary => |entry| estimateTextTokens(entry.summary),
-        .assistant => |entry| estimateTextTokens(entry.user.text) + estimateTextTokens(entry.assistant) + estimateExecutionTokens(entry.execution),
+        .assistant => |entry| estimateTextTokens(entry.user.text) + estimateUserImagesTokens(entry.user.images) + estimateTextTokens(entry.assistant) + estimateExecutionTokens(entry.execution),
         .interrupted => |entry| estimateTextTokens(entry.user.text) +
+            estimateUserImagesTokens(entry.user.images) +
             (if (entry.assistant) |assistant| estimateTextTokens(assistant) else 0) +
             estimateExecutionTokens(entry.execution),
     };
+}
+
+/// Charges each retained image at its provider token cost. Every retained
+/// image is resent with the request, so charging zero lets image-heavy
+/// history silently exceed the provider's context window.
+fn estimateUserImagesTokens(images: []const ImageAttachment) usize {
+    var total: usize = 0;
+    for (images) |image| total += image_attachments.estimateImageTokens(image);
+    return total;
 }
 
 fn estimateExecutionTokens(execution: core_types.ExecutionMemory) usize {
@@ -4117,11 +4129,13 @@ test "budgeted Message and Chat projections retain latest turn and identical tri
 
     var messages: std.ArrayList(message.Message) = .empty;
     defer deinitMessages(arena, &messages);
+    // 2400 covers the three newest image-bearing turns at provider tile cost
+    // (773 + 772 + 797) while trimming the older large turn and the summary.
     try appendHistoryMessagesBudgeted(
         arena,
         &messages,
         &history,
-        .{ .max_tokens = 64 },
+        .{ .max_tokens = 2400 },
     );
     var chat_messages: std.ArrayList(core_types.ChatMessage) = .empty;
     defer chat_messages.deinit(arena);
@@ -4129,7 +4143,7 @@ test "budgeted Message and Chat projections retain latest turn and identical tri
         arena,
         &chat_messages,
         &history,
-        .{ .max_tokens = 64 },
+        .{ .max_tokens = 2400 },
     );
 
     try std.testing.expectEqual(messages.items.len, chat_messages.items.len);
@@ -4211,6 +4225,116 @@ test "budgeted Message and Chat projections retain latest turn and identical tri
         "latest answer",
         messages.items[messages.items.len - 1].content.?.asText(),
     );
+}
+
+test "history budget charges images at provider tile cost" {
+    var known_images = [_]ImageAttachment{.{
+        .id = 1,
+        .path = @constCast("/tmp/known.png"),
+        .media_type = @constCast("image/png"),
+        .width_px = 2000,
+        .height_px = 2000,
+    }};
+    var unknown_images = [_]ImageAttachment{.{
+        .id = 2,
+        .path = @constCast("/tmp/unknown.png"),
+        .media_type = @constCast("image/png"),
+    }};
+
+    // "hello"(2) + "world"(2) and "hi"(1) + "there"(2): text math unchanged.
+    const text_only: HistoryTurn = .{ .assistant = .{
+        .user = .{ .text = @constCast("hello world") },
+        .assistant = @constCast("hi there"),
+    } };
+    try std.testing.expectEqual(@as(usize, 7), estimateHistoryTurnTokens(text_only));
+
+    const with_known: HistoryTurn = .{ .assistant = .{
+        .user = .{ .text = @constCast("hello world"), .images = known_images[0..] },
+        .assistant = @constCast("hi there"),
+    } };
+    try std.testing.expectEqual(@as(usize, 7 + 765), estimateHistoryTurnTokens(with_known));
+
+    const with_unknown: HistoryTurn = .{ .assistant = .{
+        .user = .{ .text = @constCast("hello world"), .images = unknown_images[0..] },
+        .assistant = @constCast("hi there"),
+    } };
+    const unknown_cost = estimateHistoryTurnTokens(with_unknown);
+    try std.testing.expectEqual(@as(usize, 7 + image_attachments.unknown_image_tokens), unknown_cost);
+    // A ~5 MiB base64 payload billed as text would exceed a million tokens;
+    // the dimension-based charge stays in the hundreds.
+    try std.testing.expect(unknown_cost < 1000);
+
+    const interrupted: HistoryTurn = .{ .interrupted = .{
+        .user = .{ .text = @constCast("hello world"), .images = known_images[0..] },
+    } };
+    try std.testing.expectEqual(@as(usize, 4 + 765), estimateHistoryTurnTokens(interrupted));
+}
+
+test "history budget trims image-heavy history before identical text history" {
+    const alloc = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var first_images = [_]ImageAttachment{.{
+        .id = 1,
+        .path = @constCast("/tmp/first.png"),
+        .media_type = @constCast("image/png"),
+    }};
+    var second_images = [_]ImageAttachment{.{
+        .id = 2,
+        .path = @constCast("/tmp/second.png"),
+        .media_type = @constCast("image/png"),
+    }};
+    var third_images = [_]ImageAttachment{.{
+        .id = 3,
+        .path = @constCast("/tmp/third.png"),
+        .media_type = @constCast("image/png"),
+    }};
+    const image_history = [_]HistoryTurn{
+        .{ .assistant = .{
+            .user = .{ .text = @constCast("first"), .images = first_images[0..] },
+            .assistant = @constCast("one"),
+        } },
+        .{ .assistant = .{
+            .user = .{ .text = @constCast("second"), .images = second_images[0..] },
+            .assistant = @constCast("two"),
+        } },
+        .{ .assistant = .{
+            .user = .{ .text = @constCast("third"), .images = third_images[0..] },
+            .assistant = @constCast("three"),
+        } },
+    };
+    const text_history = [_]HistoryTurn{
+        .{ .assistant = .{
+            .user = .{ .text = @constCast("first") },
+            .assistant = @constCast("one"),
+        } },
+        .{ .assistant = .{
+            .user = .{ .text = @constCast("second") },
+            .assistant = @constCast("two"),
+        } },
+        .{ .assistant = .{
+            .user = .{ .text = @constCast("third") },
+            .assistant = @constCast("three"),
+        } },
+    };
+
+    var image_messages: std.ArrayList(core_types.ChatMessage) = .empty;
+    defer image_messages.deinit(arena);
+    try appendHistoryChatMessagesBudgeted(arena, &image_messages, &image_history, .{ .max_tokens = 100 });
+    // Only the newest image turn survives; the rest becomes trimmed context.
+    try std.testing.expectEqual(@as(usize, 3), image_messages.items.len);
+    try std.testing.expectEqual(core_types.ChatRole.system, image_messages.items[0].role);
+    try std.testing.expectEqualStrings("third", image_messages.items[1].content.?);
+    try std.testing.expectEqual(@as(usize, 1), image_messages.items[1].images.len);
+
+    var text_messages: std.ArrayList(core_types.ChatMessage) = .empty;
+    defer text_messages.deinit(arena);
+    try appendHistoryChatMessagesBudgeted(arena, &text_messages, &text_history, .{ .max_tokens = 100 });
+    // Identical text without images fits the same budget untouched.
+    try std.testing.expectEqual(@as(usize, 6), text_messages.items.len);
+    try std.testing.expectEqual(core_types.ChatRole.user, text_messages.items[0].role);
 }
 
 test "context compaction summary preserves large result handle without dropping canonical execution memory" {
