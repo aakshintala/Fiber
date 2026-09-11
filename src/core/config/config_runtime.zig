@@ -7,6 +7,7 @@ const tool_result_limits = @import("../tooling/tool_result_limits.zig");
 const types = @import("../shared/types.zig");
 const workspace_access = @import("../workspace/workspace_access.zig");
 const settings_store = @import("settings_store.zig");
+const text_utils = @import("../shared/text_utils.zig");
 const project_config = @import("../mcp/project_config.zig");
 const model_provider = @import("model_provider.zig");
 const model_preferences = @import("model_preferences.zig");
@@ -197,7 +198,17 @@ pub const ConfigDiagnostic = struct {
 };
 
 pub fn writeDiagnosticMetadata(writer: *std.Io.Writer, diagnostic: ConfigDiagnostic) !void {
-    if (diagnostic.setting_key) |key| try writer.print("; key={s}", .{key});
+    if (diagnostic.setting_key) |key| {
+        // Keys arrive from repository-controlled config files, so render them
+        // through the shared terminal-safe policy (writer-based: no allocation,
+        // no truncation, exact value preserved in escaped form). Safe keys such
+        // as "additional_directories" encode byte-identically. Stored
+        // `setting_key` values stay raw; only text rendering escapes.
+        try writer.writeAll("; key=");
+        var encoder = text_utils.IncrementalTerminalSafeEncoder{};
+        try encoder.append(writer, key);
+        try encoder.finish(writer);
+    }
     if (diagnostic.recovery_path) |path| try writer.print("; recovery={s}", .{path});
     if (diagnostic.cause == .retired_skill_match_fuzzy) {
         try writer.writeAll("; remove skill_match_fuzzy; skills now load only through explicit invocation or the skill tool");
@@ -670,10 +681,12 @@ fn appendUnknownTopLevelKeyDiagnostics(
     var iterator = root.object.iterator();
     while (iterator.next()) |entry| {
         if (isKnownTopLevelKey(entry.key_ptr.*, settings_layer, in_workspace_override)) continue;
+        const key = try alloc.dupe(u8, entry.key_ptr.*);
+        errdefer alloc.free(key);
         try diagnostics.append(alloc, .{
             .layer = diagnostic_layer,
             .cause = .unknown_config_key,
-            .setting_key = try alloc.dupe(u8, entry.key_ptr.*),
+            .setting_key = key,
         });
     }
 }
@@ -3166,6 +3179,36 @@ test "misspelled top-level keys are reported with exact name and layer" {
     try expectUnknownKey(result.diagnostics, .user, "max_agent_stepz");
     try expectUnknownKey(result.diagnostics, .project, "max_tool_result_bytez");
     try std.testing.expectEqual(@as(usize, 3), result.diagnostics.len);
+}
+
+test "diagnostic metadata escapes hostile setting keys while safe keys render byte-identical" {
+    const alloc = std.testing.allocator;
+
+    var hostile = ConfigDiagnostic{
+        .layer = .project,
+        .cause = .unknown_config_key,
+        .setting_key = try alloc.dupe(u8, "evil\x1b[31m\nkey"),
+    };
+    defer hostile.deinit(alloc);
+    var hostile_out: std.Io.Writer.Allocating = .init(alloc);
+    defer hostile_out.deinit();
+    try writeDiagnosticMetadata(&hostile_out.writer, hostile);
+    const hostile_text = hostile_out.written();
+    try std.testing.expect(std.mem.indexOfScalar(u8, hostile_text, 0x1b) == null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, hostile_text, '\n') == null);
+    try std.testing.expect(std.mem.find(u8, hostile_text, "; key=evil\\x1b[31m\\x0akey") != null);
+    try std.testing.expectEqualStrings("evil\x1b[31m\nkey", hostile.setting_key.?);
+
+    var safe = ConfigDiagnostic{
+        .layer = .user,
+        .cause = .invalid_additional_directories,
+        .setting_key = try alloc.dupe(u8, "additional_directories"),
+    };
+    defer safe.deinit(alloc);
+    var safe_out: std.Io.Writer.Allocating = .init(alloc);
+    defer safe_out.deinit();
+    try writeDiagnosticMetadata(&safe_out.writer, safe);
+    try std.testing.expect(std.mem.find(u8, safe_out.written(), "; key=additional_directories") != null);
 }
 
 test "workspace statusline is global only in ordinary and detailed loads" {
