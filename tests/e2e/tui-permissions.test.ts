@@ -803,7 +803,11 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         },
       );
       expect(resumed.code).toBe(0);
-      expect(resumed.stderr).toBe("");
+      // The isolated root seeds the inert legacy `sandbox` key, which issue
+      // #26 reports as an unknown-config-key diagnostic on stderr.
+      expect(resumed.stderr).toBe(
+        "fiber ask: config user: unknown_config_key; key=sandbox; unknown configuration key; check the spelling or remove it\n",
+      );
       expect(resumedGateway.requests).toHaveLength(1);
       const resumedRequest = resumedGateway.requests[0]!.body;
       const resumedItems = codexInputItems(resumedRequest);

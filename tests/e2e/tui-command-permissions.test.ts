@@ -811,7 +811,11 @@ describe("effect-aware command permissions", () => {
         { cwd: root.workspace, env: codexEnv(root, cliResumeCodex) },
       );
       expect(cliResume.code).toBe(0);
-      expect(cliResume.stderr).toBe("");
+      // The isolated root seeds the inert legacy `sandbox` key, which issue
+      // #26 reports as an unknown-config-key diagnostic on stderr.
+      expect(cliResume.stderr).toBe(
+        "fiber ask: config user: unknown_config_key; key=sandbox; unknown configuration key; check the spelling or remove it\n",
+      );
       expect(cliResumeCodex.requests).toHaveLength(1);
       expectGroupedContinuationRequest(cliResumeCodex.requests[0]!.body, feedback);
 
