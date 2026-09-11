@@ -1735,7 +1735,7 @@ test "generation records version nullable cost separately from numeric v1" {
     // schema 1, exactly three envelope fields, numeric-only fact cost. A v2
     // record documents the downgrade behavior: older binaries reject the
     // store instead of misreading unknown spend.
-    const legacyRecordAccepts = struct {
+    const legacy_record_accepts = struct {
         fn accepts(alloc_arg: Allocator, line: []const u8) bool {
             var parsed = std.json.parseFromSlice(
                 std.json.Value,
@@ -1772,10 +1772,10 @@ test "generation records version nullable cost separately from numeric v1" {
         if (std.mem.indexOf(u8, line, "\"kind\":\"generation\"") == null) continue;
         if (std.mem.indexOf(u8, line, "\"total_cost\":null") != null) {
             unpriced_records += 1;
-            try std.testing.expect(!legacyRecordAccepts(alloc, line));
+            try std.testing.expect(!legacy_record_accepts(alloc, line));
         } else {
             priced_records += 1;
-            try std.testing.expect(legacyRecordAccepts(alloc, line));
+            try std.testing.expect(legacy_record_accepts(alloc, line));
         }
     }
     try std.testing.expectEqual(@as(usize, 3), lines);

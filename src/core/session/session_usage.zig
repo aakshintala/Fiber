@@ -4762,7 +4762,7 @@ test "unknown spend versions the rollback snapshot instead of widening it" {
     defer parsed.deinit();
     // Test-only fixture modeling the pre-nullable-cost snapshot reader:
     // exactly the 18 legacy fields with numeric-only costs.
-    const legacySnapshotAccepts = struct {
+    const legacy_snapshot_accepts = struct {
         fn accepts(value: std.json.Value) bool {
             if (value != .object) return false;
             if (value.object.count() != 18) return false;
@@ -4795,7 +4795,7 @@ test "unknown spend versions the rollback snapshot instead of widening it" {
     const marker = parsed.value.object.get("schema_version").?;
     try std.testing.expectEqual(@as(i64, 2), marker.integer);
     try std.testing.expect(parsed.value.object.get("total_cost").? == .null);
-    try std.testing.expect(!legacySnapshotAccepts(parsed.value));
+    try std.testing.expect(!legacy_snapshot_accepts(parsed.value));
 
     var decoded = try parseSnapshotValue(alloc, parsed.value);
     defer decoded.deinit(alloc);
@@ -4820,7 +4820,7 @@ test "unknown spend versions the rollback snapshot instead of widening it" {
     );
     defer legacy_parsed.deinit();
     try std.testing.expectEqual(@as(usize, 18), legacy_parsed.value.object.count());
-    try std.testing.expect(!legacySnapshotAccepts(legacy_parsed.value));
+    try std.testing.expect(!legacy_snapshot_accepts(legacy_parsed.value));
     try std.testing.expectError(
         error.InvalidUsageSnapshot,
         parseSnapshotValue(alloc, legacy_parsed.value),
