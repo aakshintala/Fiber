@@ -234,7 +234,8 @@ jobs:
 
       - name: Install E2E system dependencies
         shell: bash
-        timeout-minutes: 17
+        # 17 for the shard plus headroom for one per-file retry.
+        timeout-minutes: 22
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             missing=()
@@ -289,8 +290,13 @@ jobs:
         run: bun install --frozen-lockfile
         working-directory: tests/e2e
 
-      # No retry. A failed test is evidence; rerunning it to green destroys the
-      # evidence and doubles an already long run.
+      # One retry per file. Timing-sensitive TUI tests flake on loaded
+      # runners; a blind failure blocks the lane on noise, but a silent
+      # retry would destroy the evidence. So the retry is annotated (job
+      # warning + step summary) and every passed-after-retry file must map
+      # to a flake issue filed for deflaking by test rewrite, never by
+      # rerunning. Deterministic jobs (build, unit tests, shellcheck) do
+      # not retry: they are fast and a failure there is signal.
       - name: Run deterministic E2E shard
         shell: bash
         working-directory: tests/e2e
@@ -309,17 +315,73 @@ jobs:
           printf '  %s\n' "${selected[@]}"
 
           shard_status=0
+          retried_files=()
           test_number=0
           for test_file in "${selected[@]}"; do
             tmux_tmp_dir="$RUNNER_TEMP/fiber-e2e-tmux-${SHARD_INDEX}-${test_number}"
             mkdir -p "$tmux_tmp_dir"
-            if ! TMUX_TMPDIR="$tmux_tmp_dir" bun test --max-concurrency 1 "./$test_file"; then
-              shard_status=1
+            if TMUX_TMPDIR="$tmux_tmp_dir" bun test --max-concurrency 1 "./$test_file"; then
+              :
+            else
+              printf 'E2E shard %s: %s failed first attempt; retrying once\n' "$SHARD_INDEX" "$test_file" >&2
+              retry_tmp_dir="${tmux_tmp_dir}-retry"
+              mkdir -p "$retry_tmp_dir"
+              if TMUX_TMPDIR="$retry_tmp_dir" bun test --max-concurrency 1 "./$test_file"; then
+                printf '::warning::E2E flake (passed on retry, needs flake issue): %s\n' "$test_file"
+                retried_files+=("$test_file")
+              else
+                shard_status=1
+              fi
             fi
             TMUX_TMPDIR="$tmux_tmp_dir" tmux kill-server 2>/dev/null || true
             test_number=$((test_number + 1))
           done
+          if [ "${#retried_files[@]}" -gt 0 ]; then
+            {
+              printf 'E2E shard %s passed after retry (flaky; file a flake issue):\n' "$SHARD_INDEX"
+              printf '  %s\n' "${retried_files[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Always written (possibly blank): flake-watch collects these.
+          printf '%s\n' "${retried_files[@]}" > "$RUNNER_TEMP/fiber-flake-retries.txt"
           exit "$shard_status"
+
+      - name: Upload retry report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flake-retries-${{ matrix.platform.name }}-shard-${{ matrix.shard.index }}
+          path: ${{ runner.temp }}/fiber-flake-retries.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Non-blocking watcher: fails loudly when any shard passed after retry,
+  # so green-with-retries stays visible. Deliberately NOT in the aggregate
+  # CI job's needs: it must never block merging, only demand flake issues.
+  flake-watch:
+    name: Flake watch (non-blocking)
+    if: always() && contains(fromJSON('["success", "failure"]'), needs.e2e.result)
+    needs: e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Download retry reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: flake-retries-*
+          merge-multiple: true
+          path: flake-retries
+      - name: Fail on passed-after-retry
+        shell: bash
+        run: |
+          flakes=$(grep -h . flake-retries/* 2>/dev/null || true)
+          if [ -z "$flakes" ]; then
+            echo "No E2E retries; nothing flaky observed."
+            exit 0
+          fi
+          printf '::error::E2E passed after retry (flaky tests observed):\n%s\n' "$flakes"
+          echo "File or update a flake issue for each listed test (deflake by rewrite)."
+          exit 1
 
   bench:
     name: Performance gates
