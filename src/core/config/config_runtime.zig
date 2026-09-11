@@ -176,6 +176,7 @@ pub const ConfigDiagnosticCause = enum {
     retired_skill_match_fuzzy,
     invalid_context_limits,
     invalid_additional_directories,
+    unknown_config_key,
 };
 
 pub const ConfigDiagnostic = struct {
@@ -209,6 +210,9 @@ pub fn writeDiagnosticMetadata(writer: *std.Io.Writer, diagnostic: ConfigDiagnos
             "; additional_directories must be an array of at most {d} unique absolute directory paths for the current primary workspace",
             .{workspace_access.max_additional_directories},
         );
+    }
+    if (diagnostic.cause == .unknown_config_key) {
+        try writer.writeAll("; unknown configuration key; check the spelling or remove it");
     }
 }
 
@@ -419,6 +423,7 @@ fn loadMergedSettingsDetailedWithOptionalHome(
                 try diagnostics.append(alloc, .{ .layer = .project, .cause = .malformed_settings });
             } else {
                 try appendIgnoredProjectProfileSettingDiagnostics(alloc, &diagnostics, parsed.value);
+                try appendUnknownTopLevelKeyDiagnostics(alloc, &diagnostics, parsed.value, .project, .project, false);
                 try mergeDetailedSettingsLayer(
                     alloc,
                     &detailed_merge_state,
@@ -450,6 +455,7 @@ fn loadMergedSettingsDetailedWithOptionalHome(
                 .cause = .legacy_workspace_preferences,
             });
         }
+        try appendUnknownTopLevelKeyDiagnostics(alloc, &diagnostics, parsed.value, .user, .profile, false);
         try mergeDetailedSettingsLayer(
             alloc,
             &detailed_merge_state,
@@ -490,6 +496,7 @@ fn loadMergedSettingsDetailedWithOptionalHome(
                             additional_directory_sources = directories.sources;
                         }
                     }
+                    try appendUnknownTopLevelKeyDiagnostics(alloc, &diagnostics, workspace_value, .user, .profile, true);
                     try mergeDetailedSettingsLayer(
                         alloc,
                         &detailed_merge_state,
@@ -637,6 +644,35 @@ fn appendIgnoredProjectProfileSettingDiagnostics(
         try diagnostics.append(alloc, .{
             .layer = .project,
             .cause = .ignored_project_user_only_setting,
+            .setting_key = try alloc.dupe(u8, entry.key_ptr.*),
+        });
+    }
+}
+
+fn isKnownTopLevelKey(key: []const u8, settings_layer: SettingsLayer, in_workspace_override: bool) bool {
+    inline for (&.{ "max_agent_steps", "max_tool_result_bytes", "context" }) |known| {
+        if (std.mem.eql(u8, key, known)) return true;
+    }
+    if (isProfileOnlySettingKey(key)) return true;
+    if (settings_layer == .profile and !in_workspace_override and std.mem.eql(u8, key, "workspaces")) return true;
+    return false;
+}
+
+fn appendUnknownTopLevelKeyDiagnostics(
+    alloc: Allocator,
+    diagnostics: *std.ArrayList(ConfigDiagnostic),
+    root: std.json.Value,
+    diagnostic_layer: ConfigLayer,
+    settings_layer: SettingsLayer,
+    in_workspace_override: bool,
+) !void {
+    if (root != .object) return;
+    var iterator = root.object.iterator();
+    while (iterator.next()) |entry| {
+        if (isKnownTopLevelKey(entry.key_ptr.*, settings_layer, in_workspace_override)) continue;
+        try diagnostics.append(alloc, .{
+            .layer = diagnostic_layer,
+            .cause = .unknown_config_key,
             .setting_key = try alloc.dupe(u8, entry.key_ptr.*),
         });
     }
@@ -1704,6 +1740,19 @@ fn expectIgnoredProjectKey(diagnostics: []const ConfigDiagnostic, key: []const u
     for (diagnostics) |diagnostic| {
         if (diagnostic.layer != .project or
             diagnostic.cause != .ignored_project_user_only_setting or
+            diagnostic.setting_key == null)
+        {
+            continue;
+        }
+        if (std.mem.eql(u8, diagnostic.setting_key.?, key)) return;
+    }
+    return error.TestExpectedEqual;
+}
+
+fn expectUnknownKey(diagnostics: []const ConfigDiagnostic, layer: ConfigLayer, key: []const u8) !void {
+    for (diagnostics) |diagnostic| {
+        if (diagnostic.layer != layer or
+            diagnostic.cause != .unknown_config_key or
             diagnostic.setting_key == null)
         {
             continue;
@@ -2933,7 +2982,7 @@ test "project profile-only settings are ignored and diagnosed by key" {
     try std.testing.expectEqual(@as(usize, 1), result.settings.permission_rules.rules.len);
     try expectPermissionRule(result.settings.permission_rules.rules[0], "bash", "profile *", .allow);
 
-    try std.testing.expectEqual(@as(usize, 11), result.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 17), result.diagnostics.len);
     inline for (&.{
         "model",
         "permission_mode",
@@ -2948,6 +2997,10 @@ test "project profile-only settings are ignored and diagnosed by key" {
         "startup_scrollback",
     }) |key| {
         try expectIgnoredProjectKey(result.diagnostics, key);
+    }
+    inline for (&.{ "input_appearance", "maxxing_mode", "output_level" }) |key| {
+        try expectUnknownKey(result.diagnostics, .project, key);
+        try expectUnknownKey(result.diagnostics, .user, key);
     }
 }
 
@@ -3045,13 +3098,74 @@ test "global statusline rejects malformed containers and fields" {
     );
 }
 
-test "legacy sandbox keys are inert unknown data" {
-    var settings = try parseSettingsJson(
+test "legacy sandbox keys are reported as unknown config keys" {
+    var parsed = try parseSettingsJson(
         std.testing.allocator,
         "{\"sandbox\":{\"legacy\":true},\"statusLine\":{\"sandbox\":\"legacy\",\"context\":true}}",
     );
-    defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqual(true, settings.statusline_context.?);
+    defer parsed.deinit(std.testing.allocator);
+    try std.testing.expectEqual(true, parsed.statusline_context.?);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+    const user_settings = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{{\"model\":\"user/model\",\"sandbox\":\"os\",\"workspaces\":{{\"{s}\":{{\"sandbox\":\"none\"}}}}}}",
+        .{workspace_root},
+    );
+    defer std.testing.allocator.free(user_settings);
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", user_settings);
+    try writeFixtureFile(tmp.dir, "workspace/.fiber.json", "{\"sandbox\":\"none\",\"max_agent_steps\":16}");
+
+    var result = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("user/model", result.settings.models.get(.codex).?);
+    try std.testing.expectEqual(@as(usize, 16), result.settings.max_agent_steps.?);
+    try expectUnknownKey(result.diagnostics, .project, "sandbox");
+    var user_sandbox_reports: usize = 0;
+    for (result.diagnostics) |diagnostic| {
+        if (diagnostic.layer != .user or diagnostic.cause != .unknown_config_key) continue;
+        try std.testing.expectEqualStrings("sandbox", diagnostic.setting_key.?);
+        try std.testing.expect(diagnostic.reportAtStartup());
+        user_sandbox_reports += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), user_sandbox_reports);
+    try std.testing.expectEqual(@as(usize, 3), result.diagnostics.len);
+}
+
+test "misspelled top-level keys are reported with exact name and layer" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+    const user_settings = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{{\"permission_mode\":\"auto\",\"permission_mod\":\"auto\",\"workspaces\":{{\"{s}\":{{\"max_agent_steps\":8,\"max_agent_stepz\":7}}}}}}",
+        .{workspace_root},
+    );
+    defer std.testing.allocator.free(user_settings);
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", user_settings);
+    try writeFixtureFile(tmp.dir, "workspace/.fiber.json", "{\"max_tool_result_bytes\":65536,\"max_tool_result_bytez\":1}");
+
+    var result = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(types.PermissionMode.auto, result.settings.permission_mode.?);
+    try std.testing.expectEqual(@as(usize, 8), result.settings.max_agent_steps.?);
+    try std.testing.expectEqual(@as(usize, 65536), result.settings.max_tool_result_bytes.?);
+    try expectUnknownKey(result.diagnostics, .user, "permission_mod");
+    try expectUnknownKey(result.diagnostics, .user, "max_agent_stepz");
+    try expectUnknownKey(result.diagnostics, .project, "max_tool_result_bytez");
+    try std.testing.expectEqual(@as(usize, 3), result.diagnostics.len);
 }
 
 test "workspace statusline is global only in ordinary and detailed loads" {

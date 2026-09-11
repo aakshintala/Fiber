@@ -156,6 +156,7 @@ fn postCommitResolutionError(
             .ignored_project_user_only_setting,
             .legacy_workspace_preferences,
             .manual_backup_available,
+            .unknown_config_key,
             => {},
         }
     }

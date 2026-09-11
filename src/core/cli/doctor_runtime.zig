@@ -188,6 +188,7 @@ fn configLayerRejected(
             .ignored_project_user_only_setting,
             .legacy_workspace_preferences,
             .manual_backup_available,
+            .unknown_config_key,
             => {},
         }
     }
@@ -768,6 +769,35 @@ test "config check does not claim rejected user settings loaded" {
     try std.testing.expectEqual(CheckStatus.ok, checks.items[0].status);
     try std.testing.expect(std.mem.find(u8, checks.items[0].detail, "~/.fiber/settings.json") == null);
     try std.testing.expect(std.mem.find(u8, checks.items[0].detail, ".fiber.json") != null);
+}
+
+test "unknown config keys surface in doctor with exact name and layer" {
+    const alloc = std.testing.allocator;
+    var checks: std.ArrayList(Check) = .empty;
+    defer {
+        for (checks.items) |*entry| entry.deinit(alloc);
+        checks.deinit(alloc);
+    }
+
+    const project_key = try alloc.dupe(u8, "sandbx");
+    defer alloc.free(project_key);
+    const user_key = try alloc.dupe(u8, "permission_mod");
+    defer alloc.free(user_key);
+    const diagnostics = [_]config_runtime.ConfigDiagnostic{
+        .{ .layer = .project, .cause = .unknown_config_key, .setting_key = project_key },
+        .{ .layer = .user, .cause = .unknown_config_key, .setting_key = user_key },
+    };
+    try appendConfigDiagnosticChecks(&checks, alloc, &diagnostics);
+
+    try std.testing.expectEqual(@as(usize, 2), checks.items.len);
+    try std.testing.expectEqual(CheckStatus.warn, checks.items[0].status);
+    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, "project") != null);
+    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, "unknown_config_key") != null);
+    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, "sandbx") != null);
+    try std.testing.expect(std.mem.find(u8, checks.items[1].detail, "user") != null);
+    try std.testing.expect(std.mem.find(u8, checks.items[1].detail, "permission_mod") != null);
+    try std.testing.expect(!configLayerRejected(&diagnostics, .user));
+    try std.testing.expect(!configLayerRejected(&diagnostics, .project));
 }
 
 test "session count check preserves empty and latest details" {
