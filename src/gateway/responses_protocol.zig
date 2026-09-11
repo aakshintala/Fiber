@@ -562,7 +562,9 @@ fn nestedUnsignedField(value: ?std.json.Value, key: []const u8) ?u64 {
 }
 
 /// Builds exact subscription metrics from a provider-neutral Responses usage
-/// projection. The caller owns `model` in the returned value.
+/// projection. The caller owns `model` in the returned value. A subscription
+/// carries no per-request price, so the cost stays unknown (null) instead of
+/// reading as free; token counts are still exact.
 pub fn buildSubscriptionBilling(
     alloc: std.mem.Allocator,
     provider: model_provider.ProviderId,
@@ -581,7 +583,7 @@ pub fn buildSubscriptionBilling(
     return .{
         .created_at_ms = created_at_ms,
         .model = qualified_model,
-        .total_cost = 0,
+        .total_cost = null,
         .input_tokens = input_tokens,
         .output_tokens = output_tokens,
         .cache_read_tokens = boundedOptionalCounter(
@@ -759,6 +761,11 @@ test "Responses protocol owns one subscription billing projection" {
     )).?;
     defer alloc.free(@constCast(billing.model));
     try std.testing.expectEqualStrings("codex/gpt-test", billing.model);
+    // A subscription carries no per-request price: the cost is unknown,
+    // never zero, while token counts stay exact.
+    try std.testing.expect(billing.total_cost == null);
+    try std.testing.expectEqual(@as(u64, 17), billing.input_tokens);
+    try std.testing.expectEqual(@as(u64, 7), billing.output_tokens);
     try std.testing.expectEqual(@as(u64, 5), billing.cache_read_tokens);
     try std.testing.expectEqual(@as(u64, 2), billing.cache_write_tokens);
     try std.testing.expectEqual(@as(?u64, 3), billing.reasoning_tokens);

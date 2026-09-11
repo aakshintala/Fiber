@@ -938,7 +938,8 @@ fn formatTokenLabel(buf: *[64]u8, value: u64, label: []const u8) []const u8 {
     return std.fmt.bufPrint(buf, "{s} {s}", .{ formatCompactUnsigned(&value_buf, value), label }) catch "Unavailable";
 }
 
-fn formatMoneyLabel(buf: *[64]u8, value: f64, label: []const u8) []const u8 {
+fn formatMoneyLabel(buf: *[64]u8, value: ?f64, label: []const u8) []const u8 {
+    if (value == null) return "Cost unknown";
     var value_buf: [32]u8 = undefined;
     return std.fmt.bufPrint(buf, "{s} {s}", .{ formatMoney(&value_buf, value), label }) catch "Unavailable";
 }
@@ -994,8 +995,9 @@ fn formatGroupedUnsigned(buf: *[32]u8, value: u64) []const u8 {
     return buf[cursor..];
 }
 
-fn formatMoney(buf: anytype, value: f64) []const u8 {
-    return std.fmt.bufPrint(buf, "${d:.2}", .{value}) catch "$?";
+fn formatMoney(buf: anytype, value: ?f64) []const u8 {
+    const cost = value orelse return "unknown";
+    return std.fmt.bufPrint(buf, "${d:.2}", .{cost}) catch "$?";
 }
 
 fn formatUsageShare(buf: *[32]u8, tokens: u64, total_tokens: u64) []const u8 {
@@ -1796,7 +1798,52 @@ test "usage menu keeps session activity visible while billing is pending" {
     try std.testing.expect(std.mem.find(u8, code.items, "+5 · -2") != null);
 }
 
-fn testUsageTotals(tokens: u64, cost: f64) usage_report.Totals {
+test "usage menu shows unknown spend instead of zero and keeps tokens" {
+    var models = [_]usage_report.ModelUsage{
+        .{
+            .model = @constCast("codex/gpt-test"),
+            .totals = testUsageTotals(155, null),
+        },
+    };
+    const snapshot = usage_report.Snapshot{
+        .scope = .days_30,
+        .snapshot_time_ms = 100,
+        .window_start_ms = 0,
+        .coverage_started_at_ms = 0,
+        .coverage = .full,
+        .completeness = .complete,
+        .totals = .{
+            .total_tokens = 155,
+            .input_tokens = 130,
+            .output_tokens = 25,
+            .cache_read_tokens = 20,
+            .cache_write_tokens = 10,
+            .reasoning_tokens = 5,
+            .request_count = 1,
+            .total_cost = null,
+        },
+        .models = &models,
+    };
+    const projection: CompactCommandMenuProjection = .{ .usage = .{
+        .active = true,
+        .snapshot = &snapshot,
+    } };
+
+    var total = try composeCompactCommandMenuRow(std.testing.allocator, projection, 3, 14, 120);
+    defer total.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.find(u8, total.items, "155 tokens") != null);
+    try std.testing.expect(std.mem.find(u8, total.items, "Cost unknown") != null);
+    try std.testing.expect(std.mem.find(u8, total.items, "$0.00") == null);
+    try std.testing.expect(display_width.visibleWidthIgnoringAnsi(total.items) <= 120);
+
+    var model = try composeCompactCommandMenuRow(std.testing.allocator, projection, 9, 11, 120);
+    defer model.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.find(u8, model.items, "codex/gpt-test") != null);
+    try std.testing.expect(std.mem.find(u8, model.items, "unknown") != null);
+    try std.testing.expect(std.mem.find(u8, model.items, "$0.00") == null);
+}
+
+fn testUsageTotals(tokens: u64, cost: ?f64) usage_report.Totals {
     return .{
         .total_tokens = tokens,
         .input_tokens = tokens,

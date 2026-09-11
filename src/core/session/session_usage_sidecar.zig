@@ -418,8 +418,8 @@ test "usage sidecar restores rich fields only for its bound session and projecti
 
     var changed = try legacyCopyForTest(alloc, rich);
     defer changed.deinit(alloc);
-    changed.total_cost += 0.01;
-    changed.models[0].total_cost += 0.01;
+    changed.total_cost.? += 0.01;
+    changed.models[0].total_cost.? += 0.01;
     try std.testing.expectEqual(
         RestoreOutcome.mismatched,
         try restoreIfMatching(

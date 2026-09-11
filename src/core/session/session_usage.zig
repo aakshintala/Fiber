@@ -214,7 +214,7 @@ const GenerationRecord = generation_usage.Record;
 pub const ModelAggregate = struct {
     model: []u8,
     first_sequence: u64,
-    total_cost: f64 = 0,
+    total_cost: ?f64 = 0,
     input_tokens: u64 = 0,
     output_tokens: u64 = 0,
     cache_read_tokens: u64 = 0,
@@ -294,7 +294,7 @@ pub const Snapshot = struct {
     settled_through_sequence: u64,
     api_duration_ms: u64,
     wall_duration_ms: u64,
-    total_cost: f64,
+    total_cost: ?f64,
     input_tokens: u64,
     output_tokens: u64,
     cache_read_tokens: u64,
@@ -347,7 +347,7 @@ pub const Usage = struct {
     active_started_at_ms: i64 = 0,
     active_sequences: [max_active_invocations]u64 = undefined,
     active_sequence_count: usize = 0,
-    total_cost: f64 = 0,
+    total_cost: ?f64 = 0,
     input_tokens: u64 = 0,
     output_tokens: u64 = 0,
     cache_read_tokens: u64 = 0,
@@ -981,12 +981,14 @@ pub const Usage = struct {
             }
         }
 
-        const next_total_cost = self.total_cost + record.total_cost;
-        if (!std.math.isFinite(next_total_cost)) {
+        const next_total_cost = addOptionalCost(
+            self.total_cost,
+            record.total_cost,
+        ) catch {
             self.billing = .incomplete;
             self.dirty = true;
             return error.UsageOverflow;
-        }
+        };
         const next_input_tokens = std.math.add(u64, self.input_tokens, record.input_tokens) catch return self.failOverflow();
         const next_output_tokens = std.math.add(u64, self.output_tokens, record.output_tokens) catch return self.failOverflow();
         const next_cache_read_tokens = std.math.add(u64, self.cache_read_tokens, record.cache_read_tokens) catch return self.failOverflow();
@@ -1362,8 +1364,10 @@ pub const Usage = struct {
         defer self.mutex.unlock(io_mod.getIo());
         return .{
             .used = self.latest_context_used orelse return null,
-            .complete_cost = if (self.billing == .complete and std.math.isFinite(self.total_cost))
-                self.total_cost
+            .complete_cost = if (self.billing != .complete)
+                null
+            else if (self.total_cost) |cost|
+                if (std.math.isFinite(cost)) cost else null
             else
                 null,
         };
@@ -1783,8 +1787,10 @@ pub fn validateSnapshot(snapshot: Snapshot) !void {
     if (snapshot.settled_through_sequence >= snapshot.next_sequence) {
         return error.InvalidUsageSnapshot;
     }
-    if (!std.math.isFinite(snapshot.total_cost) or snapshot.total_cost < 0) {
-        return error.InvalidUsageSnapshot;
+    if (snapshot.total_cost) |snapshot_cost| {
+        if (!std.math.isFinite(snapshot_cost) or snapshot_cost < 0) {
+            return error.InvalidUsageSnapshot;
+        }
     }
     if (snapshot.models.len > max_models or
         snapshot.pending.len > max_pending_generations or
@@ -1814,16 +1820,21 @@ pub fn validateSnapshot(snapshot: Snapshot) !void {
         0;
     var billable_web_search_calls: u64 = 0;
     var total_cost: f64 = 0;
+    var unknown_cost = false;
     for (snapshot.models, 0..) |model, index| {
         try validateModel(model.model);
         if (model.first_sequence == 0 or model.first_sequence >= snapshot.next_sequence) {
             return error.InvalidUsageSnapshot;
         }
-        if (!std.math.isFinite(model.total_cost) or model.total_cost < 0) {
-            return error.InvalidUsageSnapshot;
+        if (model.total_cost) |model_cost| {
+            if (!std.math.isFinite(model_cost) or model_cost < 0) {
+                return error.InvalidUsageSnapshot;
+            }
+            total_cost += model_cost;
+            if (!std.math.isFinite(total_cost)) return error.InvalidUsageSnapshot;
+        } else {
+            unknown_cost = true;
         }
-        total_cost += model.total_cost;
-        if (!std.math.isFinite(total_cost)) return error.InvalidUsageSnapshot;
         identifier_bytes = std.math.add(usize, identifier_bytes, model.model.len) catch
             return error.UsageCapacityExceeded;
         input_tokens = std.math.add(u64, input_tokens, model.input_tokens) catch
@@ -1874,8 +1885,13 @@ pub fn validateSnapshot(snapshot: Snapshot) !void {
     {
         return error.InvalidUsageSnapshot;
     }
-    const cost_tolerance = @max(1e-12, snapshot.total_cost * 1e-12);
-    if (@abs(total_cost - snapshot.total_cost) > cost_tolerance) {
+    if (snapshot.total_cost) |known_cost| {
+        if (unknown_cost) return error.InvalidUsageSnapshot;
+        const cost_tolerance = @max(1e-12, known_cost * 1e-12);
+        if (@abs(total_cost - known_cost) > cost_tolerance) {
+            return error.InvalidUsageSnapshot;
+        }
+    } else if (!unknown_cost and snapshot.models.len > 0) {
         return error.InvalidUsageSnapshot;
     }
     for (snapshot.pending, 0..) |generation, index| {
@@ -2095,7 +2111,7 @@ pub fn writeSnapshot(writer: *std.Io.Writer, snapshot: Snapshot) !void {
     try writer.writeAll("{\"billing\":");
     try std.json.Stringify.value(@tagName(snapshot.billing), .{}, writer);
     try writer.print(
-        ",\"api_duration_complete\":{s},\"wall_duration_complete\":{s},\"code_complete\":{s},\"next_sequence\":{d},\"settled_through_sequence\":{d},\"api_duration_ms\":{d},\"wall_duration_ms\":{d},\"total_cost\":{d},\"input_tokens\":{d},\"output_tokens\":{d},\"cache_read_tokens\":{d},\"cache_write_tokens\":{d},\"billable_web_search_calls\":{d},\"lines_added\":{d},\"lines_removed\":{d},\"models\":[",
+        ",\"api_duration_complete\":{s},\"wall_duration_complete\":{s},\"code_complete\":{s},\"next_sequence\":{d},\"settled_through_sequence\":{d},\"api_duration_ms\":{d},\"wall_duration_ms\":{d},\"total_cost\":",
         .{
             if (snapshot.api_duration_complete) "true" else "false",
             if (snapshot.wall_duration_complete) "true" else "false",
@@ -2104,7 +2120,12 @@ pub fn writeSnapshot(writer: *std.Io.Writer, snapshot: Snapshot) !void {
             snapshot.settled_through_sequence,
             snapshot.api_duration_ms,
             snapshot.wall_duration_ms,
-            snapshot.total_cost,
+        },
+    );
+    try writeOptionalCost(writer, snapshot.total_cost);
+    try writer.print(
+        ",\"input_tokens\":{d},\"output_tokens\":{d},\"cache_read_tokens\":{d},\"cache_write_tokens\":{d},\"billable_web_search_calls\":{d},\"lines_added\":{d},\"lines_removed\":{d},\"models\":[",
+        .{
             snapshot.input_tokens,
             snapshot.output_tokens,
             snapshot.cache_read_tokens,
@@ -2119,10 +2140,13 @@ pub fn writeSnapshot(writer: *std.Io.Writer, snapshot: Snapshot) !void {
         try writer.writeAll("{\"model\":");
         try std.json.Stringify.value(model.model, .{}, writer);
         try writer.print(
-            ",\"first_sequence\":{d},\"total_cost\":{d},\"input_tokens\":{d},\"output_tokens\":{d},\"cache_read_tokens\":{d},\"cache_write_tokens\":{d},\"billable_web_search_calls\":{d}}}",
+            ",\"first_sequence\":{d},\"total_cost\":",
+            .{model.first_sequence},
+        );
+        try writeOptionalCost(writer, model.total_cost);
+        try writer.print(
+            ",\"input_tokens\":{d},\"output_tokens\":{d},\"cache_read_tokens\":{d},\"cache_write_tokens\":{d},\"billable_web_search_calls\":{d}}}",
             .{
-                model.first_sequence,
-                model.total_cost,
                 model.input_tokens,
                 model.output_tokens,
                 model.cache_read_tokens,
@@ -2159,7 +2183,7 @@ pub fn writeRichSnapshot(writer: *std.Io.Writer, snapshot: Snapshot) !void {
     try writer.writeAll("{\"schema_version\":3,\"billing\":");
     try std.json.Stringify.value(@tagName(snapshot.billing), .{}, writer);
     try writer.print(
-        ",\"api_duration_complete\":{s},\"wall_duration_complete\":{s},\"code_complete\":{s},\"next_sequence\":{d},\"settled_through_sequence\":{d},\"api_duration_ms\":{d},\"wall_duration_ms\":{d},\"total_cost\":{d},\"input_tokens\":{d},\"output_tokens\":{d},\"cache_read_tokens\":{d},\"cache_write_tokens\":{d},\"reasoning_tokens\":",
+        ",\"api_duration_complete\":{s},\"wall_duration_complete\":{s},\"code_complete\":{s},\"next_sequence\":{d},\"settled_through_sequence\":{d},\"api_duration_ms\":{d},\"wall_duration_ms\":{d},\"total_cost\":",
         .{
             if (snapshot.api_duration_complete) "true" else "false",
             if (snapshot.wall_duration_complete) "true" else "false",
@@ -2168,7 +2192,12 @@ pub fn writeRichSnapshot(writer: *std.Io.Writer, snapshot: Snapshot) !void {
             snapshot.settled_through_sequence,
             snapshot.api_duration_ms,
             snapshot.wall_duration_ms,
-            snapshot.total_cost,
+        },
+    );
+    try writeOptionalCost(writer, snapshot.total_cost);
+    try writer.print(
+        ",\"input_tokens\":{d},\"output_tokens\":{d},\"cache_read_tokens\":{d},\"cache_write_tokens\":{d},\"reasoning_tokens\":",
+        .{
             snapshot.input_tokens,
             snapshot.output_tokens,
             snapshot.cache_read_tokens,
@@ -2191,10 +2220,13 @@ pub fn writeRichSnapshot(writer: *std.Io.Writer, snapshot: Snapshot) !void {
         try writer.writeAll("{\"model\":");
         try std.json.Stringify.value(model.model, .{}, writer);
         try writer.print(
-            ",\"first_sequence\":{d},\"total_cost\":{d},\"input_tokens\":{d},\"output_tokens\":{d},\"cache_read_tokens\":{d},\"cache_write_tokens\":{d},\"reasoning_tokens\":",
+            ",\"first_sequence\":{d},\"total_cost\":",
+            .{model.first_sequence},
+        );
+        try writeOptionalCost(writer, model.total_cost);
+        try writer.print(
+            ",\"input_tokens\":{d},\"output_tokens\":{d},\"cache_read_tokens\":{d},\"cache_write_tokens\":{d},\"reasoning_tokens\":",
             .{
-                model.first_sequence,
-                model.total_cost,
                 model.input_tokens,
                 model.output_tokens,
                 model.cache_read_tokens,
@@ -2301,7 +2333,7 @@ pub fn parseSnapshotValue(alloc: Allocator, value: std.json.Value) !Snapshot {
     );
     const api_duration_ms = try parseNonNegativeInteger(value.object.get("api_duration_ms"));
     const wall_duration_ms = try parseNonNegativeInteger(value.object.get("wall_duration_ms"));
-    const total_cost = try parseNonNegativeNumber(value.object.get("total_cost"));
+    const total_cost = try parseOptionalNonNegativeNumber(value.object.get("total_cost"));
     const input_tokens = try parseNonNegativeInteger(value.object.get("input_tokens"));
     const output_tokens = try parseNonNegativeInteger(value.object.get("output_tokens"));
     const cache_read_tokens = try parseNonNegativeInteger(value.object.get("cache_read_tokens"));
@@ -2346,7 +2378,7 @@ pub fn parseSnapshotValue(alloc: Allocator, value: std.json.Value) !Snapshot {
         const model_name = model_value.object.get("model") orelse return error.InvalidUsageSnapshot;
         if (model_name != .string) return error.InvalidUsageSnapshot;
         const first_sequence = try parseNonNegativeInteger(model_value.object.get("first_sequence"));
-        const model_total_cost = try parseNonNegativeNumber(model_value.object.get("total_cost"));
+        const model_total_cost = try parseOptionalNonNegativeNumber(model_value.object.get("total_cost"));
         const model_input_tokens = try parseNonNegativeInteger(model_value.object.get("input_tokens"));
         const model_output_tokens = try parseNonNegativeInteger(model_value.object.get("output_tokens"));
         const model_cache_read_tokens = try parseNonNegativeInteger(model_value.object.get("cache_read_tokens"));
@@ -2568,9 +2600,16 @@ fn writeOptionalU64(writer: *std.Io.Writer, value: ?u64) !void {
     }
 }
 
+fn writeOptionalCost(writer: *std.Io.Writer, value: ?f64) !void {
+    if (value) |cost| {
+        try writer.print("{d}", .{cost});
+    } else {
+        try writer.writeAll("null");
+    }
+}
+
 fn addRecordToModel(model: *ModelAggregate, record: GenerationRecord, sequence: u64) !void {
-    const total_cost = model.total_cost + record.total_cost;
-    if (!std.math.isFinite(total_cost)) return error.UsageOverflow;
+    const total_cost = try addOptionalCost(model.total_cost, record.total_cost);
     const input_tokens = std.math.add(u64, model.input_tokens, record.input_tokens) catch
         return error.UsageOverflow;
     const output_tokens = std.math.add(u64, model.output_tokens, record.output_tokens) catch
@@ -2644,6 +2683,16 @@ fn generationRecordBorrowed(
 fn addOptionalCounter(first: ?u64, second: ?u64) error{UsageOverflow}!?u64 {
     if (first == null or second == null) return null;
     return std.math.add(u64, first.?, second.?) catch error.UsageOverflow;
+}
+
+/// Sums two optional costs. Unknown poisons the total instead of reading as
+/// free; overflow still fails so callers mark billing incomplete.
+fn addOptionalCost(first: ?f64, second: ?f64) error{UsageOverflow}!?f64 {
+    const current = first orelse return null;
+    const add = second orelse return null;
+    const next = current + add;
+    if (!std.math.isFinite(next)) return error.UsageOverflow;
+    return next;
 }
 
 pub fn dupeSnapshotOwned(alloc: Allocator, source: Snapshot) !Snapshot {
@@ -2866,6 +2915,12 @@ fn parseOptionalNonNegativeInteger(value: ?std.json.Value) !?u64 {
     const actual = value orelse return null;
     if (actual == .null) return null;
     return try parseNonNegativeInteger(actual);
+}
+
+fn parseOptionalNonNegativeNumber(value: ?std.json.Value) !?f64 {
+    const actual = value orelse return error.InvalidGenerationRecord;
+    if (actual == .null) return null;
+    return try parseNonNegativeNumber(actual);
 }
 
 fn parseNonNegativeI64(value: ?std.json.Value) !i64 {
@@ -3476,7 +3531,7 @@ test "fresh usage aggregates authoritative generations in invocation order" {
     defer snapshot.deinit(alloc);
     try std.testing.expectEqual(Availability.complete, snapshot.billing);
     try std.testing.expect(snapshot.api_duration_complete);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.00523), snapshot.total_cost, 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.00523), snapshot.total_cost orelse -1, 1e-12);
     try std.testing.expectEqual(@as(u64, 200), snapshot.api_duration_ms);
     try std.testing.expectEqual(@as(u64, 300), snapshot.input_tokens);
     try std.testing.expectEqual(@as(u64, 75), snapshot.output_tokens);
@@ -3493,7 +3548,84 @@ test "fresh usage aggregates authoritative generations in invocation order" {
     snapshot.input_tokens += 1;
     try std.testing.expectError(error.InvalidUsageSnapshot, validateSnapshot(snapshot));
     snapshot.input_tokens -= 1;
-    snapshot.total_cost += 1;
+    snapshot.total_cost.? += 1;
+    try std.testing.expectError(error.InvalidUsageSnapshot, validateSnapshot(snapshot));
+}
+
+test "unknown subscription cost keeps tokens and poisons spend" {
+    const alloc = std.testing.allocator;
+    var usage = Usage.initFresh();
+    defer usage.deinit(alloc);
+
+    const sequence = try usage.reserveInvocation();
+    try usage.finishObservedInvocation(
+        alloc,
+        sequence,
+        10,
+        .observed_generation,
+        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "exact/codex",
+        null,
+    );
+    try usage.applyGeneration(alloc, .{
+        .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        .model = "codex/gpt-test",
+        .total_cost = null,
+        .input_tokens = 130,
+        .output_tokens = 25,
+        .cache_read_tokens = 20,
+        .cache_write_tokens = 10,
+        .billable_web_search_calls = 0,
+    });
+
+    var snapshot = try usage.snapshot(alloc);
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(Availability.complete, snapshot.billing);
+    try std.testing.expectEqual(@as(u64, 130), snapshot.input_tokens);
+    try std.testing.expectEqual(@as(u64, 25), snapshot.output_tokens);
+    try std.testing.expect(snapshot.total_cost == null);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.models.len);
+    try std.testing.expect(snapshot.models[0].total_cost == null);
+    try validateSnapshot(snapshot);
+
+    var report = try usage.reportSnapshot(alloc);
+    defer report.deinit(alloc);
+    try std.testing.expectEqual(@as(u64, 155), report.totals.?.total_tokens);
+    try std.testing.expect(report.totals.?.total_cost == null);
+}
+
+test "snapshot validation keeps known and unknown spend consistent" {
+    const alloc = std.testing.allocator;
+    var usage = Usage.initFresh();
+    defer usage.deinit(alloc);
+
+    const sequence = try usage.reserveInvocation();
+    try usage.finishObservedInvocation(
+        alloc,
+        sequence,
+        10,
+        .observed_generation,
+        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "exact/codex",
+        null,
+    );
+    try usage.applyGeneration(alloc, .{
+        .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        .model = "codex/gpt-test",
+        .total_cost = 0.25,
+        .input_tokens = 10,
+        .output_tokens = 4,
+        .cache_read_tokens = 0,
+        .cache_write_tokens = 0,
+        .billable_web_search_calls = 0,
+    });
+
+    var snapshot = try usage.snapshot(alloc);
+    defer snapshot.deinit(alloc);
+    snapshot.models[0].total_cost = null;
+    try std.testing.expectError(error.InvalidUsageSnapshot, validateSnapshot(snapshot));
+    snapshot.models[0].total_cost = 0.25;
+    snapshot.total_cost = null;
     try std.testing.expectError(error.InvalidUsageSnapshot, validateSnapshot(snapshot));
 }
 
@@ -3537,7 +3669,7 @@ test "usage deduplicates terminal and generation callbacks" {
     var snapshot = try usage.snapshot(alloc);
     defer snapshot.deinit(alloc);
     try std.testing.expectEqual(@as(u64, 10), snapshot.api_duration_ms);
-    try std.testing.expectApproxEqAbs(@as(f64, 1.5), snapshot.total_cost, 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5), snapshot.total_cost orelse -1, 1e-12);
     try std.testing.expectEqual(@as(u64, 10), snapshot.input_tokens);
     try std.testing.expectEqual(@as(usize, 1), snapshot.models.len);
 }
@@ -3586,7 +3718,7 @@ test "usage deduplicates callbacks after the durable settlement boundary" {
     var current = try usage.snapshot(alloc);
     defer current.deinit(alloc);
     try std.testing.expectEqual(@as(u64, 10), current.api_duration_ms);
-    try std.testing.expectApproxEqAbs(@as(f64, 1.5), current.total_cost, 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5), current.total_cost orelse -1, 1e-12);
     try std.testing.expectEqual(@as(usize, 0), current.pending.len);
 }
 
@@ -4103,7 +4235,7 @@ test "successful retry after ambiguous delivery retains known generation" {
     defer snapshot.deinit(alloc);
     try std.testing.expectEqual(Availability.incomplete, snapshot.billing);
     try std.testing.expectEqual(@as(usize, 1), snapshot.models.len);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.25), snapshot.total_cost, 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.25), snapshot.total_cost orelse -1, 1e-12);
 }
 
 test "wall duration resumes from the session creation time" {
@@ -4394,7 +4526,7 @@ test "populated usage snapshot keeps the rollback-readable durable shape" {
     for (snapshot.models, decoded.models) |expected, actual| {
         try std.testing.expectEqualStrings(expected.model, actual.model);
         try std.testing.expectEqual(expected.first_sequence, actual.first_sequence);
-        try std.testing.expectApproxEqAbs(expected.total_cost, actual.total_cost, 1e-12);
+        try std.testing.expectEqual(expected.total_cost, actual.total_cost);
         try std.testing.expectEqual(expected.input_tokens, actual.input_tokens);
         try std.testing.expectEqual(expected.output_tokens, actual.output_tokens);
         try std.testing.expectEqual(expected.cache_read_tokens, actual.cache_read_tokens);

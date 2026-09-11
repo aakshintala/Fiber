@@ -5399,7 +5399,7 @@ test "unwritable usage sidecar keeps canonical usage resumable and incomplete" {
     defer resumed.deinit(alloc);
     try std.testing.expectApproxEqAbs(
         @as(f64, 0.02),
-        resumed.state.usage.?.total_cost,
+        resumed.state.usage.?.total_cost orelse -1,
         1e-12,
     );
     try std.testing.expect(resumed.state.usage.?.request_count == null);
