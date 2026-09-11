@@ -429,6 +429,12 @@ fn runSupported(alloc: Allocator, config: Config) !void {
     const home = io_mod.getenv("HOME") orelse return error.HomeNotSet;
     var paths = try Paths.open(alloc, home);
     defer paths.deinit(alloc);
+    // Error exits unwind through the endpoint defers below without reaching
+    // the idle-retire tail, so offer the same fallback removal on every exit.
+    // It stays a no-op unless the endpoint is already gone, the shape is
+    // owned, and the directory is empty; registered before the endpoint
+    // defers so it runs after them, and before deinit frees the root path.
+    defer cleanupOwnedEmptyFallbackDir(&paths.transport_dir, paths.transport_root_path);
 
     var authority_lock = io_mod.acquireTimedAdvisoryLock(
         &paths.host_dir,
@@ -1568,9 +1574,51 @@ fn cleanupOwnedEmptyFallbackDir(
     const stat = transport.dir.stat(zio) catch return;
     const owner = directoryOwner(transport.dir) catch return;
     validatePrivateRuntimeDir(stat, owner, uid) catch return;
-    std.Io.Dir.deleteDirAbsolute(zio, transport_root_path) catch return;
+    // Remove through the parent handle and only when its entry is still the
+    // validated directory, so a same-UID rename or replacement between the
+    // checks above and the removal cannot redirect the delete elsewhere.
+    const parent_path = std.fs.path.dirname(transport_root_path) orelse return;
+    const name = std.fs.path.basename(transport_root_path);
+    var parent = std.Io.Dir.openDirAbsolute(zio, parent_path, .{
+        .iterate = true,
+        .follow_symlinks = false,
+    }) catch return;
+    defer parent.close(zio);
+    const wanted = dirHandleIdentity(transport.dir) catch return;
+    const current = dirEntryIdentity(parent, name) catch return;
+    if (wanted.dev != current.dev or wanted.ino != current.ino) return;
+    parent.deleteDir(zio, name) catch return;
     transport.close();
     transport_dir.* = null;
+}
+
+const DirIdentity = struct {
+    dev: std.c.dev_t,
+    ino: std.c.ino_t,
+};
+
+fn dirHandleIdentity(dir: std.Io.Dir) !DirIdentity {
+    var native = std.mem.zeroes(std.c.Stat);
+    while (true) {
+        switch (std.c.errno(std.c.fstat(dir.handle, &native))) {
+            .SUCCESS => return .{ .dev = native.dev, .ino = native.ino },
+            .INTR => {},
+            else => return error.RuntimeDirectoryOwnershipUnavailable,
+        }
+    }
+}
+
+fn dirEntryIdentity(parent: std.Io.Dir, name: []const u8) !DirIdentity {
+    const zio = io_mod.getIo();
+    var child = parent.openDir(zio, name, .{
+        .iterate = true,
+        .follow_symlinks = false,
+    }) catch |err| switch (err) {
+        error.SymLinkLoop, error.NotDir => return error.RuntimeDirectoryUnsafe,
+        else => return err,
+    };
+    defer child.close(zio);
+    return dirHandleIdentity(child);
 }
 
 fn isOwnedFallbackTransportRoot(path: []const u8, uid: std.c.uid_t) bool {
@@ -2034,6 +2082,7 @@ test "retiring a host removes its own empty fallback directory" {
         name,
         std.Io.File.Permissions.fromMode(0o700),
     );
+    errdefer std.Io.Dir.deleteDirAbsolute(std.testing.io, root) catch {};
     var slot: ?io_mod.VerifiedDir = .{
         .dir = try parent.openDir(
             std.testing.io,
@@ -2084,6 +2133,7 @@ test "fallback cleanup leaves non-empty directories alone" {
         name,
         std.Io.File.Permissions.fromMode(0o700),
     );
+    errdefer std.Io.Dir.deleteDirAbsolute(std.testing.io, root) catch {};
     var dir = try parent.openDir(
         std.testing.io,
         name,
@@ -2098,6 +2148,7 @@ test "fallback cleanup leaves non-empty directories alone" {
         .{ .read = true },
     );
     keeper.close(std.testing.io);
+    errdefer dir.deleteFile(std.testing.io, "tmux.sock") catch {};
 
     cleanupOwnedEmptyFallbackDir(&slot, root);
 
@@ -2146,6 +2197,7 @@ test "fallback cleanup never touches an active endpoint" {
         name,
         std.Io.File.Permissions.fromMode(0o700),
     );
+    errdefer std.Io.Dir.deleteDirAbsolute(std.testing.io, root) catch {};
     var dir = try parent.openDir(
         std.testing.io,
         name,
@@ -2160,6 +2212,7 @@ test "fallback cleanup never touches an active endpoint" {
         .{ .read = true },
     );
     endpoint.close(std.testing.io);
+    errdefer dir.deleteFile(std.testing.io, endpoint_name) catch {};
 
     cleanupOwnedEmptyFallbackDir(&slot, root);
 
@@ -2204,4 +2257,167 @@ test "fallback cleanup never touches directories Fiber does not own" {
 
     try std.testing.expect(slot != null);
     try tmp.dir.access(std.testing.io, "foreign", .{});
+}
+
+test "startup failure still removes an owned empty fallback directory" {
+    if (!isSupported()) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const uid = std.c.getuid();
+
+    // A home long enough to force the hashed fallback transport root, so the
+    // error exit below exercises the same endpoint-cleanup defers as a
+    // startup failure in production.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const tmp_base = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(tmp_base);
+    const leaf = "h" ** 160;
+    try tmp.dir.createDir(
+        std.testing.io,
+        leaf,
+        std.Io.File.Permissions.fromMode(0o700),
+    );
+    const home = try std.fs.path.join(alloc, &.{ tmp_base, leaf });
+    defer alloc.free(home);
+
+    var selection = try resolveEndpointSelection(
+        alloc,
+        builtin.os.tag,
+        home,
+        uid,
+    );
+    defer selection.deinit(alloc);
+    try std.testing.expect(selection.uses_fallback);
+
+    const Fake = struct {
+        fn provider(self: *@This()) process_provider_mod.Provider {
+            return .{
+                .context = self,
+                .capture_token_fn = captureToken,
+                .match_token_fn = matchToken,
+                .signal_process_fn = signalProcess,
+            };
+        }
+
+        fn captureToken(
+            _: ?*anyopaque,
+            _: Allocator,
+            _: []const u8,
+        ) process_provider_mod.ProviderError!process_identity.ProcessInstanceToken {
+            return process_identity.ProcessInstanceToken.parse(
+                "macos:00000000000000000000000000000000:1:2",
+            ) catch unreachable;
+        }
+
+        fn matchToken(
+            _: ?*anyopaque,
+            _: Allocator,
+            _: []const u8,
+            _: process_identity.ProcessInstanceToken,
+        ) process_identity.TokenMatch {
+            return .missing;
+        }
+
+        fn signalProcess(
+            _: ?*anyopaque,
+            _: Allocator,
+            _: []const u8,
+            _: process_identity.ProcessInstanceToken,
+        ) process_provider_mod.ProviderError!void {
+            return error.Unsupported;
+        }
+    };
+    var fake = Fake{};
+
+    // Unit tests see no process environment by default; install just the
+    // HOME under test plus the startup-failure trigger, then restore.
+    var environ = std.process.Environ.Map.init(alloc);
+    defer environ.deinit();
+    try environ.put("HOME", home);
+    try environ.put("FIBER_TERMINAL_TEST_STARTUP_RECOVERY_FAILURE", "1");
+    var empty = std.process.Environ.Map.init(alloc);
+    defer empty.deinit();
+    const previous = io_mod.environMap();
+    io_mod.setEnvironMap(&environ);
+    defer {
+        if (previous) |m| io_mod.setEnvironMap(m) else io_mod.setEnvironMap(&empty);
+    }
+
+    try std.testing.expectError(
+        error.TerminalHostStartupRecoveryFailed,
+        runSupported(alloc, .{ .process_provider = fake.provider() }),
+    );
+
+    var reopened = std.Io.Dir.openDirAbsolute(
+        std.testing.io,
+        selection.transport_root,
+        .{ .iterate = true, .follow_symlinks = false },
+    ) catch |err| {
+        try std.testing.expectEqual(error.FileNotFound, err);
+        return;
+    };
+    reopened.close(std.testing.io);
+    return error.TestExpectedFileNotFound;
+}
+
+test "fallback cleanup keeps a replacement directory at a swapped path" {
+    if (!isSupported()) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const base = runtimeBase(builtin.os.tag).?;
+    const uid = std.c.getuid();
+    const name = try std.fmt.allocPrint(
+        alloc,
+        "fiber-terminal-{d}-dddddddddddddddddddddddddddddddd",
+        .{uid},
+    );
+    defer alloc.free(name);
+    const root = try std.fs.path.join(alloc, &.{ base, name });
+    defer alloc.free(root);
+    const moved_name = try std.fmt.allocPrint(alloc, "{s}.moved", .{name});
+    defer alloc.free(moved_name);
+    const moved_root = try std.fs.path.join(alloc, &.{ base, moved_name });
+    defer alloc.free(moved_root);
+
+    var parent = try std.Io.Dir.openDirAbsolute(
+        std.testing.io,
+        base,
+        .{ .iterate = true, .follow_symlinks = false },
+    );
+    defer parent.close(std.testing.io);
+    std.Io.Dir.deleteDirAbsolute(std.testing.io, root) catch {};
+    std.Io.Dir.deleteDirAbsolute(std.testing.io, moved_root) catch {};
+    errdefer std.Io.Dir.deleteDirAbsolute(std.testing.io, root) catch {};
+    errdefer std.Io.Dir.deleteDirAbsolute(std.testing.io, moved_root) catch {};
+    try parent.createDir(
+        std.testing.io,
+        name,
+        std.Io.File.Permissions.fromMode(0o700),
+    );
+    const dir = try parent.openDir(
+        std.testing.io,
+        name,
+        .{ .iterate = true, .follow_symlinks = false },
+    );
+    var slot: ?io_mod.VerifiedDir = .{ .dir = dir };
+    defer if (slot) |*open| open.close();
+
+    // A same-UID rename after validation, then a fresh empty directory lands
+    // at the old path. Removal must follow the validated handle rather than
+    // the pathname, so the replacement survives and the slot stays open.
+    try parent.rename(name, parent, moved_name, std.testing.io);
+    try parent.createDir(
+        std.testing.io,
+        name,
+        std.Io.File.Permissions.fromMode(0o700),
+    );
+
+    cleanupOwnedEmptyFallbackDir(&slot, root);
+
+    try std.testing.expect(slot != null);
+    try parent.access(std.testing.io, name, .{});
+    var owned = slot.?;
+    slot = null;
+    owned.close();
+    try parent.deleteDir(std.testing.io, moved_name);
+    try parent.deleteDir(std.testing.io, name);
 }
