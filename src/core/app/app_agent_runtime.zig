@@ -1123,6 +1123,19 @@ fn formatToolAction(
             display_target orelse spec.label_arg_default,
         );
     }
+    // Denied subagent rows are built at the typed lifecycle sites, which
+    // distinguish failure from interruption without matching label strings.
+    const subagent_state: ?tool_presentation.SubagentActionState = switch (state) {
+        .active => .active,
+        .completed => .completed,
+        .denied => null,
+    };
+    if (subagent_state) |terminal_state| {
+        if (try tool_presentation.subagentAction(arena, call, terminal_state)) |action| {
+            defer action.deinit(arena);
+            return formatToolActionValue(arena, action.label, action.detail);
+        }
+    }
     const args = tool_args.parseToolArgsObject(arena, call.arguments_json) catch {
         return formatInvalidArgsToolAction(arena, state, denied_label);
     };
@@ -2102,7 +2115,7 @@ test "tool labels preserve skill name value" {
     try std.testing.expect(std.mem.find(u8, install_completed, "vercel-labs/agent-skills") != null);
 }
 
-test "subagent labels name the action once with the subagent fallback" {
+test "subagent labels show named request and reply" {
     const alloc = std.testing.allocator;
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
@@ -2111,17 +2124,35 @@ test "subagent labels name the action once with the subagent fallback" {
     var app = try FakeApp.init(alloc);
     defer app.deinit();
 
-    const subagent_call: ToolCall = .{
+    const named_call: ToolCall = .{
         .id = "subagent",
         .name = "subagent",
-        .arguments_json = "{\"command\":{\"inspect\":{\"id\":\"child\",\"sections\":[\"status\"]}}}",
+        .arguments_json = "{\"request\":{\"action\":\"message\",\"agent\":\"reviewer\",\"message\":\"Check replay\"}}",
     };
+    const active = try app.describeToolAction(arena, named_call);
+    try std.testing.expectEqualStrings("● reviewer working\x1b[0m \x1b[38;5;245m· Check replay\x1b[0m", active);
 
-    const active = try app.describeToolAction(arena, subagent_call);
-    try std.testing.expectEqualStrings("● Managing\x1b[0m \x1b[38;5;245msubagent\x1b[0m", active);
+    const completed = try app.describeToolActionCompleted(arena, named_call);
+    try std.testing.expectEqualStrings("● reviewer replied\x1b[0m \x1b[38;5;245m· Check replay\x1b[0m", completed);
 
-    const completed = try app.describeToolActionCompleted(arena, subagent_call);
-    try std.testing.expectEqualStrings("● Managed\x1b[0m \x1b[38;5;245msubagent\x1b[0m", completed);
+    const one_off_call: ToolCall = .{
+        .id = "subagent-run",
+        .name = "subagent",
+        .arguments_json = "{\"request\":{\"action\":\"run\",\"task\":\"Check cleanup\"}}",
+    };
+    const one_off = try app.describeToolActionCompleted(arena, one_off_call);
+    try std.testing.expectEqualStrings("● Subagent finished\x1b[0m \x1b[38;5;245m· Check cleanup\x1b[0m", one_off);
+
+    // Live and resumed transcripts share these describe hooks, so resumed
+    // rows match by construction. Terminal failure and interruption rows are
+    // built at the typed lifecycle sites instead of the denied hook.
+    const legacy_call: ToolCall = .{
+        .id = "subagent",
+        .name = "subagent",
+        .arguments_json = "{\"command\":{\"inspect\":{\"id\":\"child\"}}}",
+    };
+    const legacy_active = try app.describeToolAction(arena, legacy_call);
+    try std.testing.expectEqualStrings("● Managing\x1b[0m \x1b[38;5;245msubagent\x1b[0m", legacy_active);
 }
 
 test "app agent runtime refreshes enabled project context through registry" {

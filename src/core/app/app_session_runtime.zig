@@ -6,6 +6,7 @@ const model_provider = @import("../config/model_provider.zig");
 const assistant_presentation = @import("../agent/assistant_presentation.zig");
 const tool_admission = @import("../agent/runtime/tool_admission.zig");
 const tool_presentation = @import("../agent/runtime/tool_presentation.zig");
+const tooling_presentation = @import("../tooling/tool_presentation.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const host_capability = @import("../hosts/host.zig");
 const diff = @import("../output/diff.zig");
@@ -3364,14 +3365,17 @@ pub fn Runtime(comptime App: type) type {
                     null,
                     &.{},
                 )
-            else
-                try app.describeToolActionDeniedWithAdvertised(
-                    action_arena.allocator(),
-                    call,
-                    null,
-                    "Failed",
-                    &.{},
-                );
+            else if (try tooling_presentation.subagentAction(action_arena.allocator(), call, .failed)) |subagent| blk: {
+                // Typed persisted failure status; resumed rows match live rows.
+                defer subagent.deinit(action_arena.allocator());
+                break :blk try tooling_presentation.formatSubagentStatusLine(action_arena.allocator(), subagent);
+            } else try app.describeToolActionDeniedWithAdvertised(
+                action_arena.allocator(),
+                call,
+                null,
+                "Failed",
+                &.{},
+            );
             const formatted_action = if (outcome_decision) |decision|
                 if (decision.detail) |detail|
                     try std.fmt.allocPrint(
