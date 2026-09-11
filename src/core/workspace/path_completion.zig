@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const file_picker_path = @import("../input/file_picker_path.zig");
 const file_index = @import("file_index.zig");
 const io_mod = @import("../shared/io.zig");
@@ -284,8 +283,6 @@ test "path completion resolves parent and absolute forms without recursive trave
 }
 
 test "path completion follows listed symlinks and filters unsafe names" {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -314,7 +311,7 @@ test "path completion reports bounded storage and unavailable parents" {
     try std.testing.expectError(error.NoSpaceLeft, complete("/", "./", &results, &spans, &too_small));
 
     var paths: [file_index.max_path_len]u8 = undefined;
-    try std.testing.expectError(error.PathUnavailable, complete("/", "/definitely/missing/fx-path/", &results, &spans, &paths));
+    try std.testing.expectError(error.PathUnavailable, complete("/", "/definitely/missing/fiber-path/", &results, &spans, &paths));
 }
 
 test "path completion validates the current explicit candidate kind" {

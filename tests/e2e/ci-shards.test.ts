@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildShardPlan, selectShard } from "./ci-shards";
@@ -98,8 +98,21 @@ describe("CI shard planner", () => {
     expect(selectShard(plan, 0)).toEqual(plan.shards[0]);
   });
 
+  // The planner was fully covered against synthetic manifests while the real
+  // manifest drifted in both directions and broke every Full CI shard.
+  test("the committed manifest covers the test files actually on disk", () => {
+    const manifest = JSON.parse(
+      readFileSync(join(import.meta.dir, "ci-shard-weights.json"), "utf8"),
+    );
+    const discovered = readdirSync(import.meta.dir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".test.ts"))
+      .map((entry) => entry.name);
+
+    expect(() => buildShardPlan(discovered, manifest, 4)).not.toThrow();
+  });
+
   test("an exact relative path does not select a colliding Bun test basename", () => {
-    const root = mkdtempSync(join(tmpdir(), "fx-ci-shard-exact-path-"));
+    const root = mkdtempSync(join(tmpdir(), "fiber-ci-shard-exact-path-"));
     const marker = join(root, "loaded.txt");
     const exact = "gateway-stream-lifecycle.test.ts";
     const collision = "tui-gateway-stream-lifecycle.test.ts";

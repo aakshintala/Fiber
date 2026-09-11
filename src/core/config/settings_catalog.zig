@@ -30,7 +30,6 @@ pub const SettingId = enum {
     collapse_tool_calls,
     model,
     effort,
-    fast_mode,
     permission_mode,
     sound_level,
     startup_scrollback,
@@ -64,7 +63,6 @@ pub const Snapshot = struct {
         return switch (id) {
             .model => self.model,
             .effort => self.effort,
-            .fast_mode => onOff(self.fast_mode),
             .permission_mode => self.permission_mode,
             .statusline_context => onOff(self.statusline_context),
             .statusline_session => onOff(self.statusline_session),
@@ -259,10 +257,9 @@ const specs = [_]Spec{
     .{ .id = .collapse_tool_calls, .category = .interface, .label = "Collapse tool calls", .description = "Show only a summary for each group of tool calls" },
     .{ .id = .model, .category = .agent, .label = "Model", .description = "Choose the model used for new turns" },
     .{ .id = .effort, .category = .agent, .label = "Reasoning effort", .description = "Control how much reasoning the model applies" },
-    .{ .id = .fast_mode, .category = .agent, .label = "Fast mode", .description = "Use faster inference when the model supports it" },
-    .{ .id = .permission_mode, .category = .agent, .label = "Permission mode", .description = "Choose when fx asks before taking actions" },
+    .{ .id = .permission_mode, .category = .agent, .label = "Permission mode", .description = "Choose when fiber asks before taking actions" },
     .{ .id = .sound_level, .category = .notifications, .label = "Sound level", .description = "Choose off, on, or max sounds and terminal bells" },
-    .{ .id = .startup_scrollback, .category = .advanced, .label = "Startup scrollback", .description = "Restore terminal output when fx starts" },
+    .{ .id = .startup_scrollback, .category = .advanced, .label = "Startup scrollback", .description = "Restore terminal output when fiber starts" },
     .{ .id = .prompt_history, .category = .advanced, .label = "Prompt history", .description = "Save accepted prompts and slash commands for composer history" },
 };
 
@@ -274,15 +271,6 @@ pub fn filteredCount(snapshot: Snapshot, category: Category, query: []const u8) 
     var count: usize = 0;
     for (specs) |spec| {
         if (matches(snapshot, spec, category, query)) count += 1;
-    }
-    return count;
-}
-
-pub fn categoryFilteredCount(snapshot: Snapshot, category: Category, query: []const u8) usize {
-    if (category == .all) return filteredCount(snapshot, .all, query);
-    var count: usize = 0;
-    for (specs) |spec| {
-        if (spec.category == category and matchesQuery(snapshot, spec, query)) count += 1;
     }
     return count;
 }
@@ -305,20 +293,12 @@ pub fn itemAt(snapshot: Snapshot, category: Category, query: []const u8, display
     return null;
 }
 
-pub fn specFor(id: SettingId) *const Spec {
-    for (&specs) |*spec| {
-        if (spec.id == id) return spec;
-    }
-    unreachable;
-}
-
 pub fn optionCount(snapshot: *const Snapshot, id: SettingId) usize {
     return switch (id) {
         .effort => if (snapshot.reasoning_efforts.len > 0 or !std.ascii.eqlIgnoreCase(snapshot.effort, "default"))
             snapshot.reasoning_efforts.len + 1
         else
             0,
-        .fast_mode => if (snapshot.supports_fast_mode or snapshot.fast_mode) on_off_options.len else 0,
         else => staticOptionsFor(id).len,
     };
 }
@@ -366,7 +346,6 @@ pub fn changeAt(snapshot: *const Snapshot, id: SettingId, option_index: usize) ?
 fn staticOptionsFor(id: SettingId) []const []const u8 {
     return switch (id) {
         .model, .effort => &.{},
-        .fast_mode,
         .statusline_context,
         .statusline_session,
         .statusline_workspace,
@@ -430,9 +409,9 @@ test "settings catalog projects grouped searchable preferences" {
         .sound_level = "on",
     };
 
-    try std.testing.expectEqual(@as(usize, 12), filteredCount(snapshot, .all, ""));
+    try std.testing.expectEqual(@as(usize, 11), filteredCount(snapshot, .all, ""));
     try std.testing.expectEqual(@as(usize, 5), filteredCount(snapshot, .interface, ""));
-    try std.testing.expectEqual(@as(usize, 4), filteredCount(snapshot, .agent, ""));
+    try std.testing.expectEqual(@as(usize, 3), filteredCount(snapshot, .agent, ""));
     try std.testing.expectEqual(@as(usize, 1), filteredCount(snapshot, .notifications, ""));
     try std.testing.expectEqual(@as(usize, 2), filteredCount(snapshot, .advanced, ""));
 

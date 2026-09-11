@@ -1,7 +1,6 @@
 const std = @import("std");
 const question_state = @import("../../core/agent/question_prompt.zig");
 const debug_trace = @import("../../core/shared/debug_trace.zig");
-const display_width = @import("../../core/shared/display_width.zig");
 const permission_request = @import("../../core/permissions/permission_request.zig");
 const approval_prompt = @import("../../core/permissions/approval_prompt.zig");
 const file_index = @import("../../core/workspace/file_index.zig");
@@ -17,7 +16,6 @@ const footer_viewport = @import("viewport.zig");
 const approval_ui = @import("approval_ui.zig");
 const compact_command_menu_presentation = @import("compact_command_menu_presentation.zig");
 const input_presentation = @import("input_presentation.zig");
-const interaction_state = @import("interaction_state.zig");
 const picker_presentation = @import("picker_presentation.zig");
 const model_menu_presentation = @import("model_menu_presentation.zig");
 const skills_menu_presentation = @import("skills_menu_presentation.zig");
@@ -1197,29 +1195,6 @@ fn composeAndPushVisibleInputRows(
     return placement;
 }
 
-fn composeInputRowsSnapshot(
-    alloc: Allocator,
-    input: []const u8,
-    cursor: usize,
-    images: []const types.ImageAttachment,
-    width: u16,
-    row_limit: usize,
-) ![]u8 {
-    const source = visual_layout.Source{ .input = input, .cursor = cursor, .terminal_cols = width, .images = images };
-    const summary = visual_layout.summarize(source, null);
-    const window = visual_layout.visibleWindow(summary.cursor.row_index, summary.total_rows, row_limit);
-    var rows = try input_presentation.composeVisibleInputRows(alloc, source, window);
-    defer rows.deinit(alloc);
-
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(alloc);
-    for (rows.rows.items, 0..) |row, i| {
-        if (i > 0) try out.append(alloc, '\n');
-        try out.appendSlice(alloc, row.items);
-    }
-    return try out.toOwnedSlice(alloc);
-}
-
 fn pushFooterBandRow(
     alloc: Allocator,
     frame: *footer_viewport.ComposedFooterFrame,
@@ -1311,10 +1286,6 @@ fn expectRowBackground(row_bytes: []const u8, width: u16, expected_bg: vt_emulat
         const cell = grid.cellAt(1, col) orelse return error.TestUnexpectedResult;
         try std.testing.expect(cell.style.bg.eql(expected_bg));
     }
-}
-
-fn expectRowDefaultBackground(row_bytes: []const u8, width: u16) !void {
-    try expectRowBackground(row_bytes, width, .default);
 }
 
 fn expectFrameRowBackground(frame: *const footer_viewport.ComposedFooterFrame, row_number: u16, width: u16, expected_bg: vt_emulator.Color) !void {
@@ -2177,7 +2148,7 @@ test "approval footer composition hides cursor while rendering command prompt" {
     var controls_count: u8 = 0;
     for (frame.rows.items, 0..) |row, row_index| {
         saw_prompt = saw_prompt or std.mem.find(u8, row.text.items, "Would you like to run the following command?") != null;
-        saw_default_reason = saw_default_reason or std.mem.find(u8, row.text.items, "fx needs your approval before running this shell command") != null;
+        saw_default_reason = saw_default_reason or std.mem.find(u8, row.text.items, "fiber needs your approval before running this shell command") != null;
         saw_selected_choice = saw_selected_choice or std.mem.find(u8, row.text.items, "1. Yes") != null;
         if (std.mem.find(u8, row.text.items, "Would you like to run the following command?") != null) {
             prompt_row = row_index;

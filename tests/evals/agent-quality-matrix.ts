@@ -1,4 +1,4 @@
-export const SHARED_MODEL_CONTEXT_CONTRACT = "fx.shared_model_context.v1";
+export const SHARED_MODEL_CONTEXT_CONTRACT = "fiber.shared_model_context.v1";
 
 export const FAILURE_CATEGORIES = [
   "local search",
@@ -46,7 +46,7 @@ export interface ExpectedFirstTool {
 }
 
 export interface CoveredEntrypoint {
-  entrypoint: "interactive" | "fx ask" | "ACP" | "subagent";
+  entrypoint: "interactive" | "fiber ask" | "ACP" | "subagent";
   contextContract: typeof SHARED_MODEL_CONTEXT_CONTRACT;
   notes: string;
 }
@@ -113,7 +113,7 @@ const DESTRUCTIVE_OR_MUTATING_TOOLS = [
 
 function askEntrypoint(notes: string): CoveredEntrypoint {
   return {
-    entrypoint: "fx ask",
+    entrypoint: "fiber ask",
     contextContract: SHARED_MODEL_CONTEXT_CONTRACT,
     notes,
   };
@@ -200,7 +200,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     },
     targetResult: "A local git command is used, with no web_search or clarification question.",
     coveredEntrypoints: [
-      askEntrypoint("Depends on repo_identity in fx.shared_model_context.v1."),
+      askEntrypoint("Depends on repo_identity in fiber.shared_model_context.v1."),
     ],
   },
   {
@@ -227,12 +227,12 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     currentBaselineResult: {
       status: "partial",
       notes:
-        "Live ./zig-out/bin/fx ask --auto --json --no-save answered from existing context with zero tool calls. First tool: none; forbidden tools: none; behavior cited src/core/slash_commands/command_specs.zig but did not perform local discovery first.",
+        "Live ./zig-out/bin/fiber ask --auto --json --no-save answered from existing context with zero tool calls. First tool: none; forbidden tools: none; behavior cited src/core/slash_commands/command_specs.zig but did not perform local discovery first.",
     },
     targetResult:
       "Starts with local discovery and identifies src/core/slash_commands/command_specs.zig from local evidence.",
     coveredEntrypoints: [
-      askEntrypoint("Uses workspace_identity and available_tools from fx.shared_model_context.v1."),
+      askEntrypoint("Uses workspace_identity and available_tools from fiber.shared_model_context.v1."),
     ],
   },
   {
@@ -258,11 +258,11 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     currentBaselineResult: {
       status: "passing",
       notes:
-        "Live ./zig-out/bin/fx ask --auto --json --no-save used grep_files first and made five grep_files calls total. Forbidden tools: none; behavior reported concrete local matches in command_policy.zig, tool_permission.zig, and terminal.zig.",
+        "Live ./zig-out/bin/fiber ask --auto --json --no-save used grep_files first and made five grep_files calls total. Forbidden tools: none; behavior reported concrete local matches in command_policy.zig, tool_permission.zig, and terminal.zig.",
     },
     targetResult: "Uses local search tools only and reports concrete local matches.",
     coveredEntrypoints: [
-      askEntrypoint("Depends on available_tools and workspace_identity from fx.shared_model_context.v1."),
+      askEntrypoint("Depends on available_tools and workspace_identity from fiber.shared_model_context.v1."),
     ],
   },
   {
@@ -297,7 +297,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     targetResult:
       "Stops after confirming the command-policy wiring and any defined-but-uncalled helper, then exits 0 with known facts, uncertainty, and the next useful step.",
     coveredEntrypoints: [
-      askEntrypoint("Applies to long --auto --json local source investigations in fx ask."),
+      askEntrypoint("Applies to long --auto --json local source investigations in fiber ask."),
       interactiveEntrypoint("Interactive runs should show the same milestone-only progress and stop condition."),
     ],
   },
@@ -325,7 +325,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     currentBaselineResult: {
       status: "passing",
       notes:
-        "Live ./zig-out/bin/fx ask --auto --json --no-save used read_file first, then a second read_file. Forbidden tools: none; behavior inspected MCP runtime/docs before answering and did not ask the user.",
+        "Live ./zig-out/bin/fiber ask --auto --json --no-save used read_file first, then a second read_file. Forbidden tools: none; behavior inspected MCP runtime/docs before answering and did not ask the user.",
     },
     targetResult: "At least one local inspection happens before any user question.",
     coveredEntrypoints: [
@@ -366,7 +366,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     targetResult:
       "Uses local evidence for current-repo identity and never asks for the user's GitHub handle.",
     coveredEntrypoints: [
-      askEntrypoint("Depends on repo_identity and workspace_identity from fx.shared_model_context.v1."),
+      askEntrypoint("Depends on repo_identity and workspace_identity from fiber.shared_model_context.v1."),
       interactiveEntrypoint("Follows the same no-handle rule once context refresh is normalized."),
     ],
   },
@@ -401,7 +401,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     targetResult:
       "Routes PR comments to gh and reports missing gh, auth, or permission failures directly without a clarification question.",
     coveredEntrypoints: [
-      askEntrypoint("Depends on repo_identity and available_tools from fx.shared_model_context.v1."),
+      askEntrypoint("Depends on repo_identity and available_tools from fiber.shared_model_context.v1."),
     ],
   },
   {
@@ -502,11 +502,11 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     currentBaselineResult: {
       status: "passing",
       notes:
-        "Live ./zig-out/bin/fx ask --auto --json --no-save used shell.run first with gh pr view 57 --repo vercel-labs/fx --comments. Forbidden tools: none; behavior summarized PR review comments and bot deploy comments from gh output.",
+        "Live ./zig-out/bin/fiber ask --auto --json --no-save used shell.run first with gh pr view 57 --repo vercel-labs/fx --comments. Forbidden tools: none; behavior summarized PR review comments and bot deploy comments from gh output.",
     },
     targetResult: "Routes known GitHub PR comments to gh and reports an actionable blocker if gh cannot run.",
     coveredEntrypoints: [
-      askEntrypoint("Depends on repo_identity and available_tools from fx.shared_model_context.v1."),
+      askEntrypoint("Depends on repo_identity and available_tools from fiber.shared_model_context.v1."),
     ],
   },
   {
@@ -536,7 +536,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     },
     targetResult: "Diagnoses the last failure first; does not blindly repeat an unknown command.",
     coveredEntrypoints: [
-      interactiveEntrypoint("Depends on session_metadata from fx.shared_model_context.v1."),
+      interactiveEntrypoint("Depends on session_metadata from fiber.shared_model_context.v1."),
       askEntrypoint("Headless resume should use persisted session_metadata when available."),
     ],
   },
@@ -570,7 +570,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     },
     targetResult: "Continues or reports the exact blocker using prior context.",
     coveredEntrypoints: [
-      interactiveEntrypoint("Depends on session_metadata in fx.shared_model_context.v1."),
+      interactiveEntrypoint("Depends on session_metadata in fiber.shared_model_context.v1."),
       askEntrypoint("Applies when --session or persisted session resume is used."),
     ],
   },
@@ -671,7 +671,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     },
     targetResult: "Answers from the latest tool result or clearly says the evidence is unavailable.",
     coveredEntrypoints: [
-      interactiveEntrypoint("Uses session_metadata from fx.shared_model_context.v1."),
+      interactiveEntrypoint("Uses session_metadata from fiber.shared_model_context.v1."),
       askEntrypoint("Uses persisted session_metadata when a headless session is resumed."),
     ],
   },
@@ -735,7 +735,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     },
     targetResult: "Returns a structured blocker with an explicit reason and no live ask_user_question path.",
     coveredEntrypoints: [
-      askEntrypoint("Uses permission_mode and available_tools from fx.shared_model_context.v1."),
+      askEntrypoint("Uses permission_mode and available_tools from fiber.shared_model_context.v1."),
       acpEntrypoint("ACP should map approval-required work to a refusal or policy decision."),
     ],
   },
@@ -766,7 +766,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     },
     targetResult: "Current workspace_root is reflected before answering or selecting tools.",
     coveredEntrypoints: [
-      interactiveEntrypoint("Uses workspace_identity and session_metadata from fx.shared_model_context.v1."),
+      interactiveEntrypoint("Uses workspace_identity and session_metadata from fiber.shared_model_context.v1."),
       acpEntrypoint("ACP initialize/resume behavior is explicitly marked as follow-up drift."),
     ],
   },
@@ -876,7 +876,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     targetResult:
       "First action is web_fetch for the exact public URL; web_search and browser automation are absent.",
     coveredEntrypoints: [
-      askEntrypoint("Depends on available_tools and web routing prompt guidance in fx.shared_model_context.v1."),
+      askEntrypoint("Depends on available_tools and web routing prompt guidance in fiber.shared_model_context.v1."),
     ],
   },
   {
@@ -939,7 +939,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     },
     targetResult: "Preserves an explicit handle or limitation so a later turn can recover the needed evidence.",
     coveredEntrypoints: [
-      askEntrypoint("Depends on session_metadata and available_tools from fx.shared_model_context.v1."),
+      askEntrypoint("Depends on session_metadata and available_tools from fiber.shared_model_context.v1."),
       interactiveEntrypoint("Interactive sessions should preserve the same large-output evidence contract."),
     ],
   },
@@ -1077,7 +1077,7 @@ export const AGENT_QUALITY_BASELINE_MATRIX: readonly AgentQualityMatrixRow[] = [
     currentBaselineResult: {
       status: "passing",
       notes:
-        "shell.interact exposes only fx-owned execution output for the exact returned handle.",
+        "shell.interact exposes only fiber-owned execution output for the exact returned handle.",
     },
     targetResult:
       "Long-running commands remain inspectable through the same handle without replaying the command or inventing PID/log authority.",

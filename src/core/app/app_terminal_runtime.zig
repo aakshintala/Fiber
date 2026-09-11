@@ -7,7 +7,6 @@ const managed_execution = @import("../execution/managed_execution.zig");
 const action_executor = @import("../terminal/action_executor.zig");
 const contracts = @import("../terminal/contracts.zig");
 const identity = @import("../terminal/identity.zig");
-const managed_observer = @import("../terminal/managed_observer.zig");
 const operation = @import("../terminal/operation.zig");
 const shell_resolver = @import("../terminal/shell_resolver.zig");
 
@@ -28,7 +27,7 @@ pub fn Runtime(comptime App: type) type {
                 return;
             };
             const durable_session_id = app_session_runtime.Runtime(App).activeSessionId(app) orelse {
-                try writeAdmissionFailure(app, "no durable fx session");
+                try writeAdmissionFailure(app, "no durable fiber session");
                 return;
             };
             const child_capability = app_session_runtime.Runtime(App).childCapability(app) orelse {
@@ -135,27 +134,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn collectFacts(_: *App) !void {}
-
-        pub fn refreshManagedFacts(app: *App) !void {
-            if (comptime !@hasField(App, "managed_executions") or
-                !@hasField(App, "terminal_client") or
-                !@hasField(App, "session_persistence")) return;
-            const owner = app_session_runtime.Runtime(App).childCapability(app) orelse
-                return;
-            const durable_session_id = app_session_runtime.Runtime(App).activeSessionId(app) orelse
-                return;
-            try managed_observer.refreshAll(.{
-                .alloc = app.alloc,
-                .lifecycle_allocator = app.alloc,
-                .terminal_client = &app.terminal_client,
-                .managed_runtime = &app.managed_executions,
-                .owner = owner,
-                .durable_session_id = durable_session_id,
-                .workspace_root = app.workspace_root,
-                .transport_role = .interactive,
-                .max_output_bytes = max_direct_output_bytes,
-            });
-        }
 
         pub fn prepareGracefulExit(_: *App) ExitPreparation {
             return .ready;

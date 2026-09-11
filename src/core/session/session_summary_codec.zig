@@ -14,17 +14,6 @@ const ResumableSessionContinuation = types.ResumableSessionContinuation;
 const ResumableSessionPage = types.ResumableSessionPage;
 const StateSummary = types.StateSummary;
 
-const WorkspaceLatest = struct {
-    workspace_root: []u8,
-    session_id: []u8,
-
-    fn deinit(self: *WorkspaceLatest, alloc: Allocator) void {
-        alloc.free(self.workspace_root);
-        alloc.free(self.session_id);
-        self.* = undefined;
-    }
-};
-
 const SmallCacheRead = union(enum) {
     missing,
     oversized,
@@ -372,26 +361,6 @@ fn readCachePrefix(path: []const u8, buffer: []u8) !?[]const u8 {
     return buffer[0..count];
 }
 
-/// Reads the latest session id for `target_workspace` from the summary cache,
-/// fast path then scanner fallback. Returns null if the workspace has no entry.
-fn readLatestWorkspaceSessionId(alloc: Allocator, path: []const u8, target_workspace: []const u8) !?[]u8 {
-    var stack_buf: [64 * 1024]u8 = undefined;
-    switch (try readSmallCacheFile(path, &stack_buf)) {
-        .missing => return error.SessionIndexNotFound,
-        .oversized => {},
-        .bytes => |bytes| {
-            if (try parseLatestWorkspaceSessionIdFast(alloc, bytes, target_workspace)) |id| return id;
-            return parseLatestWorkspaceSessionId(alloc, bytes, target_workspace);
-        },
-    }
-
-    const bytes = try readOptionalCacheFile(alloc, path, 256 * 1024) orelse return error.SessionIndexNotFound;
-    defer alloc.free(bytes);
-
-    if (try parseLatestWorkspaceSessionIdFast(alloc, bytes, target_workspace)) |id| return id;
-    return parseLatestWorkspaceSessionId(alloc, bytes, target_workspace);
-}
-
 fn readSmallCacheFile(path: []const u8, buf: []u8) !SmallCacheRead {
     var file = std.Io.Dir.openFileAbsolute(io_mod.getIo(), path, .{}) catch |err| switch (err) {
         error.FileNotFound => return .missing,
@@ -416,33 +385,6 @@ fn readSmallCacheFile(path: []const u8, buf: []u8) !SmallCacheRead {
         else => return err,
     };
     return if (n == 0) .{ .bytes = buf[0..total] } else .oversized;
-}
-
-/// Best-effort byte scan for one workspace entry. Returns null to defer to the
-/// scanner path; only allocation can fail.
-fn parseLatestWorkspaceSessionIdFast(alloc: Allocator, bytes: []const u8, target_workspace: []const u8) Allocator.Error!?[]u8 {
-    if (!isSimpleJsonStringContent(target_workspace)) return null;
-
-    const array_key = "\"latest_by_workspace\":[";
-    const array_start = std.mem.find(u8, bytes, array_key) orelse return null;
-    const array_tail = bytes[array_start + array_key.len ..];
-    const array_end = std.mem.findScalar(u8, array_tail, ']') orelse return null;
-    const array = array_tail[0..array_end];
-
-    var needle_buf: [std.fs.max_path_bytes + 32]u8 = undefined;
-    const needle = std.fmt.bufPrint(&needle_buf, "\"workspace_root\":\"{s}\"", .{target_workspace}) catch return null;
-    const match_start = std.mem.find(u8, array, needle) orelse return null;
-    const entry_tail = array[match_start + needle.len ..];
-    const entry_end = std.mem.findScalar(u8, entry_tail, '}') orelse return null;
-    const entry = entry_tail[0..entry_end];
-
-    const id_key = "\"id\":\"";
-    const id_start = std.mem.find(u8, entry, id_key) orelse return null;
-    const id_tail = entry[id_start + id_key.len ..];
-    const id_end = std.mem.findScalar(u8, id_tail, '"') orelse return null;
-    const id = id_tail[0..id_end];
-    validateSessionId(id) catch return null;
-    return try alloc.dupe(u8, id);
 }
 
 /// True if `text` contains no characters needing JSON escaping, so it is safe
@@ -538,108 +480,6 @@ fn parseSessionStateSummary(alloc: Allocator, bytes: []const u8) !StateSummary {
     return .{ .count = count orelse return error.InvalidSessionIndex, .latest_id = latest_id };
 }
 
-/// Authoritative scanner parse returning the matched workspace id, or null.
-fn parseLatestWorkspaceSessionId(alloc: Allocator, bytes: []const u8, target_workspace: []const u8) !?[]u8 {
-    var scanner = std.json.Scanner.initCompleteInput(alloc, bytes);
-    defer scanner.deinit();
-
-    try expectJsonToken(try scanner.next(), .object_begin);
-    var schema_ok = false;
-    var matched_id: ?[]u8 = null;
-    errdefer if (matched_id) |id| alloc.free(id);
-
-    while (true) {
-        const token = try scanner.nextAlloc(alloc, .alloc_if_needed);
-        switch (token) {
-            .object_end => break,
-            .string, .allocated_string => {
-                const key = try jsonStringFromToken(token);
-                defer key.deinit(alloc);
-
-                if (std.mem.eql(u8, key.text, "schema_version")) {
-                    schema_ok = try readSummarySchemaVersion(&scanner);
-                } else if (std.mem.eql(u8, key.text, "latest_by_workspace")) {
-                    matched_id = try readLatestWorkspaceArray(&scanner, alloc, target_workspace);
-                } else {
-                    try scanner.skipValue();
-                }
-            },
-            else => {
-                freeJsonToken(alloc, token);
-                return error.InvalidSessionIndex;
-            },
-        }
-    }
-    try expectJsonToken(try scanner.next(), .end_of_document);
-
-    if (!schema_ok) return error.InvalidSessionIndex;
-    return matched_id;
-}
-
-fn readLatestWorkspaceArray(scanner: *std.json.Scanner, alloc: Allocator, target_workspace: []const u8) !?[]u8 {
-    try expectJsonToken(try scanner.next(), .array_begin);
-    var matched_id: ?[]u8 = null;
-    errdefer if (matched_id) |id| alloc.free(id);
-
-    while (true) {
-        const token = try scanner.next();
-        switch (token) {
-            .array_end => return matched_id,
-            .object_begin => {
-                const candidate = try readLatestWorkspaceEntry(scanner, alloc, target_workspace);
-                if (candidate) |id| {
-                    if (matched_id == null) {
-                        matched_id = id;
-                    } else {
-                        alloc.free(id);
-                    }
-                }
-            },
-            else => return error.InvalidSessionIndex,
-        }
-    }
-}
-
-fn readLatestWorkspaceEntry(scanner: *std.json.Scanner, alloc: Allocator, target_workspace: []const u8) !?[]u8 {
-    var workspace_matches = false;
-    var id: ?[]u8 = null;
-    errdefer if (id) |value| alloc.free(value);
-
-    while (true) {
-        const token = try scanner.nextAlloc(alloc, .alloc_if_needed);
-        switch (token) {
-            .object_end => break,
-            .string, .allocated_string => {
-                const key = try jsonStringFromToken(token);
-                defer key.deinit(alloc);
-
-                if (std.mem.eql(u8, key.text, "workspace_root")) {
-                    const value = try readJsonString(scanner, alloc);
-                    defer value.deinit(alloc);
-                    workspace_matches = std.mem.eql(u8, value.text, target_workspace);
-                } else if (std.mem.eql(u8, key.text, "id")) {
-                    if (id) |old| alloc.free(old);
-                    id = try readJsonStringDup(scanner, alloc);
-                } else {
-                    try scanner.skipValue();
-                }
-            },
-            else => {
-                freeJsonToken(alloc, token);
-                return error.InvalidSessionIndex;
-            },
-        }
-    }
-
-    if (workspace_matches) {
-        const matched_id = id orelse return error.InvalidSessionIndex;
-        validateSessionId(matched_id) catch return error.InvalidSessionIndex;
-        return matched_id;
-    }
-    if (id) |value| alloc.free(value);
-    return null;
-}
-
 fn readSummarySchemaVersion(scanner: *std.json.Scanner) !bool {
     const token = try scanner.next();
     switch (token) {
@@ -670,12 +510,6 @@ fn readOptionalJsonStringDup(scanner: *std.json.Scanner, alloc: Allocator) !?[]u
             return error.InvalidSessionIndex;
         },
     }
-}
-
-fn readJsonStringDup(scanner: *std.json.Scanner, alloc: Allocator) ![]u8 {
-    const value = try readJsonString(scanner, alloc);
-    defer value.deinit(alloc);
-    return try alloc.dupe(u8, value.text);
 }
 
 fn readJsonString(scanner: *std.json.Scanner, alloc: Allocator) !JsonStringToken {
@@ -719,26 +553,6 @@ fn expectJsonToken(token: std.json.Token, comptime expected: std.json.TokenType)
         .end_of_document => .end_of_document,
     };
     if (actual != expected) return error.InvalidSessionIndex;
-}
-
-fn appendLatestWorkspaceSummary(alloc: Allocator, latest: *std.ArrayList(WorkspaceLatest), workspace_root: []const u8, session_id: []const u8) !void {
-    for (latest.items) |*entry| {
-        if (!std.mem.eql(u8, entry.workspace_root, workspace_root)) continue;
-        if (std.mem.order(u8, session_id, entry.session_id) != .gt) return;
-        const replacement_id = try alloc.dupe(u8, session_id);
-        alloc.free(entry.session_id);
-        entry.session_id = replacement_id;
-        return;
-    }
-
-    const owned_workspace_root = try alloc.dupe(u8, workspace_root);
-    errdefer alloc.free(owned_workspace_root);
-    const owned_session_id = try alloc.dupe(u8, session_id);
-    errdefer alloc.free(owned_session_id);
-    try latest.append(alloc, .{
-        .workspace_root = owned_workspace_root,
-        .session_id = owned_session_id,
-    });
 }
 
 /// Parses the session index document into newest-first summaries, validating
@@ -2181,24 +1995,6 @@ test "replaced index summary keeps fresh metadata when the indexed row has none"
 
     try std.testing.expectEqualStrings("First title", replacement.title.?);
     try std.testing.expectEqualStrings("First preview", replacement.preview.?);
-}
-
-test "workspace summary cache returns first matching latest entry" {
-    const alloc = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const cache_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
-    defer alloc.free(cache_dir);
-    const summary_path = try std.fs.path.join(alloc, &.{ cache_dir, "summary.json" });
-    defer alloc.free(summary_path);
-    try writeTestFile(
-        summary_path,
-        "{\"schema_version\":1,\"count\":2,\"latest_id\":\"other\",\"latest_by_workspace\":[{\"workspace_root\":\"/tmp/ws\",\"id\":\"match\"},{\"workspace_root\":\"/tmp/other\",\"id\":\"other\"}]}",
-    );
-
-    const latest = try readLatestWorkspaceSessionId(alloc, summary_path, "/tmp/ws") orelse return error.TestExpectedEqual;
-    defer alloc.free(latest);
-    try std.testing.expectEqualStrings("match", latest);
 }
 
 test "state summary fast parser reads generated cache shape" {

@@ -1,5 +1,4 @@
 const std = @import("std");
-const runtime_profile = @import("../hosts/runtime_profile.zig");
 const file_index = @import("../workspace/file_index.zig");
 const path_completion = @import("../workspace/path_completion.zig");
 const workspace_access = @import("../workspace/workspace_access.zig");
@@ -78,12 +77,6 @@ pub fn Runtime(comptime App: type) type {
 
         /// Installs `replacement` and clears it after taking ownership.
         pub fn install(app: *App, replacement: *Access) bool {
-            if (comptime !runtime_profile.allows(App, .file_index)) {
-                app.workspace.access.deinit(app.alloc);
-                app.workspace.access = replacement.*;
-                replacement.* = .{};
-                return true;
-            }
             const runtime_changed = !app.workspace.access.eql(replacement);
             app.workspace.access.deinit(app.alloc);
             app.workspace.access = replacement.*;
@@ -102,7 +95,6 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn refreshAvailability(app: *App) workspace_access.Error!bool {
-            if (comptime !runtime_profile.allows(App, .file_index)) return false;
             var replacement = (try app.workspace.access.stageAvailabilityRefresh(
                 app.alloc,
                 app.workspace_root,

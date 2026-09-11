@@ -993,7 +993,7 @@ test "visible queue review aggregate matches composed entity-aware rows" {
         .raw_end = "$skill".len,
         .name = @constCast("skill"),
         .path = @constCast("/tmp/skill/SKILL.md"),
-        .display_source = .global_fx,
+        .display_source = .global_fiber,
     }};
     var pasted = [_]paste_blocks.PastedBlock{.{
         .id = 2,
@@ -1042,7 +1042,7 @@ test "visible queue review aggregate matches composed entity-aware rows" {
         .raw_end = "$skill".len,
         .name = "skill",
         .path = "/tmp/skill/SKILL.md",
-        .display_source = .global_fx,
+        .display_source = .global_fiber,
     }};
     const stored_card = try queue_input_presentation.composeQueuedPromptCard(alloc, .{
         .input = stored,

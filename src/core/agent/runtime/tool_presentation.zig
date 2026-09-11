@@ -5,7 +5,6 @@ const permission_auto_classifier = @import("../../permissions/auto_classifier.zi
 const types = @import("../../shared/types.zig");
 const text_utils = @import("../../shared/text_utils.zig");
 const tool_dispatch = @import("../../tooling/tool_dispatch.zig");
-const tool_specs = @import("../../tooling/tool_specs.zig");
 const tooling_presentation = @import("../../tooling/tool_presentation.zig");
 const debug_trace = @import("../../shared/debug_trace.zig");
 const diff = @import("../../output/diff.zig");
@@ -811,34 +810,6 @@ fn finishDeferredToolStatus(
     } });
 }
 
-pub fn finishDeniedToolStatusWithResultMemory(
-    hooks: *const AgentRuntimeDeps,
-    arena: Allocator,
-    turn_id: u64,
-    call: ToolCall,
-    status_started: bool,
-    display_target: ?[]const u8,
-    label: []const u8,
-    advertised_dynamic_tool_names: []const []const u8,
-    result: ToolExecutionResult,
-    safe_result: []const u8,
-    result_memory: types.ToolResultMemory,
-) !void {
-    return finishDeniedToolStatusInternal(
-        hooks,
-        arena,
-        turn_id,
-        call,
-        status_started,
-        display_target,
-        label,
-        advertised_dynamic_tool_names,
-        safe_result,
-        result_memory,
-        result.command_result_json,
-    );
-}
-
 fn finishDeniedToolStatusInternal(
     hooks: *const AgentRuntimeDeps,
     arena: Allocator,
@@ -1306,23 +1277,12 @@ fn commandArtifactHandle(
         else => return null,
     };
     const handle = std.fs.path.basename(output_file);
-    if (!std.mem.startsWith(u8, handle, "fx-command-") or
+    if (!std.mem.startsWith(u8, handle, "fiber-command-") or
         !std.mem.endsWith(u8, handle, ".log") or
         std.mem.endsWith(u8, handle, ".stdout.log") or
         std.mem.endsWith(u8, handle, ".stderr.log")) return null;
     const owned: []const u8 = try arena.dupe(u8, handle);
     return owned;
-}
-
-pub fn malformedToolArgumentsResult(arena: Allocator, call: ToolCall) !ToolExecutionResult {
-    return .{
-        .status = .failure,
-        .model_output = try tool_result_errors.malformedToolArgumentsJson(
-            arena,
-            call.name,
-        ),
-        .status_detail = "invalid JSON arguments",
-    };
 }
 
 pub fn finishCommittedFileStatus(
@@ -1572,7 +1532,7 @@ test "stream start execution certainty follows provider ownership" {
         test_tool_registry,
         "read_file",
     ));
-    try std.testing.expect(streamStartMayHaveExecutedAtProvider(
+    try std.testing.expect(!streamStartMayHaveExecutedAtProvider(
         provider_registry,
         "web_search",
     ));
@@ -2250,7 +2210,7 @@ test "command completion publishes its combined artifact handle" {
         .{
             .model_output = "truncated command preview",
             .command_result_json =
-            \\{"kind":"command","output_file":"/tmp/fx-command-combined.log"}
+            \\{"kind":"command","output_file":"/tmp/fiber-command-combined.log"}
             ,
         },
         "truncated command preview",
@@ -2259,7 +2219,7 @@ test "command completion publishes its combined artifact handle" {
             .stored_output_bytes = 128_000,
             .truncated = true,
             .command_output_replay = .{ .available = .{
-                .handle = "fx-command-replay-terminal.bin",
+                .handle = "fiber-command-replay-terminal.bin",
                 .framed_bytes = 123,
             } },
         },
@@ -2275,7 +2235,7 @@ test "command completion publishes its combined artifact handle" {
                 terminal.result.?,
             );
             try std.testing.expectEqualStrings(
-                "fx-command-combined.log",
+                "fiber-command-combined.log",
                 terminal.command_artifact_handle.?,
             );
             const replay = terminal.result_memory.?.command_output_replay.?;
@@ -2284,7 +2244,7 @@ test "command completion publishes its combined artifact handle" {
                 .unavailable => return error.TestExpectedReplay,
             };
             try std.testing.expectEqualStrings(
-                "fx-command-replay-terminal.bin",
+                "fiber-command-replay-terminal.bin",
                 descriptor.handle,
             );
             try std.testing.expectEqual(@as(usize, 123), descriptor.framed_bytes);

@@ -124,48 +124,6 @@ const ParallelWorkerSlot = struct {
     owner_cancelled_at_error: bool = false,
 };
 
-pub fn runSequentialCalls(
-    alloc: Allocator,
-    calls: []const ToolCall,
-    options: ParallelRunOptions,
-) Allocator.Error!ParallelRunResult {
-    const attempts = try alloc.alloc(ParallelToolAttempt, calls.len);
-    var initialized: usize = 0;
-    errdefer {
-        for (attempts[0..initialized]) |attempt| switch (attempt) {
-            .completed => |result| freeParallelToolResult(alloc, result),
-            .cancelled => {},
-        };
-        alloc.free(attempts);
-    }
-
-    var first_cancelled_index: ?usize = null;
-    for (calls, 0..) |call, index| {
-        if (options.cancel_flag) |flag| {
-            if (flag.load(.seq_cst)) {
-                attempts[index] = .cancelled;
-                initialized += 1;
-                if (first_cancelled_index == null) first_cancelled_index = index;
-                continue;
-            }
-        }
-        const execution = options.execute(options.exec_ctx, alloc, call, index) catch |err| blk: {
-            const output = options.format_error(options.format_ctx, alloc, call.name, err) catch
-                try std.fmt.allocPrint(alloc, "Tool execution failed: {s}", .{@errorName(err)});
-            defer alloc.free(output);
-            break :blk ToolExecutionResult{
-                .status = .failure,
-                .model_output = output,
-            };
-        };
-        attempts[index] = .{
-            .completed = try duplicateParallelToolResult(alloc, call, execution),
-        };
-        initialized += 1;
-    }
-    return .{ .attempts = attempts, .first_cancelled_index = first_cancelled_index };
-}
-
 pub fn runParallelCalls(
     alloc: Allocator,
     calls: []const ToolCall,
@@ -309,8 +267,7 @@ fn duplicateParallelToolResult(alloc: Allocator, call: ToolCall, execution: Tool
         execution.selected_dynamic_tool_name != null or
         execution.selected_dynamic_tool_schema_json != null or
         execution.tool_result_memory_prepared or
-        execution.committed_file_handoff != null or
-        execution.deferred_tool_completion != null)
+        execution.committed_file_handoff != null)
     {
         return .{
             .call_id = call_id,

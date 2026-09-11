@@ -261,7 +261,7 @@ pub fn eventFileStatFingerprint(stat: EventFileStat, expected_size: u64) !Digest
     writeInt(&encoded, &offset, i128, stat.ctime_ns);
 
     var hasher = Sha256.init(.{});
-    hasher.update("fx:event-file-stat:v1\x00");
+    hasher.update("fiber:event-file-stat:v1\x00");
     hasher.update(encoded[0..offset]);
     return hasher.finalResult();
 }
@@ -498,7 +498,7 @@ fn parsePreferences(alloc: Allocator, value: std.json.Value) !session_codec.Dura
         .provider = if (object.get("provider")) |provider_value| blk: {
             if (provider_value != .string) return error.InvalidManifest;
             break :blk model_provider.parse(provider_value.string) orelse return error.InvalidManifest;
-        } else .gateway,
+        } else .codex,
         .model = model,
         .effort = types.ReasoningEffort.parse(try requireString(object, "effort")) orelse
             return error.InvalidManifest,

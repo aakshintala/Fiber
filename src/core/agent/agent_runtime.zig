@@ -12,12 +12,10 @@ const runtime_tool_contracts = @import("runtime/tool_contracts.zig");
 pub const ToolExecutionStatus = runtime_tool_contracts.ToolExecutionStatus;
 pub const Agent = runtime_agent.Agent;
 pub const checkpoint = runtime_checkpoint;
-pub const DeferredToolCompletion = runtime_tool_contracts.DeferredToolCompletion;
 pub const TransportPublicationOutcome = runtime_tool_contracts.TransportPublicationOutcome;
 pub const SecondarySinkOutcome = runtime_tool_contracts.SecondarySinkOutcome;
 pub const SecondaryPublicationReport = runtime_tool_contracts.SecondaryPublicationReport;
 pub const ToolExecutionResult = runtime_tool_contracts.ToolExecutionResult;
-pub const unavailableHostToolResult = runtime_tool_contracts.unavailableHostToolResult;
 pub const LiveToolAuthority = runtime_tool_contracts.LiveToolAuthority;
 pub const LivePermissionRevalidation = runtime_tool_contracts.LivePermissionRevalidation;
 pub const ToolExecutionRequest = runtime_tool_contracts.ToolExecutionRequest;
@@ -45,7 +43,6 @@ pub const normalizeAssistantTextForDisplay = runtime_assistant_stream.normalizeA
 
 test {
     _ = @import("stream_provider.zig");
-    _ = @import("runtime/tests/gateway_flow.zig");
     _ = @import("runtime/tests/tool_flow.zig");
     _ = @import("runtime/tests/interruption_flow.zig");
     _ = @import("runtime/tests/finalization_flow.zig");

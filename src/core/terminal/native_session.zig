@@ -13,19 +13,14 @@ const process_provider_mod = @import(
     "../execution/process_provider.zig",
 );
 const process_tree = @import("../execution/process_tree.zig");
-const command_admission = @import("../permissions/command_admission.zig");
-const command_runner = @import("../execution/command_runner.zig");
-const execution_router = @import("../execution/router.zig");
 const io_mod = @import("../shared/io.zig");
 const self_exe = @import("../shared/self_exe.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
-const types = @import("../shared/types.zig");
-const workspace_pathing = @import("../workspace/pathing.zig");
 
 const Allocator = std.mem.Allocator;
 
-const launcher_mode = "--fx-internal-terminal-launcher";
-const control_mode = "--fx-internal-terminal-control";
+const launcher_mode = "--fiber-internal-terminal-launcher";
+const control_mode = "--fiber-internal-terminal-control";
 
 const max_sessions = managed_execution_contract.max_live_entries;
 
@@ -267,7 +262,6 @@ test "native terminal backend selection follows canonical platform support" {
         .macos,
         .linux,
         .windows,
-        .wasi,
         .freebsd,
         .emscripten,
     };
@@ -318,9 +312,9 @@ pub fn runControlMarker(raw_args: []const [*:0]const u8) !void {
     const tmux_failure = if (std.mem.startsWith(
         u8,
         control_path,
-        "/tmp/fx-tmux-marker-",
+        "/tmp/fiber-tmux-marker-",
     ))
-        io_mod.getenv("FX_TERMINAL_TEST_TMUX_MARKER_FAILURE")
+        io_mod.getenv("FIBER_TERMINAL_TEST_TMUX_MARKER_FAILURE")
     else
         null;
     if (tmux_failure) |failure| {
@@ -923,7 +917,7 @@ const SupportedRegistry = struct {
             return;
         }
 
-        if (io_mod.getenv("FX_TERMINAL_TEST_FAIL_CANCELLATION_OPEN") != null) {
+        if (io_mod.getenv("FIBER_TERMINAL_TEST_FAIL_CANCELLATION_OPEN") != null) {
             return error.InjectedCancellationOpenFailure;
         }
         const durable = try self.profile.open_terminal(session_id);
@@ -1943,7 +1937,7 @@ const Session = struct {
             self.tmux_backend = null;
             return err;
         };
-        maybeDelayForTest("FX_TERMINAL_TEST_TMUX_PREPARED_RELEASE_DELAY_MS");
+        maybeDelayForTest("FIBER_TERMINAL_TEST_TMUX_PREPARED_RELEASE_DELAY_MS");
         self.tmux_backend.?.release() catch |err| {
             self.tmux_backend.?.killSession();
             return err;
@@ -2181,20 +2175,20 @@ const Session = struct {
         const path_suffix = std.fmt.bytesToHex(path_bytes, .lower);
         const control_path = try std.fmt.allocPrint(
             self.alloc,
-            "/tmp/fx-terminal-{s}.sock",
+            "/tmp/fiber-terminal-{s}.sock",
             .{path_suffix},
         );
         defer self.alloc.free(control_path);
         const bootstrap_path = try std.fmt.allocPrint(
             self.alloc,
-            "/tmp/fx-terminal-{s}.bootstrap",
+            "/tmp/fiber-terminal-{s}.bootstrap",
             .{path_suffix},
         );
         defer self.alloc.free(bootstrap_path);
         const command_path = if (request.command != null)
             try std.fmt.allocPrint(
                 self.alloc,
-                "/tmp/fx-terminal-{s}.command",
+                "/tmp/fiber-terminal-{s}.command",
                 .{path_suffix},
             )
         else
@@ -2763,18 +2757,6 @@ const Session = struct {
         }
     }
 
-    fn appendScreenTextLocked(
-        self: *Session,
-        engine: *const terminal_engine.Grid,
-        screen_text: *std.ArrayList(u8),
-    ) !void {
-        var row: u16 = 1;
-        while (row <= engine.rows) : (row += 1) {
-            try engine.rowTextTrimmed(row, screen_text);
-            try screen_text.append(self.alloc, '\n');
-        }
-    }
-
     fn checkpointLocked(
         self: *Session,
         applied_cursor: contracts.RawCursor,
@@ -3145,7 +3127,7 @@ const Session = struct {
 
     fn commitStartupBoundary(self: *Session) void {
         if (self.command != null) {
-            maybeDelayForTest("FX_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS");
+            maybeDelayForTest("FIBER_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS");
         }
         const zio = io_mod.getIo();
         self.mutex.lockUncancelable(zio);
@@ -3523,8 +3505,8 @@ fn writeAction(
     defer session.write_mutex.unlock(zio);
     if (cancelled.load(.acquire)) return error.Cancelled;
     if (request.lease == .use) {
-        signalTestBarrier("FX_TERMINAL_TEST_WRITE_BARRIER_PATH");
-        maybeDelayForTest("FX_TERMINAL_TEST_WRITE_DELAY_MS");
+        signalTestBarrier("FIBER_TERMINAL_TEST_WRITE_BARRIER_PATH");
+        maybeDelayForTest("FIBER_TERMINAL_TEST_WRITE_DELAY_MS");
     }
 
     const authorization = switch (request.lease) {
@@ -3759,7 +3741,7 @@ fn resizeAction(
 
 fn tmuxResizeCheckpointFailure() bool {
     const value = io_mod.getenv(
-        "FX_TERMINAL_TEST_TMUX_RESIZE_CHECKPOINT_FAILURE",
+        "FIBER_TERMINAL_TEST_TMUX_RESIZE_CHECKPOINT_FAILURE",
     ) orelse return false;
     return std.mem.eql(u8, value, "allocation") or
         std.mem.eql(u8, value, "storage") or
@@ -3768,11 +3750,11 @@ fn tmuxResizeCheckpointFailure() bool {
 
 fn tmuxRecoveryFailure(session_id: []const u8, point: []const u8) bool {
     const value = io_mod.getenv(
-        "FX_TERMINAL_TEST_TMUX_RECOVERY_FAILURE",
+        "FIBER_TERMINAL_TEST_TMUX_RECOVERY_FAILURE",
     ) orelse return false;
     if (!std.mem.eql(u8, value, point)) return false;
     const selected_session = io_mod.getenv(
-        "FX_TERMINAL_TEST_TMUX_RECOVERY_SESSION_ID",
+        "FIBER_TERMINAL_TEST_TMUX_RECOVERY_SESSION_ID",
     ) orelse return true;
     return std.mem.eql(u8, selected_session, session_id);
 }
@@ -3949,7 +3931,7 @@ test "terminal signaling accepts a process group that exited during descendant d
 }
 
 fn failSignalStageForTest(stage: []const u8) bool {
-    const requested = io_mod.getenv("FX_TERMINAL_TEST_FAIL_SIGNAL_STAGE") orelse
+    const requested = io_mod.getenv("FIBER_TERMINAL_TEST_FAIL_SIGNAL_STAGE") orelse
         return false;
     return std.mem.eql(u8, requested, stage);
 }
@@ -3973,7 +3955,7 @@ fn closeAction(
         return err;
     };
     if (session.durable.record.backend == .tmux and
-        io_mod.getenv("FX_TERMINAL_TEST_INTERRUPT_CLOSE_AFTER_COMMIT") != null)
+        io_mod.getenv("FIBER_TERMINAL_TEST_INTERRUPT_CLOSE_AFTER_COMMIT") != null)
     {
         session.write_mutex.unlock(zio);
         return error.InjectedTmuxCloseInterruption;
@@ -4352,7 +4334,7 @@ fn tmuxControlMain(session: *Session) void {
             }
             if (control.kind == .shell_ready) {
                 maybeDelayForTest(
-                    "FX_TERMINAL_TEST_TMUX_SHELL_READY_HOST_DELAY_MS",
+                    "FIBER_TERMINAL_TEST_TMUX_SHELL_READY_HOST_DELAY_MS",
                 );
             }
             session.handleControl(control);
@@ -4367,7 +4349,7 @@ fn tmuxControlMain(session: *Session) void {
         thread.join();
         session.output_thread = null;
     }
-    maybeDelayForTest("FX_TERMINAL_TEST_BACKEND_CLEANUP_DELAY_MS");
+    maybeDelayForTest("FIBER_TERMINAL_TEST_BACKEND_CLEANUP_DELAY_MS");
     const zio = io_mod.getIo();
     session.write_mutex.lockUncancelable(zio);
     if (session.tmux_capture) |stream| stream.close(zio);
@@ -4432,7 +4414,7 @@ fn controlMain(session: *Session) void {
         session.output_thread = null;
     }
 
-    maybeDelayForTest("FX_TERMINAL_TEST_BACKEND_CLEANUP_DELAY_MS");
+    maybeDelayForTest("FIBER_TERMINAL_TEST_BACKEND_CLEANUP_DELAY_MS");
 
     const zio = io_mod.getIo();
     session.write_mutex.lockUncancelable(zio);
@@ -4771,9 +4753,9 @@ const TestDurableFixture = struct {
             .{ .iterate = true, .follow_symlinks = false },
         ) };
         defer root.close();
-        var fx = try io_mod.openOrCreateVerifiedPrivateDir(&root, ".fx");
-        defer fx.close();
-        var sessions = try io_mod.openOrCreateVerifiedPrivateDir(&fx, "sessions");
+        var fiber = try io_mod.openOrCreateVerifiedPrivateDir(&root, ".fiber");
+        defer fiber.close();
+        var sessions = try io_mod.openOrCreateVerifiedPrivateDir(&fiber, "sessions");
         defer sessions.close();
         var owner = try io_mod.openOrCreateVerifiedPrivateDir(
             &sessions,

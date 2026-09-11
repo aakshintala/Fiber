@@ -1,6 +1,4 @@
 const std = @import("std");
-const host_target = @import("../hosts/target.zig");
-const builtin = @import("builtin");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 const operation_control = @import("operation_control.zig");
@@ -749,20 +747,6 @@ fn encodeBase64UrlNoPad(output: []u8, input: []const u8) []const u8 {
     return output[0..encoded_len];
 }
 
-pub fn generatePkce(
-    verifier_buf: *[64]u8,
-    challenge_buf: *[43]u8,
-    random: std.Random,
-) struct { verifier: []const u8, challenge: []const u8 } {
-    var entropy: [48]u8 = undefined;
-    random.bytes(&entropy);
-    const verifier = encodeBase64UrlNoPad(verifier_buf, &entropy);
-    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(verifier, &digest, .{});
-    const challenge = encodeBase64UrlNoPad(challenge_buf, &digest);
-    return .{ .verifier = verifier, .challenge = challenge };
-}
-
 test "PKCE base64url encoding covers complete and partial groups" {
     const cases = .{
         .{ "", "" },
@@ -1018,9 +1002,6 @@ pub fn authorizeInteractive(
     alloc: Allocator,
     options: InteractiveAuthorizationOptions,
 ) !AuthorizationResult {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.InteractiveMcpAuthorizationUnsupported;
-    }
     var address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
     var listener = try address.listen(io_mod.getIo(), .{ .reuse_address = true });
     defer listener.deinit(io_mod.getIo());
@@ -1464,7 +1445,7 @@ fn resolveClientRegistration(
     var payload: std.Io.Writer.Allocating = .init(alloc);
     defer payload.deinit();
     try payload.writer.writeAll(
-        "{\"client_name\":\"fx\",\"application_type\":\"native\",\"redirect_uris\":[",
+        "{\"client_name\":\"fiber\",\"application_type\":\"native\",\"redirect_uris\":[",
     );
     try std.json.Stringify.value(redirect_uri, .{}, &payload.writer);
     try payload.writer.writeAll("],\"response_types\":[\"code\"],\"grant_types\":[\"authorization_code\"");
@@ -1868,7 +1849,6 @@ fn validateJsonContentType(content_type: ?[]const u8) !void {
 }
 
 fn setSocketTimeouts(socket: std.posix.socket_t, seconds: i64) void {
-    if (comptime host_target.is_wasm) return;
     const timeout = std.posix.timeval{ .sec = seconds, .usec = 0 };
     const bytes = std.mem.asBytes(&timeout);
     std.posix.setsockopt(
@@ -2466,9 +2446,6 @@ test "authorization redirect target must match the registered callback" {
 }
 
 test "interactive callback wait observes caller and lifecycle cancellation" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
     var address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
     var listener = try address.listen(std.testing.io, .{ .reuse_address = true });
     defer listener.deinit(std.testing.io);

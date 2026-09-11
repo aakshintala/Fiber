@@ -174,12 +174,12 @@ fn format_status_label(
         switch (status.required_action) {
             .continue_later => std.fmt.bufPrint(
                 buf,
-                "{s} · /continue to resume",
+                "{s} · /retry to resume",
                 .{status.label(&base_buf)},
             ) catch status.label(buf),
             .inspect_uncertain_tool => std.fmt.bufPrint(
                 buf,
-                "{s} · inspect tool state before /continue",
+                "{s} · inspect tool state before /retry",
                 .{status.label(&base_buf)},
             ) catch status.label(buf),
             .change_request => std.fmt.bufPrint(
@@ -370,7 +370,7 @@ test "worker status route recovery labels expose required controls" {
     }, 0);
     switch (state.projection().?) {
         .turn_thinking => |projection| try std.testing.expectEqualStrings(
-            "⚠ Mac woke from sleep · connection still unavailable · recovery paused · attempt 2/10 · /continue to resume",
+            "⚠ Mac woke from sleep · connection still unavailable · recovery paused · attempt 2/10 · /retry to resume",
             projection.label,
         ),
         .none, .tool_slot => return error.TestUnexpectedResult,
@@ -386,7 +386,7 @@ test "worker status route recovery labels expose required controls" {
     }, 0);
     switch (state.projection().?) {
         .turn_thinking => |projection| try std.testing.expectEqualStrings(
-            "⚠ Response ended early · recovery paused after 10/10 attempts · inspect tool state before /continue",
+            "⚠ Response ended early · recovery paused after 10/10 attempts · inspect tool state before /retry",
             projection.label,
         ),
         .none, .tool_slot => return error.TestUnexpectedResult,

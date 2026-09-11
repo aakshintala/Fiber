@@ -1,6 +1,6 @@
 # Third-party notices
 
-fx includes material from the following projects and data sources.
+Fiber includes material from the following projects and data sources.
 
 ## cuelume
 

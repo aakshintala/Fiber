@@ -14,13 +14,9 @@ import unittest
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "sign-and-notarize-macos.sh"
 RELEASE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "release.yml"
-PUBLISH_LIBFX_WORKFLOW_PATH = (
-    REPO_ROOT / ".github" / "workflows" / "publish-libfx.yml"
-)
 PGSO_WORKFLOW_PATH = (
     REPO_ROOT / ".github" / "workflows" / "pgso-macos-arm64.yml"
 )
-DEV_RELEASE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "dev-release.yml"
 PGSO_SETUP_ACTION_PATH = REPO_ROOT / ".github" / "actions" / "setup-pgso" / "action.yml"
 SIGNING_IDENTITY = "Developer ID Application: Vercel, Inc (JW6Y669B67)"
 TEST_CDHASH = "0123456789abcdef0123456789abcdef01234567"
@@ -76,10 +72,10 @@ import pathlib
 import sys
 
 args = sys.argv[1:]
-event_log = pathlib.Path(os.environ["FX_SIGNING_TEST_LOG"])
+event_log = pathlib.Path(os.environ["FIBER_SIGNING_TEST_LOG"])
 with event_log.open("a") as log:
     log.write("security " + " ".join(args) + "\\n")
-if args and args[0] == os.environ.get("FX_SIGNING_TEST_SECURITY_FAIL_COMMAND"):
+if args and args[0] == os.environ.get("FIBER_SIGNING_TEST_SECURITY_FAIL_COMMAND"):
     print("injected security failure", file=sys.stderr)
     raise SystemExit(1)
 if args and args[0] == "set-key-partition-list":
@@ -118,17 +114,17 @@ import pathlib
 import sys
 
 args = sys.argv[1:]
-with pathlib.Path(os.environ["FX_SIGNING_TEST_LOG"]).open("a") as log:
+with pathlib.Path(os.environ["FIBER_SIGNING_TEST_LOG"]).open("a") as log:
     log.write("codesign " + " ".join(args) + "\\n")
-if os.environ.get("FX_SIGNING_TEST_CODESIGN_FAIL_STAGE") == "sign" and "--force" in args:
+if os.environ.get("FIBER_SIGNING_TEST_CODESIGN_FAIL_STAGE") == "sign" and "--force" in args:
     print("injected codesign failure", file=sys.stderr)
     raise SystemExit(1)
 if "--force" in args:
     binary = pathlib.Path(args[-1])
     binary.write_bytes(binary.read_bytes() + b"signed\\n")
 if "--display" in args:
-    identifier = os.environ.get("FX_SIGNING_TEST_IDENTIFIER", "com.vercel.fx")
-    team_id = os.environ.get("FX_SIGNING_TEST_TEAM_ID", "JW6Y669B67")
+    identifier = os.environ.get("FIBER_SIGNING_TEST_IDENTIFIER", "com.vercel.fx")
+    team_id = os.environ.get("FIBER_SIGNING_TEST_TEAM_ID", "JW6Y669B67")
     print(f"Identifier={{identifier}}", file=sys.stderr)
     print(f"TeamIdentifier={{team_id}}", file=sys.stderr)
     print("CDHash={TEST_CDHASH}", file=sys.stderr)
@@ -143,7 +139,7 @@ import pathlib
 import sys
 
 args = sys.argv[1:]
-with pathlib.Path(os.environ["FX_SIGNING_TEST_LOG"]).open("a") as log:
+with pathlib.Path(os.environ["FIBER_SIGNING_TEST_LOG"]).open("a") as log:
     log.write("ditto " + " ".join(args) + "\n")
 pathlib.Path(args[-1]).write_bytes(b"notary archive")
 ''',
@@ -158,17 +154,17 @@ import pathlib
 import sys
 
 args = sys.argv[1:]
-with pathlib.Path(os.environ["FX_SIGNING_TEST_LOG"]).open("a") as log:
+with pathlib.Path(os.environ["FIBER_SIGNING_TEST_LOG"]).open("a") as log:
     log.write("xcrun " + " ".join(args[:2]) + "\\n")
-if len(args) > 1 and args[1] == os.environ.get("FX_SIGNING_TEST_XCRUN_FAIL_COMMAND"):
+if len(args) > 1 and args[1] == os.environ.get("FIBER_SIGNING_TEST_XCRUN_FAIL_COMMAND"):
     print("injected xcrun failure", file=sys.stderr)
     raise SystemExit(1)
 if args[:2] == ["notarytool", "submit"]:
-    status = os.environ.get("FX_SIGNING_TEST_SUBMISSION_STATUS", "Accepted")
+    status = os.environ.get("FIBER_SIGNING_TEST_SUBMISSION_STATUS", "Accepted")
     print(json.dumps({{"id": "test-submission", "status": status}}))
 elif args[:2] == ["notarytool", "log"]:
-    issues = json.loads(os.environ.get("FX_SIGNING_TEST_NOTARY_ISSUES", "null"))
-    ticket_cdhash = os.environ.get("FX_SIGNING_TEST_TICKET_CDHASH", "{TEST_CDHASH}")
+    issues = json.loads(os.environ.get("FIBER_SIGNING_TEST_NOTARY_ISSUES", "null"))
+    ticket_cdhash = os.environ.get("FIBER_SIGNING_TEST_TICKET_CDHASH", "{TEST_CDHASH}")
     pathlib.Path(args[-1]).write_text(json.dumps({{
         "status": "Accepted",
         "statusSummary": "Ready for distribution",
@@ -181,11 +177,11 @@ else:
 ''',
         )
         return {
-            "FX_SIGNING_OPENSSL_BIN": openssl,
-            "FX_SIGNING_SECURITY_BIN": security,
-            "FX_SIGNING_CODESIGN_BIN": codesign,
-            "FX_SIGNING_DITTO_BIN": ditto,
-            "FX_SIGNING_XCRUN_BIN": xcrun,
+            "FIBER_SIGNING_OPENSSL_BIN": openssl,
+            "FIBER_SIGNING_SECURITY_BIN": security,
+            "FIBER_SIGNING_CODESIGN_BIN": codesign,
+            "FIBER_SIGNING_DITTO_BIN": ditto,
+            "FIBER_SIGNING_XCRUN_BIN": xcrun,
         }
 
     def run_script(
@@ -196,7 +192,7 @@ else:
         runner_temp = root / "runner-temp"
         runner_temp.mkdir()
         tool_paths = self.make_tools(root)
-        binary = root / "fx"
+        binary = root / "fiber"
         binary.write_bytes(b"unsigned\n")
         binary.chmod(0o755)
         event_log = root / "events.log"
@@ -204,7 +200,7 @@ else:
         env.update(
             {
                 "RUNNER_TEMP": str(runner_temp),
-                "FX_SIGNING_TEST_LOG": str(event_log),
+                "FIBER_SIGNING_TEST_LOG": str(event_log),
                 "APPLE_DEVELOPER_ID_P12_BASE64": base64.b64encode(
                     b"p12-private-material"
                 ).decode(),
@@ -233,7 +229,7 @@ else:
         self,
     ) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
             p12_secret = "p12-private-material"
             p8_secret = "p8-private-material"
@@ -260,7 +256,7 @@ else:
 
     def test_imports_pkcs12_private_key_for_codesign_and_security(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
             result, _, _, event_log = self.run_script(root)
 
@@ -305,34 +301,34 @@ else:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
         cases = (
             (
-                {"FX_SIGNING_TEST_SECURITY_FAIL_COMMAND": "import"},
+                {"FIBER_SIGNING_TEST_SECURITY_FAIL_COMMAND": "import"},
                 "PKCS#12 import",
             ),
             (
-                {"FX_SIGNING_TEST_SECURITY_FAIL_COMMAND": "list-keychains"},
+                {"FIBER_SIGNING_TEST_SECURITY_FAIL_COMMAND": "list-keychains"},
                 "keychain search configuration",
             ),
             (
-                {"FX_SIGNING_TEST_SECURITY_FAIL_COMMAND": "set-key-partition-list"},
+                {"FIBER_SIGNING_TEST_SECURITY_FAIL_COMMAND": "set-key-partition-list"},
                 "private-key ACL configuration",
             ),
             (
-                {"FX_SIGNING_TEST_SECURITY_FAIL_COMMAND": "find-identity"},
+                {"FIBER_SIGNING_TEST_SECURITY_FAIL_COMMAND": "find-identity"},
                 "signing identity lookup",
             ),
             (
-                {"FX_SIGNING_TEST_CODESIGN_FAIL_STAGE": "sign"},
+                {"FIBER_SIGNING_TEST_CODESIGN_FAIL_STAGE": "sign"},
                 "code signing",
             ),
             (
-                {"FX_SIGNING_TEST_XCRUN_FAIL_COMMAND": "submit"},
+                {"FIBER_SIGNING_TEST_XCRUN_FAIL_COMMAND": "submit"},
                 "notarization submission",
             ),
         )
         for extra_env, stage in cases:
             with self.subTest(stage=stage):
                 with tempfile.TemporaryDirectory(
-                    prefix="fx-macos-signing-test-"
+                    prefix="fiber-macos-signing-test-"
                 ) as tmp:
                     root = pathlib.Path(tmp)
                     result, _, _, _ = self.run_script(root, extra_env)
@@ -345,7 +341,7 @@ else:
 
     def test_rejects_notarization_log_issues_and_cleans_credentials(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
             issues = json.dumps(
                 [
@@ -358,7 +354,7 @@ else:
 
             result, _, runner_temp, event_log = self.run_script(
                 root,
-                {"FX_SIGNING_TEST_NOTARY_ISSUES": issues},
+                {"FIBER_SIGNING_TEST_NOTARY_ISSUES": issues},
             )
 
             output = result.stdout + result.stderr
@@ -372,7 +368,7 @@ else:
 
     def test_rejects_empty_secret_without_echoing_credential_material(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
 
             result, _, runner_temp, _ = self.run_script(
@@ -393,12 +389,12 @@ else:
 
     def test_rejects_a_signature_from_the_wrong_apple_team(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
 
             result, _, runner_temp, _ = self.run_script(
                 root,
-                {"FX_SIGNING_TEST_TEAM_ID": "WRONGTEAM1"},
+                {"FIBER_SIGNING_TEST_TEAM_ID": "WRONGTEAM1"},
             )
 
             output = result.stdout + result.stderr
@@ -408,12 +404,12 @@ else:
 
     def test_rejects_a_signature_with_the_wrong_identifier(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
 
             result, _, runner_temp, _ = self.run_script(
                 root,
-                {"FX_SIGNING_TEST_IDENTIFIER": "com.example.fx"},
+                {"FIBER_SIGNING_TEST_IDENTIFIER": "com.example.fx"},
             )
 
             output = result.stdout + result.stderr
@@ -423,13 +419,13 @@ else:
 
     def test_rejects_a_notarization_ticket_for_another_binary(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
 
             result, _, runner_temp, _ = self.run_script(
                 root,
                 {
-                    "FX_SIGNING_TEST_TICKET_CDHASH":
+                    "FIBER_SIGNING_TEST_TICKET_CDHASH":
                         "ffffffffffffffffffffffffffffffffffffffff"
                 },
             )
@@ -441,12 +437,12 @@ else:
 
     def test_rejects_a_failed_notarization_submission(self) -> None:
         self.assertTrue(SCRIPT_PATH.is_file(), "macOS signing helper is missing")
-        with tempfile.TemporaryDirectory(prefix="fx-macos-signing-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="fiber-macos-signing-test-") as tmp:
             root = pathlib.Path(tmp)
 
             result, _, runner_temp, event_log = self.run_script(
                 root,
-                {"FX_SIGNING_TEST_SUBMISSION_STATUS": "Invalid"},
+                {"FIBER_SIGNING_TEST_SUBMISSION_STATUS": "Invalid"},
             )
 
             output = result.stdout + result.stderr
@@ -460,32 +456,18 @@ else:
 
 
 class MacosSigningWorkflowTests(unittest.TestCase):
-    def test_every_privileged_publish_job_uses_an_environment_gate(self) -> None:
-        release = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
-        publish_libfx = PUBLISH_LIBFX_WORKFLOW_PATH.read_text(encoding="utf-8")
-
-        release_job = release.split("  release:\n", 1)[1]
-        npm_publish_job = publish_libfx.split("  publish:\n", 1)[1]
-
-        self.assertIn("environment: release", release_job)
-        self.assertIn("environment: npm", npm_publish_job)
-
     def test_stable_release_is_the_only_workflow_with_signing_secrets(self) -> None:
         release = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
         pgso = PGSO_WORKFLOW_PATH.read_text(encoding="utf-8")
-        dev_release = DEV_RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-        self.assertIn("build-macos-x86_64:", release)
-        self.assertIn("runs-on: macos-15-intel", release)
         self.assertIn("sign-macos-arm64:", release)
-        self.assertEqual(2, release.count("environment: apple-signing"))
-        self.assertIn("scripts/sign-and-notarize-macos.sh zig-out/bin/fx", release)
+        self.assertEqual(1, release.count("environment: apple-signing"))
         self.assertNotIn("sign-stable-release:", pgso)
         self.assertNotIn("package_release", pgso)
         self.assertNotIn("environment: apple-signing", pgso)
         self.assertIn(
             "scripts/sign-and-notarize-macos.sh "
-            '"$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx"',
+            '"$RUNNER_TEMP/fx-pgso-aggregate/candidate/fiber"',
             release,
         )
         arm64_caller = release.split("  build-macos-arm64:\n", 1)[1].split(
@@ -499,7 +481,7 @@ class MacosSigningWorkflowTests(unittest.TestCase):
         self.assertIn("needs: [check-version, build-macos-arm64]", sign_release)
         self.assertIn("environment: apple-signing", sign_release)
         self.assertIn(
-            "needs: [check-version, build-linux, build-macos-x86_64, sign-macos-arm64]",
+            "needs: [check-version, build-linux, sign-macos-arm64]",
             release,
         )
         workflow_call = pgso.split("  workflow_dispatch:\n", 1)[0]
@@ -530,9 +512,7 @@ class MacosSigningWorkflowTests(unittest.TestCase):
             self.assertNotIn(secret_name, workflow_call)
             self.assertNotIn(secret_name, aggregate)
             self.assertNotIn(secret_name, pgso)
-            self.assertNotIn(secret_name, dev_release)
         self.assertNotIn("sign-and-notarize-macos", pgso)
-        self.assertNotIn("sign-and-notarize-macos", dev_release)
 
     def test_pgso_release_chain_pins_every_external_action(self) -> None:
         mutable_references: list[str] = []

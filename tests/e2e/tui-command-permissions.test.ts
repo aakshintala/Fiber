@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   execFileSync,
   spawn as nodeSpawn,
-  type ChildProcess,
 } from "node:child_process";
 import {
   chmodSync,
@@ -18,27 +17,23 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
-  canonicalSubagentIdForStore,
-  classifierEvidenceFromRequest,
-  fakeGatewayPermissionDecision,
-  heldFakeGatewayFinalText,
+  codexFinalText,
+  codexInputItems,
+  codexSerializedToolCall,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
   isVolatileTokenStatusRow,
-  startDynamicFakeGateway,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
 const TIMEOUT = 30_000;
-const MODEL = "openai/gpt-5";
 const COMMAND_APPROVAL_PROMPT = "Would you like to run the following command?";
 const MANAGE_SUBAGENT_PROGRESS = "Managing subagent\n";
-
-type GatewayRequest = {
-  body: string;
-  headers: Headers;
-};
 
 type IsolatedRoot = {
   root: string;
@@ -68,160 +63,96 @@ type TerminalProcessRow = {
 };
 
 const roots: string[] = [];
-const gateways: Array<{ stop(): void }> = [];
-const heldResponses: Array<ReturnType<typeof heldFakeGatewayFinalText>> = [];
+const codexes: Array<{ stop(): void }> = [];
 let activeSession: TmuxSession | null = null;
-let activeClient: AcpClient | null = null;
-
-function heldFinalText() {
-  const response = heldFakeGatewayFinalText();
-  heldResponses.push(response);
-  return response;
-}
 
 afterEach(async () => {
-  for (const response of heldResponses.splice(0)) response.dispose();
   if (activeSession) {
     await activeSession.kill();
     activeSession = null;
   }
-  if (activeClient) {
-    await activeClient.close();
-    activeClient = null;
-  }
-  for (const gateway of gateways.splice(0)) gateway.stop();
+  for (const codex of codexes.splice(0)) codex.stop();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-function sse(events: object[]) {
-  return new Response(
-    `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
-    { headers: { "content-type": "text/event-stream" } },
-  );
-}
-
-function gatewayToolCall(toolName: string, input: object, toolCallId: string) {
-  return sse([
-    {
-      type: "tool-call",
-      toolCallId,
-      toolName,
-      input,
-    },
-    {
-      type: "finish",
-      finishReason: { unified: "tool-calls", raw: "tool-calls" },
-    },
-  ]);
-}
-
 function toolCall(
-    command: string,
-    options: Record<string, unknown> = {},
-    toolCallId = "command_1",
+  command: string,
+  options: Record<string, unknown> = {},
+  toolCallId = "command_1",
 ) {
-  return gatewayToolCall("shell", {
-    request: {
-      action: "run",
-      yield_time_ms: 30_000,
-      timeout_ms: 600_000,
-      command,
-      ...options,
-    },
-  }, toolCallId);
+  return codexToolCall(toolCallId, "shell", {
+    action: "run",
+    yield_time_ms: 30_000,
+    timeout_ms: 600_000,
+    command,
+    ...options,
+  });
 }
 
-function permissionDecision(
-  decision: "clear" | "caution" = "clear",
-  toolCallId = "permission_decision_1",
-) {
-  return fakeGatewayPermissionDecision(decision, toolCallId, "deterministic test decision");
-}
-
-function classifierTrustContext(body: string): string {
-  const evidence = classifierEvidenceFromRequest(body);
-  const startMarker = "review_origin: ";
-  const endMarker = "Normalized action evidence";
-  const start = evidence.indexOf(startMarker);
-  const end = evidence.indexOf(endMarker, start);
-  if (start < 0 || end < 0) throw new Error("classifier trust context missing");
-  return evidence.slice(start, end);
-}
-
-function subagentCreateCall(
-  toolCallId: string,
-  prompt: string,
-  _mode: "one_off" | "persistent" = "one_off",
-) {
-  return gatewayToolCall("subagent", {
-    request: {
-      action: "run",
-      task: prompt,
-    },
-  }, toolCallId);
+function reviewDecision(
+  decision: "clear" | "caution",
+  id: string,
+  rationale = "deterministic test decision",
+): string {
+  return codexToolCall(id, "permission_decision", {
+    risk: decision === "caution" ? "high" : "low",
+    decision,
+    rationale,
+  });
 }
 
 function toolCalls(command: string, callIds: string[]) {
-  return sse([
-    ...callIds.map((toolCallId) => ({
-      type: "tool-call",
-      toolCallId,
-      toolName: "shell",
-      input: {
-        request: {
-          action: "run",
-          command,
-          yield_time_ms: 30_000,
-          timeout_ms: 600_000,
-        },
-      },
-    })),
-    {
-      type: "finish",
-      finishReason: { unified: "tool-calls", raw: "tool-calls" },
-    },
-  ]);
+  return codexBatchToolCalls(
+    callIds.map((toolCallId) => [toolCallId, "shell", {
+      action: "run",
+      command,
+      yield_time_ms: 30_000,
+      timeout_ms: 600_000,
+    }] as [string, string, object]),
+  );
 }
 
 function twoEffectfulCommandBatch(first: string, second: string) {
-  return sse([
-    {
-      type: "tool-call",
-      toolCallId: "history_feedback_first",
-      toolName: "shell",
-      input: {
-        request: {
-          action: "run",
-          command: first,
-          yield_time_ms: 30_000,
-          timeout_ms: 600_000,
-        },
-      },
-    },
-    {
-      type: "tool-call",
-      toolCallId: "history_feedback_second",
-      toolName: "shell",
-      input: {
-        request: {
-          action: "run",
-          command: second,
-          yield_time_ms: 30_000,
-          timeout_ms: 600_000,
-        },
-      },
-    },
-    {
-      type: "finish",
-      finishReason: { unified: "tool-calls", raw: "tool-calls" },
-    },
+  return codexBatchToolCalls([
+    ["history_feedback_first", "shell", {
+      action: "run",
+      command: first,
+      yield_time_ms: 30_000,
+      timeout_ms: 600_000,
+    }],
+    ["history_feedback_second", "shell", {
+      action: "run",
+      command: second,
+      yield_time_ms: 30_000,
+      timeout_ms: 600_000,
+    }],
   ]);
 }
 
+// One model turn may carry several tool calls; each needs its own output_index.
+function codexBatchToolCalls(calls: Array<[string, string, object]>): string {
+  let out = "";
+  calls.forEach(([id, name, args], index) => {
+    out += `data: ${JSON.stringify({
+      type: "response.output_item.added",
+      output_index: index,
+      item: { type: "function_call", call_id: id, name },
+    })}\n\n`;
+    out += `data: ${JSON.stringify({
+      type: "response.function_call_arguments.done",
+      output_index: index,
+      arguments: JSON.stringify(args),
+    })}\n\n`;
+  });
+  out +=
+    'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":4,"output_tokens":2}}}\n\n';
+  return out;
+}
+
 function sessionIdFromHome(root: IsolatedRoot): string {
-  const sessions = join(root.home, ".fx", "sessions");
+  const sessions = join(root.home, ".fiber", "sessions");
   const ids = readdirSync(sessions, { withFileTypes: true })
     .filter((entry) => entry.name !== "latest" && entry.isDirectory())
     .map((entry) => entry.name);
@@ -231,7 +162,7 @@ function sessionIdFromHome(root: IsolatedRoot): string {
 
 function latestTraceReportPath(root: IsolatedRoot): string {
   const reports = readdirSync(root.root)
-    .filter((entry) => entry.startsWith("fx-trace-") && entry.endsWith(".md"))
+    .filter((entry) => entry.startsWith("fiber-trace-") && entry.endsWith(".md"))
     .map((entry) => {
       const path = join(root.root, entry);
       return { path, mtimeMs: statSync(path).mtimeMs };
@@ -255,49 +186,39 @@ function expectGroupedContinuationRequest(
 }
 
 function expectOrdinaryToolResults(body: string, callIds: string[]) {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
-  };
-  const results = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .filter((part) => part.type === "tool-result");
+  const results = codexInputItems(body).filter(
+    (item) => item.type === "function_call_output",
+  );
 
   expect(results).toHaveLength(callIds.length);
-  expect(results.map((part) => part.toolCallId).sort()).toEqual([...callIds].sort());
+  expect(results.map((part) => part.call_id).sort()).toEqual([...callIds].sort());
   for (const result of results) {
-    const output = result.output as Record<string, unknown> | undefined;
-    expect(output?.type).toBe("text");
-    expect(JSON.parse(output?.value as string)).toMatchObject({
+    expect(typeof result.output).toBe("string");
+    expect(JSON.parse(result.output as string)).toMatchObject({
       state: "completed",
       exit_code: 0,
       error: null,
     });
   }
-  expect(JSON.stringify(results)).not.toContain("Repeated identical tool call blocked");
+  expect(body).not.toContain("Repeated identical tool call blocked");
 }
 
+// Tool results ride the Responses input as function_call_output items; the
+// output string is the shell snapshot JSON or the review-held echo JSON.
 function toolResultText(body: string, toolCallId: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
-  };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .find((part) => part.type === "tool-result" && part.toolCallId === toolCallId);
+  const result = codexInputItems(body).find(
+    (item) =>
+      item.type === "function_call_output" && item.call_id === toolCallId,
+  );
   expect(result).toBeDefined();
-  const output = result!.output as Record<string, unknown>;
-  expect(output.type).toBe("text");
-  expect(typeof output.value).toBe("string");
-  return output.value as string;
+  expect(typeof result!.output).toBe("string");
+  return result!.output as string;
 }
 
 function completedToolCallIds(body: string): string[] {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: Array<Record<string, unknown>> }>;
-  };
-  return (request.prompt ?? [])
-    .flatMap((message) => message.content ?? [])
-    .filter((part) => part.type === "tool-result")
-    .map((part) => part.toolCallId as string);
+  return codexInputItems(body)
+    .filter((item) => item.type === "function_call_output")
+    .map((item) => item.call_id as string);
 }
 
 function contentText(value: unknown): string {
@@ -316,25 +237,16 @@ function contentText(value: unknown): string {
 }
 
 function promptText(body: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: unknown }>;
-  };
-  return (request.prompt ?? []).map((message) => contentText(message.content)).join("\n");
+  return codexInputItems(body).map((item) => contentText(item)).join("\n");
 }
 
 function latestPromptText(body: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: unknown }>;
-  };
-  return contentText(request.prompt?.at(-1)?.content);
+  return contentText(codexInputItems(body).at(-1));
 }
 
 function currentUserText(body: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ role?: string; content?: unknown }>;
-  };
   return contentText(
-    request.prompt?.findLast((message) => message.role === "user")?.content,
+    codexInputItems(body).findLast((item) => item.role === "user"),
   );
 }
 
@@ -362,67 +274,61 @@ async function waitForTraceSlice(
 }
 
 function finalText(text: string) {
-  return sse([
-    { type: "text-delta", id: "answer_1", delta: text },
-    {
-      type: "finish",
-      finishReason: { unified: "stop", raw: "stop" },
-      usage: {
-        inputTokens: { total: 3 },
-        outputTokens: { total: 5 },
-      },
+  return codexFinalText(text);
+}
+
+type CodexResponse = string | ((body: string) => string | Promise<string>);
+
+type CodexQueue = ReturnType<typeof startFakeCodex>;
+
+// The Codex helper serves one callback instead of a finite queue, so scripted
+// multi-step turns pop responses in order, awaiting async fixture steps.
+// Unresolved actions pause for a permission review round-trip; review requests
+// carry <permission_review> and answer from a separate decision queue without
+// consuming the scripted turn queue, and stay out of `requests` so turn
+// indices match the codex era.
+function startCodexQueue(
+  responses: CodexResponse[],
+  reviewResponses: CodexResponse[] = [],
+): CodexQueue & { reviewRequests: Array<{ body: string }> } {
+  const pending = [...responses];
+  const reviews = [...reviewResponses];
+  const turnRequests: CodexQueue["requests"] = [];
+  const reviewRequests: Array<{ body: string }> = [];
+  let fallbackReviews = 0;
+  const codex = startFakeCodex({
+    route: async (body: string) => {
+      if (body.includes("<permission_review>")) {
+        reviewRequests.push({ body });
+        const next = reviews.shift();
+        if (!next) {
+          fallbackReviews += 1;
+          return reviewDecision("clear", `review_decision_${fallbackReviews}`);
+        }
+        return typeof next === "function" ? await next(body) : next;
+      }
+      turnRequests.push({ path: "", authorization: null, body });
+      const next = pending.shift();
+      if (!next) return codexFinalText("unexpected turn");
+      return typeof next === "function" ? await next(body) : next;
     },
-  ]);
+  });
+  return { ...codex, requests: turnRequests, reviewRequests };
 }
 
 function startFakeGateway(
-  responses: Array<Response | ((body: string) => Response | Promise<Response>)>,
-  options: {
-    classifierDecision?: "clear" | "caution";
-    classifierResponses?: Array<Response | (() => Response | Promise<Response>)>;
-  } = {},
+  responses: CodexResponse[],
+  reviewResponses: CodexResponse[] = [],
 ) {
-  const requests: GatewayRequest[] = [];
-  const classifierRequests: GatewayRequest[] = [];
-  const classifierResponses = [...(options.classifierResponses ?? [])];
-  const server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === "/v1/models") {
-        return Response.json({
-          data: [{ id: MODEL, type: "language", tags: ["tool-use"] }],
-        });
-      }
-      if (req.method !== "POST") return new Response("not found", { status: 404 });
-      const body = await req.text();
-      if (body.includes("\"permission_decision\"")) {
-        classifierRequests.push({ body, headers: req.headers });
-        const classifierResponse = classifierResponses.shift();
-        if (classifierResponse) {
-          return typeof classifierResponse === "function"
-            ? await classifierResponse()
-            : classifierResponse;
-        }
-        return permissionDecision(options.classifierDecision ?? "clear");
-      }
-      requests.push({ body, headers: req.headers });
-      const response = responses.shift();
-      if (!response) return new Response("unexpected request", { status: 500 });
-      return typeof response === "function" ? await response(body) : response;
-    },
-  });
-  const gateway = {
-    baseUrl: `http://127.0.0.1:${server.port}`,
-    chatUrl: `http://127.0.0.1:${server.port}/v3/ai/language-model`,
-    requests,
-    classifierRequests,
-    stop() {
-      server.stop(true);
-    },
-  };
-  gateways.push(gateway);
-  return gateway;
+  const codex = startCodexQueue(responses, reviewResponses);
+  codexes.push(codex);
+  return codex;
+}
+
+// fiber ask --json wraps payloads in {ok, kind, data}: unwrap the envelope.
+function parseFxJson(result: Awaited<ReturnType<typeof runFx>>) {
+  expect(result.code).toBe(0);
+  return (JSON.parse(result.stdout.trim()) as { data: unknown }).data as any;
 }
 
 function shellQuote(value: string): string {
@@ -505,15 +411,15 @@ async function waitForPath(path: string): Promise<void> {
 }
 
 async function waitForGatewayRequestCount(
-  gateway: { requests: GatewayRequest[] },
+  codex: { requests: Array<{ body: string }> },
   count: number,
 ): Promise<void> {
   const deadline = Date.now() + TIMEOUT;
   while (Date.now() < deadline) {
-    if (gateway.requests.length >= count) return;
+    if (codex.requests.length >= count) return;
     await Bun.sleep(20);
   }
-  throw new Error(`Timed out waiting for ${count} Gateway requests`);
+  throw new Error(`Timed out waiting for ${count} model requests`);
 }
 
 function paneTty(session: TmuxSession): string {
@@ -557,7 +463,7 @@ function foregroundFxRow(
 ): TerminalProcessRow & { sid: number } {
   const row = terminalProcessRows(ttyPath).find((entry) =>
     entry.command.includes(binary) &&
-    !entry.command.includes("__fx_foreground_session__")
+    !entry.command.includes("__fiber_foreground_session__")
   );
   expect(row).toBeDefined();
   expect(row!.pgid).toBe(row!.tpgid);
@@ -571,16 +477,7 @@ function foregroundFxRow(
 }
 
 function toolResultValue(body: string, toolCallId: string): string {
-  const request = JSON.parse(body) as {
-    prompt?: Array<{ content?: string | Array<Record<string, unknown>> }>;
-  };
-  const result = (request.prompt ?? [])
-    .flatMap((message) => Array.isArray(message.content) ? message.content : [])
-    .find((part) => part.type === "tool-result" && part.toolCallId === toolCallId);
-  expect(result).toBeDefined();
-  const output = result!.output as Record<string, unknown>;
-  expect(output.type).toBe("text");
-  return output.value as string;
+  return toolResultText(body, toolCallId);
 }
 
 function expectTraceOrder(trace: string, markers: string[]) {
@@ -595,17 +492,17 @@ function expectTraceOrder(trace: string, markers: string[]) {
 }
 
 function createIsolatedRoot(baseDir = tmpdir()): IsolatedRoot {
-  const root = realpathSync(mkdtempSync(join(baseDir, "fx-command-permissions-e2e-")));
+  const root = realpathSync(mkdtempSync(join(baseDir, "fiber-command-permissions-e2e-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   const hostileBin = join(root, "hostile-bin");
   const profileMarker = join(root, "hostile-profile-used");
   const commandMarkers: Record<string, string> = {};
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
   mkdirSync(hostileBin, { recursive: true });
   writeFileSync(
-    join(home, ".fx", "settings.json"),
+    join(home, ".fiber", "settings.json"),
     JSON.stringify({ sandbox: "none", permission: {} }),
   );
   writeFileSync(join(home, ".profile"), `printf profile > ${JSON.stringify(profileMarker)}\n`);
@@ -653,23 +550,17 @@ function installUrlOpenerFixture(root: IsolatedRoot, script: string) {
   }
 }
 
-function gatewayEnv(
+function codexEnv(
   root: IsolatedRoot,
-  gateway: ReturnType<typeof startFakeGateway>,
+  codex: ReturnType<typeof startFakeGateway>,
   extra: Record<string, string | undefined> = {},
 ) {
-  return {
-    HOME: root.home,
-    AI_GATEWAY_API_KEY: "fake-command-permission-key",
-    VERCEL_OIDC_TOKEN: undefined,
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: MODEL,
-    FX_AUTO_UPGRADE: "0",
-    FX_DIRECT_SECRET: "must-not-be-inherited",
+  return seededFakeCodexEnv(root.home, codex, {
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+    FIBER_DIRECT_SECRET: "must-not-be-inherited",
     NO_COLOR: "1",
     ...extra,
-  };
+  });
 }
 
 function definedEnv(env: Record<string, string | undefined>) {
@@ -678,20 +569,20 @@ function definedEnv(env: Record<string, string | undefined>) {
   );
 }
 
-async function launchPermissionResumeHarness(initialResponses: Response[]) {
+async function launchPermissionResumeHarness(initialResponses: CodexResponse[]) {
   const root = createIsolatedRoot();
-  const settingsPath = join(root.home, ".fx", "settings.json");
+  const settingsPath = join(root.home, ".fiber", "settings.json");
   const markerPath = join(root.workspace, "must-not-exist");
   const initialStderrPath = join(root.root, "permission-resume-initial-stderr.log");
   const resumedStderrPath = join(root.root, "permission-resume-resumed-stderr.log");
   writeFileSync(initialStderrPath, "");
   writeFileSync(resumedStderrPath, "");
 
-  const initialGateway = startFakeGateway(initialResponses);
+  const initialCodex = startFakeGateway(initialResponses);
   const initialSession = await TmuxSession.create({
-    cmd: FX_BIN,
+    cmd: FIBER_BIN,
     cwd: root.workspace,
-    env: gatewayEnv(root, initialGateway, { FX_PERMISSION_MODE: undefined }),
+    env: codexEnv(root, initialCodex, { FIBER_PERMISSION_MODE: undefined }),
     stderrPath: initialStderrPath,
     width: 120,
     height: 40,
@@ -702,29 +593,29 @@ async function launchPermissionResumeHarness(initialResponses: Response[]) {
     root,
     settingsPath,
     markerPath,
-    initialGateway,
+    initialCodex,
     initialSession,
     initialStderrPath,
     resumedStderrPath,
     readSettings() {
       return JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
     },
-    async resume(responses: Response[]) {
+    async resume(responses: CodexResponse[]) {
       await initialSession.sendText("/quit");
       await initialSession.waitForSessionEnd(TIMEOUT);
       if (activeSession === initialSession) activeSession = null;
 
-      const gateway = startFakeGateway(responses);
+      const codex = startFakeGateway(responses);
       const session = await TmuxSession.create({
-        cmd: `${FX_BIN} resume last`,
+        cmd: `${FIBER_BIN} resume last`,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, { FX_PERMISSION_MODE: undefined }),
+        env: codexEnv(root, codex, { FIBER_PERMISSION_MODE: undefined }),
         stderrPath: resumedStderrPath,
         width: 120,
         height: 40,
       });
       activeSession = session;
-      return { gateway, session };
+      return { codex, session };
     },
   };
 }
@@ -740,7 +631,7 @@ function expectUserProfileTrace(tracePath: string) {
 }
 
 function expectNoCommandArtifacts(root: IsolatedRoot) {
-  const sessions = join(root.home, ".fx", "sessions");
+  const sessions = join(root.home, ".fiber", "sessions");
   if (!existsSync(sessions)) return;
   const files = Bun.spawnSync(["find", sessions, "-type", "f"], {
     stdout: "pipe",
@@ -753,10 +644,10 @@ function expectNoCommandArtifacts(root: IsolatedRoot) {
 }
 
 function commandReplayFiles(root: IsolatedRoot): string[] {
-  const sessions = join(root.home, ".fx", "sessions");
+  const sessions = join(root.home, ".fiber", "sessions");
   if (!existsSync(sessions)) return [];
   const result = Bun.spawnSync(
-    ["find", sessions, "-type", "f", "-name", "fx-command-replay-*"],
+    ["find", sessions, "-type", "f", "-name", "fiber-command-replay-*"],
     { stdout: "pipe", stderr: "pipe" },
   );
   expect(result.exitCode).toBe(0);
@@ -775,7 +666,7 @@ function largeEffectfulCommand(marker: string) {
       { length: 84 },
       (_, index) => `# large lifecycle ${index.toString().padStart(3, "0")} ${"x".repeat(720)}`,
     ),
-    `printf '%s\\n' FX_LARGE_RUN_COMMAND_DONE > ${marker}`,
+    `printf '%s\\n' FIBER_LARGE_RUN_COMMAND_DONE > ${marker}`,
   ].join("\n");
   expect(Buffer.byteLength(command)).toBeGreaterThan(57 * 1024);
   return command;
@@ -788,11 +679,12 @@ async function expectSavedShellRun(
     status: "success" | "failure" = "success",
 ) {
   const result = await runFx(
-    ["session", "--id", sessionId, "--json"],
+    ["session", "show", "--id", sessionId, "--json"],
     { cwd: root.workspace, env: { HOME: root.home } },
   );
   expect(result.code).toBe(0);
-  const detail = JSON.parse(result.stdout) as any;
+  // session --json wraps payloads in {ok, kind, data}: unwrap the envelope.
+  const detail = (JSON.parse(result.stdout) as { data: unknown }).data as any;
   const step = detail.history
     .flatMap((turn: any) => turn.execution?.tool_steps ?? [])
     .find((entry: any) => entry.tool_calls?.some((call: any) => call.name === "shell"));
@@ -816,7 +708,7 @@ function normalizeVolatileStatusRows(grid: string[]): string[] {
     /^• Streaming \([^)]*\)$/.test(line) ||
       isVolatileTokenStatusRow(line)
       ? "<status>"
-      : line.replace(/\s+YOLO enabled: fx permission checks disabled$/, "")
+      : line.replace(/\s+YOLO enabled: fiber permission checks disabled$/, "")
   );
 }
 
@@ -824,7 +716,7 @@ test("volatile token status rows normalize before transcript grid comparison", (
   expect(normalizeVolatileStatusRows(["  (↑10 ↓5)"])).toEqual(["<status>"]);
   expect(normalizeVolatileStatusRows(["  0s (↑10 ↓5)"])).toEqual(["<status>"]);
   expect(normalizeVolatileStatusRows([
-    "YOLO · gpt-5                 YOLO enabled: fx permission checks disabled",
+    "YOLO · gpt-5                 YOLO enabled: fiber permission checks disabled",
   ])).toEqual(["YOLO · gpt-5"]);
 });
 
@@ -836,24 +728,24 @@ describe("effect-aware command permissions", () => {
       const feedback = "first command feedback marker";
       const firstCommand = "touch history-feedback-first.txt && printf 'first command completed\\n'";
       const secondCommand = "touch history-feedback-second.txt && printf 'second command completed\\n'";
-      const tapePath = join(root.root, "history-feedback.fxtape");
+      const tapePath = join(root.root, "history-feedback.fibertape");
       const tracePath = join(root.root, "trace.log");
       const stderrPath = join(root.root, "stderr.log");
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         twoEffectfulCommandBatch(firstCommand, secondCommand),
         finalText("history feedback live complete"),
       ]);
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "gateway,permission,session,tool",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "ask",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "gateway,permission,session,tool",
         }),
         stderrPath,
         width: 100,
@@ -863,7 +755,7 @@ describe("effect-aware command permissions", () => {
       await activeSession.sendText("Run the prepared two-command history fixture.");
       await activeSession.waitForText(COMMAND_APPROVAL_PROMPT, TIMEOUT);
       await activeSession.sendKeys("Tab");
-      await activeSession.waitForText("Yes, and tell fx what to do next", TIMEOUT);
+      await activeSession.waitForText("Yes, and tell fiber what to do next", TIMEOUT);
       await activeSession.sendLiteralText(feedback);
       await activeSession.waitForText(`Yes, ${feedback}`, TIMEOUT);
       await activeSession.sendKeys("Enter");
@@ -888,8 +780,8 @@ describe("effect-aware command permissions", () => {
       expect(rawAnsiScrollback).toContain(feedback);
       expect(existsSync(join(root.workspace, "history-feedback-first.txt"))).toBe(true);
       expect(existsSync(join(root.workspace, "history-feedback-second.txt"))).toBe(true);
-      expect(gateway.requests).toHaveLength(2);
-      expectGroupedContinuationRequest(gateway.requests[1]!.body, feedback);
+      expect(codex.requests).toHaveLength(2);
+      expectGroupedContinuationRequest(codex.requests[1]!.body, feedback);
       expect(readFileSync(tracePath, "utf8")).not.toContain("InvalidGatewayHistory");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
@@ -900,37 +792,37 @@ describe("effect-aware command permissions", () => {
 
       const sessionId = sessionIdFromHome(root);
       const events = readFileSync(
-        join(root.home, ".fx", "sessions", sessionId, "events.jsonl"),
+        join(root.home, ".fiber", "sessions", sessionId, "events.jsonl"),
         "utf8",
       );
       expect(events).toContain(feedback);
 
-      const cliResumeGateway = startFakeGateway([
+      const cliResumeCodex = startFakeGateway([
         finalText("history feedback cli resume complete"),
       ]);
       const cliResume = await runFx(
         [
           "ask",
-          "--auto",
-          "--resume",
+          "--permission-mode", "auto",
+          "--resume-id",
           sessionId,
           "Continue through the exact resume flag.",
         ],
-        { cwd: root.workspace, env: gatewayEnv(root, cliResumeGateway) },
+        { cwd: root.workspace, env: codexEnv(root, cliResumeCodex) },
       );
       expect(cliResume.code).toBe(0);
       expect(cliResume.stderr).toBe("");
-      expect(cliResumeGateway.requests).toHaveLength(1);
-      expectGroupedContinuationRequest(cliResumeGateway.requests[0]!.body, feedback);
+      expect(cliResumeCodex.requests).toHaveLength(1);
+      expectGroupedContinuationRequest(cliResumeCodex.requests[0]!.body, feedback);
 
-      const pickerGateway = startFakeGateway([
+      const pickerCodex = startFakeGateway([
         finalText("history feedback picker resume complete"),
       ]);
       writeFileSync(stderrPath, "");
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, pickerGateway),
+        env: codexEnv(root, pickerCodex),
         stderrPath,
         width: 100,
         height: 28,
@@ -950,8 +842,8 @@ describe("effect-aware command permissions", () => {
       );
       await activeSession.sendText("Continue through interactive resume.");
       await activeSession.waitForText("history feedback picker resume complete", TIMEOUT);
-      expect(pickerGateway.requests).toHaveLength(1);
-      expectGroupedContinuationRequest(pickerGateway.requests[0]!.body, feedback);
+      expect(pickerCodex.requests).toHaveLength(1);
+      expectGroupedContinuationRequest(pickerCodex.requests[0]!.body, feedback);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
       await activeSession.sendText("/quit");
@@ -959,7 +851,7 @@ describe("effect-aware command permissions", () => {
       await activeSession.kill();
       activeSession = null;
 
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: root.workspace,
         env: { HOME: root.home },
       });
@@ -976,7 +868,7 @@ describe("effect-aware command permissions", () => {
       const root = createIsolatedRoot();
       const firstCommand = "touch history-feedback-first.txt && printf 'first command completed\\n'";
       const secondCommand = "touch history-feedback-second.txt && printf 'second command completed\\n'";
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         twoEffectfulCommandBatch(firstCommand, secondCommand),
         finalText("history feedback control complete"),
       ]);
@@ -984,10 +876,10 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath,
         width: 100,
@@ -1005,7 +897,7 @@ describe("effect-aware command permissions", () => {
       await activeSession.sendKeys("1");
       await activeSession.waitForText("history feedback control complete", TIMEOUT);
 
-      expect(gateway.requests).toHaveLength(2);
+      expect(codex.requests).toHaveLength(2);
       expect(existsSync(join(root.workspace, "history-feedback-first.txt"))).toBe(true);
       expect(existsSync(join(root.workspace, "history-feedback-second.txt"))).toBe(true);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
@@ -1017,19 +909,19 @@ describe("effect-aware command permissions", () => {
     "TUI yolo executes pwd through the default user profile without prompting",
     async () => {
       const root = createIsolatedRoot();
-      const gateway = startFakeGateway([toolCall("pwd"), finalText("direct complete")]);
+      const codex = startFakeGateway([toolCall("pwd"), finalText("direct complete")]);
       const tracePath = join(root.root, "trace.log");
       const stderrPath = join(root.root, "stderr.log");
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
+        env: codexEnv(root, codex, {
           PATH: hostilePath(root),
-          FX_PERMISSION_MODE: "yolo",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "core",
+          FIBER_PERMISSION_MODE: "yolo",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "core",
         }),
         stderrPath,
         width: 120,
@@ -1040,8 +932,8 @@ describe("effect-aware command permissions", () => {
       const pane = await activeSession.waitForText("direct complete", TIMEOUT);
 
       expect(pane).not.toContain(COMMAND_APPROVAL_PROMPT);
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.requests[1].body).toContain(root.workspace);
+      expect(codex.requests).toHaveLength(2);
+      expect(codex.requests[1].body).toContain(root.workspace);
       expectUserProfileTrace(tracePath);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(existsSync(root.profileMarker)).toBe(true);
@@ -1056,28 +948,18 @@ describe("effect-aware command permissions", () => {
     async () => {
       const root = createIsolatedRoot();
       const streamText = "DIRECT_NO_NOTICE_STREAM_TEXT";
-      const gateway = startFakeGateway([
-        sse([
-          { type: "tool-input-start", id: "command_1", toolName: "shell" },
-          { type: "text-delta", id: "answer_1", delta: streamText },
-          {
-            type: "tool-call",
-            toolCallId: "command_1",
-            toolName: "shell",
-            input: {
-              request: {
-                action: "run",
-                yield_time_ms: 30_000,
-                timeout_ms: 600_000,
-                command: "pwd",
-              },
-            },
-          },
-          {
-            type: "finish",
-            finishReason: { unified: "tool-calls", raw: "tool-calls" },
-          },
-        ]),
+      const codex = startFakeGateway([
+        codexSerializedToolCall(
+          "command_1",
+          "shell",
+          JSON.stringify({
+            action: "run",
+            yield_time_ms: 30_000,
+            timeout_ms: 600_000,
+            command: "pwd",
+          }),
+          streamText,
+        ),
         finalText("direct auto complete"),
       ]);
       const tracePath = join(root.root, "trace.log");
@@ -1085,13 +967,13 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
+        env: codexEnv(root, codex, {
           PATH: hostilePath(root),
-          FX_PERMISSION_MODE: "yolo",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "core,permission,tool",
+          FIBER_PERMISSION_MODE: "yolo",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "core,permission,tool",
         }),
         stderrPath,
         width: 120,
@@ -1109,8 +991,8 @@ describe("effect-aware command permissions", () => {
       expect(completedIndex).toBeGreaterThan(streamTextIndex);
       expect(scrollback).not.toContain("Preparing command");
       expect(scrollback).not.toContain("Auto agent approved this request");
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.classifierRequests).toHaveLength(0);
+      expect(codex.requests).toHaveLength(2);
+      expect(codex.reviewRequests).toHaveLength(0);
       expectUserProfileTrace(tracePath);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(existsSync(root.profileMarker)).toBe(true);
@@ -1127,7 +1009,7 @@ describe("effect-aware command permissions", () => {
       const stderrPath = join(root.root, "current-command-output-stderr.log");
       const resumedStderrPath = join(root.root, "current-command-output-resumed-stderr.log");
       writeFileSync(
-        join(root.home, ".fx", "settings.json"),
+        join(root.home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission_mode: "auto",
@@ -1163,36 +1045,19 @@ describe("effect-aware command permissions", () => {
         { id: "fxc110-stream", command: "./fxc110-stream.sh" },
         { id: "fxc110-failed", command: "./fxc110-failed.sh" },
       ];
-      const gateway = startFakeGateway([
-        sse([
-          ...calls.map((call) => ({
-            type: "tool-input-start",
-            id: call.id,
-            toolName: "shell",
-          })),
-          {
-            type: "text-delta",
-            id: "fxc110-provider-bridge",
-            delta: "FXC110_PROVIDER_BRIDGE",
-          },
-          ...calls.map((call) => ({
-            type: "tool-call",
-            toolCallId: call.id,
-            toolName: "shell",
-            input: {
-              request: {
-                action: "run",
-                yield_time_ms: 30_000,
-                timeout_ms: 600_000,
-                command: call.command,
-              },
-            },
-          })),
-          {
-            type: "finish",
-            finishReason: { unified: "tool-calls", raw: "tool-calls" },
-          },
-        ]),
+      const codex = startFakeGateway([
+        `data: ${JSON.stringify({
+          type: "response.output_text.delta",
+          delta: "FXC110_PROVIDER_BRIDGE",
+        })}\n\n` +
+          codexBatchToolCalls(
+            calls.map((call) => [call.id, "shell", {
+              action: "run",
+              yield_time_ms: 30_000,
+              timeout_ms: 600_000,
+              command: call.command,
+            }] as [string, string, object]),
+          ),
         finalText("FXC110_COMPLETE"),
       ]);
       const outputRows = [
@@ -1206,12 +1071,12 @@ describe("effect-aware command permissions", () => {
       };
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_TRACE_LOG: join(root.root, "minimal-command-output-trace.log"),
-          FX_TRACE_SCOPES: "core,agent,tool,session,command_output",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_TRACE_LOG: join(root.root, "minimal-command-output-trace.log"),
+          FIBER_TRACE_SCOPES: "core,agent,tool,session,command_output",
         }),
         stderrPath,
         width: 120,
@@ -1250,10 +1115,10 @@ describe("effect-aware command permissions", () => {
       await activeSession.kill();
       activeSession = null;
       activeSession = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} resume last`,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "auto",
         }),
         stderrPath: resumedStderrPath,
         width: 88,
@@ -1274,8 +1139,8 @@ describe("effect-aware command permissions", () => {
       expect(resumedFull).toContain("FXC110_STREAM_STDOUT");
       expect(resumedFull).toContain("FXC110_STREAM_STDERR");
       expect(resumedFull).toContain("FXC110_FAILED_STDERR");
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.classifierRequests).toHaveLength(calls.length);
+      expect(codex.requests).toHaveLength(2);
+      expect(codex.reviewRequests).toHaveLength(calls.length);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(readFileSync(resumedStderrPath, "utf8")).toBe("");
     },
@@ -1312,7 +1177,7 @@ describe("effect-aware command permissions", () => {
       const lossyCommand = `printf '${lossyFormat}' ${
         lossyRows.map((row) => JSON.stringify(row)).join(" ")
       }`;
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall(losslessCommand, {}, "direct_printf_lossless"),
         finalText("DIRECT_LOSSLESS_DONE"),
         toolCall(lossyCommand, {}, "direct_printf_lossy"),
@@ -1323,25 +1188,21 @@ describe("effect-aware command permissions", () => {
       const commandOutputText = (text: string): string =>
         text.split("\n").filter((line) => line.trimStart().startsWith("│ ")).join("\n");
       const toolResultValue = (body: string, toolCallId: string): string => {
-        const request = JSON.parse(body) as {
-          prompt?: Array<{ content?: Array<Record<string, any>> }>;
-        };
-        const result = (request.prompt ?? [])
-          .flatMap((message) => message.content ?? [])
-          .find((part) => part.type === "tool-result" && part.toolCallId === toolCallId);
+        const result = codexInputItems(body).find(
+          (item) => item.type === "function_call_output" && item.call_id === toolCallId,
+        );
         expect(result).toBeDefined();
-        expect(result?.output?.type).toBe("text");
-        return String(result?.output?.value ?? "");
+        return String(result?.output ?? "");
       };
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
+        env: codexEnv(root, codex, {
           PATH: hostilePath(root),
-          FX_PERMISSION_MODE: "yolo",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "core,tool,session,command_output",
+          FIBER_PERMISSION_MODE: "yolo",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "core,tool,session,command_output",
         }),
         stderrPath,
         width: 72,
@@ -1408,15 +1269,15 @@ describe("effect-aware command permissions", () => {
         normalizeVolatileStatusRows(lossyGrid),
       );
 
-      expect(gateway.requests).toHaveLength(4);
+      expect(codex.requests).toHaveLength(4);
       const losslessModelResult = toolResultValue(
-        gateway.requests[1]!.body,
+        codex.requests[1]!.body,
         "direct_printf_lossless",
       );
       expect(losslessModelResult).toContain(losslessRows[6]!);
       expect(losslessModelResult).not.toContain("command_output_replay");
       const lossyModelResult = toolResultValue(
-        gateway.requests[3]!.body,
+        codex.requests[3]!.body,
         "direct_printf_lossy",
       );
       expect(lossyModelResult).toContain(lossyRows[1]!);
@@ -1431,7 +1292,7 @@ describe("effect-aware command permissions", () => {
 
       const sessionId = sessionIdFromHome(root);
       const publicSession = await runFx(
-        ["session", "--id", sessionId, "--json"],
+        ["session", "show", "--id", sessionId, "--json"],
         { cwd: root.workspace, env: { HOME: root.home } },
       );
       expect(publicSession.code).toBe(0);
@@ -1440,7 +1301,7 @@ describe("effect-aware command permissions", () => {
       expect(publicSession.stdout).not.toContain("command_process_presentation");
       expect(publicSession.stdout).not.toContain("process_presentation");
       expect(publicSession.stdout).toContain("full_output_handle");
-      expect(publicSession.stdout).toContain("fx-command-replay-");
+      expect(publicSession.stdout).toContain("fiber-command-replay-");
 
       await activeSession.sendText("/quit");
       expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
@@ -1449,9 +1310,9 @@ describe("effect-aware command permissions", () => {
 
       const resumedGateway = startFakeGateway([]);
       activeSession = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} resume last`,
         cwd: root.workspace,
-        env: gatewayEnv(root, resumedGateway),
+        env: codexEnv(root, resumedGateway),
         stderrPath: resumedStderrPath,
         width: 72,
         height: 30,
@@ -1493,11 +1354,11 @@ describe("effect-aware command permissions", () => {
       const command = `printf '${Array.from({ length: 7 }, () => "%s\\n").join("")}' ${
         commandRows.map((row) => JSON.stringify(row)).join(" ")
       }`;
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall(command, {}, "fxc29_compact_output"),
         finalText(responseRows.join("\n")),
       ]);
-      const settingsPath = join(root.home, ".fx", "settings.json");
+      const settingsPath = join(root.home, ".fiber", "settings.json");
       writeFileSync(
         settingsPath,
         JSON.stringify({
@@ -1512,9 +1373,9 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, { FX_PERMISSION_MODE: "yolo" }),
+        env: codexEnv(root, codex, { FIBER_PERMISSION_MODE: "yolo" }),
         stderrPath,
         width: 90,
         height: 30,
@@ -1523,8 +1384,8 @@ describe("effect-aware command permissions", () => {
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("/output quiet");
       await activeSession.waitForText(responseRows.at(-1)!, TIMEOUT);
-      expect(promptText(gateway.requests[0]!.body)).toContain("/output quiet");
-      expect(gateway.requests).toHaveLength(2);
+      expect(promptText(codex.requests[0]!.body)).toContain("/output quiet");
+      expect(codex.requests).toHaveLength(2);
       const compact = await activeSession.captureFullScrollback();
       expect(compact).toContain("Ran printf");
       for (const row of commandRows) expect(compact).not.toContain(`│ ${row}`);
@@ -1542,8 +1403,8 @@ describe("effect-aware command permissions", () => {
       const beforeSlashCommands = await activeSession.captureFullScrollback();
       expect(extractResponses(beforeSlashCommands)).toEqual(responseRows);
 
-      await activeSession.sendText("/sound on");
-      await activeSession.waitForText("● Sound: on", TIMEOUT);
+      // /sound was removed; an unknown slash with arguments now
+      // routes to the model, so only retained slash commands exercise this path.
       await activeSession.sendText("/settings");
       await activeSession.waitForText("←→ Change", TIMEOUT);
       await activeSession.sendKeys("Escape");
@@ -1555,9 +1416,6 @@ describe("effect-aware command permissions", () => {
 
       const afterSlashCommands = await activeSession.captureFullScrollback();
       expect(extractResponses(afterSlashCommands)).toEqual(responseRows);
-      expect(afterSlashCommands.indexOf("● Sound: on")).toBeGreaterThan(
-        afterSlashCommands.indexOf(responseRows.at(-1)!),
-      );
       expect(afterSlashCommands).toContain("Ran printf");
       for (const row of commandRows) {
         expect(afterSlashCommands).not.toContain(`│ ${row}`);
@@ -1579,7 +1437,7 @@ describe("effect-aware command permissions", () => {
     "TUI yolo completes more than twenty-five serial user-profile commands when unlimited",
     async () => {
       const root = createIsolatedRoot();
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         ...Array.from(
           { length: 26 },
           (_, index) => toolCall("pwd", {}, `command_${index + 1}`),
@@ -1590,11 +1448,11 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
+        env: codexEnv(root, codex, {
           PATH: hostilePath(root),
-          FX_PERMISSION_MODE: "yolo",
+          FIBER_PERMISSION_MODE: "yolo",
         }),
         stderrPath,
         width: 120,
@@ -1608,7 +1466,7 @@ describe("effect-aware command permissions", () => {
       expect(scrollback).not.toContain(
         "Agent step limit reached; continue with a follow-up prompt if needed.",
       );
-      expect(gateway.requests).toHaveLength(27);
+      expect(codex.requests).toHaveLength(27);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(existsSync(root.profileMarker)).toBe(true);
       expectNoHostileExecutables(root);
@@ -1622,90 +1480,27 @@ describe("effect-aware command permissions", () => {
     TIMEOUT,
   );
 
-  test.skipIf(!tmuxAvailable())(
-    "TUI writes Gateway schema diagnostics to a trace after Gateway 400",
-    async () => {
-      const root = createIsolatedRoot();
-      const gateway = startFakeGateway([
-        new Response(
-          JSON.stringify({
-            error: {
-              message: "Invalid input: expected string, received array",
-              param: ["prompt", 0, "content"],
-            },
-          }),
-          { status: 400, headers: { "content-type": "application/json" } },
-        ),
-      ]);
-      const stderrPath = join(root.root, "stderr.log");
-      installClipboardFixture(root, "#!/bin/sh\nexit 1\n");
-      writeFileSync(stderrPath, "");
-
-      activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
-        cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          PATH: hostilePath(root),
-          TMPDIR: root.root,
-        }),
-        stderrPath,
-        width: 120,
-        height: 40,
-      });
-      await activeSession.waitForComposer(TIMEOUT);
-      await activeSession.sendText("Trigger the gateway schema diagnostic.");
-      await activeSession.waitForText("HTTP 400", TIMEOUT);
-
-      await activeSession.sendText("/trace");
-      await activeSession.waitForText(
-        process.platform === "darwin"
-          ? "Clipboard copy failed"
-          : "Trace saved at",
-        TIMEOUT,
-      );
-      const reportPath = latestTraceReportPath(root);
-      const report = readFileSync(reportPath, "utf8");
-
-      expect(gateway.requests).toHaveLength(1);
-      expect(report).toContain("## Problems");
-      expect(report).toContain("## Network Calls");
-      expect(report).toContain("status=400");
-      expect(report).toContain('gateway_schema="path=prompt.0.content expected=string received=array"');
-      expect(report).toContain("request_shape=");
-      expect(report).toContain("prompt.0 role=system content=string");
-      expect(report).toContain("role=user content=array");
-      expect(report).not.toContain('"text":"Trigger the gateway schema diagnostic."');
-      expect(statSync(reportPath).mode & 0o077).toBe(0);
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
-
-      await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
-      await activeSession.kill();
-      activeSession = null;
-    },
-    TIMEOUT,
-  );
 
   test.skipIf(!tmuxAvailable())(
     "TUI creates a private Markdown trace without a feedback CTA",
     async () => {
       const root = createIsolatedRoot();
-      const gateway = startFakeGateway([]);
+      const codex = startFakeGateway([]);
       const stderrPath = join(root.root, "trace-report-stderr.log");
       const clipboardPath = join(root.root, "trace-clipboard-path.txt");
       installClipboardFixture(
         root,
-        '#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nprintf "%s" "$last" > "$FX_TRACE_CLIPBOARD_OUTPUT"\n',
+        '#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nprintf "%s" "$last" > "$FIBER_TRACE_CLIPBOARD_OUTPUT"\n',
       );
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
+        env: codexEnv(root, codex, {
           PATH: hostilePath(root),
           TMPDIR: root.root,
-          FX_TRACE_CLIPBOARD_OUTPUT: clipboardPath,
+          FIBER_TRACE_CLIPBOARD_OUTPUT: clipboardPath,
         }),
         stderrPath,
         width: 120,
@@ -1727,7 +1522,7 @@ describe("effect-aware command permissions", () => {
       expect(escapes).not.toContain("github.com");
       const reportPath = latestTraceReportPath(root);
       const report = readFileSync(reportPath, "utf8");
-      expect(report).toContain("# fx trace");
+      expect(report).toContain("# fiber trace");
       expect(report).toContain("## Summary");
       expect(report).toContain(root.workspace);
       expect(statSync(reportPath).mode & 0o077).toBe(0);
@@ -1747,65 +1542,12 @@ describe("effect-aware command permissions", () => {
   );
 
   test.skipIf(!tmuxAvailable())(
-    "TUI feedback opens fx.sh without creating a trace or touching the clipboard",
-    async () => {
-      const root = createIsolatedRoot();
-      const gateway = startFakeGateway([]);
-      const stderrPath = join(root.root, "feedback-stderr.log");
-      const openerPath = join(root.root, "feedback-opened-url.txt");
-      const clipboardMarker = join(root.root, "feedback-clipboard-used.txt");
-      installUrlOpenerFixture(
-        root,
-        '#!/bin/sh\nprintf "%s" "$1" > "$FX_FEEDBACK_OPEN_OUTPUT"\n',
-      );
-      installClipboardFixture(
-        root,
-        '#!/bin/sh\nprintf used > "$FX_FEEDBACK_CLIPBOARD_MARKER"\n',
-      );
-      writeFileSync(stderrPath, "");
-
-      activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
-        cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          PATH: hostilePath(root),
-          TMPDIR: root.root,
-          FX_FEEDBACK_OPEN_OUTPUT: openerPath,
-          FX_FEEDBACK_CLIPBOARD_MARKER: clipboardMarker,
-        }),
-        stderrPath,
-        width: 120,
-        height: 40,
-      });
-      await activeSession.waitForComposer(TIMEOUT);
-      await activeSession.sendText("/feedback");
-      await activeSession.waitForText("Opened https://fx.sh/feedback.", TIMEOUT);
-
-      expect(readFileSync(openerPath, "utf8")).toBe("https://fx.sh/feedback");
-      expect(existsSync(clipboardMarker)).toBe(false);
-      expect(
-        readdirSync(root.root).filter((entry) => entry.startsWith("fx-trace-")),
-      ).toHaveLength(0);
-      const escapes = await activeSession.capturePaneEscapes();
-      expect(escapes).not.toContain("Feedback:");
-      expect(escapes).not.toContain("github.com");
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
-
-      await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
-      await activeSession.kill();
-      activeSession = null;
-    },
-    TIMEOUT,
-  );
-
-  test.skipIf(!tmuxAvailable())(
     "TUI keeps automatic review internal in compact and full transcripts",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-approved.txt");
       const command = `printf approved > ${JSON.stringify(marker)}`;
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall(command),
         finalText("classifier approved complete"),
       ]);
@@ -1814,12 +1556,12 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "permission,tool",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "permission,tool",
         }),
         stderrPath,
         width: 120,
@@ -1853,8 +1595,8 @@ describe("effect-aware command permissions", () => {
       );
       expect(existsSync(marker)).toBe(true);
       expect(readFileSync(marker, "utf8")).toBe("approved");
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.classifierRequests).toHaveLength(1);
+      expect(codex.requests).toHaveLength(2);
+      expect(codex.reviewRequests).toHaveLength(1);
       expect(readFileSync(tracePath, "utf8")).toContain("approval_source=auto_classifier");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     },
@@ -1866,7 +1608,7 @@ describe("effect-aware command permissions", () => {
     async () => {
       const root = createIsolatedRoot();
       const stderrPath = join(root.root, "auto-command-scrollback-stderr.log");
-      const tapePath = join(root.root, "auto-command-scrollback.fxtape");
+      const tapePath = join(root.root, "auto-command-scrollback.fibertape");
       const markerPrefix = "AUTO_COMMAND_SCROLLBACK_LINE_";
       const expectedMarkers = Array.from(
         { length: 40 },
@@ -1877,49 +1619,26 @@ describe("effect-aware command permissions", () => {
       const finalResponse = "AUTO_COMMAND_SCROLLBACK_COMPLETE";
       const hasComposer = (pane: string) =>
         pane.split("\n").some((line) => line.trim() === "┃");
-      let releaseClassifier!: (response: Response) => void;
-      const heldClassifier = new Promise<Response>((resolve) => {
+      let releaseClassifier!: (response: string) => void;
+      const heldClassifier = new Promise<string>((resolve) => {
         releaseClassifier = resolve;
       });
-      const gateway = startFakeGateway(
+      const codex = startFakeGateway(
         [
           finalText(expectedMarkers.join("\n")),
-          sse([
-            {
-              type: "tool-input-start",
-              id: "scrollback_command",
-              toolName: "shell",
-            },
-            {
-              type: "tool-call",
-              toolCallId: "scrollback_command",
-              toolName: "shell",
-              input: {
-                request: {
-                  action: "run",
-                  yield_time_ms: 30_000,
-                  timeout_ms: 600_000,
-                  command: "seq 1 1",
-                },
-              },
-            },
-            {
-              type: "finish",
-              finishReason: { unified: "tool-calls", raw: "tool-calls" },
-            },
-          ]),
+          toolCall("seq 1 1", {}, "scrollback_command"),
           finalText(finalResponse),
         ],
-        { classifierResponses: [() => heldClassifier] },
+        [() => heldClassifier],
       );
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_RECORD: tapePath,
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_RECORD: tapePath,
         }),
         stderrPath,
         width: 120,
@@ -1931,15 +1650,15 @@ describe("effect-aware command permissions", () => {
       await activeSession.sendText(firstPrompt);
       await activeSession.waitForText(expectedMarkers.at(-1)!, TIMEOUT);
       await activeSession.waitForPane(hasComposer, TIMEOUT);
-      expect(gateway.requests).toHaveLength(1);
+      expect(codex.requests).toHaveLength(1);
 
       await activeSession.sendText(secondPrompt);
       await activeSession.waitForText(secondPrompt, TIMEOUT);
       const classifierDeadline = Date.now() + TIMEOUT;
-      while (gateway.classifierRequests.length === 0 && Date.now() < classifierDeadline) {
+      while (codex.reviewRequests.length === 0 && Date.now() < classifierDeadline) {
         await Bun.sleep(10);
       }
-      expect(gateway.classifierRequests).toHaveLength(1);
+      expect(codex.reviewRequests).toHaveLength(1);
 
       const extractMarkers = (scrollback: string) =>
         [...scrollback.matchAll(/AUTO_COMMAND_SCROLLBACK_LINE_\d{2}/g)].map(
@@ -1952,7 +1671,7 @@ describe("effect-aware command permissions", () => {
       );
       expect(beforeScrollback).not.toContain("Auto agent approved this request");
 
-      releaseClassifier(permissionDecision("clear"));
+      releaseClassifier(reviewDecision("clear", "permission_decision_1"));
       const finalPane = await activeSession.waitForPane(
         (pane) => pane.includes(finalResponse) && hasComposer(pane),
         TIMEOUT,
@@ -1976,8 +1695,8 @@ describe("effect-aware command permissions", () => {
       expect(completedLine).toBeGreaterThan(secondPromptLine);
       expect(outputLine).toBe(-1);
       expect(finalLine).toBeGreaterThan(completedLine);
-      expect(gateway.requests).toHaveLength(3);
-      expect(gateway.classifierRequests).toHaveLength(1);
+      expect(codex.requests).toHaveLength(3);
+      expect(codex.reviewRequests).toHaveLength(1);
       expect(activeSession.isAlive()).toBe(true);
       expect(activeSession.isPaneAlive()).toBe(true);
 
@@ -1986,7 +1705,7 @@ describe("effect-aware command permissions", () => {
       await activeSession.kill();
       activeSession = null;
 
-      const replay = await runFx(["replay", tapePath, "--frames"], {
+      const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
         cwd: root.workspace,
         env: { HOME: root.home },
       });
@@ -2002,7 +1721,7 @@ describe("effect-aware command permissions", () => {
   test.skipIf(!tmuxAvailable())(
     "TUI isolates approved foreground commands from terminal ownership",
     async () => {
-      const binary = process.env.FX_COMMAND_SESSION_TEST_BIN ?? FX_BIN;
+      const binary = process.env.FIBER_COMMAND_SESSION_TEST_BIN ?? FIBER_BIN;
       const sandboxModes = ["legacy-sandbox-key"] as const;
 
       for (const sandbox of sandboxModes) {
@@ -2013,14 +1732,14 @@ describe("effect-aware command permissions", () => {
         const outerReturnPath = join(root.root, `terminal-session-${sandbox}-outer-returned`);
         const stderrPath = join(root.root, `terminal-session-${sandbox}-stderr.log`);
         const tracePath = join(root.root, `terminal-session-${sandbox}-trace.log`);
-        const tapePath = join(root.root, `terminal-session-${sandbox}.fxtape`);
+        const tapePath = join(root.root, `terminal-session-${sandbox}.fibertape`);
         const command = [
           "exec python3",
           shellQuote(fixturePath),
           shellQuote(statePath),
           shellQuote(releasePath),
         ].join(" ");
-        const gateway = startFakeGateway([
+        const codex = startFakeGateway([
           toolCall(command, {}, "terminal_session_command"),
           finalText(`TTY_SESSION_FINAL_${sandbox}`),
           toolCall("pwd", {}, "terminal_session_pwd"),
@@ -2033,7 +1752,7 @@ describe("effect-aware command permissions", () => {
 
         writeTerminalOwnershipFixture(fixturePath);
         writeFileSync(
-          join(root.home, ".fx", "settings.json"),
+          join(root.home, ".fiber", "settings.json"),
           JSON.stringify({ sandbox: "os", permission: {} }),
         );
         writeFileSync(join(root.home, ".profile"), "");
@@ -2043,26 +1762,26 @@ describe("effect-aware command permissions", () => {
         activeSession = await TmuxSession.create({
           cmd: `${shellQuote(outerShell)} ${outerArgs}`,
           cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
+          env: codexEnv(root, codex, {
             SHELL: outerShell,
             TMPDIR: "/tmp",
             DEVELOPER_DIR: process.platform === "darwin"
               ? "/Library/Developer/CommandLineTools"
               : undefined,
-            FX_PERMISSION_MODE: "auto",
-            FX_RECORD: tapePath,
-            FX_RECORD_INPUT: "1",
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "agent,core,gateway,permission,session,tool,worker",
+            FIBER_PERMISSION_MODE: "auto",
+            FIBER_RECORD: tapePath,
+            FIBER_RECORD_INPUT: "1",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "agent,core,gateway,permission,session,tool,worker",
           }),
           width: 120,
           height: 40,
           minimumHistoryLines: 1_000,
         });
         await activeSession.sendText(
-          "export PS1='FX_OUTER_PROMPT> '; printf 'FX_OUTER_SHELL_READY\\n'",
+          "export PS1='FIBER_OUTER_PROMPT> '; printf 'FIBER_OUTER_SHELL_READY\\n'",
         );
-        await activeSession.waitForText("FX_OUTER_SHELL_READY", TIMEOUT);
+        await activeSession.waitForText("FIBER_OUTER_SHELL_READY", TIMEOUT);
         await activeSession.sendText(
           `${shellQuote(binary)} 2>${shellQuote(stderrPath)}; ` +
             `printf '%s' "$?" > ${shellQuote(outerReturnPath)}`,
@@ -2101,13 +1820,13 @@ describe("effect-aware command permissions", () => {
         await activeSession.waitForText(`TTY_SESSION_PWD_FINAL_${sandbox}`, TIMEOUT);
         foregroundFxRow(ttyPath, binary);
 
-        expect(gateway.requests).toHaveLength(4);
-        expect(gateway.classifierRequests).toHaveLength(2);
-        expect(gateway.classifierRequests[0]!.body).toContain("action: command");
-        expect(gateway.classifierRequests[1]!.body).toContain("action: command");
-        expect(gateway.classifierRequests[1]!.body).toContain("command: pwd");
+        expect(codex.requests).toHaveLength(4);
+        expect(codex.reviewRequests).toHaveLength(2);
+        expect(codex.reviewRequests[0]!.body).toContain("action: command");
+        expect(codex.reviewRequests[1]!.body).toContain("action: command");
+        expect(codex.reviewRequests[1]!.body).toContain("command: pwd");
         const commandResult = toolResultValue(
-          gateway.requests[1]!.body,
+          codex.requests[1]!.body,
           "terminal_session_command",
         );
         const commandSnapshot = JSON.parse(commandResult);
@@ -2120,13 +1839,13 @@ describe("effect-aware command permissions", () => {
         expect(commandSnapshot.output_delta).toContain("TTY_SESSION_STDOUT_BEGIN");
         expect(commandSnapshot.output_delta).toContain("TTY_SESSION_STDOUT_END");
         expect(commandSnapshot.output_delta).toContain("TTY_SESSION_STDERR");
-        expect(commandSnapshot.full_output_handle).toMatch(/^fx-command-replay-.+\.bin$/);
-        expect(gateway.requests[1]!.body).not.toContain("\\u001e");
-        expect(gateway.requests[1]!.body).not.toContain("\\u0006");
-        expect(gateway.requests[1]!.body).not.toContain("\\u0000");
-        expect(gateway.requests[1]!.body).not.toContain("FX_FOREGROUND_EXEC_FAILED");
+        expect(commandSnapshot.full_output_handle).toMatch(/^fiber-command-replay-.+\.bin$/);
+        expect(codex.requests[1]!.body).not.toContain("\\u001e");
+        expect(codex.requests[1]!.body).not.toContain("\\u0006");
+        expect(codex.requests[1]!.body).not.toContain("\\u0000");
+        expect(codex.requests[1]!.body).not.toContain("FIBER_FOREGROUND_EXEC_FAILED");
         const pwdResult = toolResultValue(
-          gateway.requests[3]!.body,
+          codex.requests[3]!.body,
           "terminal_session_pwd",
         );
         expect(JSON.parse(pwdResult).output_delta).toContain(root.workspace);
@@ -2143,7 +1862,7 @@ describe("effect-aware command permissions", () => {
         expect(followupIndex).toBeGreaterThan(finalIndex);
         expect(pwdFinalIndex).toBeGreaterThan(followupIndex);
         expect(scrollback).not.toContain("suspended (tty input)");
-        expect(scrollback).not.toContain("FX_FOREGROUND_EXEC_FAILED");
+        expect(scrollback).not.toContain("FIBER_FOREGROUND_EXEC_FAILED");
 
         await activeSession.sendKeys("C-o");
         await activeSession.waitForText("Full detail · ctrl o close", TIMEOUT);
@@ -2185,7 +1904,7 @@ describe("effect-aware command permissions", () => {
           sessionIdFromHome(root),
           command,
         );
-        const replay = await runFx(["replay", tapePath, "--frames"], {
+        const replay = await runFx(["debug", "replay", tapePath, "--frames"], {
           cwd: root.workspace,
           env: { HOME: root.home },
         });
@@ -2194,7 +1913,7 @@ describe("effect-aware command permissions", () => {
         expect(replay.stdout).toContain("TTY_SESSION_STDOUT_BEGIN");
         expect(replay.stdout).toContain("TTY_SESSION_STDOUT_END");
         expect(replay.stdout).toContain(`TTY_SESSION_PWD_FINAL_${sandbox}`);
-        expect(replay.stdout).not.toContain("FX_FOREGROUND_EXEC_FAILED");
+        expect(replay.stdout).not.toContain("FIBER_FOREGROUND_EXEC_FAILED");
       }
     },
     90_000,
@@ -2206,24 +1925,24 @@ describe("effect-aware command permissions", () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-user-check.txt");
       const command = "printf user-check > classifier-user-check.txt";
-      const gateway = startFakeGateway(
+      const codex = startFakeGateway(
         [
           toolCall(command),
           finalText("classifier automatic caution complete"),
         ],
-        { classifierDecision: "caution" },
+        [reviewDecision("caution", "permission_decision_1")],
       );
       const tracePath = join(root.root, "trace.log");
       const stderrPath = join(root.root, "stderr.log");
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "permission",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "permission",
           TMPDIR: root.root,
         }),
         stderrPath,
@@ -2238,13 +1957,13 @@ describe("effect-aware command permissions", () => {
       );
       expect(pane).not.toContain(COMMAND_APPROVAL_PROMPT);
       expect(existsSync(marker)).toBe(false);
-      expect(gateway.classifierRequests).toHaveLength(1);
+      expect(codex.reviewRequests).toHaveLength(1);
       expect(pane).not.toContain("Auto agent denied");
       expect(pane).toContain("1 denied");
       expect(pane).toContain(`Safety caution ${command}`);
       expect(pane).not.toContain("└ terminal");
-      expect(gateway.requests).toHaveLength(2);
-      const permissionResultRequest = gateway.requests[1]!.body;
+      expect(codex.requests).toHaveLength(2);
+      const permissionResultRequest = codex.requests[1]!.body;
       expect(permissionResultRequest).toContain("tool_review_held");
       expect(permissionResultRequest).toContain("review_caution");
       expect(permissionResultRequest).not.toContain("user_denied");
@@ -2260,13 +1979,13 @@ describe("effect-aware command permissions", () => {
       activeSession = null;
 
       rmSync(
-        join(root.home, ".fx", "sessions", sessionId, "resume-view.bin"),
+        join(root.home, ".fiber", "sessions", sessionId, "resume-view.bin"),
         { force: true },
       );
       activeSession = await TmuxSession.create({
-        cmd: `${FX_BIN} resume ${sessionId}`,
+        cmd: `${FIBER_BIN} resume ${sessionId}`,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, { TMPDIR: root.root }),
+        env: codexEnv(root, codex, { TMPDIR: root.root }),
         stderrPath,
         width: 120,
         height: 40,
@@ -2279,7 +1998,7 @@ describe("effect-aware command permissions", () => {
       expect(resumedPane).toContain("1 denied");
       expect(resumedPane).not.toContain("└ terminal");
       expect(resumedPane).not.toContain("tool_permission_denied");
-      expect(gateway.requests).toHaveLength(2);
+      expect(codex.requests).toHaveLength(2);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
       await activeSession.sendText("/quit");
@@ -2296,7 +2015,7 @@ describe("effect-aware command permissions", () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-fallback-approved.txt");
       const command = `printf fallback > ${JSON.stringify(marker)}`;
-      const gateway = startFakeGateway(
+      const codex = startFakeGateway(
         [
           toolCall(command, {}, "invalid_review_1"),
           toolCall(command, {}, "invalid_review_2"),
@@ -2308,21 +2027,19 @@ describe("effect-aware command permissions", () => {
           },
           finalText("Reviewer unavailable handled normally."),
         ],
-        {
-          classifierResponses: Array.from({ length: 4 }, () => finalText("invalid")),
-        },
+        Array.from({ length: 4 }, () => finalText("invalid")),
       );
       const tracePath = join(root.root, "trace.log");
       const stderrPath = join(root.root, "stderr.log");
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "permission",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "permission",
           TMPDIR: root.root,
         }),
         stderrPath,
@@ -2338,8 +2055,8 @@ describe("effect-aware command permissions", () => {
 
       expect(pane).not.toContain(COMMAND_APPROVAL_PROMPT);
       expect(existsSync(marker)).toBe(false);
-      expect(gateway.requests).toHaveLength(5);
-      expect(gateway.classifierRequests).toHaveLength(4);
+      expect(codex.requests).toHaveLength(5);
+      expect(codex.reviewRequests).toHaveLength(4);
       const trace = readFileSync(tracePath, "utf8");
       expect(
         trace.match(/decision=unavailable fallback_reason=invalid_or_unavailable/g),
@@ -2352,7 +2069,7 @@ describe("effect-aware command permissions", () => {
       await activeSession.kill();
       activeSession = null;
     },
-    TIMEOUT,
+    90_000,
   );
 
   test.skipIf(!tmuxAvailable())(
@@ -2360,7 +2077,7 @@ describe("effect-aware command permissions", () => {
     async () => {
       const root = createIsolatedRoot();
       const callIds = Array.from({ length: 10 }, (_, index) => `command_${index + 1}`);
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCalls("pwd", callIds),
         finalText("repetition batch complete"),
       ]);
@@ -2369,13 +2086,13 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
+        env: codexEnv(root, codex, {
           PATH: hostilePath(root),
-          FX_PERMISSION_MODE: "yolo",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "core",
+          FIBER_PERMISSION_MODE: "yolo",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "core",
         }),
         stderrPath,
         width: 120,
@@ -2387,9 +2104,9 @@ describe("effect-aware command permissions", () => {
 
       expect(pane).not.toContain(COMMAND_APPROVAL_PROMPT);
       expect(pane).not.toContain("Guarding repeated");
-      expect(gateway.requests).toHaveLength(2);
-      expectOrdinaryToolResults(gateway.requests[1].body, callIds);
-      expect(gateway.requests[1].body).not.toContain("Agent stopped:");
+      expect(codex.requests).toHaveLength(2);
+      expectOrdinaryToolResults(codex.requests[1].body, callIds);
+      expect(codex.requests[1].body).not.toContain("Agent stopped:");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(existsSync(root.profileMarker)).toBe(true);
       expectNoHostileExecutables(root);
@@ -2404,28 +2121,28 @@ describe("effect-aware command permissions", () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "held-review-must-not-run.txt");
       const command = `printf cancelled > ${JSON.stringify(marker)}`;
-      let releaseClassifier!: (response: Response) => void;
-      const heldClassifier = new Promise<Response>((resolve) => {
+      let releaseClassifier!: (response: string) => void;
+      const heldClassifier = new Promise<string>((resolve) => {
         releaseClassifier = resolve;
       });
-      const gateway = startFakeGateway(
+      const codex = startFakeGateway(
         [
           toolCall(command),
           finalText("follow-up after review cancellation"),
         ],
-        { classifierResponses: [() => heldClassifier] },
+        [() => heldClassifier],
       );
       const tracePath = join(root.root, "trace.log");
       const stderrPath = join(root.root, "stderr.log");
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "auto",
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "permission,interrupt",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "permission,interrupt",
         }),
         stderrPath,
         width: 120,
@@ -2434,10 +2151,10 @@ describe("effect-aware command permissions", () => {
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the held automatic review fixture.");
       const reviewDeadline = Date.now() + TIMEOUT;
-      while (gateway.classifierRequests.length === 0 && Date.now() < reviewDeadline) {
+      while (codex.reviewRequests.length === 0 && Date.now() < reviewDeadline) {
         await Bun.sleep(10);
       }
-      expect(gateway.classifierRequests).toHaveLength(1);
+      expect(codex.reviewRequests).toHaveLength(1);
 
       await activeSession.sendKeys("Escape");
       const cancelDeadline = Date.now() + TIMEOUT;
@@ -2448,7 +2165,7 @@ describe("effect-aware command permissions", () => {
         await Bun.sleep(10);
       }
       expect(readFileSync(tracePath, "utf8")).toContain("fallback_reason=Cancelled");
-      releaseClassifier(permissionDecision("clear"));
+      releaseClassifier(reviewDecision("clear", "permission_decision_1"));
       expect(existsSync(marker)).toBe(false);
 
       await activeSession.sendText("Confirm the next prompt works.");
@@ -2457,8 +2174,8 @@ describe("effect-aware command permissions", () => {
         TIMEOUT,
       );
       expect(pane).toContain("┃");
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.classifierRequests).toHaveLength(1);
+      expect(codex.requests).toHaveLength(2);
+      expect(codex.reviewRequests).toHaveLength(1);
       expect(readFileSync(tracePath, "utf8")).not.toContain("decision=clear");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
@@ -2471,19 +2188,19 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "default fx ask defaults missing permission mode to auto",
+    "default fiber ask defaults missing permission mode to auto",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "ask-turn-default-auto.txt");
       const command = `printf ask-turn-auto > ${JSON.stringify(marker)}`;
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall(command),
         finalText("ask turn default auto complete"),
       ]);
 
       const result = await runFx(["ask", "Create the marker."], {
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
+        env: codexEnv(root, codex, {
         }),
         timeoutMs: TIMEOUT,
       });
@@ -2492,24 +2209,24 @@ describe("effect-aware command permissions", () => {
       expect(result.stdout).toContain("ask turn default auto complete");
       expect(result.stderr).not.toContain("permission required");
       expect(existsSync(marker)).toBe(true);
-      expect(gateway.requests).toHaveLength(2);
+      expect(codex.requests).toHaveLength(2);
     },
     TIMEOUT,
   );
 
   test(
-    "fx ask yolo returns repeated user-profile command results to the model",
+    "fiber ask yolo returns repeated user-profile command results to the model",
     async () => {
       const root = createIsolatedRoot();
       const callIds = ["direct_1", "direct_2", "direct_3"];
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCalls("pwd", callIds),
         finalText("direct repetition complete"),
       ]);
 
-      const result = await runFx(["ask", "--yolo", "Run pwd until you can answer."], {
+      const result = await runFx(["ask", "--permission-mode", "yolo", "Run pwd until you can answer."], {
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
+        env: codexEnv(root, codex, {
           PATH: hostilePath(root),
         }),
         timeoutMs: TIMEOUT,
@@ -2518,9 +2235,9 @@ describe("effect-aware command permissions", () => {
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("direct repetition complete");
       expect(result.stderr).toContain("Running pwd");
-      expect(gateway.requests).toHaveLength(2);
-      expectOrdinaryToolResults(gateway.requests[1].body, callIds);
-      expect(gateway.requests[1].body).not.toContain("Agent stopped:");
+      expect(codex.requests).toHaveLength(2);
+      expectOrdinaryToolResults(codex.requests[1].body, callIds);
+      expect(codex.requests[1].body).not.toContain("Agent stopped:");
       expect(existsSync(root.profileMarker)).toBe(true);
       expectNoHostileExecutables(root);
       expectNoCommandArtifacts(root);
@@ -2529,10 +2246,10 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask yolo completes more than ten serial user-profile commands when unlimited",
+    "fiber ask yolo completes more than ten serial user-profile commands when unlimited",
     async () => {
       const root = createIsolatedRoot();
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         ...Array.from(
           { length: 11 },
           (_, index) => toolCall("pwd", {}, `direct_${index + 1}`),
@@ -2540,9 +2257,9 @@ describe("effect-aware command permissions", () => {
         finalText("direct unlimited complete"),
       ]);
 
-      const result = await runFx(["ask", "--yolo", "Run pwd until you can answer."], {
+      const result = await runFx(["ask", "--permission-mode", "yolo", "Run pwd until you can answer."], {
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
+        env: codexEnv(root, codex, {
           PATH: hostilePath(root),
         }),
         timeoutMs: TIMEOUT,
@@ -2551,7 +2268,7 @@ describe("effect-aware command permissions", () => {
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("direct unlimited complete");
       expect(result.stderr).toContain("Running pwd");
-      expect(gateway.requests).toHaveLength(12);
+      expect(codex.requests).toHaveLength(12);
       expect(existsSync(root.profileMarker)).toBe(true);
       expectNoHostileExecutables(root);
       expectNoCommandArtifacts(root);
@@ -2570,16 +2287,16 @@ describe("effect-aware command permissions", () => {
         { length: 80 },
         (_, index) => `${markerPrefix}${String(index + 1).padStart(2, "0")}`,
       );
-      const gateway = startFakeGateway([finalText(expectedMarkers.join("\n"))]);
+      const codex = startFakeGateway([finalText(expectedMarkers.join("\n"))]);
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: undefined,
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "scroll,frame_commit",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: undefined,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "scroll,frame_commit",
         }),
         stderrPath,
         width: 120,
@@ -2587,10 +2304,10 @@ describe("effect-aware command permissions", () => {
         minimumHistoryLines: 1_000,
       });
 
-      await activeSession.waitForText("auto · gpt-5", TIMEOUT);
+      await activeSession.waitForText("auto · gpt-5.6-luna", TIMEOUT);
       await activeSession.sendText("Render the fixed scrollback fixture.");
       await activeSession.waitForText(expectedMarkers.at(-1)!, TIMEOUT);
-      expect(gateway.requests).toHaveLength(1);
+      expect(codex.requests).toHaveLength(1);
 
       const extractMarkers = (scrollback: string) =>
         [...scrollback.matchAll(/PERMISSIONS_SCROLLBACK_LINE_\d{2}/g)].map(
@@ -2618,7 +2335,7 @@ describe("effect-aware command permissions", () => {
 
       await activeSession.sendText("/permissions ask");
       await activeSession.waitForText("mode set to ask", TIMEOUT);
-      await activeSession.waitForText("ask · gpt-5", TIMEOUT);
+      await activeSession.waitForText("ask · gpt-5.6-luna", TIMEOUT);
 
       const commandTrace = await waitForTraceSlice(
         tracePath,
@@ -2666,9 +2383,9 @@ describe("effect-aware command permissions", () => {
       expect(dismissalPlan).toContain("semantic_rows=0 planned_rows=0");
       expect(dismissalPlan).toContain("geometry_rebase=true");
       expect(commandTrace).toContain("transcript_projection_history_floor");
-      expect(JSON.parse(readFileSync(join(root.home, ".fx", "settings.json"), "utf8")).permission_mode)
+      expect(JSON.parse(readFileSync(join(root.home, ".fiber", "settings.json"), "utf8")).permission_mode)
         .toBe("ask");
-      expect(gateway.requests).toHaveLength(1);
+      expect(codex.requests).toHaveLength(1);
       expect(activeSession.isAlive()).toBe(true);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     },
@@ -2687,38 +2404,44 @@ describe("effect-aware command permissions", () => {
       const commandId = "direct_child_command";
       writeFileSync(stderrPath, "");
 
-      const gateway = startDynamicFakeGateway((body) => {
-        if (body.includes(`\"toolCallId\":\"${commandId}\"`)) {
-          return finalText("CHILD_PERMISSION_DENIED");
-        }
-        if (body.includes(`\"toolCallId\":\"${createId}\"`)) {
-          const created = JSON.parse(toolResultText(body, createId)) as {
-            ok: boolean;
-            result?: string;
-          };
-          expect(created.ok).toBe(true);
-          expect(created.result).toContain("CHILD_PERMISSION_DENIED");
-          expect(toolResultText(body, createId)).not.toContain("child_id");
-          return finalText("PARENT_OBSERVED_CHILD_DENIAL");
-        }
-        if (currentUserText(body).includes(childPrompt)) {
-          expect(body).not.toContain('"name":"subagent"');
-          return toolCall(`/usr/bin/touch ${shellQuote(markerPath)}`, {}, commandId);
-        }
-        if (currentUserText(body).includes(rootPrompt)) {
-          return gatewayToolCall("subagent", {
-            request: { action: "run", task: childPrompt },
-          }, createId);
-        }
-        throw new Error(`Unexpected direct child approval request: ${body}`);
+      const codex = startFakeCodex({
+        route: (body: string) => {
+          const outputs = codexInputItems(body).filter(
+            (item) => item.type === "function_call_output",
+          );
+          if (outputs.some((item) => item.call_id === commandId)) {
+            return finalText("CHILD_PERMISSION_DENIED");
+          }
+          if (outputs.some((item) => item.call_id === createId)) {
+            const created = JSON.parse(toolResultText(body, createId)) as {
+              ok: boolean;
+              result?: string;
+            };
+            expect(created.ok).toBe(true);
+            expect(created.result).toContain("CHILD_PERMISSION_DENIED");
+            expect(toolResultText(body, createId)).not.toContain("child_id");
+            return finalText("PARENT_OBSERVED_CHILD_DENIAL");
+          }
+          if (currentUserText(body).includes(childPrompt)) {
+            expect(body).not.toContain('"name":"subagent"');
+            return toolCall(`/usr/bin/touch ${shellQuote(markerPath)}`, {}, commandId);
+          }
+          if (currentUserText(body).includes(rootPrompt)) {
+            return codexToolCall(createId, "subagent", {
+              action: "run",
+              task: childPrompt,
+            });
+          }
+          throw new Error(`Unexpected direct child approval request: ${body}`);
+        },
       });
-      gateways.push(gateway);
+      codexes.push(codex);
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath,
         width: 120,
@@ -2750,14 +2473,14 @@ describe("effect-aware command permissions", () => {
         finalText("permission resume seed complete"),
       ]);
 
-      await harness.initialSession.waitForText("auto · gpt-5", TIMEOUT);
+      await harness.initialSession.waitForText("auto · gpt-5.6-luna", TIMEOUT);
       await harness.initialSession.sendText("Save a turn before changing permission mode.");
       await harness.initialSession.waitForText("permission resume seed complete", TIMEOUT);
-      expect(harness.initialGateway.requests).toHaveLength(1);
+      expect(harness.initialCodex.requests).toHaveLength(1);
 
       await harness.initialSession.sendText("/permissions ask");
       await harness.initialSession.waitForText("mode set to ask", TIMEOUT);
-      await harness.initialSession.waitForText("ask · gpt-5", TIMEOUT);
+      await harness.initialSession.waitForText("ask · gpt-5.6-luna", TIMEOUT);
       const initialScrollback = await harness.initialSession.captureFullScrollback();
       expect(initialScrollback).toContain("permission resume seed complete");
       expect(initialScrollback).toContain("mode set to ask");
@@ -2768,17 +2491,17 @@ describe("effect-aware command permissions", () => {
         finalText("permission resume denial complete"),
       ]);
       await resumed.session.waitForText("● Session resumed", TIMEOUT);
-      await resumed.session.waitForText("ask · gpt-5", TIMEOUT);
+      await resumed.session.waitForText("ask · gpt-5.6-luna", TIMEOUT);
       await resumed.session.sendText("Create the marker after resuming.");
 
       const approvalPane = await resumed.session.waitForText(COMMAND_APPROVAL_PROMPT, TIMEOUT);
       expect(approvalPane).toContain("touch must-not-exist");
-      expect(resumed.gateway.requests).toHaveLength(1);
+      expect(resumed.codex.requests).toHaveLength(1);
       expect(existsSync(harness.markerPath)).toBe(false);
 
       await resumed.session.sendKeys("3");
       await resumed.session.waitForText("permission resume denial complete", TIMEOUT);
-      expect(resumed.gateway.requests).toHaveLength(2);
+      expect(resumed.codex.requests).toHaveLength(2);
       expect(existsSync(harness.markerPath)).toBe(false);
       expect(harness.readSettings().permission_mode).toBe("ask");
       expect(readFileSync(harness.initialStderrPath, "utf8")).toBe("");
@@ -2797,7 +2520,7 @@ describe("effect-aware command permissions", () => {
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "must-not-exist");
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall("touch must-not-exist"),
         finalText("denial complete"),
       ]);
@@ -2805,10 +2528,10 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath,
         width: 120,
@@ -2821,14 +2544,14 @@ describe("effect-aware command permissions", () => {
       expect(approvalPane).toContain("2. Yes, and don't ask again");
       expect(approvalPane).toContain("3. No");
       expect(approvalPane).toContain("touch must-not-exist");
-      expect(gateway.requests).toHaveLength(1);
+      expect(codex.requests).toHaveLength(1);
       expect(existsSync(marker)).toBe(false);
 
       await activeSession.sendKeys("3");
       const finalPane = await activeSession.waitForText("denial complete", TIMEOUT);
 
       expect(finalPane).toContain("denial complete");
-      expect(gateway.requests).toHaveLength(2);
+      expect(codex.requests).toHaveLength(2);
       expect(existsSync(marker)).toBe(false);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expectNoHostileExecutables(root);
@@ -2841,7 +2564,7 @@ describe("effect-aware command permissions", () => {
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "allowed-once");
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall("touch allowed-once"),
         finalText("one-time approval complete"),
       ]);
@@ -2849,10 +2572,10 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath,
         width: 120,
@@ -2868,7 +2591,7 @@ describe("effect-aware command permissions", () => {
       await activeSession.waitForText("one-time approval complete", TIMEOUT);
 
       expect(existsSync(marker)).toBe(true);
-      expect(gateway.requests).toHaveLength(2);
+      expect(codex.requests).toHaveLength(2);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expectNoHostileExecutables(root);
     },
@@ -2889,10 +2612,10 @@ describe("effect-aware command permissions", () => {
       writeFileSync(foregroundStderr, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: foregroundRoot.workspace,
-        env: gatewayEnv(foregroundRoot, foregroundGateway, {
-          FX_PERMISSION_MODE: "ask",
+        env: codexEnv(foregroundRoot, foregroundGateway, {
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath: foregroundStderr,
         width: 120,
@@ -2933,7 +2656,7 @@ describe("effect-aware command permissions", () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "allowed-always");
       const changedMarker = join(root.workspace, "allowed-always-changed");
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall("touch allowed-always", {}, "always_command_1"),
         finalText("first always approval complete"),
         toolCall("touch allowed-always", {}, "always_command_2"),
@@ -2945,10 +2668,10 @@ describe("effect-aware command permissions", () => {
       writeFileSync(stderrPath, "");
 
       activeSession = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_PERMISSION_MODE: "ask",
+        env: codexEnv(root, codex, {
+          FIBER_PERMISSION_MODE: "ask",
         }),
         stderrPath,
         width: 120,
@@ -2981,7 +2704,7 @@ describe("effect-aware command permissions", () => {
       await activeSession.waitForText("changed command approval complete", TIMEOUT);
 
       expect(existsSync(changedMarker)).toBe(true);
-      expect(gateway.requests).toHaveLength(6);
+      expect(codex.requests).toHaveLength(6);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expectNoHostileExecutables(root);
     },
@@ -2989,19 +2712,19 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask yolo executes pwd through the default user profile with process-scoped replay",
+    "fiber ask yolo executes pwd through the default user profile with process-scoped replay",
     async () => {
       const root = createIsolatedRoot();
-      const gateway = startFakeGateway([toolCall("pwd"), finalText("ask direct complete")]);
+      const codex = startFakeGateway([toolCall("pwd"), finalText("ask direct complete")]);
       const tracePath = join(root.root, "trace.log");
       const result = await runFx(
-        ["ask", "--yolo", "--quiet", "--json", "--no-save", "Run pwd once."],
+        ["ask", "--permission-mode", "yolo", "--quiet", "--json", "--no-save", "Run pwd once."],
         {
           cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
+          env: codexEnv(root, codex, {
             PATH: hostilePath(root),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "core",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "core",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3010,19 +2733,19 @@ describe("effect-aware command permissions", () => {
       expect(result.code).toBe(0);
       expect(result.stderr).toContain("Running pwd");
       expect(result.stderr.toLowerCase()).not.toContain("error");
-      expect(JSON.parse(toolResultText(gateway.requests[1].body, "command_1"))).toMatchObject({
+      expect(JSON.parse(toolResultText(codex.requests[1].body, "command_1"))).toMatchObject({
         state: "completed",
         output_delta: `${root.workspace}\n`,
         exit_code: 0,
       });
-      const json = JSON.parse(result.stdout.trim()) as any;
+      const json = parseFxJson(result);
       expect(json.tool_calls).toHaveLength(1);
       expect(json.tool_calls[0].name).toBe("shell");
       expect(json.tool_calls[0].status).toBe("success");
       expect(json.tool_calls[0].command_result.command).toBe("pwd");
       expect(json.tool_calls[0].command_result.cwd).toBe(root.workspace);
       expect(json.tool_calls[0].command_result.output_file).toMatch(
-        /^fx-command-replay-[a-f0-9-]+\.bin$/,
+        /^fiber-command-replay-[a-f0-9-]+\.bin$/,
       );
       expectUserProfileTrace(tracePath);
       expect(existsSync(root.profileMarker)).toBe(true);
@@ -3033,12 +2756,12 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask defaults missing permission mode to auto through the classifier",
+    "fiber ask defaults missing permission mode to auto through the classifier",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-accepted.txt");
       const command = `printf 'classifier\\n' >> ${JSON.stringify(marker)}`;
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall(command),
         finalText("classifier accept complete"),
       ]);
@@ -3048,9 +2771,9 @@ describe("effect-aware command permissions", () => {
         ["ask", "--quiet", "--json", "--no-save", "Run the classifier fixture."],
         {
           cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+          env: codexEnv(root, codex, {
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3061,53 +2784,36 @@ describe("effect-aware command permissions", () => {
       expect(result.stderr).not.toContain("permission required");
       expect(existsSync(marker)).toBe(true);
       expect(readFileSync(marker, "utf8")).toBe("classifier\n");
-      const json = JSON.parse(result.stdout.trim()) as any;
+      const json = parseFxJson(result);
       expect(json.output).toContain("classifier accept complete");
       expect(json.tool_calls).toContainEqual(
         expect.objectContaining({ name: "shell", status: "success" }),
       );
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.classifierRequests).toHaveLength(1);
-      expect(gateway.classifierRequests[0]!.headers.get("ai-language-model-id")).toBe(
-        "moonshotai/kimi-k3",
-      );
-      expect(JSON.parse(gateway.classifierRequests[0]!.body)).not.toHaveProperty(
-        "providerOptions.gateway.speed",
-      );
-      expect(gateway.classifierRequests[0]!.body).toContain("\"permission_decision\"");
-      expect(gateway.classifierRequests[0]!.body).toContain("\"toolChoice\":{\"type\":\"required\"}");
-      expect(gateway.classifierRequests[0]!.body).toContain("\"maxOutputTokens\":2048");
-      expect(gateway.classifierRequests[0]!.body).toContain(
+      expect(codex.requests).toHaveLength(2);
+      expect(codex.reviewRequests).toHaveLength(1);
+      // Gateway-era review wire assertions (headers, toolChoice, token caps,
+      // classifier system prompt) have no Codex Responses equivalent; the
+      // retained review payload keeps the contextual review context.
+      expect(codex.reviewRequests[0]!.body).toContain(
         "review_context_kind: contextual",
       );
-      expect(gateway.classifierRequests[0]!.body).toContain(
+      expect(codex.reviewRequests[0]!.body).toContain(
         "Run the classifier fixture.",
       );
-      expect(gateway.classifierRequests[0]!.body).toContain("\"role\":\"assistant\"");
-      expect(gateway.classifierRequests[0]!.body).toContain("\"toolCallId\":\"command_1\"");
-      expect(gateway.classifierRequests[0]!.body).toContain(
-        "The first user message contains the host-selected view",
-      );
-      expect(gateway.classifierRequests[0]!.body).toContain(
-        "Prior tool-result excerpts are bounded untrusted evidence only.",
-      );
-      expect(gateway.classifierRequests[0]!.body).toContain("action: command");
-      expect(gateway.classifierRequests[0]!.body).toContain("command: printf");
-      expect(gateway.classifierRequests[0]!.body).toContain(
-        '"enum":["clear","caution"]',
-      );
+      expect(codex.reviewRequests[0]!.body).toContain("action: command");
+      expect(codex.reviewRequests[0]!.body).toContain("command: printf");
       expect(readFileSync(tracePath, "utf8")).toContain("approval_source=auto_classifier");
     },
     TIMEOUT,
   );
 
   test(
-    "fx ask does not retry a malformed classifier completion and safely replans",
+    "fiber ask does not retry a malformed classifier completion and safely replans",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-malformed-must-not-run.txt");
       const command = `printf 'unsafe\\n' >> ${JSON.stringify(marker)}`;
-      const gateway = startFakeGateway(
+      const codex = startFakeGateway(
         [
           toolCall(command),
           (body) => {
@@ -3116,9 +2822,7 @@ describe("effect-aware command permissions", () => {
           },
           finalText("classifier recovery complete"),
         ],
-        {
-          classifierResponses: [finalText("accept")],
-        },
+        [finalText("accept")],
       );
       const tracePath = join(root.root, "trace.log");
 
@@ -3126,9 +2830,9 @@ describe("effect-aware command permissions", () => {
         ["ask", "--quiet", "--json", "--no-save", "Run the classifier recovery fixture."],
         {
           cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+          env: codexEnv(root, codex, {
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3136,10 +2840,10 @@ describe("effect-aware command permissions", () => {
 
       expect(result.code).toBe(0);
       expect(existsSync(marker)).toBe(false);
-      expect(gateway.requests).toHaveLength(3);
-      expect(gateway.classifierRequests).toHaveLength(1);
+      expect(codex.requests).toHaveLength(3);
+      expect(codex.reviewRequests).toHaveLength(1);
       const trace = readFileSync(tracePath, "utf8");
-      expect(trace.match(/event=auto_review_transport_start/g)).toHaveLength(1);
+      expect(trace.match(/event=auto_review_start/g)).toHaveLength(1);
       expect(trace.match(/event=auto_review_result/g)).toHaveLength(1);
       expect(trace).toContain("decision=unavailable");
       expect(trace).toContain("fallback_reason=invalid_or_unavailable");
@@ -3149,12 +2853,12 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask returns one malformed classifier completion to the agent without execution",
+    "fiber ask returns one malformed classifier completion to the agent without execution",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-fallback-must-not-exist.txt");
       const command = `printf fallback > ${JSON.stringify(marker)}`;
-      const gateway = startFakeGateway(
+      const codex = startFakeGateway(
         [
           toolCall(command),
           (body) => {
@@ -3162,7 +2866,7 @@ describe("effect-aware command permissions", () => {
             return finalText("classifier fallback handled");
           },
         ],
-        { classifierResponses: [finalText("accept")] },
+        [finalText("accept")],
       );
       const tracePath = join(root.root, "trace.log");
 
@@ -3170,9 +2874,9 @@ describe("effect-aware command permissions", () => {
         ["ask", "--quiet", "--json", "--no-save", "Run the classifier fallback fixture."],
         {
           cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+          env: codexEnv(root, codex, {
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3181,10 +2885,10 @@ describe("effect-aware command permissions", () => {
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("classifier fallback handled");
       expect(existsSync(marker)).toBe(false);
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.classifierRequests).toHaveLength(1);
+      expect(codex.requests).toHaveLength(2);
+      expect(codex.reviewRequests).toHaveLength(1);
       const trace = readFileSync(tracePath, "utf8");
-      expect(trace.match(/event=auto_review_transport_start/g)).toHaveLength(1);
+      expect(trace.match(/event=auto_review_start/g)).toHaveLength(1);
       expect(trace.match(/event=auto_review_result/g)).toHaveLength(1);
       expect(trace).toContain("decision=unavailable");
       expect(trace).toContain("fallback_reason=invalid_or_unavailable");
@@ -3194,77 +2898,28 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask provider failure never executes or enters malformed recovery",
-    async () => {
-      const root = createIsolatedRoot();
-      const marker = join(root.workspace, "classifier-provider-must-not-exist.txt");
-      const command = `printf provider > ${JSON.stringify(marker)}`;
-      const gateway = startFakeGateway(
-        [
-          toolCall(command),
-          (body) => {
-            expect(body).toContain("review_unavailable");
-            return finalText("provider failure handled");
-          },
-        ],
-        {
-          classifierResponses: Array.from(
-            { length: 1 },
-            () => new Response("provider unavailable", { status: 502 }),
-          ),
-        },
-      );
-      const tracePath = join(root.root, "trace.log");
-
-      const result = await runFx(
-        ["ask", "--quiet", "--json", "--no-save", "Run the provider failure fixture."],
-        {
-          cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
-          }),
-          timeoutMs: TIMEOUT,
-        },
-      );
-
-      expect(result.code).toBe(0);
-      expect(result.stdout).toContain("provider failure handled");
-      expect(existsSync(marker)).toBe(false);
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.classifierRequests).toHaveLength(1);
-      const trace = readFileSync(tracePath, "utf8");
-      expect(trace.match(/event=auto_review_transport_start/g)).toHaveLength(1);
-      expect(trace.match(/event=auto_review_result/g)).toHaveLength(1);
-      expect(trace).toContain("decision=unavailable");
-      expect(trace).toContain("fallback_reason=invalid_or_unavailable");
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "fx ask SIGINT during classifier wait terminates before decision or execution",
+    "fiber ask SIGINT during classifier wait terminates before decision or execution",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "classifier-cancel-must-not-exist.txt");
       const command = `printf cancelled > ${JSON.stringify(marker)}`;
-      let releaseClassifier!: (response: Response) => void;
-      const heldClassifier = new Promise<Response>((resolve) => {
+      let releaseClassifier!: (response: string) => void;
+      const heldClassifier = new Promise<string>((resolve) => {
         releaseClassifier = resolve;
       });
-      const gateway = startFakeGateway(
+      const codex = startFakeGateway(
         [toolCall(command)],
-        { classifierResponses: [() => heldClassifier] },
+        [() => heldClassifier],
       );
       const tracePath = join(root.root, "trace.log");
       const child = nodeSpawn(
-        FX_BIN,
+        FIBER_BIN,
         ["ask", "--quiet", "--json", "--no-save", "Run the classifier cancellation fixture."],
         {
           cwd: root.workspace,
-          env: definedEnv(gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission,stream",
+          env: definedEnv(codexEnv(root, codex, {
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission,stream",
           })),
           stdio: ["pipe", "pipe", "pipe"],
         },
@@ -3280,16 +2935,16 @@ describe("effect-aware command permissions", () => {
       );
       try {
         const requestDeadline = Date.now() + TIMEOUT;
-        while (gateway.classifierRequests.length === 0 && Date.now() < requestDeadline) {
+        while (codex.reviewRequests.length === 0 && Date.now() < requestDeadline) {
           await Bun.sleep(10);
         }
-        expect(gateway.classifierRequests).toHaveLength(1);
+        expect(codex.reviewRequests).toHaveLength(1);
 
         expect(child.kill("SIGINT")).toBe(true);
         const result = await Promise.race([
           closed,
           Bun.sleep(2_000).then(() => {
-            throw new Error("fx did not exit on SIGINT while the classifier remained blocked");
+            throw new Error("fiber did not exit on SIGINT while the classifier remained blocked");
           }),
         ]);
         expect(result).toEqual({ code: null, signal: "SIGINT" });
@@ -3300,8 +2955,8 @@ describe("effect-aware command permissions", () => {
         expect(stderr).not.toContain("Auto agent couldn’t approve because");
         expect(stderr).not.toContain("permission required");
         expect(existsSync(marker)).toBe(false);
-        expect(gateway.requests).toHaveLength(1);
-        expect(gateway.classifierRequests).toHaveLength(1);
+        expect(codex.requests).toHaveLength(1);
+        expect(codex.reviewRequests).toHaveLength(1);
         const trace = readFileSync(tracePath, "utf8");
         expect(trace).not.toContain("decision=clear");
         expect(trace).toContain("decision=cancelled_or_error");
@@ -3313,14 +2968,14 @@ describe("effect-aware command permissions", () => {
           child.kill("SIGKILL");
           await Promise.race([closed, Bun.sleep(1_000)]);
         }
-        releaseClassifier(permissionDecision("clear"));
+        releaseClassifier(reviewDecision("clear", "permission_decision_1"));
       }
     },
     TIMEOUT,
   );
 
   test(
-    "fx ask automatic review receives the exact delegated command",
+    "fiber ask automatic review receives the exact delegated command",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "delegated-agent-ran.txt");
@@ -3332,7 +2987,7 @@ describe("effect-aware command permissions", () => {
       );
       chmodSync(claudePath, 0o755);
       const command = `claude -p ${JSON.stringify(prompt)}`;
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall(command),
         finalText("delegated classifier complete"),
       ]);
@@ -3342,10 +2997,10 @@ describe("effect-aware command permissions", () => {
         ["ask", "--quiet", "--json", "--no-save", "Ask Claude to create the requested Desktop note."],
         {
           cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
+          env: codexEnv(root, codex, {
             PATH: hostilePath(root),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "permission",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "permission",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3354,21 +3009,21 @@ describe("effect-aware command permissions", () => {
       expect(result.code).toBe(0);
       expect(result.stderr).not.toContain("permission required");
       expect(readFileSync(marker, "utf8")).toContain(`-p ${prompt}`);
-      const json = JSON.parse(result.stdout.trim()) as any;
+      const json = parseFxJson(result);
       expect(json.output).toContain("delegated classifier complete");
       expect(json.tool_calls).toContainEqual(
         expect.objectContaining({ name: "shell", status: "success" }),
       );
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.classifierRequests).toHaveLength(1);
-      expect(gateway.classifierRequests[0]!.body).toContain(
+      expect(codex.requests).toHaveLength(2);
+      expect(codex.reviewRequests).toHaveLength(1);
+      expect(codex.reviewRequests[0]!.body).toContain(
         "review_context_kind: contextual",
       );
-      expect(gateway.classifierRequests[0]!.body).toContain(
+      expect(codex.reviewRequests[0]!.body).toContain(
         "Ask Claude to create the requested Desktop note.",
       );
-      expect(gateway.classifierRequests[0]!.body).toContain("action: command");
-      expect(gateway.classifierRequests[0]!.body).toContain(
+      expect(codex.reviewRequests[0]!.body).toContain("action: command");
+      expect(codex.reviewRequests[0]!.body).toContain(
         "command: claude -p \\\"Create the requested Desktop note.\\\"",
       );
       expect(readFileSync(tracePath, "utf8")).toContain("approval_source=auto_classifier");
@@ -3377,43 +3032,43 @@ describe("effect-aware command permissions", () => {
   );
 
   test.skipIf(!tmuxAvailable())(
-    "fx ask terminal automatic caution returns advice without prompting",
+    "fiber ask terminal automatic caution returns advice without prompting",
     async () => {
       const root = createIsolatedRoot();
-      const marker = join(root.workspace, "fx-ask-prompt-approved.txt");
+      const marker = join(root.workspace, "fiber-ask-prompt-approved.txt");
       const command = `printf approved > ${JSON.stringify(marker)}`;
-      const gateway = startFakeGateway(
+      const codex = startFakeGateway(
         [
           toolCall(command),
-          finalText("fx ask prompt complete"),
+          finalText("fiber ask prompt complete"),
         ],
-        { classifierDecision: "caution" },
+        [reviewDecision("caution", "permission_decision_1")],
       );
       const tracePath = join(root.root, "trace.log");
 
       activeSession = await TmuxSession.create({
-        cmd: `${shellQuote(FX_BIN)} ask --auto --no-save ${shellQuote("Run the one-shot prompt fixture.")}`,
+        cmd: `${shellQuote(FIBER_BIN)} ask --permission-mode auto --no-save ${shellQuote("Run the one-shot prompt fixture.")}`,
         cwd: root.workspace,
-        env: gatewayEnv(root, gateway, {
-          FX_TRACE_LOG: tracePath,
-          FX_TRACE_SCOPES: "permission",
+        env: codexEnv(root, codex, {
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "permission",
           TMPDIR: root.root,
         }),
         width: 120,
         height: 40,
         remainOnExit: true,
       });
-      const finalPane = await activeSession.waitForText("fx ask prompt complete", TIMEOUT);
+      const finalPane = await activeSession.waitForText("fiber ask prompt complete", TIMEOUT);
       expect(finalPane).not.toContain("Approve? [y/N]");
       expect(finalPane).not.toContain("Auto agent denied");
       expect(existsSync(marker)).toBe(false);
-      expect(gateway.classifierRequests).toHaveLength(1);
+      expect(codex.reviewRequests).toHaveLength(1);
       expect(readFileSync(tracePath, "utf8")).toContain("event=auto_review_result");
       expect(readFileSync(tracePath, "utf8")).toContain("decision=caution");
       expect(existsSync(marker)).toBe(false);
-      expect(gateway.requests).toHaveLength(2);
-      expect(gateway.requests[1]!.body).toContain("review_caution");
-      expect(gateway.requests[1]!.body).not.toContain("user_denied");
+      expect(codex.requests).toHaveLength(2);
+      expect(codex.requests[1]!.body).toContain("review_caution");
+      expect(codex.requests[1]!.body).not.toContain("user_denied");
       expect(readFileSync(tracePath, "utf8")).not.toContain("approval_source=interactive_once");
 
       await activeSession.kill();
@@ -3423,7 +3078,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask and ACP send large automatic review packets before execution",
+    "fiber ask sends large automatic review packets before execution",
     async () => {
       const cliRoot = createIsolatedRoot();
       const cliMarker = "large-cli-marker";
@@ -3433,10 +3088,10 @@ describe("effect-aware command permissions", () => {
         finalText("large CLI complete"),
       ]);
       const cliResult = await runFx(
-        ["ask", "--auto", "--quiet", "--json", "Run the large CLI fixture."],
+        ["ask", "--permission-mode", "auto", "--quiet", "--json", "Run the large CLI fixture."],
         {
           cwd: cliRoot.workspace,
-          env: gatewayEnv(cliRoot, cliGateway),
+          env: codexEnv(cliRoot, cliGateway),
           timeoutMs: TIMEOUT,
         },
       );
@@ -3444,7 +3099,7 @@ describe("effect-aware command permissions", () => {
       expect(cliResult.code).toBe(0);
       expect(cliResult.stderr).not.toContain("permission required");
       expect(cliResult.stderr).not.toContain("integer does not fit in destination type");
-      const cliJson = JSON.parse(cliResult.stdout.trim()) as any;
+      const cliJson = parseFxJson(cliResult);
       expect(cliJson.output).toContain("large CLI complete");
       expect(cliJson.tool_calls).toHaveLength(1);
       expect(cliJson.tool_calls).toContainEqual(
@@ -3452,9 +3107,9 @@ describe("effect-aware command permissions", () => {
       );
       expect(existsSync(join(cliRoot.workspace, cliMarker))).toBe(true);
       expect(cliGateway.requests).toHaveLength(2);
-      expect(cliGateway.classifierRequests).toHaveLength(1);
+      expect(cliGateway.reviewRequests).toHaveLength(1);
       expect(
-        Buffer.byteLength(cliGateway.classifierRequests[0]!.body),
+        Buffer.byteLength(cliGateway.reviewRequests[0]!.body),
       ).toBeGreaterThan(16 * 1024);
       await expectSavedShellRun(
         cliRoot,
@@ -3462,63 +3117,31 @@ describe("effect-aware command permissions", () => {
         cliCommand,
         "success",
       );
-
-      const acpRoot = createIsolatedRoot();
-      const acpMarker = "large-acp-marker";
-      const acpCommand = largeEffectfulCommand(acpMarker);
-      const acpGateway = startFakeGateway([
-        toolCall(acpCommand),
-        finalText("large ACP complete"),
-      ]);
-      activeClient = AcpClient.create(acpRoot.workspace, gatewayEnv(acpRoot, acpGateway));
-      await startAcpSession(activeClient, "code");
-      const acpMessages = await runAcpPrompt(activeClient, "Run the large ACP fixture.");
-      await activeClient.close();
-      activeClient = null;
-
-      const serialized = JSON.stringify(acpMessages);
-      expect(serialized).toContain("large ACP complete");
-      expect(serialized).not.toContain("permission_required");
-      expect(serialized).not.toContain("integer does not fit in destination type");
-      expect((serialized.match(/\"status\":\"failed\"/g) ?? [])).toHaveLength(0);
-      expect((serialized.match(/\"status\":\"completed\"/g) ?? [])).toHaveLength(1);
-      expect(existsSync(join(acpRoot.workspace, acpMarker))).toBe(true);
-      expect(acpGateway.requests).toHaveLength(2);
-      expect(acpGateway.classifierRequests).toHaveLength(1);
-      expect(
-        Buffer.byteLength(acpGateway.classifierRequests[0]!.body),
-      ).toBeGreaterThan(16 * 1024);
-      await expectSavedShellRun(
-        acpRoot,
-        sessionIdFromHome(acpRoot),
-        acpCommand,
-        "success",
-      );
     },
     90_000,
   );
 
   test(
-    "fx ask projects hostile ls filenames through the default user profile",
+    "fiber ask projects hostile ls filenames through the default user profile",
     async () => {
       const root = createIsolatedRoot();
-      const gateway = startFakeGateway([toolCall("ls"), finalText("ask ls complete")]);
+      const codex = startFakeGateway([toolCall("ls"), finalText("ask ls complete")]);
       const tracePath = join(root.root, "trace.log");
       const result = await runFx(
-        ["ask", "--yolo", "--quiet", "--json", "--no-save", "List this directory."],
+        ["ask", "--permission-mode", "yolo", "--quiet", "--json", "--no-save", "List this directory."],
         {
           cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "core",
+          env: codexEnv(root, codex, {
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "core",
           }),
           timeoutMs: TIMEOUT,
         },
       );
 
       expect(result.code).toBe(0);
-      expect(gateway.requests).toHaveLength(2);
-      const encoded = toolResultText(gateway.requests[1].body, "command_1");
+      expect(codex.requests).toHaveLength(2);
+      const encoded = toolResultText(codex.requests[1].body, "command_1");
       expect(encoded).toContain("\\u001bname");
       expect(encoded).toContain("line\\nname");
       expect(encoded).not.toContain("\x1b");
@@ -3532,22 +3155,22 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask preserves quoted shell metacharacters through the user profile",
+    "fiber ask preserves quoted shell metacharacters through the user profile",
     async () => {
       const root = createIsolatedRoot();
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall("printf '%s' '<'"),
         finalText("quoted direct complete"),
       ]);
       const tracePath = join(root.root, "trace.log");
       const result = await runFx(
-        ["ask", "--yolo", "--quiet", "--json", "--no-save", "Print a literal less-than sign."],
+        ["ask", "--permission-mode", "yolo", "--quiet", "--json", "--no-save", "Print a literal less-than sign."],
         {
           cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
+          env: codexEnv(root, codex, {
             PATH: hostilePath(root),
-            FX_TRACE_LOG: tracePath,
-            FX_TRACE_SCOPES: "core",
+            FIBER_TRACE_LOG: tracePath,
+            FIBER_TRACE_SCOPES: "core",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3555,8 +3178,8 @@ describe("effect-aware command permissions", () => {
 
       expect(result.code).toBe(0);
       expect(result.stderr).toContain("Running printf '%s' '<'");
-      expect(gateway.requests).toHaveLength(2);
-      expect(JSON.parse(toolResultText(gateway.requests[1].body, "command_1"))).toMatchObject({
+      expect(codex.requests).toHaveLength(2);
+      expect(JSON.parse(toolResultText(codex.requests[1].body, "command_1"))).toMatchObject({
         state: "completed",
         output_delta: "<",
         exit_code: 0,
@@ -3570,7 +3193,7 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask keeps parser hardening cases approval-bearing",
+    "fiber ask keeps parser hardening cases approval-bearing",
     async () => {
       const commands = [
         "wc -c < input.txt",
@@ -3581,14 +3204,14 @@ describe("effect-aware command permissions", () => {
       for (const command of commands) {
         const root = createIsolatedRoot();
         writeFileSync(join(root.workspace, "input.txt"), "bounded");
-        const gateway = startFakeGateway([toolCall(command)]);
+        const codex = startFakeGateway([toolCall(command)]);
         const result = await runFx(
           ["ask", "--json", "--no-save", "Run the requested inspection."],
           {
             cwd: root.workspace,
-            env: gatewayEnv(root, gateway, {
+            env: codexEnv(root, codex, {
               PATH: hostilePath(root),
-              FX_PERMISSION_MODE: "ask",
+              FIBER_PERMISSION_MODE: "ask",
             }),
             timeoutMs: TIMEOUT,
           },
@@ -3597,7 +3220,7 @@ describe("effect-aware command permissions", () => {
         expect(result.code).toBe(1);
         expect(result.stderr).toContain("permission required");
         expect(result.stderr).toContain("noninteractive_permission_prompt_unavailable");
-        expect(gateway.requests).toHaveLength(1);
+        expect(codex.requests).toHaveLength(1);
         expect(existsSync(root.profileMarker)).toBe(false);
         expectNoHostileExecutables(root);
         expectNoCommandArtifacts(root);
@@ -3607,18 +3230,18 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask blocks approval-bearing commands before side effects",
+    "fiber ask blocks approval-bearing commands before side effects",
     async () => {
       const root = createIsolatedRoot();
       const marker = join(root.workspace, "must-not-exist");
-      const gateway = startFakeGateway([toolCall("touch must-not-exist")]);
+      const codex = startFakeGateway([toolCall("touch must-not-exist")]);
       const result = await runFx(
         ["ask", "--json", "--no-save", "Create the marker."],
         {
           cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
+          env: codexEnv(root, codex, {
             PATH: hostilePath(root),
-            FX_PERMISSION_MODE: "ask",
+            FIBER_PERMISSION_MODE: "ask",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3635,10 +3258,10 @@ describe("effect-aware command permissions", () => {
   );
 
   test(
-    "fx ask blocks hostile git before any executable or repository access",
+    "fiber ask blocks hostile git before any executable or repository access",
     async () => {
       const root = createIsolatedRoot();
-      const gateway = startFakeGateway([
+      const codex = startFakeGateway([
         toolCall("git status"),
         finalText("git inspection complete"),
       ]);
@@ -3646,9 +3269,9 @@ describe("effect-aware command permissions", () => {
         ["ask", "--json", "--no-save", "Inspect repository status."],
         {
           cwd: root.workspace,
-          env: gatewayEnv(root, gateway, {
+          env: codexEnv(root, codex, {
             PATH: hostilePath(root),
-            FX_PERMISSION_MODE: "ask",
+            FIBER_PERMISSION_MODE: "ask",
           }),
           timeoutMs: TIMEOUT,
         },
@@ -3663,198 +3286,4 @@ describe("effect-aware command permissions", () => {
     },
     TIMEOUT,
   );
-
-  test(
-    "ACP completes more than twenty-five serial terminal calls when unlimited",
-    async () => {
-      const root = createIsolatedRoot();
-      writeFileSync(
-        join(root.home, ".fx", "settings.json"),
-        JSON.stringify({
-          sandbox: "none",
-          permission: { bash: { pwd: "allow" } },
-        }),
-      );
-      const gateway = startFakeGateway([
-        ...Array.from(
-          { length: 26 },
-          (_, index) => toolCall("pwd", { profile: "clean" }, `acp_${index + 1}`),
-        ),
-        finalText("acp unlimited complete"),
-      ]);
-      activeClient = AcpClient.create(root.workspace, gatewayEnv(root, gateway, {
-        PATH: hostilePath(root),
-      }));
-      await startAcpSession(activeClient);
-      const messages = await runAcpPrompt(activeClient, "Run pwd until you can answer.");
-      await activeClient.close();
-
-      expect(JSON.stringify(messages)).toContain("acp unlimited complete");
-      expect(gateway.requests).toHaveLength(27);
-      expect(activeClient.stderr).toBe("");
-      expect(existsSync(root.profileMarker)).toBe(false);
-      expectNoHostileExecutables(root);
-      expectNoCommandArtifacts(root);
-      activeClient = null;
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "ACP blocks redirected output before creating a file",
-    async () => {
-      const root = createIsolatedRoot();
-      const marker = join(root.workspace, "must-not-exist");
-      const gateway = startFakeGateway([
-        toolCall("printf x > must-not-exist"),
-        finalText("acp denial complete"),
-      ]);
-      activeClient = AcpClient.create(root.workspace, gatewayEnv(root, gateway, {
-        PATH: hostilePath(root),
-      }));
-      await startAcpSession(activeClient);
-      const messages = await runAcpPrompt(activeClient, "Create redirected output.");
-      await activeClient.close();
-
-      const serialized = JSON.stringify(messages);
-      expect(serialized).toContain("request_permission");
-      expect(serialized).toContain("user_denied");
-      expect(existsSync(marker)).toBe(false);
-      expect(existsSync(root.profileMarker)).toBe(false);
-      expectNoHostileExecutables(root);
-      expect(activeClient.stderr).toBe("");
-      activeClient = null;
-    },
-    TIMEOUT,
-  );
 });
-
-class AcpClient {
-  private buffer = "";
-  private lines: string[] = [];
-  private waiters: Array<(line: string) => void> = [];
-  private closed = false;
-  private stderrChunks: Buffer[] = [];
-  private activeSessionId: string | null = null;
-
-  private constructor(private proc: ChildProcess) {
-    proc.stdout!.on("data", (chunk: Buffer) => {
-      this.buffer += chunk.toString();
-      const parts = this.buffer.split("\n");
-      this.buffer = parts.pop() ?? "";
-      for (const line of parts) {
-        if (!line.trim()) continue;
-        const waiter = this.waiters.shift();
-        if (waiter) waiter(line);
-        else this.lines.push(line);
-      }
-    });
-    proc.stderr!.on("data", (chunk: Buffer) => this.stderrChunks.push(chunk));
-    proc.on("close", () => {
-      this.closed = true;
-    });
-  }
-
-  static create(cwd: string, env: Record<string, string | undefined>) {
-    return new AcpClient(nodeSpawn(FX_BIN, ["acp"], {
-      cwd,
-      env: definedEnv({ ...process.env, ...env, NO_COLOR: "1" }),
-      stdio: ["pipe", "pipe", "pipe"],
-    }));
-  }
-
-  get stderr() {
-    return Buffer.concat(this.stderrChunks).toString();
-  }
-
-  send(message: object) {
-    let outgoing = message as any;
-    if (
-      this.activeSessionId !== null &&
-      [
-        "session/prompt",
-        "session/cancel",
-        "session/set_mode",
-        "session/set_config_option",
-      ].includes(outgoing.method) &&
-      outgoing.params?.sessionId === undefined
-    ) {
-      outgoing = {
-        ...outgoing,
-        params: { ...(outgoing.params ?? {}), sessionId: this.activeSessionId },
-      };
-    }
-    this.proc.stdin!.write(`${JSON.stringify(outgoing)}\n`);
-  }
-
-  async readLine(timeoutMs = TIMEOUT): Promise<any> {
-    const line = await new Promise<string>((resolve, reject) => {
-      const buffered = this.lines.shift();
-      if (buffered) {
-        resolve(buffered);
-        return;
-      }
-      const timer = setTimeout(() => reject(new Error("ACP read timeout")), timeoutMs);
-      this.waiters.push((value) => {
-        clearTimeout(timer);
-        resolve(value);
-      });
-    });
-    const message = JSON.parse(line);
-    if (message.method === "session/request_permission" && message.id !== undefined) {
-      this.send({
-        jsonrpc: "2.0",
-        id: message.id,
-        result: { outcome: { outcome: "selected", optionId: "reject_once" } },
-      });
-    }
-    return message;
-  }
-
-  async request(method: string, params: object, id: number) {
-    this.send({ jsonrpc: "2.0", id, method, params });
-    let response: any;
-    do {
-      response = await this.readLine();
-    } while (response.id !== id);
-    if (
-      response.error === undefined &&
-      method === "session/new" &&
-      typeof response.result?.sessionId === "string"
-    ) {
-      this.activeSessionId = response.result.sessionId;
-    }
-    return response;
-  }
-
-  async close() {
-    if (this.closed) return;
-    this.proc.stdin!.end();
-    this.proc.kill("SIGTERM");
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    if (!this.closed) this.proc.kill("SIGKILL");
-  }
-}
-
-async function startAcpSession(client: AcpClient, modeId: "ask" | "code" = "ask") {
-  await client.request("initialize", { protocolVersion: 1 }, 1);
-  await client.request("session/new", { mcpServers: [] }, 2);
-  await client.readLine();
-  await client.request("session/set_mode", { modeId }, 3);
-}
-
-async function runAcpPrompt(client: AcpClient, text: string) {
-  const id = 10;
-  client.send({
-    jsonrpc: "2.0",
-    id,
-    method: "session/prompt",
-    params: { prompt: [{ type: "text", text }] },
-  });
-  const messages: any[] = [];
-  while (true) {
-    const message = await client.readLine();
-    if (message.id === id && message.result) return messages;
-    messages.push(message);
-  }
-}

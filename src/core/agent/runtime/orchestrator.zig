@@ -14,7 +14,6 @@ const mem_utils = @import("../../shared/mem_utils.zig");
 const text_utils = @import("../../shared/text_utils.zig");
 const file_mutation_contract = @import("../../tooling/file_mutation_contract.zig");
 const io_mod = @import("../../shared/io.zig");
-const host_target = @import("../../hosts/target.zig");
 const secret = @import("../../auth/secret.zig");
 const credentials = @import("../../auth/credentials.zig");
 const credential_authority = @import("../../auth/credential_authority.zig");
@@ -26,13 +25,11 @@ const tool_result_errors = @import("../../tooling/tool_result_errors.zig");
 const tooling_tool_admission = @import("../../tooling/tool_admission.zig");
 const tool_args = @import("../../tooling/tool_args.zig");
 const hooks = @import("../../hooks/hooks.zig");
-const command_environment = @import("../../execution/command_environment.zig");
 const context_contract = @import("../../workspace/context_contract.zig");
 const tool_preparation = @import("../tool_preparation.zig");
 const command_admission = @import("../../permissions/command_admission.zig");
 const permission_auto_classifier = @import("../../permissions/auto_classifier.zig");
 const auto_classifier_context = @import("../../permissions/auto_classifier_context.zig");
-const subagent_model_contract = @import("../../subagent/model_contract.zig");
 
 const runtime_config = @import("config.zig");
 const runtime_finalization = @import("finalization.zig");
@@ -2680,7 +2677,7 @@ fn streamReplaySafe(
 const read_failure_tool_recovery_instruction =
     \\<network_recovery>
     \\The previous response stream ended because the network connection was interrupted.
-    \\fx did not execute the incomplete tool call from that stream. Recreate the tool call if it is still needed.
+    \\fiber did not execute the incomplete tool call from that stream. Recreate the tool call if it is still needed.
     \\</network_recovery>
 ;
 
@@ -2874,21 +2871,6 @@ test "potentially sent recovery rejects missing or changed credential authority"
         legacy,
         .chatgpt_subscription,
         "acct_1",
-    ));
-    legacy.authority.credential_source = .ai_gateway_api_key;
-    legacy.authority.credential_identity = credential_authority.derive(
-        .ai_gateway_api_key,
-        null,
-    );
-    try std.testing.expect(!shouldRejectRecoveryAuthority(
-        legacy,
-        .ai_gateway_api_key,
-        null,
-    ));
-    try std.testing.expect(shouldRejectRecoveryAuthority(
-        legacy,
-        .stored_key,
-        null,
     ));
     legacy.authority.credential_source = null;
     legacy.authority.credential_identity = null;
@@ -3280,20 +3262,6 @@ fn refreshGatewayCredentialForJob(
         );
         return false;
     } orelse return false;
-    const previous_api_key = active_api_key.*;
-    if (comptime !host_target.is_wasm) {
-        if (deps.usage) |usage| {
-            if (source == .chatgpt_subscription or source == .grok_subscription) {
-                usage.clearReconciliationCredential();
-            } else {
-                usage.refreshReconciliationCredential(
-                    deps.usage_allocator,
-                    previous_api_key,
-                    refreshed,
-                );
-            }
-        }
-    }
     if (owned_api_key.*) |old| secret.zeroAndFree(alloc, old);
     owned_api_key.* = refreshed;
     active_api_key.* = refreshed;
@@ -3919,7 +3887,7 @@ fn appendAuthorizedVisionAttemptIds(
 ) !bool {
     if (!std.mem.eql(u8, call.name, "vision") or
         call.argument_integrity != .valid or
-        call.provenance != .fx_local)
+        call.provenance != .fiber_local)
     {
         return false;
     }
@@ -4219,7 +4187,6 @@ fn processQueuedPromptLoop(
     }
     var pending_image_ids: []const usize = initial_pending_image_ids;
     var configured_first_tool_choice_pending = true;
-    var return_to_user_pending = false;
     var active_presentation_group_id: ?types.ToolPresentationGroupId = null;
     const restored_attempts = if (job.recovery_checkpoint) |checkpoint|
         restoredConsumedAttempts(checkpoint)
@@ -4331,7 +4298,6 @@ fn processQueuedPromptLoop(
 
         var stream_ctx = runtime_assistant_stream.StreamChunkContext{
             .hooks = deps,
-            .flush_assistant_stream_per_content_chunk = deps.flush_assistant_stream_per_content_chunk,
             .semantic_presentation = semantic_presentation,
             .token_progress = &summary_accumulator,
             .turn_id = turn_id,
@@ -4593,14 +4559,12 @@ fn processQueuedPromptLoop(
             runtime_telemetry.traceGatewayProviderOptions(step_ctx, gateway_model, route_fast_mode, config.effort, provider_opts);
             const tool_choice: types.ToolChoice = if (recovery_strategy == .reconcile_tool)
                 .none
-            else if (return_to_user_pending)
-                .none
             else if (configured_first_tool_choice_pending and vision_mode != .required)
                 config.first_call_tool_choice
             else
                 .auto;
             var verified_images: std.ArrayList(image_attachments.VerifiedSnapshot) = .empty;
-            if (job.provider != .gateway and job.images.len > 0 and
+            if (job.images.len > 0 and
                 vision_policy.route == .native)
             {
                 try verified_images.ensureTotalCapacity(overlay_arena, job.images.len);
@@ -4616,7 +4580,7 @@ fn processQueuedPromptLoop(
             runtime_assistant_stream.pushTokenProgressUpdate(&stream_ctx, .changed) catch |progress_err| {
                 debug_trace.logf("agent", "token progress publication failed source=gateway_prepare err={s}", .{@errorName(progress_err)});
             };
-            if (job.provider == .gateway) {
+            if (false) {
                 try persistRecoveryCheckpoint(
                     deps,
                     arena,
@@ -4663,7 +4627,6 @@ fn processQueuedPromptLoop(
                     .secret = active_api_key,
                     .source = job.credential_source,
                     .account_id = job.account_id,
-                    .tenant = job.gateway_team,
                 },
                 .session_id = lifecycle.scope.session_id,
                 .model = gateway_model,
@@ -4686,7 +4649,6 @@ fn processQueuedPromptLoop(
                     null,
                 .trace_ctx = step_ctx,
                 .content_capture_limit = null,
-                .cooperative_pulse = deps.cooperative_transport_pulse,
                 .delivery = &gateway_delivery,
                 .attempt_evidence = &gateway_attempt_evidence,
                 .events = .{ .context = &provider_events, .emit_fn = onProviderEvent },
@@ -5037,8 +4999,7 @@ fn processQueuedPromptLoop(
             );
             stream_result_set = true;
             const first_failure = streamFailure(stream_result);
-            if (job.provider != .gateway and
-                first_failure != null and first_failure.?.kind == .unauthorized and
+            if (first_failure != null and first_failure.?.kind == .unauthorized and
                 !auth_retry_used and
                 stream_ctx.raw_text.items.len == 0 and
                 !stream_ctx.saw_tool_start and
@@ -5164,9 +5125,7 @@ fn processQueuedPromptLoop(
                 );
             }
             const settled_attempts = semantic_attempt + 1;
-            if (job.provider == .gateway or
-                response_failure == null or response_failure.?.kind != .unauthorized)
-            {
+            if (response_failure == null or response_failure.?.kind != .unauthorized) {
                 try persistRecoveryCheckpoint(
                     deps,
                     arena,
@@ -5197,7 +5156,6 @@ fn processQueuedPromptLoop(
                 debug_trace.logf("agent", "token progress publication failed source=gateway_usage err={s}", .{@errorName(progress_err)});
             };
             if (response_failure != null and response_failure.?.kind == .unauthorized and
-                job.provider == .gateway and
                 !auth_retry_used and
                 semantic_attempt + 1 < semantic_limit)
             {
@@ -5681,7 +5639,6 @@ fn processQueuedPromptLoop(
             successful_recovery_strategy = recovery_strategy;
             retainCompletedResultInTurnArena(&stream_result);
             if (vision_mode != .required) configured_first_tool_choice_pending = false;
-            return_to_user_pending = false;
             break;
         }
         defer if (stream_result_set) stream_result.deinit(arena);
@@ -5902,7 +5859,7 @@ fn processQueuedPromptLoop(
                 },
                 .reject_malformed_identity => |failure| {
                     try stream_ctx.provisional_statuses.finishRejectedCompletions(deps, arena, turn_id, completion.tool_calls, advertised_dynamic_tool_names);
-                    debug_trace.eventf("agent", "authoritative_tool_admission_rejected", step_ctx, "failure={s} provenance=fx_local", .{@tagName(failure)});
+                    debug_trace.eventf("agent", "authoritative_tool_admission_rejected", step_ctx, "failure={s} provenance=fiber_local", .{@tagName(failure)});
                     finish_trace.finish("malformed_tool_identity");
                     return error.MalformedAuthoritativeToolIdentity;
                 },
@@ -6216,7 +6173,7 @@ fn processQueuedPromptLoop(
                             .tool_name = "vision",
                             .message = runtime_vision_contracts.native_route_unavailable_message,
                             .suggestion = if (request_capabilities.image_input_support == .native or
-                                (request_capabilities.image_input_support == .unknown and job.provider != .gateway))
+                                request_capabilities.image_input_support == .unknown)
                                 "Continue using the model's native image input without Vision."
                             else
                                 "Continue without Vision.",
@@ -6883,23 +6840,13 @@ fn processQueuedPromptLoop(
                         .max_tool_result_bytes = config.max_tool_result_bytes,
                         .classification_complete = executable_classification_complete.items,
                     };
-                    if (comptime host_target.is_wasm) {
-                        parallel_run = try runtime_parallel_execution.runSequentialCalls(arena, executable_calls.items, .{
-                            .exec_ctx = &parallel_exec_ctx,
-                            .execute = runtime_parallel_execution.parallelHookExecute,
-                            .format_ctx = &parallel_exec_ctx,
-                            .format_error = runtime_parallel_execution.parallelHookFormatError,
-                            .cancel_flag = config.cancel_flag,
-                        });
-                    } else {
-                        parallel_run = try runtime_parallel_execution.runParallelCalls(arena, executable_calls.items, .{
-                            .exec_ctx = &parallel_exec_ctx,
-                            .execute = runtime_parallel_execution.parallelHookExecute,
-                            .format_ctx = &parallel_exec_ctx,
-                            .format_error = runtime_parallel_execution.parallelHookFormatError,
-                            .cancel_flag = config.cancel_flag,
-                        });
-                    }
+                    parallel_run = try runtime_parallel_execution.runParallelCalls(arena, executable_calls.items, .{
+                        .exec_ctx = &parallel_exec_ctx,
+                        .execute = runtime_parallel_execution.parallelHookExecute,
+                        .format_ctx = &parallel_exec_ctx,
+                        .format_error = runtime_parallel_execution.parallelHookFormatError,
+                        .cancel_flag = config.cancel_flag,
+                    });
                 }
                 defer if (parallel_run) |*run| run.deinit(arena);
 
@@ -6980,7 +6927,7 @@ fn processQueuedPromptLoop(
                             "tool",
                             "argument_integrity_rejected",
                             step_ctx,
-                            "call_id={s} name={s} failure=malformed_json provenance=fx_local",
+                            "call_id={s} name={s} failure=malformed_json provenance=fiber_local",
                             .{ tool_call.id, tool_call.name },
                         );
                     } else if (blocked.kind == .route_unavailable) {
@@ -8352,9 +8299,7 @@ fn processQueuedPromptLoop(
                 }
                 continue;
             }
-            if (execution.tool_result_memory_prepared or
-                execution.deferred_tool_completion != null)
-            {
+            if (execution.tool_result_memory_prepared) {
                 return error.InvalidPreparedToolExecutionResult;
             }
             if (successful_vision_route == .text_only) {
@@ -8533,9 +8478,6 @@ fn processQueuedPromptLoop(
                 try commit.commit();
                 result_commit_pending = false;
             }
-            if (execution.turn_control) |control| switch (control) {
-                .return_to_user => return_to_user_pending = true,
-            };
             replay_handed_off = true;
             if (execution.system_notice) |notice| {
                 try within_turn_suffix.append(arena, .{ .role = .system, .content = notice });
@@ -8940,7 +8882,7 @@ test "malformed duplicate unauthorized and path Vision calls settle no image ids
         .name = "vision",
         .arguments_json = "{\"image_ids\":[1]",
         .argument_integrity = .malformed_json,
-        .provenance = .fx_local,
+        .provenance = .fiber_local,
     };
     try std.testing.expect(!try appendAuthorizedVisionAttemptIds(
         std.testing.allocator,
@@ -8953,7 +8895,7 @@ test "malformed duplicate unauthorized and path Vision calls settle no image ids
         .id = "vision-duplicate",
         .name = "vision",
         .arguments_json = "{\"image_ids\":[1,1],\"focus\":\"inspect\"}",
-        .provenance = .fx_local,
+        .provenance = .fiber_local,
     };
     try std.testing.expect(!try appendAuthorizedVisionAttemptIds(
         std.testing.allocator,
@@ -8966,7 +8908,7 @@ test "malformed duplicate unauthorized and path Vision calls settle no image ids
         .id = "vision-unauthorized",
         .name = "vision",
         .arguments_json = "{\"image_ids\":[2],\"focus\":\"inspect\"}",
-        .provenance = .fx_local,
+        .provenance = .fiber_local,
     };
     try std.testing.expect(!try appendAuthorizedVisionAttemptIds(
         std.testing.allocator,
@@ -8979,7 +8921,7 @@ test "malformed duplicate unauthorized and path Vision calls settle no image ids
         .id = "vision-path",
         .name = "vision",
         .arguments_json = "{\"paths\":[\"photo.png\"],\"focus\":\"inspect\"}",
-        .provenance = .fx_local,
+        .provenance = .fiber_local,
     };
     try std.testing.expect(!try appendAuthorizedVisionAttemptIds(
         std.testing.allocator,

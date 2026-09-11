@@ -11,7 +11,7 @@ const paint_plan = render_engine.paint_plan;
 const terminal_diff = render_engine.terminal_diff;
 
 pub const Geometry = struct {
-    /// Outer top of the fx-owned footer band. Every paint clears this
+    /// Outer top of the fiber-owned footer band. Every paint clears this
     /// row and everything below it, so stale rows from a previous
     /// frame (collapsed banner, dismissed picker, footer that moved
     /// up after a scroll) are wiped before the new frame diffs in.
@@ -104,7 +104,7 @@ pub const FooterViewport = struct {
     cursor: Cursor = .{ .row = 1, .col = 1 },
     cursor_visible: bool = true,
     /// True after `beginFrame` establishes valid footer geometry. Erasing
-    /// earlier would start at row 1 and wipe pre-fx shell scrollback.
+    /// earlier would start at row 1 and wipe pre-fiber shell scrollback.
     has_frame: bool = false,
     /// Set when transcript/body rendering emits a clear that can touch
     /// the footer band. A later footer render must repaint even when
@@ -171,10 +171,6 @@ pub const FooterViewport = struct {
     pub fn setCursor(self: *FooterViewport, row: u16, col: u16) void {
         self.cursor = .{ .row = row, .col = col };
         self.cursor_visible = true;
-    }
-
-    pub fn hideCursor(self: *FooterViewport) void {
-        self.cursor_visible = false;
     }
 
     pub fn eraseCurrentFrame(self: *FooterViewport, shell: anytype, metrics: *Metrics) !void {
@@ -332,13 +328,6 @@ const FrameSink = struct {
         return .complete;
     }
 };
-
-fn expectGridRow(grid: *vt_emulator.Grid, row: u16, expected: []const u8) !void {
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.testing.allocator);
-    try grid.rowTextTrimmed(row, &buf);
-    try std.testing.expectEqualStrings(expected, buf.items);
-}
 
 fn footerSurfaceTestPlan(cols: u16) paint_plan.PaintPlan {
     return .{

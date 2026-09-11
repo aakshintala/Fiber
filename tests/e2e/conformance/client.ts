@@ -10,10 +10,10 @@ import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
-  startFakeGateway,
+  codexFinalText,
+  codexToolCall,
+  seededFakeCodexEnv,
+  startFakeCodex,
 } from "../tmux-helpers";
 
 const serverUrl = process.argv[2];
@@ -82,15 +82,15 @@ for (const call of toolCalls) {
   permission[`mcp_conformance_${call.name}`] = "allow";
 }
 
-const fxBin = resolve(import.meta.dirname, "../../../zig-out/bin/fx");
-const root = mkdtempSync(join(tmpdir(), "fx-mcp-conformance-client-"));
+const fxBin = resolve(import.meta.dirname, "../../../zig-out/bin/fiber");
+const root = mkdtempSync(join(tmpdir(), "fiber-mcp-conformance-client-"));
 const home = join(root, "home");
 const workspace = join(root, "workspace");
-mkdirSync(join(home, ".fx", "skills"), { recursive: true, mode: 0o700 });
+mkdirSync(join(home, ".fiber", "skills"), { recursive: true, mode: 0o700 });
 mkdirSync(workspace, { recursive: true });
 
 writeFileSync(
-  join(home, ".fx", "mcp.json"),
+  join(home, ".fiber", "mcp.json"),
   JSON.stringify({
     mcp: {
       conformance: {
@@ -104,7 +104,7 @@ writeFileSync(
             ? { client_id: scenarioContext.client_id }
             : {}),
           ...(scenarioContext.client_secret
-            ? { client_secret_env: "FX_MCP_CONFORMANCE_CLIENT_SECRET" }
+            ? { client_secret_env: "FIBER_MCP_CONFORMANCE_CLIENT_SECRET" }
             : {}),
         },
       },
@@ -112,31 +112,31 @@ writeFileSync(
   }),
 );
 writeFileSync(
-  join(home, ".fx", "settings.json"),
+  join(home, ".fiber", "settings.json"),
   JSON.stringify({
     permission_mode: "auto",
     permission,
   }),
 );
 
-const gatewaySteps = toolCalls.flatMap((call, index) => {
+const codexSteps = toolCalls.flatMap((call, index) => {
   const name = `mcp_conformance_${call.name}`;
   return [
-    fakeGatewayToolCall(`select_conformance_tool_${index}`, "mcp_select_tool", {
+    codexToolCall(`select_conformance_tool_${index}`, "mcp_select_tool", {
       name,
     }),
-    fakeGatewayToolCall(`call_conformance_tool_${index}`, name, call.arguments),
+    codexToolCall(`call_conformance_tool_${index}`, name, call.arguments),
   ];
 });
 if (toolCalls.length === 0) {
-  gatewaySteps.push(fakeGatewayToolCall(
+  codexSteps.push(codexToolCall(
     "search_conformance_server",
     "capability_search",
     { query: "conformance" },
   ));
 }
-gatewaySteps.push(fakeGatewayFinalText("MCP conformance client finished."));
-const gateway = startFakeGateway(gatewaySteps);
+const finalStep = codexFinalText("MCP conformance client finished.");
+const codex = startFakeCodex({ route: () => codexSteps.shift() ?? finalStep });
 
 try {
   const child = Bun.spawn(
@@ -144,7 +144,7 @@ try {
       fxBin,
       "ask",
       "--json",
-      "--auto",
+      "--permission-mode", "auto",
       "--no-save",
       "Call the conformance add_numbers MCP tool with a=2 and b=3.",
     ],
@@ -152,23 +152,17 @@ try {
       cwd: workspace,
       env: {
         ...process.env,
-        HOME: home,
-        AI_GATEWAY_API_KEY: "mcp-conformance-placeholder",
-        VERCEL_OIDC_TOKEN: "",
-        FX_AUTO_UPGRADE: "0",
-        FX_DISABLE_KEYCHAIN: "1",
-        FX_E2E_MCP_AUTH_AUTOMATE: "1",
+        ...seededFakeCodexEnv(home, codex),
+        FIBER_DISABLE_KEYCHAIN: "1",
+        FIBER_E2E_MCP_AUTH_AUTOMATE: "1",
         ...(scenarioContext.client_secret
           ? {
-              FX_MCP_CONFORMANCE_CLIENT_SECRET:
+              FIBER_MCP_CONFORMANCE_CLIENT_SECRET:
                 scenarioContext.client_secret,
             }
           : {}),
-        FX_GATEWAY_BASE_URL: gateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-        FX_MODEL: FAKE_GATEWAY_MODEL,
-        FX_SKIP_ONBOARDING: "1",
-        FX_SOUND: "0",
+        FIBER_SKIP_ONBOARDING: "1",
+        FIBER_SOUND: "0",
         NO_COLOR: "1",
       },
       stdout: "pipe",
@@ -184,7 +178,7 @@ try {
   process.stderr.write(stderr);
   process.exitCode = exitCode;
 } finally {
-  gateway.stop();
+  codex.stop();
   await legacyProbeProxy?.stop();
   rmSync(root, { recursive: true, force: true });
 }

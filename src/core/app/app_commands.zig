@@ -1,12 +1,8 @@
 const std = @import("std");
-const runtime_profile = @import("../hosts/runtime_profile.zig");
-const app_permission_runtime = @import("app_permission_runtime.zig");
 const app_session_runtime = @import("app_session_runtime.zig");
 const io_mod = @import("../shared/io.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
 const credentials = @import("../auth/credentials.zig");
-const gateway_provider = @import("../gateway/gateway_provider.zig");
-const host = @import("../hosts/host.zig");
 const change_tracker_mod = @import("../workspace/change_tracker.zig");
 const command_router = @import("../slash_commands/command_router.zig");
 const command_specs = @import("../slash_commands/command_specs.zig");
@@ -15,16 +11,13 @@ const model_capabilities = @import("../config/model_capabilities.zig");
 const editor_state = @import("../input/editor_state.zig");
 const settings_catalog = @import("../config/settings_catalog.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
-const feedback_runtime = @import("../feedback/runtime.zig");
 const output_contracts = @import("../output/output_contracts.zig");
 const diagnostics = @import("../workspace/diagnostics.zig");
 const workspace_commands = @import("../workspace/workspace_commands.zig");
-const image_commands = @import("../images/image_commands.zig");
 const mcp_auth = @import("../mcp/mcp_auth.zig");
 const mcp_command_provider = @import("../mcp/command_provider.zig");
 const mcp_runtime = @import("../mcp/mcp_runtime.zig");
 const app_mcp_runtime = @import("app_mcp_runtime.zig");
-const model_cache_runtime = @import("model_cache_runtime.zig");
 const provider_runtime = @import("provider_runtime.zig");
 const permissions = @import("../permissions/permissions.zig");
 const session_permission_state = @import("../permissions/session_permission_state.zig");
@@ -146,13 +139,13 @@ fn formatMcpIssuerMismatch(
             try std.json.Stringify.value(returned.bytes, .{}, &out.writer);
             try out.writer.writeAll(". Add \"oauth\":{\"issuer\":");
             try std.json.Stringify.value(returned.bytes, .{}, &out.writer);
-            try out.writer.writeAll("} to this server's entry in ~/.fx/mcp.json and retry.");
+            try out.writer.writeAll("} to this server's entry in ~/.fiber/mcp.json and retry.");
         },
         .authorization_response => {
             try out.writer.writeAll(" but the authorization response returned issuer ");
             try std.json.Stringify.value(returned.bytes, .{}, &out.writer);
             try out.writer.writeAll(
-                ". fx stopped before token exchange. Contact the MCP server provider; changing oauth.issuer is not a safe workaround.",
+                ". fiber stopped before token exchange. Contact the MCP server provider; changing oauth.issuer is not a safe workaround.",
             );
         },
     }
@@ -184,10 +177,6 @@ fn persistUserPreferences(
             true,
         ),
     }
-}
-
-fn clearSessionForClearCommand(app: anytype) !void {
-    try app.clearSession();
 }
 
 noinline fn parseWorkspaceCommand(rest: []const u8) !?workspace_commands.Action {
@@ -345,40 +334,25 @@ pub fn Handlers(comptime App: type) type {
             return .{
                 .ctx = @ptrCast(app),
                 .quit = commandQuit,
-                .clear_screen = commandClearScreen,
                 .new_session = commandNewSession,
-                .reset_session = commandResetSession,
                 .resume_session = commandResumeSession,
                 .continue_recovery = commandContinueRecovery,
                 .show_help = commandShowHelp,
                 .login = commandLogin,
                 .logout = commandLogout,
-                .setup = commandSetup,
                 .show_status = commandShowStatus,
-                .attach_image = commandAttachImage,
-                .manage_images = commandManageImages,
                 .handle_model = commandHandleModel,
                 .handle_permissions = commandHandlePermissions,
-                .handle_allowlist = commandHandleAllowlist,
-                .show_stats = commandShowStats,
                 .show_usage = commandShowUsage,
                 .undo_last = commandUndoLast,
                 .handle_mcp = commandHandleMcp,
                 .handle_skills = commandHandleSkills,
-                .copy_last = commandCopyLast,
-                .submit_feedback = commandSubmitFeedback,
                 .create_trace = commandCreateTrace,
+                .show_context = commandShowContext,
                 .compact_history = commandCompactHistory,
                 .handle_settings = commandHandleSettings,
-                .handle_alias = commandHandleAlias,
-                .show_credits = commandShowCredits,
-                .paste_clipboard = commandPasteClipboard,
-                .toggle_fast = commandToggleFast,
-                .handle_statusline = commandHandleStatusline,
                 .rename_session = commandRenameSession,
-                .handle_notifications = commandHandleNotifications,
                 .handle_workspace = commandHandleWorkspace,
-                .show_version = commandShowVersion,
                 .unknown = commandUnknown,
             };
         }
@@ -559,27 +533,6 @@ pub fn Handlers(comptime App: type) type {
             }
         }
 
-        fn handleFeedback(app: *App) !void {
-            try app.flushBeforeBlockingExternalWork();
-            const opened = if (comptime @hasDecl(App, "urlOpener"))
-                app.urlOpener().open(app.alloc, feedback_runtime.url) catch false
-            else
-                false;
-            if (opened) {
-                try app.writeDomainNotice(.{
-                    .topic = "",
-                    .tone = .neutral,
-                    .body = "Opened https://fx.sh/feedback.",
-                }, true);
-                return;
-            }
-            try app.writeDomainNotice(.{
-                .topic = "",
-                .tone = .@"error",
-                .body = "Could not open https://fx.sh/feedback. Open it manually.",
-            }, true);
-        }
-
         fn handleTraceReport(app: *App) !void {
             const progress_entry_id = try app.appendReplaceableDomainNotice(.{
                 .topic = "",
@@ -623,16 +576,6 @@ pub fn Handlers(comptime App: type) type {
             requestResumeExit(app);
         }
 
-        fn commandClearScreen(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try clearSessionForClearCommand(app);
-        }
-
-        fn commandResetSession(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try app.resetSession();
-        }
-
         fn commandNewSession(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try app.newSession();
@@ -640,14 +583,6 @@ pub fn Handlers(comptime App: type) type {
 
         fn commandResumeSession(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
-            if (comptime !runtime_profile.allows(App, .durable_sessions)) {
-                try app.writeDomainNotice(.{
-                    .topic = "session",
-                    .tone = .warning,
-                    .body = "Session resume is owned by the embedding SDK for this host.",
-                }, true);
-                return;
-            }
             try app_session_runtime.Runtime(App).openSessionPicker(app);
         }
 
@@ -711,32 +646,9 @@ pub fn Handlers(comptime App: type) type {
             }
         }
 
-        fn commandSetup(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            if (comptime @hasDecl(App, "openSetupHub")) {
-                try app.openSetupHub();
-            } else {
-                try app.writeDomainNotice(.{
-                    .topic = "setup",
-                    .tone = .@"error",
-                    .body = "setup is not available in this runtime",
-                }, true);
-            }
-        }
-
         fn commandShowStatus(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try session_commands.Commands(App).showStatus(app);
-        }
-
-        fn commandAttachImage(ctx: *anyopaque, path: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try image_commands.Commands(App).attachPath(app, path);
-        }
-
-        fn commandManageImages(ctx: *anyopaque, rest: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try image_commands.Commands(App).managePending(app, rest);
         }
 
         fn commandHandleModel(ctx: *anyopaque, query: []const u8) !void {
@@ -980,38 +892,8 @@ pub fn Handlers(comptime App: type) type {
             }, true);
         }
 
-        fn commandHandleAllowlist(ctx: *anyopaque, rest: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try session_commands.Commands(App).handleAllowlist(app, rest);
-        }
-
-        fn commandShowStats(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            var buf: [256]u8 = undefined;
-            const body = try std.fmt.bufPrint(
-                &buf,
-                "ansi_bytes={d}, redraws={d}, debounced_resizes={d}, footer_updates={d}, stream_chunks={d}",
-                .{ app.metrics.ansi_bytes, app.metrics.full_redraws, app.metrics.debounced_resizes, app.metrics.footer_line_updates, app.metrics.stream_chunks },
-            );
-            try app.writeDomainNotice(.{
-                .topic = "stats",
-                .tone = .neutral,
-                .body = body,
-            }, true);
-        }
-
         fn commandShowUsage(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
-            if (comptime !runtime_profile.allows(App, .profile_usage)) {
-                var usage = try app.session.usage.reportSnapshot(app.alloc);
-                defer usage.deinit(app.alloc);
-                try app.writeDomainNotice(.{
-                    .topic = "usage",
-                    .tone = .neutral,
-                    .body = "Durable profile usage is unavailable in this host; active session usage remains in memory.",
-                }, true);
-                return;
-            }
             if (comptime @hasField(App, "skills")) app.skills.closeMenu();
             if (comptime @hasField(App, "model_cache")) app.model_cache.closeMenu();
             closeHelpMenuIfPresent(app);
@@ -1685,14 +1567,6 @@ pub fn Handlers(comptime App: type) type {
 
         noinline fn commandHandleSkills(ctx: *anyopaque, rest: []const u8) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
-            if (comptime !runtime_profile.allows(App, .skills)) {
-                try app.writeDomainNotice(.{
-                    .topic = "skills",
-                    .tone = .warning,
-                    .body = "Skills are unavailable in this host because filesystem access is not provided.",
-                }, true);
-                return;
-            }
             const provider = app.skillsCommandProvider();
             const command = provider.parseCommand(rest);
 
@@ -1909,40 +1783,14 @@ pub fn Handlers(comptime App: type) type {
             if (comptime @hasField(InputRuntime, "workspace_menu")) app.input_runtime.workspace_menu.close();
         }
 
-        fn commandCopyLast(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            const last_reply = app.session.lastAssistantReply() orelse {
-                try app.writeDomainNotice(.{
-                    .topic = "clipboard",
-                    .tone = .neutral,
-                    .body = "No assistant reply to copy.",
-                }, true);
-                return;
-            };
-            const copied = app.clipboard().copy(last_reply) catch false;
-            if (!copied) {
-                try app.writeDomainNotice(.{
-                    .topic = "clipboard",
-                    .tone = .@"error",
-                    .body = "Failed to copy to clipboard.",
-                }, true);
-                return;
-            }
-            try app.writeDomainNotice(.{
-                .topic = "clipboard",
-                .tone = .neutral,
-                .body = "Copied to clipboard.",
-            }, true);
-        }
-
-        fn commandSubmitFeedback(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try handleFeedback(app);
-        }
-
         fn commandCreateTrace(ctx: *anyopaque) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try handleTraceReport(app);
+        }
+
+        fn commandShowContext(ctx: *anyopaque) !void {
+            const app: *App = @ptrCast(@alignCast(ctx));
+            try handleContextUsage(app);
         }
 
         fn commandCompactHistory(ctx: *anyopaque) !void {
@@ -1974,72 +1822,6 @@ pub fn Handlers(comptime App: type) type {
                 return;
             }
             try session_commands.Commands(App).handleSettings(app, rest);
-        }
-
-        fn commandHandleAlias(ctx: *anyopaque, _: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try app.writeDomainNotice(.{
-                .topic = "aliases",
-                .tone = .neutral,
-                .body = "Aliases are not yet configurable.",
-            }, true);
-        }
-
-        fn commandShowCredits(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            var snapshot = app.creditsProvider().fetch(app.alloc, .{
-                .credential = app.auth.apiKey(),
-                .credential_source = if (comptime @hasDecl(@TypeOf(app.auth), "credentialSource"))
-                    app.auth.credentialSource()
-                else
-                    null,
-                .tenant = app.auth.gatewayTeam(),
-            });
-            defer snapshot.deinit(app.alloc);
-            const text = snapshot.renderInteractiveBody(app.alloc) catch {
-                try app.writeDomainNotice(.{
-                    .topic = "credits",
-                    .tone = .@"error",
-                    .body = "Failed to render credits.",
-                }, true);
-                return;
-            };
-            defer app.alloc.free(text);
-            try app.writeDomainNotice(.{
-                .topic = "credits",
-                .tone = if (snapshot.err_message == null) .neutral else .@"error",
-                .body = text,
-            }, true);
-        }
-
-        fn commandPasteClipboard(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try image_commands.Commands(App).attachClipboard(app);
-        }
-
-        fn commandToggleFast(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try session_commands.Commands(App).toggleFast(app);
-        }
-
-        fn commandHandleStatusline(ctx: *anyopaque, rest: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            if (std.mem.trim(u8, rest, " \t").len == 0) {
-                if (comptime @hasField(App, "skills")) app.skills.closeMenu();
-                if (comptime @hasField(App, "model_cache")) app.model_cache.closeMenu();
-                closeHelpMenuIfPresent(app);
-                app.input_runtime.settings_menu.close();
-                closeInlineCommandMenusIfPresent(app);
-                app.input_runtime.statusline_menu.open();
-                app.shell.render_requests.request(.footer);
-                return;
-            }
-            try handleStatuslineCommand(app, rest);
-        }
-
-        fn commandHandleNotifications(ctx: *anyopaque, rest: []const u8) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try handleNotificationsCommand(app, rest);
         }
 
         fn commandHandleWorkspace(ctx: *anyopaque, rest: []const u8) !void {
@@ -2076,15 +1858,6 @@ pub fn Handlers(comptime App: type) type {
             try handleWorkspaceCommand(app, rest);
         }
 
-        fn commandShowVersion(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try app.writeDomainNotice(.{
-                .topic = "version",
-                .tone = .neutral,
-                .body = App.app_version,
-            }, true);
-        }
-
         fn commandUnknown(ctx: *anyopaque, _: []const u8) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try app.writeDomainNotice(.{
@@ -2099,11 +1872,7 @@ pub fn Handlers(comptime App: type) type {
 const trace_transcript_max_line_bytes: usize = 300;
 
 fn traceFilePermissions() std.Io.File.Permissions {
-    const builtin = @import("builtin");
-    return switch (builtin.os.tag) {
-        .windows => .default_file,
-        else => std.Io.File.Permissions.fromMode(0o600),
-    };
+    return std.Io.File.Permissions.fromMode(0o600);
 }
 
 fn writeTraceReportFile(alloc: std.mem.Allocator, contents: []const u8) ![]u8 {
@@ -2120,7 +1889,7 @@ fn writeTraceReportFile(alloc: std.mem.Allocator, contents: []const u8) ![]u8 {
         var random_bytes: [6]u8 = undefined;
         io_mod.getIo().random(&random_bytes);
         const random_hex = std.fmt.bytesToHex(random_bytes, .lower);
-        const path = try std.fmt.allocPrint(alloc, "{s}/fx-trace-{d}-{d:0>2}-{d:0>2}-{d:0>2}{d:0>2}{d:0>2}-{s}.md", .{
+        const path = try std.fmt.allocPrint(alloc, "{s}/fiber-trace-{d}-{d:0>2}-{d:0>2}-{d:0>2}{d:0>2}{d:0>2}-{s}.md", .{
             trimmed,
             year_day.year,
             month_day.month.numeric(),
@@ -2159,7 +1928,7 @@ fn buildTraceReport(app: anytype) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(app.alloc);
     defer out.deinit();
 
-    try out.writer.writeAll("# fx trace\n\n");
+    try out.writer.writeAll("# fiber trace\n\n");
     try out.writer.writeAll("Private diagnostic report. It may include prompts, file paths, command output, and file snippets.\n\n");
 
     try out.writer.writeAll("## Summary\n");
@@ -2205,7 +1974,7 @@ fn buildTraceReport(app: anytype) ![]u8 {
         try out.writer.writeAll("\n## Transcript Timeline\n(empty)\n");
     }
 
-    const trace_path: ?[]const u8 = debug_trace.activeLogPath() orelse io_mod.getenv("FX_TRACE_LOG");
+    const trace_path: ?[]const u8 = debug_trace.activeLogPath() orelse io_mod.getenv("FIBER_TRACE_LOG");
     if (trace_path) |path| {
         try writeTraceLogTail(&out.writer, app.alloc, path);
     }
@@ -2427,8 +2196,8 @@ fn processMemorySnapshot(alloc: std.mem.Allocator, pid: std.c.pid_t) ![]u8 {
 }
 
 fn writeDebugEnvSummary(writer: *std.Io.Writer, alloc: std.mem.Allocator) !void {
-    try writer.print("FX_TRACE: {s}\n", .{if (envTruthy("FX_TRACE")) "on" else "off"});
-    if (debug_trace.activeLogPath() orelse io_mod.getenv("FX_TRACE_LOG")) |path| {
+    try writer.print("FIBER_TRACE: {s}\n", .{if (envTruthy("FIBER_TRACE")) "on" else "off"});
+    if (debug_trace.activeLogPath() orelse io_mod.getenv("FIBER_TRACE_LOG")) |path| {
         try writer.writeAll("trace_log: ");
         try writeMaskedInline(writer, alloc, path);
         try writer.writeByte('\n');
@@ -2450,11 +2219,10 @@ fn writeAuthStateSummary(writer: *std.Io.Writer, app: anytype) !void {
 
     const auth_view = app.auth.view();
     try writer.print(
-        "auth: source={s} refreshable={s} gateway_team={s}\n",
+        "auth: source={s} refreshable={s}\n",
         .{
             auth_view.activeSourceLabel(),
             boolLabel(auth_view.refreshable),
-            auth_view.gatewayTeamStatus().label(),
         },
     );
 }
@@ -2659,7 +2427,7 @@ fn networkCallIsError(call: diagnostics.NetworkCall) bool {
 fn writeNetworkCallCompact(writer: *std.Io.Writer, call: diagnostics.NetworkCall) !void {
     try writeTraceTimestampUtc(writer, call.started_at_ms);
     try writer.print(" model={s}", .{call.model()});
-    if (call.kind != .gateway) try writer.print(" kind={s}", .{@tagName(call.kind)});
+    if (call.kind != .web_search) try writer.print(" kind={s}", .{@tagName(call.kind)});
     if (call.subagent_id != 0) try writer.print(" source=subagent#{d}", .{call.subagent_id}) else try writer.writeAll(" source=parent");
     if (call.errorName().len > 0) {
         try writer.print(" err={s}", .{call.errorName()});
@@ -3387,6 +3155,37 @@ fn stripAnsiEscapes(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
     return out.toOwnedSlice(alloc);
 }
 
+fn formatContextUsageBody(
+    alloc: std.mem.Allocator,
+    used_tokens: u64,
+    context_window: ?u32,
+) ![]u8 {
+    if (used_tokens == 0) {
+        return alloc.dupe(u8, "No context used in this session yet.");
+    }
+    const used_k = used_tokens / 1000;
+    if (context_window) |total| {
+        const total_k: u64 = @as(u64, total) / 1000;
+        const pct = if (total > 0) (used_tokens * 100) / @as(u64, total) else 0;
+        return std.fmt.allocPrint(alloc, "Context: {d}k/{d}k tokens used ({d}%).", .{ used_k, total_k, pct });
+    }
+    return std.fmt.allocPrint(alloc, "Context: {d}k tokens used.", .{used_k});
+}
+
+fn handleContextUsage(app: anytype) !void {
+    const App = @TypeOf(app.*);
+    const used_tokens = app.total_input_tokens;
+    const visible_model = provider_runtime.model(app);
+    const context_window = model_capabilities.resolveForApp(App, app, visible_model).context_window;
+    const body = try formatContextUsageBody(app.alloc, used_tokens, context_window);
+    defer app.alloc.free(body);
+    try app.writeDomainNotice(.{
+        .topic = "context",
+        .tone = .neutral,
+        .body = body,
+    }, true);
+}
+
 fn handleRenameCommand(app: anytype, rest: []const u8) !void {
     const App = @TypeOf(app.*);
     const SessionRuntime = app_session_runtime.Runtime(App);
@@ -3426,14 +3225,6 @@ fn handleRenameCommand(app: anytype, rest: []const u8) !void {
 }
 
 const StatuslineFeedback = enum { announce, silent };
-
-fn parseStatuslineItem(raw: []const u8) ?config_runtime.StatuslineItem {
-    const trimmed = std.mem.trim(u8, raw, " \t");
-    inline for (std.meta.fields(config_runtime.StatuslineItem)) |field| {
-        if (std.mem.eql(u8, trimmed, field.name)) return @enumFromInt(field.value);
-    }
-    return null;
-}
 
 fn statuslineItemForSetting(setting: settings_catalog.SettingId) ?config_runtime.StatuslineItem {
     return switch (setting) {
@@ -3493,18 +3284,6 @@ fn applyStatuslineItem(
         .silent => try persistUserPreferencesSilently(app, "statusline", patch, runtime_changed),
     }
     app.shell.render_requests.request(.footer);
-}
-
-fn handleStatuslineCommand(app: anytype, rest: []const u8) !void {
-    const item = parseStatuslineItem(rest) orelse {
-        try app.writeDomainNotice(.{
-            .topic = "statusline",
-            .tone = .@"error",
-            .body = "Use: context, session, workspace",
-        }, true);
-        return;
-    };
-    try applyStatuslineItem(app, item, !statuslineItemEnabled(app, item), .announce);
 }
 
 const SoundLevel = enum {
@@ -3722,10 +3501,6 @@ pub fn applySettingsCatalogChange(app: anytype, change: settings_catalog.Change)
             }
             try session_commands.Commands(@TypeOf(app.*)).selectEffortFromSettings(app, effort);
         },
-        .fast_mode => {
-            const enabled = parseOnOff(change.value) orelse return error.InvalidSettingsCatalogValue;
-            if (enabled != app.fast_mode) try session_commands.Commands(@TypeOf(app.*)).toggleFast(app);
-        },
         .permission_mode => try session_commands.Commands(@TypeOf(app.*)).handlePermissions(app, change.value),
         .sound_level => try handleNotificationsCommand(app, change.value),
         .startup_scrollback => {
@@ -3749,61 +3524,6 @@ fn parseOnOff(value: []const u8) ?bool {
 }
 
 const SurfaceOnlyApp = struct {};
-
-const CreditsCommandFakeApp = struct {
-    const FakeAuth = struct {
-        fn apiKey(_: *const FakeAuth) ?[]const u8 {
-            return "credential";
-        }
-
-        fn gatewayTeam(_: *const FakeAuth) ?[]const u8 {
-            return "tenant";
-        }
-    };
-
-    alloc: std.mem.Allocator,
-    auth: FakeAuth = .{},
-    calls: usize = 0,
-    saw_expected_input: bool = false,
-    notice_body: std.ArrayList(u8) = .empty,
-    notice_topic: ?[]const u8 = null,
-    notice_tone: ?types.NoticeTone = null,
-
-    fn deinit(self: *CreditsCommandFakeApp) void {
-        self.notice_body.deinit(self.alloc);
-    }
-
-    fn creditsProvider(self: *CreditsCommandFakeApp) gateway_provider.CreditsProvider {
-        return .{
-            .context = self,
-            .fetch_fn = fetchCredits,
-        };
-    }
-
-    fn fetchCredits(
-        raw: ?*anyopaque,
-        alloc: std.mem.Allocator,
-        input: gateway_provider.CreditsLookupInput,
-    ) output_contracts.CreditsSnapshot {
-        const self: *CreditsCommandFakeApp = @ptrCast(@alignCast(raw.?));
-        self.calls += 1;
-        self.saw_expected_input =
-            std.mem.eql(u8, input.credential orelse "", "credential") and
-            std.mem.eql(u8, input.tenant orelse "", "tenant");
-        return .{ .balance = alloc.dupe(u8, "10") catch null };
-    }
-
-    noinline fn writeDomainNotice(
-        self: *CreditsCommandFakeApp,
-        notice: types.SemanticNotice,
-        _: bool,
-    ) !void {
-        self.notice_topic = notice.topic;
-        self.notice_tone = notice.tone;
-        try self.notice_body.appendSlice(self.alloc, notice.body);
-    }
-};
-
 const McpCommandFakeApp = struct {
     const ReloadBehavior = enum {
         published_empty,
@@ -3857,7 +3577,7 @@ const McpCommandFakeApp = struct {
             .display = .{
                 .line = try alloc.dupe(
                     u8,
-                    "Waiting for MCP authentication for 'fixture'. You can continue using fx while the browser flow completes.",
+                    "Waiting for MCP authentication for 'fixture'. You can continue using fiber while the browser flow completes.",
                 ),
             },
         };
@@ -3972,24 +3692,6 @@ test "sound command parses toggle and off/on/max levels" {
     try std.testing.expectEqual(ParsedSoundCommand.invalid, parseSoundCommand("max extra"));
 }
 
-const ClearCommandFakeApp = struct {
-    clear_count: usize = 0,
-    new_count: usize = 0,
-    reset_count: usize = 0,
-
-    fn clearSession(self: *ClearCommandFakeApp) !void {
-        self.clear_count += 1;
-    }
-
-    fn newSession(self: *ClearCommandFakeApp) !void {
-        self.new_count += 1;
-    }
-
-    fn resetSession(self: *ClearCommandFakeApp) !void {
-        self.reset_count += 1;
-    }
-};
-
 const QuitCommandFakeApp = struct {
     should_exit: bool = false,
     session_persistence: app_session_runtime.Persistence = .{},
@@ -4007,58 +3709,6 @@ test "quit command requests resume handoff before exit" {
         app.session_persistence.resume_handoff_intent,
     );
 }
-
-const ClipboardCommandFakeApp = struct {
-    const CopyOutcome = enum {
-        copied,
-        unavailable,
-        failed,
-    };
-
-    const Session = struct {
-        reply: ?[]const u8 = null,
-
-        fn lastAssistantReply(self: *const Session) ?[]const u8 {
-            return self.reply;
-        }
-    };
-
-    session: Session = .{},
-    copy_outcome: CopyOutcome = .copied,
-    copy_calls: usize = 0,
-    copied_text: ?[]const u8 = null,
-    last_topic: ?[]const u8 = null,
-    last_tone: ?types.NoticeTone = null,
-    last_body: ?[]const u8 = null,
-
-    pub fn clipboard(self: *ClipboardCommandFakeApp) host.Clipboard {
-        return .{
-            .context = self,
-            .copy_fn = copy,
-        };
-    }
-
-    fn copy(raw_context: ?*anyopaque, text: []const u8) host.ClipboardError!bool {
-        const self: *ClipboardCommandFakeApp = @ptrCast(@alignCast(raw_context.?));
-        self.copy_calls += 1;
-        self.copied_text = text;
-        return switch (self.copy_outcome) {
-            .copied => true,
-            .unavailable => false,
-            .failed => error.CopyFailed,
-        };
-    }
-
-    noinline fn writeDomainNotice(
-        self: *ClipboardCommandFakeApp,
-        notice: types.SemanticNotice,
-        _: bool,
-    ) !void {
-        self.last_topic = notice.topic;
-        self.last_tone = notice.tone;
-        self.last_body = notice.body;
-    }
-};
 
 const SkillsInstallReplayApp = struct {
     const FakeInputRuntime = struct {
@@ -4131,6 +3781,103 @@ const ChangeCommandFakeApp = struct {
     }
 };
 
+const ContextCommandFakeApp = struct {
+    alloc: std.mem.Allocator,
+    total_input_tokens: u64 = 0,
+    selected_model: std.ArrayList(u8) = .empty,
+    gateway_metadata_model: ?[]const u8 = null,
+    gateway_metadata: model_capabilities.GatewayMetadata = .{},
+    last_notice: ?types.SemanticNotice = null,
+
+    fn deinit(self: *ContextCommandFakeApp) void {
+        self.selected_model.deinit(self.alloc);
+        if (self.last_notice) |notice| self.alloc.free(notice.body);
+    }
+
+    pub fn resolvedModelCapabilities(self: *ContextCommandFakeApp, model: []const u8) model_capabilities.Capabilities {
+        const fallback = model_capabilities.Capabilities{
+            .context_window = 1_000_000,
+        };
+        if (self.gateway_metadata_model) |metadata_model| {
+            if (std.mem.eql(u8, metadata_model, model)) {
+                return model_capabilities.mergeCapabilities(fallback, self.gateway_metadata);
+            }
+        }
+        return fallback;
+    }
+
+    noinline fn writeDomainNotice(self: *ContextCommandFakeApp, notice: types.SemanticNotice, _: bool) !void {
+        if (self.last_notice) |previous| self.alloc.free(previous.body);
+        self.last_notice = .{
+            .topic = notice.topic,
+            .tone = notice.tone,
+            .body = try self.alloc.dupe(u8, notice.body),
+        };
+    }
+};
+
+test "formatContextUsageBody reports used, window, and percent" {
+    const body = try formatContextUsageBody(std.testing.allocator, 43_000, 1_000_000);
+    defer std.testing.allocator.free(body);
+    try std.testing.expectEqualStrings("Context: 43k/1000k tokens used (4%).", body);
+}
+
+test "formatContextUsageBody degrades when context window is unknown" {
+    const body = try formatContextUsageBody(std.testing.allocator, 5_000, null);
+    defer std.testing.allocator.free(body);
+    try std.testing.expectEqualStrings("Context: 5k tokens used.", body);
+}
+
+test "formatContextUsageBody reports no usage when session has no tokens" {
+    const body = try formatContextUsageBody(std.testing.allocator, 0, 1_000_000);
+    defer std.testing.allocator.free(body);
+    try std.testing.expectEqualStrings("No context used in this session yet.", body);
+}
+
+test "context command writes usage notice from app totals" {
+    const alloc = std.testing.allocator;
+    var app = ContextCommandFakeApp{ .alloc = alloc };
+    defer app.deinit();
+    app.total_input_tokens = 43_000;
+    try app.selected_model.appendSlice(alloc, "anthropic/claude-opus-4.8");
+
+    try Handlers(ContextCommandFakeApp).commandShowContext(@ptrCast(&app));
+
+    const notice = app.last_notice orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("context", notice.topic);
+    try std.testing.expectEqual(types.NoticeTone.neutral, notice.tone);
+    try std.testing.expectEqualStrings("Context: 43k/1000k tokens used (4%).", notice.body);
+}
+
+test "context command uses gateway context window when available" {
+    const alloc = std.testing.allocator;
+    var app = ContextCommandFakeApp{
+        .alloc = alloc,
+        .total_input_tokens = 12_000,
+        .gateway_metadata_model = "provider/new-long-context",
+        .gateway_metadata = .{ .context_window = 750_000 },
+    };
+    defer app.deinit();
+    try app.selected_model.appendSlice(alloc, "provider/new-long-context");
+
+    try Handlers(ContextCommandFakeApp).commandShowContext(@ptrCast(&app));
+
+    const notice = app.last_notice orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("Context: 12k/750k tokens used (1%).", notice.body);
+}
+
+test "context command reports no usage when tokens are zero" {
+    const alloc = std.testing.allocator;
+    var app = ContextCommandFakeApp{ .alloc = alloc };
+    defer app.deinit();
+    try app.selected_model.appendSlice(alloc, "test-model");
+
+    try Handlers(ContextCommandFakeApp).commandShowContext(@ptrCast(&app));
+
+    const notice = app.last_notice orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("No context used in this session yet.", notice.body);
+}
+
 fn writeTempSkillFile(tmp: *std.testing.TmpDir, sub_path: []const u8, content: []const u8) !void {
     if (std.fs.path.dirname(sub_path)) |parent| {
         try tmp.dir.createDirPath(io_mod.getIo(), parent);
@@ -4179,16 +3926,14 @@ test "trace report file uses private randomized markdown path" {
     defer alloc.free(path);
     defer std.Io.Dir.deleteFileAbsolute(std.testing.io, path) catch {};
 
-    try std.testing.expect(std.mem.find(u8, path, "fx-trace-") != null);
+    try std.testing.expect(std.mem.find(u8, path, "fiber-trace-") != null);
     try std.testing.expect(std.mem.endsWith(u8, path, ".md"));
 
     var file = try std.Io.Dir.openFileAbsolute(std.testing.io, path, .{});
     defer file.close(std.testing.io);
     const stat = try file.stat(std.testing.io);
     try std.testing.expectEqual(@as(u64, 6), stat.size);
-    if (@import("builtin").os.tag != .windows) {
-        try std.testing.expectEqual(@as(std.posix.mode_t, 0), stat.permissions.toMode() & 0o077);
-    }
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0), stat.permissions.toMode() & 0o077);
 }
 
 test "trace auth summary preserves missing and loaded status text" {
@@ -4200,13 +3945,13 @@ test "trace auth summary preserves missing and loaded status text" {
     defer missing.deinit();
     try writeAuthStateSummary(&missing.writer, &app);
     try std.testing.expectEqualStrings(
-        "auth: source=missing refreshable=false gateway_team=unknown\n",
+        "auth: source=missing refreshable=false\n",
         missing.written(),
     );
 
     var credential = credentials.Credential{
         .token = try alloc.dupe(u8, "token"),
-        .source = .fx_login,
+        .source = .chatgpt_subscription,
     };
     defer credential.deinit(alloc);
     _ = app.auth.adoptCredential(alloc, &credential);
@@ -4214,7 +3959,7 @@ test "trace auth summary preserves missing and loaded status text" {
     defer loaded.deinit();
     try writeAuthStateSummary(&loaded.writer, &app);
     try std.testing.expectEqualStrings(
-        "auth: source=fx login refreshable=true gateway_team=unset\n",
+        "auth: source=Codex subscription refreshable=true\n",
         loaded.written(),
     );
 }
@@ -4258,7 +4003,7 @@ test "trace successful tool calls use compact result previews" {
     var call: diagnostics.ToolCallMetric = .{ .started_at_ms = 3000, .duration_ms = 1, .ok = true };
     call.setName("read_file");
     call.setArgs("{\"path\":\"README.md\"}");
-    call.setResult("<path>README.md</path>\n<content>\n# fx\n\nlong body line\n</content>");
+    call.setResult("<path>README.md</path>\n<content>\n# fiber\n\nlong body line\n</content>");
     diagnostics.recordToolCall(call);
 
     var out: std.Io.Writer.Allocating = .init(alloc);
@@ -4267,7 +4012,7 @@ test "trace successful tool calls use compact result previews" {
     const text = out.written();
 
     try std.testing.expect(std.mem.find(u8, text, "recent successes (compact):") != null);
-    try std.testing.expect(std.mem.find(u8, text, "result_preview: # fx") != null);
+    try std.testing.expect(std.mem.find(u8, text, "result_preview: # fiber") != null);
     try std.testing.expect(std.mem.find(u8, text, "<path>README.md</path>") == null);
     try std.testing.expect(std.mem.find(u8, text, "long body line") == null);
 }
@@ -4325,7 +4070,7 @@ test "trace web search calls hide provider names and payloads" {
             .id = "call_local",
             .name = "read_file",
             .arguments_json = "{}",
-            .provenance = .fx_local,
+            .provenance = .fiber_local,
         },
     };
     var results = [_]types.PersistedToolResult{
@@ -4508,64 +4253,6 @@ test "app_commands exposes active handler API surface" {
     try std.testing.expect(handlers_info.return_type.? == command_router.CommandHandlers);
 }
 
-test "credits command renders through the composed provider" {
-    var app = CreditsCommandFakeApp{ .alloc = std.testing.allocator };
-    defer app.deinit();
-
-    try Handlers(CreditsCommandFakeApp).commandShowCredits(@ptrCast(&app));
-
-    try std.testing.expectEqual(@as(usize, 1), app.calls);
-    try std.testing.expect(app.saw_expected_input);
-    try std.testing.expectEqualStrings("credits", app.notice_topic.?);
-    try std.testing.expectEqual(types.NoticeTone.neutral, app.notice_tone.?);
-    try std.testing.expectEqualStrings("balance=10", app.notice_body.items);
-}
-
-test "app_commands routes clear through carry-forward session reset" {
-    var app = ClearCommandFakeApp{};
-
-    try clearSessionForClearCommand(&app);
-
-    try std.testing.expectEqual(@as(usize, 1), app.clear_count);
-    try std.testing.expectEqual(@as(usize, 0), app.reset_count);
-}
-
-test "copy command routes exact reply bytes through the host clipboard" {
-    var app = ClipboardCommandFakeApp{
-        .session = .{ .reply = "reply\nwith exact bytes" },
-    };
-
-    try Handlers(ClipboardCommandFakeApp).commandCopyLast(@ptrCast(&app));
-
-    try std.testing.expectEqual(@as(usize, 1), app.copy_calls);
-    try std.testing.expectEqualStrings("reply\nwith exact bytes", app.copied_text.?);
-    try std.testing.expectEqualStrings("clipboard", app.last_topic.?);
-    try std.testing.expectEqual(types.NoticeTone.neutral, app.last_tone.?);
-    try std.testing.expectEqualStrings("Copied to clipboard.", app.last_body.?);
-}
-
-test "copy command reports missing replies and host failures" {
-    var app = ClipboardCommandFakeApp{};
-
-    try Handlers(ClipboardCommandFakeApp).commandCopyLast(@ptrCast(&app));
-    try std.testing.expectEqual(@as(usize, 0), app.copy_calls);
-    try std.testing.expectEqual(types.NoticeTone.neutral, app.last_tone.?);
-    try std.testing.expectEqualStrings("No assistant reply to copy.", app.last_body.?);
-
-    app.session.reply = "reply";
-    for ([_]ClipboardCommandFakeApp.CopyOutcome{ .unavailable, .failed }) |outcome| {
-        app.copy_outcome = outcome;
-        app.last_tone = null;
-        app.last_body = null;
-
-        try Handlers(ClipboardCommandFakeApp).commandCopyLast(@ptrCast(&app));
-
-        try std.testing.expectEqual(types.NoticeTone.@"error", app.last_tone.?);
-        try std.testing.expectEqualStrings("Failed to copy to clipboard.", app.last_body.?);
-    }
-    try std.testing.expectEqual(@as(usize, 2), app.copy_calls);
-}
-
 test "app_commands renders transactional status for explicit MCP reload" {
     var app = McpCommandFakeApp{ .alloc = std.testing.allocator };
     defer app.deinit();
@@ -4658,7 +4345,7 @@ test "app_commands preserves command display after implicit MCP reload" {
     try std.testing.expectEqualStrings("mcp", app.last_topic.?);
     try std.testing.expectEqual(types.NoticeTone.neutral, app.last_tone.?);
     try std.testing.expectEqualStrings(
-        "Waiting for MCP authentication for 'fixture'. You can continue using fx while the browser flow completes.",
+        "Waiting for MCP authentication for 'fixture'. You can continue using fiber while the browser flow completes.",
         app.notice_body.items,
     );
     try Handlers(McpCommandFakeApp).collectMcpAuthenticationFacts(&app);
@@ -4777,7 +4464,7 @@ test "skills list opens menu without transcript inventory" {
             .name = "managed",
             .description = "managed skill",
             .path = "/tmp/managed/SKILL.md",
-            .source = .global_fx,
+            .source = .global_fiber,
         },
         .{
             .name = "workspace",
@@ -4839,7 +4526,7 @@ test "skills show focuses matching menu row without transcript body" {
             .name = "managed",
             .description = "managed skill",
             .path = "/tmp/managed/SKILL.md",
-            .source = .global_fx,
+            .source = .global_fiber,
         },
         .{
             .name = "workspace",
@@ -4869,7 +4556,7 @@ test "skills show exposes duplicate rows without focusing a precedence winner" {
             .name = "review",
             .description = "managed review",
             .path = "/tmp/managed/review",
-            .source = .global_fx,
+            .source = .global_fiber,
         },
         .{
             .name = "review",
@@ -4900,12 +4587,12 @@ test "skills remove prefers a managed match after a workspace duplicate" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeTempSkillFile(&tmp, "home/.fx/skills/review/SKILL.md", "---\nname: review\n---\nmanaged body\n");
+    try writeTempSkillFile(&tmp, "home/.fiber/skills/review/SKILL.md", "---\nname: review\n---\nmanaged body\n");
     try writeTempSkillFile(&tmp, "home/workspace/.agents/skills/review/SKILL.md", "---\nname: review\n---\nworkspace body\n");
 
-    const managed_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    const managed_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
     defer alloc.free(managed_root);
-    const managed_skill = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills/review");
+    const managed_skill = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills/review");
     defer alloc.free(managed_skill);
     const workspace_skill = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace/.agents/skills/review");
     defer alloc.free(workspace_skill);
@@ -4920,7 +4607,7 @@ test "skills remove prefers a managed match after a workspace duplicate" {
             .name = "review",
             .description = "managed review",
             .path = managed_skill,
-            .source = .global_fx,
+            .source = .global_fiber,
         },
     };
     var app = SkillsInstallReplayApp{
@@ -4937,7 +4624,7 @@ test "skills remove prefers a managed match after a workspace duplicate" {
     try std.testing.expectEqual(@as(usize, 1), app.reload_count);
     try std.testing.expectError(
         error.FileNotFound,
-        tmp.dir.access(io_mod.getIo(), "home/.fx/skills/review", .{}),
+        tmp.dir.access(io_mod.getIo(), "home/.fiber/skills/review", .{}),
     );
     try tmp.dir.access(io_mod.getIo(), "home/workspace/.agents/skills/review/SKILL.md", .{});
 }
@@ -4948,7 +4635,7 @@ test "skills show missing name keeps not found notice" {
         .name = "managed",
         .description = "managed skill",
         .path = "/tmp/managed/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     var app = SkillsInstallReplayApp{ .alloc = alloc, .skills = .{ .items = @constCast(&skills) } };
     defer app.deinit();

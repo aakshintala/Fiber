@@ -13,6 +13,9 @@ pub const Options = struct {
     permission_rules: types.PermissionRuleSet = .{},
     mcp_runtime: ?*mcp_runtime.McpRuntime = null,
     subagent_available: bool = false,
+    /// Whether a configured search backend exists. When false the built-in
+    /// web_search tool is omitted instead of advertised as a silent fallback.
+    web_search_available: bool = true,
 };
 
 const BuildKind = enum { full, read_only };
@@ -609,10 +612,6 @@ fn buildTestModelToolProjectionForRegistry(alloc: Allocator, tools: []const tool
     return buildModelToolProjectionForSet(alloc, testToolSetForRegistry(tools), options);
 }
 
-fn buildTestReadOnlyModelToolProjection(alloc: Allocator, options: Options) !EffectiveToolProjection {
-    return buildReadOnlyModelToolProjectionForSet(alloc, test_tool_set, options);
-}
-
 pub fn buildModelToolProjectionForSet(alloc: Allocator, tool_set: tool_set_contract.ToolSet, options: Options) !EffectiveToolProjection {
     return buildToolProjection(alloc, tool_set, .full, options);
 }
@@ -668,6 +667,7 @@ fn appendBuiltinTool(
     if (!tool.model_visible) return;
     if (!includeBuiltinForKind(tool.name, kind, tool_set)) return;
     if (std.mem.eql(u8, tool.name, "subagent") and !options.subagent_available) return;
+    if (std.mem.eql(u8, tool.name, "web_search") and !options.web_search_available) return;
     if (std.mem.eql(u8, tool.name, "vision")) return;
     if (options.permission_mode != .yolo) {
         if (tool.provider_executed and !providerExecutionIsAllowed(tool.name, options.permission_rules)) return;
@@ -689,7 +689,7 @@ fn appendBuiltinTool(
 
 /// A provider-executed tool is never dispatched locally, so an unsettled `ask`
 /// hides it exactly like a `deny`. The tool name doubles as the target pattern
-/// because the provider owns the call and fx never sees its arguments.
+/// because the provider owns the call and fiber never sees its arguments.
 fn providerExecutionIsAllowed(tool_name: []const u8, rules: types.PermissionRuleSet) bool {
     const permission = permissions.permissionNameForTool(tool_name);
     return switch (permissions.ruleDecisionForPermissionPattern(rules, permission, tool_name, .none)) {
@@ -735,13 +735,6 @@ fn expectNotContainsName(names: []const []const u8, expected: []const u8) !void 
     for (names) |name| {
         if (std.mem.eql(u8, name, expected)) return error.TestExpectedEqual;
     }
-}
-
-fn indexOfName(names: []const []const u8, expected: []const u8) !usize {
-    for (names, 0..) |name, index| {
-        if (std.mem.eql(u8, name, expected)) return index;
-    }
-    return error.TestExpectedEqual;
 }
 
 fn appendTestMcpTool(runtime: *mcp_runtime.McpRuntime, server_index: usize, name: []const u8) !void {

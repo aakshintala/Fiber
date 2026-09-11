@@ -364,50 +364,16 @@ fn authPickerInteractionHint(view: auth_runtime.PickerView, width: u16) ?[]const
         "Enter Open  Esc Back",
         "Enter Esc",
     };
-    const selection_variants = [_][]const u8{
-        "↑↓ Navigate     Enter Use     Esc Back",
-        "↑↓ Move  Enter Use  Esc",
-        "Enter Use  Esc Back",
-        "Enter Esc",
-    };
-    const team_variants = [_][]const u8{
-        "Type to search     ↑↓ Navigate     Enter Use     Esc Back",
-        "Type  ↑↓ Move  Enter  Esc",
-        "↑↓ Move  Enter  Esc",
-        "Enter Esc",
-    };
     const codex_sign_in_variants = [_][]const u8{
         "Enter reopens browser · Esc cancels",
         "Enter reopens  Esc cancels",
         "Enter  Esc",
         "Enter Esc",
     };
-    const grok_browser_variants = [_][]const u8{
-        "Enter reopens browser · Tab enters code · Esc cancels",
-        "Enter reopens  Tab code  Esc cancels",
-        "Enter  Tab  Esc",
-        "Enter Tab Esc",
-    };
-    const grok_manual_variants = [_][]const u8{
-        "Enter submits code · Tab returns to browser · Esc cancels",
-        "Enter submits  Tab browser  Esc cancels",
-        "Enter  Tab  Esc",
-        "Enter Tab Esc",
-    };
     const variants = switch (view.stage) {
         .root => root_variants,
         .connections => connections_variants,
-        .provider, .switch_credential => selection_variants,
-        .change_team => team_variants,
-        .sign_in => switch (view.sign_in_source) {
-            .chatgpt_subscription => codex_sign_in_variants,
-            .grok_subscription => if (view.sign_in_code_visible)
-                grok_manual_variants
-            else
-                grok_browser_variants,
-            else => return null,
-        },
-        .api_key => return null,
+        .sign_in => codex_sign_in_variants,
     };
     for (variants) |candidate| {
         if (display_width.visibleWidth(candidate) <= width) return candidate;
@@ -1527,7 +1493,7 @@ test "footer suppresses slash rows for streaming model-shaped input" {
         .name = "model-helper",
         .description = "model helper",
         .path = "/tmp/model-helper/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
 
     for ([_][]const u8{ "/model", "/model " }) |text| {
@@ -1597,7 +1563,7 @@ test "compose hint row replaces model status with setup navigation" {
     try std.testing.expect(std.mem.find(u8, root.items, "gpt-5.1") == null);
 
     ctx.auth_picker.stage = .connections;
-    ctx.auth_picker.selected_choice = .{ .action = .login };
+    ctx.auth_picker.selected_choice = .{ .action = .connections };
     var child = try composeHintRow(std.testing.allocator, false, null, ctx, 96);
     defer child.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.find(u8, child.items, "Esc Back") != null);
@@ -1607,23 +1573,11 @@ test "compose hint row replaces model status with subscription sign-in controls"
     const alloc = std.testing.allocator;
     const cases = [_]struct {
         source: credentials.Source,
-        manual_code_visible: bool,
         expected: []const u8,
     }{
         .{
             .source = .chatgpt_subscription,
-            .manual_code_visible = false,
             .expected = "Enter reopens browser · Esc cancels",
-        },
-        .{
-            .source = .grok_subscription,
-            .manual_code_visible = false,
-            .expected = "Enter reopens browser · Tab enters code · Esc cancels",
-        },
-        .{
-            .source = .grok_subscription,
-            .manual_code_visible = true,
-            .expected = "Enter submits code · Tab returns to browser · Esc cancels",
         },
     };
 
@@ -1639,8 +1593,6 @@ test "compose hint row replaces model status with subscription sign-in controls"
             .active_source = null,
             .include_skip = false,
             .stage = .sign_in,
-            .sign_in_source = case.source,
-            .sign_in_code_visible = case.manual_code_visible,
         };
 
         var row = try composeHintRow(alloc, false, null, ctx, 80);
@@ -1735,7 +1687,7 @@ test "compose hint row prioritizes red yolo warning with compact fallback" {
     var input = InputRuntime{};
     defer input.deinit(std.testing.allocator);
     var ctx = testRenderContext(&input);
-    ctx.danger_status = "YOLO enabled: fx permission checks disabled";
+    ctx.danger_status = "YOLO enabled: fiber permission checks disabled";
     ctx.danger_status_compact = "YOLO: unrestricted";
 
     var full = try composeHintRow(std.testing.allocator, false, null, ctx, 80);
@@ -1759,7 +1711,7 @@ test "compose hint row yields the yolo warning to a pending ctrl+c quit hint" {
     var input = InputRuntime{};
     defer input.deinit(std.testing.allocator);
     var ctx = testRenderContext(&input);
-    ctx.danger_status = "YOLO enabled: fx permission checks disabled";
+    ctx.danger_status = "YOLO enabled: fiber permission checks disabled";
     ctx.danger_status_compact = "YOLO: unrestricted";
     ctx.ctrl_c_pending = true;
 

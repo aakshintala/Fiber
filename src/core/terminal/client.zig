@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const host_target = @import("../hosts/target.zig");
 const contracts = @import("contracts.zig");
 const protocol = @import("protocol.zig");
 const host = @import("host.zig");
@@ -215,7 +214,6 @@ pub const Runtime = struct {
         correlation_id: contracts.CorrelationId,
         request: contracts.ActionRequest,
     ) AdmissionError!void {
-        if (comptime host_target.is_wasm) return error.TerminalUnavailable;
         try correlation_id.validate();
         var intent = Intent{
             .correlation_id = correlation_id,
@@ -305,14 +303,6 @@ pub const Runtime = struct {
         self.mutex.lockUncancelable(zio);
         defer self.mutex.unlock(zio);
         return self.projection.snapshot(alloc);
-    }
-
-    pub fn clearTerminalProjection(self: *Runtime) bool {
-        const zio = io_mod.getIo();
-        self.mutex.lockUncancelable(zio);
-        defer self.mutex.unlock(zio);
-        const alloc = self.alloc orelse return false;
-        return self.projection.clear(alloc);
     }
 
     pub fn deinit(self: *Runtime) void {
@@ -542,9 +532,9 @@ const RequestWorker = struct {
 
 fn maybeDelayRequestForTest(worker: *RequestWorker) void {
     const variable = switch (worker.intent.request.value) {
-        .start => "FX_TERMINAL_TEST_CLIENT_REQUEST_DELAY_MS",
+        .start => "FIBER_TERMINAL_TEST_CLIENT_REQUEST_DELAY_MS",
         .write => |request| if (request.lease == .acquire)
-            "FX_TERMINAL_TEST_TAKEOVER_ACQUIRE_DELAY_MS"
+            "FIBER_TERMINAL_TEST_TAKEOVER_ACQUIRE_DELAY_MS"
         else
             return,
         else => return,
@@ -565,7 +555,7 @@ fn maybeDelayRequestForTest(worker: *RequestWorker) void {
 }
 
 fn takeoverWorkerStartFailureRequested(worker: *const RequestWorker) bool {
-    const requested = io_mod.getenv("FX_TERMINAL_TEST_TAKEOVER_FAILURE") orelse
+    const requested = io_mod.getenv("FIBER_TERMINAL_TEST_TAKEOVER_FAILURE") orelse
         return false;
     if (!std.mem.eql(u8, requested, "worker_start")) return false;
     return switch (worker.intent.request.value) {

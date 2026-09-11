@@ -33,7 +33,6 @@ const testLifecycleContext = test_support.testLifecycleContext;
 const finishCommonAssistantTerminal = runtime_orchestrator.finishCommonAssistantTerminal;
 const expectBodyContains = test_support.expectBodyContains;
 const expectBodyNotContains = test_support.expectBodyNotContains;
-const countText = test_support.countText;
 const countNeedle = test_support.countNeedle;
 const readTraceFile = test_support.readTraceFile;
 const textContains = test_support.textContains;
@@ -721,7 +720,7 @@ test "common Stop continues once with exact synthetic context and joined history
     try expectBodyContains(
         &gateway,
         1,
-        "Continue the turn. fx hook context:\\nverify the answer",
+        "Continue the turn. fiber hook context:\\nverify the answer",
     );
     try std.testing.expectEqualStrings(
         "candidate\nfinal",
@@ -748,7 +747,7 @@ test "common Stop continues once with exact synthetic context and joined history
     try expectBodyNotContains(
         &follow_gateway,
         0,
-        "Continue the turn. fx hook context",
+        "Continue the turn. fiber hook context",
     );
 }
 
@@ -1718,7 +1717,7 @@ test "TurnFinalizationGuard runs PostTurnEnd once for every terminal outcome and
         .{ .scope_kind = .interactive, .outcome = .completed, .disposition = .completed },
         .{ .scope_kind = .ask, .outcome = .interrupted, .disposition = null },
         .{ .scope_kind = .ask, .outcome = .paused, .disposition = null },
-        .{ .scope_kind = .acp, .outcome = .failed, .disposition = .length_limited },
+        .{ .scope_kind = .ask, .outcome = .failed, .disposition = .length_limited },
         .{ .scope_kind = .subagent, .outcome = .completed, .disposition = null },
     };
 

@@ -2,7 +2,6 @@ const std = @import("std");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 const session_usage = @import("session_usage.zig");
-const generation_usage = @import("generation_usage_provider.zig");
 const stream_provider = @import("../agent/stream_provider.zig");
 const types = @import("../shared/types.zig");
 
@@ -572,19 +571,6 @@ test "torn exact settlement republishes stale backlog without reapplying totals"
             if (event == .generation) self.generations += 1;
         }
     };
-    const LookupProbe = struct {
-        calls: usize = 0,
-
-        fn lookup(
-            raw: ?*anyopaque,
-            _: Allocator,
-            _: generation_usage.LookupInput,
-        ) generation_usage.LookupError!generation_usage.LookupOutcome {
-            const self: *@This() = @ptrCast(@alignCast(raw.?));
-            self.calls += 1;
-            return error.Unavailable;
-        }
-    };
 
     const alloc = std.testing.allocator;
     const completion: types.ModelCompletion = .{
@@ -650,11 +636,8 @@ test "torn exact settlement republishes stale backlog without reapplying totals"
     try std.testing.expectEqual(@as(usize, 1), durable.publication_backlog.len);
     try std.testing.expectEqual(@as(u64, 17), durable.input_tokens);
 
-    var lookup = LookupProbe{};
     var publication = PublicationProbe{};
-    var resumed = session_usage.Usage.initFreshWithProviders(.{
-        .codex = .{ .context = &lookup, .lookup_fn = LookupProbe.lookup },
-    });
+    var resumed = session_usage.Usage.initFresh();
     defer resumed.deinit(alloc);
     resumed.configurePublicationSink(.{
         .context = &publication,
@@ -666,7 +649,6 @@ test "torn exact settlement republishes stale backlog without reapplying totals"
     var final = try resumed.snapshot(alloc);
     defer final.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 1), publication.generations);
-    try std.testing.expectEqual(@as(usize, 0), lookup.calls);
     try std.testing.expectEqual(@as(usize, 0), final.pending.len);
     try std.testing.expectEqual(@as(usize, 0), final.publication_backlog.len);
     try std.testing.expectEqual(@as(u64, 17), final.input_tokens);

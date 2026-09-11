@@ -46,12 +46,6 @@ pub const LivePermissionRevalidation = union(enum) {
     },
 };
 
-pub const DeferredToolCompletion = struct {
-    transport_id: []const u8,
-    content_text: []const u8,
-    command_result_json: ?[]const u8 = null,
-};
-
 pub const TransportPublicationOutcome = enum {
     published,
     failed,
@@ -83,7 +77,6 @@ pub const ToolExecutionResult = struct {
     interactive_notice: ?types.SemanticNotice = null,
     context_notices: []const []const u8 = &.{},
     command_result_json: ?[]const u8 = null,
-    turn_control: ?tool_dispatch.TurnControl = null,
     web_search_completion: ?types.WebSearchCompletion = null,
     web_fetch_completion: ?types.WebFetchCompletion = null,
     inner_usage: ?types.ToolUsage = null,
@@ -92,7 +85,6 @@ pub const ToolExecutionResult = struct {
     tool_result_memory: ?types.ToolResultMemory = null,
     tool_result_memory_prepared: bool = false,
     committed_file_handoff: ?file_mutation.CommittedFileHandoff = null,
-    deferred_tool_completion: ?DeferredToolCompletion = null,
     command_replay_capture: ?*command_replay_store.Capture = null,
     result_commit: ?result_commit.Token = null,
 };
@@ -117,13 +109,6 @@ test "tool result failure writer preserves exact error type and identity" {
         @TypeOf(failure) == error{LiveToolAuthorityUnavailable}!ToolExecutionResult,
     );
     try std.testing.expectError(error.LiveToolAuthorityUnavailable, failure);
-}
-
-pub fn unavailableHostToolResult(alloc: Allocator) Allocator.Error!ToolExecutionResult {
-    return .{
-        .status = .failure,
-        .model_output = try alloc.dupe(u8, "Tools are unavailable in the current JavaScript host."),
-    };
 }
 
 pub const ToolExecutionRequest = struct {

@@ -1,6 +1,5 @@
 const std = @import("std");
 const host = @import("../hosts/host.zig");
-const host_target = @import("../hosts/target.zig");
 const io_mod = @import("../shared/io.zig");
 const profile_paths = @import("../shared/profile_paths.zig");
 
@@ -8,7 +7,6 @@ pub fn profileFile(
     file_name: []const u8,
     max_bytes: usize,
 ) host.SecretStorePresence {
-    if (comptime host_target.is_wasm) return .missing;
     return profileFileFromHome(io_mod.getenv("HOME"), file_name, max_bytes);
 }
 

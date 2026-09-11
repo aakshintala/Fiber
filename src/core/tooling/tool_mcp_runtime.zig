@@ -56,15 +56,6 @@ pub const Access = union(enum) {
         action_authority_generation: u64 = 0,
     },
 
-    pub fn allowsTool(self: Access, runtime_generation: u64, name: []const u8) bool {
-        return switch (self) {
-            .unrestricted => true,
-            .disabled => false,
-            .scoped => |scope| scope.captured.runtime_generation == runtime_generation and
-                scope.captured.tool(name) != null,
-        };
-    }
-
     pub fn allowsFeatureServer(self: Access, runtime_generation: u64, name: []const u8) bool {
         return switch (self) {
             .unrestricted => true,
@@ -125,14 +116,6 @@ pub const InputOrigin = struct {
     lifecycle_cancel_flag: ?*const std.atomic.Value(bool) = null,
 };
 
-pub const InputIdentityWitness = struct {
-    runtime_generation: u64 = 0,
-    connection_generation: u64,
-    client_generation: u64,
-    catalog_generation: u64,
-    auth_generation: u64,
-};
-
 pub const InputResponder = struct {
     context: *anyopaque,
     capabilities: elicitation.Capabilities = .{},
@@ -152,7 +135,7 @@ pub const LegacyUrlCompletion = struct {
 
 pub const LegacyUrlCompletionSink = struct {
     context: *anyopaque,
-    /// Accepts the unique outbound ACP elicitation id. The legacy wire id is
+    /// Accepts the unique outbound elicitation id. The legacy wire id is
     /// not unique across recovered connections and cannot own cleanup.
     accept: *const fn (*anyopaque, InputOrigin, []const u8) LegacyUrlAcceptTransition,
     consume: *const fn (*anyopaque, LegacyUrlCompletion) LegacyUrlConsumeTransition,
@@ -162,11 +145,6 @@ pub const LegacyUrlCompletionSink = struct {
 pub const LegacyUrlConsumeTransition = union(enum) {
     missing,
     consumed: ?[]u8,
-};
-
-pub const LegacyUrlAcceptStatus = enum {
-    awaiting_completion,
-    completed,
 };
 
 pub const LegacyUrlAcceptTransition = union(enum) {

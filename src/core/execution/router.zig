@@ -104,7 +104,9 @@ pub fn executePreparedRoute(
     return local_executor.executePreparedCommand(cfg, alloc, route);
 }
 
-pub fn executePlannedCommand(
+/// Test-only composition of validateConfigContext, prepareAuthorizedRoute, and
+/// executePreparedRoute. Production calls those three directly.
+fn executePlannedCommand(
     cfg: command_runner.Config,
     alloc: std.mem.Allocator,
     command_ctx: command_admission.CommandContext,
@@ -169,7 +171,6 @@ test "router keeps direct grammar on the safer route for every shell source" {
     const sources = [_]command_admission.ShellAuthorizationSource{
         .configured_rule,
         .session_grant,
-        .js_host,
         .interactive_once,
         .interactive_always,
         .auto_mode,

@@ -22,6 +22,7 @@ pub const RunResult = struct {
 };
 
 const RunError = error{
+    NoReleaseSource,
     FetchFailed,
     DownloadFailed,
     ChecksumFetchFailed,
@@ -35,24 +36,26 @@ const RunError = error{
 pub fn run(
     alloc: Allocator,
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     format: output_contracts.OutputFormat,
 ) RunResult {
-    return runInner(alloc, current, channel, format) catch |err| failureResult(current, channel, err);
+    return runInner(alloc, current, format) catch |err| failureResult(current, err);
 }
 
 fn runInner(
     alloc: Allocator,
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     format: output_contracts.OutputFormat,
 ) RunError!RunResult {
+    // Refuse before spawning a worker so the answer is deterministic and costs
+    // no thread or network timing. The worker keeps its own guard as defence.
+    if (helpers.resolveReleaseBase() == null) return error.NoReleaseSource;
+
     var done = std.atomic.Value(bool).init(false);
     var progress = ProgressState{};
     var worker_result = WorkerResult{};
 
     const show_progress = format == .text;
-    const worker = std.Thread.spawn(.{}, upgradeWorker, .{ alloc, current, channel, &done, &worker_result, &progress, show_progress }) catch
+    const worker = std.Thread.spawn(.{}, upgradeWorker, .{ alloc, current, &done, &worker_result, &progress, show_progress }) catch
         return error.FetchFailed;
 
     if (show_progress) {
@@ -62,13 +65,12 @@ fn runInner(
     }
     if (format == .text) worker.join();
 
-    return completeRunResult(alloc, current, channel, worker_result);
+    return completeRunResult(alloc, current, worker_result);
 }
 
 fn completeRunResult(
     alloc: Allocator,
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     worker_result: WorkerResult,
 ) RunError!RunResult {
     if (worker_result.err) |e| {
@@ -80,18 +82,13 @@ fn completeRunResult(
     }
 
     const target = worker_result.target_owned orelse return error.FetchFailed;
-    const latest = target.version();
-    const latest_revision = target.revision() orelse "";
+    const latest = target.version;
 
     if (!target.shouldInstall(current)) {
         return .{
             .snapshot = .{
                 .current = versionLabel(current.version),
                 .latest = latest,
-                .channel = channel.label(),
-                .current_channel = current.channel.label(),
-                .current_revision = current.revision,
-                .latest_revision = latest_revision,
                 .status = .up_to_date,
             },
             .target_owned = target,
@@ -102,10 +99,6 @@ fn completeRunResult(
         .snapshot = .{
             .current = versionLabel(current.version),
             .latest = latest,
-            .channel = channel.label(),
-            .current_channel = current.channel.label(),
-            .current_revision = current.revision,
-            .latest_revision = latest_revision,
             .status = .upgraded,
         },
         .target_owned = target,
@@ -114,25 +107,29 @@ fn completeRunResult(
 
 fn failureResult(
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     err: RunError,
 ) RunResult {
     return .{ .snapshot = .{
         .current = versionLabel(current.version),
         .latest = "",
-        .channel = channel.label(),
-        .current_channel = current.channel.label(),
-        .current_revision = current.revision,
         .status = .failed,
         .err_message = failureMessage(err),
     } };
 }
 
+/// Fiber publishes no releases yet, so `fiber upgrade` fails with exactly this
+/// message rather than pretending a fetch was attempted.
+pub const unavailable_message =
+    "no release source is configured; upgrade is unavailable until releases are published";
+
+pub const unavailable_code = "UpgradeUnavailable";
+
 fn failureMessage(err: RunError) []const u8 {
     return switch (err) {
-        error.FetchFailed => "failed to fetch latest version from CDN",
+        error.NoReleaseSource => unavailable_message,
+        error.FetchFailed => "failed to fetch latest version from the release server",
         error.DownloadFailed => "failed to download release archive",
-        error.ChecksumFetchFailed => "failed to fetch checksum from CDN",
+        error.ChecksumFetchFailed => "failed to fetch checksum from the release server",
         error.ChecksumMismatch => "downloaded archive failed integrity check",
         error.ExtractionFailed => "failed to extract release archive",
         error.SelfExeNotFound => "could not determine path of running binary",
@@ -157,14 +154,13 @@ fn workerErrorToRunError(err: UpgradeError) RunError {
 fn upgradeWorker(
     alloc: Allocator,
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     done: *std.atomic.Value(bool),
     result: *WorkerResult,
     progress: *ProgressState,
     show_progress: bool,
 ) void {
     defer done.store(true, .release);
-    upgradeWorkerInner(alloc, current, channel, result, progress, show_progress) catch {
+    upgradeWorkerInner(alloc, current, result, progress, show_progress) catch {
         if (result.err == null) result.err = .out_of_memory;
     };
 }
@@ -172,13 +168,15 @@ fn upgradeWorker(
 fn upgradeWorkerInner(
     alloc: Allocator,
     current: update_target.CurrentBuild,
-    channel: update_target.Channel,
     result: *WorkerResult,
     progress: *ProgressState,
     show_progress: bool,
 ) !void {
-    const cdn_base = helpers.resolveCdnBase();
-    const fetched_target = helpers.fetchTarget(alloc, channel, cdn_base) catch {
+    const release_base = helpers.resolveReleaseBase() orelse {
+        result.err = .fetch_failed;
+        return;
+    };
+    const fetched_target = helpers.fetchTarget(alloc, release_base) catch {
         result.err = .fetch_failed;
         return;
     };
@@ -193,7 +191,7 @@ fn upgradeWorkerInner(
     var rand_buf: [8]u8 = undefined;
     io_mod.getIo().random(&rand_buf);
     const rand_hex = std.fmt.bytesToHex(rand_buf, .lower);
-    const tmp_dir = try std.fmt.allocPrint(alloc, "{s}/fx-upgrade-{s}", .{ tmp_base, rand_hex });
+    const tmp_dir = try std.fmt.allocPrint(alloc, "{s}/fiber-upgrade-{s}", .{ tmp_base, rand_hex });
     defer alloc.free(tmp_dir);
     defer std.Io.Dir.cwd().deleteTree(io_mod.getIo(), tmp_dir) catch {};
 
@@ -202,10 +200,10 @@ fn upgradeWorkerInner(
         return;
     };
 
-    const archive_path = try std.fmt.allocPrint(alloc, "{s}/fx.tar.gz", .{tmp_dir});
+    const archive_path = try std.fmt.allocPrint(alloc, "{s}/fiber.tar.gz", .{tmp_dir});
     defer alloc.free(archive_path);
 
-    const archive_url = try std.fmt.allocPrint(alloc, "{s}/{s}/fx-{s}.tar.gz", .{ cdn_base, target.artifactRef(), helpers.platform });
+    const archive_url = try std.fmt.allocPrint(alloc, "{s}/{s}/fiber-{s}.tar.gz", .{ release_base, target.artifactRef(), helpers.platform });
     defer alloc.free(archive_url);
 
     var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
@@ -221,7 +219,7 @@ fn upgradeWorkerInner(
     };
     progress.markFinishing();
 
-    const checksum_url = try std.fmt.allocPrint(alloc, "{s}/{s}/fx-{s}.tar.gz.sha256", .{ cdn_base, target.artifactRef(), helpers.platform });
+    const checksum_url = try std.fmt.allocPrint(alloc, "{s}/{s}/fiber-{s}.tar.gz.sha256", .{ release_base, target.artifactRef(), helpers.platform });
     defer alloc.free(checksum_url);
 
     helpers.verifyChecksum(&client, archive_path, checksum_url) catch |err| {
@@ -237,7 +235,7 @@ fn upgradeWorkerInner(
         return;
     };
 
-    const extracted_bin = try std.fmt.allocPrint(alloc, "{s}/fx", .{tmp_dir});
+    const extracted_bin = try std.fmt.allocPrint(alloc, "{s}/fiber", .{tmp_dir});
     defer alloc.free(extracted_bin);
 
     var self_exe_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -364,7 +362,7 @@ fn formatProgressStatusLine(buf: []u8, snapshot: ProgressSnapshot, current: []co
         .found => blk: {
             const latest = latest_label orelse return null;
             var out: std.Io.Writer = .fixed(buf);
-            out.print("fx {s} -> {s}", .{ current, versionLabel(latest) }) catch return out.buffered();
+            out.print("fiber {s} -> {s}", .{ current, versionLabel(latest) }) catch return out.buffered();
             break :blk out.buffered();
         },
         .downloading_known => if (snapshot.total > 0)
@@ -418,10 +416,9 @@ test "completeRunResult reports up to date when normalized versions match" {
     const target = try update_target.Target.initStable(alloc, "v0.2.10");
 
     var result = try completeRunResult(alloc, .{
-        .channel = .stable,
         .version = "0.2.10",
         .revision = "0123456789ab",
-    }, .stable, .{ .target_owned = target });
+    }, .{ .target_owned = target });
     defer result.deinit(alloc);
 
     try std.testing.expectEqual(output_contracts.UpgradeSnapshot.Status.up_to_date, result.snapshot.status);
@@ -434,10 +431,9 @@ test "completeRunResult reports upgraded when latest differs" {
     const target = try update_target.Target.initStable(alloc, "0.2.11");
 
     var result = try completeRunResult(alloc, .{
-        .channel = .stable,
         .version = "0.2.10",
         .revision = "0123456789ab",
-    }, .stable, .{ .target_owned = target });
+    }, .{ .target_owned = target });
     defer result.deinit(alloc);
 
     try std.testing.expectEqual(output_contracts.UpgradeSnapshot.Status.upgraded, result.snapshot.status);
@@ -450,10 +446,9 @@ test "completeRunResult reports no update for an older stable target" {
     const target = try update_target.Target.initStable(alloc, "v0.0.1");
 
     var result = try completeRunResult(alloc, .{
-        .channel = .stable,
         .version = "0.0.2",
         .revision = "0123456789ab",
-    }, .stable, .{ .target_owned = target });
+    }, .{ .target_owned = target });
     defer result.deinit(alloc);
 
     try std.testing.expectEqual(output_contracts.UpgradeSnapshot.Status.up_to_date, result.snapshot.status);
@@ -468,10 +463,9 @@ test "completeRunResult maps worker errors and frees latest version" {
     try std.testing.expectError(
         error.DownloadFailed,
         completeRunResult(alloc, .{
-            .channel = .stable,
             .version = "0.2.10",
             .revision = "0123456789ab",
-        }, .stable, .{
+        }, .{
             .target_owned = target,
             .err = .download_failed,
         }),
@@ -480,10 +474,9 @@ test "completeRunResult maps worker errors and frees latest version" {
 
 test "failureResult preserves active error messages" {
     const result = failureResult(.{
-        .channel = .stable,
         .version = "v0.2.10",
         .revision = "0123456789ab",
-    }, .stable, error.ChecksumMismatch);
+    }, error.ChecksumMismatch);
 
     try std.testing.expectEqual(output_contracts.UpgradeSnapshot.Status.failed, result.snapshot.status);
     try std.testing.expectEqualStrings("0.2.10", result.snapshot.current);
@@ -542,7 +535,7 @@ test "formatProgressStatusLine renders found update before download starts" {
     var buf: [128]u8 = undefined;
 
     try std.testing.expectEqualStrings(
-        "fx 0.3.39 -> 0.3.40",
+        "fiber 0.3.39 -> 0.3.40",
         formatProgressStatusLine(&buf, .{
             .phase = .found,
             .downloaded = 0,

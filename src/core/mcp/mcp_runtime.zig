@@ -1,5 +1,4 @@
 const std = @import("std");
-const atomic_value = @import("atomic_value.zig");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const collections = @import("../shared/collections.zig");
@@ -68,8 +67,8 @@ const max_early_legacy_url_completions_per_window: usize = 64;
 const max_legacy_url_completion_candidates: usize = 1024;
 const max_legacy_url_completion_windows: usize = 32;
 const early_legacy_url_completion_ttl_ms: i64 = 10 * 60 * 1000;
-var next_legacy_url_runtime_generation: atomic_value.Value(u64) = .init(1);
-var next_runtime_generation: atomic_value.Value(u64) = .init(1);
+var next_legacy_url_runtime_generation: std.atomic.Value(u64) = .init(1);
+var next_runtime_generation: std.atomic.Value(u64) = .init(1);
 
 const lockRwSharedUntil = controlled_lock.rwSharedUntil;
 const lockRwUntil = controlled_lock.rwUntil;
@@ -78,7 +77,6 @@ const lockRwSharedWithControl = controlled_lock.rwSharedWithControl;
 const lockMutexWithControl = controlled_lock.mutexWithControl;
 const checkOperationControl = controlled_lock.checkOperation;
 const StdioProtocol = protocol_negotiation.Protocol;
-const ResponsePayload = protocol_negotiation.ResponsePayload;
 const DiscoveryOutcome = protocol_negotiation.DiscoveryOutcome;
 const LegacyStdioVersion = protocol_negotiation.LegacyStdioVersion;
 const LegacyInitializeObservation = protocol_negotiation.LegacyInitializeObservation;
@@ -124,7 +122,6 @@ const LegacyUrlWaiter = legacy_url_completion.Waiter;
 const LegacyUrlWireCompletionIdentity = legacy_url_completion.WireCompletionIdentity;
 const EarlyLegacyUrlCompletion = legacy_url_completion.EarlyCompletion;
 const LegacyUrlCompletionCandidate = legacy_url_completion.Candidate;
-const LegacyUrlCompletionPublication = legacy_url_completion.Publication;
 const LegacyUrlCompletionReplayStep = legacy_url_completion.ReplayStep;
 const LegacyUrlCompletionWindow = legacy_url_completion.Window;
 const legacyUrlCandidateMatchesWire = legacy_url_completion.candidateMatchesWire;
@@ -2517,7 +2514,6 @@ pub const ServerState = enum {
     failed,
 };
 
-pub const ToolFreshness = feature_cache.Freshness;
 const DiscoveryState = enum(u8) {
     idle,
     loading,
@@ -3512,7 +3508,7 @@ pub const McpServer = struct {
     prompt_catalog: PromptCatalogSnapshot = .{},
     resource_read_cache: std.ArrayList(ResourceReadCacheEntry) = .empty,
     next_request_id: u64 = 1,
-    http_next_request_id: atomic_value.Value(u64) = .init(1),
+    http_next_request_id: std.atomic.Value(u64) = .init(1),
     next_generation: u64 = 1,
     connection_generation: u64 = 0,
     catalog_generation: u64 = 0,
@@ -3525,7 +3521,7 @@ pub const McpServer = struct {
     subscription_lifecycle_lock: std.Io.Mutex = .init,
     auth_lock: std.Io.Mutex = .init,
     status_lock: std.Io.Mutex = .init,
-    auth_generation: atomic_value.Value(u64) = .init(0),
+    auth_generation: std.atomic.Value(u64) = .init(0),
     auth_logout_in_progress: std.atomic.Value(bool) = .init(false),
     auth_credentials_present: std.atomic.Value(bool) = .init(false),
     auth_challenge_present: std.atomic.Value(bool) = .init(false),
@@ -4771,41 +4767,6 @@ pub const McpRuntime = struct {
         if (publication) |id| sink.publish(sink.context, id);
     }
 
-    pub fn acceptLegacyUrlCompletion(
-        self: *McpRuntime,
-        origin: tool_mcp_runtime.InputOrigin,
-        acp_id: []const u8,
-        sink: tool_mcp_runtime.LegacyUrlCompletionSink,
-    ) ?tool_mcp_runtime.LegacyUrlAcceptStatus {
-        const accepted = accepted: {
-            self.catalog_mutex.lockSharedUncancelable(io_mod.getIo());
-            defer self.catalog_mutex.unlockShared(io_mod.getIo());
-            self.legacy_url_waiter_mutex.lockUncancelable(io_mod.getIo());
-            defer self.legacy_url_waiter_mutex.unlock(io_mod.getIo());
-            if (!self.legacyCompletionSourceCurrentLocked(
-                origin.server_name,
-                origin.runtime_generation,
-                origin.connection_generation,
-                origin.client_generation,
-                origin.auth_generation,
-            )) break :accepted tool_mcp_runtime.LegacyUrlAcceptTransition.missing;
-            const server = self.findServer(origin.server_name) orelse
-                break :accepted tool_mcp_runtime.LegacyUrlAcceptTransition.missing;
-            if (server.catalog_generation != origin.catalog_generation) {
-                break :accepted tool_mcp_runtime.LegacyUrlAcceptTransition.missing;
-            }
-            break :accepted sink.accept(sink.context, origin, acp_id);
-        };
-        return switch (accepted) {
-            .missing => null,
-            .awaiting_completion => .awaiting_completion,
-            .completed => |id| completed: {
-                sink.publish(sink.context, id);
-                break :completed .completed;
-            },
-        };
-    }
-
     fn cancelLegacyUrlWaitersForServer(
         self: *McpRuntime,
         server_name: []const u8,
@@ -4933,21 +4894,6 @@ pub const McpRuntime = struct {
                 if (retained) break;
             }
             if (!retained) return true;
-        }
-        return false;
-    }
-
-    pub fn workspaceAuthorityReducedAgainstConfigs(
-        self: *const McpRuntime,
-        next: []const McpServerConfig,
-        phase: startup_admission.Phase,
-    ) bool {
-        for (self.servers.items) |current| {
-            if (!project_config.configRetainsWorkspaceAuthority(
-                current.config,
-                next,
-                phase,
-            )) return true;
         }
         return false;
     }
@@ -5276,19 +5222,6 @@ pub const McpRuntime = struct {
     pub fn connectAll(self: *McpRuntime, tool_registry: tool_dispatch.Registry) void {
         self.discovery_cancel_requested.store(false, .seq_cst);
         self.connectAllCancellable(tool_registry, &self.discovery_cancel_requested);
-    }
-
-    pub fn connectAllForAcp(self: *McpRuntime, tool_registry: tool_dispatch.Registry) void {
-        if (self.discovery_state.cmpxchgStrong(.idle, .loading, .seq_cst, .seq_cst) != null) return;
-        self.discovery_cancel_requested.store(false, .seq_cst);
-        self.connectAllControlled(
-            tool_registry,
-            &self.discovery_cancel_requested,
-            null,
-            .acp_startup,
-        );
-        self.finishDeferredDiscovery();
-        self.discovery_state.store(.complete, .seq_cst);
     }
 
     pub fn connectAllCancellable(
@@ -5844,10 +5777,6 @@ pub const McpRuntime = struct {
         }
     }
 
-    fn disconnectAll(self: *McpRuntime) void {
-        for (self.servers.items) |*server| server.disconnect();
-    }
-
     fn lookupTool(self: *McpRuntime, name: []const u8) ?struct { server: *McpServer, tool: McpTool } {
         if (self.isDiscovering()) return null;
         for (self.servers.items) |*server| {
@@ -5952,23 +5881,6 @@ pub const McpRuntime = struct {
         operation_access.refresh() catch return false;
         operation_access.authorize(.{ .tool = name }) catch return false;
         return true;
-    }
-
-    pub fn serverToolFreshness(self: *McpRuntime, name: []const u8) ?ToolFreshness {
-        if (self.isDiscovering()) return null;
-        self.catalog_mutex.lockSharedUncancelable(io_mod.getIo());
-        defer self.catalog_mutex.unlockShared(io_mod.getIo());
-        const server = self.findServer(name) orelse return null;
-        const metadata = server.tool_catalog.metadata orelse return null;
-        if (!catalogAuthPartitionMatches(server, metadata)) return .stale;
-        return feature_cache.effectiveFreshness(
-            metadata,
-            clockMillis(),
-            if (server.tool_subscription) |subscription|
-                subscription.hasInvalidation()
-            else
-                false,
-        );
     }
 
     /// Returns owned names for every currently ready tool not revoked by policy.
@@ -6438,30 +6350,6 @@ pub const McpRuntime = struct {
             max_tool_result_bytes,
             .{},
         );
-    }
-
-    /// Captures only continuation identity while holding the catalog lock.
-    /// Callers perform all transport writes and user waiting after this
-    /// returns; no runtime-owned pointer escapes the lock.
-    pub fn inputIdentityWitness(
-        self: *McpRuntime,
-        server_name: []const u8,
-    ) ?tool_mcp_runtime.InputIdentityWitness {
-        if (self.isDiscovering() or self.retiring.load(.acquire)) return null;
-        self.catalog_mutex.lockSharedUncancelable(io_mod.getIo());
-        defer self.catalog_mutex.unlockShared(io_mod.getIo());
-        const server = self.findServer(server_name) orelse return null;
-        if (server.state != .ready) return null;
-        return .{
-            .runtime_generation = self.legacy_url_runtime_generation,
-            .connection_generation = server.connection_generation,
-            .client_generation = if (server.dispatcher) |dispatcher|
-                dispatcher.connectionGeneration()
-            else
-                server.connection_generation,
-            .catalog_generation = server.catalog_generation,
-            .auth_generation = server.auth_generation.load(.acquire),
-        };
     }
 
     pub fn validateToolArgumentsByName(
@@ -9070,7 +8958,7 @@ fn renderAuthenticationRequired(
         try writeEncodedJsonScalar(alloc, &out.writer, server.config.name);
         switch (mode) {
             .oauth => try out.writer.writeAll(
-                ",\"interactive\":true,\"message\":\"Run /mcp auth for this server in an interactive fx session.\"",
+                ",\"interactive\":true,\"message\":\"Run /mcp auth for this server in an interactive fiber session.\"",
             ),
             .bearer_environment => {
                 try out.writer.writeAll(
@@ -9082,7 +8970,7 @@ fn renderAuthenticationRequired(
                     server.config.bearer_token_env.?,
                 );
                 try out.writer.writeAll(
-                    ",\"message\":\"Set this environment variable before starting fx.\"",
+                    ",\"message\":\"Set this environment variable before starting fiber.\"",
                 );
             },
         }
@@ -9586,8 +9474,6 @@ test "runtime-wide recovery serialization observes the operation deadline" {
 }
 
 test "guarded stdio subscription startup releases catalog locks before transport commit" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
-
     const child = try std.process.spawn(std.testing.io, .{
         .argv = &.{ "sh", "-c", "while IFS= read -r request; do :; done" },
         .stdin = .pipe,
@@ -9682,8 +9568,6 @@ test "guarded stdio subscription startup releases catalog locks before transport
 }
 
 test "runtime shutdown releases catalog locks before subscription cancellation write" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
     var runtime = McpRuntime.init(alloc);
     var runtime_live = true;
@@ -9871,7 +9755,7 @@ test "scoped stdio recovery rejects revoked authority before state changes" {
     defer runtime.deinit();
     try runtime.addServer(.{
         .name = try alloc.dupe(u8, "fixture"),
-        .command = try alloc.dupe(u8, "/definitely/not/an/fx-mcp-fixture"),
+        .command = try alloc.dupe(u8, "/definitely/not/an/fiber-mcp-fixture"),
     });
     const server = &runtime.servers.items[0];
     server.state = .ready;
@@ -9937,7 +9821,7 @@ test "failed recovery leaves its remaining generation budget reachable" {
     var runtime = McpRuntime.init(std.testing.allocator);
     var server = McpServer{ .config = .{
         .name = "fixture",
-        .command = "/definitely/not/an/fx-mcp-fixture",
+        .command = "/definitely/not/an/fiber-mcp-fixture",
         .restart_limit = 2,
     } };
     defer if (server.last_error) |message| std.testing.allocator.free(message);
@@ -10520,7 +10404,7 @@ fn spawnStdioServer(alloc: Allocator, server: *McpServer, argv: []const []const 
         .stdout = .pipe,
         .stderr = .ignore,
         .environ_map = if (server.env_map != null) &server.env_map.? else null,
-        .pgid = if (builtin.os.tag == .windows) null else 0,
+        .pgid = 0,
     });
 
     server.dispatcher = stdio_dispatcher.StdioDispatcher.create(
@@ -10731,13 +10615,6 @@ const LegacyInitializeSuccess = struct {
     version: LegacyStdioVersion,
 };
 
-fn parseToolsListChangedCapabilityFromResponse(
-    alloc: Allocator,
-    response: []const u8,
-) !bool {
-    return (try parseServerCapabilitiesFromResponse(alloc, response)).tools_list_changed;
-}
-
 const ParsedServerCapabilities = struct {
     tools_list_changed: bool = false,
     features: ServerCapabilities = .{},
@@ -10799,10 +10676,6 @@ fn parseServerIdentity(value: std.json.Value) !ParsedServerIdentity {
         break :blk if (field.string.len > 0) field.string else null;
     } else null;
     return .{ .name = name, .version = version };
-}
-
-fn parseToolsListChangedCapability(value: std.json.Value) !bool {
-    return (try parseServerCapabilities(value)).tools_list_changed;
 }
 
 fn parseServerCapabilities(value: std.json.Value) !ParsedServerCapabilities {
@@ -12168,7 +12041,7 @@ fn writeModernRequestMetadataWithProgress(
 ) !void {
     try writer.writeAll("{\"io.modelcontextprotocol/protocolVersion\":\"");
     try writer.writeAll(modern_protocol_version);
-    try writer.writeAll("\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"fx\",\"version\":");
+    try writer.writeAll("\",\"io.modelcontextprotocol/clientInfo\":{\"name\":\"fiber\",\"version\":");
     try std.json.Stringify.value(build_options.app_version, .{}, writer);
     try writer.writeAll("},\"io.modelcontextprotocol/clientCapabilities\":{");
     if (capabilities.any()) {
@@ -12645,7 +12518,7 @@ fn advanceAuthGenerationLocked(server: *McpServer) void {
 
 fn automatedAuthorizationEnabled(endpoint: []const u8) bool {
     if (!mcp_auth.isLoopbackEndpoint(endpoint)) return false;
-    const value = io_mod.getenv("FX_E2E_MCP_AUTH_AUTOMATE") orelse return false;
+    const value = io_mod.getenv("FIBER_E2E_MCP_AUTH_AUTOMATE") orelse return false;
     return std.mem.eql(u8, value, "1") or
         std.ascii.eqlIgnoreCase(value, "true");
 }
@@ -13004,7 +12877,7 @@ fn buildLegacyInitializeRequest(
     } else if (negotiated_wire == .legacy_mcp_2025_11 and elicitation_capabilities.url) {
         try out.writer.writeAll("\"elicitation\":{\"url\":{}}");
     }
-    try out.writer.writeAll("},\"clientInfo\":{\"name\":\"fx\",\"version\":");
+    try out.writer.writeAll("},\"clientInfo\":{\"name\":\"fiber\",\"version\":");
     try std.json.Stringify.value(build_options.app_version, .{}, &out.writer);
     try out.writer.writeAll("}}}");
     return out.toOwnedSlice();
@@ -14756,36 +14629,6 @@ test "legacy completion routing keeps recovered connection identities distinct" 
         .publish = Capture.publish,
     });
     waiter.binding.runtime_generation = runtime.legacy_url_runtime_generation;
-    const stale_origin = tool_mcp_runtime.InputOrigin{
-        .wire = .legacy_mcp_2025_11,
-        .server_name = "server",
-        .operation = .{ .tools_call = "authorize" },
-        .runtime_generation = runtime.legacy_url_runtime_generation,
-        .connection_generation = 1,
-        .client_generation = 1,
-        .catalog_generation = 3,
-        .request_generation = 4,
-        .auth_generation = 5,
-        .deadline_ms = std.math.maxInt(i64),
-    };
-    try std.testing.expect(runtime.acceptLegacyUrlCompletion(
-        stale_origin,
-        "same-id",
-        runtime.legacy_url_completion_sink.?,
-    ) == null);
-    try std.testing.expectEqual(@as(usize, 0), capture.accepted);
-    var current_origin = stale_origin;
-    current_origin.connection_generation = 2;
-    current_origin.client_generation = 2;
-    try std.testing.expectEqual(
-        tool_mcp_runtime.LegacyUrlAcceptStatus.awaiting_completion,
-        runtime.acceptLegacyUrlCompletion(
-            current_origin,
-            "same-id",
-            runtime.legacy_url_completion_sink.?,
-        ).?,
-    );
-    try std.testing.expectEqual(@as(usize, 1), capture.accepted);
     var parsed = try std.json.parseFromSlice(
         std.json.Value,
         alloc,
@@ -14847,7 +14690,7 @@ test "legacy URL completions require an established unique candidate before repl
             const self: *@This() = @ptrCast(@alignCast(raw));
             if (!self.available) return .missing;
             self.consumed += 1;
-            return .{ .consumed = self.alloc.dupe(u8, "acp-early") catch null };
+            return .{ .consumed = self.alloc.dupe(u8, "early-completion") catch null };
         }
 
         fn publish(raw: *anyopaque, id: []u8) void {
@@ -15780,47 +15623,6 @@ test "logout releases completion arbitration before draining active legacy HTTP"
         waiter.signal.status.load(.acquire),
     );
 
-    const Capture = struct {
-        accepted: usize = 0,
-
-        fn accept(
-            raw: *anyopaque,
-            _: tool_mcp_runtime.InputOrigin,
-            _: []const u8,
-        ) tool_mcp_runtime.LegacyUrlAcceptTransition {
-            const self: *@This() = @ptrCast(@alignCast(raw));
-            self.accepted += 1;
-            return .awaiting_completion;
-        }
-
-        fn consume(
-            _: *anyopaque,
-            _: tool_mcp_runtime.LegacyUrlCompletion,
-        ) tool_mcp_runtime.LegacyUrlConsumeTransition {
-            return .missing;
-        }
-
-        fn publish(_: *anyopaque, _: []u8) void {}
-    };
-    var capture = Capture{};
-    try std.testing.expect(runtime.acceptLegacyUrlCompletion(.{
-        .wire = .legacy_mcp_2025_11,
-        .server_name = "server",
-        .operation = .{ .tools_call = "authorize" },
-        .connection_generation = 2,
-        .client_generation = 2,
-        .catalog_generation = 3,
-        .request_generation = 4,
-        .auth_generation = 5,
-        .deadline_ms = std.math.maxInt(i64),
-    }, "acp-id", .{
-        .context = @ptrCast(&capture),
-        .accept = Capture.accept,
-        .consume = Capture.consume,
-        .publish = Capture.publish,
-    }) == null);
-    try std.testing.expectEqual(@as(usize, 0), capture.accepted);
-
     runtime.unregisterLegacyUrlWaiter(&waiter);
     waiter_registered = false;
     client.releaseUse();
@@ -15939,8 +15741,6 @@ test "legacy URL waiter publication is allocator-safe and retirement wakes it" {
 }
 
 test "runtime retirement cancels a committed stdio tool call before waiting for its lease" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
-
     const alloc = std.testing.allocator;
     const shell_server =
         \\while IFS= read -r line; do
@@ -16415,7 +16215,7 @@ test "modern request builders share required request metadata" {
     const alloc = std.testing.allocator;
     const metadata = try std.fmt.allocPrint(
         alloc,
-        "\"_meta\":{{\"io.modelcontextprotocol/protocolVersion\":\"{s}\",\"io.modelcontextprotocol/clientInfo\":{{\"name\":\"fx\",\"version\":\"{s}\"}},\"io.modelcontextprotocol/clientCapabilities\":{{}}}}",
+        "\"_meta\":{{\"io.modelcontextprotocol/protocolVersion\":\"{s}\",\"io.modelcontextprotocol/clientInfo\":{{\"name\":\"fiber\",\"version\":\"{s}\"}},\"io.modelcontextprotocol/clientCapabilities\":{{}}}}",
         .{ modern_protocol_version, build_options.app_version },
     );
     defer alloc.free(metadata);

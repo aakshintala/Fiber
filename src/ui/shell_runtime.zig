@@ -9,7 +9,6 @@ const frame_layout = @import("render_engine/frame_layout.zig");
 const cursor_probe = @import("terminal/cursor_probe.zig");
 const resize_runtime = @import("resize_runtime.zig");
 const ui_terminal = @import("terminal/terminal.zig");
-const wasm_terminal = if (builtin.os.tag == .wasi) @import("terminal/wasm_terminal.zig") else struct {};
 
 const Allocator = std.mem.Allocator;
 const Layout = types.Layout;
@@ -19,26 +18,12 @@ const TranscriptRuntime = transcript_runtime.TranscriptRuntime;
 const TmuxHistoryClearRunner = *const fn (Allocator, []const u8) anyerror!void;
 var tmux_history_clear_test_runner: if (builtin.is_test) ?TmuxHistoryClearRunner else void = if (builtin.is_test) null else {};
 
-const supports_test_pty = switch (builtin.os.tag) {
-    .linux,
-    .macos,
-    .freebsd,
-    .netbsd,
-    .openbsd,
-    => true,
-    else => false,
-};
-
 extern "c" fn posix_openpt(flags: c_int) c_int;
 extern "c" fn grantpt(fd: c_int) c_int;
 extern "c" fn unlockpt(fd: c_int) c_int;
 extern "c" fn ptsname(fd: c_int) ?[*:0]u8;
 
-pub const supports_resize_signal = resize_runtime.supports_resize_signal;
-pub const ResizeHandler = if (builtin.os.tag == .wasi)
-    *const fn () callconv(.c) void
-else
-    std.posix.Sigaction.handler_fn;
+pub const ResizeHandler = std.posix.Sigaction.handler_fn;
 pub const ResizeApprovalInterlock = resize_runtime.ResizeApprovalInterlock;
 pub const RedrawMode = resize_runtime.RedrawMode;
 
@@ -84,22 +69,16 @@ pub const TerminalState = struct {
     }
 
     pub fn ensureInteractive(self: TerminalState) !void {
-        if (comptime builtin.os.tag == .wasi) return;
         if (std.c.isatty(self.stdin_fd) == 0 or std.c.isatty(std.posix.STDOUT_FILENO) == 0) {
             return error.NotATerminal;
         }
     }
 
     pub fn captureOriginalTermios(self: *TerminalState) !void {
-        if (comptime builtin.os.tag == .wasi) return;
         self.original_termios = try std.posix.tcgetattr(self.stdin_fd);
     }
 
     pub fn enableRawMode(self: *TerminalState) !void {
-        if (comptime builtin.os.tag == .wasi) {
-            self.raw_enabled = true;
-            return;
-        }
         var raw = self.original_termios;
 
         raw.iflag.BRKINT = false;
@@ -131,15 +110,11 @@ pub const TerminalState = struct {
 
     pub fn disableRawMode(self: *TerminalState) void {
         if (!self.raw_enabled) return;
-        if (comptime builtin.os.tag != .wasi) {
-            std.posix.tcsetattr(self.stdin_fd, .FLUSH, self.original_termios) catch {};
-        }
+        std.posix.tcsetattr(self.stdin_fd, .FLUSH, self.original_termios) catch {};
         self.raw_enabled = false;
     }
 
     pub fn installResizeSignal(self: *TerminalState, handler: ResizeHandler) void {
-        if (!supports_resize_signal) return;
-
         const act: std.posix.Sigaction = .{
             .handler = .{ .handler = handler },
             .mask = std.posix.sigemptyset(),
@@ -153,7 +128,7 @@ pub const TerminalState = struct {
     }
 
     pub fn uninstallResizeSignal(self: *TerminalState) void {
-        if (!supports_resize_signal or !self.signal_handler_installed) return;
+        if (!self.signal_handler_installed) return;
         if (self.old_winch_action) |old| {
             std.posix.sigaction(std.posix.SIG.WINCH, &old, null);
         }
@@ -161,18 +136,10 @@ pub const TerminalState = struct {
     }
 
     pub fn queryLayout(self: TerminalState, footer_rows: u16) !Layout {
-        return if (comptime builtin.os.tag == .wasi)
-            wasm_terminal.queryLayout(footer_rows)
-        else
-            ui_terminal.queryLayout(self.stdin_fd, footer_rows);
+        return ui_terminal.queryLayout(self.stdin_fd, footer_rows);
     }
 
     pub fn queryCursorPosition(self: TerminalState) !CursorPosition {
-        if (comptime builtin.os.tag == .wasi) {
-            // JavaScript hosts provide a fresh terminal surface rather than an
-            // existing shell viewport, so there are no launch rows to preserve.
-            return .{ .row = 1, .col = 1 };
-        }
         var stdout_file = std.Io.File.stdout();
         try stdout_file.writeStreamingAll(io_mod.getIo(), "\x1b[6n");
 
@@ -240,20 +207,10 @@ pub const TerminalState = struct {
     }
 
     pub fn read(self: TerminalState, out: []u8) !usize {
-        if (comptime builtin.os.tag == .wasi) {
-            return std.Io.File.stdin().readStreaming(io_mod.getIo(), &.{out});
-        }
         return std.posix.read(self.stdin_fd, out);
     }
 
     pub fn pollInput(self: TerminalState, timeout_ms: i32) !PollResult {
-        if (comptime builtin.os.tag == .wasi) {
-            return switch (wasm_terminal.pollInput(timeout_ms)) {
-                1 => .{ .readable = true },
-                -1 => .{ .hung_up = true },
-                else => .{},
-            };
-        }
         var fds = [_]std.posix.pollfd{.{
             .fd = self.stdin_fd,
             .events = std.posix.POLL.IN,
@@ -334,7 +291,7 @@ test "tmux history clear failure does not escape the reset boundary" {
 }
 
 pub fn detectSyncUpdatesEnabled(_: Allocator) bool {
-    const override = io_mod.getenv("FX_SYNC_UPDATES");
+    const override = io_mod.getenv("FIBER_SYNC_UPDATES");
 
     const fallback_override = if (override == null)
         io_mod.getenv("FLASH_SYNC_UPDATES")
@@ -520,8 +477,6 @@ fn historyResetUsesRisForValues(term_program: ?[]const u8, tmux: ?[]const u8) bo
 fn vminIndex() usize {
     return switch (builtin.os.tag) {
         .linux => 6,
-        .macos, .ios, .tvos, .watchos, .visionos => 16,
-        .freebsd, .netbsd, .dragonfly, .openbsd => 16,
         else => 16,
     };
 }
@@ -529,8 +484,6 @@ fn vminIndex() usize {
 fn vtimeIndex() usize {
     return switch (builtin.os.tag) {
         .linux => 5,
-        .macos, .ios, .tvos, .watchos, .visionos => 17,
-        .freebsd, .netbsd, .dragonfly, .openbsd => 17,
         else => 17,
     };
 }
@@ -585,8 +538,6 @@ fn closeTestFd(fd: std.posix.fd_t) void {
 }
 
 test "enableRawMode preserves already queued input" {
-    if (!supports_test_pty) return error.SkipZigTest;
-
     const pty = try TestPty.open();
     defer pty.close();
 
@@ -628,8 +579,6 @@ test "enableRawMode preserves already queued input" {
 }
 
 test "enableRawMode preserves carriage return input" {
-    if (!supports_test_pty) return error.SkipZigTest;
-
     const pty = try TestPty.open();
     defer pty.close();
 

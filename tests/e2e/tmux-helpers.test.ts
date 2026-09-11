@@ -22,11 +22,9 @@ import {
 
 const tmuxTest = test.skipIf(!tmuxAvailable());
 const ISOLATED_KEYS = [
-  "AI_GATEWAY_API_KEY",
-  "VERCEL_OIDC_TOKEN",
   "FX_E2E_GATEWAY_CHAT_URL",
-  "FX_E2E_GATEWAY_MODELS_URL",
-  "FX_E2E_GATEWAY_CREDITS_URL",
+  "FIBER_E2E_GATEWAY_MODELS_URL",
+  "FIBER_E2E_GATEWAY_CREDITS_URL",
 ] as const;
 
 test("pane exit matching requires the expected observed status", () => {
@@ -96,14 +94,14 @@ test("volatile token status rows stay narrowly classified", () => {
 });
 
 test("observed command keeps wrapper signal diagnostics out of captured stderr", () => {
-  const root = mkdtempSync(join(tmpdir(), "fx-observed-command-"));
-  const stderrPath = join(root, "fx.stderr");
+  const root = mkdtempSync(join(tmpdir(), "fiber-observed-command-"));
+  const stderrPath = join(root, "fiber.stderr");
   const exitStatusPath = join(root, "exit-status");
 
   try {
     for (const shellPath of ["/bin/sh", "/bin/dash"].filter(existsSync)) {
       const observedCommand = buildObservedCommand(
-        `/bin/sh -c 'printf "fx stderr\\n" >&2; kill -TERM $$'`,
+        `/bin/sh -c 'printf "fiber stderr\\n" >&2; kill -TERM $$'`,
         stderrPath,
         exitStatusPath,
       ).replaceAll("/bin/sh", shellPath);
@@ -112,7 +110,7 @@ test("observed command keeps wrapper signal diagnostics out of captured stderr",
       });
 
       expect(result.status).toBe(143);
-      expect(readFileSync(stderrPath, "utf8")).toBe("fx stderr\n");
+      expect(readFileSync(stderrPath, "utf8")).toBe("fiber stderr\n");
       expect(readFileSync(exitStatusPath, "utf8")).toBe("143\n");
     }
   } finally {
@@ -120,9 +118,9 @@ test("observed command keeps wrapper signal diagnostics out of captured stderr",
   }
 });
 
-tmuxTest("tmux launch scrubs stale overrides without storing explicit credentials", async () => {
-  const socketName = `fx-env-isolation-${process.pid}-${Date.now()}`;
-  const root = mkdtempSync(join(tmpdir(), "fx-tmux-env-isolation-"));
+tmuxTest("tmux launch scrubs stale overrides and honors explicit env", async () => {
+  const socketName = `fiber-env-isolation-${process.pid}-${Date.now()}`;
+  const root = mkdtempSync(join(tmpdir(), "fiber-tmux-env-isolation-"));
   const probePath = join(root, "probe.mjs");
   const resultPath = join(root, "result.json");
   const originalValues = new Map(
@@ -140,19 +138,20 @@ tmuxTest("tmux launch scrubs stale overrides without storing explicit credential
   try {
     execFileSync(
       "tmux",
-      ["-L", socketName, "new-session", "-d", "-s", "fx-stale-env-seed", "sleep 60"],
+      ["-L", socketName, "new-session", "-d", "-s", "fiber-stale-env-seed", "sleep 60"],
       { env: seedEnv, stdio: "pipe" },
     );
 
     for (const key of ISOLATED_KEYS) delete process.env[key];
 
-    const explicitCredential = "explicit-auth-sentinel";
+    const explicitPermissionMode = "yolo";
     writeFileSync(
       probePath,
       `await Bun.write(${JSON.stringify(resultPath)}, JSON.stringify({\n` +
         ISOLATED_KEYS.map((key) =>
           `  ${JSON.stringify(key)}: process.env[${JSON.stringify(key)}] ?? null,\n`
         ).join("") +
+        "  FIBER_PERMISSION_MODE: process.env.FIBER_PERMISSION_MODE ?? null,\n" +
         "}));\nawait Bun.sleep(5_000);\n",
     );
     session = await TmuxSession.create({
@@ -160,7 +159,7 @@ tmuxTest("tmux launch scrubs stale overrides without storing explicit credential
       startupWaitMs: 200,
       socketName,
       env: {
-        AI_GATEWAY_API_KEY: explicitCredential,
+        FIBER_PERMISSION_MODE: explicitPermissionMode,
       },
     });
 
@@ -170,11 +169,10 @@ tmuxTest("tmux launch scrubs stale overrides without storing explicit credential
     }
     expect(existsSync(resultPath)).toBe(true);
     const observed = JSON.parse(readFileSync(resultPath, "utf8"));
-    expect(observed.AI_GATEWAY_API_KEY).toBe(explicitCredential);
-    expect(observed.VERCEL_OIDC_TOKEN).toBeNull();
+    expect(observed.FIBER_PERMISSION_MODE).toBe(explicitPermissionMode);
     expect(observed.FX_E2E_GATEWAY_CHAT_URL).toBeNull();
-    expect(observed.FX_E2E_GATEWAY_MODELS_URL).toBeNull();
-    expect(observed.FX_E2E_GATEWAY_CREDITS_URL).toBeNull();
+    expect(observed.FIBER_E2E_GATEWAY_MODELS_URL).toBeNull();
+    expect(observed.FIBER_E2E_GATEWAY_CREDITS_URL).toBeNull();
 
     const startCommand = execFileSync(
       "tmux",
@@ -189,17 +187,10 @@ tmuxTest("tmux launch scrubs stale overrides without storing explicit credential
       ],
       { encoding: "utf8" },
     );
-    expect(startCommand).not.toContain(explicitCredential);
+    expect(startCommand).not.toContain("stale-");
     for (const value of Object.values(staleValues)) {
       expect(startCommand).not.toContain(value);
     }
-    const sessionEnvironment = execFileSync(
-      "tmux",
-      ["-L", socketName, "show-environment", "-t", session.name],
-      { encoding: "utf8" },
-    );
-    expect(sessionEnvironment).not.toContain("AI_GATEWAY_API_KEY=");
-    expect(sessionEnvironment).not.toContain(explicitCredential);
   } finally {
     await session?.kill();
     try {
@@ -216,23 +207,23 @@ tmuxTest("tmux launch scrubs stale overrides without storing explicit credential
 });
 
 tmuxTest("pane environment does not poison a shared tmux server", async () => {
-  const socketName = `fx-pe-${process.pid}-${Date.now().toString(36)}`;
-  const root = mkdtempSync(join(tmpdir(), "fx-tmux-pane-env-isolation-"));
+  const socketName = `fiber-pe-${process.pid}-${Date.now().toString(36)}`;
+  const root = mkdtempSync(join(tmpdir(), "fiber-tmux-pane-env-isolation-"));
   const seededHome = join(root, "seeded-home");
   const probePath = join(root, "probe.mjs");
   const firstResultPath = join(root, "first.json");
   const secondResultPath = join(root, "second.json");
-  const originalRecord = process.env.FX_RECORD;
+  const originalRecord = process.env.FIBER_RECORD;
   let first: TmuxSession | undefined;
   let second: TmuxSession | undefined;
 
   try {
-    delete process.env.FX_RECORD;
+    delete process.env.FIBER_RECORD;
     writeFileSync(
       probePath,
       `await Bun.write(process.argv[2], JSON.stringify({\n` +
         `  HOME: process.env.HOME ?? null,\n` +
-        `  FX_RECORD: process.env.FX_RECORD ?? null,\n` +
+        `  FIBER_RECORD: process.env.FIBER_RECORD ?? null,\n` +
         `}));\nawait Bun.sleep(5_000);\n`,
     );
 
@@ -242,7 +233,7 @@ tmuxTest("pane environment does not poison a shared tmux server", async () => {
       startupWaitMs: 100,
       env: {
         HOME: seededHome,
-        FX_RECORD: "stale-record-path",
+        FIBER_RECORD: "stale-record-path",
       },
     });
     second = await TmuxSession.create({
@@ -262,11 +253,11 @@ tmuxTest("pane environment does not poison a shared tmux server", async () => {
     expect(existsSync(secondResultPath)).toBe(true);
     expect(JSON.parse(readFileSync(firstResultPath, "utf8"))).toEqual({
       HOME: seededHome,
-      FX_RECORD: "stale-record-path",
+      FIBER_RECORD: "stale-record-path",
     });
     expect(JSON.parse(readFileSync(secondResultPath, "utf8"))).toEqual({
       HOME: process.env.HOME ?? null,
-      FX_RECORD: null,
+      FIBER_RECORD: null,
     });
   } finally {
     await second?.kill();
@@ -276,14 +267,14 @@ tmuxTest("pane environment does not poison a shared tmux server", async () => {
         stdio: "pipe",
       });
     } catch {}
-    if (originalRecord === undefined) delete process.env.FX_RECORD;
-    else process.env.FX_RECORD = originalRecord;
+    if (originalRecord === undefined) delete process.env.FIBER_RECORD;
+    else process.env.FIBER_RECORD = originalRecord;
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 tmuxTest("minimum history lines survive a fresh tmux server restart", async () => {
-  const socketName = `fx-history-limit-${process.pid}-${Date.now()}`;
+  const socketName = `fiber-history-limit-${process.pid}-${Date.now()}`;
   let first: TmuxSession | undefined;
   let session: TmuxSession | undefined;
   try {

@@ -11,12 +11,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
+  codexFinalText,
   composerContains,
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  startFakeGateway,
+  FAKE_CODEX_DEFAULT_MODEL,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -34,33 +35,54 @@ const WORKSPACE_REVIEW_BODY = "GROUP_C_WORKSPACE_REVIEW_BODY";
 let session: TmuxSession | null = null;
 let root: string | null = null;
 let stderrPath: string | null = null;
-let gateway: ReturnType<typeof startFakeGateway> | null = null;
+let codex: ReturnType<typeof startFakeCodex> | null = null;
+let modelServer: ReturnType<typeof Bun.serve> | null = null;
 let fixtureImagePath: string | null = null;
 
 afterEach(async () => {
   await session?.kill();
   session = null;
-  gateway?.stop();
-  gateway = null;
+  codex?.stop();
+  codex = null;
+  modelServer?.stop(true);
+  modelServer = null;
   if (root) rmSync(root, { recursive: true, force: true });
   root = null;
   stderrPath = null;
   fixtureImagePath = null;
 });
 
+// The shared fake catalog is text-only, but these suites attach real
+// images. The old gateway models option carried vision/file-input tags; the
+// Codex equivalent is the image input modality, copied from the shared
+// payload shape with that one addition.
+function imageCapableModelsPayload() {
+  return {
+    models: [FAKE_CODEX_DEFAULT_MODEL, "gpt-5.4"].map((slug) => ({
+      slug,
+      visibility: "list",
+      supported_in_api: true,
+      supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }],
+      additional_speed_tiers: [],
+      input_modalities: ["text", "image"],
+      context_window: 272000,
+    })),
+  };
+}
+
 async function startFx(
-  withGateway: boolean,
+  withCodex: boolean,
   responseCount = 1,
   duplicateReview = false,
   traceScopes?: string,
 ): Promise<TmuxSession> {
-  root = realpathSync(mkdtempSync(join(tmpdir(), "fx-edit-contracts-")));
+  root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-edit-contracts-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace);
   writeFileSync(
-    join(home, ".fx", "settings.json"),
+    join(home, ".fiber", "settings.json"),
     JSON.stringify({}),
   );
   stderrPath = join(root, "stderr.log");
@@ -73,7 +95,7 @@ async function startFx(
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   );
   writeFileSync(join(workspace, "target.txt"), "target\n");
-  const skillRoot = join(home, ".fx", "skills", "review");
+  const skillRoot = join(home, ".fiber", "skills", "review");
   mkdirSync(skillRoot, { recursive: true });
   writeFileSync(
     join(skillRoot, "SKILL.md"),
@@ -88,40 +110,54 @@ async function startFx(
     );
   }
 
-  if (withGateway) {
-    gateway = startFakeGateway(
-      Array.from(
-        { length: responseCount },
-        () => fakeGatewayFinalText("edit contract complete"),
-      ),
-      {
-        models: [{
-          id: FAKE_GATEWAY_MODEL,
-          type: "language",
-          tags: ["vision", "file-input", "tool-use"],
-          context_window: 256_000,
-          max_tokens: 64_000,
-        }],
-      },
+  if (withCodex) {
+    const queue = Array.from(
+      { length: responseCount },
+      () => codexFinalText("edit contract complete"),
     );
+    codex = startFakeCodex();
+    modelServer = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/models") {
+          codex!.modelRequests.push({
+            path: url.pathname,
+            authorization: req.headers.get("authorization"),
+            url: req.url,
+          });
+          return Response.json(imageCapableModelsPayload());
+        }
+        const body = await req.text();
+        codex!.requests.push({
+          path: url.pathname,
+          authorization: req.headers.get("authorization"),
+          body,
+        });
+        return new Response(queue.shift() ?? codexFinalText("unexpected"), {
+          headers: { "content-type": "text/event-stream" },
+        });
+      },
+    });
   }
 
   session = await TmuxSession.create({
-    cmd: FX_BIN,
+    cmd: FIBER_BIN,
     cwd: workspace,
     env: {
       HOME: home,
-      AI_GATEWAY_API_KEY: withGateway ? "fake-edit-contract-key" : undefined,
-      VERCEL_OIDC_TOKEN: undefined,
-      FX_GATEWAY_BASE_URL: gateway?.baseUrl,
-      FX_GATEWAY_CHAT_URL: gateway?.chatUrl,
-      FX_E2E_GATEWAY_MODELS_URL: gateway
-        ? `${gateway.baseUrl}/coding-agent/v1/models`
-        : undefined,
-      FX_MODEL: withGateway ? FAKE_GATEWAY_MODEL : undefined,
-      FX_AUTO_UPGRADE: "0",
-      FX_TRACE_LOG: tracePath,
-      FX_TRACE_SCOPES: traceScopes,
+      ...(codex && modelServer
+        ? seededFakeCodexEnv(home, {
+          responsesUrl: `http://127.0.0.1:${modelServer.port}/responses`,
+          modelsUrl: `http://127.0.0.1:${modelServer.port}/models`,
+          tokenUrl: codex.tokenUrl,
+        } as ReturnType<typeof startFakeCodex>, {
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+        })
+        : {}),
+      FIBER_TRACE_LOG: tracePath,
+      FIBER_TRACE_SCOPES: traceScopes,
     },
     width: 112,
     height: 32,
@@ -132,7 +168,7 @@ async function startFx(
 }
 
 function historyImageSnapshotPath(): string {
-  const sessionsRoot = join(root!, "home", ".fx", "sessions");
+  const sessionsRoot = join(root!, "home", ".fiber", "sessions");
   const sessionNames = readdirSync(sessionsRoot, { withFileTypes: true })
     .filter((entry) =>
       entry.isDirectory() &&
@@ -147,29 +183,29 @@ function historyImageSnapshotPath(): string {
   return join(imageDir, snapshotNames[0]!);
 }
 
-async function waitForGatewayRequest(count = 1): Promise<void> {
-  await waitForGatewayRequestWithin(TIMEOUT, count);
+async function waitForCodexRequest(count = 1): Promise<void> {
+  await waitForCodexRequestWithin(TIMEOUT, count);
 }
 
-async function waitForGatewayRequestWithin(
+async function waitForCodexRequestWithin(
   timeout: number,
   count = 1,
 ): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < timeout) {
-    if ((gateway?.requestCount() ?? 0) >= count) return;
+    if ((codex?.requests.length ?? 0) >= count) return;
     await Bun.sleep(25);
   }
-  throw new Error("Timed out waiting for fake Gateway request");
+  throw new Error("Timed out waiting for fake Codex request");
 }
 
 async function waitForModelRequest(count = 1): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < TIMEOUT) {
-    if ((gateway?.modelRequests.length ?? 0) >= count) return;
+    if ((codex?.modelRequests.length ?? 0) >= count) return;
     await Bun.sleep(25);
   }
-  throw new Error("Timed out waiting for fake Gateway model request");
+  throw new Error("Timed out waiting for fake Codex model request");
 }
 
 async function waitForTraceOrExit(
@@ -191,40 +227,19 @@ function userParts(requestIndex = 0): Array<{
   type: string;
   text?: string;
 }> {
-  const body = JSON.parse(gateway!.requests[requestIndex]!.body) as {
-    prompt: Array<{
-      role: string;
-      content: Array<{ type: string; text?: string }>;
+  const body = JSON.parse(codex!.requests[requestIndex]!.body) as {
+    input: Array<{
+      role?: string;
+      content?: Array<{ type: string; text?: string }>;
     }>;
   };
-  const message = body.prompt.findLast((entry) => entry.role === "user");
+  const message = body.input.findLast((entry) => entry.role === "user");
   return message?.content ?? [];
 }
 
 function finalUserText(requestIndex = 0): string {
-  return userParts(requestIndex).find((part) => part.type === "text")?.text ??
+  return userParts(requestIndex).find((part) => part.type === "input_text")?.text ??
     "";
-}
-
-function nestedText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map(nestedText).join("");
-  if (content && typeof content === "object") {
-    const value = content as Record<string, unknown>;
-    return [
-      nestedText(value.text),
-      nestedText(value.value),
-      nestedText(value.content),
-    ].join("");
-  }
-  return "";
-}
-
-function gatewayPromptText(requestIndex = 0): string {
-  const body = JSON.parse(gateway!.requests[requestIndex]!.body) as {
-    prompt: Array<{ content: unknown }>;
-  };
-  return body.prompt.map((message) => nestedText(message.content)).join("\n");
 }
 
 function expectCleanRuntime(active: TmuxSession): void {
@@ -264,14 +279,14 @@ tmuxTest(
     await active.sendLiteralText("abc");
     await active.sendHexBytes(["1b", "01", "58"]);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest(1);
+    await waitForCodexRequest(1);
     expect(finalUserText(0)).toBe("Xabc");
 
     await active.waitForComposer(TIMEOUT);
     await active.sendLiteralText("/");
     await active.sendHexBytes(["1b", "15", ...textHex("after")]);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest(2);
+    await waitForCodexRequest(2);
     expect(finalUserText(1)).toBe("after");
     expectCleanRuntime(active);
   },
@@ -279,13 +294,13 @@ tmuxTest(
 );
 
 tmuxTest(
-  "CRLF paste reaches Gateway as one logical newline",
+  "CRLF paste reaches Codex as one logical newline",
   async () => {
     const active = await startFx(true);
 
     await pasteExact(active, "CRLF_SENTINEL_A\r\nCRLF_SENTINEL_B");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe("CRLF_SENTINEL_A\nCRLF_SENTINEL_B");
     expectCleanRuntime(active);
@@ -308,12 +323,12 @@ tmuxTest(
     ]);
     await waitForTraceOrExit(active, "reason=unsafe_suffix");
 
-    expect(gateway?.requestCount()).toBe(0);
+    expect((codex?.requests.length ?? 0)).toBe(0);
     expect(await active.captureFullScrollback()).not.toContain("● Version:");
     await active.waitForText("PRESERVED_DRAFT", TIMEOUT);
 
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
     expect(finalUserText()).toBe("PRESERVED_DRAFT");
     expectCleanRuntime(active);
   },
@@ -336,10 +351,10 @@ tmuxTest(
     ]);
     await waitForTraceOrExit(active, "reason=unsafe_suffix");
 
-    expect(gateway?.requestCount()).toBe(0);
+    expect((codex?.requests.length ?? 0)).toBe(0);
     await active.waitForText("ESCAPE_DRAFT", TIMEOUT);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
     expect(finalUserText()).toBe("ESCAPE_DRAFT");
     expectCleanRuntime(active);
   },
@@ -347,14 +362,14 @@ tmuxTest(
 );
 
 tmuxTest(
-  "direct multiline paste reaches Gateway with boundary whitespace intact",
+  "direct multiline paste reaches Codex with boundary whitespace intact",
   async () => {
     const active = await startFx(true);
     const exact = "    if True:\n        print(\"x\")\n";
 
     await pasteExact(active, exact);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe(exact);
     const submitted = (await active.captureFullScrollback())
@@ -389,7 +404,7 @@ tmuxTest(
     expect(pane).not.toContain("GROUP_I_HIDDEN_ROW");
 
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
     expect(finalUserText()).toBe(exact);
     expectCleanRuntime(active);
   },
@@ -397,7 +412,7 @@ tmuxTest(
 );
 
 tmuxTest(
-  "absolute non-image path at prompt start reaches Gateway",
+  "absolute non-image path at prompt start reaches Codex",
   async () => {
     const active = await startFx(true);
     const path = realpathSync(join(root!, "workspace", "target.txt"));
@@ -405,7 +420,7 @@ tmuxTest(
 
     await active.sendLiteralText(prompt);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe(prompt);
     expect(await active.captureFullScrollback()).not.toContain(
@@ -417,7 +432,7 @@ tmuxTest(
 );
 
 tmuxTest(
-  "typed prompt above the old 4 KiB limit reaches Gateway byte-for-byte",
+  "typed prompt above the old 4 KiB limit reaches Codex byte-for-byte",
   async () => {
     const active = await startFx(true);
     const prompt = `BEGIN-${"x".repeat(8192)}-END`;
@@ -425,12 +440,14 @@ tmuxTest(
     await waitForModelRequest();
     await active.sendLiteralText(prompt);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe(prompt);
-    expect(gateway!.modelRequests).toHaveLength(1);
-    expect(JSON.parse(gateway!.requests[0]!.body)).toMatchObject({
-      maxOutputTokens: 64_000,
+    expect(codex!.modelRequests).toHaveLength(1);
+    // Codex catalogs carry no max-output field, so the request omits
+    // maxOutputTokens by design; pin the model the turn used instead.
+    expect(JSON.parse(codex!.requests[0]!.body)).toMatchObject({
+      model: FAKE_CODEX_DEFAULT_MODEL,
     });
     expect(await active.captureFullScrollback()).not.toContain(
       "local prompt safety limit",
@@ -456,12 +473,14 @@ tmuxTest(
     await active.resizeWindow(42, 16);
     await active.resizeWindow(112, 32);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe(`HEAD-EDIT-${prompt}-TAIL-EDIT`);
-    expect(gateway!.modelRequests).toHaveLength(1);
-    expect(JSON.parse(gateway!.requests[0]!.body)).toMatchObject({
-      maxOutputTokens: 64_000,
+    expect(codex!.modelRequests).toHaveLength(1);
+    // Codex catalogs carry no max-output field, so the request omits
+    // maxOutputTokens by design; pin the model the turn used instead.
+    expect(JSON.parse(codex!.requests[0]!.body)).toMatchObject({
+      model: FAKE_CODEX_DEFAULT_MODEL,
     });
     expectCleanRuntime(active);
   },
@@ -497,7 +516,7 @@ tmuxTest(
     );
     await active.waitForText("[Pasted text #2, 1 line]", TIMEOUT);
     await active.sendKeys("Enter");
-    await waitForGatewayRequestWithin(COMPOSER_LIMIT_PASTE_TIMEOUT);
+    await waitForCodexRequestWithin(COMPOSER_LIMIT_PASTE_TIMEOUT);
 
     expect(finalUserText()).toBe(prompt);
     expect(await active.captureFullScrollback()).not.toContain(
@@ -516,11 +535,11 @@ tmuxTest(
     await waitForModelRequest();
     await active.pasteText("x".repeat(COMPOSER_BYTE_LIMIT + 1));
     await active.waitForText("local prompt safety limit", TIMEOUT);
-    expect(gateway!.requestCount()).toBe(0);
+    expect((codex?.requests.length ?? 0)).toBe(0);
 
     await active.sendLiteralText("RECOVERY_PROMPT");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe("RECOVERY_PROMPT");
     expectCleanRuntime(active);
@@ -564,7 +583,7 @@ tmuxTest(
     await active.sendKeys("End");
     await active.sendLiteralText("_END");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText(0)).toBe("FIRST\nHOME_SECOND_END\nTHIRD");
 
@@ -576,7 +595,7 @@ tmuxTest(
     await active.sendHexBytes(["05"]);
     await active.sendLiteralText("_CTRLE");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest(2);
+    await waitForCodexRequest(2);
 
     expect(finalUserText(1)).toBe("ONE\nCTRLA_TWO_CTRLE\nTHREE");
     expectCleanRuntime(active);
@@ -595,7 +614,7 @@ tmuxTest(
     await active.sendKeys("Left");
     await active.sendLiteralText("EDIT_SENTINEL");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe(`EDIT_SENTINEL${pasted}`);
     expectCleanRuntime(active);
@@ -615,7 +634,7 @@ tmuxTest(
     await active.sendKeys("Up Left Right Down");
     await active.sendLiteralText("VERTICAL_SENTINEL");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe(`x\nVERTICAL_SENTINEL${pasted}`);
     expectCleanRuntime(active);
@@ -634,7 +653,7 @@ tmuxTest(
     await active.sendHexBytes(["15"]);
     await active.sendHexBytes(["19"]);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe(pasted);
     expectCleanRuntime(active);
@@ -652,10 +671,10 @@ tmuxTest(
     await active.sendHexBytes(["15"]);
     await active.sendHexBytes(["19", "19"]);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe("[Image #2][Image #3]");
-    expect(userParts().filter((part) => part.type === "file")).toHaveLength(2);
+    expect(userParts().filter((part) => part.type === "input_image")).toHaveLength(2);
     expectCleanRuntime(active);
   },
   TIMEOUT,
@@ -671,10 +690,10 @@ tmuxTest(
     await active.sendKeys("Home");
     await active.sendHexBytes(["0b", "19"]);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe("[Image #2]");
-    expect(userParts().filter((part) => part.type === "file")).toHaveLength(1);
+    expect(userParts().filter((part) => part.type === "input_image")).toHaveLength(1);
     expectCleanRuntime(active);
   },
   TIMEOUT,
@@ -689,12 +708,15 @@ tmuxTest(
     await active.sendLiteralText("inspect");
     await active.sendHexBytes(["15", "19"]);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe("$review inspect");
-    const prompt = gatewayPromptText();
-    expect(prompt).toContain(WORKSPACE_REVIEW_BODY);
-    expect(prompt).not.toContain(MANAGED_REVIEW_BODY);
+    // Skill content rides outside the input items (like instructions), so
+    // provenance is asserted on the whole body, matching the migrated
+    // explicit-skill case in cli.test.ts.
+    const body = codex!.requests[0]!.body;
+    expect(body).toContain(WORKSPACE_REVIEW_BODY);
+    expect(body).not.toContain(MANAGED_REVIEW_BODY);
     expectCleanRuntime(active);
   },
   TIMEOUT,
@@ -709,7 +731,7 @@ tmuxTest(
     await pasteExact(active, pasted);
     await active.waitForText("[Pasted text #1, 1 line]", TIMEOUT);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
     await active.waitForPane(
       (pane) =>
         pane.includes("edit contract complete") &&
@@ -723,7 +745,7 @@ tmuxTest(
     await active.sendLiteralText(" EDIT_SHOULD_APPEAR");
     await active.waitForText("EDIT_SHOULD_APPEAR", TIMEOUT);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest(2);
+    await waitForCodexRequest(2);
 
     expect(finalUserText(1)).toBe(`${pasted} EDIT_SHOULD_APPEAR`);
     expectCleanRuntime(active);
@@ -740,7 +762,7 @@ tmuxTest(
     await active.waitForText("[Image 1]", TIMEOUT);
     await active.sendLiteralText(" describe history image");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
     await active.waitForPane(
       (pane) =>
         pane.includes("edit contract complete") &&
@@ -752,12 +774,12 @@ tmuxTest(
     await active.sendKeys("Up");
     await active.waitForText("[Image 2]", TIMEOUT);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest(2);
+    await waitForCodexRequest(2);
 
     expect(finalUserText(0)).toBe("[Image #1] describe history image");
     expect(finalUserText(1)).toBe("[Image #2] describe history image");
-    expect(userParts(0).filter((part) => part.type === "file")).toHaveLength(1);
-    expect(userParts(1).filter((part) => part.type === "file")).toHaveLength(1);
+    expect(userParts(0).filter((part) => part.type === "input_image")).toHaveLength(1);
+    expect(userParts(1).filter((part) => part.type === "input_image")).toHaveLength(1);
     expectCleanRuntime(active);
   },
   TIMEOUT,
@@ -790,7 +812,7 @@ for (
       await active.waitForText("[Image 1]", TIMEOUT);
       await active.sendLiteralText(" remember image");
       await active.sendKeys("Enter");
-      await waitForGatewayRequest();
+      await waitForCodexRequest();
       await active.waitForPane(
         (pane) =>
           pane.includes("edit contract complete") &&
@@ -830,7 +852,7 @@ tmuxTest(
     );
     await active.sendLiteralText("history skill");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
     await active.waitForPane(
       (pane) =>
         pane.includes("edit contract complete") &&
@@ -848,12 +870,12 @@ tmuxTest(
       TIMEOUT,
     );
     await active.sendKeys("Enter");
-    await waitForGatewayRequest(2);
+    await waitForCodexRequest(2);
 
     expect(finalUserText(1)).toBe("$review history skill");
-    const prompt = gatewayPromptText(1);
-    expect(prompt).toContain(WORKSPACE_REVIEW_BODY);
-    expect(prompt).not.toContain(MANAGED_REVIEW_BODY);
+    const historyBody = codex!.requests[1]!.body;
+    expect(historyBody).toContain(WORKSPACE_REVIEW_BODY);
+    expect(historyBody).not.toContain(MANAGED_REVIEW_BODY);
     expectCleanRuntime(active);
   },
   TIMEOUT,
@@ -870,7 +892,7 @@ tmuxTest(
     await active.sendHexBytes(["04"]);
     await active.sendLiteralText("KEPT_SPACE");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe("KEPT_SPACE ");
     expectCleanRuntime(active);
@@ -888,7 +910,7 @@ tmuxTest(
     await pasteExact(active, pasted);
     await active.sendLiteralText(` duplicate ${lookalike}`);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe(`${pasted} duplicate ${lookalike}`);
     expectCleanRuntime(active);
@@ -903,10 +925,10 @@ tmuxTest(
 
     await active.sendLiteralText("inspect i.png,");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe("inspect [Image #1],");
-    expect(userParts().filter((part) => part.type === "file")).toHaveLength(1);
+    expect(userParts().filter((part) => part.type === "input_image")).toHaveLength(1);
     expectCleanRuntime(active);
   },
   TIMEOUT,
@@ -921,10 +943,10 @@ tmuxTest(
     await active.waitForText("[Image 1]", TIMEOUT);
     await active.sendLiteralText(" duplicate [Image #1]");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe("[Image #2] duplicate [Image #1]");
-    expect(userParts().filter((part) => part.type === "file")).toHaveLength(1);
+    expect(userParts().filter((part) => part.type === "input_image")).toHaveLength(1);
     expectCleanRuntime(active);
   },
   TIMEOUT,
@@ -940,10 +962,10 @@ tmuxTest(
     await active.sendKeys("Home");
     await active.sendHexBytes(["1b", "64"]);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest();
+    await waitForCodexRequest();
 
     expect(finalUserText()).toBe("[Image #1] TAIL");
-    expect(userParts().filter((part) => part.type === "file")).toHaveLength(1);
+    expect(userParts().filter((part) => part.type === "input_image")).toHaveLength(1);
     expectCleanRuntime(active);
   },
   TIMEOUT,
@@ -961,7 +983,7 @@ tmuxTest(
     await active.sendKeys("Enter");
     await active.waitForText("@target.txt", TIMEOUT);
     await active.sendKeys("Enter");
-    await waitForGatewayRequest(1);
+    await waitForCodexRequest(1);
     expect(finalUserText(0)).toBe("$review @target.txt ");
 
     await active.waitForComposer(TIMEOUT);
@@ -970,7 +992,7 @@ tmuxTest(
     await active.sendHexBytes(["1b", "62", "1b", "62"]);
     await active.sendLiteralText("X");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest(2);
+    await waitForCodexRequest(2);
     expect(finalUserText(1)).toBe("X$review hello");
 
     await active.waitForComposer(TIMEOUT);
@@ -978,7 +1000,7 @@ tmuxTest(
     await active.sendHexBytes(["1b", "7f"]);
     await active.sendLiteralText("ALT_BACKSPACE_OK");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest(3);
+    await waitForCodexRequest(3);
     expect(finalUserText(2)).toBe("ALT_BACKSPACE_OK");
 
     await active.waitForComposer(TIMEOUT);
@@ -987,7 +1009,7 @@ tmuxTest(
     await active.sendHexBytes(["04"]);
     await active.sendLiteralText("DELETE_OK");
     await active.sendKeys("Enter");
-    await waitForGatewayRequest(4);
+    await waitForCodexRequest(4);
     expect(finalUserText(3)).toBe("DELETE_OK");
     expectCleanRuntime(active);
   },

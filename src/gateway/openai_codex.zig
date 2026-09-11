@@ -11,7 +11,7 @@ const model_tool_schema = @import("../core/tooling/model_tool_schema.zig");
 
 const Allocator = std.mem.Allocator;
 const endpoint = "https://chatgpt.com/backend-api/codex/responses";
-const e2e_endpoint_env = "FX_E2E_OPENAI_CODEX_RESPONSES_URL";
+const e2e_endpoint_env = "FIBER_E2E_OPENAI_CODEX_RESPONSES_URL";
 const max_error_body_bytes: usize = 1024 * 1024;
 const max_sse_line_bytes: usize = 32 * 1024 * 1024;
 const max_sse_aggregate_bytes: usize = 64 * 1024 * 1024;
@@ -205,7 +205,7 @@ pub fn streamPrepared(
     var extra_count: usize = 0;
     extra_headers_buf[extra_count] = .{ .name = "chatgpt-account-id", .value = account_id };
     extra_count += 1;
-    extra_headers_buf[extra_count] = .{ .name = "originator", .value = "fx" };
+    extra_headers_buf[extra_count] = .{ .name = "originator", .value = "fiber" };
     extra_count += 1;
     extra_headers_buf[extra_count] = .{ .name = "OpenAI-Beta", .value = "responses=experimental" };
     extra_count += 1;
@@ -660,9 +660,9 @@ test "OpenAI Codex rejects a wrong-origin credential before network I/O" {
     var evidence: stream_provider.AttemptEvidence = .{};
     var callback_context: u8 = 0;
     try std.testing.expectError(
-        error.CodexSubscriptionCredentialRequired,
+        error.InvalidChatGptAccessToken,
         agent_stream_provider.stream(std.testing.allocator, .{
-            .credential = .{ .secret = "gateway-key", .source = .ai_gateway_api_key },
+            .credential = .{ .secret = "gateway-key", .source = .chatgpt_subscription },
             .model = "gpt-5.6-sol",
             .retry_count = 1,
             .messages = &.{},

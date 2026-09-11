@@ -38,7 +38,7 @@ ${"    _ = shell.stdout_file.writeStreaming(io, &.{}, &.{bytes}, 1);\n".repeat(w
 }
 
 function runFixture(fixture: Fixture): ReturnType<typeof spawnSync> {
-  const root = mkdtempSync(join(tmpdir(), "fx-direct-write-audit-"));
+  const root = mkdtempSync(join(tmpdir(), "fiber-direct-write-audit-"));
   try {
     writeFrameCommit(root);
     writeSource(root, fixture.path, fixture.source);
@@ -80,7 +80,6 @@ describe("tui: direct-write audit", () => {
     expect(output).toContain("frame_commit=1");
     expect(output).toContain("unclassified=0");
     expect(output).toContain("path=src/ui/transcript/io.zig");
-    expect(output).toContain("category=acp_protocol_transport");
     expect(output).toContain("category=subprocess_protocol_transport");
     expect(output).toMatch(
       /path=src\/core\/terminal\/native_session\.zig .*function=acceptMarker .*category=subprocess_protocol_transport/,
@@ -244,7 +243,7 @@ describe("tui: direct-write audit", () => {
 
   test("requires exactly one normal interactive frame commit", () => {
     for (const writes of [0, 2]) {
-      const root = mkdtempSync(join(tmpdir(), "fx-direct-write-audit-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-direct-write-audit-"));
       try {
         if (writes > 0) writeFrameCommit(root, writes);
         const result = spawnSync("bun", [auditScript, "--repo-root", root], {

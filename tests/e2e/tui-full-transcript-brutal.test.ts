@@ -14,14 +14,15 @@ import {
 } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
+  chatGptAccessToken,
+  codexFinalText,
+  codexToolCall,
   composerContains,
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewaySse,
-  fakeShellRun,
-  startFakeGateway,
+  fakeCodexModelsPayload,
+  FAKE_CODEX_DEFAULT_MODEL,
+  seededFakeCodexEnv,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -129,7 +130,7 @@ function countOccurrences(text: string, needle: string): number {
 }
 
 function committedAssistantOccurrences(home: string, assistant: string): number {
-  const sessionsRoot = join(home, ".fx", "sessions");
+  const sessionsRoot = join(home, ".fiber", "sessions");
   let count = 0;
   for (const entry of readdirSync(sessionsRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "latest") continue;
@@ -191,29 +192,216 @@ function summarizeMemory(values: number[]) {
 
 function gatewayEnv(
   home: string,
-  gateway: ReturnType<typeof startFakeGateway>,
+  gateway: ReturnType<typeof startCodexQueue>,
 ) {
-  return {
-    HOME: home,
-    AI_GATEWAY_API_KEY: "fake-full-transcript-brutal-key",
-    VERCEL_OIDC_TOKEN: undefined,
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
+  return seededFakeCodexEnv(home, gateway, {
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
     NO_COLOR: "1",
+  });
+}
+
+type CodexQueueResponse =
+  | string
+  | ((body: string) => string | Promise<string>);
+
+// File-local fake-Codex server, mirroring tui-gateway-stream-lifecycle's
+// serveCodexQueue (models/token/responses endpoints, queued responses).
+function startCodexQueue(responses: CodexQueueResponse[]) {
+  const accountId = "acct_e2e";
+  const refreshedAccessToken = chatGptAccessToken(accountId, "fresh");
+  const requests: Array<{ body: string; headers: Headers }> = [];
+  const classifierRequests: Array<{ body: string; headers: Headers }> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    idleTimeout: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/models") {
+        return Response.json(fakeCodexModelsPayload());
+      }
+      if (url.pathname === "/token") {
+        return Response.json({
+          access_token: refreshedAccessToken,
+          refresh_token: "chatgpt-refresh-next",
+          expires_in: 3600,
+        });
+      }
+      const body = await req.text();
+      const headers = new Headers(req.headers);
+      if (body.includes("<permission_review>")) {
+        classifierRequests.push({ body, headers });
+        return new Response(
+          codexToolCall(
+            `review_decision_${classifierRequests.length}`,
+            "permission_decision",
+            { risk: "low", decision: "clear", rationale: "test fixture" },
+          ),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      requests.push({ body, headers });
+      const queued = responses.shift();
+      if (queued === undefined) {
+        return new Response("unexpected request", { status: 500 });
+      }
+      return new Response(
+        typeof queued === "function" ? await queued(body) : queued,
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  return {
+    requests,
+    classifierRequests,
+    responsesUrl: `${base}/responses`,
+    modelsUrl: `${base}/models`,
+    tokenUrl: `${base}/token`,
+    stop() {
+      server.stop(true);
+    },
   };
 }
 
+// Maps gateway-shaped stream event objects to Codex Responses SSE lines so
+// fixtures keep their delivery semantics on the Codex protocol. Copied from
+// tui-gateway-stream-lifecycle. Tool calls correlate by output_index,
+// assigned in first-seen order.
+type CodexStreamCtx = {
+  indexByCallId: Map<string, number>;
+  nextIndex: number;
+};
+
+function createCodexStreamCtx(): CodexStreamCtx {
+  return { indexByCallId: new Map(), nextIndex: 0 };
+}
+
+function codexIndexForCall(ctx: CodexStreamCtx, id: string): number {
+  const existing = ctx.indexByCallId.get(id);
+  if (existing !== undefined) return existing;
+  const index = ctx.nextIndex;
+  ctx.nextIndex += 1;
+  ctx.indexByCallId.set(id, index);
+  return index;
+}
+
+function codexEventLines(event: Record<string, unknown>, ctx: CodexStreamCtx): string[] {
+  const data = (payload: unknown) => `data: ${JSON.stringify(payload)}\n\n`;
+  switch (event.type) {
+    case "text-delta":
+      return [data({ type: "response.output_text.delta", delta: event.delta })];
+    case "text-start":
+    case "text-end":
+      return [];
+    case "reasoning-start":
+      return [data({
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "reasoning" },
+      })];
+    case "reasoning-delta":
+      return [data({
+        type: "response.reasoning_summary_text.delta",
+        delta: event.delta,
+      })];
+    case "reasoning-end":
+      return [];
+    case "tool-input-start": {
+      const index = codexIndexForCall(ctx, event.id as string);
+      return [data({
+        type: "response.output_item.added",
+        output_index: index,
+        item: { type: "function_call", call_id: event.id, name: event.toolName },
+      })];
+    }
+    case "tool-input-delta": {
+      const index = codexIndexForCall(ctx, event.id as string);
+      return [data({
+        type: "response.function_call_arguments.delta",
+        output_index: index,
+        delta: event.delta,
+      })];
+    }
+    case "tool-input-end":
+      return [];
+    case "tool-call": {
+      const id = event.toolCallId as string;
+      const lines: string[] = [];
+      if (!ctx.indexByCallId.has(id)) {
+        const index = codexIndexForCall(ctx, id);
+        lines.push(data({
+          type: "response.output_item.added",
+          output_index: index,
+          item: { type: "function_call", call_id: id, name: event.toolName },
+        }));
+      }
+      const index = ctx.indexByCallId.get(id)!;
+      const input = typeof event.input === "string"
+        ? event.input
+        : JSON.stringify(event.input);
+      lines.push(data({
+        type: "response.function_call_arguments.done",
+        output_index: index,
+        arguments: input,
+      }));
+      return lines;
+    }
+    case "finish": {
+      const usage = (event.usage ?? {}) as {
+        inputTokens?: { total?: number };
+        outputTokens?: { total?: number };
+      };
+      return [data({
+        type: "response.completed",
+        response: {
+          status: "completed",
+          usage: {
+            input_tokens: usage.inputTokens?.total ?? 4,
+            output_tokens: usage.outputTokens?.total ?? 2,
+          },
+        },
+      })];
+    }
+    case "error":
+      return [data({
+        type: "response.failed",
+        response: { status: "failed", error: event.error },
+      })];
+    default:
+      return [];
+  }
+}
+
+function codexSse(events: Record<string, unknown>[]): string {
+  const ctx = createCodexStreamCtx();
+  return events.flatMap((event) => codexEventLines(event, ctx)).join("");
+}
+
+function codexShellRun(
+  id: string,
+  command: string,
+  options: Record<string, unknown> = {},
+): string {
+  return codexToolCall(id, "shell", {
+    request: {
+      yield_time_ms: 30_000,
+      ...options,
+      action: "run",
+      command,
+    },
+  });
+}
+
 function makeRoot(label: string): StressRoot {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), `fx-ctrl-o-${label}-`)));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), `fiber-ctrl-o-${label}-`)));
   return {
     root,
     home: join(root, "home"),
     workspace: join(root, "workspace"),
     stderrPath: join(root, "stderr.log"),
     resumedStderrPath: join(root, "resumed-stderr.log"),
-    tapePath: join(root, "ctrl-o-brutal.fxtape"),
+    tapePath: join(root, "ctrl-o-brutal.fibertape"),
     metricsPath: join(root, "ctrl-o-latency.json"),
     profilePath: join(root, "ctrl-o.sample.txt"),
     tracePath: join(root, "ctrl-o-cache-trace.log"),
@@ -304,7 +492,7 @@ function realisticChatLine(batch: number, line: number, linesPerBatch: number): 
 function batchResponse(
   batch: number,
   config: StressConfig,
-): Response {
+): string {
   const firstTool = batch * config.toolsPerBatch;
   const chat = Array.from(
     { length: config.chatLinesPerBatch },
@@ -332,23 +520,23 @@ function batchResponse(
     type: "finish",
     finishReason: { unified: "tool-calls", raw: "tool-calls" },
   });
-  return fakeGatewaySse(events);
+  return codexSse(events);
 }
 
 function prepareFixture(config: StressConfig): {
   paths: StressRoot;
-  gateway: ReturnType<typeof startFakeGateway>;
+  gateway: ReturnType<typeof startCodexQueue>;
   totalTools: number;
 } {
   const paths = makeRoot(config.label);
-  mkdirSync(join(paths.home, ".fx"), { recursive: true });
+  mkdirSync(join(paths.home, ".fiber"), { recursive: true });
   mkdirSync(paths.workspace);
   writeFileSync(paths.stderrPath, "");
   writeFileSync(paths.resumedStderrPath, "");
   writeFileSync(paths.tracePath, "");
   writeFileSync(paths.resumedTracePath, "");
   writeFileSync(
-    join(paths.home, ".fx", "settings.json"),
+    join(paths.home, ".fiber", "settings.json"),
     JSON.stringify({
       sandbox: "none",
       permission_mode: "auto",
@@ -384,17 +572,17 @@ done
   );
   chmodSync(liveScript, 0o755);
 
-  const responses: Response[] = [];
+  const responses: CodexQueueResponse[] = [];
   for (let batch = 0; batch < config.batches; batch += 1) {
     responses.push(batchResponse(batch, config));
   }
-  responses.push(fakeGatewayFinalText(`${HISTORY_DONE}\n${TAIL_SENTINEL}`));
-  responses.push(fakeShellRun("ctrl-o-brutal-live", "./ctrl-o-live.sh", {
+  responses.push(codexFinalText(`${HISTORY_DONE}\n${TAIL_SENTINEL}`));
+  responses.push(codexShellRun("ctrl-o-brutal-live", "./ctrl-o-live.sh", {
     timeout_ms: 600_000,
   }));
-  responses.push(fakeGatewayFinalText(LIVE_DONE));
+  responses.push(codexFinalText(LIVE_DONE));
 
-  return { paths, gateway: startFakeGateway(responses), totalTools };
+  return { paths, gateway: startCodexQueue(responses), totalTools };
 }
 
 async function waitForScrollback(
@@ -589,7 +777,7 @@ function fxProcessId(session: TmuxSession): number {
   }).trim().split("\n");
   const pid = findFxProcessId(rows);
   if (pid !== undefined) return pid;
-  throw new Error(`Unable to find fx on ${tty}. Processes:\n${rows.join("\n")}`);
+  throw new Error(`Unable to find fiber on ${tty}. Processes:\n${rows.join("\n")}`);
 }
 
 function findFxProcessId(rows: readonly string[]): number | undefined {
@@ -597,16 +785,16 @@ function findFxProcessId(rows: readonly string[]): number | undefined {
     const match = row.trim().match(/^(\d+)\s+(.+)$/);
     if (!match) continue;
     const command = match[2]!;
-    if (command === "fx" || command === FX_BIN || command.endsWith("/fx")) {
+    if (command === "fiber" || command === FIBER_BIN || command.endsWith("/fiber")) {
       return Number(match[1]);
     }
   }
   return undefined;
 }
 
-test("fx process discovery accepts basename and path process names", () => {
-  expect(findFxProcessId(["11361 fx"])).toBe(11361);
-  expect(findFxProcessId(["11362 /workspace/zig-out/bin/fx"])).toBe(11362);
+test("fiber process discovery accepts basename and path process names", () => {
+  expect(findFxProcessId(["11361 fiber"])).toBe(11361);
+  expect(findFxProcessId(["11362 /workspace/zig-out/bin/fiber"])).toBe(11362);
 });
 
 function residentKib(pid: number): number {
@@ -872,19 +1060,19 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
   const primaryRssKib: number[] = [];
   const resumedRssKib: number[] = [];
   let session: TmuxSession | null = null;
-  let resumedGateway: ReturnType<typeof startFakeGateway> | null = null;
+  let resumedGateway: ReturnType<typeof startCodexQueue> | null = null;
   let profiler: ReturnType<typeof Bun.spawn> | null = null;
   let passed = false;
   try {
     session = await TmuxSession.create({
-      cmd: FX_BIN,
+      cmd: FIBER_BIN,
       cwd: realpathSync(paths.workspace),
       env: {
         ...gatewayEnv(paths.home, gateway),
-        FX_RECORD: paths.tapePath,
-        FX_RECORD_INPUT: "1",
-        FX_TRACE_LOG: paths.tracePath,
-        FX_TRACE_SCOPES:
+        FIBER_RECORD: paths.tapePath,
+        FIBER_RECORD_INPUT: "1",
+        FIBER_TRACE_LOG: paths.tracePath,
+        FIBER_TRACE_SCOPES:
           "full_transcript_cache,full_transcript,scroll,frame_render,terminal_diff,frame_schedule,frame_plan",
       },
       stderrPath: paths.stderrPath,
@@ -932,13 +1120,16 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
       immediateTraceStart,
       [
         "open_request state=pending",
+        "open_request state=ready",
         "depth_transition from=inline to=full route=root trigger=ctrl_o",
+        "depth_transition from=inline to=full trigger=ctrl_o",
       ],
     );
     session.sendKeysImmediate(["Escape"]);
     await waitForAnyTraceAfter(paths.tracePath, immediateTraceStart, [
       "open_request state=cancelled",
       "depth_transition from=full to=inline route=root trigger=escape",
+      "depth_transition from=full to=inline trigger=escape",
     ]);
     await waitForMode(session, "main", DRAFT);
     expect(performance.now() - escapeStarted).toBeLessThan(INPUT_SANITY_BUDGET_MS);
@@ -946,8 +1137,10 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
     const repeatedOpenTraceStart = traceSize(paths.tracePath);
     const repeatedOpenStarted = performance.now();
     session.sendKeysImmediate(["C-o"]);
-    await waitForTraceAfter(paths.tracePath, repeatedOpenTraceStart, [
+    await waitForAnyTraceAfter(paths.tracePath, repeatedOpenTraceStart, [
+      "open_request state=ready",
       "depth_transition from=inline to=full route=root trigger=ctrl_o",
+      "depth_transition from=inline to=full trigger=ctrl_o",
     ]);
     await waitForMode(session, "full", DRAFT);
     expect(performance.now() - repeatedOpenStarted).toBeLessThan(
@@ -983,8 +1176,9 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
       BURST_NAVIGATION_EVENTS,
       "Escape",
     );
-    await waitForTraceAfter(paths.tracePath, burstEscapeTraceStart, [
+    await waitForAnyTraceAfter(paths.tracePath, burstEscapeTraceStart, [
       "depth_transition from=full to=inline route=root trigger=escape",
+      "depth_transition from=full to=inline trigger=escape",
     ]);
     await waitForMode(session, "main", DRAFT);
     expect(performance.now() - burstEscapeStarted).toBeLessThan(
@@ -1120,14 +1314,14 @@ async function runStress(config: StressConfig): Promise<StressRoot> {
     session = null;
 
     if (config.resumeCycles > 0) {
-      resumedGateway = startFakeGateway([]);
+      resumedGateway = startCodexQueue([]);
       session = await TmuxSession.create({
-        cmd: `${FX_BIN} --resume-last`,
+        cmd: `${FIBER_BIN} session resume last`,
         cwd: realpathSync(paths.workspace),
         env: {
           ...gatewayEnv(paths.home, resumedGateway),
-          FX_TRACE_LOG: paths.resumedTracePath,
-          FX_TRACE_SCOPES:
+          FIBER_TRACE_LOG: paths.resumedTracePath,
+          FIBER_TRACE_SCOPES:
             "full_transcript_cache,full_transcript,scroll,frame_render,terminal_diff,frame_plan",
         },
         stderrPath: paths.resumedStderrPath,
@@ -1211,7 +1405,7 @@ test.skipIf(!tmuxAvailable())(
   "Ctrl-O fills a viewport taller than the prepared overscan cache",
   async () => {
     const paths = makeRoot("tall-viewport");
-    mkdirSync(join(paths.home, ".fx"), { recursive: true });
+    mkdirSync(join(paths.home, ".fiber"), { recursive: true });
     mkdirSync(paths.workspace);
     writeFileSync(paths.stderrPath, "");
     const tallTail = "TALL_TRANSCRIPT_TAIL";
@@ -1221,11 +1415,11 @@ test.skipIf(!tmuxAvailable())(
         ? tallTail
         : `TALL_TRANSCRIPT_ROW_${String(index).padStart(3, "0")}`,
     ).join("\n");
-    const tallGateway = startFakeGateway([fakeGatewayFinalText(response)]);
+    const tallGateway = startCodexQueue([codexFinalText(response)]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: realpathSync(paths.workspace),
         env: gatewayEnv(paths.home, tallGateway),
         stderrPath: paths.stderrPath,
@@ -1274,7 +1468,7 @@ test.skipIf(!tmuxAvailable())(
   240_000,
 );
 
-test.skipIf(!tmuxAvailable() || process.env.FX_CTRL_O_BRUTAL !== "1")(
+test.skipIf(!tmuxAvailable() || process.env.FIBER_CTRL_O_BRUTAL !== "1")(
   "Ctrl-O extended brutal soak holds under four thousand chat lines and ninety six tools",
   async () => {
     await runStress({
@@ -1293,7 +1487,7 @@ test.skipIf(!tmuxAvailable() || process.env.FX_CTRL_O_BRUTAL !== "1")(
 
 test.skipIf(
   !tmuxAvailable() ||
-    process.env.FX_CTRL_O_PROFILE !== "1" ||
+    process.env.FIBER_CTRL_O_PROFILE !== "1" ||
     platform() !== "darwin" ||
     !existsSync("/usr/bin/sample"),
 )(
@@ -1316,10 +1510,10 @@ test.skipIf(
   600_000,
 );
 
-test.skipIf(!tmuxAvailable() || process.env.FX_CTRL_O_50K !== "1")(
+test.skipIf(!tmuxAvailable() || process.env.FIBER_CTRL_O_50K !== "1")(
   "Ctrl-O load test survives a realistic fifty-thousand-line session with large tool sidecars",
   async () => {
-    const profileSeconds = process.env.FX_CTRL_O_PROFILE === "1" &&
+    const profileSeconds = process.env.FIBER_CTRL_O_PROFILE === "1" &&
         platform() === "darwin" &&
         existsSync("/usr/bin/sample")
       ? 30

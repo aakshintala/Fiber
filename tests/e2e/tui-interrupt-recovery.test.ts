@@ -14,10 +14,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readTrace } from "./tui-render-assertions";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeShellRun,
-  startFakeGateway,
+  chatGptAccessToken,
+  codexFinalText,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexEnv,
+  fakeCodexModelsPayload,
+  startFakeCodex,
+  writeSeededChatGptLogin,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -32,9 +36,10 @@ const PARTIAL_CHUNKS = [
 ];
 const VISIBLE_PARTIAL_CHUNKS = PARTIAL_CHUNKS.slice(0, 2);
 const FOLLOW_UP_RESPONSE = "INTERRUPT_FOLLOW_UP_COMPLETE";
-const FOLLOW_UP_MODEL = "google/gemini-3.1-flash-lite";
+const FOLLOW_UP_MODEL = "gpt-5.4";
 
-type GatewayHandle = ReturnType<typeof startFakeGateway>;
+type CodexHandle = ReturnType<typeof startFakeCodex>;
+type StreamServer = ReturnType<typeof Bun.serve>;
 type HoldState = {
   started: boolean;
   cancelled: boolean;
@@ -44,7 +49,8 @@ type HoldState = {
 };
 
 let session: TmuxSession | null = null;
-let gateway: GatewayHandle | null = null;
+let codex: CodexHandle | null = null;
+let server: StreamServer | null = null;
 let root: string | null = null;
 
 afterEach(async () => {
@@ -52,8 +58,10 @@ afterEach(async () => {
     await session.kill();
     session = null;
   }
-  gateway?.stop();
-  gateway = null;
+  codex?.stop();
+  codex = null;
+  server?.stop(true);
+  server = null;
   if (root) {
     rmSync(root, { recursive: true, force: true });
     root = null;
@@ -64,14 +72,15 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
   test(
     "submitted status text queues behind an active response",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-text-queues-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-text-queues-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
       const tracePath = join(root, "trace.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
+      mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
-      writeFileSync(join(home, ".fx", "settings.json"), "{}");
+      writeFileSync(join(home, ".fiber", "settings.json"), "{}");
+      writeSeededChatGptLogin(home, chatGptAccessToken());
 
       const held: HoldState = {
         started: false,
@@ -80,27 +89,41 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
         released: false,
       };
       const queuedText = "What are you doing right now?";
-      gateway = startFakeGateway([
-        () => heldUntilReleasedResponse(held),
-        fakeGatewayFinalText("QUEUED_STATUS_PROMPT_COMPLETE"),
-      ]);
+      codex = startFakeCodex();
+      server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/models") {
+            return Response.json(fakeCodexModelsPayload());
+          }
+          const body = await req.text();
+          codex!.requests.push({
+            path: url.pathname,
+            authorization: req.headers.get("authorization"),
+            body,
+          });
+          if (codex!.requests.length === 1) return heldUntilReleasedResponse(held);
+          return new Response(codexFinalText("QUEUED_STATUS_PROMPT_COMPLETE"), {
+            headers: { "content-type": "text/event-stream" },
+          });
+        },
+      });
       session = await TmuxSession.create({
         cwd: realpathSync(workspace),
         stderrPath,
         width: 120,
         height: 40,
-        env: {
-          HOME: home,
-          AI_GATEWAY_API_KEY: "fake-text-queues-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_TRACE_SCOPES: TRACE_SCOPES,
-          FX_TRACE_LOG: tracePath,
-        },
+        env: fakeCodexEnv(home, {
+          responsesUrl: `http://127.0.0.1:${server.port}/responses`,
+          modelsUrl: `http://127.0.0.1:${server.port}/models`,
+          tokenUrl: codex.tokenUrl,
+        } as CodexHandle, {
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+          FIBER_TRACE_SCOPES: TRACE_SCOPES,
+          FIBER_TRACE_LOG: tracePath,
+        }),
       });
       await session.waitForComposer(TIMEOUT);
 
@@ -109,7 +132,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       await session.sendText(queuedText);
       await Bun.sleep(250);
 
-      expect(gateway.requests).toHaveLength(1);
+      expect(codex!.requests).toHaveLength(1);
       expect(held.cancelled).toBe(false);
       expect(held.cancelCount).toBe(0);
       expect(readTrace(tracePath)).not.toContain("event=interrupt_persisted");
@@ -123,25 +146,25 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
 
       expect(held.released).toBe(true);
       expect(held.cancelCount).toBe(0);
-      expect(gateway.requests).toHaveLength(2);
-      const queuedRequest = JSON.parse(gateway.requests[1]!.body) as {
-        prompt: unknown;
+      expect(codex!.requests).toHaveLength(2);
+      const queuedBody = JSON.parse(codex!.requests[1]!.body) as {
+        input: unknown;
         tools: unknown[];
       };
-      const queuedPrompt = JSON.stringify(queuedRequest.prompt);
+      const queuedPrompt = JSON.stringify(queuedBody.input);
       expect(queuedPrompt).toContain(queuedText);
-      expect(queuedRequest.tools.length).toBeGreaterThan(0);
-      expect(gateway.requests[1]!.body).not.toContain(
+      expect(queuedBody.tools.length).toBeGreaterThan(0);
+      expect(codex!.requests[1]!.body).not.toContain(
         "Treat it as interrupting any previous tool plan.",
       );
-      expect(gateway.requests[1]!.body).not.toContain(
+      expect(codex!.requests[1]!.body).not.toContain(
         "Continue from the latest meaningful state",
       );
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(session.isAlive()).toBe(true);
       expect(session.isPaneAlive()).toBe(true);
 
-      const sessionRoot = join(home, ".fx", "sessions");
+      const sessionRoot = join(home, ".fiber", "sessions");
       const eventsPath = readdirSync(sessionRoot, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .map((entry) => join(sessionRoot, entry.name, "events.jsonl"))
@@ -157,18 +180,19 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
   test(
     "partial output survives cancellation and the next prompt completes",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-interrupt-recovery-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-interrupt-recovery-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
       const tracePath = join(root, "trace.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
+      mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
-      const settingsPath = join(home, ".fx", "settings.json");
+      const settingsPath = join(home, ".fiber", "settings.json");
       writeFileSync(
         settingsPath,
-        JSON.stringify({ model: FAKE_GATEWAY_MODEL }) + "\n",
+        JSON.stringify({ model: FAKE_CODEX_DEFAULT_MODEL }) + "\n",
       );
+      writeSeededChatGptLogin(home, chatGptAccessToken());
 
       const held: HoldState = {
         started: false,
@@ -176,32 +200,38 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
         cancelCount: 0,
         released: false,
       };
-      gateway = startFakeGateway([
-        () => heldPartialResponse(held),
-        () => providerPortableResponse(FOLLOW_UP_RESPONSE),
-      ], {
-        models: [
-          { id: FAKE_GATEWAY_MODEL, type: "language", tags: ["tool-use"] },
-          { id: FOLLOW_UP_MODEL, type: "language", tags: ["tool-use"] },
-        ],
+      codex = startFakeCodex();
+      server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/models") {
+            return Response.json(fakeCodexModelsPayload());
+          }
+          const body = await req.text();
+          codex!.requests.push({
+            path: url.pathname,
+            authorization: req.headers.get("authorization"),
+            body,
+          });
+          if (codex!.requests.length === 1) return heldPartialResponse(held);
+          return providerPortableResponse(FOLLOW_UP_RESPONSE);
+        },
       });
       session = await TmuxSession.create({
         cwd: realpathSync(workspace),
         stderrPath,
         width: 120,
         height: 40,
-        env: {
-          HOME: home,
-          AI_GATEWAY_API_KEY: "fake-interrupt-recovery-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-          FX_TRACE_SCOPES: TRACE_SCOPES,
-          FX_TRACE_LOG: tracePath,
-        },
+        env: fakeCodexEnv(home, {
+          responsesUrl: `http://127.0.0.1:${server.port}/responses`,
+          modelsUrl: `http://127.0.0.1:${server.port}/models`,
+          tokenUrl: codex.tokenUrl,
+        } as CodexHandle, {
+          FIBER_TRACE_SCOPES: TRACE_SCOPES,
+          FIBER_TRACE_LOG: tracePath,
+        }),
       });
       await session.waitForComposer(TIMEOUT);
 
@@ -209,12 +239,13 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       await waitForCondition(() => held.started, "held response start");
       await session.waitForText(VISIBLE_PARTIAL_CHUNKS.at(-1)!.trim(), TIMEOUT);
       await session.sendKeys("Escape");
-      await waitForCondition(() => held.cancelled, "gateway stream cancellation");
+      await waitForCondition(() => held.cancelled, "stream cancellation");
       await waitForTrace(tracePath, "event=interrupt_persisted", TIMEOUT);
       await session.waitForText("cancelled", TIMEOUT);
       await session.sendText(`/model ${FOLLOW_UP_MODEL}`);
+      await session.sendKeys("Enter");
       await waitForCondition(
-        () => JSON.parse(readFileSync(settingsPath, "utf8")).models?.gateway === FOLLOW_UP_MODEL,
+        () => JSON.parse(readFileSync(settingsPath, "utf8")).models?.codex === FOLLOW_UP_MODEL,
         "follow-up model persistence",
       );
       await session.sendText("Confirm that the next prompt still works.");
@@ -236,23 +267,22 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       }
       expect(finalScrollback).toContain(FOLLOW_UP_RESPONSE);
       expect(countOccurrences(finalScrollback, "cancelled")).toBe(1);
-      expect(gateway.requests).toHaveLength(2);
+      expect(codex!.requests).toHaveLength(2);
       expect(held.cancelCount).toBe(1);
       expect(countOccurrences(readTrace(tracePath), "event=interrupt_persisted")).toBe(1);
-      const followUpRequest = JSON.parse(gateway.requests[1]!.body) as {
-        prompt: Array<{ role: string }>;
+      const followUpBody = JSON.parse(codex!.requests[1]!.body) as {
+        model: string;
+        input: Array<{ role?: string }>;
         tools: unknown[];
       };
-      const followUpPrompt = JSON.stringify(followUpRequest.prompt);
-      expect(gateway.requests[0]!.headers.get("ai-language-model-id")).toBe(
-        FAKE_GATEWAY_MODEL,
+      const followUpPrompt = JSON.stringify(followUpBody.input);
+      expect(JSON.parse(codex!.requests[0]!.body).model).toBe(
+        FAKE_CODEX_DEFAULT_MODEL,
       );
-      expect(gateway.requests[1]!.headers.get("ai-language-model-id")).toBe(
-        FOLLOW_UP_MODEL,
-      );
+      expect(followUpBody.model).toBe(FOLLOW_UP_MODEL);
       expect(
-        followUpRequest.prompt
-          .filter((entry) => entry.role !== "system")
+        followUpBody.input
+          .filter((entry) => entry.role !== undefined)
           .map((entry) => entry.role),
       ).toEqual([
         "user",
@@ -263,11 +293,11 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       expect(followUpPrompt).toContain("<turn_aborted>");
       expect(countOccurrences(followUpPrompt, "<turn_aborted>")).toBe(1);
       expect(followUpPrompt).toContain("Confirm that the next prompt still works.");
-      expect(followUpRequest.tools.length).toBeGreaterThan(0);
-      expect(gateway.requests[1]!.body).not.toContain(
+      expect(followUpBody.tools.length).toBeGreaterThan(0);
+      expect(codex!.requests[1]!.body).not.toContain(
         "Treat it as interrupting any previous tool plan.",
       );
-      expect(gateway.requests[1]!.body).not.toContain(
+      expect(codex!.requests[1]!.body).not.toContain(
         "Continue from the latest meaningful state",
       );
       expect(session.isAlive()).toBe(true);
@@ -275,7 +305,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(finalScrollback).not.toContain("HTTP 400");
 
-      const sessionRoot = join(home, ".fx", "sessions");
+      const sessionRoot = join(home, ".fiber", "sessions");
       const sessionIds = readdirSync(sessionRoot, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .map((entry) => entry.name)
@@ -302,22 +332,23 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
   test(
     "workspace mutation waits for cancelled worker unwind",
     async () => {
-      root = realpathSync(mkdtempSync(join(tmpdir(), "fx-workspace-cancel-unwind-")));
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-workspace-cancel-unwind-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const observed = join(root, "observed");
       const shared = join(root, "shared");
       const stderrPath = join(root, "stderr.log");
       const tracePath = join(root, "trace.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
+      mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
       mkdirSync(observed, { recursive: true });
       mkdirSync(shared, { recursive: true });
+      writeSeededChatGptLogin(home, chatGptAccessToken());
       const workspaceRoot = realpathSync(workspace);
       const observedRoot = realpathSync(observed);
       const sharedRoot = realpathSync(shared);
       writeFileSync(
-        join(home, ".fx", "settings.json"),
+        join(home, ".fiber", "settings.json"),
         JSON.stringify({
           sandbox: "none",
           permission_mode: "auto",
@@ -339,28 +370,33 @@ while :; do sleep 1; done
       );
       chmodSync(scriptPath, 0o755);
 
-      gateway = startFakeGateway([
-        fakeShellRun("workspace-cancel-hold", "./hold-workspace-cancel.sh", {
-          timeout_ms: 600_000,
-        }),
-      ]);
+      codex = startFakeCodex({
+        route: (body) => {
+          if (body.includes("<permission_review>")) {
+            return codexToolCall("workspace-cancel-review", "permission_decision", {
+              risk: "low",
+              decision: "clear",
+              rationale: "test fixture",
+            });
+          }
+          return codexToolCall("workspace-cancel-hold", "shell", {
+            action: "run",
+            command: "./hold-workspace-cancel.sh",
+            yield_time_ms: 30_000,
+            timeout_ms: 600_000,
+          });
+        },
+      });
       session = await TmuxSession.create({
         cwd: workspaceRoot,
         stderrPath,
         width: 120,
         height: 40,
-        env: {
-          HOME: home,
-          AI_GATEWAY_API_KEY: "fake-workspace-cancel-unwind-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_TRACE_SCOPES: `${TRACE_SCOPES},core`,
-          FX_TRACE_LOG: tracePath,
-        },
+        env: fakeCodexEnv(home, codex, {
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+          FIBER_TRACE_SCOPES: `${TRACE_SCOPES},core`,
+          FIBER_TRACE_LOG: tracePath,
+        }),
       });
       await session.waitForComposer(TIMEOUT);
 
@@ -396,7 +432,7 @@ while :; do sleep 1; done
         TIMEOUT,
       );
       const beforeRetry = JSON.parse(
-        readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+        readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
       );
       expect(beforeRetry.workspaces[workspaceRoot].additional_directories).toEqual([
         observedRoot,
@@ -404,7 +440,7 @@ while :; do sleep 1; done
 
       await waitForTrace(tracePath, "finish processing queued=0", TIMEOUT);
       await session.waitForText(
-        "Cancelled ./hold-workspace-cancel.sh · What can fx do differently?",
+        "Cancelled ./hold-workspace-cancel.sh · What can fiber do differently?",
         TIMEOUT,
       );
       await session.sendText("/workspace list");
@@ -415,12 +451,12 @@ while :; do sleep 1; done
       await session.sendText(command);
       await session.waitForText("runtime_changed=true", TIMEOUT);
 
-      const stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+      const stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
       expect(stored.workspaces[workspaceRoot].additional_directories).toEqual([
         observedRoot,
         sharedRoot,
       ]);
-      expect(gateway.requests).toHaveLength(1);
+      expect(codex.requests.filter((request) => !request.body.includes("<permission_review>"))).toHaveLength(1);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(session.isAlive()).toBe(true);
       expect(session.isPaneAlive()).toBe(true);
@@ -439,7 +475,8 @@ function heldPartialResponse(state: HoldState): Response {
         state.started = true;
         for (const delta of PARTIAL_CHUNKS) {
           controller.enqueue(encoder.encode(
-            `data: ${JSON.stringify({ type: "text-delta", id: "partial", delta })}\n\n`,
+            `data: ${JSON.stringify({ type: "response.output_text.delta", delta })}` +
+              "\n\n",
           ));
         }
         timer = setInterval(() => {
@@ -458,22 +495,24 @@ function heldPartialResponse(state: HoldState): Response {
 }
 
 function providerPortableResponse(text: string): Response {
-  const request = gateway?.requests.at(-1);
+  const request = codex?.requests.at(-1);
   if (!request) return new Response("missing captured request", { status: 500 });
-  const payload = JSON.parse(request.body) as { prompt: Array<{ role: string }> };
+  const payload = JSON.parse(request.body) as { input: Array<{ role?: string }> };
   let sawNonSystem = false;
-  for (const entry of payload.prompt) {
-    if (entry.role === "system") {
+  for (const entry of payload.input) {
+    if (entry.role === "system" || entry.role === "developer") {
       if (sawNonSystem) {
         return new Response("system role must remain in the leading prefix", {
           status: 400,
         });
       }
-    } else {
+    } else if (entry.role !== undefined) {
       sawNonSystem = true;
     }
   }
-  return fakeGatewayFinalText(text);
+  return new Response(codexFinalText(text), {
+    headers: { "content-type": "text/event-stream" },
+  });
 }
 
 function heldUntilReleasedResponse(state: HoldState): Response {
@@ -485,7 +524,10 @@ function heldUntilReleasedResponse(state: HoldState): Response {
       start(controller) {
         state.started = true;
         controller.enqueue(encoder.encode(
-          'data: {"type":"text-delta","id":"held","delta":"ACTIVE_RESPONSE_HELD\\n"}\n\n',
+          `data: ${JSON.stringify({
+            type: "response.output_text.delta",
+            delta: "ACTIVE_RESPONSE_HELD\\n",
+          })}` + "\n\n",
         ));
         timer = setInterval(() => {
           if (!closed) controller.enqueue(encoder.encode(": held-response\n\n"));
@@ -496,8 +538,13 @@ function heldUntilReleasedResponse(state: HoldState): Response {
           state.released = true;
           if (timer) clearInterval(timer);
           controller.enqueue(encoder.encode(
-            'data: {"type":"finish","finishReason":{"unified":"stop","raw":"stop"}}\n\n' +
-              "data: [DONE]\n\n",
+            `data: ${JSON.stringify({
+              type: "response.completed",
+              response: {
+                status: "completed",
+                usage: { input_tokens: 4, output_tokens: 2 },
+              },
+            })}` + "\n\n",
           ));
           controller.close();
         };

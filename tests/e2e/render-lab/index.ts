@@ -13,8 +13,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { FX_BIN, REPO_ROOT } from "../../evals/eval-helpers";
-import { isVolatileTokenStatusRow } from "../tmux-helpers";
+import { FIBER_BIN, REPO_ROOT } from "../../evals/eval-helpers";
+import {
+  chatGptAccessToken,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexModelsPayload,
+  isVolatileTokenStatusRow,
+  writeSeededChatGptLogin,
+} from "../tmux-helpers";
 import {
   ACTIVE_TOOL_MARKER,
   analyzeRun,
@@ -77,43 +83,56 @@ type ScenarioContext = {
 
 type FxLaunchOptions = {
   stderrPath?: string;
-  gatewayApiKey?: string;
-  gatewayChatUrl?: string;
-  gatewayModelsUrl?: string;
+  codexResponsesUrl?: string;
+  codexModelsUrl?: string;
+  codexTokenUrl?: string;
   permissionMode?: "ask" | "auto" | "yolo";
 };
 
 type LocalGatewayFixture = {
-  chatUrl: string;
+  responsesUrl: string;
   modelsUrl: string;
+  tokenUrl: string;
   requests: string[];
   releaseResponse(): void;
   stop(): void;
 };
 
-function gatewaySse(events: object[]): Response {
+function codexTextEvent(delta: string): string {
+  return `data: ${JSON.stringify({ type: "response.output_text.delta", delta })}\n\n`;
+}
+
+function codexToolEvent(callId: string, name: string, args: object): string {
+  return `data: ${JSON.stringify({
+    type: "response.output_item.added",
+    output_index: 0,
+    item: { type: "function_call", call_id: callId, name },
+  })}\n\n` +
+    `data: ${JSON.stringify({
+      type: "response.function_call_arguments.done",
+      output_index: 0,
+      arguments: JSON.stringify(args),
+    })}\n\n`;
+}
+
+function codexSse(parts: string[]): Response {
   return new Response(
-    `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`,
+    parts.join("") +
+      `data: ${JSON.stringify({
+        type: "response.completed",
+        response: { status: "completed", usage: { input_tokens: 4, output_tokens: 2 } },
+      })}\n\n`,
     { headers: { "content-type": "text/event-stream" } },
   );
 }
 
 function permissionDecisionResponse(): Response {
-  return gatewaySse([
-    {
-      type: "tool-call",
-      toolCallId: "render_lab_permission_decision_1",
-      toolName: "permission_decision",
-      input: {
-        risk: "low",
-        decision: "clear",
-        rationale: "deterministic render-lab decision",
-      },
-    },
-    {
-      type: "finish",
-      finishReason: { unified: "tool-calls", raw: "tool-calls" },
-    },
+  return codexSse([
+    codexToolEvent("render_lab_permission_decision_1", "permission_decision", {
+      risk: "low",
+      decision: "clear",
+      rationale: "deterministic render-lab decision",
+    }),
   ]);
 }
 
@@ -131,8 +150,8 @@ const OBSERVABILITY_FINAL_MARKER = "OBSERVABILITY_FINAL_RESPONSE";
 const OBSERVABILITY_PERMISSION_PROMPT = "Would you like to run the following command?";
 const OBSERVABILITY_PERMISSION_REVIEW = "Permission needed";
 const OBSERVABILITY_TOOL_COMMAND = "touch render-lab-observability-approved.txt";
-const LOCAL_GATEWAY_CHAT_PATH = "/v3/ai/language-model";
-const LOCAL_GATEWAY_MODELS_PATH = "/coding-agent/v1/models";
+const LOCAL_GATEWAY_CHAT_PATH = "/responses";
+const LOCAL_GATEWAY_MODELS_PATH = "/models";
 const DEFAULT_BENCH_SIZES: RenderLabTerminalSize[] = [
   { cols: 80, rows: 24 },
   { cols: 120, rows: 40 },
@@ -140,7 +159,7 @@ const DEFAULT_BENCH_SIZES: RenderLabTerminalSize[] = [
 ];
 const BENCHMARK_COMBINED_P95_LIMIT_MS = 8;
 const BENCHMARK_P95_MIN_RUNS = 20;
-const PROMPT_TEXT = "FX_RENDER_LAB%";
+const PROMPT_TEXT = "FIBER_RENDER_LAB%";
 const TRACE_SCOPES =
   "render,paint,resize,scroll,footer.clean,input,permission,frame_layout,frame_plan,frame_diff,frame_commit,frame_owner_violation,frame_schedule,ui_activity";
 const QUIESCENCE_INTERVAL_MS = 300;
@@ -150,7 +169,7 @@ export async function runRenderLab(rawOptions: Partial<Options> = {}): Promise<R
   const options = {
     scenario: rawOptions.scenario ?? SCENARIO,
     runs: rawOptions.runs ?? 1,
-    out: rawOptions.out ?? join(shortTempBase(), "fx-render-lab-artifacts"),
+    out: rawOptions.out ?? join(shortTempBase(), "fiber-render-lab-artifacts"),
     analyze: rawOptions.analyze ?? null,
     listScenarios: rawOptions.listScenarios ?? false,
     sizes: rawOptions.sizes ?? null,
@@ -248,7 +267,7 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const manifest: RenderLabManifest = {
     version: 1,
     scenario: SCENARIO,
@@ -257,10 +276,10 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -278,7 +297,7 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
         `SHELL_A_BEFORE_FIRST_${runId}`,
         `SHELL_A_BETWEEN_LAUNCHES_${runId}`,
       ],
-      submitted: ["permission_mode", "● Version:", "/help"],
+      submitted: ["permission_mode", "permission_mode", "/help"],
     },
     frames: [],
     failures: [],
@@ -334,7 +353,7 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
     );
 
     await launchFx(context, session, "second");
-    await submitSlashCommand(context, session, "/version", "● Version:", "second-version-visible");
+    await submitSlashCommand(context, session, "/status", "permission_mode", "second-status-visible");
     await resize(context, session, 72, 24, "second-resize-narrow");
     await resize(context, session, 132, 42, "second-resize-wide");
     await resize(context, session, 120, 40, "second-resize-restored");
@@ -349,7 +368,7 @@ async function runSameShellRelaunch(outRoot: string, runNumber: number): Promise
     );
 
     await launchFx(context, session, "third");
-    await submitSlashCommand(context, session, "/help", "/version", "third-help-visible");
+    await submitSlashCommand(context, session, "/help", "show available slash commands", "third-help-visible");
     const finalFrame = await capture(context, session, "final-third-launch-state");
     manifest.finalFrameIndex = finalFrame.index;
 
@@ -402,7 +421,7 @@ async function runActiveToolPlacement(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const manifest: RenderLabManifest = {
     version: 1,
     scenario,
@@ -411,10 +430,10 @@ async function runActiveToolPlacement(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -448,9 +467,9 @@ async function runActiveToolPlacement(
 
     await launchFx(context, session, "active-tool", {
       stderrPath: join(artifactDir, "stderr.log"),
-      gatewayApiKey: "render-lab-local-gateway-key",
-      gatewayChatUrl: gateway.chatUrl,
-      gatewayModelsUrl: gateway.modelsUrl,
+      codexResponsesUrl: gateway.responsesUrl,
+      codexModelsUrl: gateway.modelsUrl,
+      codexTokenUrl: gateway.tokenUrl,
     });
     await submitSlashCommand(
       context,
@@ -638,7 +657,7 @@ async function runUserCardResizeReplayScrollback(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const promptHead = `USER_CARD_HEAD_${markerSuffix}`;
   const promptTail = `USER_CARD_TAIL_${markerSuffix}`;
   const prompt = [
@@ -655,10 +674,10 @@ async function runUserCardResizeReplayScrollback(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -691,9 +710,9 @@ async function runUserCardResizeReplayScrollback(
 
     await launchFx(context, session, "user-card", {
       stderrPath: join(artifactDir, "stderr.log"),
-      gatewayApiKey: "render-lab-local-gateway-key",
-      gatewayChatUrl: gateway.chatUrl,
-      gatewayModelsUrl: gateway.modelsUrl,
+      codexResponsesUrl: gateway.responsesUrl,
+      codexModelsUrl: gateway.modelsUrl,
+      codexTokenUrl: gateway.tokenUrl,
     });
     await session.sendText(prompt);
     await waitForLocalGatewayRequest(
@@ -775,7 +794,7 @@ async function runTuiObservabilityGauntlet(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const shellMarker = `OBSERVABILITY_SHELL_HISTORY_${markerSuffix}`;
   const promptHead = `OBSERVABILITY_PROMPT_HEAD_${markerSuffix}`;
   const promptTail = `OBSERVABILITY_PROMPT_TAIL_${markerSuffix}`;
@@ -792,10 +811,10 @@ async function runTuiObservabilityGauntlet(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -843,9 +862,9 @@ async function runTuiObservabilityGauntlet(
 
     await launchFx(context, session, "observability", {
       stderrPath: join(artifactDir, "stderr.log"),
-      gatewayApiKey: "render-lab-local-gateway-key",
-      gatewayChatUrl: gateway.chatUrl,
-      gatewayModelsUrl: gateway.modelsUrl,
+      codexResponsesUrl: gateway.responsesUrl,
+      codexModelsUrl: gateway.modelsUrl,
+      codexTokenUrl: gateway.tokenUrl,
       permissionMode: "ask",
     });
     await session.sendText(prompt);
@@ -1044,7 +1063,7 @@ async function runStartupScrollbackOverflow(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const promptHead = `OVERFLOW_PROMPT_HEAD_${markerSuffix}`;
   const promptTail = `OVERFLOW_PROMPT_TAIL_${markerSuffix}`;
   const manifest: RenderLabManifest = {
@@ -1055,10 +1074,10 @@ async function runStartupScrollbackOverflow(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -1082,9 +1101,9 @@ async function runStartupScrollbackOverflow(
   writeReproScript(manifest);
 
   const fixture = createFixture(runId);
-  mkdirSync(join(fixture.home, ".fx"), { recursive: true });
+  mkdirSync(join(fixture.home, ".fiber"), { recursive: true });
   writeFileSync(
-    join(fixture.home, ".fx", "settings.json"),
+    join(fixture.home, ".fiber", "settings.json"),
     `${JSON.stringify({ startup_scrollback: startupScrollback })}\n`,
   );
   const gateway = startLocalGatewayFixture(promptTail);
@@ -1122,9 +1141,9 @@ async function runStartupScrollbackOverflow(
 
     await launchFx(context, session, "overflow", {
       stderrPath: join(artifactDir, "stderr.log"),
-      gatewayApiKey: "render-lab-local-gateway-key",
-      gatewayChatUrl: gateway.chatUrl,
-      gatewayModelsUrl: gateway.modelsUrl,
+      codexResponsesUrl: gateway.responsesUrl,
+      codexModelsUrl: gateway.modelsUrl,
+      codexTokenUrl: gateway.tokenUrl,
     });
     await capture(context, session, "overflow-initial-bottom-anchored-frame");
 
@@ -1273,7 +1292,7 @@ function runBufferSystemFrameBench(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-bench`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const manifest: RenderLabManifest = {
     version: 1,
     scenario: BUFFER_SYSTEM_FRAME_BENCH,
@@ -1282,10 +1301,10 @@ function runBufferSystemFrameBench(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -1627,19 +1646,23 @@ async function launchFx(
   options: FxLaunchOptions = {},
 ): Promise<void> {
   const environment = [
-    options.gatewayApiKey ? `AI_GATEWAY_API_KEY=${shQuote(options.gatewayApiKey)}` : null,
-    options.gatewayChatUrl ? `FX_E2E_GATEWAY_CHAT_URL=${shQuote(options.gatewayChatUrl)}` : null,
-    options.gatewayModelsUrl ? `FX_E2E_GATEWAY_MODELS_URL=${shQuote(options.gatewayModelsUrl)}` : null,
-    options.permissionMode ? `FX_PERMISSION_MODE=${shQuote(options.permissionMode)}` : null,
+    // The scenarios never choose a model, and fiber has no compiled-in
+    // default. Without this the shell opens the model picker over
+    // the frame every scenario is here to photograph.
+    `FIBER_MODEL=${shQuote(FAKE_CODEX_DEFAULT_MODEL)}`,
+    options.codexResponsesUrl ? `FIBER_E2E_OPENAI_CODEX_RESPONSES_URL=${shQuote(options.codexResponsesUrl)}` : null,
+    options.codexModelsUrl ? `FIBER_E2E_OPENAI_CODEX_MODELS_URL=${shQuote(options.codexModelsUrl)}` : null,
+    options.codexTokenUrl ? `FIBER_E2E_CHATGPT_TOKEN_URL=${shQuote(options.codexTokenUrl)}` : null,
+    options.permissionMode ? `FIBER_PERMISSION_MODE=${shQuote(options.permissionMode)}` : null,
   ].filter((entry): entry is string => entry !== null).join(" ");
   const environmentPrefix = environment.length > 0 ? `${environment} ` : "";
   const stderrRedirect = options.stderrPath ? ` 2>${shQuote(options.stderrPath)}` : "";
   await session.sendText(
-    `${environmentPrefix}FX_RECORD=${shQuote(context.manifest.tapePath)} FX_RECORD_INPUT=1 ${shQuote(FX_BIN)}${stderrRedirect}`,
+    `${environmentPrefix}FIBER_RECORD=${shQuote(context.manifest.tapePath)} FIBER_RECORD_INPUT=1 ${shQuote(FIBER_BIN)}${stderrRedirect}`,
   );
-  await capture(context, session, `${label}-fx-launch-requested`);
+  await capture(context, session, `${label}-fiber-launch-requested`);
   await session.waitForPane((pane) => pane.includes("Run /help for commands"), 25_000);
-  await capture(context, session, `${label}-fx-prompt-visible`);
+  await capture(context, session, `${label}-fiber-prompt-visible`);
 }
 
 function startLocalGatewayFixture(expectedPromptTail: string): LocalGatewayFixture {
@@ -1658,16 +1681,7 @@ function startLocalGatewayFixture(expectedPromptTail: string): LocalGatewayFixtu
       requests.push(`${request.method} ${url.pathname}`);
 
       if (request.method === "GET" && url.pathname === LOCAL_GATEWAY_MODELS_PATH) {
-        return Response.json({
-          data: [
-            {
-              id: "anthropic/claude-opus-4.7",
-              type: "language",
-              released: 1,
-              tags: ["tool-use"],
-            },
-          ],
-        });
+        return Response.json(fakeCodexModelsPayload());
       }
 
       if (request.method === "POST" && url.pathname === LOCAL_GATEWAY_CHAT_PATH) {
@@ -1676,26 +1690,7 @@ function startLocalGatewayFixture(expectedPromptTail: string): LocalGatewayFixtu
           return new Response("prompt tail missing", { status: 422 });
         }
         await responseGate;
-        const sse = [
-          `data: ${JSON.stringify({ type: "text-delta", id: "render-lab", delta: LOCAL_GATEWAY_COMPLETION })}`,
-          "",
-          `data: ${JSON.stringify({
-            type: "finish",
-            finishReason: { unified: "stop", raw: "stop" },
-            usage: {
-              inputTokens: { total: 1 },
-              outputTokens: { total: 1 },
-            },
-          })}`,
-          "",
-          "data: [DONE]",
-          "",
-        ].join("\n");
-        return new Response(sse, {
-          headers: {
-            "content-type": "text/event-stream",
-          },
-        });
+        return codexSse([codexTextEvent(LOCAL_GATEWAY_COMPLETION)]);
       }
 
       return new Response("not found", { status: 404 });
@@ -1703,8 +1698,9 @@ function startLocalGatewayFixture(expectedPromptTail: string): LocalGatewayFixtu
   });
   const baseUrl = `http://127.0.0.1:${server.port}`;
   return {
-    chatUrl: `${baseUrl}${LOCAL_GATEWAY_CHAT_PATH}`,
+    responsesUrl: `${baseUrl}${LOCAL_GATEWAY_CHAT_PATH}`,
     modelsUrl: `${baseUrl}${LOCAL_GATEWAY_MODELS_PATH}`,
+    tokenUrl: `${baseUrl}/token`,
     requests,
     releaseResponse() {
       if (responseReleased) return;
@@ -1732,44 +1728,32 @@ function startActiveToolGatewayFixture(): LocalGatewayFixture {
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === LOCAL_GATEWAY_MODELS_PATH) {
         requests.push(`${request.method} ${url.pathname}`);
-        return Response.json({ data: [{ id: "anthropic/claude-opus-4.7", type: "language", released: 1, tags: ["tool-use"] }] });
+        return Response.json(fakeCodexModelsPayload());
       }
       if (request.method === "POST" && url.pathname === LOCAL_GATEWAY_CHAT_PATH) {
         const body = await request.text();
-        if (body.includes("\"permission_decision\"")) {
+        if (body.includes("permission_decision")) {
           return permissionDecisionResponse();
         }
         requests.push(`${request.method} ${url.pathname}`);
         chatRequestCount += 1;
         if (chatRequestCount === 2) await responseGate;
-        const sse = chatRequestCount === 1
-          ? [
-              `data: ${JSON.stringify({ type: "tool-input-start", id: "active_tool_1", toolName: "shell" })}`,
-              "",
-              `data: ${JSON.stringify({ type: "tool-call", toolCallId: "active_tool_1", toolName: "shell", input: { request: { action: "run", command: "sleep 1; i=1; sleep 3; while [ \"$i\" -le 32 ]; do printf 'ACTIVE_TOOL_LINE_%02d\\n' \"$i\"; i=$((i+1)); sleep 0.03; done; while [ ! -f .active-tool-release ]; do sleep 0.05; done", yield_time_ms: 30_000, timeout_ms: 600_000 } } })}`,
-              "",
-              `data: ${JSON.stringify({ type: "finish", finishReason: { unified: "tool-calls", raw: "tool-calls" }, usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } })}`,
-              "",
-              "data: [DONE]",
-              "",
-            ].join("\n")
-          : [
-              `data: ${JSON.stringify({ type: "text-delta", id: "render-lab", delta: LOCAL_GATEWAY_COMPLETION })}`,
-              "",
-              `data: ${JSON.stringify({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } })}`,
-              "",
-              "data: [DONE]",
-              "",
-            ].join("\n");
-        return new Response(sse, { headers: { "content-type": "text/event-stream" } });
+        return chatRequestCount === 1
+          ? codexSse([
+              codexToolEvent("active_tool_1", "shell", {
+                request: { action: "run", command: "sleep 1; i=1; sleep 3; while [ \"$i\" -le 32 ]; do printf 'ACTIVE_TOOL_LINE_%02d\\n' \"$i\"; i=$((i+1)); sleep 0.03; done; while [ ! -f .active-tool-release ]; do sleep 0.05; done", yield_time_ms: 30_000, timeout_ms: 600_000 },
+              }),
+            ])
+          : codexSse([codexTextEvent(LOCAL_GATEWAY_COMPLETION)]);
       }
       return new Response("not found", { status: 404 });
     },
   });
   const baseUrl = `http://127.0.0.1:${server.port}`;
   return {
-    chatUrl: `${baseUrl}${LOCAL_GATEWAY_CHAT_PATH}`,
+    responsesUrl: `${baseUrl}${LOCAL_GATEWAY_CHAT_PATH}`,
     modelsUrl: `${baseUrl}${LOCAL_GATEWAY_MODELS_PATH}`,
+    tokenUrl: `${baseUrl}/token`,
     requests,
     releaseResponse() {
       if (responseReleased) return;
@@ -1809,16 +1793,7 @@ function startObservabilityGatewayFixture(
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === LOCAL_GATEWAY_MODELS_PATH) {
         requests.push(`${request.method} ${url.pathname}`);
-        return Response.json({
-          data: [
-            {
-              id: "anthropic/claude-opus-4.7",
-              type: "language",
-              released: 1,
-              tags: ["tool-use"],
-            },
-          ],
-        });
+        return Response.json(fakeCodexModelsPayload());
       }
       if (request.method === "POST" && url.pathname === LOCAL_GATEWAY_CHAT_PATH) {
         const body = await request.text();
@@ -1828,59 +1803,23 @@ function startObservabilityGatewayFixture(
           return new Response("prompt tail missing", { status: 422 });
         }
         if (chatRequestCount === 2) await responseGate;
-        const events = chatRequestCount === 1
-          ? [
-              {
-                type: "text-delta",
-                id: "observability-transcript",
-                delta: transcript,
-              },
-              {
-                type: "tool-input-start",
-                id: "observability-tool-1",
-                toolName: "shell",
-              },
-              {
-                type: "tool-call",
-                toolCallId: "observability-tool-1",
-                toolName: "shell",
-                input: {
-                  request: { action: "run", command, timeout_ms: 600_000 },
-                },
-              },
-              {
-                type: "finish",
-                finishReason: { unified: "tool-calls", raw: "tool-calls" },
-                usage: {
-                  inputTokens: { total: 1 },
-                  outputTokens: { total: 1 },
-                },
-              },
-            ]
-          : [
-              {
-                type: "text-delta",
-                id: "observability-final",
-                delta: OBSERVABILITY_FINAL_MARKER,
-              },
-              {
-                type: "finish",
-                finishReason: { unified: "stop", raw: "stop" },
-                usage: {
-                  inputTokens: { total: 1 },
-                  outputTokens: { total: 1 },
-                },
-              },
-            ];
-        return gatewaySse(events);
+        return chatRequestCount === 1
+          ? codexSse([
+              codexTextEvent(transcript),
+              codexToolEvent("observability-tool-1", "shell", {
+                request: { action: "run", command, timeout_ms: 600_000 },
+              }),
+            ])
+          : codexSse([codexTextEvent(OBSERVABILITY_FINAL_MARKER)]);
       }
       return new Response("not found", { status: 404 });
     },
   });
   const baseUrl = `http://127.0.0.1:${server.port}`;
   return {
-    chatUrl: `${baseUrl}${LOCAL_GATEWAY_CHAT_PATH}`,
+    responsesUrl: `${baseUrl}${LOCAL_GATEWAY_CHAT_PATH}`,
     modelsUrl: `${baseUrl}${LOCAL_GATEWAY_MODELS_PATH}`,
+    tokenUrl: `${baseUrl}/token`,
     requests,
     releaseResponse() {
       if (responseReleased) return;
@@ -1946,7 +1885,7 @@ async function quitFx(context: ScenarioContext, session: RenderLabTmux, label: s
   await session.sendLiteral("/quit");
   await session.sendKeys("Enter");
   await session.sendKeys("Enter");
-  await capture(context, session, `${label}-fx-quit-requested`);
+  await capture(context, session, `${label}-fiber-quit-requested`);
   await session.waitForPane((pane) => pane.includes(PROMPT_TEXT), 15_000);
   await capture(context, session, `${label}-post-quit-shell-prompt`);
 }
@@ -2055,13 +1994,14 @@ function writeFrame(manifest: RenderLabManifest, frame: RenderLabFrame): void {
 async function writeReplaySummary(manifest: RenderLabManifest): Promise<void> {
   try {
     const output = execFileSync(
-      FX_BIN,
-      ["replay", manifest.tapePath, "--json", "--golden", manifest.finalGridPath],
+      FIBER_BIN,
+      ["debug", "replay", manifest.tapePath, "--json", "--golden", manifest.finalGridPath],
       { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
     const jsonLine = output.split(/\r?\n/).find((line) => line.trim().startsWith("{"));
     if (jsonLine) {
-      writeFileSync(manifest.replaySummaryPath, `${jsonLine}\n`);
+      const parsed = JSON.parse(jsonLine) as { data?: unknown };
+      writeFileSync(manifest.replaySummaryPath, `${JSON.stringify(parsed.data ?? parsed)}\n`);
       return;
     }
   } catch (error) {
@@ -2091,22 +2031,18 @@ class RenderLabTmux {
     width: number;
     height: number;
   }): Promise<RenderLabTmux> {
-    const name = `fx-render-lab-${process.pid}-${randomBytes(4).toString("hex")}`;
+    const name = `fiber-render-lab-${process.pid}-${randomBytes(4).toString("hex")}`;
     const env = testEnv(opts.fixture, opts.manifest);
     const command = [
       "env",
-      "-u",
-      "AI_GATEWAY_API_KEY",
-      "-u",
-      "VERCEL_OIDC_TOKEN",
-      "FX_DISABLE_KEYCHAIN=1",
-      "FX_SKIP_ONBOARDING=1",
+      "FIBER_DISABLE_KEYCHAIN=1",
+      "FIBER_SKIP_ONBOARDING=1",
       `HOME=${shQuote(opts.fixture.home)}`,
       `ZDOTDIR=${shQuote(opts.fixture.zdotdir)}`,
       `HISTFILE=${shQuote(opts.fixture.histfile)}`,
       `SHELL=${shQuote(zshPath())}`,
-      `FX_TRACE_LOG=${shQuote(opts.manifest.traceLogPath)}`,
-      `FX_TRACE_SCOPES=${shQuote(TRACE_SCOPES)}`,
+      `FIBER_TRACE_LOG=${shQuote(opts.manifest.traceLogPath)}`,
+      `FIBER_TRACE_SCOPES=${shQuote(TRACE_SCOPES)}`,
       `SHELL_A_BEFORE_FIRST=${shQuote(opts.manifest.markers.shell[0] ?? "")}`,
       `SHELL_A_BETWEEN_LAUNCHES=${shQuote(opts.manifest.markers.shell[1] ?? "")}`,
       `SHELL_A_BEFORE_THIRD=${shQuote(opts.manifest.markers.shell[2] ?? "")}`,
@@ -2189,7 +2125,7 @@ class RenderLabTmux {
       timestampMs: Date.now(),
       width: size.width,
       height: size.height,
-      binaryPath: FX_BIN,
+      binaryPath: FIBER_BIN,
       binarySha256,
       grid: this.captureGrid(),
       escapes: this.captureEscapes(),
@@ -2293,28 +2229,26 @@ function preflight(): void {
 }
 
 function preflightBinaryOnly(): void {
-  if (!existsSync(FX_BIN)) {
-    throw new Error(`fx binary not found at ${FX_BIN}. Run zig build first.`);
+  if (!existsSync(FIBER_BIN)) {
+    throw new Error(`fiber binary not found at ${FIBER_BIN}. Run zig build first.`);
   }
-  const stat = statSync(FX_BIN);
+  const stat = statSync(FIBER_BIN);
   if (!stat.isFile() || (stat.mode & 0o111) === 0) {
-    throw new Error(`fx binary is not executable at ${FX_BIN}`);
+    throw new Error(`fiber binary is not executable at ${FIBER_BIN}`);
   }
 }
 
 function testEnv(fixture: Fixture, manifest: RenderLabManifest): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env.AI_GATEWAY_API_KEY;
-  delete env.VERCEL_OIDC_TOKEN;
-  env.FX_DISABLE_KEYCHAIN = "1";
-  env.FX_SKIP_ONBOARDING = "1";
+  env.FIBER_DISABLE_KEYCHAIN = "1";
+  env.FIBER_SKIP_ONBOARDING = "1";
   env.HOME = fixture.home;
   env.ZDOTDIR = fixture.zdotdir;
   env.HISTFILE = fixture.histfile;
   env.SHELL = zshPath();
   env.TERM_PROGRAM = "tmux";
-  env.FX_TRACE_LOG = manifest.traceLogPath;
-  env.FX_TRACE_SCOPES = TRACE_SCOPES;
+  env.FIBER_TRACE_LOG = manifest.traceLogPath;
+  env.FIBER_TRACE_SCOPES = TRACE_SCOPES;
   env.SHELL_A_BEFORE_FIRST = manifest.markers.shell[0] ?? "";
   env.SHELL_A_BETWEEN_LAUNCHES = manifest.markers.shell[1] ?? "";
   env.SHELL_A_BEFORE_THIRD = manifest.markers.shell[2] ?? "";
@@ -2330,17 +2264,18 @@ function createFixture(runId: string): Fixture {
     work: join(root, "w"),
     histfile: join(root, "hist"),
   };
-  mkdirSync(join(fixture.home, ".fx"), { recursive: true });
+  mkdirSync(join(fixture.home, ".fiber"), { recursive: true });
   mkdirSync(fixture.zdotdir, { recursive: true });
   mkdirSync(fixture.work, { recursive: true });
+  writeSeededChatGptLogin(fixture.home, chatGptAccessToken());
   writeFileSync(
-    join(fixture.home, ".fx", "settings.json"),
+    join(fixture.home, ".fiber", "settings.json"),
     `${JSON.stringify({})}\n`,
   );
   writeFileSync(join(fixture.work, "run-id.txt"), `${runId}\n`);
   writeFileSync(
     join(fixture.zdotdir, ".zshrc"),
-    ["PROMPT='FX_RENDER_LAB%% '", "RPROMPT=''", "setopt NO_BEEP", ""].join("\n"),
+    ["PROMPT='FIBER_RENDER_LAB%% '", "RPROMPT=''", "setopt NO_BEEP", ""].join("\n"),
   );
   return fixture;
 }

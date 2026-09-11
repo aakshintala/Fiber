@@ -11,17 +11,17 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewayPermissionDecision,
-  fakeGatewaySse,
-  fakeGatewaySerializedToolCall,
-  fakeGatewayToolCall,
-  fakeShellRun,
-  startDynamicFakeGateway,
-  startFakeGateway,
+  chatGptAccessToken,
+  codexFinalText,
+  codexSerializedToolCall,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexEnv,
+  fakeCodexModelsPayload,
+  startFakeCodex,
+  writeSeededChatGptLogin,
   terminalFixtureShell,
   TmuxSession,
   tmuxAvailable,
@@ -37,18 +37,18 @@ const MARKDOWN =
   "```zig\nconst answer: u8 = 42;\n```\n";
 
 const roots: string[] = [];
-const gateways: Array<{ stop(): void }> = [];
+const servers: Array<{ stop(): void }> = [];
 const sessions: TmuxSession[] = [];
 
 afterEach(async () => {
   for (const session of sessions.splice(0)) await session.kill();
-  for (const gateway of gateways.splice(0)) gateway.stop();
+  for (const server of servers.splice(0)) server.stop();
   await Promise.all(roots.map(waitForTerminalHostExit));
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 async function waitForTerminalHostExit(root: string): Promise<void> {
-  const identityPath = join(root, "home", ".fx", "terminal-host-v7", "host.json");
+  const identityPath = join(root, "home", ".fiber", "terminal-host-v7", "host.json");
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     if (!existsSync(identityPath)) return;
@@ -58,41 +58,37 @@ async function waitForTerminalHostExit(root: string): Promise<void> {
 }
 
 function createRoot() {
-  const root = mkdtempSync(join(tmpdir(), "fx-e2e-ask-presentation-"));
+  const root = mkdtempSync(join(tmpdir(), "fiber-e2e-ask-presentation-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(home);
   mkdirSync(workspace);
+  writeSeededChatGptLogin(home, chatGptAccessToken());
   roots.push(root);
   return { root, home: realpathSync(home), workspace: realpathSync(workspace) };
 }
 
 function createShortRoot() {
-  const root = realpathSync(mkdtempSync("/tmp/fx-ask-terminal-"));
+  const root = realpathSync(mkdtempSync("/tmp/fiber-ask-terminal-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(home);
   mkdirSync(workspace);
+  writeSeededChatGptLogin(home, chatGptAccessToken());
   roots.push(root);
   return { root, home: realpathSync(home), workspace: realpathSync(workspace) };
 }
 
-function gatewayEnv(
+function codexEnv(
   home: string,
-  gateway: ReturnType<typeof startFakeGateway>,
+  codex: ReturnType<typeof startFakeCodex>,
 ): Record<string, string | undefined> {
-  return {
-    HOME: home,
-    AI_GATEWAY_API_KEY: "fake-ask-presentation-key",
-    VERCEL_OIDC_TOKEN: undefined,
-    FX_DISABLE_KEYCHAIN: "1",
-    FX_SKIP_ONBOARDING: "1",
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_PERMISSION_MODE: "auto",
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-  };
+  return fakeCodexEnv(home, codex, {
+    FIBER_DISABLE_KEYCHAIN: "1",
+    FIBER_SKIP_ONBOARDING: "1",
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+    FIBER_PERMISSION_MODE: "auto",
+  });
 }
 
 function shellQuote(value: string): string {
@@ -100,74 +96,78 @@ function shellQuote(value: string): string {
 }
 
 function terminalCommand(args: string[]): string {
-  const fx = [FX_BIN, ...args].map(shellQuote).join(" ");
-  const script = `${fx}; code=$?; printf '\\n__FX_EXIT_%s__\\n' "$code"; exit "$code"`;
+  const fiber_cmd = [FIBER_BIN, ...args].map(shellQuote).join(" ");
+  const script = `${fiber_cmd}; code=$?; printf '\\n__FIBER_EXIT_%s__\\n' "$code"; exit "$code"`;
   return `/bin/sh -c ${shellQuote(script)}`;
 }
 
-function fakeGatewayStreamingText(lines: string[], delayMs: number) {
-  const encoder = new TextEncoder();
-  return new Response(
-    new ReadableStream<Uint8Array>({
-      async start(controller) {
-        for (const line of lines) {
-          controller.enqueue(encoder.encode(
-            `data: ${JSON.stringify({
-              type: "text-delta",
-              id: "answer_1",
-              delta: `${line}\n`,
-            })}\n\n`,
-          ));
-          if (delayMs > 0) await Bun.sleep(delayMs);
-        }
-        controller.enqueue(encoder.encode(
+let reviewCount = 0;
+
+// Answers the single forced permission_decision review call with a clear
+// decision. Used on every route that serves a tool call in auto mode.
+function reviewBranch(body: string) {
+  if (!body.includes("<permission_review>")) return null;
+  reviewCount += 1;
+  return codexToolCall(`review_decision_${reviewCount}`, "permission_decision", {
+    risk: "low",
+    decision: "clear",
+    rationale: "test fixture",
+  });
+}
+
+function outputCount(body: string): number {
+  const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+  return items.filter((item) => item.type === "function_call_output").length;
+}
+
+function streamingCodexText(lines: string[]) {
+  return (
+    lines
+      .map(
+        (line) =>
           `data: ${JSON.stringify({
-            type: "finish",
-            finishReason: { unified: "stop", raw: "stop" },
-            usage: {
-              inputTokens: { total: 3 },
-              outputTokens: { total: lines.length },
-            },
-          })}\n\ndata: [DONE]\n\n`,
-        ));
-        controller.close();
+            type: "response.output_text.delta",
+            delta: `${line}\n`,
+          })}` + "\n\n",
+      )
+      .join("") +
+    `data: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        status: "completed",
+        usage: { input_tokens: 3, output_tokens: lines.length },
       },
-    }),
-    { headers: { "content-type": "text/event-stream" } },
+    })}` +
+      "\n\n"
   );
 }
 
-describe("fx ask presentation", () => {
+describe("fiber ask presentation", () => {
   test("redirected command output separates the next tool header", async () => {
     const root = createRoot();
-    const gateway = startFakeGateway([
-      fakeGatewaySse([
-        {
-          type: "tool-call",
-          toolCallId: "no-final-newline",
-          toolName: "shell",
-          input: { request: { action: "run", profile: "clean", yield_time_ms: 30_000, command: "printf no-final-newline" } },
-        },
-        {
-          type: "tool-call",
-          toolCallId: "next-command",
-          toolName: "shell",
-          input: { request: { action: "run", profile: "clean", yield_time_ms: 30_000, command: "printf 'next-output\\n'" } },
-        },
-        {
-          type: "finish",
-          finishReason: { unified: "tool-calls", raw: "tool-calls" },
-        },
-      ]),
-      fakeGatewayFinalText("Commands complete.\n"),
-    ]);
-    gateways.push(gateway);
+    const codex = startFakeCodex({
+      route: (body) => {
+        const done = outputCount(body);
+        if (done === 0) {
+          return codexToolCall("no-final-newline", "shell", {
+            request: { action: "run", profile: "clean", yield_time_ms: 30_000, command: "printf no-final-newline" },
+          });
+        }
+        if (done === 1) {
+          return codexToolCall("next-command", "shell", {
+            request: { action: "run", profile: "clean", yield_time_ms: 30_000, command: "printf 'next-output\\n'" },
+          });
+        }
+        return codexFinalText("Commands complete.\n");
+      },
+    });
+    servers.push(codex);
 
     const result = await runFx(
-      ["ask", "--json", "--yolo", "--no-save", "--no-color", "Run both commands."],
+      ["ask", "--json", "--permission-mode", "yolo", "--no-save", "Run both commands."],
       {
         cwd: root.workspace,
-        env: gatewayEnv(root.home, gateway),
+        env: codexEnv(root.home, codex),
         timeoutMs: TIMEOUT,
       },
     );
@@ -175,7 +175,7 @@ describe("fx ask presentation", () => {
     expect(result.code).toBe(0);
     expect(result.stderr).toContain("Running printf no-final-newline\n");
     expect(result.stderr).toContain("Running printf 'next-output\\n'\n");
-    expect(JSON.parse(result.stdout).output).toBe("Commands complete.\n");
+    expect(JSON.parse(result.stdout).data.output).toBe("Commands complete.\n");
   }, TIMEOUT);
 
   test("no-save advertises process-local shell actions and preserves run profiles", async () => {
@@ -186,75 +186,63 @@ describe("fx ask presentation", () => {
     if (configuredShell.endsWith("/zsh")) {
       writeFileSync(
         join(root.home, ".zprofile"),
-        "export FX_PROFILE_LOGIN=login\nexport PATH=\"$HOME/profile-bin:$PATH\"\n",
+        "export FIBER_PROFILE_LOGIN=login\nexport PATH=\"$HOME/profile-bin:$PATH\"\n",
       );
       writeFileSync(
         join(root.home, ".zshrc"),
-        "export FX_PROFILE_RC=rc\nalias fx_profile_alias='printf alias-user'\n" +
-          "fx_profile_function() { printf function-user; }\n",
+        "export FIBER_PROFILE_RC=rc\nalias fiber_profile_alias='printf alias-user'\n" +
+          "fiber_profile_function() { printf function-user; }\n",
       );
     } else {
       writeFileSync(
         join(root.home, ".bash_profile"),
-        "export FX_PROFILE_LOGIN=login\nexport PATH=\"$HOME/profile-bin:$PATH\"\n" +
+        "export FIBER_PROFILE_LOGIN=login\nexport PATH=\"$HOME/profile-bin:$PATH\"\n" +
           "source \"$HOME/.bashrc\"\n",
       );
       writeFileSync(
         join(root.home, ".bashrc"),
-        "export FX_PROFILE_RC=rc\nalias fx_profile_alias='printf alias-user'\n" +
-          "fx_profile_function() { printf function-user; }\n",
+        "export FIBER_PROFILE_RC=rc\nalias fiber_profile_alias='printf alias-user'\n" +
+          "fiber_profile_function() { printf function-user; }\n",
       );
     }
 
     const profileCommand =
-      "printf 'mode=%s:%s:' \"${FX_PROFILE_LOGIN-unset}\" \"${FX_PROFILE_RC-unset}\"; " +
+      "printf 'mode=%s:%s:' \"${FIBER_PROFILE_LOGIN-unset}\" \"${FIBER_PROFILE_RC-unset}\"; " +
       "case :\"$PATH\": in *:\"$HOME/profile-bin\":*) printf 'path-user:';; *) printf 'path-clean:';; esac; " +
-      "if alias fx_profile_alias >/dev/null 2>&1; then fx_profile_alias; else printf no-alias; fi; printf ':'; " +
-      "if command -v fx_profile_function >/dev/null; then fx_profile_function; else printf no-function; fi";
+      "if alias fiber_profile_alias >/dev/null 2>&1; then fiber_profile_alias; else printf no-alias; fi; printf ':'; " +
+      "if command -v fiber_profile_function >/dev/null; then fiber_profile_function; else printf no-function; fi";
     const nestedExecMarker = join(root.workspace, "nested-no-save-ran");
-    const gateway = startFakeGateway([
-      fakeGatewayToolCall("shell-omitted", "shell", {
-        request: { action: "run", command: profileCommand, yield_time_ms: 30_000 },
-      }),
-      fakeGatewayToolCall("shell-clean", "shell", {
-        request: { action: "run", command: profileCommand, profile: "clean", yield_time_ms: 30_000 },
-      }),
-      fakeGatewayToolCall("shell-user", "shell", {
-        request: { action: "run", command: profileCommand, profile: "user", yield_time_ms: 30_000 },
-      }),
-      fakeGatewayToolCall("shell-stale-tty", "shell", {
-        request: {
-          action: "run",
-          command: "printf should-not-start",
-          tty: true,
-        },
-      }),
-      fakeGatewayToolCall("shell-nested-run", "shell", {
-        request: {
-          action: "run",
-          profile: "clean",
-          yield_time_ms: 30_000,
-          command: `printf nested > ${JSON.stringify(nestedExecMarker)}`,
-        },
-      }),
-      fakeGatewayToolCall("shell-neighbor-run", "shell", {
-        request: { action: "run", profile: "clean", yield_time_ms: 30_000, command: "printf neighbor-exec" },
-      }),
-      fakeGatewayFinalText("Shell no-save profiles verified.\n"),
-    ]);
-    gateways.push(gateway);
+    const shellCalls = [
+      { id: "shell-omitted", args: { request: { action: "run", command: profileCommand, yield_time_ms: 30_000 } } },
+      { id: "shell-clean", args: { request: { action: "run", command: profileCommand, profile: "clean", yield_time_ms: 30_000 } } },
+      { id: "shell-user", args: { request: { action: "run", command: profileCommand, profile: "user", yield_time_ms: 30_000 } } },
+      { id: "shell-stale-tty", args: { request: { action: "run", command: "printf should-not-start", tty: true } } },
+      { id: "shell-nested-run", args: { request: { action: "run", profile: "clean", yield_time_ms: 30_000, command: `printf nested > ${JSON.stringify(nestedExecMarker)}` } } },
+      { id: "shell-neighbor-run", args: { request: { action: "run", profile: "clean", yield_time_ms: 30_000, command: "printf neighbor-exec" } } },
+    ];
+    const codex = startFakeCodex({
+      route: (body) => {
+        const done = outputCount(body);
+        if (done < shellCalls.length) {
+          const call = shellCalls[done]!;
+          return codexToolCall(call.id, "shell", call.args);
+        }
+        return codexFinalText("Shell no-save profiles verified.\n");
+      },
+    });
+    servers.push(codex);
 
     const result = await runFx(
-      ["ask", "--json", "--yolo", "--no-save", "Verify shell run profiles."],
+      ["ask", "--json", "--permission-mode", "yolo", "--no-save", "Verify shell run profiles."],
       {
         cwd: root.workspace,
-        env: gatewayEnv(root.home, gateway),
+        env: codexEnv(root.home, codex),
         timeoutMs: TIMEOUT,
       },
     );
 
     expect(result.code).toBe(0);
-    const output = JSON.parse(result.stdout) as {
+    const output = JSON.parse(result.stdout).data as {
       output: string;
       tool_calls: Array<{ name: string; status: string }>;
     };
@@ -267,13 +255,13 @@ describe("fx ask presentation", () => {
       { name: "shell", status: "success" },
       { name: "shell", status: "success" },
     ]);
-    expect(gateway.requests).toHaveLength(7);
+    expect(codex.requests).toHaveLength(7);
 
-    const firstRequest = JSON.parse(gateway.requests[0]!.body) as {
+    const firstRequest = JSON.parse(codex.requests[0]!.body) as {
       tools: Array<any>;
     };
     const shellTool = firstRequest.tools.find(({ name }) => name === "shell");
-    const shellSchema = shellTool?.inputSchema;
+    const shellSchema = shellTool?.parameters;
     expect(Object.keys(shellSchema?.properties ?? {})).toEqual(["request"]);
     expect(shellSchema?.required).toEqual(["request"]);
     expect(shellSchema?.additionalProperties).toBe(false);
@@ -289,30 +277,30 @@ describe("fx ask presentation", () => {
     expect(serializedShellTool).not.toContain('"terminal"');
 
     for (const requestIndex of [1, 3]) {
-      expect(gateway.requests[requestIndex]!.body).toContain("mode=login:rc:path-user:");
-      expect(gateway.requests[requestIndex]!.body).toContain("alias-user:function-user");
+      expect(codex.requests[requestIndex]!.body).toContain("mode=login:rc:path-user:");
+      expect(codex.requests[requestIndex]!.body).toContain("alias-user:function-user");
     }
-    expect(gateway.requests[2]!.body).toContain("mode=unset:unset:path-clean:");
-    expect(gateway.requests[2]!.body).toContain("no-alias:no-function");
-    expect(gateway.requests[4]!.body).toContain("tool_execution_failed");
-    expect(gateway.requests[4]!.body).toContain("tool_execution_failed");
-    expect(gateway.requests[4]!.body).not.toContain("authority_denied");
-    expect(gateway.requests[4]!.body).not.toContain("tool_permission_denied");
-    expect(gateway.requests[5]!.body).toContain("nested");
+    expect(codex.requests[2]!.body).toContain("mode=unset:unset:path-clean:");
+    expect(codex.requests[2]!.body).toContain("no-alias:no-function");
+    expect(codex.requests[4]!.body).toContain("tool_execution_failed");
+    expect(codex.requests[4]!.body).toContain("tool_execution_failed");
+    expect(codex.requests[4]!.body).not.toContain("authority_denied");
+    expect(codex.requests[4]!.body).not.toContain("tool_permission_denied");
+    expect(codex.requests[5]!.body).toContain("nested");
     expect(existsSync(nestedExecMarker)).toBe(true);
-    expect(gateway.requests[6]!.body).toContain("neighbor-exec");
+    expect(codex.requests[6]!.body).toContain("neighbor-exec");
     expect(
-      existsSync(join(root.home, ".fx", "terminal-host-v7", "host.json")),
+      existsSync(join(root.home, ".fiber", "terminal-host-v7", "host.json")),
     ).toBe(false);
   }, TIMEOUT);
 
   test("redirected and JSON stdout preserve raw assistant Markdown", async () => {
     const root = createRoot();
-    const rawGateway = startFakeGateway([fakeGatewayFinalText(MARKDOWN)]);
-    gateways.push(rawGateway);
+    const rawCodex = startFakeCodex({ route: () => codexFinalText(MARKDOWN) });
+    servers.push(rawCodex);
     const raw = await runFx(["ask", "--no-save", "Render the fixture."], {
       cwd: root.workspace,
-      env: gatewayEnv(root.home, rawGateway),
+      env: codexEnv(root.home, rawCodex),
       timeoutMs: TIMEOUT,
     });
 
@@ -321,19 +309,19 @@ describe("fx ask presentation", () => {
     expect(raw.stdout).not.toContain("\x1b");
     expect(raw.stderr).toBe("");
 
-    const jsonGateway = startFakeGateway([fakeGatewayFinalText(MARKDOWN)]);
-    gateways.push(jsonGateway);
+    const jsonCodex = startFakeCodex({ route: () => codexFinalText(MARKDOWN) });
+    servers.push(jsonCodex);
     const json = await runFx(
       ["ask", "--json", "--no-save", "Render the fixture."],
       {
         cwd: root.workspace,
-        env: gatewayEnv(root.home, jsonGateway),
+        env: codexEnv(root.home, jsonCodex),
         timeoutMs: TIMEOUT,
       },
     );
 
     expect(json.code).toBe(0);
-    expect(JSON.parse(json.stdout).output).toBe(MARKDOWN);
+    expect(JSON.parse(json.stdout).data.output).toBe(MARKDOWN);
     expect(json.stdout).not.toContain("\x1b");
     expect(json.stderr).toBe("");
   }, TIMEOUT);
@@ -343,28 +331,32 @@ describe("fx ask presentation", () => {
     writeFileSync(join(root.workspace, "fixture.txt"), "fixture contents\n");
     const intermediate = "I will inspect the fixture first.\n";
     const final = "The fixture inspection is complete.";
-    const gateway = startFakeGateway([
-      fakeGatewaySerializedToolCall(
-        "read_fixture_for_final_output",
-        "read_file",
-        JSON.stringify({ path: "fixture.txt" }),
-        intermediate,
-      ),
-      fakeGatewayFinalText(final),
-    ]);
-    gateways.push(gateway);
+    const codex = startFakeCodex({
+      route: (body) => {
+        const reviewed = reviewBranch(body);
+        if (reviewed) return reviewed;
+        if (outputCount(body) > 0) return codexFinalText(final);
+        return codexSerializedToolCall(
+          "read_fixture_for_final_output",
+          "read_file",
+          JSON.stringify({ path: "fixture.txt" }),
+          intermediate,
+        );
+      },
+    });
+    servers.push(codex);
 
     const result = await runFx(
-      ["ask", "--json", "--auto", "--no-save", "Inspect fixture.txt."],
+      ["ask", "--json", "--permission-mode", "auto", "--no-save", "Inspect fixture.txt."],
       {
         cwd: root.workspace,
-        env: gatewayEnv(root.home, gateway),
+        env: codexEnv(root.home, codex),
         timeoutMs: TIMEOUT,
       },
     );
 
     expect(result.code).toBe(0);
-    const output = JSON.parse(result.stdout) as {
+    const output = JSON.parse(result.stdout).data as {
       output: string;
       final_output: string;
       tool_calls: Array<{ name: string; status: string }>;
@@ -379,7 +371,7 @@ describe("fx ask presentation", () => {
     expect(output.tool_calls).toEqual([
       { name: "read_file", status: "success" },
     ]);
-    expect(gateway.requests).toHaveLength(2);
+    expect(codex.requests).toHaveLength(2);
     expect(result.stderr).toContain("Reading fixture.txt");
   }, TIMEOUT);
 
@@ -392,31 +384,38 @@ describe("fx ask presentation", () => {
       const finalReady = new Promise<void>((resolve) => {
         releaseFinal = resolve;
       });
-      const gateway = startFakeGateway([
-        fakeGatewayToolCall("read_fixture", "read_file", { path: "fixture.txt" }),
-        fakeGatewaySerializedToolCall(
-          "read_missing",
-          "read_file",
-          JSON.stringify({ path: "missing.txt" }),
-          "Between groups.\n",
-        ),
-        async () => {
+      const codex = startFakeCodex({
+        route: async (body) => {
+          const reviewed = reviewBranch(body);
+          if (reviewed) return reviewed;
+          const done = outputCount(body);
+          if (done === 0) {
+            return codexToolCall("read_fixture", "read_file", { path: "fixture.txt" });
+          }
+          if (done === 1) {
+            return codexSerializedToolCall(
+              "read_missing",
+              "read_file",
+              JSON.stringify({ path: "missing.txt" }),
+              "Between groups.\n",
+            );
+          }
           await finalReady;
-          return fakeGatewayFinalText(MARKDOWN);
+          return codexFinalText(MARKDOWN);
         },
-      ]);
-      gateways.push(gateway);
+      });
+      servers.push(codex);
 
       const session = await TmuxSession.create({
         isolated: true,
         cmd: terminalCommand([
           "ask",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "Inspect fixture.txt and render the response.",
         ]),
         cwd: root.workspace,
-        env: { ...gatewayEnv(root.home, gateway), NO_COLOR: undefined },
+        env: { ...codexEnv(root.home, codex), NO_COLOR: undefined },
         width: 120,
         height: 40,
         remainOnExit: true,
@@ -426,7 +425,7 @@ describe("fx ask presentation", () => {
       await session.waitForText("Between groups.", TIMEOUT);
       await session.resizeWindow(104, 36);
       releaseFinal!();
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const pane = await session.capturePane();
       const scrollback = await session.captureFullScrollback();
       const escaped = await session.captureFullScrollbackEscapes();
@@ -450,47 +449,11 @@ describe("fx ask presentation", () => {
   );
 
   test.skipIf(!tmuxAvailable())(
-    "--no-color keeps the TTY layout without fx styles or hyperlinks",
-    async () => {
-      const root = createRoot();
-      const gateway = startFakeGateway([fakeGatewayFinalText(MARKDOWN)]);
-      gateways.push(gateway);
-
-      const session = await TmuxSession.create({
-        isolated: true,
-        cmd: terminalCommand([
-          "ask",
-          "--no-color",
-          "--no-save",
-          "Render the no-color fixture.",
-        ]),
-        cwd: root.workspace,
-        env: { ...gatewayEnv(root.home, gateway), NO_COLOR: undefined },
-        width: 120,
-        height: 40,
-        remainOnExit: true,
-      });
-      sessions.push(session);
-
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
-      const pane = await session.captureFullScrollback();
-      const escaped = await session.captureFullScrollbackEscapes();
-      expect(pane).toContain("Render the no-color fixture.");
-      expect(pane).toContain("Ask presentation");
-      expect(pane).toContain("bold and docs");
-      expect(pane).toContain("const answer: u8 = 42;");
-      expect(escaped).not.toMatch(/\x1b\[[0-9;]*m/);
-      expect(escaped).not.toContain("\x1b]8;");
-    },
-    TIMEOUT,
-  );
-
-  test.skipIf(!tmuxAvailable())(
     "light theme uses readable syntax colors in TTY code blocks with redirected stdin",
     async () => {
       const root = createRoot();
-      const gateway = startFakeGateway([fakeGatewayFinalText(MARKDOWN)]);
-      gateways.push(gateway);
+      const codex = startFakeCodex({ route: () => codexFinalText(MARKDOWN) });
+      servers.push(codex);
       const stderrPath = join(root.root, "stderr.log");
       writeFileSync(stderrPath, "");
 
@@ -503,8 +466,8 @@ describe("fx ask presentation", () => {
         ])} </dev/null`,
         cwd: root.workspace,
         env: {
-          ...gatewayEnv(root.home, gateway),
-          FX_THEME: "light",
+          ...codexEnv(root.home, codex),
+          FIBER_THEME: "light",
           NO_COLOR: undefined,
         },
         width: 120,
@@ -514,7 +477,7 @@ describe("fx ask presentation", () => {
       });
       sessions.push(session);
 
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const escaped = await session.captureFullScrollbackEscapes();
       expect(escaped).toContain("\x1b[38;5;238mconst\x1b[39m");
       expect(escaped).not.toContain("\x1b[38;5;252mconst\x1b[39m");
@@ -531,24 +494,10 @@ describe("fx ask presentation", () => {
         { length: 60 },
         (_, index) => `ANSWER_LINE_${String(index + 1).padStart(2, "0")}`,
       );
-      const gateway = startFakeGateway([
-        fakeGatewaySse([
-          ...answerLines.map((line) => ({
-            type: "text-delta",
-            id: "answer_1",
-            delta: `${line}\n`,
-          })),
-          {
-            type: "finish",
-            finishReason: { unified: "stop", raw: "stop" },
-            usage: {
-              inputTokens: { total: 3 },
-              outputTokens: { total: 60 },
-            },
-          },
-        ]),
-      ]);
-      gateways.push(gateway);
+      const codex = startFakeCodex({
+        route: () => codexFinalText(answerLines.map((line) => `${line}\n`).join("")),
+      });
+      servers.push(codex);
       const stderrPath = join(root.root, "stderr.log");
       writeFileSync(stderrPath, "");
 
@@ -560,7 +509,7 @@ describe("fx ask presentation", () => {
           "Render every answer line.",
         ]),
         cwd: root.workspace,
-        env: gatewayEnv(root.home, gateway),
+        env: codexEnv(root.home, codex),
         width: 80,
         height: 12,
         minimumHistoryLines: 200,
@@ -569,7 +518,7 @@ describe("fx ask presentation", () => {
       });
       sessions.push(session);
 
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const scrollback = await session.captureFullScrollback();
       let previousIndex = -1;
       for (const line of answerLines) {
@@ -598,39 +547,56 @@ describe("fx ask presentation", () => {
       const responseGate = new Promise<void>((resolve) => {
         releaseResponse = resolve;
       });
-      const gateway = startDynamicFakeGateway(() => {
-        const encoder = new TextEncoder();
-        return new Response(
-          new ReadableStream<Uint8Array>({
-            async start(controller) {
-              await outputGate;
-              for (const line of answerLines) {
+      // The Codex helper serves whole bodies, but this case needs a held
+      // stream (header visible before lines, lines before completion), so it
+      // keeps a local SSE server speaking the Responses shapes and records
+      // into the shared request log.
+      const codex = startFakeCodex();
+      const streamServer = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/models") {
+            return Response.json(fakeCodexModelsPayload());
+          }
+          const encoder = new TextEncoder();
+          const body = await req.text();
+          codex.requests.push({
+            path: url.pathname,
+            authorization: req.headers.get("authorization"),
+            body,
+          });
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              async start(controller) {
+                await outputGate;
+                for (const line of answerLines) {
+                  controller.enqueue(encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: "response.output_text.delta",
+                      delta: `${line}\n`,
+                    })}` + "\n\n",
+                  ));
+                }
+                await responseGate;
                 controller.enqueue(encoder.encode(
                   `data: ${JSON.stringify({
-                    type: "text-delta",
-                    id: "answer_1",
-                    delta: `${line}\n`,
-                  })}\n\n`,
+                    type: "response.completed",
+                    response: {
+                      status: "completed",
+                      usage: { input_tokens: 3, output_tokens: answerLines.length },
+                    },
+                  })}` + "\n\n",
                 ));
-              }
-              await responseGate;
-              controller.enqueue(encoder.encode(
-                `data: ${JSON.stringify({
-                  type: "finish",
-                  finishReason: { unified: "stop", raw: "stop" },
-                  usage: {
-                    inputTokens: { total: 3 },
-                    outputTokens: { total: answerLines.length },
-                  },
-                })}\n\ndata: [DONE]\n\n`,
-              ));
-              controller.close();
-            },
-          }),
-          { headers: { "content-type": "text/event-stream" } },
-        );
+                controller.close();
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        },
       });
-      gateways.push(gateway);
+      servers.push(codex, { stop: () => streamServer.stop(true) });
       const stderrPath = join(root.root, "stderr.log");
       writeFileSync(stderrPath, "");
 
@@ -642,7 +608,11 @@ describe("fx ask presentation", () => {
           "Stream every answer line.",
         ]),
         cwd: root.workspace,
-        env: gatewayEnv(root.home, gateway),
+        env: codexEnv(root.home, {
+          responsesUrl: `http://127.0.0.1:${streamServer.port}/responses`,
+          modelsUrl: `http://127.0.0.1:${streamServer.port}/models`,
+          tokenUrl: codex.tokenUrl,
+        } as ReturnType<typeof startFakeCodex>),
         width: 80,
         height: 12,
         minimumHistoryLines: 200,
@@ -653,10 +623,10 @@ describe("fx ask presentation", () => {
 
       try {
         const requestDeadline = Date.now() + 5_000;
-        while (gateway.requestCount() === 0 && Date.now() < requestDeadline) {
+        while (codex.requests.length === 0 && Date.now() < requestDeadline) {
           await Bun.sleep(25);
         }
-        expect(gateway.requestCount()).toBe(1);
+        expect(codex.requests).toHaveLength(1);
 
         const headerDeadline = Date.now() + 5_000;
         let initialScrollback = "";
@@ -689,7 +659,7 @@ describe("fx ask presentation", () => {
         releaseResponse();
       }
 
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const finalScrollback = await session.captureFullScrollback();
       expect(finalScrollback.split("Run /help for commands")).toHaveLength(2);
       for (const line of answerLines) {
@@ -709,10 +679,10 @@ describe("fx ask presentation", () => {
         (_, index) =>
           `WRAPPED_LINE_${String(index + 1).padStart(2, "0")} ${"x".repeat(190)}`,
       );
-      const gateway = startFakeGateway([
-        () => fakeGatewayStreamingText(answerLines, 3),
-      ]);
-      gateways.push(gateway);
+      const codex = startFakeCodex({
+        route: () => streamingCodexText(answerLines),
+      });
+      servers.push(codex);
       const stderrPath = join(root.root, "stderr.log");
       writeFileSync(stderrPath, "");
 
@@ -724,7 +694,7 @@ describe("fx ask presentation", () => {
           "Render every wrapped answer line.",
         ]),
         cwd: root.workspace,
-        env: gatewayEnv(root.home, gateway),
+        env: codexEnv(root.home, codex),
         width: 100,
         height: 20,
         minimumHistoryLines: 100,
@@ -733,9 +703,9 @@ describe("fx ask presentation", () => {
       });
       sessions.push(session);
 
-      await session.waitForText(/__FX_EXIT_[0-9]+__/, TIMEOUT);
+      await session.waitForText(/__FIBER_EXIT_[0-9]+__/, TIMEOUT);
       const scrollback = await session.captureFullScrollback();
-      expect(scrollback).toContain("__FX_EXIT_0__");
+      expect(scrollback).toContain("__FIBER_EXIT_0__");
       let previousIndex = -1;
       for (const line of answerLines) {
         const marker = line.slice(0, "WRAPPED_LINE_00".length);
@@ -756,34 +726,35 @@ describe("fx ask presentation", () => {
       const instructions = join(root.root, "instructions.md");
       writeFileSync(instructions, "# Fixture instructions\n");
       symlinkSync(instructions, join(root.workspace, "AGENTS.md"));
-      const gateway = startFakeGateway(
-        [
-          fakeShellRun("write_fixture", "printf notice-test > ask-notice.txt", {
-            timeout_ms: 600_000,
-          }),
-          fakeGatewayFinalText("Notice filtering complete.\n"),
-        ],
-        { classifierResponses: [fakeGatewayPermissionDecision()] },
-      );
-      gateways.push(gateway);
+      const codex = startFakeCodex({
+        route: (body) => {
+          const reviewed = reviewBranch(body);
+          if (reviewed) return reviewed;
+          if (outputCount(body) > 0) return codexFinalText("Notice filtering complete.\n");
+          return codexToolCall("write_fixture", "shell", {
+            request: { action: "run", command: "printf notice-test > ask-notice.txt", timeout_ms: 600_000 },
+          });
+        },
+      });
+      servers.push(codex);
 
       const session = await TmuxSession.create({
         isolated: true,
         cmd: terminalCommand([
           "ask",
-          "--auto",
+          "--permission-mode", "auto",
           "--no-save",
           "Run the notice filtering fixture.",
         ]),
         cwd: root.workspace,
-        env: { ...gatewayEnv(root.home, gateway), NO_COLOR: undefined },
+        env: { ...codexEnv(root.home, codex), NO_COLOR: undefined },
         width: 120,
         height: 40,
         remainOnExit: true,
       });
       sessions.push(session);
 
-      await session.waitForText("__FX_EXIT_0__", TIMEOUT);
+      await session.waitForText("__FIBER_EXIT_0__", TIMEOUT);
       const scrollback = await session.captureFullScrollback();
       expect(scrollback).toContain("Run the notice filtering fixture.");
       expect(scrollback).toContain("Notice filtering complete.");

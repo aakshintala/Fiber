@@ -1,6 +1,5 @@
 const std = @import("std");
 const session_layout = @import("../session/session_layout.zig");
-const types = @import("../shared/types.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -1394,7 +1393,6 @@ pub fn validate_checkpoint_anchor(
 pub const TransportRole = enum {
     interactive,
     headless,
-    acp,
 };
 
 pub const TerminalLifetime = enum {

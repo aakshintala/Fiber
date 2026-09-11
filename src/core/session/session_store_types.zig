@@ -5,27 +5,15 @@ const session_log = @import("session_log.zig");
 
 const Allocator = std.mem.Allocator;
 
-/// Upper bound on a single legacy `session.json` read in the non-`allow_large`
-/// path. Larger snapshots are rejected with `error.LegacySessionTooLarge`.
-pub const max_session_bytes: usize = 512 * 1024;
-
-/// Default ceiling for an automatic (non-opt-in) legacy snapshot. Snapshots
-/// above this are surfaced by `doctor` and refused by automatic migration.
-pub const automatic_legacy_max_bytes: u64 = 256 * 1024 * 1024;
-
 /// On-disk storage format a readable session was found in.
 pub const StorageFormat = enum {
     schema_v3,
-    legacy_v1,
-    legacy_v2,
 };
 
 /// Storage format of a discovery candidate (kept distinct from `StorageFormat`
 /// so discovery and read APIs can evolve independently).
 pub const CandidateStorage = enum {
     schema_v3,
-    legacy_v1,
-    legacy_v2,
 };
 
 /// Freshness of a session's cached projection relative to its event log.
@@ -47,7 +35,6 @@ pub const DiscoveryCause = enum {
     missing_manifest,
     invalid_manifest,
     unsupported_schema,
-    legacy_too_large,
     unsafe_path,
 };
 
@@ -132,18 +119,8 @@ pub const ResumeTarget = union(enum) {
     id: []const u8,
 };
 
-/// Options controlling a resume. `log` is threaded into the canonical log layer;
-/// `seed_preferences` overrides the merged-config preferences on migration.
+/// Options controlling a resume. `log` is threaded into the canonical log layer.
 pub const ResumeOptions = struct {
-    allow_large_legacy: bool = false,
-    seed_preferences: ?session_codec.DurableSessionPreferences = null,
-    log: session_log.Options = .{},
-};
-
-/// Options controlling a storage-only migration.
-pub const MigrationOptions = struct {
-    allow_large: bool = false,
-    seed_preferences: ?session_codec.DurableSessionPreferences = null,
     log: session_log.Options = .{},
 };
 
@@ -179,26 +156,6 @@ pub const HistoryPage = struct {
     }
 };
 
-/// Outcome of a migration request.
-pub const SessionMigrationStatus = enum {
-    migrated,
-    already_current,
-};
-
-/// Result of a storage-only migration, including the source it migrated from.
-pub const SessionMigrationResult = struct {
-    session_id: []u8,
-    source_schema_version: u8,
-    source_bytes: u64,
-    status: SessionMigrationStatus,
-
-    /// Frees the owned session id and poisons the value.
-    pub fn deinit(self: *SessionMigrationResult, alloc: Allocator) void {
-        alloc.free(self.session_id);
-        self.* = undefined;
-    }
-};
-
 pub const SessionRecoveryStatus = enum {
     recovered,
     recovered_with_unverified_artifacts,
@@ -227,7 +184,6 @@ pub const DoctorIssueKind = enum {
     invalid_authority,
     commit_intent_pending,
     invalid_commit_intent,
-    oversized_legacy_snapshot,
     projection_missing,
     projection_invalid,
     projection_stale,

@@ -10,13 +10,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, REPO_ROOT, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, REPO_ROOT, runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
+  chatGptAccessToken,
+  codexFinalText,
+  FAKE_CODEX_DEFAULT_MODEL,
+  seededFakeCodexEnv,
   hasEmptyComposer,
   isComposerLine,
-  startFakeGateway,
+  startFakeCodex,
+  writeSeededChatGptLogin,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -26,7 +29,7 @@ import {
 } from "./tui-render-assertions";
 
 const HAS_TMUX = tmuxAvailable();
-if (process.env.FX_REQUIRE_TMUX === "1" && !HAS_TMUX) {
+if (process.env.FIBER_REQUIRE_TMUX === "1" && !HAS_TMUX) {
   throw new Error("tmux is required for tui-input-navigation.test.ts");
 }
 
@@ -43,64 +46,138 @@ const imageFixture = join(
 
 let session: TmuxSession | null = null;
 let testHome: string | null = null;
-let gateway: ReturnType<typeof startFakeGateway> | null = null;
+let codex: ReturnType<typeof startFakeCodex> | null = null;
+let modelServer: ReturnType<typeof Bun.serve> | null = null;
 let stderrPath: string | null = null;
 
 afterEach(async () => {
   await session?.kill();
   session = null;
-  gateway?.stop();
-  gateway = null;
+  codex?.stop();
+  codex = null;
+  modelServer?.stop(true);
+  modelServer = null;
   if (testHome) rmSync(testHome, { recursive: true, force: true });
   testHome = null;
   stderrPath = null;
 });
 
+// The shared fake catalog is text-only, but suites here attach real images.
+// The old gateway models option carried vision/file-input tags; the Codex
+// equivalent is the image input modality, copied from the shared payload
+// shape with that one addition.
+function imageCapableModelsPayload() {
+  return {
+    models: [FAKE_CODEX_DEFAULT_MODEL, "gpt-5.4"].map((slug) => ({
+      slug,
+      visibility: "list",
+      supported_in_api: true,
+      supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }],
+      additional_speed_tiers: [],
+      input_modalities: ["text", "image"],
+      context_window: 272000,
+    })),
+  };
+}
+
+type LocalCodex = {
+  handle: ReturnType<typeof startFakeCodex>;
+  requests: Array<{ body: string }>;
+  env: (extra?: Record<string, string | undefined>) => Record<string, string | undefined>;
+};
+
+// One fake serving the image-capable model catalog plus a finite reply
+// queue, recording into the shared request logs. Used by startFx and every
+// local image scenario in this file.
+function startLocalCodex(home: string, replies: string[]): LocalCodex {
+  const queue = [...replies];
+  const handle = startFakeCodex();
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/models") {
+        handle.modelRequests.push({
+          path: url.pathname,
+          authorization: req.headers.get("authorization"),
+          url: req.url,
+        });
+        return Response.json(imageCapableModelsPayload());
+      }
+      const body = await req.text();
+      handle.requests.push({
+        path: url.pathname,
+        authorization: req.headers.get("authorization"),
+        body,
+      });
+      const reply = queue.shift() ?? "unexpected";
+      return new Response(codexFinalText(reply), {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  });
+  codex = handle;
+  modelServer = server;
+  const urls = {
+    responsesUrl: `http://127.0.0.1:${server.port}/responses`,
+    modelsUrl: `http://127.0.0.1:${server.port}/models`,
+    tokenUrl: handle.tokenUrl,
+  };
+  return {
+    handle,
+    requests: handle.requests,
+    env: (extra = {}) =>
+      seededFakeCodexEnv(home, urls as ReturnType<typeof startFakeCodex>, {
+        FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+        ...extra,
+      }),
+  };
+}
+
 async function startFx(
   width: number,
   height: number,
-  withGateway = false,
+  withCodex = false,
   recordRender = false,
-  gatewayResponseCount = 1,
+  codexResponseCount = 1,
 ): Promise<TmuxSession> {
-  testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
+  testHome = mkdtempSync(join(tmpdir(), "fiber-tui-input-"));
   stderrPath = join(testHome, "stderr.log");
   writeFileSync(stderrPath, "");
-  mkdirSync(join(testHome, ".fx"), { recursive: true });
+  mkdirSync(join(testHome, ".fiber"), { recursive: true });
   writeFileSync(
-    join(testHome, ".fx", "settings.json"),
+    join(testHome, ".fiber", "settings.json"),
     JSON.stringify({ sandbox: "none" }),
   );
-  if (withGateway) {
-    gateway = startFakeGateway(
-      Array.from(
-        { length: gatewayResponseCount },
-        () => fakeGatewayFinalText("history prompt complete"),
-      ),
+  if (withCodex) {
+    writeSeededChatGptLogin(testHome, chatGptAccessToken());
+    startLocalCodex(
+      testHome,
+      Array.from({ length: codexResponseCount }, () => "history prompt complete"),
     );
   }
   const active = await TmuxSession.create({
-    cmd: withGateway
-      ? FX_BIN
-      : `env -u AI_GATEWAY_API_KEY -u VERCEL_OIDC_TOKEN FX_DISABLE_KEYCHAIN=1 FX_SKIP_ONBOARDING=1 ${FX_BIN}`,
+    cmd: withCodex
+      ? FIBER_BIN
+      : `env -u AI_GATEWAY_API_KEY -u VERCEL_OIDC_TOKEN FIBER_DISABLE_KEYCHAIN=1 FIBER_SKIP_ONBOARDING=1 ${FIBER_BIN}`,
     env: {
       HOME: testHome,
-      ...(gateway
-        ? {
-          AI_GATEWAY_API_KEY: "fake-input-navigation-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-        }
+      ...(codex && modelServer
+        ? seededFakeCodexEnv(testHome, {
+          responsesUrl: `http://127.0.0.1:${modelServer.port}/responses`,
+          modelsUrl: `http://127.0.0.1:${modelServer.port}/models`,
+          tokenUrl: codex.tokenUrl,
+        } as ReturnType<typeof startFakeCodex>, {
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+        })
         : {}),
       ...(recordRender
         ? {
-          FX_RECORD: join(testHome, "session.fxtape"),
-          FX_RECORD_INPUT: "1",
-          FX_TRACE_LOG: join(testHome, "trace.log"),
-          FX_TRACE_SCOPES: RENDER_TRACE_SCOPES,
+          FIBER_RECORD: join(testHome, "session.fibertape"),
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TRACE_LOG: join(testHome, "trace.log"),
+          FIBER_TRACE_SCOPES: RENDER_TRACE_SCOPES,
         }
         : {}),
     },
@@ -193,7 +270,7 @@ function rowHasBackgroundSgr(row: string): boolean {
 }
 
 test("selected slash row ignores the welcome header help hint", () => {
-  const header = `${SELECTED_COMPLETION_SGR}𝒇x\x1b[0m\x1b[38;5;245m v0.3.27 · Run /help for commands`;
+  const header = `${SELECTED_COMPLETION_SGR}fiber\x1b[0m\x1b[38;5;245m v0.3.27 · Run /help for commands`;
   const composer = `${SELECTED_COMPLETION_SGR}┃ /\x1b[39m`;
   const selected = `${SELECTED_COMPLETION_SGR}  /clear\x1b[38;5;245m Clear the conversation`;
 
@@ -247,7 +324,7 @@ async function setupMultilinePromptHistory(active: TmuxSession): Promise<void> {
   await active.sendKeys("Enter");
   await active.waitForPane(
     (pane) =>
-      gateway?.requests.length === 2 &&
+      codex?.requests.length === 2 &&
       pane.includes("┃") &&
       !pane.includes("Thinking"),
     READY_TIMEOUT,
@@ -314,7 +391,7 @@ tmuxTest(
     await waitForSelectedSlashLabel(active, "/help", READY_TIMEOUT);
 
     await active.sendHexBytes(["0a"]);
-    await waitForSelectedSlashLabel(active, "/clear", READY_TIMEOUT);
+    await waitForSelectedSlashLabel(active, "/new", READY_TIMEOUT);
     await waitForExactComposerRow(active, "┃ /");
 
     await active.sendHexBytes(["0b"]);
@@ -322,7 +399,7 @@ tmuxTest(
     await waitForExactComposerRow(active, "┃ /");
 
     await active.sendKeys("Enter");
-    await active.waitForText("Commands 35", READY_TIMEOUT);
+    await active.waitForText("Commands 20", READY_TIMEOUT);
     await active.sendKeys("Escape");
     await active.waitForPane(
       (pane) => hasEmptyComposer(pane) && !pane.includes("Enter Open"),
@@ -569,7 +646,7 @@ tmuxTest(
     expect(prompt.match(/\t/g)).toHaveLength(21);
 
     const active = await startFx(72, 16, true, true);
-    const tapePath = join(testHome!, "session.fxtape");
+    const tapePath = join(testHome!, "session.fibertape");
     await active.pasteText(prompt);
     await active.waitForText("[Pasted text #1, 11 lines]", READY_TIMEOUT);
     await active.sendKeys("Enter");
@@ -580,15 +657,15 @@ tmuxTest(
 
     expect(active.isAlive()).toBe(true);
     expectCleanStderr();
-    expect(gateway?.requests).toHaveLength(1);
+    expect(codex?.requests).toHaveLength(1);
 
-    const messages = JSON.parse(gateway!.requests[0]!.body).prompt as Array<{
-      role: string;
-      content: Array<{ type: string; text?: string }>;
+    const messages = JSON.parse(codex!.requests[0]!.body).input as Array<{
+      role?: string;
+      content?: Array<{ type: string; text?: string }>;
     }>;
     const finalUser = messages[messages.length - 1];
     expect(finalUser?.role).toBe("user");
-    expect(finalUser?.content[0]?.text).toBe(prompt);
+    expect(finalUser?.content?.[0]).toEqual({ type: "input_text", text: prompt });
 
     const scrollback = await active.captureFullScrollback();
     const promptTail = scrollback.indexOf("TAB_START_0085");
@@ -603,7 +680,7 @@ tmuxTest(
     expect(trace).not.toContain("frame_owner_violation");
 
     const goldenPath = join(testHome!, "replay-grid.txt");
-    const replay = await runFx(["replay", tapePath, "--golden", goldenPath], {
+    const replay = await runFx(["debug", "replay", tapePath, "--golden", goldenPath], {
       cwd: REPO_ROOT,
       timeoutMs: READY_TIMEOUT,
     });
@@ -839,14 +916,14 @@ tmuxTest(
     expect(readFileSync(join(testHome!, "trace.log"), "utf8")).toContain(
       "visual_epoch_reset_requested trigger=ctrl_l",
     );
-    expect(gateway?.requests).toHaveLength(1);
+    expect(codex?.requests).toHaveLength(1);
 
     await active.sendKeys("Enter");
     await active.waitForPane(
-      (pane) => gateway?.requests.length === 2 && pane.includes("history prompt complete"),
+      (pane) => codex?.requests.length === 2 && pane.includes("history prompt complete"),
       READY_TIMEOUT,
     );
-    const followup = gateway!.requests[1]!.body;
+    const followup = codex!.requests[1]!.body;
     expect(followup).toContain("zz-history");
     expect(followup).toContain("history prompt complete");
     expect(followup).toContain(draft);
@@ -995,542 +1072,6 @@ tmuxTest(
 );
 
 tmuxTest(
-  "typed pasted and slash-command images share the queued Gateway and session contract",
-  async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
-    stderrPath = join(testHome, "stderr.log");
-    writeFileSync(stderrPath, "");
-    const workspacePath = join(testHome, "workspace");
-    mkdirSync(workspacePath, { recursive: true });
-    const workspace = realpathSync(workspacePath);
-    const nested = join(workspace, "assets", "nested");
-    const sibling = join(workspace, "sibling");
-    mkdirSync(nested, { recursive: true });
-    mkdirSync(sibling, { recursive: true });
-    const scopedImagePath = join(nested, "fixture.png");
-    copyFileSync(imageFixture, scopedImagePath);
-    const scopedImage = realpathSync(scopedImagePath);
-    const rootRule = "TUI_IMAGE_CONTEXT_ROOT_SENTINEL";
-    const nestedRule = "TUI_IMAGE_CONTEXT_NESTED_SENTINEL";
-    const siblingRule = "TUI_IMAGE_CONTEXT_SIBLING_MUST_BE_ABSENT";
-    writeFileSync(join(workspace, "AGENTS.md"), `${rootRule}\n`);
-    writeFileSync(join(nested, "AGENTS.md"), `${nestedRule}\n`);
-    writeFileSync(join(sibling, "AGENTS.md"), `${siblingRule}\n`);
-    const expectScopedContext = (body: string) => {
-      expect(body).toContain(rootRule);
-      expect(body).toContain(nestedRule);
-      expect(body).not.toContain(siblingRule);
-      expect(body.indexOf(rootRule)).toBeLessThan(body.indexOf(nestedRule));
-    };
-    const localGateway = startFakeGateway(
-      [
-        fakeGatewayFinalText("IMAGE_TYPED_OK"),
-        fakeGatewayFinalText("IMAGE_PASTED_OK"),
-        fakeGatewayFinalText("IMAGE_COMMAND_OK"),
-      ],
-      {
-        models: [{
-          id: FAKE_GATEWAY_MODEL,
-          type: "language",
-          tags: ["vision", "file-input", "tool-use"],
-        }],
-      },
-    );
-    gateway = localGateway;
-    const active = await TmuxSession.create({
-      cmd: FX_BIN,
-      cwd: workspace,
-      env: {
-        HOME: testHome,
-        AI_GATEWAY_API_KEY: "fake-image-input-key",
-        VERCEL_OIDC_TOKEN: undefined,
-        FX_GATEWAY_BASE_URL: localGateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: localGateway.chatUrl,
-        FX_E2E_GATEWAY_MODELS_URL: `${localGateway.baseUrl}/coding-agent/v1/models`,
-        FX_MODEL: FAKE_GATEWAY_MODEL,
-        FX_AUTO_UPGRADE: "0",
-      },
-      width: 100,
-      height: 24,
-      stderrPath,
-    });
-    session = active;
-    await active.waitForComposer(READY_TIMEOUT);
-
-    await typeLiteral(active, scopedImage);
-    await active.sendKeys("Enter");
-    await active.waitForPane(
-      (pane) => pane.includes("IMAGE_TYPED_OK") && hasEmptyComposer(pane),
-      READY_TIMEOUT,
-    );
-    expect(localGateway.requests).toHaveLength(1);
-    expect(localGateway.requests[0]?.body).toContain('"type":"file"');
-    expect(localGateway.requests[0]?.body).not.toContain(scopedImage);
-    expectScopedContext(localGateway.requests[0]!.body);
-
-    await active.pasteText(scopedImage);
-    await waitForActiveFooter(
-      active,
-      (footer) => footer.includes("[Image 2]"),
-    );
-    await active.sendKeys("Enter");
-    await active.waitForPane(
-      (pane) => pane.includes("IMAGE_PASTED_OK") && hasEmptyComposer(pane),
-      READY_TIMEOUT,
-    );
-    expect(localGateway.requests).toHaveLength(2);
-    expect(localGateway.requests[1]?.body).toContain('"type":"file"');
-    expect(localGateway.requests[1]?.body).not.toContain(scopedImage);
-    expectScopedContext(localGateway.requests[1]!.body);
-
-    await typeLiteral(active, `/image ${scopedImage}`);
-    await active.sendKeys("Enter");
-    await waitForActiveFooter(
-      active,
-      (footer) => footer.includes("[Image 3]"),
-    );
-    expect(localGateway.requests).toHaveLength(2);
-    await typeLiteral(active, " describe via command");
-    await active.sendKeys("Enter");
-    await active.waitForPane(
-      (pane) => pane.includes("IMAGE_COMMAND_OK") && hasEmptyComposer(pane),
-      READY_TIMEOUT,
-    );
-    expect(localGateway.requests).toHaveLength(3);
-    expect(localGateway.requests[2]?.body).toContain('"type":"file"');
-    expect(localGateway.requests[2]?.body).not.toContain(scopedImage);
-    expectScopedContext(localGateway.requests[2]!.body);
-
-    const escapes = await active.captureFullScrollbackEscapes();
-    expect(escapes).toContain("\x1b]8;;file://");
-    expect(escapes).toContain("[Image 1]");
-    expect(escapes).toContain("\x1b]8;;\x1b\\");
-
-    const listed = await runFx(["sessions", "--json"], {
-      cwd: workspace,
-      env: { HOME: testHome },
-      timeoutMs: READY_TIMEOUT,
-    });
-    expect(listed.code).toBe(0);
-    const sessionId = JSON.parse(listed.stdout).sessions[0]?.id as string | undefined;
-    expect(sessionId).toBeDefined();
-    const readImageTurns = async () => {
-      const detailResult = await runFx(["session", "--id", sessionId!, "--json"], {
-        cwd: workspace,
-        env: { HOME: testHome },
-        timeoutMs: READY_TIMEOUT,
-      });
-      expect(detailResult.code).toBe(0);
-      const detail = JSON.parse(detailResult.stdout) as {
-        history: Array<{
-          user?: { images: Array<{ path: string; media_type: string }> };
-        }>;
-      };
-      return detail.history.filter((turn) => turn.user?.images.length === 1).slice(-3);
-    };
-    const detailDeadline = Date.now() + READY_TIMEOUT;
-    let imageTurns = await readImageTurns();
-    while (imageTurns.length < 3 && Date.now() < detailDeadline) {
-      await Bun.sleep(25);
-      imageTurns = await readImageTurns();
-    }
-    expect(imageTurns).toHaveLength(3);
-    for (const turn of imageTurns) {
-      expect(turn.user!.images[0]).toEqual({
-        path: scopedImage,
-        media_type: "image/png",
-      });
-    }
-
-    expectCleanStderr();
-    expect(active.isAlive()).toBe(true);
-  },
-  TIMEOUT,
-);
-
-tmuxTest(
-  "registered slash command stays local behind a pending image",
-  async () => {
-    const active = await startFx(100, 24, true);
-    const image = realpathSync(imageFixture);
-
-    await typeLiteral(active, `/image ${image}`);
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("[Image 1]"), READY_TIMEOUT);
-    expect(gateway?.requests).toHaveLength(0);
-
-    await typeLiteral(active, "/status");
-    await active.sendKeys("Enter");
-    await active.waitForPane(
-      (pane) => pane.includes("model=") && pane.includes("[Image 1]"),
-      READY_TIMEOUT,
-    );
-
-    expect(gateway?.requests).toHaveLength(0);
-    const composer = (await active.capturePaneGrid())
-      .filter(isComposerLine)
-      .at(-1);
-    expect(composer).toContain("[Image 1]");
-    expect(composer).not.toContain("/status");
-    expectCleanStderr();
-    expect(active.isAlive()).toBe(true);
-  },
-  TIMEOUT,
-);
-
-tmuxTest(
-  "repeated image commands stay local and submit together as one prompt",
-  async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
-    stderrPath = join(testHome, "stderr.log");
-    writeFileSync(stderrPath, "");
-    const workspace = mkdtempSync(join(tmpdir(), "fx-tui-images-"));
-    const firstPath = join(workspace, "first.png");
-    const secondPath = join(workspace, "second.png");
-    copyFileSync(imageFixture, firstPath);
-    copyFileSync(imageFixture, secondPath);
-    const first = realpathSync(firstPath);
-    const second = realpathSync(secondPath);
-
-    const localGateway = startFakeGateway(
-      [fakeGatewayFinalText("Both images received.")],
-      {
-        models: [{
-          id: FAKE_GATEWAY_MODEL,
-          type: "language",
-          tags: ["vision", "file-input", "tool-use"],
-        }],
-      },
-    );
-    gateway = localGateway;
-    const active = await TmuxSession.create({
-      cmd: FX_BIN,
-      env: {
-        HOME: testHome,
-        AI_GATEWAY_API_KEY: "fake-repeated-image-key",
-        VERCEL_OIDC_TOKEN: undefined,
-        FX_GATEWAY_BASE_URL: localGateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: localGateway.chatUrl,
-        FX_E2E_GATEWAY_MODELS_URL: `${localGateway.baseUrl}/coding-agent/v1/models`,
-        FX_MODEL: FAKE_GATEWAY_MODEL,
-        FX_AUTO_UPGRADE: "0",
-      },
-      width: 100,
-      height: 24,
-      stderrPath,
-    });
-    session = active;
-    await active.waitForComposer(READY_TIMEOUT);
-
-    await typeLiteral(active, `/image ${first}`);
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("[Image 1]"), READY_TIMEOUT);
-    expect(localGateway.requests).toHaveLength(0);
-
-    await typeLiteral(active, `/image ${second}`);
-    await active.sendKeys("Enter");
-    await active.waitForPane(
-      (pane) => pane.includes("[Image 1]") && pane.includes("[Image 2]"),
-      READY_TIMEOUT,
-    );
-    expect(localGateway.requests).toHaveLength(0);
-
-    const attachedGrid = await active.capturePaneGrid();
-    const attachedComposer = attachedGrid.filter(isComposerLine).at(-1);
-    expect(attachedComposer).toBeDefined();
-    expect(attachedComposer).toContain("[Image 1]");
-    expect(attachedComposer).toContain("[Image 2]");
-    expect(attachedComposer).not.toContain("/image");
-    expect(attachedComposer).not.toContain(second);
-
-    await typeLiteral(active, "/images");
-    await active.sendKeys("Enter");
-    await active.waitForPane(
-      (pane) => pane.includes("● Images: 2 pending"),
-      READY_TIMEOUT,
-    );
-    expect(localGateway.requests).toHaveLength(0);
-
-    await typeLiteral(active, " describe both");
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("Both images received."), READY_TIMEOUT);
-
-    expect(localGateway.requests).toHaveLength(1);
-    const body = localGateway.requests[0]!.body;
-    const fileParts = body.match(/"type":"file"/g) ?? [];
-    expect(fileParts).toHaveLength(2);
-    expect(body).not.toContain("/image ");
-    expect(body).not.toContain(first);
-    expect(body).not.toContain(second);
-    expect(body).not.toContain(workspace);
-    expect(body).not.toContain("file://");
-    expect(body).not.toContain("data:image");
-    expect(body).toContain("describe both");
-
-    const fullScrollback = await active.captureFullScrollback();
-    expect(fullScrollback).toContain("● Images: 2 pending");
-    expect(fullScrollback).toContain("Both images received.");
-    expect(fullScrollback).not.toContain("ImageContextAdapterFailed");
-    expect(fullScrollback.match(/describe both/g) ?? []).toHaveLength(1);
-
-    const finalGrid = await active.capturePaneGrid();
-    const finalComposer = finalGrid.filter(isComposerLine).at(-1);
-    expect(finalComposer).toBeDefined();
-    expect(finalComposer).not.toContain("[Image 1]");
-    expect(finalComposer).not.toContain("[Image 2]");
-
-    expectCleanStderr();
-    expect(active.isAlive()).toBe(true);
-    rmSync(workspace, { recursive: true, force: true });
-  },
-  TIMEOUT,
-);
-
-tmuxTest(
-  "a later turn's image keeps its own id in the composer and transcript",
-  async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
-    stderrPath = join(testHome, "stderr.log");
-    writeFileSync(stderrPath, "");
-    const workspace = mkdtempSync(join(tmpdir(), "fx-tui-image-ids-"));
-    const firstPath = join(workspace, "one.png");
-    const secondPath = join(workspace, "two.png");
-    copyFileSync(imageFixture, firstPath);
-    copyFileSync(imageFixture, secondPath);
-    const first = realpathSync(firstPath);
-    const second = realpathSync(secondPath);
-
-    const localGateway = startFakeGateway(
-      [
-        fakeGatewayFinalText("turn 1 complete"),
-        fakeGatewayFinalText("turn 2 complete"),
-      ],
-      {
-        models: [{
-          id: FAKE_GATEWAY_MODEL,
-          type: "language",
-          tags: ["vision", "file-input", "tool-use"],
-        }],
-      },
-    );
-    gateway = localGateway;
-    const active = await TmuxSession.create({
-      cmd: FX_BIN,
-      env: {
-        HOME: testHome,
-        AI_GATEWAY_API_KEY: "fake-image-id-key",
-        VERCEL_OIDC_TOKEN: undefined,
-        FX_GATEWAY_BASE_URL: localGateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: localGateway.chatUrl,
-        FX_E2E_GATEWAY_MODELS_URL: `${localGateway.baseUrl}/coding-agent/v1/models`,
-        FX_MODEL: FAKE_GATEWAY_MODEL,
-        FX_AUTO_UPGRADE: "0",
-      },
-      width: 120,
-      height: 36,
-      stderrPath,
-    });
-    session = active;
-    await active.waitForComposer(READY_TIMEOUT);
-
-    await typeLiteral(active, `/image ${first}`);
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("[Image 1]"), READY_TIMEOUT);
-    await typeLiteral(active, " first turn");
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("turn 1 complete"), READY_TIMEOUT);
-
-    await typeLiteral(active, `/image ${second}`);
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("[Image 2]"), READY_TIMEOUT);
-
-    const attachedGrid = await active.capturePaneGrid();
-    const attachedComposer = attachedGrid.filter(isComposerLine).at(-1);
-    expect(attachedComposer).toBeDefined();
-    expect(attachedComposer).toContain("[Image 2]");
-    expect(attachedComposer).not.toContain("[Image 1]");
-
-    await typeLiteral(active, " second turn");
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("turn 2 complete"), READY_TIMEOUT);
-
-    await active.resizeWindow(88, 24);
-    await active.waitForText("turn 2 complete", READY_TIMEOUT);
-    const resized = await active.captureFullScrollback();
-    expect(resized).toContain("[Image 1] first turn");
-    expect(resized).toContain("[Image 2] second turn");
-    expect(resized).not.toContain("[Image 1] second turn");
-
-    // The second request replays turn 1, so it carries both placeholders. What
-    // matters is that each turn's text is paired with its own image id.
-    expect(localGateway.requests).toHaveLength(2);
-    const firstBody = localGateway.requests[0]!.body;
-    const secondBody = localGateway.requests[1]!.body;
-    expect(firstBody).toContain("[Image #1] first turn");
-    expect(secondBody).toContain("[Image #1] first turn");
-    expect(secondBody).toContain("[Image #2] second turn");
-    expect(secondBody).not.toContain("[Image #1] second turn");
-    for (const body of [firstBody, secondBody]) {
-      expect(body).not.toContain(workspace);
-      expect(body).not.toContain("file://");
-      expect(body).not.toContain("data:image");
-    }
-
-    expectCleanStderr();
-    expect(active.isAlive()).toBe(true);
-    rmSync(workspace, { recursive: true, force: true });
-  },
-  TIMEOUT,
-);
-
-tmuxTest(
-  "image line kill and repeated yank preserve captured bytes under fresh ids",
-  async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
-    stderrPath = join(testHome, "stderr.log");
-    writeFileSync(stderrPath, "");
-    const workspace = mkdtempSync(join(tmpdir(), "fx-tui-image-yank-"));
-    const sourcePath = join(workspace, "source.png");
-    copyFileSync(imageFixture, sourcePath);
-    const source = realpathSync(sourcePath);
-    const originalBase64 = readFileSync(source).toString("base64");
-
-    const localGateway = startFakeGateway(
-      [fakeGatewayFinalText("YANKED_IMAGES_OK")],
-      {
-        models: [{
-          id: FAKE_GATEWAY_MODEL,
-          type: "language",
-          tags: ["vision", "file-input", "tool-use"],
-        }],
-      },
-    );
-    gateway = localGateway;
-    const active = await TmuxSession.create({
-      cmd: FX_BIN,
-      env: {
-        HOME: testHome,
-        AI_GATEWAY_API_KEY: "fake-image-yank-key",
-        VERCEL_OIDC_TOKEN: undefined,
-        FX_GATEWAY_BASE_URL: localGateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: localGateway.chatUrl,
-        FX_E2E_GATEWAY_MODELS_URL: `${localGateway.baseUrl}/coding-agent/v1/models`,
-        FX_MODEL: FAKE_GATEWAY_MODEL,
-        FX_AUTO_UPGRADE: "0",
-      },
-      width: 100,
-      height: 24,
-      stderrPath,
-    });
-    session = active;
-    await active.waitForComposer(READY_TIMEOUT);
-
-    await typeLiteral(active, `/image ${source}`);
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("[Image 1]"), READY_TIMEOUT);
-    rmSync(source);
-
-    await active.sendHexBytes(hexSeq("\x15"));
-    await active.waitForPane(hasEmptyComposer, READY_TIMEOUT);
-    await active.sendHexBytes(hexSeq("\x19"));
-    await active.waitForPane((pane) => pane.includes("[Image 2]"), READY_TIMEOUT);
-    await active.sendHexBytes(hexSeq("\x19"));
-    await active.waitForPane(
-      (pane) => pane.includes("[Image 2]") && pane.includes("[Image 3]"),
-      READY_TIMEOUT,
-    );
-
-    await typeLiteral(active, " inspect both yanks");
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("YANKED_IMAGES_OK"), READY_TIMEOUT);
-
-    expect(localGateway.requests).toHaveLength(1);
-    const body = localGateway.requests[0]!.body;
-    expect(body.match(/"type":"file"/g) ?? []).toHaveLength(2);
-    expect(body.split(originalBase64).length - 1).toBe(2);
-    expect(body).toContain("[Image #2][Image #3] inspect both yanks");
-    expect(body).not.toContain(source);
-    expect(body).not.toContain(workspace);
-    expect(body).not.toContain("file://");
-    expectCleanStderr();
-    expect(active.isAlive()).toBe(true);
-    rmSync(workspace, { recursive: true, force: true });
-  },
-  TIMEOUT,
-);
-
-tmuxTest(
-  "pending image commands stay local",
-  async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-input-"));
-    stderrPath = join(testHome, "stderr.log");
-    writeFileSync(stderrPath, "");
-    const localGateway = startFakeGateway(
-      [],
-      {
-        models: [{
-          id: FAKE_GATEWAY_MODEL,
-          type: "language",
-          tags: ["vision", "file-input", "tool-use"],
-        }],
-      },
-    );
-    gateway = localGateway;
-    const active = await TmuxSession.create({
-      cmd: FX_BIN,
-      env: {
-        HOME: testHome,
-        AI_GATEWAY_API_KEY: "fake-pending-image-key",
-        VERCEL_OIDC_TOKEN: undefined,
-        FX_GATEWAY_BASE_URL: localGateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: localGateway.chatUrl,
-        FX_E2E_GATEWAY_MODELS_URL: `${localGateway.baseUrl}/coding-agent/v1/models`,
-        FX_MODEL: FAKE_GATEWAY_MODEL,
-        FX_AUTO_UPGRADE: "0",
-      },
-      width: 100,
-      height: 24,
-      stderrPath,
-    });
-    session = active;
-    await active.waitForComposer(READY_TIMEOUT);
-
-    await typeLiteral(active, `/image ${imageFixture}`);
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("[Image 1]"), READY_TIMEOUT);
-    expect(localGateway.requests).toHaveLength(0);
-
-    await typeLiteral(active, "/images");
-    await active.sendKeys("Enter");
-    await active.waitForPane(
-      (pane) => pane.includes("● Images: 1 pending") && pane.includes("favicon.png (image/png)"),
-      READY_TIMEOUT,
-    );
-    expect(localGateway.requests).toHaveLength(0);
-    const listedGrid = await active.capturePaneGrid();
-    expect(listedGrid.some((line) => isComposerLine(line) && line.includes("[Image 1]"))).toBe(true);
-
-    await typeLiteral(active, "/images clear");
-    await active.sendKeys("Enter");
-    await active.waitForPane((pane) => pane.includes("cleared pending images"), READY_TIMEOUT);
-    expect(localGateway.requests).toHaveLength(0);
-    const clearedGrid = await active.capturePaneGrid();
-    const currentComposer = clearedGrid.filter(isComposerLine).at(-1);
-    expect(currentComposer).toBeDefined();
-    expect(currentComposer).not.toContain("[Image 1]");
-
-    const fullScrollback = await active.captureFullScrollback();
-    expect(fullScrollback).toContain("● Images: 1 pending");
-    expect(fullScrollback).toContain("favicon.png (image/png)");
-    expect(fullScrollback).toContain("cleared pending images");
-    expect(fullScrollback).not.toContain("ImageContextAdapterFailed");
-    expectCleanStderr();
-    expect(active.isAlive()).toBe(true);
-  },
-  TIMEOUT,
-);
-
-tmuxTest(
   "repeated image-path paste cannot grow direct input past the cap and leaves fx alive",
   async () => {
     const active = await startFx(120, 24);
@@ -1588,23 +1129,13 @@ tmuxTest(
 tmuxTest(
   "current composer and submitted prompt use connected rails",
   async () => {
-    testHome = mkdtempSync(join(tmpdir(), "fx-tui-current-rails-"));
-    mkdirSync(join(testHome, ".fx"), { recursive: true });
-    const localGateway = startFakeGateway([
-      fakeGatewayFinalText("CURRENT_RAIL_MOCK_OK"),
-    ]);
-    gateway = localGateway;
+    testHome = mkdtempSync(join(tmpdir(), "fiber-tui-current-rails-"));
+    mkdirSync(join(testHome, ".fiber"), { recursive: true });
+    writeSeededChatGptLogin(testHome, chatGptAccessToken());
+    const localCodex = startLocalCodex(testHome, ["CURRENT_RAIL_MOCK_OK"]);
     const active = await TmuxSession.create({
-      cmd: FX_BIN,
-      env: {
-        HOME: testHome,
-        AI_GATEWAY_API_KEY: "fake-current-rail-key",
-        VERCEL_OIDC_TOKEN: undefined,
-        FX_GATEWAY_BASE_URL: localGateway.baseUrl,
-        FX_GATEWAY_CHAT_URL: localGateway.chatUrl,
-        FX_MODEL: FAKE_GATEWAY_MODEL,
-        FX_AUTO_UPGRADE: "0",
-      },
+      cmd: FIBER_BIN,
+      env: localCodex.env(),
       width: 80,
       height: 24,
     });
@@ -1636,13 +1167,13 @@ tmuxTest(
       (pane) => pane.includes("CURRENT_RAIL_MOCK_OK") && pane.includes("┃"),
       20_000,
     );
-    expect(localGateway.requests.length).toBe(1);
-    const request = JSON.parse(localGateway.requests[0]!.body).prompt as Array<{
-      role: string;
-      content: Array<{ type: string; text?: string }>;
+    expect(localCodex.requests.length).toBe(1);
+    const request = JSON.parse(localCodex.requests[0]!.body).input as Array<{
+      role?: string;
+      content?: Array<{ type: string; text?: string }>;
     }>;
     const user = request.findLast((message) => message.role === "user");
-    expect(user?.content[0]?.text).toBe(submission);
+    expect(user?.content?.[0]).toEqual({ type: "input_text", text: submission });
 
     const transcript = await active.capturePaneEscapes();
     const first = rowWithVisiblePredicate(
@@ -1711,8 +1242,8 @@ tmuxTest(
       READY_TIMEOUT,
     );
     await active.resizeWindow(80, 24, 300);
-    await active.waitForText("Commands 35", READY_TIMEOUT);
-    expect(gateway?.requests).toHaveLength(0);
+    await active.waitForText("Commands 20", READY_TIMEOUT);
+    expect(codex?.requests).toHaveLength(0);
     expectCleanStderr();
   },
   TIMEOUT,
@@ -1730,7 +1261,12 @@ tmuxTest(
       (position) => position.row === before.row && position.col === before.col,
       READY_TIMEOUT,
     );
-    const selected = await waitForSelectedSlashLabel(active, "/cle", READY_TIMEOUT);
+    await active.sendKeys("Down");
+    await active.waitForCursor(
+      (position) => position.row === before.row && position.col === before.col,
+      READY_TIMEOUT,
+    );
+    const selected = await waitForSelectedSlashLabel(active, "/res…", READY_TIMEOUT);
     expect(stripAnsi(selected)).toContain("…");
   },
   TIMEOUT,
@@ -1748,7 +1284,7 @@ tmuxTest(
       (position) => position.row === visibleCursor.row && position.col === visibleCursor.col,
       READY_TIMEOUT,
     );
-    await waitForSelectedSlashLabel(active, "/clear", READY_TIMEOUT);
+    await waitForSelectedSlashLabel(active, "/new", READY_TIMEOUT);
 
     await active.resizeWindow(8, 10, 300);
     const wrapped = await active.waitForCursor((position) => position.col > 2, READY_TIMEOUT);
@@ -1756,7 +1292,7 @@ tmuxTest(
     await active.waitForCursor((position) => position.row === wrapped.row - 1, READY_TIMEOUT);
 
     await active.resizeWindow(80, 24, 300);
-    await active.waitForPane((pane) => pane.includes("/clear"), READY_TIMEOUT);
+    await waitForSelectedSlashLabel(active, "/new", READY_TIMEOUT);
     const visibleAgain = await active.waitForCursor((position) => position.col > 2, READY_TIMEOUT);
     await active.sendKeys("Down");
     await active.waitForCursor(

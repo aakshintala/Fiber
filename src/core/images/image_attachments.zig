@@ -175,7 +175,7 @@ pub fn createTempSnapshotDir(alloc: std.mem.Allocator) ![]u8 {
         io_mod.getIo().random(std.mem.asBytes(&suffix));
         const path = try std.fmt.allocPrint(
             alloc,
-            "{s}/fx-image-snapshots-{x}",
+            "{s}/fiber-image-snapshots-{x}",
             .{ temp_root, suffix },
         );
         errdefer alloc.free(path);
@@ -349,27 +349,6 @@ pub fn openVisionRegularFile(canonical_path: []const u8) !VisionRegularFile {
     };
     if (initial.kind != .file) return error.NotRegularFile;
 
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        var file = cwd.openFile(io_mod.getIo(), canonical_path, .{
-            .mode = .read_only,
-            .allow_directory = false,
-            .follow_symlinks = false,
-        }) catch |err| switch (err) {
-            error.IsDir, error.SymLinkLoop, error.NotDir => return error.NotRegularFile,
-            else => return err,
-        };
-        errdefer file.close(io_mod.getIo());
-        const stat = try file.stat(io_mod.getIo());
-        if (stat.kind != .file) return error.NotRegularFile;
-        return .{
-            .file = file,
-            .identity = pathing.fileIdentity(
-                try pathing.descriptorDevice(file.handle),
-                stat,
-            ),
-        };
-    }
-
     var flags: std.posix.O = .{
         .ACCMODE = .RDONLY,
         .NOFOLLOW = true,
@@ -490,11 +469,11 @@ pub fn captureInlineImageBytes(
     io_mod.getIo().random(std.mem.asBytes(&random_suffix));
     const source_name = try std.fmt.allocPrint(
         alloc,
-        "image-{d}.acp-source.{x}",
+        "image-{d}.source.{x}",
         .{ image_id, random_suffix },
     );
     defer alloc.free(source_name);
-    defer deleteSnapshotFile(snapshot_dir_handle, source_name, "capture_acp_source");
+    defer deleteSnapshotFile(snapshot_dir_handle, source_name, "capture_source");
 
     {
         var source = try snapshot_dir_handle.createFile(
@@ -2510,7 +2489,7 @@ test "extractInlineImageAttachments replaces supported paths with matching place
 
 test "extractInlineImageAttachments preserves missing and unsupported tokens" {
     const alloc = std.testing.allocator;
-    const input = "look /tmp/fx-definitely-missing-image.png and notes.txt";
+    const input = "look /tmp/fiber-definitely-missing-image.png and notes.txt";
     const result = try extractInlineImageAttachments(alloc, "/", input, 1);
     defer result.deinit(alloc);
 
@@ -2798,8 +2777,6 @@ test "capture rejection distinguishes source size from preparation failure" {
 }
 
 test "image normalizer process requires success and preserves operational errors" {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
-
     const success_argv = [_][]const u8{ "/bin/sh", "-c", "exit 0" };
     try runImageNormalizerProcess(&success_argv, .{});
 

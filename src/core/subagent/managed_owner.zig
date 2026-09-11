@@ -2,7 +2,6 @@ const std = @import("std");
 const approval_registry = @import("approval_registry.zig");
 const authority = @import("authority.zig");
 const child_state = @import("child_state.zig");
-const domain = @import("domain.zig");
 const execution = @import("execution.zig");
 const io_mod = @import("../shared/io.zig");
 const permission_request = @import("../permissions/permission_request.zig");

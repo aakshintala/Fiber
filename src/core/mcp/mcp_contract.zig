@@ -181,20 +181,17 @@ pub const McpTransport = enum { stdio, http, sse };
 
 pub const ConfigSource = enum {
     profile,
-    acp,
     workspace,
 };
 
 pub const ConfigScope = enum {
     profile,
-    acp_session,
     workspace,
 };
 
 pub fn sourceAllowsScope(source: ConfigSource, scope: ConfigScope) bool {
     return switch (source) {
         .profile => scope == .profile,
-        .acp => scope == .acp_session,
         .workspace => scope == .workspace,
     };
 }
@@ -211,7 +208,7 @@ pub fn sourceAllowsWorkspaceAdmission(
 ) bool {
     return switch (source) {
         .workspace => admission != null,
-        .profile, .acp => admission == null,
+        .profile => admission == null,
     };
 }
 
@@ -327,11 +324,10 @@ test "MCP server configuration deinit owns present empty targets" {
 }
 
 test "MCP configuration sources admit only their product scope" {
-    for ([_]ConfigSource{ .profile, .acp, .workspace }) |source| {
-        for ([_]ConfigScope{ .profile, .acp_session, .workspace }) |scope| {
+    for ([_]ConfigSource{ .profile, .workspace }) |source| {
+        for ([_]ConfigScope{ .profile, .workspace }) |scope| {
             const expected = switch (source) {
                 .profile => scope == .profile,
-                .acp => scope == .acp_session,
                 .workspace => scope == .workspace,
             };
             try std.testing.expectEqual(expected, sourceAllowsScope(source, scope));
@@ -340,7 +336,7 @@ test "MCP configuration sources admit only their product scope" {
 }
 
 test "workspace admission is present exactly for workspace source" {
-    for ([_]ConfigSource{ .profile, .acp, .workspace }) |source| {
+    for ([_]ConfigSource{ .profile, .workspace }) |source| {
         for ([_]?WorkspaceAdmission{ null, .pending, .approved, .rejected }) |admission| {
             const expected = if (source == .workspace) admission != null else admission == null;
             try std.testing.expectEqual(

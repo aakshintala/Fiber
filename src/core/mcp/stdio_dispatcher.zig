@@ -1,6 +1,4 @@
 const std = @import("std");
-const host_target = @import("../hosts/target.zig");
-const builtin = @import("builtin");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 const mcp_contract = @import("mcp_contract.zig");
@@ -264,7 +262,6 @@ pub const StdioDispatcher = struct {
         generation: u64,
         initial_max_frame_bytes: usize,
     ) !*StdioDispatcher {
-        if (comptime host_target.is_wasm) return error.McpTransportUnavailable;
         var child = child_value;
         const child_id = child.id orelse return error.McpProcessNotStarted;
         const stdin = child.stdin orelse {
@@ -1694,45 +1691,27 @@ fn jsonNumber(value: std.json.Value) !f64 {
 }
 
 fn terminateChild(child_id: std.process.Child.Id) void {
-    switch (builtin.os.tag) {
-        .windows => {
-            const windows = std.os.windows;
-            switch (windows.ntdll.NtTerminateProcess(child_id, @enumFromInt(1))) {
-                .SUCCESS, .PROCESS_IS_TERMINATING, .ACCESS_DENIED => {},
-                else => |status| debug_trace.logf(
-                    "mcp",
-                    "failed to terminate stdio child status={any}",
-                    .{status},
-                ),
-            }
-        },
-        .wasi => {},
-        else => std.posix.kill(-child_id, .KILL) catch |group_err| {
-            std.posix.kill(child_id, .KILL) catch |child_err| switch (child_err) {
-                error.ProcessNotFound => {},
-                else => debug_trace.logf(
-                    "mcp",
-                    "failed to terminate stdio child pid={d} group_err={s} child_err={s}",
-                    .{ child_id, @errorName(group_err), @errorName(child_err) },
-                ),
-            };
-        },
-    }
-}
-
-fn terminateChildGracefully(child_id: std.process.Child.Id) void {
-    switch (builtin.os.tag) {
-        .windows => terminateChild(child_id),
-        .wasi => {},
-        else => std.posix.kill(child_id, .TERM) catch |err| switch (err) {
+    std.posix.kill(-child_id, .KILL) catch |group_err| {
+        std.posix.kill(child_id, .KILL) catch |child_err| switch (child_err) {
             error.ProcessNotFound => {},
             else => debug_trace.logf(
                 "mcp",
-                "failed to request stdio child termination pid={d} err={s}",
-                .{ child_id, @errorName(err) },
+                "failed to terminate stdio child pid={d} group_err={s} child_err={s}",
+                .{ child_id, @errorName(group_err), @errorName(child_err) },
             ),
-        },
-    }
+        };
+    };
+}
+
+fn terminateChildGracefully(child_id: std.process.Child.Id) void {
+    std.posix.kill(child_id, .TERM) catch |err| switch (err) {
+        error.ProcessNotFound => {},
+        else => debug_trace.logf(
+            "mcp",
+            "failed to request stdio child termination pid={d} err={s}",
+            .{ child_id, @errorName(err) },
+        ),
+    };
 }
 
 test "classifyInbound separates responses notifications progress and requests" {
@@ -1896,9 +1875,6 @@ fn createShellDispatcher(script: []const u8) !struct {
     dispatcher: *StdioDispatcher,
     pid: std.posix.pid_t,
 } {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
     const child = try std.process.spawn(io_mod.getIo(), .{
         .argv = &.{ "sh", "-c", script },
         .stdin = .pipe,
@@ -2368,9 +2344,6 @@ test "operation timeout returns and shutdown joins an uncooperative child" {
 }
 
 test "MCP normal shutdown gives a cooperative child TERM before forced cleanup" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -2397,9 +2370,6 @@ test "MCP normal shutdown gives a cooperative child TERM before forced cleanup" 
 }
 
 test "MCP forced shutdown gives launchers bounded TERM before KILL" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

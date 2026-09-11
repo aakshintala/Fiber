@@ -1,0 +1,20 @@
+Fiber
+Copyright 2026 Amogh Akshintala
+
+This product is a fork of fx, developed by Vercel, Inc.
+
+    fx
+    Copyright 2025 Vercel, Inc.
+    https://github.com/vercel-labs/fx
+
+Fiber was forked from vercel-labs/fx at commit
+993688a5, tagged in this repository as `fork-point`.
+
+Fiber is an independent product and is not affiliated with, endorsed by,
+or supported by Vercel, Inc. Files in this repository have been modified
+from their upstream form; see the commit history from `fork-point`
+onward for the complete record of changes.
+
+Both fx and Fiber are licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text, and
+THIRD_PARTY_NOTICES.md for third-party material included in this work.

@@ -544,8 +544,6 @@ pub const LoadedWritableSession = struct {
     namespace_confirmation_required: bool = false,
     degraded_tail: ?FailedTail = null,
     compaction_warning_active: bool = false,
-    migration_source_schema_version: ?u8 = null,
-    migration_source_bytes: ?u64 = null,
     usage_sidecar_reseal_pending: bool = false,
     resume_view_stale: bool = false,
     /// Runtime-only provenance installed by subagent resume admission. These
@@ -4666,7 +4664,7 @@ test "root init rejects symlinked durable and sessions roots" {
         tmp.dir.symLink(
             io_mod.getIo(),
             "../outside",
-            "home/.fx",
+            "home/.fiber",
             .{ .is_directory = true },
         ) catch |err| switch (err) {
             error.AccessDenied => return error.SkipZigTest,
@@ -4684,12 +4682,12 @@ test "root init rejects symlinked durable and sessions roots" {
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+        try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
         try tmp.dir.createDirPath(io_mod.getIo(), "outside");
         tmp.dir.symLink(
             io_mod.getIo(),
             "../../outside",
-            "home/.fx/sessions",
+            "home/.fiber/sessions",
             .{ .is_directory = true },
         ) catch |err| switch (err) {
             error.AccessDenied => return error.SkipZigTest,
@@ -4708,8 +4706,8 @@ test "root init rejects symlinked durable and sessions roots" {
 fn testState(alloc: Allocator, id: []const u8, updated_at_ms: i64) !session_codec.DurableSessionState {
     return .{
         .id = try alloc.dupe(u8, id),
-        .origin_workspace_root = try alloc.dupe(u8, "/tmp/fx-plan-03"),
-        .workspace_root = try alloc.dupe(u8, "/tmp/fx-plan-03"),
+        .origin_workspace_root = try alloc.dupe(u8, "/tmp/fiber-plan-03"),
+        .workspace_root = try alloc.dupe(u8, "/tmp/fiber-plan-03"),
         .created_at_ms = 10,
         .updated_at_ms = updated_at_ms,
         .conversation_language = session.ConversationLanguage.literal("en"),

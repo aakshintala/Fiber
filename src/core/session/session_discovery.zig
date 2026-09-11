@@ -1,10 +1,8 @@
 const std = @import("std");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
-const session = @import("session.zig");
 const session_codec = @import("session_codec.zig");
 const session_child_store = @import("session_child_store.zig");
-const session_json = @import("session_json.zig");
 const session_log = @import("session_log.zig");
 const session_projection = @import("session_projection.zig");
 const session_display_metadata = @import("session_display_metadata.zig");
@@ -20,7 +18,6 @@ const eventFileStat = authority.eventFileStat;
 const loadAuthorityMarkerOptional = authority.loadAuthorityMarkerOptional;
 const loadAuthorityTransitionOptional = authority.loadAuthorityTransitionOptional;
 const manifestSchemaVersion = authority.manifestSchemaVersion;
-const openSessionFile = authority.openSessionFile;
 const readOptionalSessionFile = authority.readOptionalSessionFile;
 const requireAuthorityFenceAbsent = authority.requireAuthorityFenceAbsent;
 const sessionDirPath = paths.sessionDirPath;
@@ -31,8 +28,6 @@ const DoctorInspectionOptions = types.DoctorInspectionOptions;
 const DoctorIssueKind = types.DoctorIssueKind;
 const ProjectionState = types.ProjectionState;
 const SessionSummary = types.SessionSummary;
-const StorageFormat = types.StorageFormat;
-const automatic_legacy_max_bytes = types.automatic_legacy_max_bytes;
 const StoreContext = types.StoreContext;
 
 pub const DiscoveryMode = enum {
@@ -75,36 +70,6 @@ pub const WritableCandidate = struct {
     pub fn deinit(self: *WritableCandidate, alloc: Allocator) void {
         alloc.free(self.id);
         alloc.free(self.workspace_root);
-        self.* = undefined;
-    }
-};
-
-const LegacyCandidateSummary = struct {
-    id: []u8,
-    workspace_root: ?[]u8 = null,
-    created_at_ms: i64,
-    updated_at_ms: i64,
-    conversation_language: session.ConversationLanguage,
-    history_len: usize,
-    schema_version: session_json.LegacySchemaVersion = .v1,
-
-    fn intoSessionSummary(self: *LegacyCandidateSummary) SessionSummary {
-        const summary = SessionSummary{
-            .id = self.id,
-            .workspace_root = self.workspace_root,
-            .created_at_ms = self.created_at_ms,
-            .updated_at_ms = self.updated_at_ms,
-            .conversation_language = self.conversation_language,
-            .history_len = self.history_len,
-        };
-        self.id = undefined;
-        self.workspace_root = null;
-        return summary;
-    }
-
-    fn deinit(self: *LegacyCandidateSummary, alloc: Allocator) void {
-        alloc.free(self.id);
-        if (self.workspace_root) |root| alloc.free(root);
         self.* = undefined;
     }
 };
@@ -198,7 +163,7 @@ pub fn inspectDoctorSession(
         return;
     };
     if (marker == null) {
-        return inspectAuthoritylessSession(ctx, alloc, diagnostics, session_dir, session_id);
+        return inspectAuthoritylessSession(alloc, diagnostics, session_dir, session_id);
     }
 
     var owned_marker = marker.?;
@@ -212,10 +177,9 @@ pub fn inspectDoctorSession(
 }
 
 /// Diagnoses a session that carries no authority marker: either an in-flight
-/// schema-v3 creation orphan, an oversized legacy snapshot, or a missing
-/// authority record. Terminal: appends exactly one classification and returns.
+/// schema-v3 creation orphan or a missing authority record. Terminal: appends
+/// exactly one classification and returns.
 fn inspectAuthoritylessSession(
-    ctx: StoreContext,
     alloc: Allocator,
     diagnostics: *std.ArrayList(DoctorDiagnostic),
     session_dir: *io_mod.VerifiedDir,
@@ -252,13 +216,7 @@ fn inspectAuthoritylessSession(
             return;
         }
 
-        var legacy_file = try openSessionFile(session_dir, "session.json", .read_only);
-        defer legacy_file.close(io_mod.getIo());
-        const legacy_stat = try legacy_file.stat(io_mod.getIo());
-        if (legacy_stat.size > automatic_legacy_max_bytes) {
-            try appendDoctorDiagnostic(diagnostics, alloc, session_id, .oversized_legacy_snapshot, legacy_stat.size);
-        }
-        try inspectDoctorManagedChildren(ctx, alloc, diagnostics, session_dir, session_id);
+        try appendDoctorDiagnostic(diagnostics, alloc, session_id, .missing_authority, null);
         return;
     }
 
@@ -493,17 +451,15 @@ fn inspectDoctorManagedChildren(
     }
 }
 
-/// Classifies a session directory into a read-only candidate, dispatching on
-/// its authority state to the schema-v3 or legacy classifier.
+/// Classifies a session directory into a read-only candidate. Only current
+/// schema-v3 sessions are readable.
 pub fn classifyReadOnlyCandidate(
     alloc: Allocator,
     session_dir: *io_mod.VerifiedDir,
     session_id: []const u8,
 ) !ReadOnlyCandidate {
-    return switch (try classifyAuthority(alloc, session_dir, session_id)) {
-        .schema_v3 => classifySchemaV3Candidate(alloc, session_dir, session_id),
-        .legacy => classifyLegacyCandidate(alloc, session_dir, session_id),
-    };
+    try classifyAuthority(alloc, session_dir, session_id);
+    return classifySchemaV3Candidate(alloc, session_dir, session_id);
 }
 
 /// Builds a read-only candidate from a schema-v3 manifest, validating the
@@ -586,44 +542,6 @@ pub fn classifySchemaV3Candidate(
     };
 }
 
-/// Builds a read-only candidate from a legacy `session.json` snapshot via a
-/// streaming summary parse. Rejects directories carrying an authority fence.
-pub fn classifyLegacyCandidate(
-    alloc: Allocator,
-    session_dir: *io_mod.VerifiedDir,
-    session_id: []const u8,
-) !ReadOnlyCandidate {
-    if (try entryExistsRelative(session_dir, "authority.json")) {
-        return error.InvalidSessionFormat;
-    }
-    var file = try openSessionFile(session_dir, "session.json", .read_only);
-    defer file.close(io_mod.getIo());
-    const stat = try file.stat(io_mod.getIo());
-    if (stat.kind != .file or stat.nlink != 1) return error.SessionPathUnsafe;
-    if (stat.size > automatic_legacy_max_bytes) return error.LegacySessionTooLarge;
-    var buffer: [16 * 1024]u8 = undefined;
-    var reader = file.readerStreaming(io_mod.getIo(), &buffer);
-    var legacy = session_json.parseLegacySummaryStreaming(
-        LegacyCandidateSummary,
-        alloc,
-        &reader.interface,
-    ) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return err,
-    };
-    errdefer legacy.deinit(alloc);
-    if (!std.mem.eql(u8, legacy.id, session_id)) {
-        return error.InvalidSessionFormat;
-    }
-    try requireAuthorityFenceAbsent(alloc, session_dir, session_id);
-    const storage = candidateStorageForLegacy(legacy.schema_version);
-    return .{
-        .summary = legacy.intoSessionSummary(),
-        .storage = storage,
-        .projection_state = .current,
-    };
-}
-
 /// Projects a durable session state into the lightweight `SessionSummary`
 /// returned by listing APIs. Allocates owned copies of the id and roots.
 pub fn summaryFromState(
@@ -672,25 +590,6 @@ pub fn dupeWritableCandidate(
         .updated_at_ms = updated_at_ms,
         .storage = storage,
         .projection_state = projection_state,
-    };
-}
-
-fn candidateStorageForLegacy(
-    schema: session_json.LegacySchemaVersion,
-) CandidateStorage {
-    return switch (schema) {
-        .v1 => .legacy_v1,
-        .v2 => .legacy_v2,
-    };
-}
-
-/// Maps a legacy schema version to its public `StorageFormat` tag.
-pub fn storageFormatForLegacy(
-    schema: session_json.LegacySchemaVersion,
-) StorageFormat {
-    return switch (schema) {
-        .v1 => .legacy_v1,
-        .v2 => .legacy_v2,
     };
 }
 
@@ -757,7 +656,6 @@ fn discoveryCause(err: anyerror) DiscoveryCause {
         error.SessionAuthorityBoundaryUnavailable => .authority_transition,
         error.SessionNotFound => .missing_manifest,
         error.UnsupportedSessionSchema => .unsupported_schema,
-        error.LegacySessionTooLarge => .legacy_too_large,
         error.SessionPathUnsafe, error.DurablePathUnsafe => .unsafe_path,
         else => .invalid_manifest,
     };

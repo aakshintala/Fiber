@@ -32,14 +32,10 @@ pub const Config = struct {
     /// Interactive hosts may request a durable "try later" pause separately
     /// from cancellation. Headless hosts leave this null.
     recovery_pause_flag: ?*std.atomic.Value(bool) = null,
-    gateway_chat_url: []const u8,
     advertised_tool_names: []const []const u8 = &.{},
     advertised_functions: []const model_tool_schema.FunctionSchema = &.{},
     initial_dynamic_tools: []const stream_provider.DynamicFunctionTool = &.{},
-    provider_capabilities: provider_set.Bundle.Capabilities = .{
-        .fx_search = true,
-        .vision_fallback = true,
-    },
+    provider_capabilities: provider_set.Bundle.Capabilities = .{ .vision_fallback = true },
     custom_tool_guidance: []const u8 = "",
     agent_step_limit: usize,
     max_tool_result_bytes: usize = tool_result_limits.default_max_tool_result_bytes,

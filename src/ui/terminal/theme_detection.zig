@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const io_mod = @import("../../core/shared/io.zig");
 const shell_runtime = @import("../shell_runtime.zig");
 const terminal_sequences = @import("terminal.zig");
@@ -13,7 +12,7 @@ pub const Detection = struct {
 pub const TerminalBackground = theme_protocol.Background;
 
 pub fn explicitThemeOverride() ?bool {
-    const override = io_mod.getenv("FX_THEME") orelse return null;
+    const override = io_mod.getenv("FIBER_THEME") orelse return null;
     if (std.ascii.eqlIgnoreCase(override, "light")) return true;
     if (std.ascii.eqlIgnoreCase(override, "dark")) return false;
     return null;
@@ -21,7 +20,6 @@ pub fn explicitThemeOverride() ?bool {
 
 pub fn detectTheme(_: std.mem.Allocator, terminal_state: *const shell_runtime.TerminalState) Detection {
     if (explicitThemeOverride()) |light| return .{ .light = light, .rgb = null };
-    if (comptime builtin.os.tag == .wasi) return .{ .light = false, .rgb = null };
 
     // One probe derives both light/dark and the RGB used for bar shading.
     if (queryTerminalBackground(terminal_state)) |info| {

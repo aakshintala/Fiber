@@ -1,5 +1,4 @@
 const std = @import("std");
-const app_worker_runtime = @import("app_worker_runtime.zig");
 const image_attachments = @import("../images/image_attachments.zig");
 const tool_result_errors = @import("../tooling/tool_result_errors.zig");
 const types = @import("../shared/types.zig");
@@ -9,36 +8,6 @@ pub fn Runtime(comptime App: type) type {
     return struct {
         pub fn startWorkerThread(app: *App) !void {
             app.worker_thread = try std.Thread.spawn(.{}, workerThreadMain, .{app});
-        }
-
-        /// Starts one queued prompt on a single-threaded host. Prompt admission
-        /// is presented before agent work can suspend on host transport.
-        pub fn processNextCooperativePrompt(
-            app: *App,
-            event_handlers: app_worker_runtime.WorkerEventHandlers,
-            flush_frame: *const fn (*App) anyerror!void,
-        ) !void {
-            const job = (try app.worker.tryTakeNextPrompt(std.heap.c_allocator)) orelse return;
-            defer worker_runtime.freeQueuedPrompt(std.heap.c_allocator, job);
-
-            try app_worker_runtime.Runtime(App).tick(
-                app,
-                event_handlers,
-            );
-            try flush_frame(app);
-
-            app.processQueuedPrompt(job) catch |err| {
-                if (err != error.RouteRecoveryStopped) {
-                    const body = try formatErrorBody(std.heap.c_allocator, "request failed", err);
-                    defer std.heap.c_allocator.free(body);
-                    try app.worker.pushEvent(std.heap.c_allocator, .{ .error_text = .{
-                        .topic = "system",
-                        .tone = .@"error",
-                        .body = body,
-                    } });
-                }
-            };
-            app.worker.finishProcessing();
         }
 
         pub fn formatToolExecutionError(alloc: std.mem.Allocator, tool_name: []const u8, err: anyerror) ![]u8 {

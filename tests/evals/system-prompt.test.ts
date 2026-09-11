@@ -20,7 +20,7 @@ describe("eval: system prompt override", () => {
 
       const result = await runFx(
         [
-          "ask", "--auto", "--json", "--no-save",
+          "ask", "--permission-mode", "auto", "--json", "--no-save",
           "--system", "You are a pirate. You must use pirate language like 'Arrr', 'matey', 'ye', 'ahoy', or 'shiver me timbers' in every response.",
           "Say hello and introduce yourself in one sentence.",
         ],

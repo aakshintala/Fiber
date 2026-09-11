@@ -202,10 +202,6 @@ pub fn blockKindForNoticeTone(tone: types.NoticeTone) TranscriptBlockKind {
     };
 }
 
-pub fn blockGapRowsBetween(prev: TranscriptBlockKind, next: TranscriptBlockKind) u16 {
-    return default_block_gap_policy.gapBetween(prev, next);
-}
-
 fn blockKindForEntry(entry: TranscriptEntry) TranscriptBlockKind {
     return switch (entry) {
         .raw_bytes => |e| blockKindForRawClass(e.class),
@@ -2646,14 +2642,6 @@ pub const RenderedBlock = struct {
     }
 };
 
-pub fn transcriptLineCount(text: []const u8) usize {
-    var total: usize = 1;
-    for (text) |byte| {
-        if (byte == '\n') total += 1;
-    }
-    return total;
-}
-
 fn deinitTestEntries(entries: *std.ArrayList(TranscriptEntry), alloc: Allocator) void {
     for (entries.items) |*entry| entry.deinit(alloc);
     entries.deinit(alloc);
@@ -2743,7 +2731,7 @@ test "semantic notice renders every tone and resets before following content" {
 
 test "semantic notice keeps an OSC 8 target hidden and clickable" {
     const alloc = std.testing.allocator;
-    const url = "https://fx.sh/feedback";
+    const url = "https://example.com/notice";
     const body = try std.fmt.allocPrint(
         alloc,
         "\x1b]8;;{s}\x1b\\Open feedback form\x1b]8;;\x1b\\.",
@@ -3786,13 +3774,13 @@ test "renderEntriesToBytes keeps the assistant gutter outside an OSC 8 link" {
         &entries,
         alloc,
         1,
-        "\x1b]8;id=fx-1;https://example.com\x1b\\\x1b[4mabcdef\x1b[24m\x1b]8;;\x1b\\",
+        "\x1b]8;id=fiber-1;https://example.com\x1b\\\x1b[4mabcdef\x1b[24m\x1b]8;;\x1b\\",
     );
 
     const out = try renderEntriesToBytes(alloc, entries.items, 5, .{});
     defer alloc.free(out);
-    try std.testing.expect(std.mem.startsWith(u8, out, "  \x1b[4m\x1b]8;id=fx-1;https://example.com\x1b\\abc"));
-    try std.testing.expect(std.mem.find(u8, out, "\x1b[0m\x1b]8;;\x1b\\\n  \x1b[4m\x1b]8;id=fx-1") != null);
+    try std.testing.expect(std.mem.startsWith(u8, out, "  \x1b[4m\x1b]8;id=fiber-1;https://example.com\x1b\\abc"));
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[0m\x1b]8;;\x1b\\\n  \x1b[4m\x1b]8;id=fiber-1") != null);
 }
 
 test "renderEntriesToBytes reflows an inline image label at narrow widths" {

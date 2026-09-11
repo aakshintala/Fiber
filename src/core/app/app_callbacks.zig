@@ -17,7 +17,6 @@ const debug_trace = @import("../shared/debug_trace.zig");
 const diagnostics = @import("../workspace/diagnostics.zig");
 const diff_mod = @import("../output/diff.zig");
 const file_mutation = @import("../tooling/file_mutation.zig");
-const file_mutation_contract = @import("../tooling/file_mutation_contract.zig");
 const command_output_content = @import("../tooling/command_output_content.zig");
 const tool_admission = @import("../tooling/tool_admission.zig");
 const tool_presentation = @import("../tooling/tool_presentation.zig");
@@ -30,7 +29,6 @@ const types = @import("../shared/types.zig");
 const worker_runtime = @import("../agent/worker_runtime.zig");
 const assistant_presentation = @import("../agent/assistant_presentation.zig");
 const activity_runtime = @import("../output/activity_runtime.zig");
-const assistant_pacer = @import("../../ui/assistant/pacer.zig");
 const ui_render = @import("../../ui/render.zig");
 const render_request = @import("../../ui/render_request.zig");
 const transcript_runtime = @import("../../ui/transcript/runtime.zig");
@@ -271,10 +269,6 @@ pub fn Bindings(comptime App: type) type {
                     app.agentStreamProvider()
                 else
                     agent_stream_provider.unavailable_provider,
-                .cooperative_transport_pulse = if (comptime @hasDecl(App, "cooperativeTransportPulse")) .{
-                    .ctx = @ptrCast(app),
-                    .run = cooperativeTransportPulse,
-                } else null,
                 .tool_registry = if (comptime @hasDecl(App, "toolRegistry")) app.toolRegistry() else .{},
                 .context_registry = if (comptime @hasDecl(App, "contextRegistry")) app.contextRegistry() else null,
                 .context_enabled = if (comptime @hasField(App, "context_enabled")) app.context_enabled else false,
@@ -525,18 +519,9 @@ pub fn Bindings(comptime App: type) type {
             app_worker_runtime.Runtime(App).pushWebFetchProgress(app, call_id, progress) catch {};
         }
 
-        pub fn onInnerToolUsage(ctx: *anyopaque, tool_name: []const u8, usage: types.ToolUsage) void {
-            agentReportInnerToolUsage(ctx, tool_name, usage);
-        }
-
         fn agentAppendRuntimeContext(ctx: *anyopaque, arena: Allocator, messages: *std.ArrayList(ChatMessage)) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             try app.appendRuntimeContextMessage(arena, messages);
-        }
-
-        fn cooperativeTransportPulse(ctx: *anyopaque) !void {
-            const app: *App = @ptrCast(@alignCast(ctx));
-            try app.cooperativeTransportPulse();
         }
 
         fn agentFinalizeTurn(ctx: *anyopaque, turn_id: u64, outcome: types.TurnPresentationOutcome, _: ?types.ProviderCompletionDisposition) !void {
@@ -897,11 +882,11 @@ pub fn Bindings(comptime App: type) type {
         fn agentRequestRouteRecovery(ctx: *anyopaque, arena: Allocator, request: agent_runtime.RouteRecoveryRequest) !agent_runtime.RouteRecoveryDecision {
             const app: *App = @ptrCast(@alignCast(ctx));
             const question = switch (request.finish_reason) {
-                .content_filter => "Response blocked by content filter. What should fx do?",
+                .content_filter => "Response blocked by content filter. What should fiber do?",
                 else => if (request.replay_safe)
                     try std.fmt.allocPrint(
                         arena,
-                        "Route failed after {d} attempt{s} for {s}. What should fx do?",
+                        "Route failed after {d} attempt{s} for {s}. What should fiber do?",
                         .{
                             request.semantic_attempts,
                             if (request.semantic_attempts == 1) "" else "s",
@@ -909,8 +894,8 @@ pub fn Bindings(comptime App: type) type {
                         },
                     )
                 else switch (request.unsafe_no_retry_reason orelse .assistant_output) {
-                    .assistant_output => "Route failed after assistant output started. What should fx do?",
-                    .tool_start => "Route failed after tool use started. What should fx do?",
+                    .assistant_output => "Route failed after assistant output started. What should fiber do?",
+                    .tool_start => "Route failed after tool use started. What should fiber do?",
                 },
             };
             var options_buf: [3]types.QuestionOption = undefined;
@@ -1180,10 +1165,6 @@ const FakeWorker = struct {
         _ = tool_name;
         _ = target_path;
         self.propagated_grants += 1;
-    }
-
-    pub fn transferActivePromptSnapshots(self: *FakeWorker) void {
-        self.active_snapshot_transfers += 1;
     }
 
     pub fn activeTurnId(self: *FakeWorker) u64 {
@@ -1834,7 +1815,7 @@ test "interactive stream adapter queues byte-identical rendered spans" {
 
     const spans = [_][]const u8{
         "\x1b[1mbold\x1b[22m and \x1b[3mitalic\x1b[23m\n",
-        "\x1b]8;id=fx-1;https://example.com\x1b\\docs\x1b]8;;\x1b\\\n",
+        "\x1b]8;id=fiber-1;https://example.com\x1b\\docs\x1b]8;;\x1b\\\n",
         "\x1b[2m\xe2\x94\x82 \x1b[22mconst x = **literal**;\n",
     };
     const deps = Bindings(FakeApp).agentRuntimeDeps(&app);

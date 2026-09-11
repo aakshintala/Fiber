@@ -27,10 +27,6 @@ pub const StepBatchState = struct {
     step_total_count: usize = 0,
     step_had_writes: bool = false,
     pending_user_suffix: std.ArrayList(ChatMessage) = .empty,
-
-    pub fn allToolResultsFailed(self: StepBatchState) bool {
-        return self.step_total_count > 0 and self.step_error_count == self.step_total_count;
-    }
 };
 
 pub const ToolResultAccounting = struct {
@@ -218,7 +214,7 @@ pub fn assembleParallelToolResults(
                 "tool",
                 "argument_integrity_rejected",
                 step_ctx,
-                "call_id={s} name={s} failure=malformed_json provenance=fx_local",
+                "call_id={s} name={s} failure=malformed_json provenance=fiber_local",
                 .{ original_call.id, original_call.name },
             );
             try runtime_tool_admission.recordRejectedToolCall(
@@ -411,31 +407,6 @@ pub fn processCommittedFileResult(
             .{ tool_call.id, tool_call.name, @errorName(err) },
         );
     };
-    if (execution.deferred_tool_completion) |deferred_completion| {
-        if (hooks.publish_deferred_tool_completion) |publish_deferred| {
-            const outcome = publish_deferred(
-                hooks.ctx,
-                deferred_completion,
-            );
-            if (outcome == .failed) reporting_degraded = true;
-            debug_trace.eventf(
-                "tool",
-                "deferred_tool_completion_publication",
-                step_ctx,
-                "call_id={s} name={s} outcome={s}",
-                .{ tool_call.id, tool_call.name, @tagName(outcome) },
-            );
-        } else {
-            reporting_degraded = true;
-            debug_trace.eventf(
-                "tool",
-                "deferred_tool_completion_publication",
-                step_ctx,
-                "call_id={s} name={s} outcome=missing_publisher",
-                .{ tool_call.id, tool_call.name },
-            );
-        }
-    }
     if (reporting_degraded) {
         hooks.push_system_notice(
             hooks.ctx,

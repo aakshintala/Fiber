@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const debug_trace = @import("../core/shared/debug_trace.zig");
 const io_mod = @import("../core/shared/io.zig");
 const record_tape = @import("../core/workspace/record_tape.zig");
@@ -22,25 +21,6 @@ pub const FrameCommit = enum {
     none,
     light,
     reset,
-};
-
-pub const supports_resize_signal = switch (builtin.os.tag) {
-    .linux,
-    .plan9,
-    .illumos,
-    .netbsd,
-    .openbsd,
-    .haiku,
-    .macos,
-    .ios,
-    .watchos,
-    .tvos,
-    .visionos,
-    .dragonfly,
-    .freebsd,
-    .serenity,
-    => true,
-    else => false,
 };
 
 pub const ResizeApprovalInterlock = struct {
@@ -192,89 +172,72 @@ pub fn collectResizeFacts(
 ) !void {
     const now = io_mod.milliTimestamp();
 
-    if (supports_resize_signal) {
-        if (cursor_probe_allowed) resumeResizeCursorProbeAfterPaste(probe, now);
-        switch (probe.poll(now)) {
-            .none => {},
-            .probe_timed_out => {
-                debug_trace.logf("resize", "cursor_measure_failed err=Timeout", .{});
-                finishPendingResizeProbe(shell, null);
-            },
-            .late_window_expired => {
-                debug_trace.logf("resize", "cursor_measure_late_window_expired", .{});
-            },
-        }
+    if (cursor_probe_allowed) resumeResizeCursorProbeAfterPaste(probe, now);
+    switch (probe.poll(now)) {
+        .none => {},
+        .probe_timed_out => {
+            debug_trace.logf("resize", "cursor_measure_failed err=Timeout", .{});
+            finishPendingResizeProbe(shell, null);
+        },
+        .late_window_expired => {
+            debug_trace.logf("resize", "cursor_measure_late_window_expired", .{});
+        },
+    }
 
-        _ = admitResizeSignal(
-            shell,
-            resize_interlock,
-            now,
-            debounce_ms,
-            "facts",
-        );
+    _ = admitResizeSignal(
+        shell,
+        resize_interlock,
+        now,
+        debounce_ms,
+        "facts",
+    );
 
-        if (resizeObservationAwaiting(shell.pending_resize_observation)) return;
+    if (resizeObservationAwaiting(shell.pending_resize_observation)) return;
 
-        if (shell.render_requests.resize_dirty) {
-            if (queuedObservationMatchesDeadline(shell)) {
-                if (now < shell.render_requests.resize_apply_after_ms) return;
-                try settlePendingResize(
-                    terminal,
-                    shell,
-                    metrics,
-                    probe,
-                    footer_rows,
-                    debounce_ms,
-                    cursor_probe_allowed,
-                    now,
-                );
-                return;
-            }
-            // Position replies are indistinguishable from pasted bytes, so
-            // leave live geometry pending until bracketed paste releases input
-            // ownership and the shared parser can begin.
-            if (!cursor_probe_allowed or !probe.canBegin()) return;
-            try observeDirtyResize(
+    if (shell.render_requests.resize_dirty) {
+        if (queuedObservationMatchesDeadline(shell)) {
+            if (now < shell.render_requests.resize_apply_after_ms) return;
+            try settlePendingResize(
                 terminal,
                 shell,
                 metrics,
                 probe,
                 footer_rows,
+                debounce_ms,
+                cursor_probe_allowed,
                 now,
             );
             return;
         }
-        if (!shell.render_requests.pending_settled_width_reflow or
-            now < shell.render_requests.resize_apply_after_ms)
-        {
-            return;
-        }
-        try settlePendingResize(
+        // Position replies are indistinguishable from pasted bytes, so
+        // leave live geometry pending until bracketed paste releases input
+        // ownership and the shared parser can begin.
+        if (!cursor_probe_allowed or !probe.canBegin()) return;
+        try observeDirtyResize(
             terminal,
             shell,
             metrics,
             probe,
             footer_rows,
-            debounce_ms,
-            cursor_probe_allowed,
             now,
         );
         return;
     }
-
-    const next_layout = terminal.queryLayout(footer_rows) catch |err| {
-        try handleInvalidResize(shell, err);
-        return;
-    };
-    if (next_layout.rows == shell.layout.rows and next_layout.cols == shell.layout.cols and !shell.terminal_dimensions_invalid) {
+    if (!shell.render_requests.pending_settled_width_reflow or
+        now < shell.render_requests.resize_apply_after_ms)
+    {
         return;
     }
-
-    shell.layout = next_layout;
-    shell.terminal_dimensions_invalid = false;
-    try recordOwnedBandInvalidation(shell, .resize);
-    metrics.debounced_resizes += 1;
-    try requestRedraw(shell, metrics, .replay_viewport);
+    try settlePendingResize(
+        terminal,
+        shell,
+        metrics,
+        probe,
+        footer_rows,
+        debounce_ms,
+        cursor_probe_allowed,
+        now,
+    );
 }
 
 pub fn admitResizeSignal(
@@ -284,7 +247,7 @@ pub fn admitResizeSignal(
     debounce_ms: i64,
     source: []const u8,
 ) bool {
-    if (!supports_resize_signal or !resize_interlock.takeResizePending()) return false;
+    if (!resize_interlock.takeResizePending()) return false;
     shell.render_requests.observeResizeSignal(now_ms, debounce_ms);
     debug_trace.logf(
         "frame_schedule",

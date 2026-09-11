@@ -1,5 +1,6 @@
 const std = @import("std");
 const mcp = @import("mcp_test_exports");
+const AccessView = @FieldType(mcp.ResolvedLiveView, "view");
 
 const Allocator = std.mem.Allocator;
 
@@ -390,8 +391,8 @@ fn runRuntimeHttpMrtr(io: std.Io, alloc: Allocator, server_url: []const u8) !voi
 
 const ScopedAuthLiveProvider = struct {
     io: std.Io,
-    captured: *const mcp.AccessView,
-    revoked: *const mcp.AccessView,
+    captured: *const AccessView,
+    revoked: *const AccessView,
     marker_path: []const u8,
     resolutions: usize = 0,
 
@@ -780,7 +781,7 @@ fn addInteractiveAuthServer(
         .transport = .http,
         .url = try alloc.dupe(u8, server_url),
         .auth = .{
-            .client_id = try alloc.dupe(u8, "fx-mcp-auth-test"),
+            .client_id = try alloc.dupe(u8, "fiber-mcp-auth-test"),
         },
         .operation_timeout_ms = 10_000,
     });
@@ -1199,19 +1200,19 @@ fn runRuntimeRecovery(
     config_args[0] = try alloc.dupe(u8, fixture_path);
     const config_env = try alloc.alloc(mcp.McpEnvVar, 4);
     config_env[0] = .{
-        .key = try alloc.dupe(u8, "FX_MCP_MODE"),
+        .key = try alloc.dupe(u8, "FIBER_MCP_MODE"),
         .value = try alloc.dupe(u8, "block_operation_write_once"),
     };
     config_env[1] = .{
-        .key = try alloc.dupe(u8, "FX_MCP_CRASH_MARKER"),
+        .key = try alloc.dupe(u8, "FIBER_MCP_CRASH_MARKER"),
         .value = try alloc.dupe(u8, marker_path),
     };
     config_env[2] = .{
-        .key = try alloc.dupe(u8, "FX_MCP_WIRE_LOG"),
+        .key = try alloc.dupe(u8, "FIBER_MCP_WIRE_LOG"),
         .value = try alloc.dupe(u8, wire_log_path),
     };
     config_env[3] = .{
-        .key = try alloc.dupe(u8, "FX_MCP_PID_PATH"),
+        .key = try alloc.dupe(u8, "FIBER_MCP_PID_PATH"),
         .value = try alloc.dupe(u8, pid_path),
     };
 
@@ -1453,7 +1454,7 @@ fn runRuntimeStaleRecovery(
     }
     const recovered_subscription = runtime.servers.items[0].tool_subscription orelse
         return error.MissingRecoveredSubscription;
-    if (recovered_subscription.startupState() != .committed) {
+    if (recovered_subscription.startup_readiness.current() != .committed) {
         return error.RecoveredSubscriptionNotCommitted;
     }
     const listen_count = try countWireMethod(
@@ -1837,15 +1838,15 @@ fn addRecoveryTestServer(
     config_args[0] = try alloc.dupe(u8, fixture_path);
     const config_env = try alloc.alloc(mcp.McpEnvVar, 9);
     const entries = [_]struct { key: []const u8, value: []const u8 }{
-        .{ .key = "FX_MCP_MODE", .value = mode },
-        .{ .key = "FX_MCP_CRASH_MARKER", .value = marker_path },
-        .{ .key = "FX_MCP_WIRE_LOG", .value = wire_log_path },
-        .{ .key = "FX_MCP_PID_PATH", .value = pid_path },
-        .{ .key = "FX_MCP_RECOVERY_READY_PATH", .value = ready_path },
-        .{ .key = "FX_MCP_RECOVERY_RELEASE_PATH", .value = release_path },
-        .{ .key = "FX_MCP_INITIAL_TOOL_NAME", .value = initial_tool_name },
-        .{ .key = "FX_MCP_RECOVERED_TOOL_NAME", .value = recovered_tool_name },
-        .{ .key = "FX_MCP_RESULT_TEXT", .value = result_text },
+        .{ .key = "FIBER_MCP_MODE", .value = mode },
+        .{ .key = "FIBER_MCP_CRASH_MARKER", .value = marker_path },
+        .{ .key = "FIBER_MCP_WIRE_LOG", .value = wire_log_path },
+        .{ .key = "FIBER_MCP_PID_PATH", .value = pid_path },
+        .{ .key = "FIBER_MCP_RECOVERY_READY_PATH", .value = ready_path },
+        .{ .key = "FIBER_MCP_RECOVERY_RELEASE_PATH", .value = release_path },
+        .{ .key = "FIBER_MCP_INITIAL_TOOL_NAME", .value = initial_tool_name },
+        .{ .key = "FIBER_MCP_RECOVERED_TOOL_NAME", .value = recovered_tool_name },
+        .{ .key = "FIBER_MCP_RESULT_TEXT", .value = result_text },
     };
     for (entries, 0..) |entry, index| {
         config_env[index] = .{

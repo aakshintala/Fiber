@@ -6,8 +6,6 @@ const Allocator = std.mem.Allocator;
 const private_dir_permissions = std.Io.File.Permissions.fromMode(0o700);
 const private_file_permissions = std.Io.File.Permissions.fromMode(0o600);
 
-pub const subagent_relationship_index_file = "relationship-index.bin";
-
 pub const ManagedChildKind = enum {
     background_records,
     background_logs,
@@ -150,18 +148,8 @@ pub const ManagedFile = struct {
         return total;
     }
 
-    pub fn relativeName(self: ManagedFile) []const u8 {
-        return self.impl.relative_name;
-    }
-
     pub fn displayPath(self: ManagedFile) ?[]const u8 {
         return self.impl.display_path;
-    }
-
-    /// Returns the verified open descriptor for immediate child stdio
-    /// inheritance. The ManagedFile remains the owner and must outlive spawn.
-    pub fn childStdioFile(self: ManagedFile) std.Io.File {
-        return self.impl.file;
     }
 };
 
@@ -586,95 +574,6 @@ pub const SessionChildCapability = struct {
         return .{ .impl = impl };
     }
 
-    pub fn initLegacyBackgroundRoutes(
-        alloc: Allocator,
-        background_path: []const u8,
-        mode: Mode,
-    ) !SessionChildCapability {
-        if (mode == .writable) io_mod.e2eFailIfDurableMutationAttempted();
-        if (mode == .writable) {
-            try config_runtime.makeAbsolutePath(background_path);
-        }
-        var records = std.Io.Dir.openDirAbsolute(
-            io_mod.getIo(),
-            background_path,
-            .{ .iterate = true, .follow_symlinks = false },
-        ) catch |err| switch (err) {
-            error.NotDir, error.SymLinkLoop => return error.SessionPathUnsafe,
-            else => return err,
-        };
-        errdefer records.close(io_mod.getIo());
-        if (mode == .writable) {
-            records.setPermissions(
-                io_mod.getIo(),
-                private_dir_permissions,
-            ) catch return error.PrivateStatePermissionsUnsupported;
-        }
-        try verifyPrivateDirectory(records);
-
-        if (mode == .writable) {
-            records.createDir(
-                io_mod.getIo(),
-                "logs",
-                private_dir_permissions,
-            ) catch |err| switch (err) {
-                error.PathAlreadyExists => {},
-                error.NotDir, error.SymLinkLoop => {
-                    return error.SessionPathUnsafe;
-                },
-                else => return error.SessionChildStoreFailed,
-            };
-        }
-        const logs: ?std.Io.Dir = records.openDir(io_mod.getIo(), "logs", .{
-            .iterate = true,
-            .follow_symlinks = false,
-        }) catch |err| switch (err) {
-            error.FileNotFound => if (mode == .read_only)
-                null
-            else
-                return error.SessionChildStoreFailed,
-            error.NotDir, error.SymLinkLoop => return error.SessionPathUnsafe,
-            else => return err,
-        };
-        errdefer if (logs) |route| route.close(io_mod.getIo());
-        if (logs) |route| {
-            if (mode == .writable) {
-                route.setPermissions(
-                    io_mod.getIo(),
-                    private_dir_permissions,
-                ) catch return error.PrivateStatePermissionsUnsupported;
-            }
-            try verifyPrivateDirectory(route);
-        }
-
-        var retained = try records.openDir(io_mod.getIo(), ".", .{
-            .iterate = true,
-            .follow_symlinks = false,
-        });
-        errdefer retained.close(io_mod.getIo());
-        const display = try alloc.dupe(u8, background_path);
-        errdefer alloc.free(display);
-        const direct_display = try alloc.dupe(u8, background_path);
-        errdefer alloc.free(direct_display);
-        const impl = try alloc.create(CapabilityImpl);
-        impl.* = .{
-            .alloc = alloc,
-            .mode = mode,
-            .session_dir = .{ .dir = retained },
-            .display_session_path = display,
-            .legacy_background_root = true,
-            .legacy_display_route = direct_display,
-            .replace_ops = .{},
-            .lock_ops = .{},
-            .background_records = .{ .dir = records },
-            .background_logs = if (logs) |route|
-                .{ .dir = route }
-            else
-                null,
-        };
-        return .{ .impl = impl };
-    }
-
     pub fn initForTesting(
         alloc: Allocator,
         session_dir: std.Io.Dir,
@@ -770,7 +669,7 @@ pub const SessionChildCapability = struct {
     }
 
     /// Opens a capability restricted to holder proofs in the owning durable
-    /// fx session. It does not imply access to host-owned terminal state.
+    /// fiber session. It does not imply access to host-owned terminal state.
     pub fn initTerminalProofs(
         alloc: Allocator,
         session_dir: std.Io.Dir,
@@ -1167,10 +1066,6 @@ pub const SessionChildCapability = struct {
     ) ![]u8 {
         return self.impl.displayRoutePath(alloc, kind);
     }
-
-    pub fn validateManagedName(name: []const u8) !void {
-        try validateName(name);
-    }
 };
 
 fn closeOptionalDir(optional: *?io_mod.VerifiedDir) void {
@@ -1317,11 +1212,6 @@ fn countEntries(dir: std.Io.Dir) !usize {
 }
 
 test "private read-only file remains valid after atomic replacement unlinks it" {
-    if (comptime @import("builtin").os.tag == .windows or
-        @import("builtin").os.tag == .wasi)
-    {
-        return error.SkipZigTest;
-    }
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 

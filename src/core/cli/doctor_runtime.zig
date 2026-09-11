@@ -4,7 +4,6 @@ const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 const agent_steps = @import("../config/agent_steps.zig");
 const config_runtime = @import("../config/config_runtime.zig");
-const host = @import("../hosts/host.zig");
 const mcp_contract = @import("../mcp/mcp_contract.zig");
 const session_store = @import("../session/session_store.zig");
 const types = @import("../shared/types.zig");
@@ -34,7 +33,7 @@ pub const Check = struct {
 pub const Snapshot = struct {
     workspace_root: []u8,
     model: []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     owned_model: ?[]u8 = null,
     auth: auth_runtime.StatusSnapshot = .{},
     permission_mode: types.PermissionMode,
@@ -44,7 +43,6 @@ pub const Snapshot = struct {
     pub fn deinit(self: *Snapshot, alloc: Allocator) void {
         alloc.free(self.workspace_root);
         if (self.owned_model) |model| alloc.free(model);
-        self.auth.deinit(alloc);
         for (self.checks) |*entry| entry.deinit(alloc);
         alloc.free(self.checks);
         self.* = undefined;
@@ -58,7 +56,6 @@ const ResolvedModel = struct {
 
 pub fn collect(
     alloc: Allocator,
-    secret_store: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
     mcp_config_diagnostic: mcp_contract.ProfileConfigDiagnostic,
@@ -82,7 +79,6 @@ pub fn collect(
     errdefer {
         alloc.free(snapshot.workspace_root);
         if (snapshot.owned_model) |model| alloc.free(model);
-        snapshot.auth.deinit(alloc);
     }
 
     const workspace_detail = try std.fmt.allocPrint(alloc, "using workspace {s}", .{snapshot.workspace_root});
@@ -96,7 +92,7 @@ pub fn collect(
 
     var detailed = config_runtime.loadMergedSettingsDetailed(alloc, snapshot.workspace_root) catch |err| {
         // Settings are unreadable, so no remembered choice is available to honour.
-        snapshot.auth = try auth_runtime.loadStatusSnapshot(alloc, secret_store, null);
+        snapshot.auth = try auth_runtime.loadStatusSnapshot(alloc);
         try appendConfigLoadFailureCheck(&checks, alloc, "config", "failed to load config", err);
         try appendMcpConfigCheck(&checks, alloc, mcp_config_diagnostic);
         try appendAuthCheck(&checks, alloc, snapshot.auth);
@@ -109,13 +105,11 @@ pub fn collect(
         return snapshot;
     };
     defer detailed.deinit(alloc);
-    snapshot.provider = detailed.settings.provider orelse .gateway;
+    snapshot.provider = .codex;
 
     snapshot.auth = try auth_runtime.loadStatusSnapshotForProvider(
         alloc,
-        secret_store,
         snapshot.provider,
-        detailed.settings.credential_source,
     );
 
     try appendConfigCheck(&checks, alloc, paths, detailed.diagnostics);
@@ -225,10 +219,22 @@ fn appendResolvedStartupCheck(
     snapshot.permission_mode = try resolvePermissionMode(settings.permission_mode);
     snapshot.agent_step_limit = try resolveAgentStepLimit(default_agent_step_limit, settings.max_agent_steps);
 
+    // An unset model is the one startup value fiber cannot substitute for, so
+    // doctor names it rather than reporting a blank resolved model.
+    if (snapshot.model.len == 0) {
+        try appendCheck(checks, alloc, "model", .warn, config_runtime.missing_model_message);
+    } else {
+        try appendCheck(checks, alloc, "model", .ok, "a model is selected");
+    }
+
     const detail = try std.fmt.allocPrint(
         alloc,
         "resolved model={s}, permission_mode={s}, agent_step_limit={d}",
-        .{ snapshot.model, permissionModeLabel(snapshot.permission_mode), snapshot.agent_step_limit },
+        .{
+            if (snapshot.model.len == 0) "<not set>" else snapshot.model,
+            permissionModeLabel(snapshot.permission_mode),
+            snapshot.agent_step_limit,
+        },
     );
     try appendCheckOwned(checks, alloc, "startup", .ok, detail);
 }
@@ -367,7 +373,6 @@ fn appendSessionDiagnosticChecks(
             .authority_less_creation_orphan,
             .authority_transition_pending,
             .commit_intent_pending,
-            .oversized_legacy_snapshot,
             .projection_missing,
             .projection_stale,
             .canonical_log_large,
@@ -441,7 +446,7 @@ fn recoveryActionForSessionDiagnostic(
         .authority_transition_pending,
         .commit_intent_pending,
         .cleanup_candidate,
-        => "rerun fx doctor after active writers exit; cleanup is guarded",
+        => "rerun fiber doctor after active writers exit; cleanup is guarded",
 
         .canonical_log_large,
         .canonical_log_compaction_overdue,
@@ -449,9 +454,6 @@ fn recoveryActionForSessionDiagnostic(
 
         .canonical_log_compaction_failed,
         => "inspect the failed compaction artifact; keep it until no writer is active",
-
-        .oversized_legacy_snapshot,
-        => "rerun migration with --allow-large only after verifying the legacy snapshot",
 
         .projection_missing,
         .projection_stale,
@@ -462,7 +464,7 @@ fn recoveryActionForSessionDiagnostic(
         .commit_watermark_mismatched,
         => std.fmt.bufPrint(
             buffer,
-            "run fx session recover {s}; it creates a separate resumable copy and leaves the source unchanged",
+            "run fiber session recover {s}; it creates a separate resumable copy and leaves the source unchanged",
             .{session_id},
         ),
 
@@ -471,7 +473,7 @@ fn recoveryActionForSessionDiagnostic(
         .invalid_commit_intent,
         => std.fmt.bufPrint(
             buffer,
-            "back up ~/.fx/sessions, then inspect this session with fx session {s} --json",
+            "back up ~/.fiber/sessions, then inspect this session with fiber session {s} --json",
             .{session_id},
         ),
 
@@ -479,7 +481,7 @@ fn recoveryActionForSessionDiagnostic(
         .invalid_authority,
         .invalid_authority_transition,
         .unsafe_path,
-        => "back up ~/.fx/sessions and avoid opening this session until the path is repaired",
+        => "back up ~/.fiber/sessions and avoid opening this session until the path is repaired",
     };
 }
 
@@ -500,7 +502,7 @@ fn appendGhCheck(checks: *std.ArrayList(Check), alloc: Allocator) !void {
 }
 
 fn resolveModel(alloc: Allocator, default_model: []const u8, configured: ?[]const u8) !ResolvedModel {
-    if (io_mod.getenv("FX_MODEL")) |model| {
+    if (io_mod.getenv("FIBER_MODEL")) |model| {
         const trimmed = std.mem.trim(u8, model, " \t\r\n");
         if (trimmed.len > 0) return .{ .value = trimmed };
     }
@@ -515,7 +517,7 @@ fn resolveModel(alloc: Allocator, default_model: []const u8, configured: ?[]cons
 
 fn resolvePermissionMode(configured: ?types.PermissionMode) !types.PermissionMode {
     const fallback = configured orelse config_runtime.default_permission_mode;
-    const raw = io_mod.getenv("FX_PERMISSION_MODE") orelse return fallback;
+    const raw = io_mod.getenv("FIBER_PERMISSION_MODE") orelse return fallback;
     return config_runtime.parsePermissionMode(raw) orelse fallback;
 }
 
@@ -523,7 +525,7 @@ fn resolveAgentStepLimit(fallback: usize, configured: ?usize) !usize {
     return agent_steps.resolveMaxAgentStepsWithOverride(
         configured,
         fallback,
-        io_mod.getenv("FX_MAX_AGENT_STEPS"),
+        io_mod.getenv("FIBER_MAX_AGENT_STEPS"),
     );
 }
 
@@ -556,7 +558,7 @@ fn appendMcpConfigCheck(
             var out: std.Io.Writer.Allocating = .init(alloc);
             defer out.deinit();
             try out.writer.print(
-                "~/.fx/mcp.json warning: {s}",
+                "~/.fiber/mcp.json warning: {s}",
                 .{@tagName(warning.cause)},
             );
             if (warning.key()) |key| try out.writer.print(" key={s}", .{key});
@@ -576,7 +578,7 @@ fn appendMcpConfigCheck(
         .failed => |err| {
             const detail = try std.fmt.allocPrint(
                 alloc,
-                "failed to load ~/.fx/mcp.json: {s}",
+                "failed to load ~/.fiber/mcp.json: {s}",
                 .{@errorName(err)},
             );
             try appendCheckOwned(checks, alloc, "mcp_config", .fail, detail);
@@ -594,24 +596,17 @@ fn formatConfigPresence(alloc: Allocator, user_exists: bool, repo_exists: bool) 
     if (user_exists) {
         if (!first) try out.writer.writeAll(", ");
         first = false;
-        try out.writer.writeAll("~/.fx/settings.json");
+        try out.writer.writeAll("~/.fiber/settings.json");
     }
     if (repo_exists) {
         if (!first) try out.writer.writeAll(", ");
-        try out.writer.writeAll(".fx.json");
+        try out.writer.writeAll(".fiber.json");
     }
     return try out.toOwnedSlice();
 }
 
 fn fileExists(path: []const u8) !bool {
-    if (comptime @import("builtin").os.tag != .windows) {
-        return accessPath(path);
-    }
-    std.Io.Dir.accessAbsolute(io_mod.getIo(), path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return false,
-        else => return err,
-    };
-    return true;
+    return accessPath(path);
 }
 
 fn hasGitMetadata(alloc: Allocator, workspace_root: []const u8) !bool {
@@ -652,17 +647,7 @@ fn commandInPathValue(alloc: Allocator, command_name: []const u8, path_env: []co
 }
 
 fn pathExists(path: []const u8) bool {
-    if (comptime @import("builtin").os.tag != .windows) {
-        return accessPath(path) catch false;
-    }
-
-    if (std.fs.path.isAbsolute(path)) {
-        std.Io.Dir.accessAbsolute(io_mod.getIo(), path, .{}) catch return false;
-        return true;
-    }
-
-    std.Io.Dir.cwd().access(io_mod.getIo(), path, .{}) catch return false;
-    return true;
+    return accessPath(path) catch false;
 }
 
 fn accessPath(path: []const u8) !bool {
@@ -689,7 +674,7 @@ test "format config presence names existing layers" {
     const detail = try formatConfigPresence(std.testing.allocator, true, false);
     defer std.testing.allocator.free(detail);
 
-    try std.testing.expectEqualStrings("loaded config from ~/.fx/settings.json", detail);
+    try std.testing.expectEqualStrings("loaded config from ~/.fiber/settings.json", detail);
 }
 
 test "MCP config diagnostic maps only failures to one doctor check" {
@@ -712,7 +697,7 @@ test "MCP config diagnostic maps only failures to one doctor check" {
     try std.testing.expectEqualStrings("mcp_config", checks.items[0].name);
     try std.testing.expectEqual(CheckStatus.fail, checks.items[0].status);
     try std.testing.expectEqualStrings(
-        "failed to load ~/.fx/mcp.json: McpConfigInvalidJson",
+        "failed to load ~/.fiber/mcp.json: McpConfigInvalidJson",
         checks.items[0].detail,
     );
 }
@@ -721,10 +706,10 @@ test "config check handles user and workspace config files together" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    try writeDoctorFixtureFile(tmp.dir, "home/.fx/settings.json", "{\"permission_mode\":\"ask\"}");
-    try writeDoctorFixtureFile(tmp.dir, "workspace/.fx.json", "{\"permission_mode\":\"auto\"}");
+    try writeDoctorFixtureFile(tmp.dir, "home/.fiber/settings.json", "{\"permission_mode\":\"ask\"}");
+    try writeDoctorFixtureFile(tmp.dir, "workspace/.fiber.json", "{\"permission_mode\":\"auto\"}");
 
     const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
     defer std.testing.allocator.free(home_root);
@@ -744,18 +729,18 @@ test "config check handles user and workspace config files together" {
 
     try std.testing.expectEqual(@as(usize, 1), checks.items.len);
     try std.testing.expectEqual(CheckStatus.ok, checks.items[0].status);
-    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, "~/.fx/settings.json") != null);
-    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, ".fx.json") != null);
+    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, "~/.fiber/settings.json") != null);
+    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, ".fiber.json") != null);
 }
 
 test "config check does not claim rejected user settings loaded" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    try writeDoctorFixtureFile(tmp.dir, "home/.fx/settings.json", "{\"permission_mode\":\"ask\"}");
-    try writeDoctorFixtureFile(tmp.dir, "workspace/.fx.json", "{\"permission_mode\":\"auto\"}");
+    try writeDoctorFixtureFile(tmp.dir, "home/.fiber/settings.json", "{\"permission_mode\":\"ask\"}");
+    try writeDoctorFixtureFile(tmp.dir, "workspace/.fiber.json", "{\"permission_mode\":\"auto\"}");
 
     const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
     defer std.testing.allocator.free(home_root);
@@ -781,8 +766,8 @@ test "config check does not claim rejected user settings loaded" {
 
     try std.testing.expectEqual(@as(usize, 1), checks.items.len);
     try std.testing.expectEqual(CheckStatus.ok, checks.items[0].status);
-    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, "~/.fx/settings.json") == null);
-    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, ".fx.json") != null);
+    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, "~/.fiber/settings.json") == null);
+    try std.testing.expect(std.mem.find(u8, checks.items[0].detail, ".fiber.json") != null);
 }
 
 test "session count check preserves empty and latest details" {
@@ -872,7 +857,7 @@ test "session doctor renders precise watermark and compaction diagnostics" {
     try std.testing.expect(std.mem.find(
         u8,
         checks.items[0].detail,
-        "fx session recover missing-watermark",
+        "fiber session recover missing-watermark",
     ) != null);
     try std.testing.expectEqual(CheckStatus.warn, checks.items[1].status);
     try std.testing.expect(std.mem.find(

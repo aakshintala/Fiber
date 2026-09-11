@@ -62,14 +62,6 @@ pub const PermissionEngine = struct {
         self.rules = next_rules;
     }
 
-    pub fn configuredRuleDecision(self: PermissionEngine, alloc: std.mem.Allocator, workspace_root: []const u8, tool_name: []const u8, target_path: []const u8, target_kind: PermissionTargetKind) !RuleDecision {
-        return ruleDecisionFor(alloc, self.rules, workspace_root, tool_name, target_path, target_kind);
-    }
-
-    pub fn formatPermissionsText(self: PermissionEngine, alloc: std.mem.Allocator, workspace_root: []const u8) ![]u8 {
-        return formatPermissionsStatus(alloc, workspace_root, self.mode, self.grants.items, self.rules);
-    }
-
     pub fn formatPermissionsNoticeBody(self: PermissionEngine, alloc: std.mem.Allocator, workspace_root: []const u8) ![]u8 {
         return (output_contracts.PermissionsSnapshot{
             .workspace_root = workspace_root,
@@ -94,7 +86,7 @@ pub const PermissionTargetKind = enum {
 
 pub const web_search_permission = "web_search";
 pub const web_fetch_permission = "web_fetch";
-pub const yolo_warning_text = "YOLO enabled: fx permission checks disabled";
+pub const yolo_warning_text = "YOLO enabled: fiber permission checks disabled";
 
 pub fn isWebSearchToolName(tool_name: []const u8) bool {
     return std.mem.eql(u8, tool_name, web_search_permission);
@@ -1420,10 +1412,6 @@ pub fn permissionNameForTool(tool_name: []const u8) []const u8 {
     return tool_name;
 }
 
-pub fn permissionRuleCategoryForGrant(permission_name: []const u8) ?[]const u8 {
-    return permissionNameForTool(permission_name);
-}
-
 /// Returns the persistent rule pattern for a session grant. Caller owns the returned slice.
 pub fn permissionRulePatternForGrant(alloc: std.mem.Allocator, workspace_root: []const u8, permission_name: []const u8, pattern: []const u8) ![]u8 {
     const permission = permissionNameForTool(permission_name);
@@ -2370,8 +2358,8 @@ test "configured wildcard command allows only static command grammar" {
 
     try std.testing.expectEqual(RuleDecision.allow, ruleDecisionForPermissionPattern(rules, "bash", "printf safe", .none));
     try std.testing.expectEqual(RuleDecision.allow, ruleDecisionForPermissionPattern(rules, "bash", "printf 'safe value'", .none));
-    try std.testing.expectEqual(RuleDecision.none, ruleDecisionForPermissionPattern(rules, "bash", "printf safe && touch /tmp/fx-marker", .none));
-    try std.testing.expectEqual(RuleDecision.none, ruleDecisionForPermissionPattern(rules, "bash", "printf \"$(touch /tmp/fx-marker)\"", .none));
+    try std.testing.expectEqual(RuleDecision.none, ruleDecisionForPermissionPattern(rules, "bash", "printf safe && touch /tmp/fiber-marker", .none));
+    try std.testing.expectEqual(RuleDecision.none, ruleDecisionForPermissionPattern(rules, "bash", "printf \"$(touch /tmp/fiber-marker)\"", .none));
 }
 
 test "configured command rules require exact matching outside static grammar" {
@@ -2381,7 +2369,7 @@ test "configured command rules require exact matching outside static grammar" {
     const exact_rules: types.PermissionRuleSet = .{ .rules = &exact_rules_buf };
 
     try std.testing.expectEqual(RuleDecision.allow, ruleDecisionForPermissionPattern(exact_rules, "bash", "printf \"$(date)\"", .none));
-    try std.testing.expectEqual(RuleDecision.none, ruleDecisionForPermissionPattern(exact_rules, "bash", "printf \"$(touch /tmp/fx-marker)\"", .none));
+    try std.testing.expectEqual(RuleDecision.none, ruleDecisionForPermissionPattern(exact_rules, "bash", "printf \"$(touch /tmp/fiber-marker)\"", .none));
 
     var dynamic_pattern_rules_buf = [_]types.PermissionRule{
         .{ .permission = @constCast("bash"), .pattern = @constCast("printf \"*\""), .action = .allow },
@@ -2399,8 +2387,8 @@ test "configured command deny and ask retain generic wildcard matching" {
     };
     const rules: types.PermissionRuleSet = .{ .rules = &rules_buf };
 
-    try std.testing.expectEqual(RuleDecision.deny, ruleDecisionForPermissionPattern(rules, "bash", "printf safe && touch /tmp/fx-marker", .none));
-    try std.testing.expectEqual(RuleDecision.ask, ruleDecisionForPermissionPattern(rules, "custom", "printf \"$(touch /tmp/fx-marker)\"", .none));
+    try std.testing.expectEqual(RuleDecision.deny, ruleDecisionForPermissionPattern(rules, "bash", "printf safe && touch /tmp/fiber-marker", .none));
+    try std.testing.expectEqual(RuleDecision.ask, ruleDecisionForPermissionPattern(rules, "custom", "printf \"$(touch /tmp/fiber-marker)\"", .none));
 }
 
 test "static command grammar is an explicit allowlist" {
@@ -2547,6 +2535,13 @@ test "web_fetch grants do not authorize other tools" {
     try std.testing.expect(!sessionGrantAllowed(&grants, "web_fetch", "domain:example.org"));
     try std.testing.expect(!sessionGrantAllowed(&grants, "read_file", "https://example.com/docs"));
     try std.testing.expect(!sessionGrantAllowed(&grants, "run_command", "https://example.com/docs"));
+}
+
+test "canonicalWebFetchDomainPattern rejects wildcard host patterns" {
+    const alloc = std.testing.allocator;
+    try std.testing.expectError(error.InvalidToolArguments, canonicalWebFetchDomainPattern(alloc, "example.*"));
+    try std.testing.expectError(error.InvalidToolArguments, canonicalWebFetchDomainPattern(alloc, "*"));
+    try std.testing.expectError(error.InvalidToolArguments, canonicalWebFetchDomainPattern(alloc, "https://example.com/*"));
 }
 
 test "web_fetch allowlist rejects wildcard and hand edited broad authorization" {

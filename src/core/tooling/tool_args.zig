@@ -55,12 +55,6 @@ pub noinline fn decodeOwnedSearchQuery(
     return .{ .input = input };
 }
 
-pub fn destroyOwnedSearchQueryInput(ptr: *anyopaque, alloc: std.mem.Allocator) void {
-    const input: *OwnedSearchQueryInput = @ptrCast(@alignCast(ptr));
-    input.deinit(alloc);
-    alloc.destroy(input);
-}
-
 noinline fn prefixedFailure(
     alloc: std.mem.Allocator,
     prefix: []const u8,
@@ -170,9 +164,9 @@ test "optional typed args return payloads only for matching tags" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const args = try parseToolArgsObject(arena, "{\"name\":\"fx\",\"enabled\":true,\"count\":3,\"other\":1.25}");
+    const args = try parseToolArgsObject(arena, "{\"name\":\"fiber\",\"enabled\":true,\"count\":3,\"other\":1.25}");
 
-    try std.testing.expectEqualStrings("fx", optionalStringArg(args, "name").?);
+    try std.testing.expectEqualStrings("fiber", optionalStringArg(args, "name").?);
     try std.testing.expect(optionalStringArg(args, "missing") == null);
     try std.testing.expect(optionalStringArg(args, "enabled") == null);
 

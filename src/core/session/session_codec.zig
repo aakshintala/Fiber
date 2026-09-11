@@ -11,7 +11,7 @@ const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
 pub const DurableSessionPreferences = struct {
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     model: []u8,
     effort: types.ReasoningEffort,
     fast_mode: bool,
@@ -363,7 +363,7 @@ fn formatLegacyBackgroundAssistant(
         }
     }
     try out.writer.writeAll(
-        "[Historical command record: fx no longer owns or controls this process",
+        "[Historical command record: fiber no longer owns or controls this process",
     );
     if (log_path.len != 0) try out.writer.print("; former log={s}", .{log_path});
     if (url) |value| try out.writer.print("; recorded url={s}", .{value});
@@ -554,7 +554,7 @@ fn validateStateWithPermissionMigration(
     try validateWorkspaceRoot(state.workspace_root);
     if (state.created_at_ms < 0 or state.updated_at_ms < 0) return error.InvalidDurableField;
     try validateConversationLanguage(state.conversation_language);
-    try validateModel(state.preferences.model);
+    try validateOptionalModel(state.preferences.model);
     if (state.context_history_start > state.history.len) return error.InvalidDurableField;
     if (state.last_subagent_work_id) |id| {
         session.validateWorkId(id) catch return error.InvalidDurableField;
@@ -601,10 +601,6 @@ fn validateStateWithPermissionMigration(
             }
         }
     }
-}
-
-pub fn validateModelPreference(value: []const u8) !void {
-    try validateModel(value);
 }
 
 pub fn parseConversationLanguage(raw: []const u8) !session.ConversationLanguage {
@@ -839,7 +835,7 @@ fn decodeStateImpl(alloc: Allocator, source: *std.Io.Reader, limits: DecodeLimit
         return error.InvalidDurableField;
     try expectKey(&json_reader, alloc, "fast_mode");
     const fast_mode = try readBool(&json_reader);
-    var provider: model_provider.ProviderId = .gateway;
+    var provider: model_provider.ProviderId = .codex;
     if (try json_reader.peekNextTokenType() != .object_end) {
         try expectKey(&json_reader, alloc, "provider");
         const provider_raw = try readStringOwned(&json_reader, alloc, 16);
@@ -1015,7 +1011,7 @@ pub fn parseRecoveryCheckpoint(alloc: Allocator, value: std.json.Value) !Recover
             .provider = if (object.get("route_provider")) |provider_value| blk: {
                 if (provider_value != .string) return error.InvalidDurableField;
                 break :blk model_provider.parse(provider_value.string) orelse return error.InvalidDurableField;
-            } else .gateway,
+            } else .codex,
             .model = model,
         };
     } else try parseTurnAuthority(alloc, object.get("authority") orelse return error.InvalidSessionFormat);
@@ -2228,6 +2224,15 @@ fn validateWorkspaceRoot(value: []const u8) !void {
     }
 }
 
+/// Session preferences may carry no model. fiber ships no compiled-in default,
+/// so a profile that has never selected one opens the shell with an empty
+/// model and the user picks it with /model. Rejecting that made every
+/// first-run session non-durable.
+fn validateOptionalModel(value: []const u8) !void {
+    if (value.len == 0) return;
+    return validateModel(value);
+}
+
 fn validateModel(value: []const u8) !void {
     if (value.len == 0 or value.len > 1024 or !std.unicode.utf8ValidateSlice(value)) {
         return error.InvalidDurableField;
@@ -2759,6 +2764,41 @@ test "current history duplicate-key repair preserves allocation failures" {
     );
 }
 
+test "an unselected model persists but a checkpoint authority still requires one" {
+    const alloc = std.testing.allocator;
+    const unselected =
+        "{\"id\":\"fresh\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\"," ++
+        "\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\"," ++
+        "\"preferences\":{\"model\":\"\",\"effort\":\"auto\",\"fast_mode\":false}," ++
+        "\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}";
+    var source = std.Io.Reader.fixed(unselected);
+    var decoded = try decodeState(alloc, &source, .{});
+    defer decoded.deinit(alloc);
+    try std.testing.expectEqualStrings("", decoded.preferences.model);
+
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    _ = try encodeState(decoded, &encoded.writer);
+    try std.testing.expect(std.mem.find(u8, encoded.written(), "\"model\":\"\"") != null);
+
+    // A blank model is only ever a not-yet-chosen one. A turn cannot be in
+    // flight without a model, so the checkpoint authority stays strict.
+    var blank_authority = decoded;
+    blank_authority.recovery_checkpoint = .{
+        .turn_id = 1,
+        .user = .{ .text = @constCast("prompt") },
+        .assistant_source = @constCast(""),
+        .cause = .network_interrupted,
+        .action = .retrying_request,
+        .authority = .{ .provider = .codex, .model = @constCast("") },
+        .requested_fast_mode = false,
+        .fast_mode = false,
+        .max_provider_attempts = 1,
+        .consumed_provider_attempts = 0,
+    };
+    try std.testing.expectError(error.InvalidDurableField, validateState(blank_authority));
+}
+
 test "legacy durable state defaults context history start to zero" {
     const alloc = std.testing.allocator;
     const legacy =
@@ -2928,7 +2968,7 @@ test "execution memory codec preserves feedback and reads v1 results without it"
             },
         },
         .command_output_replay = .{ .available = .{
-            .handle = "fx-command-replay-private.bin",
+            .handle = "fiber-command-replay-private.bin",
             .framed_bytes = 321,
         } },
         .command_process_presentation = .{ .exit_code = 7 },
@@ -2959,7 +2999,7 @@ test "execution memory codec preserves feedback and reads v1 results without it"
     try std.testing.expect(std.mem.find(u8, encoded.written(), "\"permission_feedback\"") != null);
     try std.testing.expect(std.mem.find(u8, encoded.written(), "\"committed_file_presentation\"") != null);
     try std.testing.expect(std.mem.find(u8, encoded.written(), "\"command_output_replay\"") != null);
-    try std.testing.expect(std.mem.find(u8, encoded.written(), "fx-command-replay-private.bin") != null);
+    try std.testing.expect(std.mem.find(u8, encoded.written(), "fiber-command-replay-private.bin") != null);
 
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, encoded.written(), .{});
     defer parsed.deinit();
@@ -2987,7 +3027,7 @@ test "execution memory codec preserves feedback and reads v1 results without it"
         .available => |value| value,
         .unavailable => return error.TestExpectedReplay,
     };
-    try std.testing.expectEqualStrings("fx-command-replay-private.bin", descriptor.handle);
+    try std.testing.expectEqualStrings("fiber-command-replay-private.bin", descriptor.handle);
     try std.testing.expectEqual(@as(usize, 321), descriptor.framed_bytes);
     try std.testing.expectEqual(
         types.CommandProcessPresentation{ .exit_code = 7 },
@@ -3327,10 +3367,10 @@ test "interrupted command presentation is strict and round trips" {
         },
         .cancelled_command = .{
             .output_replay = .{ .available = .{
-                .handle = "fx-command-replay.bin",
+                .handle = "fiber-command-replay.bin",
                 .framed_bytes = 42,
             } },
-            .command_artifact_handle = "fx-command.log",
+            .command_artifact_handle = "fiber-command.log",
         },
     } };
     var encoded: std.Io.Writer.Allocating = .init(alloc);
@@ -3345,9 +3385,9 @@ test "interrupted command presentation is strict and round trips" {
         .available => |value| value,
         .unavailable => return error.TestExpectedReplay,
     };
-    try std.testing.expectEqualStrings("fx-command-replay.bin", descriptor.handle);
+    try std.testing.expectEqualStrings("fiber-command-replay.bin", descriptor.handle);
     try std.testing.expectEqual(@as(usize, 42), descriptor.framed_bytes);
-    try std.testing.expectEqualStrings("fx-command.log", presentation.command_artifact_handle.?);
+    try std.testing.expectEqualStrings("fiber-command.log", presentation.command_artifact_handle.?);
     try std.testing.expectEqual(types.InterruptedTerminalReason.cancelled, decoded.interrupted.terminal_reason);
 
     const failed_turn: session.HistoryTurn = .{ .interrupted = .{
@@ -3555,7 +3595,7 @@ test "durable image snapshots serialize as session-relative locators" {
         .id = 1,
         .path = @constCast("/Users/private/source.png"),
         .media_type = @constCast("image/png"),
-        .snapshot_path = @constCast("/tmp/fx/sessions/session-id/images/image-1-deadbeef.bin"),
+        .snapshot_path = @constCast("/tmp/fiber/sessions/session-id/images/image-1-deadbeef.bin"),
         .snapshot_sha256 = @constCast("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
     }};
     const turn: session.HistoryTurn = .{ .assistant = .{
@@ -3570,7 +3610,7 @@ test "durable image snapshots serialize as session-relative locators" {
     try std.testing.expect(std.mem.find(
         u8,
         encoded.written(),
-        "/tmp/fx/sessions/session-id/images",
+        "/tmp/fiber/sessions/session-id/images",
     ) == null);
     try std.testing.expect(std.mem.find(
         u8,
@@ -3690,7 +3730,7 @@ test "recovery checkpoint round trips while legacy state stays absent" {
     var legacy_source = std.Io.Reader.fixed(legacy);
     var legacy_state = try decodeState(alloc, &legacy_source, .{});
     defer legacy_state.deinit(alloc);
-    try std.testing.expectEqual(model_provider.ProviderId.gateway, legacy_state.preferences.provider);
+    try std.testing.expectEqual(model_provider.ProviderId.codex, legacy_state.preferences.provider);
     try std.testing.expectEqual(@as(?RecoveryCheckpoint, null), legacy_state.recovery_checkpoint);
 }
 
@@ -3774,7 +3814,7 @@ test "recovery checkpoint rejects an outstanding attempt beyond its budget" {
             .assistant_source = @constCast(""),
             .cause = .network_interrupted,
             .action = .retrying_request,
-            .authority = .{ .provider = .gateway, .model = @constCast("openai/gpt-test") },
+            .authority = .{ .provider = .codex, .model = @constCast("openai/gpt-test") },
             .requested_fast_mode = false,
             .fast_mode = false,
             .max_provider_attempts = 1,

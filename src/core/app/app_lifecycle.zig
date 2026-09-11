@@ -6,12 +6,10 @@ const auth_runtime = @import("../auth/auth_runtime.zig");
 const credentials = @import("../auth/credentials.zig");
 const host = @import("../hosts/host.zig");
 const oauth_transport = @import("../auth/oauth_transport.zig");
-const model_capabilities = @import("../config/model_capabilities.zig");
 const model_provider = @import("../config/model_provider.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const record_tape = @import("../workspace/record_tape.zig");
 const workspace_access = @import("../workspace/workspace_access.zig");
-const update_target = @import("../upgrade/update_target.zig");
 const notification_sound = @import("../notifications/sound.zig");
 const tool_result_limits = @import("../tooling/tool_result_limits.zig");
 const types = @import("../shared/types.zig");
@@ -75,11 +73,9 @@ fn tmuxAbnormalExitHandler(sig: std.posix.SIG) callconv(.c) void {
 }
 
 /// Install handlers for SIGTERM and SIGHUP so an externally-terminated
-/// fx restores terminal state before dying. SIGINT is not included
+/// fiber restores terminal state before dying. SIGINT is not included
 /// because raw mode disables terminal-generated SIGINT.
 pub fn installAbnormalExitHandlers(tmux: ?[]const u8) void {
-    if (!shell_runtime.supports_resize_signal) return;
-
     const handler: std.posix.Sigaction.handler_fn = if (tmux == null)
         abnormalExitHandler
     else
@@ -100,8 +96,6 @@ pub fn installAbnormalExitHandlers(tmux: ?[]const u8) void {
 }
 
 pub fn uninstallAbnormalExitHandlers() void {
-    if (!shell_runtime.supports_resize_signal) return;
-
     if (old_sigterm_action) |old| {
         std.posix.sigaction(std.posix.SIG.TERM, &old, null);
         old_sigterm_action = null;
@@ -117,8 +111,7 @@ pub const StartupState = struct {
     workspace_access: workspace_access.WorkspaceAccess = .{},
     credential: ?credentials.Credential = null,
     credential_onboarding_skipped: bool = false,
-    stored_key_status: credentials.StoredKeyReadStatus = .not_attempted,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     selected_model: []u8 = &.{},
     configured_model: []u8 = &.{},
     model_source: config_runtime.ModelSource = .compiled_default,
@@ -131,11 +124,9 @@ pub const StartupState = struct {
     context_enabled: bool = true,
     fast_mode: bool = false,
     fast_mode_model_bound: bool = false,
-    fast_mode_source: config_runtime.ConfigSource = .compiled_default,
     slash_menu_categories: bool = true,
     collapse_tool_calls: bool = false,
-    auto_upgrade: bool = true,
-    update_channel: update_target.Channel = .stable,
+    auto_upgrade: bool = false,
     startup_scrollback: bool = true,
     prompt_history_enabled: bool = true,
     prompt_history_store_allowed: bool = true,
@@ -186,12 +177,6 @@ pub const StartupState = struct {
         return credentials.catalogAccessAt(self.credential, io_mod.milliTimestamp());
     }
 
-    pub fn gatewayTeam(self: *const StartupState) ?[]const u8 {
-        const credential = self.credential orelse return null;
-        if (credential.needsRefreshAt(io_mod.milliTimestamp())) return null;
-        return credential.gatewayTeam();
-    }
-
     pub fn takeCredential(self: *StartupState) ?credentials.Credential {
         const value = self.credential;
         self.credential = null;
@@ -213,19 +198,17 @@ pub const StartupState = struct {
 
 pub const StartupStatus = struct {
     workspace_root: []u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     selected_model: []const u8,
     owned_selected_model: ?[]u8 = null,
     auth: auth_runtime.StatusSnapshot = .{},
     permission_mode: PermissionMode,
     agent_step_limit: usize,
-    update_channel: update_target.Channel = .stable,
     config_diagnostics: []config_runtime.ConfigDiagnostic = &.{},
 
     pub fn deinit(self: *StartupStatus, alloc: Allocator) void {
         alloc.free(self.workspace_root);
         if (self.owned_selected_model) |model| alloc.free(model);
-        self.auth.deinit(alloc);
         if (self.config_diagnostics.len > 0) {
             for (self.config_diagnostics) |*diagnostic| diagnostic.deinit(alloc);
             alloc.free(self.config_diagnostics);
@@ -249,84 +232,36 @@ pub const BootstrapConfig = struct {
     startup_min_body_rows: u16 = 0,
     default_model: []const u8,
     default_agent_step_limit: usize,
-    secret_store: host.SecretStore,
     resize_handler: ResizeHandler,
-    fx_version: []const u8 = "",
+    fiber_version: []const u8 = "",
 };
 
 pub fn loadStartupState(
     alloc: Allocator,
     transport: oauth_transport.Provider,
-    secret_store: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !StartupState {
     const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-    return loadStartupStateFromOwnedWorkspace(alloc, transport, secret_store, workspace_root, default_model, default_agent_step_limit, null, .refresh_if_needed);
+    return loadStartupStateFromOwnedWorkspace(alloc, transport, workspace_root, default_model, default_agent_step_limit, null, .refresh_if_needed);
 }
 
 pub fn loadStartupStateWithoutCredentials(alloc: Allocator, default_model: []const u8, default_agent_step_limit: usize) !StartupState {
     const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, workspace_root, default_model, default_agent_step_limit, null, null);
-}
-
-pub fn loadEmbeddedStartupState(
-    alloc: Allocator,
-    home_dir: []const u8,
-    workspace_root: []const u8,
-    default_model: []const u8,
-    default_agent_step_limit: usize,
-) !StartupState {
-    const owned_workspace_root = try io_mod.realpathAlloc(alloc, workspace_root);
-    return loadStartupStateFromOwnedWorkspace(
-        alloc,
-        oauth_transport.unavailable_provider,
-        host.unavailable_secret_store,
-        owned_workspace_root,
-        default_model,
-        default_agent_step_limit,
-        home_dir,
-        null,
-    );
-}
-
-pub fn loadLibfxStartupState(
-    alloc: Allocator,
-    workspace_root: []const u8,
-    model: []const u8,
-    default_agent_step_limit: usize,
-) Allocator.Error!StartupState {
-    const owned_workspace = try alloc.dupe(u8, workspace_root);
-    errdefer alloc.free(owned_workspace);
-    const selected_model = try alloc.dupe(u8, model);
-    errdefer alloc.free(selected_model);
-    const configured_model = try alloc.dupe(u8, model);
-    return .{
-        .workspace_root = owned_workspace,
-        .selected_model = selected_model,
-        .configured_model = configured_model,
-        .permission_mode = .auto,
-        .agent_step_limit = default_agent_step_limit,
-        .context_enabled = false,
-        .auto_upgrade = false,
-        .prompt_history_enabled = false,
-        .prompt_history_store_allowed = false,
-    };
+    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, workspace_root, default_model, default_agent_step_limit, null, null);
 }
 
 pub fn loadCatalogStartupState(
     alloc: Allocator,
-    secret_store: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !StartupState {
     const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, secret_store, workspace_root, default_model, default_agent_step_limit, null, .stored);
+    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, workspace_root, default_model, default_agent_step_limit, null, .stored);
 }
 
 pub fn loadStartupStatus(
     alloc: Allocator,
-    secret_store: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !StartupStatus {
@@ -344,9 +279,7 @@ pub fn loadStartupStatus(
 
     var auth_status = try auth_runtime.loadStatusSnapshotForProvider(
         alloc,
-        secret_store,
         configured_selection.provider,
-        settings.credential_source,
     );
     errdefer auth_status.deinit(alloc);
 
@@ -358,10 +291,8 @@ pub fn loadStartupStatus(
         .auth = auth_status,
         .permission_mode = loadPermissionMode(settings.permission_mode),
         .agent_step_limit = loadAgentStepLimit(default_agent_step_limit, settings.max_agent_steps),
-        .update_channel = settings.update_channel orelse .stable,
         .config_diagnostics = detailed.diagnostics,
     };
-    auth_status.owned_team = null;
     detailed.diagnostics = &.{};
     return result;
 }
@@ -382,7 +313,7 @@ pub fn applyWorkspaceLaunch(
 
 fn loadStartupStateForWorkspace(alloc: Allocator, workspace_root: []const u8, default_model: []const u8, default_agent_step_limit: usize) !StartupState {
     const owned_workspace_root = try alloc.dupe(u8, workspace_root);
-    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, host.unavailable_secret_store, owned_workspace_root, default_model, default_agent_step_limit, null, null);
+    return loadStartupStateFromOwnedWorkspace(alloc, oauth_transport.unavailable_provider, owned_workspace_root, default_model, default_agent_step_limit, null, null);
 }
 
 const CredentialLoadMode = credentials.LoadMode;
@@ -390,7 +321,6 @@ const CredentialLoadMode = credentials.LoadMode;
 fn loadStartupStateFromOwnedWorkspace(
     alloc: Allocator,
     transport: oauth_transport.Provider,
-    secret_store: host.SecretStore,
     owned_workspace_root: []u8,
     default_model: []const u8,
     default_agent_step_limit: usize,
@@ -419,9 +349,16 @@ fn loadStartupStateFromOwnedWorkspace(
 
     const configured_selection = try configuredProviderSelection(default_model, settings);
     state.provider = configured_selection.provider;
-    state.configured_model = try alloc.dupe(u8, configured_selection.model);
     state.model_source = detailed.model_source orelse .compiled_default;
     state.selected_model = try loadInitialModel(alloc, configured_selection.model, null);
+    // FIBER_MODEL supplies a model without writing one to the profile. With no
+    // compiled-in default behind it, the profile setting can be empty while the
+    // effective model is not, and the session store rejects an empty durable
+    // model. The durable seed follows the effective model in that case.
+    state.configured_model = try alloc.dupe(u8, if (configured_selection.model.len > 0)
+        configured_selection.model
+    else
+        state.selected_model);
     if (hasProcessModelOverride()) state.model_source = .process_override;
     state.config_diagnostics = detailed.diagnostics;
     detailed.diagnostics = &.{};
@@ -431,13 +368,10 @@ fn loadStartupStateFromOwnedWorkspace(
         const resolution = try credentials.resolveForProvider(
             alloc,
             transport,
-            secret_store,
             mode,
             state.provider,
-            settings.credential_source,
         );
         state.credential = resolution.credential;
-        state.stored_key_status = resolution.stored_key_status;
     }
     state.permission_mode = loadPermissionMode(settings.permission_mode);
     state.yolo_acknowledged = settings.yolo_acknowledged orelse false;
@@ -446,21 +380,11 @@ fn loadStartupStateFromOwnedWorkspace(
     state.max_tool_result_bytes = tool_result_limits.resolveMaxToolResultBytes(settings.max_tool_result_bytes, tool_result_limits.default_max_tool_result_bytes);
     state.context_limits = config_runtime.resolveContextLimits(settings, &.{});
     state.context_enabled = settings.context orelse true;
-    const fast_mode = resolveStartupFastMode(
-        state.provider,
-        state.model_source,
-        settings.fast_mode,
-        detailed.sources.fast_mode,
-        settings.fast_mode_model_bound,
-        detailed.sources.fast_mode_model_bound,
-    );
-    state.fast_mode = fast_mode.enabled;
-    state.fast_mode_model_bound = fast_mode.model_bound;
-    state.fast_mode_source = detailed.sources.fast_mode;
+    state.fast_mode = false;
+    state.fast_mode_model_bound = false;
     state.slash_menu_categories = settings.slash_menu_categories orelse true;
     state.collapse_tool_calls = settings.collapse_tool_calls orelse false;
-    state.auto_upgrade = settings.auto_upgrade orelse true;
-    state.update_channel = settings.update_channel orelse .stable;
+    state.auto_upgrade = settings.auto_upgrade orelse false;
     state.startup_scrollback = settings.startup_scrollback orelse true;
     state.effort = settings.effort orelse .auto;
     state.first_call_tool_choice = settings.first_call_tool_choice orelse .auto;
@@ -477,32 +401,6 @@ fn loadStartupStateFromOwnedWorkspace(
     return state;
 }
 
-const StartupFastMode = struct {
-    enabled: bool,
-    model_bound: bool,
-};
-
-fn resolveStartupFastMode(
-    provider: model_provider.ProviderId,
-    model_source: config_runtime.ModelSource,
-    configured_fast_mode: ?bool,
-    fast_mode_source: config_runtime.ConfigSource,
-    model_bound: ?bool,
-    binding_source: config_runtime.ConfigSource,
-) StartupFastMode {
-    if (configured_fast_mode) |enabled| {
-        return .{
-            .enabled = enabled,
-            .model_bound = enabled and
-                model_bound == true and
-                model_source == fast_mode_source and
-                fast_mode_source == binding_source,
-        };
-    }
-    const enabled = provider == .gateway and model_source == .compiled_default;
-    return .{ .enabled = enabled, .model_bound = enabled };
-}
-
 pub fn bootstrapInteractiveApp(cfg: BootstrapConfig) !StartupState {
     try cfg.terminal.ensureInteractive();
     try cfg.terminal.captureOriginalTermios();
@@ -514,7 +412,6 @@ pub fn bootstrapInteractiveApp(cfg: BootstrapConfig) !StartupState {
 
     var state = try loadCatalogStartupState(
         cfg.alloc,
-        cfg.secret_store,
         cfg.default_model,
         cfg.default_agent_step_limit,
     );
@@ -538,7 +435,7 @@ pub fn bootstrapInteractiveApp(cfg: BootstrapConfig) !StartupState {
         cfg.alloc,
         cfg.shell.layout.cols,
         cfg.shell.layout.rows,
-        cfg.fx_version,
+        cfg.fiber_version,
     ) catch |err| {
         debug_trace.logf("record", "startup recording failed err={s}", .{@errorName(err)});
         return error.RecordingStartFailed;
@@ -661,16 +558,13 @@ fn suspendTerminalForJobControl(
 }
 
 /// Raise SIGTSTP after restoring cooked mode; on SIGCONT rebuild interactive
-/// terminal state and request a full repaint. Platforms without job-control
-/// signals (same set as `supports_resize_signal`) are a no-op.
+/// terminal state and request a full repaint.
 pub fn suspendToJobControl(
     terminal: *TerminalState,
     shell: *TranscriptRuntime,
     metrics: *Metrics,
     footer_rows: u16,
 ) !void {
-    if (!shell_runtime.supports_resize_signal) return;
-
     suspendTerminalForJobControl(terminal, shell, metrics);
     _ = std.c.raise(std.posix.SIG.TSTP);
     try resumeTerminalAfterJobControl(terminal, shell, metrics, footer_rows);
@@ -1060,7 +954,7 @@ fn shutdownCleanupRow(shell: *const TranscriptRuntime) u16 {
 
 fn loadPermissionMode(configured: ?PermissionMode) PermissionMode {
     const fallback = configured orelse default_permission_mode;
-    const mode = io_mod.getenv("FX_PERMISSION_MODE") orelse return fallback;
+    const mode = io_mod.getenv("FIBER_PERMISSION_MODE") orelse return fallback;
     return config_runtime.parsePermissionMode(mode) orelse fallback;
 }
 
@@ -1068,7 +962,7 @@ fn loadAgentStepLimit(fallback: usize, configured: ?usize) usize {
     return agent_steps.resolveMaxAgentStepsWithOverride(
         configured,
         fallback,
-        io_mod.getenv("FX_MAX_AGENT_STEPS"),
+        io_mod.getenv("FIBER_MAX_AGENT_STEPS"),
     );
 }
 
@@ -1076,47 +970,28 @@ fn configuredProviderSelection(
     default_model: []const u8,
     settings: *const config_runtime.Settings,
 ) !model_provider.ProviderSelection {
-    const provider = settings.provider orelse .gateway;
-    const model = settings.models.get(provider) orelse switch (provider) {
-        .gateway => default_model,
-        .codex => return error.CodexModelNotSelected,
-        .grok => return error.GrokModelNotSelected,
-    };
+    const provider: model_provider.ProviderId = .codex;
+    const model = settings.models.get(provider) orelse default_model;
     return .{ .provider = provider, .model = model };
 }
 
 fn initialModelId(default_model: []const u8, configured: ?[]const u8) []const u8 {
-    const model = io_mod.getenv("FX_MODEL") orelse return configured orelse default_model;
+    const model = io_mod.getenv("FIBER_MODEL") orelse return configured orelse default_model;
     const trimmed = std.mem.trim(u8, model, " \t\r\n");
     return if (trimmed.len > 0) trimmed else configured orelse default_model;
 }
 
 test "startup provider chooses only its provider-scoped model" {
-    var gateway_settings = config_runtime.Settings{ .provider = .gateway };
-    gateway_settings.models.values[@intFromEnum(model_provider.ProviderId.gateway)] = @constCast("gateway/model");
-    gateway_settings.models.values[@intFromEnum(model_provider.ProviderId.codex)] = @constCast("gpt-model");
-    const gateway = try configuredProviderSelection("default/model", &gateway_settings);
-    try std.testing.expectEqual(model_provider.ProviderId.gateway, gateway.provider);
-    try std.testing.expectEqualStrings("gateway/model", gateway.model);
-
-    var codex_settings = config_runtime.Settings{ .provider = .codex };
-    codex_settings.models.values[@intFromEnum(model_provider.ProviderId.gateway)] = @constCast("gateway/model");
+    var codex_settings = config_runtime.Settings{};
     codex_settings.models.values[@intFromEnum(model_provider.ProviderId.codex)] = @constCast("gpt-model");
     const codex = try configuredProviderSelection("default/model", &codex_settings);
     try std.testing.expectEqual(model_provider.ProviderId.codex, codex.provider);
     try std.testing.expectEqualStrings("gpt-model", codex.model);
 
-    const missing_codex = config_runtime.Settings{ .provider = .codex };
-    try std.testing.expectError(
-        error.CodexModelNotSelected,
-        configuredProviderSelection("default/model", &missing_codex),
-    );
-
-    var grok_settings = config_runtime.Settings{ .provider = .grok };
-    grok_settings.models.values[@intFromEnum(model_provider.ProviderId.grok)] = @constCast("grok-model");
-    const grok = try configuredProviderSelection("default/model", &grok_settings);
-    try std.testing.expectEqual(model_provider.ProviderId.grok, grok.provider);
-    try std.testing.expectEqualStrings("grok-model", grok.model);
+    const missing_codex = config_runtime.Settings{};
+    const fallback = try configuredProviderSelection("default/model", &missing_codex);
+    try std.testing.expectEqual(model_provider.ProviderId.codex, fallback.provider);
+    try std.testing.expectEqualStrings("default/model", fallback.model);
 }
 
 fn loadInitialModel(alloc: Allocator, default_model: []const u8, configured: ?[]const u8) ![]u8 {
@@ -1124,7 +999,7 @@ fn loadInitialModel(alloc: Allocator, default_model: []const u8, configured: ?[]
 }
 
 fn hasProcessModelOverride() bool {
-    const model = io_mod.getenv("FX_MODEL") orelse return false;
+    const model = io_mod.getenv("FIBER_MODEL") orelse return false;
     return std.mem.trim(u8, model, " \t\r\n").len > 0;
 }
 
@@ -1134,7 +1009,7 @@ fn loadStartupStatusModel(alloc: Allocator, default_model: []const u8, configure
 }
 
 fn credentialOnboardingDisabled() bool {
-    const value = io_mod.getenv("FX_SKIP_ONBOARDING") orelse return false;
+    const value = io_mod.getenv("FIBER_SKIP_ONBOARDING") orelse return false;
     const trimmed = std.mem.trim(u8, value, " \t\r\n");
     if (trimmed.len == 0) return false;
     return !std.mem.eql(u8, trimmed, "0") and !std.ascii.eqlIgnoreCase(trimmed, "false");
@@ -1143,7 +1018,7 @@ fn credentialOnboardingDisabled() bool {
 const SoundEnvLevel = enum { off, on, max };
 
 fn soundEnvOverride() ?SoundEnvLevel {
-    const value = io_mod.getenv("FX_SOUND") orelse return null;
+    const value = io_mod.getenv("FIBER_SOUND") orelse return null;
     const trimmed = std.mem.trim(u8, value, " \t\r\n");
     if (trimmed.len == 0) return null;
     if (std.ascii.eqlIgnoreCase(trimmed, "max")) return .max;
@@ -1221,7 +1096,7 @@ test "permission mode loader defaults to auto" {
 
 test "permission mode environment accepts yolo without changing fallback" {
     var env = try TestEnv.install(std.testing.allocator, &.{
-        .{ .key = "FX_PERMISSION_MODE", .value = "yolo" },
+        .{ .key = "FIBER_PERMISSION_MODE", .value = "yolo" },
     });
     defer env.deinit();
 
@@ -1875,18 +1750,22 @@ test "startup credential modes select a refresh policy, never a narrower source 
 }
 
 test "loadStartupState applies core env overrides" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, ".");
+    defer std.testing.allocator.free(home);
+
     var env = try TestEnv.install(std.testing.allocator, &.{
-        .{ .key = "FX_MODEL", .value = "  env-model  " },
-        .{ .key = "AI_GATEWAY_API_KEY", .value = "gateway-key" },
-        .{ .key = "FX_PERMISSION_MODE", .value = "auto" },
-        .{ .key = "FX_MAX_AGENT_STEPS", .value = "37" },
+        .{ .key = "HOME", .value = home },
+        .{ .key = "FIBER_MODEL", .value = "  env-model  " },
+        .{ .key = "FIBER_PERMISSION_MODE", .value = "auto" },
+        .{ .key = "FIBER_MAX_AGENT_STEPS", .value = "37" },
     });
     defer env.deinit();
 
     var state = try loadStartupState(
         std.testing.allocator,
         oauth_transport.unavailable_provider,
-        host.unavailable_secret_store,
         "default-model",
         12,
     );
@@ -1897,93 +1776,16 @@ test "loadStartupState applies core env overrides" {
     try std.testing.expectEqualStrings("default-model", state.configured_model);
     try std.testing.expectEqual(config_runtime.ModelSource.process_override, state.model_source);
     try std.testing.expect(!state.fast_mode);
-    try std.testing.expectEqualStrings("gateway-key", state.apiKey().?);
-    try std.testing.expectEqual(credentials.Source.ai_gateway_api_key, state.credential.?.source);
+    try std.testing.expect(state.credential == null);
     try std.testing.expectEqual(PermissionMode.auto, state.permission_mode);
     try std.testing.expectEqual(@as(usize, 37), state.agent_step_limit);
-}
-
-test "loadStartupState defaults fast mode on only for the compiled Gateway default and requires bound explicit preferences" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
-    try tmp.dir.createDirPath(io_mod.getIo(), "absent");
-    try tmp.dir.createDirPath(io_mod.getIo(), "configured");
-    try tmp.dir.createDirPath(io_mod.getIo(), "disabled");
-    try tmp.dir.createDirPath(io_mod.getIo(), "legacy-fast");
-    try tmp.dir.createDirPath(io_mod.getIo(), "bound-fast");
-    try tmp.dir.createDirPath(io_mod.getIo(), "codex");
-
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const absent_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "absent");
-    defer std.testing.allocator.free(absent_root);
-    const configured_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "configured");
-    defer std.testing.allocator.free(configured_root);
-    const disabled_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "disabled");
-    defer std.testing.allocator.free(disabled_root);
-    const legacy_fast_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "legacy-fast");
-    defer std.testing.allocator.free(legacy_fast_root);
-    const bound_fast_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "bound-fast");
-    defer std.testing.allocator.free(bound_fast_root);
-    const codex_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "codex");
-    defer std.testing.allocator.free(codex_root);
-
-    const fixture = try std.fmt.allocPrint(
-        std.testing.allocator,
-        "{{\"workspaces\":{{\"{s}\":{{\"model\":\"openai/gpt-5\"}},\"{s}\":{{\"fast_mode\":false}},\"{s}\":{{\"model\":\"zai/glm-5.3\",\"fast_mode\":true}},\"{s}\":{{\"model\":\"provider/fast-toggle\",\"fast_mode\":true,\"fast_mode_model_bound\":true}},\"{s}\":{{\"provider\":\"codex\",\"codex_model\":\"gpt-5.4-mini\"}}}}}}\n",
-        .{ configured_root, disabled_root, legacy_fast_root, bound_fast_root, codex_root },
-    );
-    defer std.testing.allocator.free(fixture);
-    try writeFixtureFile(tmp.dir, "home/.fx/settings.json", fixture);
-
-    var env = try TestEnv.install(std.testing.allocator, &.{.{ .key = "HOME", .value = home_root }});
-    defer env.deinit();
-
-    var absent = try loadStartupStateForWorkspace(std.testing.allocator, absent_root, "zai/glm-5.2", 25);
-    defer absent.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("zai/glm-5.2", absent.selected_model);
-    try std.testing.expectEqualStrings("zai/glm-5.2", absent.configured_model);
-    try std.testing.expect(absent.fast_mode);
-    try std.testing.expect(absent.fast_mode_model_bound);
-
-    var configured = try loadStartupStateForWorkspace(std.testing.allocator, configured_root, "zai/glm-5.2", 25);
-    defer configured.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("openai/gpt-5", configured.selected_model);
-    try std.testing.expectEqualStrings("openai/gpt-5", configured.configured_model);
-    try std.testing.expect(!configured.fast_mode);
-    try std.testing.expect(!configured.fast_mode_model_bound);
-
-    var disabled = try loadStartupStateForWorkspace(std.testing.allocator, disabled_root, "zai/glm-5.2", 25);
-    defer disabled.deinit(std.testing.allocator);
-    try std.testing.expect(!disabled.fast_mode);
-    try std.testing.expect(!disabled.fast_mode_model_bound);
-
-    var legacy_fast = try loadStartupStateForWorkspace(std.testing.allocator, legacy_fast_root, "zai/glm-5.2", 25);
-    defer legacy_fast.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("zai/glm-5.3", legacy_fast.selected_model);
-    try std.testing.expect(legacy_fast.fast_mode);
-    try std.testing.expect(!legacy_fast.fast_mode_model_bound);
-
-    var bound_fast = try loadStartupStateForWorkspace(std.testing.allocator, bound_fast_root, "zai/glm-5.2", 25);
-    defer bound_fast.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("provider/fast-toggle", bound_fast.selected_model);
-    try std.testing.expect(bound_fast.fast_mode);
-    try std.testing.expect(bound_fast.fast_mode_model_bound);
-
-    var codex = try loadStartupStateForWorkspace(std.testing.allocator, codex_root, "zai/glm-5.2", 25);
-    defer codex.deinit(std.testing.allocator);
-    try std.testing.expectEqual(model_provider.ProviderId.codex, codex.provider);
-    try std.testing.expectEqualStrings("gpt-5.4-mini", codex.selected_model);
-    try std.testing.expect(!codex.fast_mode);
 }
 
 test "loadStartupState resolves startup scrollback default and explicit false" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "absent");
     try tmp.dir.createDirPath(io_mod.getIo(), "disabled");
 
@@ -2000,7 +1802,7 @@ test "loadStartupState resolves startup scrollback default and explicit false" {
         .{disabled_root},
     );
     defer std.testing.allocator.free(fixture);
-    try writeFixtureFile(tmp.dir, "home/.fx/settings.json", fixture);
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", fixture);
 
     var env = try TestEnv.install(std.testing.allocator, &.{.{ .key = "HOME", .value = home_root }});
     defer env.deinit();
@@ -2018,7 +1820,7 @@ test "loadStartupState resolves slash menu categories default and explicit false
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
 
     const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
@@ -2033,7 +1835,7 @@ test "loadStartupState resolves slash menu categories default and explicit false
     defer initial.deinit(std.testing.allocator);
     try std.testing.expect(initial.slash_menu_categories);
 
-    try writeFixtureFile(tmp.dir, "home/.fx/settings.json", "{\"slash_menu_categories\":false}\n");
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", "{\"slash_menu_categories\":false}\n");
     var hidden = try loadStartupStateForWorkspace(std.testing.allocator, workspace_root, "default-model", 25);
     defer hidden.deinit(std.testing.allocator);
     try std.testing.expect(!hidden.slash_menu_categories);
@@ -2049,8 +1851,8 @@ test "loadStartupState resolves max_agent_steps default zero and positive values
     try tmp.dir.createDirPath(io_mod.getIo(), "absent");
     try tmp.dir.createDirPath(io_mod.getIo(), "zero");
     try tmp.dir.createDirPath(io_mod.getIo(), "positive");
-    try writeFixtureFile(tmp.dir, "zero/.fx.json", "{\"max_agent_steps\":0}");
-    try writeFixtureFile(tmp.dir, "positive/.fx.json", "{\"max_agent_steps\":50}");
+    try writeFixtureFile(tmp.dir, "zero/.fiber.json", "{\"max_agent_steps\":0}");
+    try writeFixtureFile(tmp.dir, "positive/.fiber.json", "{\"max_agent_steps\":50}");
 
     const absent_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "absent");
     defer std.testing.allocator.free(absent_root);
@@ -2081,7 +1883,7 @@ test "loadStartupState resolves max_tool_result_bytes default and explicit value
 
     try tmp.dir.createDirPath(io_mod.getIo(), "absent");
     try tmp.dir.createDirPath(io_mod.getIo(), "explicit");
-    try writeFixtureFile(tmp.dir, "explicit/.fx.json", "{\"max_tool_result_bytes\":131072}");
+    try writeFixtureFile(tmp.dir, "explicit/.fiber.json", "{\"max_tool_result_bytes\":131072}");
 
     const absent_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "absent");
     defer std.testing.allocator.free(absent_root);
@@ -2105,7 +1907,7 @@ test "loadStartupState falls back to auto for invalid first_call_tool_choice" {
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    try writeFixtureFile(tmp.dir, "workspace/.fx.json", "{\"first_call_tool_choice\":\"required\"}");
+    try writeFixtureFile(tmp.dir, "workspace/.fiber.json", "{\"first_call_tool_choice\":\"required\"}");
 
     const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
     defer std.testing.allocator.free(workspace_root);
@@ -2119,7 +1921,7 @@ test "loadStartupState falls back to auto for invalid first_call_tool_choice" {
 test "loadStartupState diagnoses the retired fuzzy skill setting" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
 
     const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
@@ -2127,7 +1929,7 @@ test "loadStartupState diagnoses the retired fuzzy skill setting" {
     const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
     defer std.testing.allocator.free(workspace_root);
 
-    try writeFixtureFile(tmp.dir, "home/.fx/settings.json", "{\"skill_match_fuzzy\":true}");
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", "{\"skill_match_fuzzy\":true}");
 
     var env = try TestEnv.install(std.testing.allocator, &.{.{ .key = "HOME", .value = home_root }});
     defer env.deinit();
@@ -2140,8 +1942,8 @@ test "loadStartupState diagnoses the retired fuzzy skill setting" {
 
 test "credential onboarding can be skipped independently from Keychain" {
     var env = try TestEnv.install(std.testing.allocator, &.{
-        .{ .key = "FX_SKIP_ONBOARDING", .value = "1" },
-        .{ .key = "FX_DISABLE_KEYCHAIN", .value = "1" },
+        .{ .key = "FIBER_SKIP_ONBOARDING", .value = "1" },
+        .{ .key = "FIBER_DISABLE_KEYCHAIN", .value = "1" },
     });
     defer env.deinit();
 

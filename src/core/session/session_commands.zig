@@ -14,7 +14,6 @@ const permissions = @import("../permissions/permissions.zig");
 const worker_runtime = @import("../agent/worker_runtime.zig");
 const prompt_history_runtime = @import("../app/prompt_history_runtime.zig");
 const provider_runtime = @import("../app/provider_runtime.zig");
-const tool_dispatch = @import("../tooling/tool_dispatch.zig");
 const text_utils = @import("../shared/text_utils.zig");
 const types = @import("../shared/types.zig");
 const render_request = @import("../../ui/render_request.zig");
@@ -176,7 +175,6 @@ fn appendShadowedUserSources(
     try appendShadowedUserSource(writer, "model", patch.model_preference != null, model_source, &wrote_header);
     try appendShadowedUserSource(writer, "permission_mode", patch.permission_mode != null, sources.permission_mode, &wrote_header);
     try appendShadowedUserSource(writer, "effort", patch.effort != null, sources.effort, &wrote_header);
-    try appendShadowedUserSource(writer, "fast_mode", patch.fast_mode != null, sources.fast_mode, &wrote_header);
     try appendShadowedUserSource(writer, "startup_scrollback", patch.startup_scrollback != null, sources.startup_scrollback, &wrote_header);
     try appendShadowedUserSource(writer, "prompt_history", patch.prompt_history_enabled != null, sources.prompt_history_enabled, &wrote_header);
     if (patch.statusline_item) |item| {
@@ -276,7 +274,7 @@ pub fn Commands(comptime App: type) type {
                 .model = provider_runtime.model(app),
                 .provider = provider_runtime.provider(app),
                 .update_channel = update_channel_label(app),
-                .build_channel = if (@hasDecl(App, "build_update_channel")) App.build_update_channel.label() else "stable",
+                .build_channel = "stable",
                 .build_revision = if (@hasDecl(App, "build_revision")) App.build_revision else "",
                 .auth = auth,
                 .auth_help = auth.missingHelp(.interactive),
@@ -377,53 +375,6 @@ pub fn Commands(comptime App: type) type {
             try app.writeDomainNotice(.{ .topic = "permissions", .tone = .@"error", .body = permissions_usage }, true);
         }
 
-        pub fn handleAllowlist(app: *App, rest: []const u8) !void {
-            const trimmed = std.mem.trim(u8, rest, " \t");
-            if (trimmed.len == 0) {
-                try writeAllowlistStatus(app, .effective);
-                return;
-            }
-
-            const first = splitFirstWord(trimmed).?;
-            if (std.ascii.eqlIgnoreCase(first.word, "view")) {
-                const view = parseAllowlistView(first.rest) orelse {
-                    try writeAllowlistUsage(app);
-                    return;
-                };
-                try writeAllowlistStatus(app, view);
-                return;
-            }
-
-            var permission_scope: config_runtime.PermissionScope = .local;
-            var action = first;
-            if (std.ascii.eqlIgnoreCase(first.word, "user") or
-                std.ascii.eqlIgnoreCase(first.word, "local"))
-            {
-                permission_scope = if (std.ascii.eqlIgnoreCase(first.word, "user")) .user else .local;
-                action = splitFirstWord(first.rest) orelse {
-                    try writeAllowlistUsage(app);
-                    return;
-                };
-            }
-
-            if (std.ascii.eqlIgnoreCase(action.word, "add")) {
-                try handleAllowlistAdd(app, permission_scope, action.rest);
-                return;
-            }
-
-            if (std.ascii.eqlIgnoreCase(action.word, "remove")) {
-                try handleAllowlistRemove(app, permission_scope, action.rest);
-                return;
-            }
-
-            if (std.ascii.eqlIgnoreCase(action.word, "reset")) {
-                try handleAllowlistReset(app, permission_scope, action.rest);
-                return;
-            }
-
-            try writeAllowlistUsage(app);
-        }
-
         pub fn handleHistory(app: *App, rest: []const u8) !void {
             const trimmed = std.mem.trim(u8, rest, " \t");
             if (std.ascii.eqlIgnoreCase(trimmed, "off")) {
@@ -492,220 +443,7 @@ pub fn Commands(comptime App: type) type {
             try app.writeDomainNotice(.{ .topic = "history", .tone = .@"error", .body = "prompt history options: on, off" }, true);
         }
 
-        fn writeAllowlistUsage(app: *App) !void {
-            try app.writeDomainNotice(.{
-                .topic = "allowlist",
-                .tone = .@"error",
-                .body = "usage: /allowlist [view [effective|local|user]|[local|user] add|remove|reset ...]",
-            }, true);
-        }
-
-        fn handleAllowlistAdd(
-            app: *App,
-            permission_scope: config_runtime.PermissionScope,
-            raw: []const u8,
-        ) !void {
-            const target = (try parseAllowlistTargetAlloc(app.alloc, app.toolRegistry(), raw)) orelse {
-                try app.writeDomainNotice(.{
-                    .topic = "allowlist",
-                    .tone = .@"error",
-                    .body = "usage: /allowlist add [command|tool|url|web-fetch-domain] <pattern>",
-                }, true);
-                return;
-            };
-            defer target.deinit(app.alloc);
-
-            var outcome = config_runtime.addPermissionRule(
-                app.alloc,
-                permission_scope,
-                permissionWorkspaceRoot(app, permission_scope),
-                target.category,
-                target.pattern,
-                .allow,
-            ) catch |err| {
-                const notice_rule_write_fail = try std.fmt.allocPrint(
-                    app.alloc,
-                    "failed to add rule to settings (scope={s}, error={s})",
-                    .{ @tagName(permission_scope), @errorName(err) },
-                );
-                defer app.alloc.free(notice_rule_write_fail);
-                try app.writeDomainNotice(.{ .topic = "allowlist", .tone = .@"error", .body = notice_rule_write_fail }, true);
-                debug_trace.logf(
-                    "config",
-                    "allowlist add failed scope={s} err={s}",
-                    .{ @tagName(permission_scope), @errorName(err) },
-                );
-                return;
-            };
-            defer outcome.deinit(app.alloc);
-
-            try finishAllowlistMutation(app, permission_scope, "added", target);
-        }
-
-        fn handleAllowlistRemove(
-            app: *App,
-            permission_scope: config_runtime.PermissionScope,
-            raw: []const u8,
-        ) !void {
-            const target = (try parseAllowlistTargetAlloc(app.alloc, app.toolRegistry(), raw)) orelse {
-                try app.writeDomainNotice(.{
-                    .topic = "allowlist",
-                    .tone = .@"error",
-                    .body = "usage: /allowlist remove [command|tool|url|web-fetch-domain] <pattern>",
-                }, true);
-                return;
-            };
-            defer target.deinit(app.alloc);
-
-            var outcome = config_runtime.removePermissionRule(
-                app.alloc,
-                permission_scope,
-                permissionWorkspaceRoot(app, permission_scope),
-                target.category,
-                target.pattern,
-            ) catch |err| {
-                const notice = try std.fmt.allocPrint(
-                    app.alloc,
-                    "failed to remove rule from settings (scope={s}, error={s})",
-                    .{ @tagName(permission_scope), @errorName(err) },
-                );
-                defer app.alloc.free(notice);
-                try app.writeDomainNotice(.{ .topic = "allowlist", .tone = .@"error", .body = notice }, true);
-                debug_trace.logf(
-                    "config",
-                    "allowlist remove failed scope={s} err={s}",
-                    .{ @tagName(permission_scope), @errorName(err) },
-                );
-                return;
-            };
-            defer outcome.deinit(app.alloc);
-            if (outcome == .unchanged) {
-                const msg = try formatAllowlistChange(app.alloc, "no matching rule for", target, permission_scope, "");
-                defer app.alloc.free(msg);
-                try app.writeDomainNotice(.{ .topic = "allowlist", .tone = .neutral, .body = msg }, true);
-                return;
-            }
-
-            try finishAllowlistMutation(app, permission_scope, "removed", target);
-        }
-
-        fn handleAllowlistReset(
-            app: *App,
-            permission_scope: config_runtime.PermissionScope,
-            raw: []const u8,
-        ) !void {
-            const reset_scope = parseAllowlistResetScope(raw) orelse {
-                try app.writeDomainNotice(.{
-                    .topic = "allowlist",
-                    .tone = .@"error",
-                    .body = "usage: /allowlist reset [commands|tools|urls|web-fetch-domains|all]",
-                }, true);
-                return;
-            };
-
-            var outcome = config_runtime.removeAllowlistRules(
-                app.alloc,
-                permission_scope,
-                permissionWorkspaceRoot(app, permission_scope),
-                reset_scope,
-            ) catch |err| {
-                const notice_reset_fail = try std.fmt.allocPrint(
-                    app.alloc,
-                    "failed to reset rules in settings (scope={s}, error={s})",
-                    .{ @tagName(permission_scope), @errorName(err) },
-                );
-                defer app.alloc.free(notice_reset_fail);
-                try app.writeDomainNotice(.{ .topic = "allowlist", .tone = .@"error", .body = notice_reset_fail }, true);
-                debug_trace.logf(
-                    "config",
-                    "allowlist reset failed scope={s} err={s}",
-                    .{ @tagName(permission_scope), @errorName(err) },
-                );
-                return;
-            };
-            defer outcome.deinit(app.alloc);
-            const removed: usize = switch (outcome) {
-                .unchanged => 0,
-                .committed => |committed| committed.permission_rules_removed,
-            };
-
-            var detailed = loadDetailedSettingsForNotice(app) catch |err| {
-                const msg = try std.fmt.allocPrint(
-                    app.alloc,
-                    "reset {s}: removed {d} rule{s} (scope={s}); saved but effective source unknown and runtime reload failed ({s})",
-                    .{
-                        allowlistResetScopeLabel(reset_scope),
-                        removed,
-                        if (removed == 1) "" else "s",
-                        @tagName(permission_scope),
-                        @errorName(err),
-                    },
-                );
-                defer app.alloc.free(msg);
-                try app.writeDomainNotice(.{ .topic = "allowlist", .tone = .warning, .body = msg }, true);
-                return;
-            };
-            defer detailed.deinit(app.alloc);
-            if (postCommitResolutionError(detailed)) |err| {
-                const msg = try std.fmt.allocPrint(
-                    app.alloc,
-                    "reset {s}: removed {d} rule{s} (scope={s}); saved but effective source unknown and runtime reload failed ({s})",
-                    .{
-                        allowlistResetScopeLabel(reset_scope),
-                        removed,
-                        if (removed == 1) "" else "s",
-                        @tagName(permission_scope),
-                        @errorName(err),
-                    },
-                );
-                defer app.alloc.free(msg);
-                try app.writeDomainNotice(.{ .topic = "allowlist", .tone = .warning, .body = msg }, true);
-                return;
-            }
-            replaceEffectivePermissionRules(app, &detailed);
-
-            const shadow = permissionShadowLabel(detailed.permission_sources, permission_scope);
-            const msg = try std.fmt.allocPrint(
-                app.alloc,
-                "reset {s}: removed {d} rule{s} (scope={s}){s}{s}",
-                .{
-                    allowlistResetScopeLabel(reset_scope),
-                    removed,
-                    if (removed == 1) "" else "s",
-                    @tagName(permission_scope),
-                    if (shadow.len > 0) "; user rules shadowed by " else "",
-                    shadow,
-                },
-            );
-            defer app.alloc.free(msg);
-            try app.writeDomainNotice(.{ .topic = "allowlist", .tone = .neutral, .body = msg }, true);
-        }
-
-        pub fn toggleFast(app: *App) !void {
-            try toggleFastForModel(app, provider_runtime.model(app), true);
-        }
-
-        fn toggleFastForModel(app: *App, model: []const u8, announce: bool) !void {
-            if (app.fast_mode) {
-                try applyFastMode(app, false, announce, true);
-                return;
-            }
-            if (!model_capabilities.resolveForApp(App, app, model).supports_fast_mode) {
-                if (announce) {
-                    try app.writeDomainNotice(.{
-                        .topic = "fast",
-                        .tone = .neutral,
-                        .body = "This model does not come with a fast mode.",
-                    }, true);
-                }
-                app.shell.render_requests.request(.footer);
-                return;
-            }
-
-            try applyFastMode(app, !app.fast_mode, announce, true);
-        }
-
-        fn applyFastMode(app: *App, enabled: bool, announce: bool, persist: bool) !void {
+        fn applyFastMode(app: *App, enabled: bool, announce: bool) !void {
             const previous = app.fast_mode;
             app.fast_mode = enabled;
             app.worker.syncQueuedPromptFastMode(app.fast_mode);
@@ -719,19 +457,6 @@ pub fn Commands(comptime App: type) type {
                     if (model_capabilities.resolveForApp(App, app, provider_runtime.model(app)).supports_fast_mode) "true" else "false",
                 },
             );
-
-            if (persist) {
-                try persistPreferenceTargets(
-                    app,
-                    .{
-                        .provider = provider_runtime.provider(app),
-                        .model = provider_runtime.model(app),
-                        .fast_mode = app.fast_mode,
-                    },
-                    "fast",
-                    !announce,
-                );
-            }
 
             if (announce) {
                 const label = if (app.fast_mode) "on" else "off";
@@ -777,140 +502,10 @@ pub fn Commands(comptime App: type) type {
             }
             const selected_fast_mode = capabilities.supports_fast_mode and fast_mode;
             if (selected_fast_mode != app.fast_mode) {
-                try applyFastMode(app, selected_fast_mode, false, false);
+                try applyFastMode(app, selected_fast_mode, false);
             }
             patch.fast_mode = selected_fast_mode;
             try persistPreferenceTargets(app, patch, "model picker", false);
-        }
-
-        fn permissionWorkspaceRoot(
-            app: *App,
-            permission_scope: config_runtime.PermissionScope,
-        ) ?[]const u8 {
-            return switch (permission_scope) {
-                .user => null,
-                .local => app.workspace_root,
-            };
-        }
-
-        fn replaceEffectivePermissionRules(
-            app: *App,
-            detailed: *config_runtime.DetailedSettings,
-        ) void {
-            app.permission_state.authority_mutex.lockUncancelable(io_mod.getIo());
-            defer app.permission_state.authority_mutex.unlock(io_mod.getIo());
-            if (detailed.settings.has_permission_rules) {
-                app.permission_engine.replaceRules(app.alloc, detailed.settings.permission_rules);
-                detailed.settings.permission_rules = .{};
-                detailed.settings.has_permission_rules = false;
-            } else {
-                app.permission_engine.rules.deinit(app.alloc);
-                app.permission_engine.rules = .{};
-            }
-        }
-
-        fn finishAllowlistMutation(
-            app: *App,
-            permission_scope: config_runtime.PermissionScope,
-            verb: []const u8,
-            target: AllowlistTarget,
-        ) !void {
-            var detailed = loadDetailedSettingsForNotice(app) catch |err| {
-                const detail = try std.fmt.allocPrint(
-                    app.alloc,
-                    "saved but effective source unknown and runtime reload failed ({s})",
-                    .{@errorName(err)},
-                );
-                defer app.alloc.free(detail);
-                const msg = try formatAllowlistChange(app.alloc, verb, target, permission_scope, detail);
-                defer app.alloc.free(msg);
-                try app.writeDomainNotice(.{ .topic = "allowlist", .tone = .warning, .body = msg }, true);
-                return;
-            };
-            defer detailed.deinit(app.alloc);
-            if (postCommitResolutionError(detailed)) |err| {
-                const detail = try std.fmt.allocPrint(
-                    app.alloc,
-                    "saved but effective source unknown and runtime reload failed ({s})",
-                    .{@errorName(err)},
-                );
-                defer app.alloc.free(detail);
-                const msg = try formatAllowlistChange(app.alloc, verb, target, permission_scope, detail);
-                defer app.alloc.free(msg);
-                try app.writeDomainNotice(.{ .topic = "allowlist", .tone = .warning, .body = msg }, true);
-                return;
-            }
-            replaceEffectivePermissionRules(app, &detailed);
-
-            const shadow = permissionShadowLabel(detailed.permission_sources, permission_scope);
-            const detail = if (shadow.len > 0)
-                try std.fmt.allocPrint(app.alloc, "user rules shadowed by {s}", .{shadow})
-            else
-                try app.alloc.dupe(u8, "");
-            defer app.alloc.free(detail);
-            const msg = try formatAllowlistChange(app.alloc, verb, target, permission_scope, detail);
-            defer app.alloc.free(msg);
-            try app.writeDomainNotice(.{ .topic = "allowlist", .tone = .neutral, .body = msg }, true);
-        }
-
-        fn writeAllowlistStatus(app: *App, view: AllowlistView) !void {
-            var detailed = loadDetailedSettingsForNotice(app) catch |err| {
-                try writeSettingsLoadError(app, err);
-                return;
-            };
-            defer detailed.deinit(app.alloc);
-            for (detailed.diagnostics) |diagnostic| {
-                switch (diagnostic.cause) {
-                    .durable_path_unsafe => {
-                        try writeSettingsLoadError(app, error.DurablePathUnsafe);
-                        return;
-                    },
-                    .private_state_permissions_unsupported => {
-                        try writeSettingsLoadError(app, error.PrivateStatePermissionsUnsupported);
-                        return;
-                    },
-                    else => {},
-                }
-            }
-            replaceEffectivePermissionRules(app, &detailed);
-
-            const rules = switch (view) {
-                .effective => app.permission_engine.rules.rules,
-                .local => detailed.permission_sources.local.rules,
-                .user => detailed.permission_sources.user.rules,
-            };
-
-            var out: std.Io.Writer.Allocating = .init(app.alloc);
-            defer out.deinit();
-
-            if (hasAllowlistRules(rules)) {
-                try out.writer.print("{s} persistent allow rules:\n", .{@tagName(view)});
-                try writeAllowlistRuleGroups(&out.writer, rules);
-            } else {
-                try out.writer.print("{s} persistent allow rules: (none)\n", .{@tagName(view)});
-            }
-            const shadow = permissionShadowLabel(detailed.permission_sources, .user);
-            if ((view == .effective or view == .user) and
-                detailed.permission_sources.user.rules.len > 0 and
-                shadow.len > 0)
-            {
-                try out.writer.print("user rules are shadowed by {s}\n", .{shadow});
-            }
-            const web_fetch_warning_count = permissions.webFetchRuleWarningCount(rules);
-            if (web_fetch_warning_count > 0) {
-                try out.writer.print("ignored {d} malformed web_fetch rule{s}; expected domain:<canonical-hostname>\n", .{
-                    web_fetch_warning_count,
-                    if (web_fetch_warning_count == 1) "" else "s",
-                });
-            }
-
-            const text = try out.toOwnedSlice();
-            defer app.alloc.free(text);
-            try app.writeDomainNotice(.{
-                .topic = "allowlist",
-                .tone = if (web_fetch_warning_count == 0) .neutral else .warning,
-                .body = std.mem.trimEnd(u8, text, "\n"),
-            }, true);
         }
 
         fn writePermissionsStatus(app: *App) !void {
@@ -932,7 +527,7 @@ pub fn Commands(comptime App: type) type {
             const startup_scrollback_label = if (settings.startup_scrollback orelse true) "on" else "off";
             const msg = try std.fmt.allocPrint(app.alloc, "model: {s}\nmodel_config_source: {s}\npermission_mode: {s}\nworkspace: {s}\nstep_limit: {d}\nstartup_scrollback: {s}", .{
                 provider_runtime.model(app),
-                @tagName(detailed.sources.models.get(.gateway)),
+                @tagName(detailed.sources.models.get(.codex)),
                 permissions.permissionModeLabel(app.permission_engine.mode),
                 app.workspace_root,
                 app.agent_step_limit,
@@ -1038,7 +633,7 @@ pub fn Commands(comptime App: type) type {
             const model_changed = !std.mem.eql(u8, provider_runtime.model(app), resolved);
             try setResolvedModelRuntime(app, resolved, announce);
             if (model_changed and app.fast_mode) {
-                try applyFastMode(app, false, false, false);
+                try applyFastMode(app, false, false);
             }
             try persistPreferenceTargets(
                 app,
@@ -1168,94 +763,6 @@ pub fn Commands(comptime App: type) type {
     };
 }
 
-fn startsWithWord(text: []const u8, word: []const u8) bool {
-    if (!std.ascii.startsWithIgnoreCase(text, word)) return false;
-    if (text.len == word.len) return true;
-    return text[word.len] == ' ' or text[word.len] == '\t';
-}
-
-const AllowlistKind = enum {
-    command,
-    tool,
-    url,
-    web_fetch_domain,
-};
-
-const AllowlistTarget = struct {
-    kind: AllowlistKind,
-    category: []const u8,
-    pattern: []const u8,
-    pattern_owned: bool = false,
-
-    fn deinit(self: AllowlistTarget, alloc: std.mem.Allocator) void {
-        if (self.pattern_owned) alloc.free(self.pattern);
-    }
-};
-
-fn parseAllowlistTargetAlloc(
-    alloc: std.mem.Allocator,
-    tool_registry: tool_dispatch.Registry,
-    raw: []const u8,
-) !?AllowlistTarget {
-    const trimmed = std.mem.trim(u8, raw, " \t");
-    const kind_split = splitFirstWord(trimmed) orelse return null;
-    const pattern = parseQuotedOrRest(kind_split.rest);
-    if (pattern.len == 0) return null;
-
-    if (std.ascii.eqlIgnoreCase(kind_split.word, "web-fetch-domain")) {
-        const canonical = permissions.canonicalWebFetchDomainPattern(alloc, pattern) catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => return null,
-        };
-        return .{
-            .kind = .web_fetch_domain,
-            .category = permissions.web_fetch_permission,
-            .pattern = canonical,
-            .pattern_owned = true,
-        };
-    }
-
-    return parseAllowlistTarget(tool_registry, raw);
-}
-
-fn parseAllowlistTarget(tool_registry: tool_dispatch.Registry, raw: []const u8) ?AllowlistTarget {
-    const trimmed = std.mem.trim(u8, raw, " \t");
-    const kind_split = splitFirstWord(trimmed) orelse return null;
-    const pattern = parseQuotedOrRest(kind_split.rest);
-    if (pattern.len == 0) return null;
-
-    if (std.ascii.eqlIgnoreCase(kind_split.word, "command")) {
-        return .{ .kind = .command, .category = "bash", .pattern = pattern };
-    }
-    if (std.ascii.eqlIgnoreCase(kind_split.word, "url")) {
-        return .{ .kind = .url, .category = "url", .pattern = pattern };
-    }
-    if (std.ascii.eqlIgnoreCase(kind_split.word, "tool")) {
-        if (std.mem.eql(u8, pattern, permissions.web_fetch_permission)) return null;
-        if (!isKnownAllowlistTool(tool_registry, pattern)) return null;
-        return .{ .kind = .tool, .category = permissions.permissionNameForTool(pattern), .pattern = "*" };
-    }
-
-    return null;
-}
-
-fn isKnownAllowlistTool(tool_registry: tool_dispatch.Registry, name: []const u8) bool {
-    if (tool_registry.lookup(name) != null) return true;
-
-    const categories = [_][]const u8{
-        "edit",
-        "read",
-        "glob",
-        "grep",
-        "skill",
-        permissions.web_search_permission,
-    };
-    for (categories) |category| {
-        if (std.mem.eql(u8, name, category)) return true;
-    }
-    return false;
-}
-
 const WordSplit = struct {
     word: []const u8,
     rest: []const u8,
@@ -1273,205 +780,6 @@ fn splitFirstWord(text: []const u8) ?WordSplit {
         }
     }
     return .{ .word = trimmed, .rest = "" };
-}
-
-fn parseQuotedOrRest(raw: []const u8) []const u8 {
-    const trimmed = std.mem.trim(u8, raw, " \t");
-    if (trimmed.len > 0 and trimmed[0] == '"') {
-        if (std.mem.findScalarPos(u8, trimmed, 1, '"')) |close| {
-            return trimmed[1..close];
-        }
-        return trimmed[1..];
-    }
-    return trimmed;
-}
-
-fn parseAllowlistResetScope(raw: []const u8) ?config_runtime.AllowlistResetScope {
-    const trimmed = std.mem.trim(u8, raw, " \t");
-    if (std.ascii.eqlIgnoreCase(trimmed, "all")) return .all;
-    if (std.ascii.eqlIgnoreCase(trimmed, "command") or std.ascii.eqlIgnoreCase(trimmed, "commands")) return .commands;
-    if (std.ascii.eqlIgnoreCase(trimmed, "tool") or std.ascii.eqlIgnoreCase(trimmed, "tools")) return .tools;
-    if (std.ascii.eqlIgnoreCase(trimmed, "url") or std.ascii.eqlIgnoreCase(trimmed, "urls")) return .urls;
-    if (std.ascii.eqlIgnoreCase(trimmed, "web-fetch-domain") or std.ascii.eqlIgnoreCase(trimmed, "web-fetch-domains")) return .web_fetch_domains;
-    return null;
-}
-
-const AllowlistView = enum {
-    effective,
-    local,
-    user,
-};
-
-fn parseAllowlistView(raw: []const u8) ?AllowlistView {
-    const trimmed = std.mem.trim(u8, raw, " \t");
-    if (trimmed.len == 0 or std.ascii.eqlIgnoreCase(trimmed, "effective")) return .effective;
-    if (std.ascii.eqlIgnoreCase(trimmed, "local")) return .local;
-    if (std.ascii.eqlIgnoreCase(trimmed, "user")) return .user;
-    return null;
-}
-
-fn permissionShadowLabel(
-    views: config_runtime.PermissionSourceViews,
-    permission_scope: config_runtime.PermissionScope,
-) []const u8 {
-    if (permission_scope != .user or views.user.rules.len == 0) return "";
-    if (views.user_shadowed_by_local) return "local settings";
-    return "";
-}
-
-fn allowlistResetScopeLabel(scope: config_runtime.AllowlistResetScope) []const u8 {
-    return switch (scope) {
-        .all => "all",
-        .commands => "commands",
-        .tools => "tools",
-        .urls => "urls",
-        .web_fetch_domains => "web-fetch-domains",
-    };
-}
-
-const AllowlistDisplayKind = enum {
-    tool,
-    command,
-    url,
-    web_fetch_domain,
-};
-
-const AllowlistRuleGroup = struct {
-    kind: AllowlistDisplayKind,
-    name: []const u8,
-};
-
-fn hasAllowlistRules(rules: []const types.PermissionRule) bool {
-    for (rules) |rule| {
-        if (allowlistRuleDisplayable(rule)) return true;
-    }
-    return false;
-}
-
-fn writeAllowlistRuleGroups(writer: *std.Io.Writer, rules: []const types.PermissionRule) !void {
-    try writeAllowlistSection(writer, rules, .tool);
-    try writeAllowlistSection(writer, rules, .command);
-    try writeAllowlistSection(writer, rules, .url);
-    try writeAllowlistSection(writer, rules, .web_fetch_domain);
-}
-
-fn writeAllowlistSection(writer: *std.Io.Writer, rules: []const types.PermissionRule, kind: AllowlistDisplayKind) !void {
-    if (!hasAllowlistKind(rules, kind)) return;
-
-    switch (kind) {
-        .tool => try writer.writeAll("  tools:\n"),
-        .command => try writer.writeAll("  commands:\n"),
-        .url => try writer.writeAll("  urls:\n"),
-        .web_fetch_domain => try writer.writeAll("  web-fetch domains:\n"),
-    }
-
-    for (rules, 0..) |rule, idx| {
-        if (!allowlistRuleDisplayable(rule)) continue;
-        const group = allowlistRuleGroup(rule);
-        if (group.kind != kind) continue;
-        if (allowlistGroupSeen(rules[0..idx], group)) continue;
-        try writeAllowlistGroupLine(writer, rules, group);
-    }
-}
-
-fn hasAllowlistKind(rules: []const types.PermissionRule, kind: AllowlistDisplayKind) bool {
-    for (rules) |rule| {
-        if (!allowlistRuleDisplayable(rule)) continue;
-        if (allowlistRuleGroup(rule).kind == kind) return true;
-    }
-    return false;
-}
-
-fn writeAllowlistGroupLine(writer: *std.Io.Writer, rules: []const types.PermissionRule, group: AllowlistRuleGroup) !void {
-    switch (group.kind) {
-        .tool => try writer.print("    {s}: ", .{group.name}),
-        .command, .url, .web_fetch_domain => try writer.writeAll("    "),
-    }
-
-    var first = true;
-    for (rules) |rule| {
-        if (!allowlistRuleDisplayable(rule)) continue;
-        if (!sameAllowlistGroup(allowlistRuleGroup(rule), group)) continue;
-        if (!first) try writer.writeAll(", ");
-        first = false;
-        try writeAllowlistPattern(writer, group, rule.pattern);
-    }
-    try writer.writeByte('\n');
-}
-
-fn writeAllowlistPattern(writer: *std.Io.Writer, group: AllowlistRuleGroup, pattern: []const u8) !void {
-    if (group.kind == .tool and std.mem.eql(u8, pattern, "*") and isWorkspacePathToolPermission(group.name)) {
-        try writer.writeAll("workspace");
-        return;
-    }
-    try writer.writeAll(pattern);
-}
-
-fn isWorkspacePathToolPermission(permission: []const u8) bool {
-    const path_permissions = [_][]const u8{
-        "edit",
-        "read",
-        "glob",
-        "grep",
-    };
-    for (path_permissions) |path_permission| {
-        if (std.mem.eql(u8, permission, path_permission)) return true;
-    }
-    return false;
-}
-
-fn allowlistGroupSeen(rules: []const types.PermissionRule, group: AllowlistRuleGroup) bool {
-    for (rules) |rule| {
-        if (!allowlistRuleDisplayable(rule)) continue;
-        if (sameAllowlistGroup(allowlistRuleGroup(rule), group)) return true;
-    }
-    return false;
-}
-
-fn allowlistRuleGroup(rule: types.PermissionRule) AllowlistRuleGroup {
-    if (std.mem.eql(u8, rule.permission, "bash")) {
-        return .{ .kind = .command, .name = "command" };
-    }
-    if (std.mem.eql(u8, rule.permission, "url")) {
-        return .{ .kind = .url, .name = "url" };
-    }
-    if (std.mem.eql(u8, rule.permission, permissions.web_fetch_permission)) {
-        return .{ .kind = .web_fetch_domain, .name = "web-fetch-domain" };
-    }
-    return .{ .kind = .tool, .name = rule.permission };
-}
-
-fn allowlistRuleDisplayable(rule: types.PermissionRule) bool {
-    if (rule.action != .allow) return false;
-    if (std.mem.eql(u8, rule.permission, permissions.web_fetch_permission)) {
-        return permissions.isCanonicalWebFetchDomainPattern(rule.pattern);
-    }
-    return true;
-}
-
-fn sameAllowlistGroup(a: AllowlistRuleGroup, b: AllowlistRuleGroup) bool {
-    return a.kind == b.kind and std.mem.eql(u8, a.name, b.name);
-}
-
-fn formatAllowlistChange(
-    alloc: std.mem.Allocator,
-    verb: []const u8,
-    target: AllowlistTarget,
-    permission_scope: config_runtime.PermissionScope,
-    detail: []const u8,
-) ![]u8 {
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    errdefer out.deinit();
-    try out.writer.print("{s} ", .{verb});
-    switch (target.kind) {
-        .command => try out.writer.print("command: \"{s}\"", .{target.pattern}),
-        .url => try out.writer.print("url: \"{s}\"", .{target.pattern}),
-        .tool => try out.writer.print("tool {s}: \"{s}\"", .{ target.category, target.pattern }),
-        .web_fetch_domain => try out.writer.print("web-fetch-domain: \"{s}\"", .{target.pattern}),
-    }
-    try out.writer.print(" (scope={s})", .{@tagName(permission_scope)});
-    if (detail.len > 0) try out.writer.print("; {s}", .{detail});
-    return out.toOwnedSlice();
 }
 
 /// Scores prefix and substring matches above token, subsequence, and partial matches.
@@ -1643,9 +951,8 @@ const FakeHistoryCommandApp = struct {
 const FakeApp = struct {
     alloc: std.mem.Allocator,
     workspace_root: []u8,
-    tool_registry: tool_dispatch.Registry = .{},
     selected_model: std.ArrayList(u8) = .empty,
-    selected_provider: model_provider.ProviderId = .gateway,
+    selected_provider: model_provider.ProviderId = .codex,
     auth: auth_runtime.Runtime = .{},
     permission_engine: permissions.PermissionEngine = .{},
     permission_state: app_permission_runtime.State = .{},
@@ -1724,10 +1031,6 @@ const FakeApp = struct {
 
     fn clearTranscript(self: *FakeApp) void {
         self.transcript.clearRetainingCapacity();
-    }
-
-    fn toolRegistry(self: *const FakeApp) tool_dispatch.Registry {
-        return self.tool_registry;
     }
 
     // Public so `@hasDecl` sees it from the session runtime, which is where
@@ -1907,12 +1210,6 @@ const SessionCommandTestHome = struct {
     }
 };
 
-fn expectRule(rule: types.PermissionRule, permission: []const u8, pattern: []const u8, action: types.PermissionAction) !void {
-    try std.testing.expectEqualStrings(permission, rule.permission);
-    try std.testing.expectEqualStrings(pattern, rule.pattern);
-    try std.testing.expectEqual(action, rule.action);
-}
-
 fn writeFixtureFile(dir: std.Io.Dir, sub_path: []const u8, text: []const u8) !void {
     var file = try dir.createFile(io_mod.getIo(), sub_path, .{ .truncate = true });
     defer file.close(io_mod.getIo());
@@ -1987,9 +1284,9 @@ test "session_commands handleSettings shows startup scrollback status" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    try writeFixtureFile(tmp.dir, "home/.fx/settings.json", "{\"startup_scrollback\":false}");
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", "{\"startup_scrollback\":false}");
     const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
     defer std.testing.allocator.free(home_root);
     const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
@@ -2060,7 +1357,7 @@ test "session_commands startup scrollback ignores project profile-only shadowing
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
     try writeFixtureFile(
         tmp.dir,
-        "workspace/.fx.json",
+        "workspace/.fiber.json",
         "{\"startup_scrollback\":true}\n",
     );
     const home_root = try io_mod.dirRealpathAlloc(
@@ -2299,425 +1596,6 @@ test "session_commands handlePermissions reports usage and invalid action before
     try std.testing.expectEqual(@as(usize, 0), app.permission_mode_preference_commit_count);
 }
 
-test "session_commands handleAllowlist adds lists and removes workspace rules" {
-    const builtin_tools = @import("../../builtins/tools.zig");
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "anthropic/claude-opus-4.6");
-    defer app.deinit();
-    app.tool_registry = .{ .tools = &.{builtin_tools.read_file} };
-
-    try Commands(FakeApp).handleAllowlist(&app, "add command \"git *\"");
-    try expectTranscriptContains(&app, "● Allowlist: added command: \"git *\"");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "add tool read_file");
-    try expectTranscriptContains(&app, "● Allowlist: added tool read: \"*\"");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "add url \"https://example.com/*\"");
-    try expectTranscriptContains(&app, "● Allowlist: added url: \"https://example.com/*\"");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "add command echo");
-    try expectTranscriptContains(&app, "● Allowlist: added command: \"echo\"");
-
-    _ = try config_runtime.addPermissionRule(std.testing.allocator, .local, workspace_root, "read", "docs/*", .allow);
-
-    var settings = try config_runtime.loadMergedSettings(std.testing.allocator, workspace_root);
-    defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 5), settings.permission_rules.rules.len);
-    try expectRule(settings.permission_rules.rules[0], "bash", "git *", .allow);
-    try expectRule(settings.permission_rules.rules[1], "bash", "echo", .allow);
-    try expectRule(settings.permission_rules.rules[2], "read", "*", .allow);
-    try expectRule(settings.permission_rules.rules[3], "read", "docs/*", .allow);
-    try expectRule(settings.permission_rules.rules[4], "url", "https://example.com/*", .allow);
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "");
-    try expectTranscriptContains(&app, "● Allowlist: effective persistent allow rules:");
-    try expectTranscriptContains(&app, "  tools:\n    read: workspace, docs/*");
-    try expectTranscriptContains(&app, "  commands:\n    git *, echo");
-    try expectTranscriptContains(&app, "  urls:\n    https://example.com/*");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "view");
-    try expectTranscriptContains(&app, "● Allowlist: effective persistent allow rules:");
-    try expectTranscriptContains(&app, "  commands:\n    git *, echo");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "remove command \"git *\"");
-    try expectTranscriptContains(&app, "● Allowlist: removed command: \"git *\"");
-
-    var after_remove = try config_runtime.loadMergedSettings(std.testing.allocator, workspace_root);
-    defer after_remove.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 4), after_remove.permission_rules.rules.len);
-    try expectRule(after_remove.permission_rules.rules[0], "bash", "echo", .allow);
-    try expectRule(after_remove.permission_rules.rules[1], "read", "*", .allow);
-    try expectRule(after_remove.permission_rules.rules[2], "read", "docs/*", .allow);
-    try expectRule(after_remove.permission_rules.rules[3], "url", "https://example.com/*", .allow);
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "reset tools");
-    try expectTranscriptContains(&app, "● Allowlist: reset tools: removed 2 rules");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "reset all");
-    try expectTranscriptContains(&app, "● Allowlist: reset all: removed 2 rules");
-
-    var after_reset = try config_runtime.loadMergedSettings(std.testing.allocator, workspace_root);
-    defer after_reset.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 0), after_reset.permission_rules.rules.len);
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "view");
-    try expectTranscriptContains(&app, "● Allowlist: effective persistent allow rules: (none)");
-}
-
-test "session_commands allowlist scopes expose and mutate hidden user rules independently" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "anthropic/claude-opus-4.6");
-    defer app.deinit();
-
-    try Commands(FakeApp).handleAllowlist(&app, "user add command \"user *\"");
-    try expectTranscriptContains(&app, "(scope=user)");
-    try std.testing.expect(std.mem.find(u8, app.text(), "shadowed") == null);
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "add command \"local *\"");
-    try expectTranscriptContains(&app, "(scope=local)");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "view user");
-    try expectTranscriptContains(&app, "● Allowlist: user persistent allow rules:");
-    try expectTranscriptContains(&app, "user *");
-    try expectTranscriptContains(&app, "user rules are shadowed by local settings");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "view local");
-    try expectTranscriptContains(&app, "● Allowlist: local persistent allow rules:");
-    try expectTranscriptContains(&app, "local *");
-    try std.testing.expect(std.mem.find(u8, app.text(), "user *") == null);
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "view effective");
-    try expectTranscriptContains(&app, "● Allowlist: effective persistent allow rules:");
-    try expectTranscriptContains(&app, "local *");
-    try std.testing.expect(std.mem.find(u8, app.text(), "user *") == null);
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "user remove command \"user *\"");
-    try expectTranscriptContains(&app, "(scope=user)");
-    try std.testing.expect(std.mem.find(u8, app.text(), "shadowed") == null);
-
-    var after_remove = try config_runtime.loadMergedSettingsDetailed(
-        std.testing.allocator,
-        workspace_root,
-    );
-    defer after_remove.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 0), after_remove.permission_sources.user.rules.len);
-    try std.testing.expectEqual(@as(usize, 1), after_remove.permission_sources.local.rules.len);
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "user add command \"user-again *\"");
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "user reset all");
-    try expectTranscriptContains(&app, "reset all: removed 1 rule (scope=user)");
-    try std.testing.expect(std.mem.find(u8, app.text(), "shadowed") == null);
-
-    var after_reset = try config_runtime.loadMergedSettingsDetailed(
-        std.testing.allocator,
-        workspace_root,
-    );
-    defer after_reset.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 0), after_reset.permission_sources.user.rules.len);
-    try std.testing.expectEqual(@as(usize, 1), after_reset.permission_sources.local.rules.len);
-}
-
-test "session_commands allowlist view reports unsafe settings without returning an error" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home");
-    try tmp.dir.createDirPath(io_mod.getIo(), "outside");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    tmp.dir.symLink(io_mod.getIo(), "../outside", "home/.fx", .{
-        .is_directory = true,
-    }) catch |err| switch (err) {
-        error.AccessDenied => return error.SkipZigTest,
-        else => return err,
-    };
-
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "anthropic/claude-opus-4.6");
-    defer app.deinit();
-
-    try Commands(FakeApp).handleAllowlist(&app, "view");
-    try expectTranscriptContains(&app, "Failed to load settings: DurablePathUnsafe");
-}
-
-test "web_fetch allowlist add remove view and reset persist exact canonical domains" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "anthropic/claude-opus-4.6");
-    defer app.deinit();
-
-    try Commands(FakeApp).handleAllowlist(&app, "add web-fetch-domain Example.COM.");
-    try expectTranscriptContains(&app, "● Allowlist: added web-fetch-domain: \"domain:example.com\"");
-
-    var settings = try config_runtime.loadMergedSettings(std.testing.allocator, workspace_root);
-    defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 1), settings.permission_rules.rules.len);
-    try expectRule(settings.permission_rules.rules[0], "web_fetch", "domain:example.com", .allow);
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "view");
-    try expectTranscriptContains(&app, "  web-fetch domains:\n    domain:example.com");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "remove web-fetch-domain EXAMPLE.com");
-    try expectTranscriptContains(&app, "● Allowlist: removed web-fetch-domain: \"domain:example.com\"");
-
-    _ = try config_runtime.addPermissionRule(std.testing.allocator, .local, workspace_root, "web_fetch", "domain:example.com", .allow);
-    _ = try config_runtime.addPermissionRule(std.testing.allocator, .local, workspace_root, "web_fetch", "domain:example.org", .allow);
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "reset web-fetch-domains");
-    try expectTranscriptContains(&app, "● Allowlist: reset web-fetch-domains: removed 2 rules");
-}
-
-test "web_fetch allowlist rejects wildcard url shaped and tool wide authorization" {
-    const alloc = std.testing.allocator;
-    var app = try FakeApp.init(alloc, "/tmp/workspace", "anthropic/claude-opus-4.6");
-    defer app.deinit();
-
-    try Commands(FakeApp).handleAllowlist(&app, "add web-fetch-domain *");
-    try expectTranscriptContains(&app, "usage: /allowlist add [command|tool|url|web-fetch-domain] <pattern>");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "add web-fetch-domain https://example.com");
-    try expectTranscriptContains(&app, "usage: /allowlist add [command|tool|url|web-fetch-domain] <pattern>");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "add tool web_fetch");
-    try expectTranscriptContains(&app, "usage: /allowlist add [command|tool|url|web-fetch-domain] <pattern>");
-}
-
-test "web_fetch malformed hand edited rules render bounded allowlist warnings" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "anthropic/claude-opus-4.6");
-    defer app.deinit();
-
-    _ = try config_runtime.addPermissionRule(std.testing.allocator, .local, workspace_root, "web_fetch", "*", .allow);
-    _ = try config_runtime.addPermissionRule(std.testing.allocator, .local, workspace_root, "read", "*", .allow);
-
-    try Commands(FakeApp).handleAllowlist(&app, "view");
-    try expectTranscriptContains(&app, "ignored 1 malformed web_fetch rule");
-    try expectTranscriptContains(&app, "  tools:\n    read: workspace");
-}
-
-test "session_commands handleAllowlist reports usage for invalid input" {
-    const alloc = std.testing.allocator;
-    var app = try FakeApp.init(alloc, "/tmp/workspace", "anthropic/claude-opus-4.6");
-    defer app.deinit();
-
-    try Commands(FakeApp).handleAllowlist(&app, "add");
-    try expectTranscriptContains(&app, "usage: /allowlist add [command|tool|url|web-fetch-domain] <pattern>");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "remove nope value");
-    try expectTranscriptContains(&app, "usage: /allowlist remove [command|tool|url|web-fetch-domain] <pattern>");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "add tool not_a_tool");
-    try expectTranscriptContains(&app, "usage: /allowlist add [command|tool|url|web-fetch-domain] <pattern>");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "remove tool not_a_tool");
-    try expectTranscriptContains(&app, "usage: /allowlist remove [command|tool|url|web-fetch-domain] <pattern>");
-
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "reset");
-    try expectTranscriptContains(&app, "usage: /allowlist reset [commands|tools|urls|web-fetch-domains|all]");
-}
-
-test "session_commands allowlist recognizes whole-tool web_search grant" {
-    const builtin_tools = @import("../../builtins/tools.zig");
-    const tool_registry = tool_dispatch.Registry{ .tools = &.{builtin_tools.web_search} };
-    const target = parseAllowlistTarget(tool_registry, "tool web_search") orelse return error.TestExpectedEqual;
-
-    try std.testing.expectEqual(AllowlistKind.tool, target.kind);
-    try std.testing.expectEqualStrings("web_search", target.category);
-    try std.testing.expectEqualStrings("*", target.pattern);
-    try std.testing.expect(parseAllowlistTarget(tool_registry, "tool web_search current news") == null);
-}
-
-test "session_commands handleAllowlist recognizes tools from the active registry" {
-    const builtin_tools = @import("../../builtins/tools.zig");
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-
-    const provider_tool = blk: {
-        var tool = builtin_tools.read_file;
-        tool.name = "provider_custom";
-        break :blk tool;
-    };
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "test-model");
-    defer app.deinit();
-    app.tool_registry = .{ .tools = &.{provider_tool} };
-
-    try Commands(FakeApp).handleAllowlist(&app, "add tool provider_custom");
-    try expectTranscriptContains(&app, "● Allowlist: added tool provider_custom: \"*\"");
-
-    var settings = try config_runtime.loadMergedSettings(std.testing.allocator, workspace_root);
-    defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 1), settings.permission_rules.rules.len);
-    try expectRule(settings.permission_rules.rules[0], "provider_custom", "*", .allow);
-
-    app.tool_registry = .{};
-    app.clearTranscript();
-    try Commands(FakeApp).handleAllowlist(&app, "remove tool provider_custom");
-    try expectTranscriptContains(&app, "usage: /allowlist remove [command|tool|url|web-fetch-domain] <pattern>");
-    try std.testing.expect(parseAllowlistTarget(.{}, "tool read") != null);
-    try std.testing.expect(parseAllowlistTarget(.{}, "tool memory") == null);
-}
-
-test "session_commands toggleFast reports unsupported model and redraws footer" {
-    const alloc = std.testing.allocator;
-    var app = try FakeApp.init(alloc, "/tmp/workspace", "openai/gpt-4o");
-    defer app.deinit();
-
-    try Commands(FakeApp).toggleFast(&app);
-
-    try std.testing.expect(!app.fast_mode);
-    try std.testing.expect(app.shell.render_requests.hasReason(.footer));
-    try std.testing.expect(app.worker.synced_fast_mode == null);
-    try std.testing.expectEqual(@as(usize, 0), app.worker.fast_sync_count);
-    try expectTranscriptContains(&app, "● Fast: This model does not come with a fast mode.");
-}
-
-test "session_commands toggleFast disables stale fast mode for unsupported model" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-    var fast_outcome = try config_runtime.setUserPreferences(
-        std.testing.allocator,
-        .{ .fast_mode = true },
-    );
-    defer fast_outcome.deinit(std.testing.allocator);
-
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "openai/gpt-4o");
-    defer app.deinit();
-    app.fast_mode = true;
-    app.worker.synced_fast_mode = true;
-
-    try Commands(FakeApp).toggleFast(&app);
-
-    try std.testing.expect(!app.fast_mode);
-    try std.testing.expectEqual(@as(?bool, false), app.worker.synced_fast_mode);
-    try std.testing.expectEqual(@as(usize, 1), app.worker.fast_sync_count);
-
-    var settings = try config_runtime.loadMergedSettings(std.testing.allocator, workspace_root);
-    defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(?bool, false), settings.fast_mode);
-}
-
-test "session_commands toggleFast syncs queued fast mode for supported models" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "anthropic/claude-opus-4.6");
-    defer app.deinit();
-    app.setGatewayControls("anthropic/claude-opus-4.6", &.{}, true);
-
-    try Commands(FakeApp).toggleFast(&app);
-
-    try std.testing.expect(app.fast_mode);
-    try std.testing.expectEqual(@as(?bool, true), app.worker.synced_fast_mode);
-    try std.testing.expectEqual(@as(usize, 1), app.worker.fast_sync_count);
-    try expectTranscriptContains(&app, "● Fast: on");
-}
-
 test "session_commands selectModelFromPicker skips effort changes for models without reasoning support" {
     const alloc = std.testing.allocator;
     var app = try FakeApp.init(alloc, "/tmp/workspace", "anthropic/claude-opus-4.6");
@@ -2878,7 +1756,7 @@ test "session_commands user save notice uses one post-commit load after legacy c
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
     const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
     defer std.testing.allocator.free(home_root);
@@ -2890,8 +1768,8 @@ test "session_commands user save notice uses one post-commit load after legacy c
         .{workspace_root},
     );
     defer std.testing.allocator.free(fixture);
-    try writeFixtureFile(tmp.dir, "home/.fx/settings.json", fixture);
-    try writeFixtureFile(tmp.dir, "workspace/.fx.json", "{\"model\":\"project/model\"}\n");
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", fixture);
+    try writeFixtureFile(tmp.dir, "workspace/.fiber.json", "{\"model\":\"project/model\"}\n");
 
     const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
     defer home.deinit();
@@ -2912,7 +1790,7 @@ test "session_commands durable user save survives post-commit resolver failure" 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
     const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
     defer std.testing.allocator.free(home_root);
@@ -2924,7 +1802,7 @@ test "session_commands durable user save survives post-commit resolver failure" 
         .{workspace_root},
     );
     defer std.testing.allocator.free(fixture);
-    try writeFixtureFile(tmp.dir, "home/.fx/settings.json", fixture);
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", fixture);
 
     const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
     defer home.deinit();
@@ -2946,14 +1824,14 @@ test "session_commands durable user save survives post-commit resolver failure" 
         workspace_root,
     );
     defer settings.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("user/new", settings.models.get(.gateway).?);
+    try std.testing.expectEqualStrings("user/new", settings.models.get(.codex).?);
 }
 
 test "session_commands durable user save survives post-commit resolver diagnostic" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
     const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
     defer std.testing.allocator.free(home_root);
@@ -2972,55 +1850,6 @@ test "session_commands durable user save survives post-commit resolver diagnosti
     try std.testing.expectEqual(@as(usize, 1), app.post_commit_resolution_count);
     try expectTranscriptContains(&app, "● Model: saved to user settings (scope=user)");
     try expectTranscriptContains(&app, "next-startup source unknown (DurablePathUnsafe)");
-}
-
-test "session_commands allowlist failures retain explicit scope and error" {
-    const home = try SessionCommandTestHome.install(std.testing.allocator, null);
-    defer home.deinit();
-    var app = try FakeApp.init(std.testing.allocator, "/tmp/workspace", "model");
-    defer app.deinit();
-
-    try Commands(FakeApp).handleAllowlist(
-        &app,
-        "user add command \"git status *\"",
-    );
-
-    try expectTranscriptContains(
-        &app,
-        "● Allowlist: failed to add rule to settings (scope=user, error=HomeNotSet)",
-    );
-    try std.testing.expectEqual(types.NoticeTone.@"error", app.last_tone.?);
-}
-
-test "session_commands allowlist durable save survives post-commit resolver diagnostic" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
-    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
-    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
-    defer std.testing.allocator.free(home_root);
-    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
-    defer std.testing.allocator.free(workspace_root);
-
-    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
-    defer home.deinit();
-    var app = try FakeApp.init(std.testing.allocator, workspace_root, "model");
-    defer app.deinit();
-    app.post_commit_resolution_diagnostic = .durable_path_unsafe;
-
-    try Commands(FakeApp).handleAllowlist(
-        &app,
-        "user add command \"git status *\"",
-    );
-
-    try expectTranscriptContains(&app, "● Allowlist: added command");
-    try expectTranscriptContains(&app, "(scope=user)");
-    try expectTranscriptContains(
-        &app,
-        "saved but effective source unknown and runtime reload failed (DurablePathUnsafe)",
-    );
-    try std.testing.expectEqual(types.NoticeTone.warning, app.last_tone.?);
 }
 
 test "session_commands runtime-first model keeps runtime state when both durable targets fail" {
@@ -3182,14 +2011,4 @@ test "session_commands isSplitter recognizes separator characters" {
     try std.testing.expect(isSplitter('_'));
     try std.testing.expect(!isSplitter('a'));
     try std.testing.expect(!isSplitter('0'));
-}
-
-test "session_commands startsWithWord matches word boundary" {
-    try std.testing.expect(startsWithWord("add bash gh", "add"));
-    try std.testing.expect(startsWithWord("remove bash gh", "remove"));
-    try std.testing.expect(startsWithWord("add\tbash", "add"));
-    try std.testing.expect(!startsWithWord("addition", "add"));
-    try std.testing.expect(!startsWithWord("ad", "add"));
-    try std.testing.expect(startsWithWord("add", "add"));
-    try std.testing.expect(startsWithWord("Add bash", "add"));
 }

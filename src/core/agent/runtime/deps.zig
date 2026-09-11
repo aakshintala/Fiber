@@ -22,12 +22,10 @@ const PermissionMode = types.PermissionMode;
 const ToolCall = types.ToolCall;
 const WorkerEvent = worker_runtime.WorkerEvent;
 
-const DeferredToolCompletion = tool_contracts.DeferredToolCompletion;
 const DiffEntryPayload = tool_contracts.DiffEntryPayload;
 const ToolCallValidationResult = tool_contracts.ToolCallValidationResult;
 const ToolExecutionRequest = tool_contracts.ToolExecutionRequest;
 const ToolExecutionResult = tool_contracts.ToolExecutionResult;
-const TransportPublicationOutcome = tool_contracts.TransportPublicationOutcome;
 pub const LiveToolAuthority = tool_contracts.LiveToolAuthority;
 
 pub const RecoveryCheckpointEffect = struct {
@@ -167,8 +165,6 @@ pub const DiffMarkerStyles = struct {
 pub const AgentRuntimeDeps = struct {
     ctx: *anyopaque,
     agent_stream_provider: agent_stream_provider.Provider = agent_stream_provider.unavailable_provider,
-    flush_assistant_stream_per_content_chunk: bool = false,
-    cooperative_transport_pulse: ?agent_stream_provider.CooperativePulse = null,
     tool_registry: tool_dispatch.Registry = .{},
     context_registry: ?context_contract.Registry = null,
     context_enabled: bool = false,
@@ -197,7 +193,6 @@ pub const AgentRuntimeDeps = struct {
     permission_target_for_call: *const fn (ctx: *anyopaque, arena: Allocator, call: ToolCall, advertised_dynamic_tool_names: []const []const u8) anyerror![]const u8,
     execute_tool_call: *const fn (ctx: *anyopaque, request: ToolExecutionRequest) anyerror!ToolExecutionResult,
     publish_committed_file_handoff: *const fn (ctx: *anyopaque, handoff: file_mutation.CommittedFileHandoff) tool_contracts.SecondaryPublicationReport,
-    publish_deferred_tool_completion: ?*const fn (ctx: *anyopaque, completion: DeferredToolCompletion) TransportPublicationOutcome = null,
     propagate_history_turn: *const fn (ctx: *anyopaque, turn: HistoryTurn) anyerror!void,
     recovery_checkpoint: ?RecoveryCheckpointEffect = null,
     propagate_grant: *const fn (ctx: *anyopaque, tool_name: []const u8, target_path: []const u8) anyerror!void,

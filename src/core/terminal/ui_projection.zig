@@ -29,23 +29,6 @@ pub const Snapshot = struct {
     }
 };
 
-pub const BackgroundStatus = struct {
-    count: usize = 0,
-    running: bool = false,
-};
-
-pub fn backgroundStatus(rows: []const Row) BackgroundStatus {
-    var result: BackgroundStatus = .{};
-    for (rows) |row| {
-        if (row.lifecycle != .running or row.attention.attention != .background) {
-            continue;
-        }
-        result.count += 1;
-        result.running = true;
-    }
-    return result;
-}
-
 pub const Store = struct {
     rows: std.ArrayList(Row) = .empty,
 
@@ -185,20 +168,6 @@ fn labelFromRequest(request: contracts.ActionRequest) ?[]const u8 {
         },
         else => null,
     };
-}
-
-test "background status counts only running background terminal sessions" {
-    const rows = [_]Row{
-        .{ .session_id = @constCast("a"), .label = @constCast("a"), .lifecycle = .running, .attention = .{}, .backend = .native },
-        .{ .session_id = @constCast("b"), .label = @constCast("b"), .lifecycle = .running, .attention = .{ .attention = .agent_wait, .write_lease = .agent }, .backend = .native },
-        .{ .session_id = @constCast("c"), .label = @constCast("c"), .lifecycle = .exited, .attention = .{}, .backend = .tmux },
-        .{ .session_id = @constCast("d"), .label = @constCast("d"), .lifecycle = .running, .attention = .{ .attention = .user_takeover, .write_lease = .human }, .backend = .native },
-        .{ .session_id = @constCast("e"), .label = @constCast("e"), .lifecycle = .starting, .attention = .{}, .backend = .native },
-        .{ .session_id = @constCast("f"), .label = @constCast("f"), .lifecycle = .closed, .attention = .{}, .backend = .tmux },
-    };
-    const status = backgroundStatus(&rows);
-    try std.testing.expectEqual(@as(usize, 1), status.count);
-    try std.testing.expect(status.running);
 }
 
 test "filtered catalog observations update rows without replacing the full projection" {

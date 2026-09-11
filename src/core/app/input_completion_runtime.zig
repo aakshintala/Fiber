@@ -1,5 +1,4 @@
 const std = @import("std");
-const runtime_profile = @import("../hosts/runtime_profile.zig");
 const edit_contract = @import("../input/editor_state.zig");
 const file_picker_path = @import("../input/file_picker_path.zig");
 const horizontal_navigation = @import("../input/horizontal_navigation.zig");
@@ -368,9 +367,7 @@ pub fn CompletionRuntime(comptime App: type) type {
             if (try routeModelMenuMove(app, delta)) return true;
             if (routeAuthPickerMove(app, delta)) return true;
             if (try routeSkillsMenuMove(app, delta)) return true;
-            if (comptime runtime_profile.allows(App, .durable_sessions)) {
-                if (try routeSessionPickerMove(app, delta)) return true;
-            }
+            if (try routeSessionPickerMove(app, delta)) return true;
             const stream_suppresses_file_picker = app.stream.active and !queueReviewOwnsComposer(app);
             if (!stream_suppresses_file_picker and hasFileQuery(app)) {
                 navigateFilePicker(app, delta);
@@ -1107,6 +1104,22 @@ pub fn CompletionRuntime(comptime App: type) type {
             return buf[idx];
         }
 
+        /// fiber ships no compiled-in default model, so a profile that has
+        /// never chosen one reaches the shell with nothing selected. Rather
+        /// than wait for the user to discover /model, open its picker.
+        ///
+        /// Not without a credential: the catalog needs one, so the picker
+        /// would render "unable to load models" over a composer the user
+        /// still has to clear. Signing in comes first, and the connections
+        /// prompt already asks for that.
+        pub fn openModelPickerIfUnselected(app: *App) !void {
+            if (provider_runtime.model(app).len > 0) return;
+            if (comptime @hasDecl(App, "hasCredentialSource")) {
+                if (!app.hasCredentialSource()) return;
+            }
+            try openCurrentModelPicker(app);
+        }
+
         pub fn openCurrentModelPicker(app: *App) !void {
             try app.input_runtime.textReplacementState().replace(app.alloc, "/model ");
             app.input_runtime.picker.model_completion_anchor_current = true;
@@ -1508,13 +1521,13 @@ test "command skills navigation measures a width-changed queued editor before fr
     const alloc = std.testing.allocator;
     const rt = CompletionRuntime(SkillsNavigationTestApp);
     const skills = [_]skill_runtime.Skill{
-        .{ .name = "one", .description = "", .path = "/tmp/one", .source = .global_fx },
-        .{ .name = "two", .description = "", .path = "/tmp/two", .source = .global_fx },
-        .{ .name = "three", .description = "", .path = "/tmp/three", .source = .global_fx },
-        .{ .name = "four", .description = "", .path = "/tmp/four", .source = .global_fx },
-        .{ .name = "five", .description = "", .path = "/tmp/five", .source = .global_fx },
-        .{ .name = "six", .description = "", .path = "/tmp/six", .source = .global_fx },
-        .{ .name = "seven", .description = "", .path = "/tmp/seven", .source = .global_fx },
+        .{ .name = "one", .description = "", .path = "/tmp/one", .source = .global_fiber },
+        .{ .name = "two", .description = "", .path = "/tmp/two", .source = .global_fiber },
+        .{ .name = "three", .description = "", .path = "/tmp/three", .source = .global_fiber },
+        .{ .name = "four", .description = "", .path = "/tmp/four", .source = .global_fiber },
+        .{ .name = "five", .description = "", .path = "/tmp/five", .source = .global_fiber },
+        .{ .name = "six", .description = "", .path = "/tmp/six", .source = .global_fiber },
+        .{ .name = "seven", .description = "", .path = "/tmp/seven", .source = .global_fiber },
     };
     var app = SkillsNavigationTestApp{ .alloc = alloc };
     defer app.deinit();
@@ -1616,7 +1629,7 @@ test "root slash completion follows multiline and command argument ownership" {
         .name = "resume-helper",
         .description = "resume a workflow",
         .path = "/tmp/resume-helper/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     var app = InlineCompletionTestApp{
         .alloc = alloc,
@@ -1639,7 +1652,7 @@ test "inline skill completion stays inactive when its suffix cannot render" {
         .name = "managed-menu",
         .description = "",
         .path = "/tmp/managed-menu/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     var app = InlineCompletionTestApp{
         .alloc = alloc,
@@ -1685,7 +1698,7 @@ test "model picker ownership suppresses inline skill completion" {
         .name = "managed-menu",
         .description = "",
         .path = "/tmp/managed-menu/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     var app = InlineCompletionTestApp{
         .alloc = alloc,
@@ -1713,7 +1726,7 @@ test "dedicated catalog ownership suppresses inline skill completion" {
         .name = "managed-menu",
         .description = "",
         .path = "/tmp/managed-menu/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     var app = InlineCompletionTestApp{
         .alloc = alloc,

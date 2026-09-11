@@ -9,7 +9,6 @@ const recv_timeout_sec: i64 = 30;
 const latest_version_max_bytes: usize = 128;
 const checksum_max_bytes: usize = 4096;
 
-const Channel = update_target.Channel;
 const Target = update_target.Target;
 
 fn setRecvTimeout(conn: *std.http.Client.Connection) void {
@@ -18,13 +17,17 @@ fn setRecvTimeout(conn: *std.http.Client.Connection) void {
     std.posix.setsockopt(sock, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&timeout)) catch {};
 }
 
-pub const cdn_base = "https://releases.fx.sh";
-
-pub fn resolveCdnBase() []const u8 {
-    if (io_mod.getenv("FX_E2E_UPGRADE_BASE_URL")) |url| {
+/// Returns the base URL to fetch releases from, or null when this build has no
+/// release source at all.
+///
+/// The inherited CDN is gone, so today the only source is the loopback address
+/// the deterministic E2E tests serve. That seam is deliberately kept: update
+/// support (#46) will need somewhere to point.
+pub fn resolveReleaseBase() ?[]const u8 {
+    if (io_mod.getenv("FIBER_E2E_UPGRADE_BASE_URL")) |url| {
         if (isLoopbackE2eUpgradeBase(url)) return url;
     }
-    return cdn_base;
+    return null;
 }
 
 fn isLoopbackE2eUpgradeBase(url: []const u8) bool {
@@ -68,28 +71,10 @@ fn platformFromTarget() ?[]const u8 {
     return null;
 }
 
-pub fn fetchTarget(alloc: Allocator, channel: Channel, base_url: []const u8) !Target {
-    return switch (channel) {
-        .stable => blk: {
-            const latest = try fetchLatestVersion(alloc, base_url);
-            defer alloc.free(latest);
-            break :blk Target.initStable(alloc, latest) catch return error.FetchFailed;
-        },
-        .dev => blk: {
-            var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
-            defer client.deinit();
-            const url = try std.fmt.allocPrint(alloc, "{s}/dev.json", .{base_url});
-            defer alloc.free(url);
-            const manifest = try fetchTextBounded(
-                &client,
-                alloc,
-                url,
-                update_target.max_manifest_bytes,
-            );
-            defer alloc.free(manifest);
-            break :blk Target.parseDevManifest(alloc, manifest) catch return error.FetchFailed;
-        },
-    };
+pub fn fetchTarget(alloc: Allocator, base_url: []const u8) !Target {
+    const latest = try fetchLatestVersion(alloc, base_url);
+    defer alloc.free(latest);
+    return Target.initStable(alloc, latest) catch return error.FetchFailed;
 }
 
 fn fetchLatestVersion(alloc: Allocator, base_url: []const u8) ![]u8 {
@@ -153,10 +138,6 @@ pub const DownloadProgress = struct {
     start: *const fn (*anyopaque, ?u64) void,
     update: *const fn (*anyopaque, u64, ?u64) void,
 };
-
-pub fn downloadFileStreaming(client: *std.http.Client, url: []const u8, dest_path: []const u8) !void {
-    return downloadFileStreamingWithProgress(client, url, dest_path, null);
-}
 
 pub fn downloadFileStreamingWithProgress(client: *std.http.Client, url: []const u8, dest_path: []const u8, progress: ?DownloadProgress) !void {
     var file = std.Io.Dir.createFileAbsolute(io_mod.getIo(), dest_path, .{}) catch return error.DownloadFailed;
@@ -329,12 +310,12 @@ test "E2E upgrade base accepts only explicit IPv4 loopback origins" {
     try std.testing.expect(!isLoopbackE2eUpgradeBase("http://localhost:1234"));
 }
 
-test "production upgrade base uses the fx release domain" {
-    try std.testing.expectEqualStrings("https://releases.fx.sh", resolveCdnBase());
+test "production upgrade base returns null without E2E override" {
+    try std.testing.expect(resolveReleaseBase() == null);
 }
 
 test "extractChecksumHex parses sha256sum format" {
-    const with_filename = "abc123def456  fx-macos-aarch64.tar.gz\n";
+    const with_filename = "abc123def456  fiber-macos-aarch64.tar.gz\n";
     const hex = extractChecksumHex(with_filename).?;
     try std.testing.expectEqualStrings("abc123def456", hex);
 }
@@ -361,13 +342,13 @@ test "replaceBinary moves replacement over target path" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeTempFile(tmp.dir, "fx-old", "old");
-    try writeTempFile(tmp.dir, "fx-new", "new");
+    try writeTempFile(tmp.dir, "fiber-old", "old");
+    try writeTempFile(tmp.dir, "fiber-new", "new");
     const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
     defer alloc.free(root);
-    const new_path = try std.fs.path.join(alloc, &.{ root, "fx-new" });
+    const new_path = try std.fs.path.join(alloc, &.{ root, "fiber-new" });
     defer alloc.free(new_path);
-    const target_path = try std.fs.path.join(alloc, &.{ root, "fx-old" });
+    const target_path = try std.fs.path.join(alloc, &.{ root, "fiber-old" });
     defer alloc.free(target_path);
 
     try replaceBinary(new_path, target_path);

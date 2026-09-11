@@ -42,7 +42,6 @@ pub const Wire = enum {
     modern_mcp,
     legacy_mcp_2025_06,
     legacy_mcp_2025_11,
-    acp,
 
     pub fn isLegacy(self: Wire) bool {
         return self == .legacy_mcp_2025_06 or self == .legacy_mcp_2025_11;
@@ -102,20 +101,6 @@ pub const Capabilities = packed struct {
     }
 };
 
-/// ACP deliberately has no empty-object form fallback. A mode is supported
-/// only when its property exists and is not JSON null.
-pub fn parseAcpCapabilities(client_capabilities: std.json.Value) Capabilities {
-    if (client_capabilities != .object) return .{};
-    const elicitation = client_capabilities.object.get("elicitation") orelse return .{};
-    if (elicitation != .object) return .{};
-    const form = elicitation.object.get("form");
-    const url = elicitation.object.get("url");
-    return .{
-        .form = form != null and form.? != .null,
-        .url = url != null and url.? != .null,
-    };
-}
-
 /// Modern MCP retains its compatibility rule: an empty elicitation capability
 /// supports form mode. Explicit mode members otherwise use presence/non-null.
 fn parseModernMcpCapabilities(client_capabilities: std.json.Value) Capabilities {
@@ -133,16 +118,6 @@ fn parseModernMcpCapabilities(client_capabilities: std.json.Value) Capabilities 
 
 pub const Scope = union(enum) {
     operation: Operation,
-    acp_session: struct {
-        session_id: []const u8,
-        tool_call_id: ?[]const u8 = null,
-    },
-    acp_request: AcpRequestId,
-};
-
-const AcpRequestId = union(enum) {
-    integer: i64,
-    string: []const u8,
 };
 
 pub const Operation = union(enum) {
@@ -160,7 +135,6 @@ pub const Binding = struct {
     catalog_generation: u64,
     request_generation: u64,
     auth_generation: u64,
-    user_identity: ?[]const u8 = null,
     deadline_ms: i64,
 };
 
@@ -173,7 +147,6 @@ pub const AnswerBinding = struct {
     catalog_generation: u64,
     request_generation: u64,
     auth_generation: u64,
-    user_identity: ?[]const u8 = null,
 };
 
 pub const RequestState = enum {
@@ -195,7 +168,6 @@ const Rejection = enum {
     wrong_catalog_generation,
     wrong_request_generation,
     changed_auth,
-    wrong_user,
     cancelled,
 };
 
@@ -225,7 +197,6 @@ pub fn decideTransition(
     if (expected.catalog_generation != answer.catalog_generation) return .{ .reject = .wrong_catalog_generation };
     if (expected.request_generation != answer.request_generation) return .{ .reject = .wrong_request_generation };
     if (expected.auth_generation != answer.auth_generation) return .{ .reject = .changed_auth };
-    if (!optionalStringEqual(expected.user_identity, answer.user_identity)) return .{ .reject = .wrong_user };
     return .consume;
 }
 
@@ -233,16 +204,6 @@ fn scopeEqual(expected: Scope, answer: Scope) bool {
     return switch (expected) {
         .operation => |operation| switch (answer) {
             .operation => |other| operationEqual(operation, other),
-            else => false,
-        },
-        .acp_session => |session| switch (answer) {
-            .acp_session => |other| std.mem.eql(u8, session.session_id, other.session_id) and
-                optionalStringEqual(session.tool_call_id, other.tool_call_id),
-            else => false,
-        },
-        .acp_request => |request_id| switch (answer) {
-            .acp_request => |other| requestIdEqual(request_id, other),
-            else => false,
         },
     };
 }
@@ -262,24 +223,6 @@ fn operationEqual(expected: Operation, answer: Operation) bool {
             else => false,
         },
     };
-}
-
-fn requestIdEqual(expected: AcpRequestId, answer: AcpRequestId) bool {
-    return switch (expected) {
-        .integer => |value| switch (answer) {
-            .integer => |other| value == other,
-            else => false,
-        },
-        .string => |value| switch (answer) {
-            .string => |other| std.mem.eql(u8, value, other),
-            else => false,
-        },
-    };
-}
-
-fn optionalStringEqual(left: ?[]const u8, right: ?[]const u8) bool {
-    if (left == null or right == null) return left == null and right == null;
-    return std.mem.eql(u8, left.?, right.?);
 }
 
 pub const Action = enum {
@@ -405,7 +348,6 @@ pub fn decideLegacyUrlCompletion(
             .catalog_generation = notification.catalog_generation,
             .request_generation = expected.request_generation,
             .auth_generation = notification.auth_generation,
-            .user_identity = expected.user_identity,
         },
         now_ms,
         server_present,
@@ -558,182 +500,6 @@ pub fn parseLegacyUrlRequired(
     return .{ .requests = requests };
 }
 
-const AcpProjectionScope = union(enum) {
-    session: struct {
-        session_id: []const u8,
-        tool_call_id: ?[]const u8 = null,
-    },
-    request: AcpRequestId,
-};
-
-/// Projects a validated modern MCP request onto ACP's distinct direct-request
-/// wire. ACP requires an explicit mode, excludes MCP's `$schema` and
-/// compatibility-only `enumNames`, and owns its own URL elicitation id.
-pub fn projectToAcpCreateParams(
-    alloc: Allocator,
-    request: Request,
-    scope: AcpProjectionScope,
-    url_elicitation_id: ?[]const u8,
-    display_message: ?[]const u8,
-    limits: Limits,
-) Error![]u8 {
-    return projectToAcpCreateParamsFallible(
-        alloc,
-        request,
-        scope,
-        url_elicitation_id,
-        display_message,
-        limits,
-    ) catch |err| switch (err) {
-        error.WriteFailed => error.OutOfMemory,
-        else => |other| other,
-    };
-}
-
-fn projectToAcpCreateParamsFallible(
-    alloc: Allocator,
-    request: Request,
-    scope: AcpProjectionScope,
-    url_elicitation_id: ?[]const u8,
-    display_message: ?[]const u8,
-    limits: Limits,
-) (Error || std.Io.Writer.Error)![]u8 {
-    if (request.wire != .modern_mcp and !request.wire.isLegacy()) return error.InvalidRequest;
-    var parsed = std.json.parseFromSlice(std.json.Value, alloc, request.raw_params_json, .{
-        .parse_numbers = false,
-    }) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.InvalidRequest,
-    };
-    defer parsed.deinit();
-    if (parsed.value != .object) return error.InvalidRequest;
-
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    defer out.deinit();
-    try out.writer.writeByte('{');
-    switch (scope) {
-        .session => |value| {
-            if (value.session_id.len == 0 or value.session_id.len > limits.max_name_bytes) {
-                return error.InvalidRequest;
-            }
-            try out.writer.writeAll("\"sessionId\":");
-            try std.json.Stringify.value(value.session_id, .{}, &out.writer);
-            if (value.tool_call_id) |tool_call_id| {
-                if (tool_call_id.len == 0 or tool_call_id.len > limits.max_name_bytes) {
-                    return error.InvalidRequest;
-                }
-                try out.writer.writeAll(",\"toolCallId\":");
-                try std.json.Stringify.value(tool_call_id, .{}, &out.writer);
-            }
-        },
-        .request => |request_id| {
-            try out.writer.writeAll("\"requestId\":");
-            switch (request_id) {
-                .integer => |value| try out.writer.print("{d}", .{value}),
-                .string => |value| {
-                    if (value.len == 0 or value.len > limits.max_name_bytes) {
-                        return error.InvalidRequest;
-                    }
-                    try std.json.Stringify.value(value, .{}, &out.writer);
-                },
-            }
-        },
-    }
-    try out.writer.writeAll(",\"mode\":");
-    try std.json.Stringify.value(@tagName(request.mode), .{}, &out.writer);
-    try out.writer.writeAll(",\"message\":");
-    try std.json.Stringify.value(display_message orelse request.message, .{}, &out.writer);
-    switch (request.mode) {
-        .form => {
-            const schema = parsed.value.object.get("requestedSchema") orelse return error.InvalidRequest;
-            try out.writer.writeAll(",\"requestedSchema\":");
-            var remaining = schemaNodeLimit(limits);
-            try writeAcpSchemaValue(&out.writer, schema, &remaining);
-        },
-        .url => {
-            const id = url_elicitation_id orelse return error.InvalidRequest;
-            if (id.len == 0 or id.len > limits.max_name_bytes) return error.InvalidRequest;
-            try out.writer.writeAll(",\"url\":");
-            try std.json.Stringify.value(request.url orelse return error.InvalidRequest, .{}, &out.writer);
-            try out.writer.writeAll(",\"elicitationId\":");
-            try std.json.Stringify.value(id, .{}, &out.writer);
-        },
-        .unknown => return error.UnsupportedMode,
-    }
-    if (parsed.value.object.get("_meta")) |metadata| {
-        if (metadata != .object) return error.InvalidRequest;
-        try out.writer.writeAll(",\"_meta\":");
-        try std.json.Stringify.value(metadata, .{}, &out.writer);
-    }
-    try out.writer.writeByte('}');
-    if (out.written().len > limits.max_request_bytes) return error.LimitExceeded;
-
-    const projected = try out.toOwnedSlice();
-    errdefer alloc.free(projected);
-    var validated = try parseRequest(alloc, .acp, projected, limits);
-    validated.deinit(alloc);
-    return projected;
-}
-
-fn writeAcpSchemaValue(
-    writer: *std.Io.Writer,
-    schema: std.json.Value,
-    remaining: *usize,
-) (Error || std.Io.Writer.Error)!void {
-    if (remaining.* == 0) return error.LimitExceeded;
-    remaining.* -= 1;
-    switch (schema) {
-        .object => |object| {
-            try writer.writeByte('{');
-            var wrote = false;
-            var iterator = object.iterator();
-            while (iterator.next()) |entry| {
-                if (std.mem.eql(u8, entry.key_ptr.*, "$schema") or
-                    std.mem.eql(u8, entry.key_ptr.*, "enumNames")) continue;
-                if (wrote) try writer.writeByte(',');
-                wrote = true;
-                try std.json.Stringify.value(entry.key_ptr.*, .{}, writer);
-                try writer.writeByte(':');
-                try writeAcpSchemaValue(writer, entry.value_ptr.*, remaining);
-            }
-            try writer.writeByte('}');
-        },
-        .array => |array| {
-            try writer.writeByte('[');
-            for (array.items, 0..) |item, index| {
-                if (index > 0) try writer.writeByte(',');
-                try writeAcpSchemaValue(writer, item, remaining);
-            }
-            try writer.writeByte(']');
-        },
-        else => try std.json.Stringify.value(schema, .{}, writer),
-    }
-}
-
-fn containsKeyRecursive(value: std.json.Value, needle: []const u8, max_nodes: usize) bool {
-    var remaining = max_nodes;
-    return containsKeyRecursiveBounded(value, needle, &remaining);
-}
-
-fn containsKeyRecursiveBounded(value: std.json.Value, needle: []const u8, remaining: *usize) bool {
-    if (remaining.* == 0) return true;
-    remaining.* -= 1;
-    switch (value) {
-        .object => |object| {
-            var iterator = object.iterator();
-            while (iterator.next()) |entry| {
-                if (std.mem.eql(u8, entry.key_ptr.*, needle) or
-                    containsKeyRecursiveBounded(entry.value_ptr.*, needle, remaining)) return true;
-            }
-        },
-        .array => |array| for (array.items) |item| {
-            if (containsKeyRecursiveBounded(item, needle, remaining)) return true;
-        },
-        else => {},
-    }
-    return false;
-}
-
 pub fn parseRequest(
     alloc: Allocator,
     wire: Wire,
@@ -782,7 +548,7 @@ pub fn parseRequest(
             const url_value = parsed.value.object.get("url") orelse return error.InvalidRequest;
             request.url = try copyString(alloc, url_value, limits.max_string_bytes, error.InvalidRequest);
             request.url_host = try classifyUrl(alloc, request.url.?, limits);
-            if (wire == .acp or wire == .legacy_mcp_2025_11) {
+            if (wire == .legacy_mcp_2025_11) {
                 const id_value = parsed.value.object.get("elicitationId") orelse return error.InvalidRequest;
                 request.elicitation_id = try copyString(
                     alloc,
@@ -800,7 +566,7 @@ pub fn parseRequest(
 }
 
 fn parseMode(wire: Wire, mode: ?std.json.Value) Mode {
-    if (mode == null) return if (wire == .acp) .unknown else .form;
+    if (mode == null) return .form;
     if (wire == .legacy_mcp_2025_06) return .unknown;
     if (mode.? != .string) return .unknown;
     if (std.mem.eql(u8, mode.?.string, "form")) return .form;
@@ -941,15 +707,7 @@ fn parseFormSchemaValue(
     limits: Limits,
 ) Error!FormSchema {
     if (schema != .object) return error.InvalidSchema;
-    if (wire == .acp and
-        (containsKeyRecursive(schema, "$schema", schemaNodeLimit(limits)) or
-            containsKeyRecursive(schema, "enumNames", schemaNodeLimit(limits))))
-    {
-        return error.UnsupportedSchema;
-    }
-    if (wire != .acp and
-        (schema.object.get("title") != null or schema.object.get("description") != null))
-    {
+    if (schema.object.get("title") != null or schema.object.get("description") != null) {
         return error.UnsupportedSchema;
     }
     if (schema.object.get("additionalProperties")) |additional| {
@@ -1019,11 +777,6 @@ fn parseFormSchemaValue(
     return result;
 }
 
-fn schemaNodeLimit(limits: Limits) usize {
-    return std.math.mul(usize, limits.max_fields, limits.max_options) catch
-        std.math.maxInt(usize);
-}
-
 fn parseFieldInto(
     out: *Field,
     alloc: Allocator,
@@ -1034,9 +787,6 @@ fn parseFieldInto(
     limits: Limits,
 ) Error!void {
     if (schema != .object) return error.InvalidSchema;
-    if (wire == .acp and schema.object.get("enumNames") != null) {
-        return error.UnsupportedSchema;
-    }
     const type_value = schema.object.get("type") orelse return error.InvalidSchema;
     if (type_value != .string) return error.UnsupportedSchema;
 
@@ -1059,10 +809,10 @@ fn parseFieldInto(
         try parseStringConstraints(alloc, &field, schema, limits, wire);
         if (schema.object.get("oneOf")) |choices| {
             if (wire == .legacy_mcp_2025_06) return error.UnsupportedSchema;
-            field.choices = try parseTitledChoices(alloc, choices, limits, wire == .acp);
+            field.choices = try parseTitledChoices(alloc, choices, limits);
             field.kind = .single_select;
         } else if (schema.object.get("enum")) |choices| {
-            field.choices = try parseEnumChoices(alloc, choices, schema.object.get("enumNames"), limits, wire);
+            field.choices = try parseEnumChoices(alloc, choices, schema.object.get("enumNames"), limits);
             field.kind = .single_select;
         }
     } else if (std.mem.eql(u8, type_value.string, "number")) {
@@ -1076,7 +826,7 @@ fn parseFieldInto(
     } else if (std.mem.eql(u8, type_value.string, "array")) {
         if (wire == .legacy_mcp_2025_06) return error.UnsupportedSchema;
         field.kind = .multi_select;
-        try parseMultiSelect(alloc, &field, schema, limits, wire);
+        try parseMultiSelect(alloc, &field, schema, limits);
     } else {
         return error.UnsupportedSchema;
     }
@@ -1103,7 +853,7 @@ fn parseStringConstraints(
     if (schema.object.get("format")) |format_value| {
         field.format_name = try copyString(alloc, format_value, limits.max_name_bytes, error.InvalidSchema);
         field.format = classifyFormat(field.format_name.?);
-        if (field.format == .unknown and wire != .acp) return error.UnsupportedSchema;
+        if (field.format == .unknown) return error.UnsupportedSchema;
     }
     if (schema.object.get("pattern")) |pattern_value| {
         if (wire == .legacy_mcp_2025_06) return error.UnsupportedSchema;
@@ -1139,7 +889,6 @@ fn parseMultiSelect(
     field: *Field,
     schema: std.json.Value,
     limits: Limits,
-    wire: Wire,
 ) Error!void {
     field.min_items = try optionalUsize(schema.object, "minItems", limits.max_options);
     field.max_items = try optionalUsize(schema.object, "maxItems", limits.max_options);
@@ -1154,13 +903,13 @@ fn parseMultiSelect(
                 return error.UnsupportedSchema;
             }
         }
-        field.choices = try parseTitledChoices(alloc, choices, limits, wire == .acp);
+        field.choices = try parseTitledChoices(alloc, choices, limits);
     } else if (items.object.get("enum")) |choices| {
         const item_type = items.object.get("type") orelse return error.InvalidSchema;
         if (item_type != .string or !std.mem.eql(u8, item_type.string, "string")) {
             return error.UnsupportedSchema;
         }
-        field.choices = try parseEnumChoices(alloc, choices, items.object.get("enumNames"), limits, wire);
+        field.choices = try parseEnumChoices(alloc, choices, items.object.get("enumNames"), limits);
     } else {
         return error.InvalidSchema;
     }
@@ -1171,7 +920,6 @@ fn parseTitledChoices(
     alloc: Allocator,
     value: std.json.Value,
     limits: Limits,
-    allow_description: bool,
 ) Error![]Choice {
     if (value != .array or value.array.items.len == 0 or value.array.items.len > limits.max_options) {
         return error.InvalidSchema;
@@ -1203,20 +951,9 @@ fn parseTitledChoices(
                 return error.InvalidSchema;
             }
         }
-        if (item.object.get("description")) |description| {
-            if (!allow_description) {
-                choices[count].deinit(alloc);
-                return error.UnsupportedSchema;
-            }
-            choices[count].description = copyString(
-                alloc,
-                description,
-                limits.max_label_bytes,
-                error.InvalidSchema,
-            ) catch |err| {
-                choices[count].deinit(alloc);
-                return err;
-            };
+        if (item.object.get("description")) |_| {
+            choices[count].deinit(alloc);
+            return error.UnsupportedSchema;
         }
         count += 1;
     }
@@ -1228,12 +965,10 @@ fn parseEnumChoices(
     value: std.json.Value,
     enum_names: ?std.json.Value,
     limits: Limits,
-    wire: Wire,
 ) Error![]Choice {
     if (value != .array or value.array.items.len == 0 or value.array.items.len > limits.max_options) {
         return error.InvalidSchema;
     }
-    if (wire == .acp and enum_names != null) return error.UnsupportedSchema;
     if (enum_names) |names| if (names != .array or names.array.items.len != value.array.items.len) {
         return error.InvalidSchema;
     };
@@ -1302,8 +1037,8 @@ pub fn validateResponse(
 }
 
 /// Produces the smallest response safe to place on the originating MCP wire.
-/// In particular, ignored ACP fields and content attached to decline/cancel or
-/// URL consent are never forwarded to the MCP server.
+/// In particular, extra fields and content attached to decline/cancel or
+/// URL accept responses are never forwarded to the MCP server.
 pub fn canonicalResponse(
     alloc: Allocator,
     request: Request,
@@ -1700,23 +1435,21 @@ fn stringifyBounded(alloc: Allocator, value: std.json.Value, max_bytes: usize) E
     return out.toOwnedSlice();
 }
 
-test "ACP and modern MCP capability fallbacks stay distinct" {
+test "modern MCP capability fallbacks stay distinct" {
     const alloc = std.testing.allocator;
     const cases = [_]struct {
         json: []const u8,
-        acp: Capabilities,
         mcp: Capabilities,
     }{
-        .{ .json = "{}", .acp = .{}, .mcp = .{} },
-        .{ .json = "{\"elicitation\":null}", .acp = .{}, .mcp = .{} },
-        .{ .json = "{\"elicitation\":{}}", .acp = .{}, .mcp = .{ .form = true } },
-        .{ .json = "{\"elicitation\":{\"form\":null,\"url\":null}}", .acp = .{}, .mcp = .{} },
-        .{ .json = "{\"elicitation\":{\"form\":{},\"url\":{}}}", .acp = .{ .form = true, .url = true }, .mcp = .{ .form = true, .url = true } },
+        .{ .json = "{}", .mcp = .{} },
+        .{ .json = "{\"elicitation\":null}", .mcp = .{} },
+        .{ .json = "{\"elicitation\":{}}", .mcp = .{ .form = true } },
+        .{ .json = "{\"elicitation\":{\"form\":null,\"url\":null}}", .mcp = .{} },
+        .{ .json = "{\"elicitation\":{\"form\":{},\"url\":{}}}", .mcp = .{ .form = true, .url = true } },
     };
     for (cases) |case| {
         var parsed = try std.json.parseFromSlice(std.json.Value, alloc, case.json, .{});
         defer parsed.deinit();
-        try std.testing.expectEqual(case.acp, parseAcpCapabilities(parsed.value));
         try std.testing.expectEqual(case.mcp, parseModernMcpCapabilities(parsed.value));
     }
 }
@@ -1724,9 +1457,9 @@ test "ACP and modern MCP capability fallbacks stay distinct" {
 test "form schemas parse every supported field kind and validate content" {
     const alloc = std.testing.allocator;
     const schema =
-        \\{"type":"object","title":"Profile","additionalProperties":false,"properties":{"name":{"type":"string","minLength":2,"maxLength":20,"pattern":"^[A-Za-z]+$"},"age":{"type":"integer","minimum":18,"maximum":120},"ratio":{"type":"number","minimum":0,"maximum":1},"enabled":{"type":"boolean","default":true},"color":{"type":"string","oneOf":[{"const":"red","title":"Red"},{"const":"blue","title":"Blue"}]},"tags":{"type":"array","items":{"anyOf":[{"const":"a","title":"A"},{"const":"b","title":"B"}]},"minItems":1}},"required":["name","age"]}
+        \\{"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","minLength":2,"maxLength":20,"pattern":"^[A-Za-z]+$"},"age":{"type":"integer","minimum":18,"maximum":120},"ratio":{"type":"number","minimum":0,"maximum":1},"enabled":{"type":"boolean","default":true},"color":{"type":"string","oneOf":[{"const":"red","title":"Red"},{"const":"blue","title":"Blue"}]},"tags":{"type":"array","items":{"anyOf":[{"const":"a","title":"A"},{"const":"b","title":"B"}]},"minItems":1}},"required":["name","age"]}
     ;
-    var form = try parseFormSchema(alloc, .acp, schema, .{});
+    var form = try parseFormSchema(alloc, .modern_mcp, schema, .{});
     defer form.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 6), form.fields.len);
 
@@ -1803,7 +1536,7 @@ test "secret classification covers normalized forms without truncation bypasses"
     defer std.testing.allocator.free(schema);
     var form = try parseFormSchema(
         std.testing.allocator,
-        .acp,
+        .modern_mcp,
         schema,
         .{ .max_label_bytes = 2048 },
     );
@@ -1859,23 +1592,13 @@ test "legacy schemas are explicitly scoped to their negotiated revision" {
     );
     defer parsed_11_form.deinit(alloc);
     try std.testing.expectEqualStrings("A", parsed_11_form.fields[0].choices[0].title);
-
-    try std.testing.expectError(
-        error.UnsupportedSchema,
-        parseFormSchema(
-            alloc,
-            .acp,
-            "{\"type\":\"object\",\"properties\":{\"choice\":{\"type\":\"string\",\"enum\":[\"a\"],\"enumNames\":[\"A\"]}}}",
-            .{},
-        ),
-    );
 }
 
 test "exact numeric constraints retain large integer and fractional lexemes" {
     const alloc = std.testing.allocator;
     var form = try parseFormSchema(
         alloc,
-        .acp,
+        .modern_mcp,
         "{\"type\":\"object\",\"properties\":{\"large\":{\"type\":\"integer\",\"minimum\":9007199254740993,\"maximum\":9007199254740995,\"default\":9007199254740994},\"fraction\":{\"type\":\"number\",\"minimum\":0.1,\"maximum\":0.3,\"multipleOf\":0.1,\"default\":0.3}},\"required\":[\"large\",\"fraction\"]}",
         .{},
     );
@@ -1953,7 +1676,7 @@ test "ambiguous schemas are rejected before interaction" {
         error.InvalidSchema,
         parseFormSchema(
             alloc,
-            .acp,
+            .modern_mcp,
             "{\"type\":\"object\",\"properties\":{\"color\":{\"type\":\"string\",\"enum\":[\"red\",\"red\"]}}}",
             .{},
         ),
@@ -1962,7 +1685,7 @@ test "ambiguous schemas are rejected before interaction" {
         error.InvalidSchema,
         parseFormSchema(
             alloc,
-            .acp,
+            .modern_mcp,
             "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\",\"name\"]}",
             .{},
         ),
@@ -1971,21 +1694,17 @@ test "ambiguous schemas are rejected before interaction" {
         error.UnsupportedSchema,
         parseFormSchema(
             alloc,
-            .acp,
+            .modern_mcp,
             "{\"type\":\"object\",\"additionalProperties\":true,\"properties\":{}}",
             .{},
         ),
     );
 }
 
-test "unknown formats remain ACP annotations but are not widened onto MCP" {
+test "unknown formats are rejected on modern MCP" {
     const alloc = std.testing.allocator;
     const schema =
         "{\"type\":\"object\",\"properties\":{\"value\":{\"type\":\"string\",\"format\":\"future-format\"}}}";
-    var acp = try parseFormSchema(alloc, .acp, schema, .{});
-    defer acp.deinit(alloc);
-    try std.testing.expectEqual(Format.unknown, acp.fields[0].format);
-    try std.testing.expectEqualStrings("future-format", acp.fields[0].format_name.?);
     try std.testing.expectError(
         error.UnsupportedSchema,
         parseFormSchema(alloc, .modern_mcp, schema, .{}),
@@ -2019,7 +1738,7 @@ test "elicitation patterns use bounded codepoint semantics" {
     );
     defer too_many_codepoints.deinit();
 
-    for ([_]Wire{ .modern_mcp, .legacy_mcp_2025_11, .acp }) |wire| {
+    for ([_]Wire{ .modern_mcp, .legacy_mcp_2025_11 }) |wire| {
         var form = try parseFormSchema(
             alloc,
             wire,
@@ -2280,7 +1999,6 @@ test "continuation decisions reject stale cross-owner and duplicate answers" {
         .catalog_generation = 4,
         .request_generation = 5,
         .auth_generation = 6,
-        .user_identity = "user-a",
         .deadline_ms = 100,
     };
     const answer: AnswerBinding = .{
@@ -2292,7 +2010,6 @@ test "continuation decisions reject stale cross-owner and duplicate answers" {
         .catalog_generation = 4,
         .request_generation = 5,
         .auth_generation = 6,
-        .user_identity = "user-a",
     };
     try std.testing.expectEqual(Transition.consume, decideTransition(.pending, expected, answer, 99, true));
     try std.testing.expectEqual(Rejection.duplicate, decideTransition(.consumed, expected, answer, 99, true).reject);
@@ -2315,28 +2032,8 @@ test "request parsing and validation release every allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, checkAllocationFailures, .{});
 }
 
-test "ACP projection keeps the wire distinctions from modern and legacy MCP" {
+test "legacy URL-required requests keep elicitation ids on 2025-11 wire" {
     const alloc = std.testing.allocator;
-    var modern = try parseRequest(
-        alloc,
-        .modern_mcp,
-        "{\"message\":\"Profile\",\"requestedSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}}},\"_meta\":{\"fixture\":true}}",
-        .{},
-    );
-    defer modern.deinit(alloc);
-    const projected = try projectToAcpCreateParams(
-        alloc,
-        modern,
-        .{ .session = .{ .session_id = "session", .tool_call_id = "tool" } },
-        null,
-        null,
-        .{},
-    );
-    defer alloc.free(projected);
-    try std.testing.expect(std.mem.find(u8, projected, "\"mode\":\"form\"") != null);
-    try std.testing.expect(std.mem.find(u8, projected, "\"$schema\"") == null);
-    try std.testing.expect(std.mem.find(u8, projected, "\"_meta\":{\"fixture\":true}") != null);
-
     var legacy_url = try parseRequest(
         alloc,
         .legacy_mcp_2025_11,
@@ -2345,32 +2042,13 @@ test "ACP projection keeps the wire distinctions from modern and legacy MCP" {
     );
     defer legacy_url.deinit(alloc);
     try std.testing.expectEqualStrings("legacy-id", legacy_url.elicitation_id.?);
-
-    var with_enum_names = try parseRequest(
-        alloc,
-        .legacy_mcp_2025_06,
-        "{\"message\":\"Choose\",\"requestedSchema\":{\"type\":\"object\",\"properties\":{\"choice\":{\"type\":\"string\",\"enum\":[\"a\"],\"enumNames\":[\"A\"]}}}}",
-        .{},
-    );
-    defer with_enum_names.deinit(alloc);
-    const projected_enum_names = try projectToAcpCreateParams(
-        alloc,
-        with_enum_names,
-        .{ .request = .{ .string = "request" } },
-        null,
-        null,
-        .{},
-    );
-    defer alloc.free(projected_enum_names);
-    try std.testing.expect(std.mem.find(u8, projected_enum_names, "enumNames") == null);
-    try std.testing.expect(std.mem.find(u8, projected_enum_names, "\"enum\":[\"a\"]") != null);
 }
 
 test "canonical responses discard ignored content and unknown fields" {
     const alloc = std.testing.allocator;
     var request = try parseRequest(
         alloc,
-        .acp,
+        .legacy_mcp_2025_11,
         "{\"mode\":\"url\",\"message\":\"Authorize\",\"url\":\"https://example.test/connect\",\"elicitationId\":\"id\"}",
         .{},
     );
@@ -2388,29 +2066,12 @@ test "canonical responses discard ignored content and unknown fields" {
 fn checkAllocationFailures(alloc: Allocator) !void {
     var request = try parseRequest(
         alloc,
-        .acp,
+        .modern_mcp,
         "{\"mode\":\"form\",\"message\":\"Choose\",\"requestedSchema\":{\"type\":\"object\",\"properties\":{\"choice\":{\"type\":\"string\",\"enum\":[\"a\",\"b\"]}},\"required\":[\"choice\"]}}",
         .{},
     );
     defer request.deinit(alloc);
     _ = try validateResponse(alloc, request, "{\"action\":\"accept\",\"content\":{\"choice\":\"a\"}}", .{});
-
-    var modern = try parseRequest(
-        alloc,
-        .modern_mcp,
-        "{\"message\":\"Profile\",\"requestedSchema\":{\"$schema\":\"draft\",\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}}}}",
-        .{},
-    );
-    defer modern.deinit(alloc);
-    const projected = try projectToAcpCreateParams(
-        alloc,
-        modern,
-        .{ .session = .{ .session_id = "session" } },
-        null,
-        null,
-        .{},
-    );
-    alloc.free(projected);
 
     var url_required = try parseLegacyUrlRequired(
         alloc,
@@ -2450,7 +2111,7 @@ fn fuzzElicitationJson(_: void, smith: *std.testing.Smith) !void {
         defer parsed.deinit();
         _ = classifyLegacyUrlCompletionNotification(parsed.value, .{});
     }
-    for ([_]Wire{ .modern_mcp, .legacy_mcp_2025_06, .legacy_mcp_2025_11, .acp }) |wire| {
+    for ([_]Wire{ .modern_mcp, .legacy_mcp_2025_06, .legacy_mcp_2025_11 }) |wire| {
         var request = parseRequest(std.testing.allocator, wire, bytes, .{}) catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => continue,

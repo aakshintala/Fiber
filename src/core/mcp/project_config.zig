@@ -799,7 +799,7 @@ pub fn mergeNative(
     return merged;
 }
 
-pub fn appendWorkspaceAfterAcpPrimary(
+pub fn appendWorkspaceAfterPrimary(
     alloc: Allocator,
     output: *std.ArrayList(McpServerConfig),
     workspace: *std.ArrayList(McpServerConfig),
@@ -836,31 +836,6 @@ pub fn authorityNames(
         }
     }
     return names.toOwnedSlice(alloc);
-}
-
-pub fn configRetainsWorkspaceAuthority(
-    current: McpServerConfig,
-    next: []const McpServerConfig,
-    phase: startup_admission.Phase,
-) bool {
-    if (current.source != .workspace or
-        startup_admission.decide(
-            current.enabled,
-            current.required,
-            current.workspace_admission,
-            phase,
-        ) != .connect) return true;
-    for (next) |candidate| {
-        if (candidate.source != .workspace or
-            !std.mem.eql(u8, current.name, candidate.name)) continue;
-        if (startup_admission.decide(
-            candidate.enabled,
-            candidate.required,
-            candidate.workspace_admission,
-            phase,
-        ) == .connect) return true;
-    }
-    return false;
 }
 
 inline fn failServerConfig(err: anytype) @TypeOf(err)!McpServerConfig {
@@ -1744,20 +1719,20 @@ test "native merge keeps the primary whole entry" {
     try std.testing.expectEqualStrings("only", merged.items[1].name);
 }
 
-test "ACP primary duplicates remain ordered while workspace collisions are excluded" {
+test "workspace primary duplicates remain ordered while workspace collisions are excluded" {
     const alloc = std.testing.allocator;
     var output: std.ArrayList(McpServerConfig) = .empty;
     defer deinitConfigs(alloc, &output);
     try output.append(alloc, .{
         .name = try alloc.dupe(u8, "same"),
-        .source = .acp,
-        .scope = .acp_session,
+        .source = .profile,
+        .scope = .profile,
         .command = try alloc.dupe(u8, "one"),
     });
     try output.append(alloc, .{
         .name = try alloc.dupe(u8, "same"),
-        .source = .acp,
-        .scope = .acp_session,
+        .source = .profile,
+        .scope = .profile,
         .command = try alloc.dupe(u8, "two"),
     });
     var workspace: std.ArrayList(McpServerConfig) = .empty;
@@ -1776,7 +1751,7 @@ test "ACP primary duplicates remain ordered while workspace collisions are exclu
         .command = try alloc.dupe(u8, "workspace"),
         .workspace_admission = .pending,
     });
-    try appendWorkspaceAfterAcpPrimary(alloc, &output, &workspace);
+    try appendWorkspaceAfterPrimary(alloc, &output, &workspace);
     try std.testing.expectEqual(@as(usize, 3), output.items.len);
     try std.testing.expectEqualStrings("one", output.items[0].command.?);
     try std.testing.expectEqualStrings("two", output.items[1].command.?);
@@ -1794,10 +1769,10 @@ test "authority projection detects only removed workspace names" {
     defer freeOwnedStrings(alloc, interactive);
     try std.testing.expectEqual(@as(usize, 1), interactive.len);
     try std.testing.expectEqualStrings("approved", interactive[0]);
-    const headless = try authorityNames(alloc, &configs, .acp_startup);
-    defer freeOwnedStrings(alloc, headless);
-    try std.testing.expectEqual(@as(usize, 1), headless.len);
-    try std.testing.expectEqualStrings("approved", headless[0]);
+    const startup = try authorityNames(alloc, &configs, .ask_startup);
+    defer freeOwnedStrings(alloc, startup);
+    try std.testing.expectEqual(@as(usize, 1), startup.len);
+    try std.testing.expectEqualStrings("approved", startup[0]);
 }
 
 test "workspace parsing releases every partial allocation failure" {

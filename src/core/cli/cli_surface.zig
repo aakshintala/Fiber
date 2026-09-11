@@ -3,8 +3,7 @@ const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const app_lifecycle = @import("../app/app_lifecycle.zig");
 const chatgpt_oauth = @import("../auth/chatgpt_oauth.zig");
-const grok_oauth = @import("../auth/grok_oauth.zig");
-const acp_runner = @import("acp_runner.zig");
+const auth_runtime = @import("../auth/auth_runtime.zig");
 const cli_ask = @import("cli_ask.zig");
 const cli_replay = @import("cli_replay.zig");
 const command_specs = @import("../slash_commands/command_specs.zig");
@@ -18,17 +17,15 @@ const gateway_provider = @import("../gateway/gateway_provider.zig");
 const model_catalog = @import("../gateway/model_catalog.zig");
 const provider_set = @import("../gateway/provider_set.zig");
 const execution_process_provider = @import("../execution/process_provider.zig");
-const github_publish = @import("../github/github_publish.zig");
-const github_workflows = @import("../github/github_workflows.zig");
 const host = @import("../hosts/host.zig");
-const login_flow = @import("../auth/login_flow.zig");
 const oauth_transport = @import("../auth/oauth_transport.zig");
 const provider_catalog = @import("../auth/provider_catalog.zig");
-const secret = @import("../auth/secret.zig");
 const output_contracts = @import("../output/output_contracts.zig");
+const permissions = @import("../permissions/permissions.zig");
 const prompt_policy = @import("../config/prompt_policy.zig");
 const session_store = @import("../session/session_store.zig");
 const subagent_resume_admission = @import("../subagent/resume_admission.zig");
+const app_session_runtime = @import("../app/app_session_runtime.zig");
 const usage_report = @import("../session/usage_report.zig");
 const skill_contract = @import("../skills/skill_contract.zig");
 const types = @import("../shared/types.zig");
@@ -47,7 +44,6 @@ const mcp_runtime = @import("../mcp/mcp_runtime.zig");
 const text_utils = @import("../shared/text_utils.zig");
 const profile_paths = @import("../shared/profile_paths.zig");
 const tool_set_contract = @import("../tooling/tool_set.zig");
-const workspace_access = @import("../workspace/workspace_access.zig");
 const workspace_commands = @import("../workspace/workspace_commands.zig");
 const usage_cli_runtime = @import("usage_cli_runtime.zig");
 
@@ -59,41 +55,27 @@ pub const Command = union(enum) {
     interactive,
     help,
     ask: []const [:0]const u8,
-    acp: []const [:0]const u8,
-    pr: []const [:0]const u8,
-    issue: []const [:0]const u8,
-    login: []const [:0]const u8,
-    logout: []const [:0]const u8,
-    setup: []const [:0]const u8,
+    auth: []const [:0]const u8,
     status: []const [:0]const u8,
     permissions: []const [:0]const u8,
     mcp: []const [:0]const u8,
     models: []const [:0]const u8,
-    provider: []const [:0]const u8,
     doctor: []const [:0]const u8,
-    teams: []const [:0]const u8,
     session: []const [:0]const u8,
     sessions: []const [:0]const u8,
     resume_session: ResumeInvocation,
-    credits: []const [:0]const u8,
     usage: []const [:0]const u8,
     upgrade: []const [:0]const u8,
-    replay: []const [:0]const u8,
+    debug: []const [:0]const u8,
     workspace: []const [:0]const u8,
     unknown: []const u8,
 };
 
 const ResumeInvocation = struct {
     args: []const [:0]const u8,
-    top_level_alias: bool = false,
 };
 
-const resume_id_alias_prefix = "--resume-";
 pub const upgrade_relaunch_arg = "--upgrade-relaunch";
-
-// The one resume alias that asks which session to open. Every other spelling
-// names its target, so it resumes without a prompt.
-const resume_picker_alias = "-r";
 
 pub const ResumeTarget = union(enum) {
     pick,
@@ -142,26 +124,25 @@ pub const RunResult = union(enum) {
     interactive: InteractiveLaunch,
     handled_success,
     handled_failure,
+    handled_usage_error,
     handled_exit: u8,
 };
 
-const version_usage = "usage: fx --version\n";
+const version_usage = "usage: fiber --version\n";
+const help_usage = "usage: fiber help\n";
 
 pub const Config = struct {
     version: []const u8 = "",
     revision: []const u8 = "",
-    build_channel: update_target.Channel = .stable,
     command_catalog: CommandCatalog,
     default_model: []const u8,
     default_agent_step_limit: usize,
     models_path: []const u8,
     gateway_retry_count: usize,
-    gateway_chat_url: []const u8,
-    gateway_provider: gateway_provider.Provider,
+    oauth_transport: oauth_transport.Provider,
     provider_set: provider_set.Set,
     process_provider: execution_process_provider.Provider = execution_process_provider.unavailable_provider,
     url_opener: host.UrlOpener,
-    secret_store: host.SecretStore,
     prompt_policy: prompt_policy.Policy,
     skill_root_policy: skill_contract.RootPolicy,
     ignored_list_entries: []const []const u8,
@@ -183,7 +164,6 @@ pub const Config = struct {
         mcp_command_provider.addProfileServerUnavailable,
     remove_mcp_profile_server: mcp_command_provider.RemoveProfileServerFn =
         mcp_command_provider.removeProfileServerUnavailable,
-    acp_runner: acp_runner.Runner,
 };
 
 const LocalSurfaceOptions = struct {
@@ -196,21 +176,122 @@ fn parseLoginProvider(rest: []const [:0]const u8) !?model_provider.ProviderId {
     return provider_catalog.parse(rest[0]) orelse error.InvalidLoginProviderArgs;
 }
 
-fn selectCatalogModel(
-    entries: []const model_catalog.ModelCatalogEntry,
-    saved: ?[]const u8,
-) ?[]const u8 {
-    if (saved) |candidate| {
-        for (entries) |entry| {
-            if (std.mem.eql(u8, entry.id, candidate)) return entry.id;
+/// `fiber models use <id>` is the only way to set the default model without a
+/// terminal. The catalog is advisory: an unreachable one warns rather than
+/// blocking, so a model can be preset on an unauthenticated or offline machine.
+fn runModelsUse(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    var requested: ?[]const u8 = null;
+    var format: output_contracts.OutputFormat = .text;
+    for (rest) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            format = .json;
+            continue;
+        }
+        if (requested != null) {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .models);
+            return .handled_usage_error;
+        }
+        requested = arg;
+    }
+    const model = requested orelse {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .models);
+        return .handled_usage_error;
+    };
+    if (model.len == 0 or !std.mem.eql(u8, model, std.mem.trim(u8, model, " \t\r\n"))) {
+        try writeModelsUseError(alloc, deps, format, "InvalidModelId", "model id must not be empty or padded with whitespace");
+        return .handled_failure;
+    }
+
+    var startup = try deps.load_catalog_startup_state(
+        alloc,
+        cfg.default_model,
+        cfg.default_agent_step_limit,
+    );
+    defer startup.deinit(alloc);
+    try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+
+    // An unreachable catalog leaves the id unverified rather than refusing it.
+    var verified = false;
+    if (cfg.provider_set.select(startup.provider).cli_model_catalog) |catalog_provider| {
+        switch (catalog_provider.fetch(alloc, .{
+            .access = startup.modelCatalogAccess(),
+            .endpoint = cfg.models_path,
+        })) {
+            .loaded => |loaded| {
+                var ids = loaded.ids;
+                defer collections.freeStringList(alloc, &ids);
+                for (ids.items) |id| {
+                    if (std.mem.eql(u8, id, model)) {
+                        verified = true;
+                        break;
+                    }
+                }
+                if (!verified) {
+                    const detail = try std.fmt.allocPrint(
+                        alloc,
+                        "unknown model: {s}; run fiber models to see what is available",
+                        .{model},
+                    );
+                    defer alloc.free(detail);
+                    try writeModelsUseError(alloc, deps, format, "UnknownModel", detail);
+                    return .handled_failure;
+                }
+            },
+            .failure => {},
         }
     }
-    return if (entries.len > 0) entries[0].id else null;
+
+    var attempt = config_runtime.attemptUserPreferences(alloc, .{
+        .model_preference = .{ .provider = startup.provider, .model = model },
+    });
+    defer attempt.deinit(alloc);
+    switch (attempt) {
+        .failure => |failure| {
+            debug_trace.logf("config", "models use persistence failed err={s}", .{@errorName(failure.err)});
+            try writeModelsUseError(alloc, deps, format, @errorName(failure.err), "failed to save the default model");
+            return .handled_failure;
+        },
+        .outcome => {},
+    }
+
+    const text = try (output_contracts.ModelUseSnapshot{
+        .model = model,
+        .verified = verified,
+    }).render(alloc, format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, format);
+    return .handled_success;
+}
+
+fn writeModelsUseError(
+    alloc: Allocator,
+    deps: RunDeps,
+    format: output_contracts.OutputFormat,
+    code: []const u8,
+    message: []const u8,
+) !void {
+    if (format == .json) {
+        try writeJsonCommandFailureCode(
+            alloc,
+            deps,
+            output_contracts.Kind.models_use.jsonName(),
+            code,
+            message,
+        );
+        return;
+    }
+    try writeStderr(deps, "fiber models use: ");
+    try writeStderr(deps, message);
+    try writeStderr(deps, "\n");
 }
 
 const UpgradeOptions = struct {
     format: output_contracts.OutputFormat = .text,
-    channel: ?update_target.Channel = null,
 };
 
 const SessionListOptions = struct {
@@ -253,17 +334,6 @@ const SessionDetailOptions = struct {
     }
 };
 
-const SessionMigrationOptions = struct {
-    format: output_contracts.OutputFormat = .text,
-    session_id: []u8,
-    allow_large: bool = false,
-
-    fn deinit(self: *SessionMigrationOptions, alloc: Allocator) void {
-        alloc.free(self.session_id);
-        self.* = undefined;
-    }
-};
-
 const SessionRecoveryOptions = struct {
     format: output_contracts.OutputFormat = .text,
     session_id: []u8,
@@ -274,39 +344,52 @@ const SessionRecoveryOptions = struct {
     }
 };
 
-const AcpOptions = struct {
-    model: ?[]const u8 = null,
-    log_file: ?[]const u8 = null,
-};
+const SessionRenameOptions = struct {
+    format: output_contracts.OutputFormat = .text,
+    session_id: []u8,
+    title: []u8,
 
-const WorkflowOptions = struct {
-    auto_permission: bool,
-    create: bool,
-    context: []u8,
-
-    fn deinit(self: WorkflowOptions, alloc: Allocator) void {
-        alloc.free(self.context);
+    fn deinit(self: *SessionRenameOptions, alloc: Allocator) void {
+        alloc.free(self.session_id);
+        alloc.free(self.title);
+        self.* = undefined;
     }
 };
 
+const SessionRemoveOptions = struct {
+    format: output_contracts.OutputFormat = .text,
+    session_id: []u8,
+
+    fn deinit(self: *SessionRemoveOptions, alloc: Allocator) void {
+        alloc.free(self.session_id);
+        self.* = undefined;
+    }
+};
+
+const SessionTitleValidator = app_session_runtime.Runtime(struct {});
+
+fn validateSessionTitle(raw: []const u8) SessionTitleValidator.RenameError![]const u8 {
+    return SessionTitleValidator.validateSessionTitle(raw);
+}
+
 const WriteFn = *const fn (?*anyopaque, []const u8) anyerror!void;
-const LoadStartupStateFn = *const fn (Allocator, oauth_transport.Provider, host.SecretStore, []const u8, usize) anyerror!app_lifecycle.StartupState;
-const LoadCatalogStartupStateFn = *const fn (Allocator, host.SecretStore, []const u8, usize) anyerror!app_lifecycle.StartupState;
+const LoadStartupStateFn = *const fn (Allocator, oauth_transport.Provider, []const u8, usize) anyerror!app_lifecycle.StartupState;
+const LoadCatalogStartupStateFn = *const fn (Allocator, []const u8, usize) anyerror!app_lifecycle.StartupState;
 const LoadStartupStateWithoutCredentialsFn = *const fn (Allocator, []const u8, usize) anyerror!app_lifecycle.StartupState;
-const LoadStartupStatusFn = *const fn (Allocator, host.SecretStore, []const u8, usize) anyerror!app_lifecycle.StartupStatus;
+const LoadStartupStatusFn = *const fn (Allocator, []const u8, usize) anyerror!app_lifecycle.StartupStatus;
 const GetenvFn = *const fn (?*anyopaque, []const u8) ?[]const u8;
 const EnvironMapFn = *const fn (?*anyopaque) ?*const std.process.Environ.Map;
 const SelfExePathFn = *const fn (?*anyopaque, Allocator) anyerror![]u8;
-const ReadMaskedKeyFn = *const fn (?*anyopaque, Allocator, WriteFn, ?*anyopaque) anyerror![]u8;
-const SetupTerminalAvailableFn = *const fn (?*anyopaque) bool;
+const IsTtyFn = *const fn (?*anyopaque) bool;
 const RunDeps = struct {
     stdout_ctx: ?*anyopaque = null,
     stderr_ctx: ?*anyopaque = null,
+    stdin_ctx: ?*anyopaque = null,
     env_ctx: ?*anyopaque = null,
     self_exe_ctx: ?*anyopaque = null,
-    setup_ctx: ?*anyopaque = null,
     write_stdout: WriteFn = writeRealStdout,
     write_stderr: WriteFn = writeRealStderr,
+    stdin_is_tty: IsTtyFn = realStdinIsTty,
     load_startup_state: LoadStartupStateFn = app_lifecycle.loadStartupState,
     load_catalog_startup_state: LoadCatalogStartupStateFn = app_lifecycle.loadCatalogStartupState,
     load_startup_state_without_credentials: LoadStartupStateWithoutCredentialsFn = app_lifecycle.loadStartupStateWithoutCredentials,
@@ -314,8 +397,6 @@ const RunDeps = struct {
     getenv: GetenvFn = getenvDefault,
     environ_map: EnvironMapFn = environMapDefault,
     self_exe_path: SelfExePathFn = selfExePathDefault,
-    read_masked_key: ReadMaskedKeyFn = readMaskedKeyDefault,
-    setup_terminal_available: SetupTerminalAvailableFn = setupTerminalAvailableDefault,
 };
 
 const GlobalLaunchArgs = struct {
@@ -421,48 +502,30 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
     switch (command[0]) {
         '-', 'h' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .help)) return .help;
-            if (command_specs.matchesTopLevel(command_catalog, command, .@"resume") or
-                std.mem.startsWith(u8, command, resume_id_alias_prefix))
-            {
-                return .{ .resume_session = .{
-                    .args = args,
-                    .top_level_alias = true,
-                } };
-            }
         },
         'a' => {
+            if (command_specs.matchesTopLevel(command_catalog, command, .auth)) return .{ .auth = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .ask)) return .{ .ask = args[1..] };
-            if (command_specs.matchesTopLevel(command_catalog, command, .acp)) return .{ .acp = args[1..] };
         },
-        'b' => if (command_specs.matchesTopLevel(command_catalog, command, .credits)) return .{ .credits = args[1..] },
         'c' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .credits)) return .{ .credits = args[1..] };
+            if (command_specs.matchesTopLevel(command_catalog, command, .@"continue")) return .{ .resume_session = .{ .args = args[1..] } };
         },
         'd' => {
+            if (command_specs.matchesTopLevel(command_catalog, command, .debug)) return .{ .debug = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .doctor)) return .{ .doctor = args[1..] };
         },
-        'i' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .issue)) return .{ .issue = args[1..] };
-        },
-        'l' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .login)) return .{ .login = args[1..] };
-            if (command_specs.matchesTopLevel(command_catalog, command, .logout)) return .{ .logout = args[1..] };
-        },
+        'l' => {},
         'm' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .mcp)) return .{ .mcp = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .models)) return .{ .models = args[1..] };
         },
         'p' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .pr)) return .{ .pr = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .permissions)) return .{ .permissions = args[1..] };
-            if (command_specs.matchesTopLevel(command_catalog, command, .provider)) return .{ .provider = args[1..] };
         },
         'r' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .@"resume")) return .{ .resume_session = .{ .args = args[1..] } };
-            if (command_specs.matchesTopLevel(command_catalog, command, .replay)) return .{ .replay = args[1..] };
         },
         's' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .setup)) return .{ .setup = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .status)) return .{ .status = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .sessions)) return .{ .sessions = args[1..] };
             if (command_specs.matchesTopLevel(command_catalog, command, .session)) {
@@ -471,9 +534,6 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
                 }
                 return .{ .session = args[1..] };
             }
-        },
-        't' => {
-            if (command_specs.matchesTopLevel(command_catalog, command, .teams)) return .{ .teams = args[1..] };
         },
         'u' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .usage)) return .{ .usage = args[1..] };
@@ -531,20 +591,19 @@ pub fn parseInteractiveLaunch(
             .modifiers = global_args.takeModifiers(),
         } },
         .resume_session => |invocation| {
+            if (command_specs.matchesTopLevel(command_catalog, effective_args[0], .@"continue") and
+                invocation.args.len > 0)
+            {
+                return error.InvalidContinueArgs;
+            }
             const resume_args = invocation.args;
-            const upgrade_relaunch = !invocation.top_level_alias and
-                resume_args.len == 2 and
+            const upgrade_relaunch = resume_args.len == 2 and
                 std.mem.eql(u8, resume_args[1], upgrade_relaunch_arg);
             const target_args = if (upgrade_relaunch)
                 resume_args[0..1]
             else
                 resume_args;
-            const target = try parseResumeArgs(
-                alloc,
-                command_catalog,
-                target_args,
-                invocation.top_level_alias,
-            );
+            const target = try parseResumeArgs(alloc, target_args);
             return .{ .interactive = .{
                 .requested_resume = target,
                 .upgrade_relaunch = upgrade_relaunch,
@@ -559,8 +618,8 @@ pub fn parseInteractiveLaunch(
     }
 }
 
-/// Detects `fx <subcommand> --help` / `-h` and returns the subcommand kind so the
-/// caller can render command-specific help. Top-level `fx --help`/`fx help` are
+/// Detects `fiber <subcommand> --help` / `-h` and returns the subcommand kind so the
+/// caller can render command-specific help. Top-level `fiber --help`/`fiber help` are
 /// handled separately and intentionally excluded here.
 fn topLevelHelpRequest(command_catalog: CommandCatalog, args: []const [:0]const u8) ?TopLevelKind {
     if (args.len < 2) return null;
@@ -594,21 +653,15 @@ fn runNoConfigIfRequestedWithDeps(
     return true;
 }
 
-const ProviderActivationCaller = enum {
-    provider_command,
-    provider_login,
-};
-
 fn writeProviderActivationError(
     alloc: Allocator,
     deps: RunDeps,
-    caller: ProviderActivationCaller,
     detail: []const u8,
 ) !void {
     const message = try std.fmt.allocPrint(
         alloc,
-        "{s}: {s}\n",
-        .{ if (caller == .provider_login) "fx login" else "fx provider", detail },
+        "fiber auth login: {s}\n",
+        .{detail},
     );
     defer alloc.free(message);
     try writeStderr(deps, message);
@@ -619,141 +672,27 @@ fn activateProviderSelection(
     cfg: Config,
     deps: RunDeps,
     target: model_provider.ProviderId,
-    caller: ProviderActivationCaller,
 ) !bool {
-    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-    defer alloc.free(workspace_root);
-    var settings = config_runtime.loadMergedSettings(alloc, workspace_root) catch |err| {
-        try writeProviderActivationError(alloc, deps, caller, "could not load settings");
-        debug_trace.logf("config", "provider selection settings load failed err={s}", .{@errorName(err)});
-        return false;
-    };
-    defer settings.deinit(alloc);
-
+    switch (target) {
+        .codex => {},
+    }
     var resolution = try credentials.resolveForProvider(
         alloc,
-        cfg.gateway_provider.oauth_transport,
-        cfg.secret_store,
+        cfg.oauth_transport,
         .refresh_if_needed,
-        target,
-        settings.credential_source,
+        .codex,
     );
     defer if (resolution.credential) |*credential| credential.deinit(alloc);
 
-    const already_selected = (settings.provider orelse .gateway) == target;
-    if (caller == .provider_command and already_selected and resolution.credential != null) {
-        try writeStdout(deps, switch (target) {
-            .gateway => "Gateway is already selected.\n",
-            .codex => "Codex is already selected.\n",
-            .grok => "Grok is already selected.\n",
-        });
-        return true;
-    }
-
-    var performed_login: ?model_provider.ProviderId = null;
-    if (resolution.credential == null and target == .codex and caller == .provider_command) {
-        chatgpt_oauth.runLogin(alloc, cfg.gateway_provider.oauth_transport, cfg.url_opener) catch |err| {
-            debug_trace.logf("auth", "provider selection Codex login failed err={s}", .{@errorName(err)});
-            try writeProviderActivationError(alloc, deps, caller, "Codex login failed");
-            return false;
-        };
-        performed_login = .codex;
-        resolution = try credentials.resolveForProvider(
-            alloc,
-            cfg.gateway_provider.oauth_transport,
-            cfg.secret_store,
-            .refresh_if_needed,
-            target,
-            settings.credential_source,
-        );
-    }
-    if (resolution.credential == null and target == .grok and caller == .provider_command) {
-        grok_oauth.runLogin(alloc, cfg.gateway_provider.oauth_transport, cfg.url_opener) catch |err| {
-            debug_trace.logf("auth", "provider selection Grok login failed err={s}", .{@errorName(err)});
-            try writeProviderActivationError(alloc, deps, caller, "Grok login failed");
-            return false;
-        };
-        performed_login = .grok;
-        resolution = try credentials.resolveForProvider(
-            alloc,
-            cfg.gateway_provider.oauth_transport,
-            cfg.secret_store,
-            .refresh_if_needed,
-            target,
-            settings.credential_source,
-        );
-    }
-
-    const credential = if (resolution.credential) |*value| value else {
-        try writeProviderActivationError(
-            alloc,
-            deps,
-            caller,
-            switch (target) {
-                .codex => "Codex credential is unavailable",
-                .grok => "Grok credential is unavailable",
-                .gateway => "configure a Gateway credential first",
-            },
-        );
+    // Confirms the credential OAuth just wrote is actually resolvable. It does
+    // not choose a model: catalog order is the provider's, not a ranking, so
+    // adopting the first entry bound the user to an arbitrary model and made
+    // login fail outright whenever the catalog was unreachable. `fiber models
+    // use <id>` is the deliberate choice, and the shell opens its picker for
+    // the same reason.
+    if (resolution.credential == null) {
+        try writeProviderActivationError(alloc, deps, "Codex credential is unavailable");
         return false;
-    };
-    const catalog_provider = cfg.provider_set.select(target).model_catalog orelse {
-        try writeProviderActivationError(alloc, deps, caller, switch (target) {
-            .codex => "Codex model catalog is unavailable",
-            .grok => "Grok model catalog is unavailable",
-            .gateway => "Gateway model catalog is unavailable",
-        });
-        return false;
-    };
-    const fetch_result = model_catalog.fetchWithPublicFallback(catalog_provider, alloc, .{
-        .access = credentials.catalogAccessAt(credential.*, io_mod.milliTimestamp()),
-        .endpoint = cfg.models_path,
-        .view = .picker,
-    });
-    var loaded = switch (fetch_result) {
-        .loaded => |loaded| loaded,
-        .failed => |failure| {
-            debug_trace.logf("catalog", "provider selection catalog failed provider={s} category={s}", .{ @tagName(target), @tagName(failure.failure.category) });
-            const detail = try std.fmt.allocPrint(
-                alloc,
-                "could not load the target model catalog ({s})",
-                .{@tagName(failure.failure.category)},
-            );
-            defer alloc.free(detail);
-            try writeProviderActivationError(alloc, deps, caller, detail);
-            return false;
-        },
-    };
-    defer model_catalog.freeModelCatalog(alloc, &loaded.catalog);
-    const saved_model = settings.models.get(target);
-    const selected_model = selectCatalogModel(loaded.catalog.items, saved_model) orelse {
-        try writeProviderActivationError(alloc, deps, caller, "target model catalog is empty");
-        return false;
-    };
-    var attempt = config_runtime.attemptUserPreferences(alloc, .{
-        .provider = target,
-        .model_preference = .{ .provider = target, .model = selected_model },
-    });
-    defer attempt.deinit(alloc);
-    switch (attempt) {
-        .failure => |failure| {
-            debug_trace.logf("config", "provider selection persistence failed err={s}", .{@errorName(failure.err)});
-            try writeProviderActivationError(alloc, deps, caller, "failed to save provider selection");
-            return false;
-        },
-        .outcome => {},
-    }
-    if (performed_login) |provider| switch (provider) {
-        .codex => try writeStdout(deps, "Signed in with Codex.\n"),
-        .grok => try writeStdout(deps, "Signed in with Grok.\n"),
-        .gateway => unreachable,
-    };
-    if (caller == .provider_command) {
-        try writeStdout(deps, switch (target) {
-            .gateway => "Provider set to Gateway.\n",
-            .codex => "Provider set to Codex.\n",
-            .grok => "Provider set to Grok.\n",
-        });
     }
     return true;
 }
@@ -762,18 +701,22 @@ fn runIfRequestedWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Con
     const parsed_launch = parseInteractiveLaunch(alloc, args, cfg.command_catalog) catch |err| {
         if (err == error.InvalidResumeArgs) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .@"resume");
-            return .handled_failure;
+            return .handled_usage_error;
+        }
+        if (err == error.InvalidContinueArgs) {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .@"continue");
+            return .handled_usage_error;
         }
         var writer: std.Io.Writer.Allocating = .init(alloc);
         defer writer.deinit();
         if (globalLaunchErrorMessage(err)) |message| {
-            try writer.writer.print("fx: {s}\n", .{message});
+            try writer.writer.print("fiber: {s}\n", .{message});
         } else {
-            try writer.writer.print("fx: invalid global launch option: {s}\n", .{@errorName(err)});
+            try writer.writer.print("fiber: invalid global launch option: {s}\n", .{@errorName(err)});
         }
-        try writer.writer.writeAll("usage: fx [--context-limit NAME=BYTES|off] [--add-dir PATH]... [--no-additional-dirs] <command>\n");
+        try writer.writer.writeAll("usage: fiber [--context-limit NAME=BYTES|off] [--add-dir PATH]... [--no-additional-dirs] <command>\n");
         try writeStderr(deps, writer.written());
-        return .handled_failure;
+        return .handled_usage_error;
     };
     switch (parsed_launch) {
         .interactive => |launch| {
@@ -802,13 +745,13 @@ fn runNonInteractiveWithDeps(
         !commandSupportsWorkspaceModifiers(parsed_command))
     {
         try writeWorkspaceModifierUsage(deps);
-        return .handled_failure;
+        return .handled_usage_error;
     }
 
     if (isVersionFlag(effective_args[0])) {
         if (effective_args.len != 1) {
             try writeStderr(deps, version_usage);
-            return .handled_failure;
+            return .handled_usage_error;
         }
         try writeStdout(deps, cfg.version);
         try writeStdout(deps, "\n");
@@ -825,227 +768,29 @@ fn runNonInteractiveWithDeps(
     switch (parsed_command) {
         .interactive, .resume_session => unreachable,
         .help => {
+            if (effective_args.len != 1) {
+                try writeStderr(deps, help_usage);
+                return .handled_usage_error;
+            }
             try writeTopLevelHelp(alloc, cfg.command_catalog, deps, cfg.version, .stdout);
             return .handled_success;
         },
         .ask => |rest| {
             try writeMcpProfileWarningIfPresent(alloc, cfg, deps);
             const exit_code = try cli_ask.run(alloc, rest, workflowConfigWithLaunchModifiers(cfg, global_args.modifiers), cfg.context_registry, cfg.tool_set);
-            return if (exit_code == 0) .handled_success else .handled_failure;
+            return .{ .handled_exit = exit_code };
         },
-        .acp => |rest| {
-            const acp_opts = parseAcpArgs(rest) catch {
-                try writeStderr(deps, "usage: fx acp [--model <id>] [--log-file <path>]\n");
-                return .handled_failure;
-            };
-            try cfg.acp_runner.run(alloc, .{
-                .default_model = cfg.default_model,
-                .default_agent_step_limit = cfg.default_agent_step_limit,
-                .gateway_retry_count = cfg.gateway_retry_count,
-                .gateway_chat_url = cfg.gateway_provider.chat_url.resolve(cfg.gateway_chat_url),
-                .gateway_models_path = cfg.models_path,
-                .gateway_provider = cfg.gateway_provider,
-                .provider_set = cfg.provider_set,
-                .process_provider = cfg.process_provider,
-                .secret_store = cfg.secret_store,
-                .prompt_policy = cfg.prompt_policy,
-                .ignored_list_entries = cfg.ignored_list_entries,
-                .max_list_entries = cfg.max_list_entries,
-                .max_read_file_bytes = cfg.max_read_file_bytes,
-                .max_read_file_lines = cfg.max_read_file_lines,
-                .max_read_file_line_len = cfg.max_read_file_line_len,
-                .max_command_output_bytes = cfg.max_command_output_bytes,
-                .max_tool_result_bytes = cfg.max_tool_result_bytes,
-                .max_history_turns = cfg.max_history_turns,
-                .context_registry = cfg.context_registry,
-                .mode_registry = cfg.mode_registry,
-                .context_limit_overrides = global_args.modifiers.context_limit_overrides,
-                .additional_directories = global_args.modifiers.additional_directories,
-                .saved_directories_suppressed = global_args.modifiers.saved_directories_suppressed,
-                .model_override = acp_opts.model,
-                .log_file = acp_opts.log_file,
-            });
-            return .handled_success;
+        .auth => |rest| {
+            return runTopLevelAuth(alloc, rest, cfg, deps);
         },
-        .pr => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .pull_request),
-        .issue => |rest| return runGithubWorkflow(alloc, rest, cfg, global_args.modifiers, deps, .issue),
-        .login => |rest| {
-            const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx login [vercel|codex|grok]\n");
-                return .handled_failure;
-            };
-            // Preserve the original `fx login` behavior for scripts and users.
-            const login_provider = maybe_login_provider orelse .gateway;
-            switch (login_provider) {
-                .gateway => login_flow.runLogin(
-                    alloc,
-                    cfg.gateway_provider.oauth_transport,
-                    cfg.url_opener,
-                ) catch |err| {
-                    const message = switch (err) {
-                        error.ClientIdMissing => "fx login: missing FX_OAUTH_CLIENT_ID; configure the fx Vercel App client id first\n",
-                        error.AccessDenied => "fx login: authorization denied\n",
-                        error.ExpiredToken, error.LoginTimedOut => "fx login: authorization expired; run fx login again\n",
-                        else => "fx login: failed to sign in\n",
-                    };
-                    try writeStderr(deps, message);
-                    return .handled_failure;
-                },
-                .codex => {
-                    chatgpt_oauth.runLogin(
-                        alloc,
-                        cfg.gateway_provider.oauth_transport,
-                        cfg.url_opener,
-                    ) catch |err| {
-                        const message = switch (err) {
-                            error.ChatGptLoginTimedOut => "fx login: Codex authorization expired; run fx login codex again\n",
-                            error.ChatGptAuthorizationFailed => "fx login: Codex authorization denied\n",
-                            else => "fx login: failed to sign in with Codex\n",
-                        };
-                        try writeStderr(deps, message);
-                        return .handled_failure;
-                    };
-                    if (!try activateProviderSelection(alloc, cfg, deps, .codex, .provider_login)) {
-                        return .handled_failure;
-                    }
-                    try writeStdout(deps, "Signed in with Codex.\n");
-                },
-                .grok => {
-                    grok_oauth.runLogin(
-                        alloc,
-                        cfg.gateway_provider.oauth_transport,
-                        cfg.url_opener,
-                    ) catch |err| {
-                        debug_trace.logf("auth", "Grok login failed err={s}", .{@errorName(err)});
-                        try writeStderr(deps, "fx login: failed to sign in with Grok\n");
-                        return .handled_failure;
-                    };
-                    if (!try activateProviderSelection(alloc, cfg, deps, .grok, .provider_login)) {
-                        return .handled_failure;
-                    }
-                    try writeStdout(deps, "Signed in with Grok.\n");
-                },
-            }
-            return .handled_success;
-        },
-        .logout => |rest| {
-            const maybe_login_provider = parseLoginProvider(rest) catch {
-                try writeStderr(deps, "usage: fx logout [vercel|codex|grok]\n");
-                return .handled_failure;
-            };
-            // Preserve the original `fx logout` behavior for scripts and users.
-            const login_provider = maybe_login_provider orelse .gateway;
-            if (login_provider == .codex) {
-                const outcome = chatgpt_oauth.logout() catch {
-                    try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
-                    return .handled_failure;
-                };
-                return switch (outcome) {
-                    .deleted => result: {
-                        try writeStdout(deps, "Signed out of Codex.\n");
-                        break :result .handled_success;
-                    },
-                    .missing => result: {
-                        try writeStdout(deps, "No Codex login session found.\n");
-                        break :result .handled_success;
-                    },
-                    .deleted_not_durable => result: {
-                        try writeStderr(deps, "fx logout: failed to durably remove saved Codex login\n");
-                        break :result .handled_failure;
-                    },
-                };
-            }
-            if (login_provider == .grok) {
-                const outcome = grok_oauth.logout(alloc, cfg.gateway_provider.oauth_transport) catch {
-                    try writeStderr(deps, "fx logout: failed to durably remove saved Grok login\n");
-                    return .handled_failure;
-                };
-                if (outcome.revocation_failed) {
-                    try writeStderr(deps, "fx logout: local Grok session removed, but remote revocation could not be confirmed\n");
-                }
-                return switch (outcome.deletion) {
-                    .deleted => result: {
-                        try writeStdout(deps, "Signed out of Grok.\n");
-                        break :result .handled_success;
-                    },
-                    .missing => result: {
-                        try writeStdout(deps, "No Grok login session found.\n");
-                        break :result .handled_success;
-                    },
-                    .deleted_not_durable => result: {
-                        try writeStderr(deps, "fx logout: failed to durably remove saved Grok login\n");
-                        break :result .handled_failure;
-                    },
-                };
-            }
-            const result = login_flow.logout(alloc, cfg.gateway_provider.oauth_transport) catch |err| switch (err) {
-                error.SessionDeleteFailed => {
-                    try writeStderr(deps, "fx logout: failed to durably remove saved fx login\n");
-                    return .handled_failure;
-                },
-            };
-            if (result.local_durability_failed) {
-                try writeStderr(deps, "fx logout: failed to durably remove saved fx login\n");
-            } else {
-                try writeStdout(
-                    deps,
-                    if (result.session_deleted) "Signed out of fx.\n" else "No fx login session found.\n",
-                );
-            }
-            if (result.remote_revocation_failed) {
-                try writeStderr(deps, login_flow.remote_revocation_warning);
-                try writeStderr(deps, "\n");
-            }
-            return if (result.local_durability_failed) .handled_failure else .handled_success;
-        },
-        .teams => |rest| {
-            if (rest.len != 0) {
-                try writeStderr(deps, "usage: fx teams\n");
-                return .handled_failure;
-            }
-            login_flow.runTeams(alloc, cfg.gateway_provider.oauth_transport) catch |err| {
-                const message = switch (err) {
-                    error.NoSession => "fx teams: run fx login first\n",
-                    error.SessionChanged => "fx teams: authentication changed; try again\n",
-                    error.TeamRequestFailed => "fx teams: failed to list Vercel teams\n",
-                    error.InvalidTeamSelection => "fx teams: no team selected\n",
-                    error.AccessDenied => "fx teams: authorization denied\n",
-                    else => "fx teams: failed to switch team\n",
-                };
-                try writeStderr(deps, message);
-                return .handled_failure;
-            };
-            return .handled_success;
-        },
-        .provider => |rest| {
-            if (rest.len != 1) {
-                try writeStderr(deps, "usage: fx provider <gateway|codex|grok>\n");
-                return .handled_failure;
-            }
-            const target = model_provider.parse(rest[0]) orelse {
-                try writeStderr(deps, "fx provider: expected gateway, codex, or grok\n");
-                return .handled_failure;
-            };
-            return if (try activateProviderSelection(alloc, cfg, deps, target, .provider_command))
-                .handled_success
-            else
-                .handled_failure;
-        },
-        .setup => |rest| {
-            if (rest.len != 0) {
-                try writeTopLevelUsage(cfg.command_catalog, deps, .setup);
-                return .handled_failure;
-            }
-            return if (try runPasteSetup(alloc, cfg.secret_store, deps)) .handled_success else .handled_failure;
-        },
+
         .status => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .status, "status", err, rest);
-                return .handled_failure;
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .status, output_contracts.Kind.status.jsonName(), err, rest);
+                return .handled_usage_error;
             };
             var startup = try deps.load_startup_status(
                 alloc,
-                cfg.secret_store,
                 cfg.default_model,
                 cfg.default_agent_step_limit,
             );
@@ -1058,7 +803,6 @@ fn runNonInteractiveWithDeps(
             defer mcp_inspection.deinit(alloc);
 
             var snapshot = statusSnapshotFromStartupWithBuild(startup, .{
-                .channel = cfg.build_channel,
                 .version = cfg.version,
                 .revision = cfg.revision,
             }, mcp_inspection.profile_diagnostic);
@@ -1074,9 +818,12 @@ fn runNonInteractiveWithDeps(
             return .handled_success;
         },
         .permissions => |rest| {
+            if (rest.len > 0 and (std.mem.eql(u8, rest[0], "mode") or std.mem.eql(u8, rest[0], "rule"))) {
+                return runTopLevelPermissions(alloc, rest, cfg, deps);
+            }
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .permissions, "permissions", err, rest);
-                return .handled_failure;
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .permissions, output_contracts.Kind.permissions.jsonName(), err, rest);
+                return .handled_usage_error;
             };
             var startup = try deps.load_startup_state_without_credentials(alloc, cfg.default_model, cfg.default_agent_step_limit);
             defer startup.deinit(alloc);
@@ -1099,14 +846,16 @@ fn runNonInteractiveWithDeps(
             return runTopLevelMcp(alloc, rest, cfg, deps);
         },
         .models => |rest| {
+            if (rest.len > 0 and std.mem.eql(u8, rest[0], "use")) {
+                return runModelsUse(alloc, rest[1..], cfg, deps);
+            }
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .models, "models", err, rest);
-                return .handled_failure;
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .models, output_contracts.Kind.models.jsonName(), err, rest);
+                return .handled_usage_error;
             };
 
             var startup = try deps.load_catalog_startup_state(
                 alloc,
-                cfg.secret_store,
                 cfg.default_model,
                 cfg.default_agent_step_limit,
             );
@@ -1115,11 +864,7 @@ fn runNonInteractiveWithDeps(
 
             const catalog_access = startup.modelCatalogAccess();
             const catalog_provider = cfg.provider_set.select(startup.provider).cli_model_catalog orelse {
-                try writeStderr(deps, switch (startup.provider) {
-                    .gateway => "fx models: Gateway model catalog is unavailable\n",
-                    .codex => "fx models: Codex model catalog is unavailable\n",
-                    .grok => "fx models: Grok model catalog is unavailable\n",
-                });
+                try writeStderr(deps, "fiber models: Codex model catalog is unavailable\n");
                 return .handled_failure;
             };
             const loaded = switch (catalog_provider.fetch(alloc, .{
@@ -1139,12 +884,12 @@ fn runNonInteractiveWithDeps(
                         try writeJsonCommandFailureCode(
                             alloc,
                             deps,
-                            "models",
+                            output_contracts.Kind.models.jsonName(),
                             error_name,
                             message,
                         );
                     } else {
-                        try writeStderr(deps, "fx models: ");
+                        try writeStderr(deps, "fiber models: ");
                         try writeStderr(deps, message);
                         try writeStderr(deps, "\n");
                     }
@@ -1166,8 +911,8 @@ fn runNonInteractiveWithDeps(
         },
         .doctor => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .doctor, "doctor", err, rest);
-                return .handled_failure;
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .doctor, output_contracts.Kind.doctor.jsonName(), err, rest);
+                return .handled_usage_error;
             };
 
             const workspace_root = try io_mod.realpathAlloc(alloc, ".");
@@ -1179,7 +924,6 @@ fn runNonInteractiveWithDeps(
             defer mcp_inspection.deinit(alloc);
             var snapshot = try doctor_runtime.collect(
                 alloc,
-                cfg.secret_store,
                 cfg.default_model,
                 cfg.default_agent_step_limit,
                 mcp_inspection.profile_diagnostic,
@@ -1199,7 +943,25 @@ fn runNonInteractiveWithDeps(
             return .handled_success;
         },
         .session => |rest| {
-            if (rest.len > 0 and std.mem.eql(u8, rest[0], "recover")) {
+            if (rest.len == 0 or
+                (!std.mem.eql(u8, rest[0], "show") and
+                    !std.mem.eql(u8, rest[0], "list") and
+                    !std.mem.eql(u8, rest[0], "rename") and
+                    !std.mem.eql(u8, rest[0], "remove") and
+                    !std.mem.eql(u8, rest[0], "recover")))
+            {
+                try writeUsageOrJsonError(
+                    alloc,
+                    cfg.command_catalog,
+                    deps,
+                    .session,
+                    output_contracts.Kind.session_show.jsonName(),
+                    error.InvalidSessionDetailArgs,
+                    rest,
+                );
+                return .handled_usage_error;
+            }
+            if (std.mem.eql(u8, rest[0], "recover")) {
                 var recovery = parseSessionRecoveryArgs(
                     alloc,
                     rest[1..],
@@ -1209,11 +971,11 @@ fn runNonInteractiveWithDeps(
                         cfg.command_catalog,
                         deps,
                         .session,
-                        "session",
+                        output_contracts.Kind.session_recover.jsonName(),
                         err,
                         rest[1..],
                     );
-                    return .handled_failure;
+                    return .handled_usage_error;
                 };
                 defer recovery.deinit(alloc);
 
@@ -1226,7 +988,7 @@ fn runNonInteractiveWithDeps(
                     try writeLookupFailure(
                         alloc,
                         deps,
-                        "session",
+                        output_contracts.Kind.session_recover.jsonName(),
                         err,
                         recovery.format,
                     );
@@ -1241,7 +1003,7 @@ fn runNonInteractiveWithDeps(
                     try writeLookupFailure(
                         alloc,
                         deps,
-                        "session",
+                        output_contracts.Kind.session_recover.jsonName(),
                         err,
                         recovery.format,
                     );
@@ -1259,152 +1021,24 @@ fn runNonInteractiveWithDeps(
                 else
                     .handled_failure;
             }
-
-            if (rest.len > 0 and std.mem.eql(u8, rest[0], "migrate")) {
-                var migration = parseSessionMigrationArgs(alloc, rest[1..]) catch |err| {
-                    try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, "session", err, rest[1..]);
-                    return .handled_failure;
-                };
-                defer migration.deinit(alloc);
-
-                const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-                defer alloc.free(workspace_root);
-
-                var store = session_store.Store.init(alloc, workspace_root) catch |err| {
-                    try writeLookupFailure(alloc, deps, "session", err, migration.format);
-                    return .handled_failure;
-                };
-                defer store.deinit(alloc);
-                var result = store.migrateLegacyStorageOnly(
-                    alloc,
-                    migration.session_id,
-                    .{ .allow_large = migration.allow_large },
-                ) catch |err| {
-                    try writeLookupFailure(alloc, deps, "session", err, migration.format);
-                    return .handled_failure;
-                };
-                defer result.deinit(alloc);
-
-                const text = try (output_contracts.SessionMigrationSnapshot{
-                    .result = result,
-                }).render(alloc, migration.format);
-                defer alloc.free(text);
-                try writeFormattedOutput(deps, text, migration.format);
-                return .handled_success;
+            if (std.mem.eql(u8, rest[0], "show")) {
+                return try executeSessionShow(alloc, cfg, deps, rest[1..]);
             }
-
-            var opts = parseSessionDetailArgs(alloc, rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, "session", err, rest);
-                return .handled_failure;
-            };
-            defer opts.deinit(alloc);
-
-            const target = opts.target orelse {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .session, "session", error.InvalidSessionDetailArgs, rest);
-                return .handled_failure;
-            };
-
-            const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-            defer alloc.free(workspace_root);
-
-            var store = session_store.Store.initReadOnly(alloc, workspace_root) catch |err| {
-                try writeLookupFailure(alloc, deps, "session", err, opts.format);
-                return .handled_failure;
-            };
-            defer store.deinit(alloc);
-
-            switch (target) {
-                .last => {
-                    var summary = subagent_resume_admission.latestVisibleWorkspaceSummary(
-                        store,
-                        alloc,
-                    ) catch |err| {
-                        try writeLookupFailure(alloc, deps, "session", err, opts.format);
-                        return .handled_failure;
-                    };
-                    defer summary.deinit(alloc);
-
-                    const text = try (output_contracts.SessionSummarySnapshot{
-                        .summary = summary,
-                    }).render(alloc, opts.format);
-                    defer alloc.free(text);
-                    try writeFormattedOutput(deps, text, opts.format);
-                    return .handled_success;
-                },
-                .id => |id| {
-                    var detail = subagent_resume_admission.loadVisibleReadOnlyDetail(
-                        store,
-                        alloc,
-                        id,
-                        .{},
-                    ) catch |err| {
-                        try writeSessionDetailFailure(
-                            alloc,
-                            deps,
-                            id,
-                            err,
-                            opts.format,
-                        );
-                        return .handled_failure;
-                    };
-                    defer detail.deinit(alloc);
-
-                    const text = try (output_contracts.SessionDetailSnapshot{
-                        .detail = detail,
-                    }).render(alloc, opts.format);
-                    defer alloc.free(text);
-                    try writeFormattedOutput(deps, text, opts.format);
-                    return .handled_success;
-                },
+            if (std.mem.eql(u8, rest[0], "list")) {
+                return try executeSessionList(alloc, cfg, deps, rest[1..]);
             }
+            if (std.mem.eql(u8, rest[0], "rename")) {
+                return try executeSessionRename(alloc, cfg, deps, rest[1..]);
+            }
+            return try executeSessionRemove(alloc, cfg, deps, rest[1..]);
         },
         .sessions => |rest| {
-            const opts = parseSessionListArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .sessions, "sessions", err, rest);
-                return .handled_failure;
-            };
-
-            const workspace_root = try io_mod.realpathAlloc(alloc, ".");
-            defer alloc.free(workspace_root);
-
-            var store = session_store.Store.initReadOnly(alloc, workspace_root) catch |err| {
-                try writeLookupFailure(alloc, deps, "sessions", err, opts.format);
-                return .handled_failure;
-            };
-            defer store.deinit(alloc);
-
-            var page = subagent_resume_admission.listVisiblePage(
-                store,
-                alloc,
-                opts.scope,
-                opts.continuation,
-                opts.limit,
-            ) catch |err| return err;
-            defer page.deinit(alloc);
-            const next_cursor = if (page.has_more and page.summaries.items.len > 0)
-                try formatSessionListCursor(
-                    alloc,
-                    page.summaries.items[page.summaries.items.len - 1],
-                )
-            else
-                null;
-            defer if (next_cursor) |cursor| alloc.free(cursor);
-
-            const text = try (output_contracts.SessionListSnapshot{
-                .sessions = page.summaries.items,
-                .has_more = page.has_more,
-                .next_cursor = next_cursor,
-                .skipped_invalid = page.skipped_invalid,
-                .all_workspaces = opts.scope == .all_workspaces,
-            }).render(alloc, opts.format);
-            defer alloc.free(text);
-            try writeFormattedOutput(deps, text, opts.format);
-            return .handled_success;
+            return try executeSessionList(alloc, cfg, deps, rest);
         },
         .workspace => |rest| {
             const opts = parseWorkspaceArgs(rest) catch |err| {
                 try writeWorkspaceCommandError(alloc, cfg.command_catalog, deps, rest, err);
-                return .handled_failure;
+                return .handled_usage_error;
             };
             var startup = deps.load_startup_state_without_credentials(
                 alloc,
@@ -1456,46 +1090,10 @@ fn runNonInteractiveWithDeps(
                 },
             }
         },
-        .credits => |rest| {
-            const opts = parseLocalSurfaceArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .credits, "credits", err, rest);
-                return .handled_failure;
-            };
-            var startup = try deps.load_startup_state(
-                alloc,
-                cfg.gateway_provider.oauth_transport,
-                cfg.secret_store,
-                cfg.default_model,
-                cfg.default_agent_step_limit,
-            );
-            defer startup.deinit(alloc);
-            try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
-
-            const credits = cfg.provider_set.select(startup.provider).credits orelse
-                gateway_provider.unavailable_credits_provider;
-            var snapshot = credits.fetch(alloc, .{
-                .credential = startup.apiKey(),
-                .credential_source = if (startup.credential) |credential| credential.source else null,
-                .tenant = startup.gatewayTeam(),
-            });
-            defer snapshot.deinit(alloc);
-            const text = try snapshot.render(alloc, opts.format);
-            defer alloc.free(text);
-            if (snapshot.err_message != null) {
-                if (opts.format == .json) {
-                    try writeFormattedOutput(deps, text, opts.format);
-                } else {
-                    try writeStderr(deps, text);
-                }
-                return .handled_failure;
-            }
-            try writeFormattedOutput(deps, text, opts.format);
-            return .handled_success;
-        },
         .usage => |rest| {
             const opts = parseUsageArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .usage, "usage", err, rest);
-                return .handled_failure;
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .usage, output_contracts.Kind.usage.jsonName(), err, rest);
+                return .handled_usage_error;
             };
             const home = deps.getenv(deps.env_ctx, "HOME") orelse {
                 try writeUsageCommandFailure(
@@ -1526,8 +1124,8 @@ fn runNonInteractiveWithDeps(
         .upgrade => |rest| {
             const upgrade_runtime = @import("../upgrade/upgrade_runtime.zig");
             const opts = parseUpgradeArgs(rest) catch |err| {
-                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .upgrade, "upgrade", err, rest);
-                return .handled_failure;
+                try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .upgrade, output_contracts.Kind.upgrade.jsonName(), err, rest);
+                return .handled_usage_error;
             };
 
             var startup = deps.load_startup_state_without_credentials(
@@ -1536,55 +1134,62 @@ fn runNonInteractiveWithDeps(
                 cfg.default_agent_step_limit,
             ) catch |err| {
                 if (opts.format == .json) {
-                    try writeJsonCommandFailure(alloc, deps, "upgrade", err, "failed to load update settings");
+                    try writeJsonCommandFailure(alloc, deps, output_contracts.Kind.upgrade.jsonName(), err, "failed to load update settings");
                 } else {
-                    try writeStderr(deps, "fx upgrade: failed to load update settings\n");
+                    try writeStderr(deps, "fiber upgrade: failed to load update settings\n");
                 }
                 return .handled_failure;
             };
             defer startup.deinit(alloc);
             try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
 
-            const channel = opts.channel orelse startup.update_channel;
-            if (opts.channel) |selected| {
-                var outcome = config_runtime.setUserPreferences(alloc, .{ .update_channel = selected }) catch |err| {
-                    if (opts.format == .json) {
-                        try writeJsonCommandFailure(alloc, deps, "upgrade", err, "failed to save update channel");
-                    } else {
-                        try writeStderr(deps, "fx upgrade: failed to save update channel\n");
-                    }
-                    return .handled_failure;
-                };
-                defer outcome.deinit(alloc);
-            }
-
             var result = upgrade_runtime.run(alloc, .{
-                .channel = cfg.build_channel,
                 .version = cfg.version,
                 .revision = cfg.revision,
-            }, channel, switch (opts.format) {
+            }, switch (opts.format) {
                 .text => .text,
                 .json => .json,
             });
             defer result.deinit(alloc);
+
+            // A failed upgrade reports through the shared command-failure
+            // contract. Rendering the snapshot here would put the error inside
+            // an ok:true data object, which no other command does.
+            if (result.snapshot.status == .failed) {
+                const message = result.snapshot.err_message orelse upgrade_runtime.unavailable_message;
+                if (opts.format == .json) {
+                    try writeJsonCommandFailureCode(
+                        alloc,
+                        deps,
+                        output_contracts.Kind.upgrade.jsonName(),
+                        upgrade_runtime.unavailable_code,
+                        message,
+                    );
+                } else {
+                    const line = try std.fmt.allocPrint(alloc, "fiber upgrade: {s}\n", .{message});
+                    defer alloc.free(line);
+                    try writeStderr(deps, line);
+                }
+                return .handled_failure;
+            }
+
             const text = result.snapshot.render(alloc, switch (opts.format) {
                 .text => .text,
                 .json => .json,
             }) catch {
-                try writeStderr(deps, "fx upgrade: render failed\n");
+                try writeStderr(deps, "fiber upgrade: render failed\n");
                 return .handled_failure;
             };
             defer alloc.free(text);
             try writeStdout(deps, text);
             if (opts.format == .json) try writeStdout(deps, "\n");
-            return if (result.snapshot.status == .failed) .handled_failure else .handled_success;
+            return .handled_success;
         },
-        .replay => |rest| {
-            const exit_code = try cli_replay.run(alloc, rest);
-            return if (exit_code == 0) .handled_success else .handled_failure;
+        .debug => |rest| {
+            return runTopLevelDebug(alloc, rest, cfg, deps);
         },
         .unknown => |command| {
-            try writeStderr(deps, "fx: unknown subcommand: ");
+            try writeStderr(deps, "fiber: unknown subcommand: ");
             try writeStderr(deps, command);
             try writeStderr(deps, "\n\n");
             try writeTopLevelHelp(alloc, cfg.command_catalog, deps, cfg.version, .stderr);
@@ -1615,66 +1220,19 @@ fn writeTopLevelHelp(
     }
 }
 
-fn runGithubWorkflow(
-    alloc: Allocator,
-    args: []const [:0]const u8,
-    cfg: Config,
-    launch_modifiers: LaunchModifiers,
+/// Routes `fiber debug replay` output through the caller's injected sinks so
+/// tests capture it instead of writing to the real process streams.
+const ReplayOutput = struct {
     deps: RunDeps,
-    workflow: github_workflows.Workflow,
-) !RunResult {
-    const opts = try parseWorkflowArgs(alloc, args);
-    defer opts.deinit(alloc);
 
-    const prompt = switch (workflow) {
-        .pull_request => github_workflows.buildPrompt(alloc, workflow, workflowLanguagePlaceholder(), opts.context) catch |err| switch (err) {
-            error.NotGitRepository => {
-                try writeStderr(deps, "fx pr: requires running inside a git repository\n");
-                return .handled_failure;
-            },
-            else => return err,
-        },
-        .issue => try github_workflows.buildPrompt(alloc, workflow, workflowLanguagePlaceholder(), opts.context),
-    };
-    defer alloc.free(prompt);
-
-    const workflow_cfg = workflowConfigWithLaunchModifiers(cfg, launch_modifiers);
-    if (!opts.create) {
-        const exit_code = try cli_ask.runPrompt(alloc, prompt, opts.auto_permission, workflow_cfg, cfg.context_registry, cfg.tool_set);
-        return if (exit_code == 0) .handled_success else .handled_failure;
+    pub fn writeStdout(self: *@This(), text: []const u8) !void {
+        try self.deps.write_stdout(self.deps.stdout_ctx, text);
     }
 
-    const run_result = try cli_ask.runPromptCapture(alloc, prompt, opts.auto_permission, workflow_cfg, cfg.context_registry, cfg.tool_set);
-    defer run_result.deinit(alloc);
-    if (run_result.exit_code != 0) return .handled_failure;
-
-    const draft = github_publish.parseDraft(alloc, run_result.assistant_output) catch {
-        try writeStderr(deps, switch (workflow) {
-            .pull_request => "fx pr: failed to parse drafted PR title/body\n",
-            .issue => "fx issue: failed to parse drafted issue title/body\n",
-        });
-        return .handled_failure;
-    };
-    defer draft.deinit(alloc);
-
-    const published = try github_publish.publish(alloc, switch (workflow) {
-        .pull_request => .pull_request,
-        .issue => .issue,
-    }, draft);
-    defer published.deinit(alloc);
-    if (!published.ok) {
-        try writeStderr(deps, switch (workflow) {
-            .pull_request => "fx pr: ",
-            .issue => "fx issue: ",
-        });
-        try writeStderr(deps, published.text);
-        try writeStderr(deps, "\n");
-        return .handled_failure;
+    pub fn writeStderr(self: *@This(), text: []const u8) !void {
+        try self.deps.write_stderr(self.deps.stderr_ctx, text);
     }
-    try writeStdout(deps, published.text);
-    try writeStdout(deps, "\n");
-    return .handled_success;
-}
+};
 
 fn writeStdout(deps: RunDeps, text: []const u8) !void {
     try deps.write_stdout(deps.stdout_ctx, text);
@@ -1683,150 +1241,6 @@ fn writeStdout(deps: RunDeps, text: []const u8) !void {
 fn writeStderr(deps: RunDeps, text: []const u8) !void {
     try deps.write_stderr(deps.stderr_ctx, text);
 }
-
-fn runPasteSetup(
-    alloc: Allocator,
-    secret_store: host.SecretStore,
-    deps: RunDeps,
-) !bool {
-    if (secret_store.isDisabled()) {
-        try writeStderr(deps, "fx setup: stored API keys are disabled by FX_DISABLE_KEYCHAIN\n");
-        return false;
-    }
-    if (!deps.setup_terminal_available(deps.setup_ctx)) {
-        try writeStderr(deps, "fx setup: an interactive terminal is required to paste an API key\n");
-        return false;
-    }
-
-    try writeStderr(deps, "Paste AI Gateway API key (input hidden): ");
-    const stored_interactively = secret_store.storeInteractive() catch {
-        try writeStderr(deps, "\nfx setup: API key was not saved\n");
-        return false;
-    };
-    if (!stored_interactively) {
-        const key = deps.read_masked_key(
-            deps.setup_ctx,
-            alloc,
-            deps.write_stderr,
-            deps.stderr_ctx,
-        ) catch {
-            try writeStderr(deps, "\nfx setup: API key was not saved\n");
-            return false;
-        };
-        defer secret.zeroAndFree(alloc, key);
-        try writeStderr(deps, "\n");
-        secret_store.store(alloc, key) catch {
-            try writeStderr(deps, "fx setup: API key was not saved\n");
-            return false;
-        };
-    }
-
-    const message = try std.fmt.allocPrint(
-        alloc,
-        "Saved API key to {s}.\n",
-        .{secret_store.backend_label},
-    );
-    defer alloc.free(message);
-    try writeStdout(deps, message);
-    return true;
-}
-
-fn setupTerminalAvailableDefault(_: ?*anyopaque) bool {
-    return std.c.isatty(std.posix.STDIN_FILENO) != 0 and
-        std.c.isatty(std.posix.STDERR_FILENO) != 0;
-}
-
-fn readMaskedKeyDefault(
-    _: ?*anyopaque,
-    alloc: Allocator,
-    write_mask: WriteFn,
-    write_ctx: ?*anyopaque,
-) ![]u8 {
-    var raw = try MaskedKeyRawMode.enable();
-    defer raw.disable();
-
-    var input: std.ArrayList(u8) = .empty;
-    errdefer {
-        if (input.capacity > 0) secret.zeroAndFree(alloc, input.allocatedSlice());
-    }
-
-    while (input.items.len < 8 * 1024) {
-        var byte: [1]u8 = undefined;
-        if (try std.posix.read(std.posix.STDIN_FILENO, &byte) == 0) return error.SetupCancelled;
-        switch (byte[0]) {
-            '\r', '\n' => {
-                if (input.items.len == 0) continue;
-                // toOwnedSlice shrinks through realloc, which may move the buffer
-                // and free the original without zeroing it. Copy out and wipe the
-                // source so no unzeroed key is left behind in freed memory.
-                const owned = try alloc.dupe(u8, input.items);
-                secret.zeroAndFree(alloc, input.allocatedSlice());
-                input = .empty;
-                return owned;
-            },
-            3, 4, 0x1b => return error.SetupCancelled,
-            8, 127 => if (input.items.len > 0) {
-                _ = input.pop();
-                try write_mask(write_ctx, "\x08 \x08");
-            },
-            0x20...0x7e => {
-                try input.append(alloc, byte[0]);
-                try write_mask(write_ctx, "•");
-            },
-            else => {},
-        }
-    }
-    return error.SetupKeyTooLong;
-}
-
-const MaskedKeyRawMode = struct {
-    original: std.posix.termios = undefined,
-    active: bool = false,
-
-    fn enable() !MaskedKeyRawMode {
-        if (std.c.isatty(std.posix.STDIN_FILENO) == 0 or
-            std.c.isatty(std.posix.STDERR_FILENO) == 0)
-        {
-            return error.NotATerminal;
-        }
-
-        var self: MaskedKeyRawMode = .{};
-        self.original = try std.posix.tcgetattr(std.posix.STDIN_FILENO);
-        var raw = self.original;
-        raw.iflag.BRKINT = false;
-        raw.iflag.ICRNL = false;
-        raw.iflag.INPCK = false;
-        raw.iflag.ISTRIP = false;
-        raw.iflag.IXON = false;
-        raw.iflag.IXOFF = false;
-        raw.cflag.CSIZE = .CS8;
-        raw.lflag.ECHO = false;
-        raw.lflag.ICANON = false;
-        raw.lflag.IEXTEN = false;
-        raw.lflag.ISIG = false;
-        const vmin_idx = switch (builtin.os.tag) {
-            .linux => 6,
-            else => 16,
-        };
-        const vtime_idx = switch (builtin.os.tag) {
-            .linux => 5,
-            else => 17,
-        };
-        if (vmin_idx < raw.cc.len and vtime_idx < raw.cc.len) {
-            raw.cc[vmin_idx] = 1;
-            raw.cc[vtime_idx] = 0;
-        }
-        try std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, raw);
-        self.active = true;
-        return self;
-    }
-
-    fn disable(self: *MaskedKeyRawMode) void {
-        if (!self.active) return;
-        std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, self.original) catch {};
-        self.active = false;
-    }
-};
 
 fn writeConfigDiagnostics(
     alloc: Allocator,
@@ -1838,7 +1252,7 @@ fn writeConfigDiagnostics(
         var notice_writer: std.Io.Writer.Allocating = .init(alloc);
         defer notice_writer.deinit();
         try notice_writer.writer.print(
-            "fx: config {s}: {s}",
+            "fiber: config {s}: {s}",
             .{ @tagName(diagnostic.layer), @tagName(diagnostic.cause) },
         );
         try config_runtime.writeDiagnosticMetadata(&notice_writer.writer, diagnostic);
@@ -1901,7 +1315,6 @@ fn writeStatusJsonLine(alloc: Allocator, deps: RunDeps, snapshot: output_contrac
 
 fn statusSnapshotFromStartup(startup: app_lifecycle.StartupStatus) output_contracts.StatusSnapshot {
     return statusSnapshotFromStartupWithBuild(startup, .{
-        .channel = .stable,
         .version = "",
         .revision = "",
     }, .clear);
@@ -1922,8 +1335,8 @@ fn statusSnapshotFromStartupWithBuild(
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = startup.agent_step_limit,
-        .update_channel = startup.update_channel.label(),
-        .build_channel = build.channel.label(),
+        .update_channel = "stable",
+        .build_channel = "stable",
         .build_revision = build.revision,
         .mcp_config_error = switch (mcp_config_diagnostic) {
             .clear, .warning => null,
@@ -1954,17 +1367,15 @@ fn doctorSnapshotFromRuntime(snapshot: doctor_runtime.Snapshot) output_contracts
 }
 
 fn writeRealStdout(_: ?*anyopaque, text: []const u8) !void {
-    if (comptime builtin.os.tag != .windows) {
-        return writeFdAll(std.posix.STDOUT_FILENO, text);
-    }
-    try std.Io.File.stdout().writeStreamingAll(io_mod.getIo(), text);
+    return writeFdAll(std.posix.STDOUT_FILENO, text);
 }
 
 fn writeRealStderr(_: ?*anyopaque, text: []const u8) !void {
-    if (comptime builtin.os.tag != .windows) {
-        return writeFdAll(std.posix.STDERR_FILENO, text);
-    }
-    try std.Io.File.stderr().writeStreamingAll(io_mod.getIo(), text);
+    return writeFdAll(std.posix.STDERR_FILENO, text);
+}
+
+fn realStdinIsTty(_: ?*anyopaque) bool {
+    return std.Io.File.stdin().isTty(io_mod.getIo()) catch false;
 }
 
 fn writeFdAll(fd: std.posix.fd_t, text: []const u8) !void {
@@ -1992,7 +1403,7 @@ fn selfExePathDefault(_: ?*anyopaque, alloc: Allocator) ![]u8 {
 }
 
 fn writeTopLevelUsage(command_catalog: CommandCatalog, deps: RunDeps, kind: TopLevelKind) !void {
-    try writeStderr(deps, "usage: fx ");
+    try writeStderr(deps, "usage: fiber ");
     try writeStderr(deps, command_specs.topLevelUsage(command_catalog, kind));
     try writeStderr(deps, "\n");
 }
@@ -2040,6 +1451,726 @@ fn loadMcpCommandRuntime(
     return .{ .startup = startup, .runtime = runtime };
 }
 
+const AuthSurfaceOptions = struct {
+    format: output_contracts.OutputFormat = .text,
+    provider: ?model_provider.ProviderId = null,
+};
+
+fn parseAuthSurfaceArgs(args: []const [:0]const u8) !AuthSurfaceOptions {
+    var options: AuthSurfaceOptions = .{};
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (options.provider != null) return error.InvalidAuthArgs;
+        options.provider = provider_catalog.parse(arg) orelse return error.InvalidAuthArgs;
+    }
+    return options;
+}
+
+fn parseAuthListArgs(args: []const [:0]const u8) !output_contracts.OutputFormat {
+    if (args.len == 0) return .text;
+    if (args.len == 1 and std.mem.eql(u8, args[0], "--json")) return .json;
+    return error.InvalidAuthArgs;
+}
+
+fn providerConnected(alloc: Allocator, provider: model_provider.ProviderId) !bool {
+    return switch (provider) {
+        .codex => chatgpt_oauth.sourceExists(alloc) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => false,
+        },
+    };
+}
+
+fn loadConfiguredAuthProvider(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+) !model_provider.ProviderId {
+    var startup = try deps.load_startup_state_without_credentials(
+        alloc,
+        cfg.default_model,
+        cfg.default_agent_step_limit,
+    );
+    defer startup.deinit(alloc);
+    return startup.provider;
+}
+
+fn defaultAuthProvider(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+) !model_provider.ProviderId {
+    if (provider_catalog.entries.len == 1) return provider_catalog.entries[0].id;
+    return loadConfiguredAuthProvider(alloc, cfg, deps);
+}
+
+fn resolveAuthProvider(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    maybe_provider: ?model_provider.ProviderId,
+) !model_provider.ProviderId {
+    if (maybe_provider) |provider| return provider;
+    return defaultAuthProvider(alloc, cfg, deps);
+}
+
+fn writeSupportedAuthProviders(deps: RunDeps) !void {
+    try writeStderr(deps, "Supported providers:\n");
+    for (&provider_catalog.entries) |*entry| {
+        try writeStderr(deps, "  ");
+        try writeStderr(deps, entry.slug);
+        try writeStderr(deps, " — ");
+        try writeStderr(deps, entry.name);
+        try writeStderr(deps, "\n");
+    }
+}
+
+fn writeAuthLoginNonInteractiveError(deps: RunDeps) !void {
+    try writeStderr(deps, "fiber auth login: no provider and stdin is not a tty\n");
+    try writeSupportedAuthProviders(deps);
+}
+
+fn pickAuthProviderInteractive(deps: RunDeps) !model_provider.ProviderId {
+    try writeStderr(deps, "Select a provider:\n");
+    for (&provider_catalog.entries, 0..) |*entry, index| {
+        var line_buf: [128]u8 = undefined;
+        const line = try std.fmt.bufPrint(
+            &line_buf,
+            "  {d}. {s} ({s})\n",
+            .{ index + 1, entry.name, entry.slug },
+        );
+        try writeStderr(deps, line);
+    }
+    try writeStderr(deps, "Enter number: ");
+
+    var read_buffer: [256]u8 = undefined;
+    var reader = std.Io.File.stdin().reader(io_mod.getIo(), &read_buffer);
+    const line = reader.takeDelimiter('\n') catch |err| switch (err) {
+        error.StreamTooLong, error.EndOfStream => return error.InvalidAuthProviderSelection,
+    };
+    const trimmed = std.mem.trim(u8, line, " \t\r\n");
+    const selected = std.fmt.parseInt(usize, trimmed, 10) catch return error.InvalidAuthProviderSelection;
+    if (selected == 0 or selected > provider_catalog.entries.len) return error.InvalidAuthProviderSelection;
+    return provider_catalog.entries[selected - 1].id;
+}
+
+fn resolveAuthLoginProvider(
+    deps: RunDeps,
+    maybe_provider: ?model_provider.ProviderId,
+) !model_provider.ProviderId {
+    if (maybe_provider) |provider| return provider;
+    // Only ambiguous when >1 provider exists: a single provider proceeds
+    // unconditionally, tty or not, matching today's `fiber login` behavior
+    // (no tty check at all) for the one case that's actually reachable.
+    if (provider_catalog.entries.len == 1) return provider_catalog.entries[0].id;
+    if (!deps.stdin_is_tty(deps.stdin_ctx)) return error.ProviderRequiredNonInteractive;
+    return pickAuthProviderInteractive(deps);
+}
+
+fn runProviderLogin(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    provider: model_provider.ProviderId,
+) !RunResult {
+    const provider_name = provider_catalog.find(provider).name;
+    switch (provider) {
+        .codex => {
+            chatgpt_oauth.runLogin(
+                alloc,
+                cfg.oauth_transport,
+                cfg.url_opener,
+            ) catch |err| {
+                const message = switch (err) {
+                    error.ChatGptLoginTimedOut => "fiber auth login: Codex authorization expired; run fiber auth login codex again\n",
+                    error.ChatGptAuthorizationFailed => "fiber auth login: Codex authorization denied\n",
+                    else => "fiber auth login: failed to sign in with Codex\n",
+                };
+                try writeStderr(deps, message);
+                return .handled_failure;
+            };
+        },
+    }
+    if (!try activateProviderSelection(alloc, cfg, deps, provider)) {
+        return .handled_failure;
+    }
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try out.writer.print(
+        "Signed in with {s}.\nRun fiber models to see what is available, then fiber models use <id>.\n",
+        .{provider_name},
+    );
+    try writeStdout(deps, out.written());
+    return .handled_success;
+}
+
+fn runProviderLogout(
+    alloc: Allocator,
+    deps: RunDeps,
+    provider: model_provider.ProviderId,
+    format: output_contracts.OutputFormat,
+) !RunResult {
+    const provider_name = provider_catalog.find(provider).name;
+    const outcome = switch (provider) {
+        .codex => chatgpt_oauth.logout() catch {
+            var message: std.Io.Writer.Allocating = .init(alloc);
+            defer message.deinit();
+            try message.writer.print(
+                "fiber auth logout: failed to durably remove saved {s} login\n",
+                .{provider_name},
+            );
+            try writeStderr(deps, message.written());
+            return .handled_failure;
+        },
+    };
+    return switch (outcome) {
+        .deleted, .missing => result: {
+            const snapshot = output_contracts.AuthLogoutSnapshot{
+                .provider = provider,
+                .result = switch (outcome) {
+                    .deleted => .deleted,
+                    .missing => .missing,
+                    .deleted_not_durable => unreachable,
+                },
+            };
+            const text = try snapshot.render(alloc, format);
+            defer alloc.free(text);
+            try writeFormattedOutput(deps, text, format);
+            break :result .handled_success;
+        },
+        .deleted_not_durable => result: {
+            var message: std.Io.Writer.Allocating = .init(alloc);
+            defer message.deinit();
+            try message.writer.print(
+                "fiber auth logout: failed to durably remove saved {s} login\n",
+                .{provider_name},
+            );
+            try writeStderr(deps, message.written());
+            break :result .handled_failure;
+        },
+    };
+}
+
+fn runTopLevelAuth(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    if (rest.len == 0) {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+        return .handled_usage_error;
+    }
+    const operation = rest[0];
+    if (std.mem.eql(u8, operation, "list")) {
+        const format = parseAuthListArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .auth, output_contracts.Kind.auth_list.jsonName(), err, rest[1..]);
+            return .handled_usage_error;
+        };
+        var entries: [provider_catalog.entries.len]output_contracts.AuthListEntry = undefined;
+        var count: usize = 0;
+        for (&provider_catalog.entries) |*entry| {
+            entries[count] = .{
+                .id = entry.slug,
+                .name = entry.name,
+                .connected = try providerConnected(alloc, entry.id),
+            };
+            count += 1;
+        }
+        const text = try (output_contracts.AuthListSnapshot{
+            .providers = entries[0..count],
+        }).render(alloc, format);
+        defer alloc.free(text);
+        try writeFormattedOutput(deps, text, format);
+        return .handled_success;
+    }
+    if (std.mem.eql(u8, operation, "status")) {
+        const opts = parseAuthSurfaceArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .auth, output_contracts.Kind.auth_status.jsonName(), err, rest[1..]);
+            return .handled_usage_error;
+        };
+        const provider = resolveAuthProvider(alloc, cfg, deps, opts.provider) catch {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+            return .handled_usage_error;
+        };
+        const status = try auth_runtime.loadStatusSnapshotForProvider(alloc, provider);
+        const text = try (output_contracts.AuthStatusSnapshot{
+            .provider = provider,
+            .status = status,
+        }).render(alloc, opts.format);
+        defer alloc.free(text);
+        try writeFormattedOutput(deps, text, opts.format);
+        return .handled_success;
+    }
+    if (std.mem.eql(u8, operation, "login")) {
+        if (argsContainJson(rest[1..])) {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+            return .handled_usage_error;
+        }
+        const maybe_provider = parseLoginProvider(rest[1..]) catch {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+            return .handled_usage_error;
+        };
+        const provider = resolveAuthLoginProvider(deps, maybe_provider) catch |err| {
+            if (err == error.ProviderRequiredNonInteractive) {
+                try writeAuthLoginNonInteractiveError(deps);
+            } else {
+                try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+            }
+            return .handled_usage_error;
+        };
+        return runProviderLogin(alloc, cfg, deps, provider);
+    }
+    if (std.mem.eql(u8, operation, "logout")) {
+        const opts = parseAuthSurfaceArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .auth, output_contracts.Kind.auth_logout.jsonName(), err, rest[1..]);
+            return .handled_usage_error;
+        };
+        const provider = resolveAuthProvider(alloc, cfg, deps, opts.provider) catch {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+            return .handled_usage_error;
+        };
+        return runProviderLogout(alloc, deps, provider, opts.format);
+    }
+
+    try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
+    return .handled_usage_error;
+}
+
+fn runTopLevelDebug(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    if (rest.len == 0) {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .debug);
+        return .handled_usage_error;
+    }
+    const operation = rest[0];
+    if (std.mem.eql(u8, operation, "replay")) {
+        var output: ReplayOutput = .{ .deps = deps };
+        const exit_code = try cli_replay.runWithOutput(alloc, rest[1..], &output);
+        return .{ .handled_exit = exit_code };
+    }
+
+    try writeTopLevelUsage(cfg.command_catalog, deps, .debug);
+    return .handled_usage_error;
+}
+
+fn runTopLevelPermissions(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    if (rest.len == 0) {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .permissions);
+        return .handled_usage_error;
+    }
+    const operation = rest[0];
+    if (std.mem.eql(u8, operation, "mode")) {
+        const parsed = parsePermissionsModeArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(
+                alloc,
+                cfg.command_catalog,
+                deps,
+                .permissions,
+                output_contracts.Kind.permissions_mode.jsonName(),
+                err,
+                rest[1..],
+            );
+            return .handled_usage_error;
+        };
+        var outcome = config_runtime.setUserPreferences(alloc, .{ .permission_mode = parsed.mode }) catch |err| {
+            try writePermissionsModeFailure(alloc, deps, parsed.format, err);
+            return .handled_failure;
+        };
+        defer outcome.deinit(alloc);
+        const text = try (output_contracts.PermissionsModeSnapshot{
+            .mode = parsed.mode,
+        }).render(alloc, parsed.format);
+        defer alloc.free(text);
+        try writeFormattedOutput(deps, text, parsed.format);
+        return .handled_success;
+    }
+    if (std.mem.eql(u8, operation, "rule")) {
+        return runPermissionsRule(alloc, rest[1..], cfg, deps);
+    }
+
+    try writeTopLevelUsage(cfg.command_catalog, deps, .permissions);
+    return .handled_usage_error;
+}
+
+fn runPermissionsRule(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    if (rest.len == 0) {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .permissions);
+        return .handled_usage_error;
+    }
+    const operation = rest[0];
+    if (std.mem.eql(u8, operation, "list")) {
+        const format = parsePermissionsRuleListArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(
+                alloc,
+                cfg.command_catalog,
+                deps,
+                .permissions,
+                output_contracts.Kind.permissions_rule_list.jsonName(),
+                err,
+                rest[1..],
+            );
+            return .handled_usage_error;
+        };
+        var startup = try deps.load_startup_state_without_credentials(alloc, cfg.default_model, cfg.default_agent_step_limit);
+        defer startup.deinit(alloc);
+        try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+
+        var detailed = try config_runtime.loadMergedSettingsDetailed(alloc, startup.workspace_root);
+        defer detailed.deinit(alloc);
+        const entries = try permissionRuleListEntriesFromSources(alloc, detailed.permission_sources);
+        defer if (entries.len > 0) alloc.free(entries);
+
+        const text = try (output_contracts.PermissionsRuleListSnapshot{
+            .rules = entries,
+            .user_shadowed_by_local = detailed.permission_sources.user_shadowed_by_local,
+        }).render(alloc, format);
+        defer alloc.free(text);
+        try writeFormattedOutput(deps, text, format);
+        return .handled_success;
+    }
+    if (std.mem.eql(u8, operation, "add")) {
+        const args = parsePermissionsRuleAddArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(
+                alloc,
+                cfg.command_catalog,
+                deps,
+                .permissions,
+                output_contracts.Kind.permissions_rule_add.jsonName(),
+                err,
+                rest[1..],
+            );
+            return .handled_usage_error;
+        };
+        return runPermissionsRuleAdd(alloc, cfg, deps, args, rest[1..]);
+    }
+    if (std.mem.eql(u8, operation, "remove")) {
+        const args = parsePermissionsRuleRemoveArgs(rest[1..]) catch |err| {
+            try writeUsageOrJsonError(
+                alloc,
+                cfg.command_catalog,
+                deps,
+                .permissions,
+                output_contracts.Kind.permissions_rule_remove.jsonName(),
+                err,
+                rest[1..],
+            );
+            return .handled_usage_error;
+        };
+        return runPermissionsRuleRemove(alloc, cfg, deps, args, rest[1..]);
+    }
+
+    try writeTopLevelUsage(cfg.command_catalog, deps, .permissions);
+    return .handled_usage_error;
+}
+
+fn runPermissionsRuleAdd(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    args: PermissionsRuleAddArgs,
+    raw_args: []const [:0]const u8,
+) !RunResult {
+    var canonical_pattern: ?[]u8 = null;
+    defer if (canonical_pattern) |pattern| alloc.free(pattern);
+
+    const pattern = if (std.mem.eql(u8, args.permission, "web_fetch")) blk: {
+        canonical_pattern = permissions.canonicalWebFetchDomainPattern(alloc, args.pattern) catch |err| {
+            if (err == error.InvalidToolArguments) {
+                try writeUsageOrJsonError(
+                    alloc,
+                    cfg.command_catalog,
+                    deps,
+                    .permissions,
+                    output_contracts.Kind.permissions_rule_add.jsonName(),
+                    error.InvalidPermissionArgs,
+                    raw_args,
+                );
+                return .handled_usage_error;
+            }
+            return err;
+        };
+        break :blk canonical_pattern.?;
+    } else args.pattern;
+
+    var startup = try deps.load_startup_state_without_credentials(alloc, cfg.default_model, cfg.default_agent_step_limit);
+    defer startup.deinit(alloc);
+    try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+
+    const workspace_root: ?[]const u8 = if (args.scope == .local) startup.workspace_root else null;
+    var outcome = config_runtime.addPermissionRule(
+        alloc,
+        args.scope,
+        workspace_root,
+        args.permission,
+        pattern,
+        args.action,
+    ) catch |err| {
+        try writePermissionsRuleMutationFailure(alloc, deps, "add", args.format, err);
+        return .handled_failure;
+    };
+    defer outcome.deinit(alloc);
+
+    const text = try (output_contracts.PermissionsRuleAddSnapshot{
+        .scope = permissionScopeLabel(args.scope),
+        .permission = args.permission,
+        .pattern = pattern,
+        .action = args.action,
+        .changed = outcome == .committed,
+    }).render(alloc, args.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, args.format);
+    return .handled_success;
+}
+
+fn runPermissionsRuleRemove(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    args: PermissionsRuleRemoveArgs,
+    raw_args: []const [:0]const u8,
+) !RunResult {
+    _ = raw_args;
+    var startup = try deps.load_startup_state_without_credentials(alloc, cfg.default_model, cfg.default_agent_step_limit);
+    defer startup.deinit(alloc);
+    try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+
+    const workspace_root: ?[]const u8 = if (args.scope == .local) startup.workspace_root else null;
+    var outcome = config_runtime.removePermissionRule(
+        alloc,
+        args.scope,
+        workspace_root,
+        args.permission,
+        args.pattern,
+    ) catch |err| {
+        try writePermissionsRuleMutationFailure(alloc, deps, "remove", args.format, err);
+        return .handled_failure;
+    };
+    defer outcome.deinit(alloc);
+
+    const text = try (output_contracts.PermissionsRuleRemoveSnapshot{
+        .scope = permissionScopeLabel(args.scope),
+        .permission = args.permission,
+        .pattern = args.pattern,
+        .removed = outcome == .committed,
+    }).render(alloc, args.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, args.format);
+    return .handled_success;
+}
+
+const PermissionsModeArgs = struct {
+    mode: types.PermissionMode,
+    format: output_contracts.OutputFormat = .text,
+};
+
+const PermissionsRuleAddArgs = struct {
+    format: output_contracts.OutputFormat = .text,
+    scope: config_runtime.PermissionScope = .local,
+    permission: []const u8,
+    pattern: []const u8,
+    action: types.PermissionAction,
+};
+
+const PermissionsRuleRemoveArgs = struct {
+    format: output_contracts.OutputFormat = .text,
+    scope: config_runtime.PermissionScope = .local,
+    permission: []const u8,
+    pattern: []const u8,
+};
+
+fn parsePermissionsModeArgs(args: []const [:0]const u8) !PermissionsModeArgs {
+    var options: PermissionsModeArgs = .{ .mode = undefined };
+    var mode_seen = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (mode_seen) return error.InvalidPermissionArgs;
+        mode_seen = true;
+        options.mode = config_runtime.parsePermissionMode(arg) orelse return error.InvalidPermissionArgs;
+    }
+    if (!mode_seen) return error.InvalidPermissionArgs;
+    return options;
+}
+
+fn parsePermissionsRuleListArgs(args: []const [:0]const u8) !output_contracts.OutputFormat {
+    if (args.len == 0) return .text;
+    if (args.len == 1 and std.mem.eql(u8, args[0], "--json")) return .json;
+    return error.InvalidPermissionArgs;
+}
+
+fn parsePermissionsRuleAddArgs(args: []const [:0]const u8) !PermissionsRuleAddArgs {
+    var options: PermissionsRuleAddArgs = .{
+        .permission = undefined,
+        .pattern = undefined,
+        .action = undefined,
+    };
+    var permission_seen = false;
+    var pattern_seen = false;
+    var action_seen = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--user")) {
+            options.scope = .user;
+            continue;
+        }
+        if (!permission_seen) {
+            permission_seen = true;
+            options.permission = arg;
+            continue;
+        }
+        if (!pattern_seen) {
+            pattern_seen = true;
+            options.pattern = arg;
+            continue;
+        }
+        if (!action_seen) {
+            action_seen = true;
+            options.action = config_runtime.parsePermissionAction(arg) orelse return error.InvalidPermissionArgs;
+            continue;
+        }
+        return error.InvalidPermissionArgs;
+    }
+    if (!permission_seen or !pattern_seen or !action_seen) return error.InvalidPermissionArgs;
+    return options;
+}
+
+fn parsePermissionsRuleRemoveArgs(args: []const [:0]const u8) !PermissionsRuleRemoveArgs {
+    var options: PermissionsRuleRemoveArgs = .{
+        .permission = undefined,
+        .pattern = undefined,
+    };
+    var permission_seen = false;
+    var pattern_seen = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--user")) {
+            options.scope = .user;
+            continue;
+        }
+        if (!permission_seen) {
+            permission_seen = true;
+            options.permission = arg;
+            continue;
+        }
+        if (!pattern_seen) {
+            pattern_seen = true;
+            options.pattern = arg;
+            continue;
+        }
+        return error.InvalidPermissionArgs;
+    }
+    if (!permission_seen or !pattern_seen) return error.InvalidPermissionArgs;
+    return options;
+}
+
+fn permissionScopeLabel(scope: config_runtime.PermissionScope) []const u8 {
+    return switch (scope) {
+        .user => "user",
+        .local => "local",
+    };
+}
+
+fn permissionRuleListEntriesFromSources(
+    alloc: Allocator,
+    sources: config_runtime.PermissionSourceViews,
+) ![]output_contracts.PermissionsRuleListEntry {
+    const total = sources.user.rules.len + sources.local.rules.len;
+    if (total == 0) return &.{};
+    const entries = try alloc.alloc(output_contracts.PermissionsRuleListEntry, total);
+    var index: usize = 0;
+    for (sources.user.rules) |rule| {
+        entries[index] = .{
+            .scope = "user",
+            .permission = rule.permission,
+            .pattern = rule.pattern,
+            .action = rule.action,
+        };
+        index += 1;
+    }
+    for (sources.local.rules) |rule| {
+        entries[index] = .{
+            .scope = "local",
+            .permission = rule.permission,
+            .pattern = rule.pattern,
+            .action = rule.action,
+        };
+        index += 1;
+    }
+    return entries;
+}
+
+fn writePermissionsModeFailure(
+    alloc: Allocator,
+    deps: RunDeps,
+    format: output_contracts.OutputFormat,
+    err: anyerror,
+) !void {
+    const message = "fiber permissions mode failed";
+    if (format == .json) {
+        try writeJsonCommandFailure(
+            alloc,
+            deps,
+            output_contracts.Kind.permissions_mode.jsonName(),
+            err,
+            message,
+        );
+        return;
+    }
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try out.writer.print("{s}: {s}.\n", .{ message, @errorName(err) });
+    try writeStderr(deps, out.written());
+}
+
+fn writePermissionsRuleMutationFailure(
+    alloc: Allocator,
+    deps: RunDeps,
+    operation: []const u8,
+    format: output_contracts.OutputFormat,
+    err: anyerror,
+) !void {
+    const kind = if (std.mem.eql(u8, operation, "add"))
+        output_contracts.Kind.permissions_rule_add.jsonName()
+    else
+        output_contracts.Kind.permissions_rule_remove.jsonName();
+    const message = try std.fmt.allocPrint(alloc, "fiber permissions rule {s} failed", .{operation});
+    defer alloc.free(message);
+    if (format == .json) {
+        try writeJsonCommandFailure(alloc, deps, kind, err, message);
+        return;
+    }
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try out.writer.print("{s}: {s}.\n", .{ message, @errorName(err) });
+    try writeStderr(deps, out.written());
+}
+
 fn runTopLevelMcp(
     alloc: Allocator,
     rest: []const [:0]const u8,
@@ -2048,24 +2179,40 @@ fn runTopLevelMcp(
 ) !RunResult {
     if (rest.len == 0) {
         try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-        return .handled_failure;
+        return .handled_usage_error;
     }
     const operation = rest[0];
     if (std.mem.eql(u8, operation, "add")) {
+        var format: output_contracts.OutputFormat = .text;
         var tokens: std.ArrayList([]const u8) = .empty;
         defer tokens.deinit(alloc);
-        try tokens.ensureTotalCapacity(alloc, rest.len - 1);
-        for (rest[1..]) |token| tokens.appendAssumeCapacity(token);
+        for (rest[1..]) |token| {
+            if (std.mem.eql(u8, token, "--json")) {
+                format = .json;
+                continue;
+            }
+            try tokens.append(alloc, token);
+        }
         const intent = mcp_command_provider.parseAddIntent(tokens.items) catch |err| {
             if (err == error.McpAddUsage) {
-                try writeMcpAddUsage(deps);
-            } else {
-                try writeMcpOperationFailure(alloc, deps, "add", err);
+                if (format == .json) {
+                    try writeJsonCommandFailure(
+                        alloc,
+                        deps,
+                        output_contracts.Kind.mcp_add.jsonName(),
+                        err,
+                        "fiber mcp add: invalid arguments",
+                    );
+                } else {
+                    try writeMcpAddUsage(deps);
+                }
+                return .handled_usage_error;
             }
+            try writeMcpOperationFailure(alloc, deps, "add", format, err);
             return .handled_failure;
         };
         var result = cfg.add_mcp_profile_server(alloc, intent) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "add", err);
+            try writeMcpOperationFailure(alloc, deps, "add", format, err);
             return .handled_failure;
         };
         defer result.deinit(alloc);
@@ -2074,23 +2221,40 @@ fn runTopLevelMcp(
             .local => |local| local.name,
             .http => |http| http.name,
         };
-        try writeMcpProfileMutationSuccess(
-            alloc,
-            deps,
-            "Saved",
-            "to",
-            name,
-            result.profile_path,
-        );
+        if (format == .json) {
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpAddSnapshot{
+                .server = name,
+                .profile_path = result.profile_path,
+            });
+        } else {
+            try writeMcpProfileMutationSuccess(
+                alloc,
+                deps,
+                "Saved",
+                "to",
+                name,
+                result.profile_path,
+            );
+        }
         return .handled_success;
     }
     if (std.mem.eql(u8, operation, "trust")) {
-        const action = parseTopLevelProjectMcpAction(rest[1..]) catch {
-            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
+        var format: output_contracts.OutputFormat = .text;
+        var trust_args: std.ArrayList([:0]const u8) = .empty;
+        defer trust_args.deinit(alloc);
+        for (rest[1..]) |token| {
+            if (std.mem.eql(u8, token, "--json")) {
+                format = .json;
+                continue;
+            }
+            try trust_args.append(alloc, token);
+        }
+        const action = parseTopLevelProjectMcpAction(trust_args.items) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "trust", rest[1..]);
+            return .handled_usage_error;
         };
         const workspace_root = io_mod.realpathAlloc(alloc, ".") catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "trust", err);
+            try writeMcpOperationFailure(alloc, deps, "trust", format, err);
             return .handled_failure;
         };
         defer alloc.free(workspace_root);
@@ -2102,101 +2266,140 @@ fn runTopLevelMcp(
         defer attempt.deinit(alloc);
         switch (attempt) {
             .failure => |failure| {
-                try writeMcpOperationFailure(alloc, deps, "trust", failure.err);
+                try writeMcpOperationFailure(alloc, deps, "trust", format, failure.err);
                 return .handled_failure;
             },
             .outcome => {},
         }
-        try writeMcpTrustSuccess(alloc, deps, workspace_root, action);
+        if (format == .json) {
+            const fields = mcpTrustSnapshotFields(action);
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpTrustSnapshot{
+                .workspace_root = workspace_root,
+                .action = fields.action,
+                .server = fields.server,
+            });
+        } else {
+            try writeMcpTrustSuccess(alloc, deps, workspace_root, action);
+        }
         return .handled_success;
     }
     if (std.mem.eql(u8, operation, "path")) {
-        if (rest.len != 1) {
-            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
-        }
+        const format = parseMcpOptionalJsonArgs(rest[1..]) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "path", rest[1..]);
+            return .handled_usage_error;
+        };
         const home = deps.getenv(deps.env_ctx, "HOME") orelse {
-            try writeMcpOperationFailure(alloc, deps, "path", error.HomeNotSet);
+            try writeMcpOperationFailure(alloc, deps, "path", format, error.HomeNotSet);
             return .handled_failure;
         };
         const path = try profile_paths.mcpConfigPath(alloc, home);
         defer alloc.free(path);
-        var encoded_path = try text_utils.encodeTerminalSafe(alloc, path, 512);
-        defer encoded_path.deinit(alloc);
-        try writeStdout(deps, encoded_path.bytes);
-        try writeStdout(deps, "\n");
+        if (format == .json) {
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpPathSnapshot{ .path = path });
+        } else {
+            var encoded_path = try text_utils.encodeTerminalSafe(alloc, path, 512);
+            defer encoded_path.deinit(alloc);
+            try writeStdout(deps, encoded_path.bytes);
+            try writeStdout(deps, "\n");
+        }
         return .handled_success;
     }
     if (std.mem.eql(u8, operation, "remove")) {
-        if (rest.len != 2 or rest[1].len == 0) {
-            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
-        }
-        var result = cfg.remove_mcp_profile_server(alloc, rest[1]) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "remove", err);
+        const parsed = parseMcpServerArgs(rest[1..]) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "remove", rest[1..]);
+            return .handled_usage_error;
+        };
+        var result = cfg.remove_mcp_profile_server(alloc, parsed.server) catch |err| {
+            try writeMcpOperationFailure(alloc, deps, "remove", parsed.format, err);
             return .handled_failure;
         };
         defer result.deinit(alloc);
         if (result.warning) |warning| try writeMcpProfileWarning(alloc, deps, warning);
         if (!result.removed) {
-            var encoded_name = try text_utils.encodeTerminalSafe(alloc, rest[1], 160);
-            defer encoded_name.deinit(alloc);
-            var out: std.Io.Writer.Allocating = .init(alloc);
-            defer out.deinit();
-            try out.writer.print(
-                "MCP server '{s}' was not found in the profile.\n",
-                .{encoded_name.bytes},
-            );
-            try writeStderr(deps, out.written());
+            if (parsed.format == .json) {
+                const message = try std.fmt.allocPrint(
+                    alloc,
+                    "MCP server '{s}' was not found in the profile",
+                    .{parsed.server},
+                );
+                defer alloc.free(message);
+                try writeJsonCommandFailure(
+                    alloc,
+                    deps,
+                    output_contracts.Kind.mcp_remove.jsonName(),
+                    error.McpServerNotFound,
+                    message,
+                );
+            } else {
+                var encoded_name = try text_utils.encodeTerminalSafe(alloc, parsed.server, 160);
+                defer encoded_name.deinit(alloc);
+                var out: std.Io.Writer.Allocating = .init(alloc);
+                defer out.deinit();
+                try out.writer.print(
+                    "MCP server '{s}' was not found in the profile.\n",
+                    .{encoded_name.bytes},
+                );
+                try writeStderr(deps, out.written());
+            }
             return .handled_failure;
         }
-        try writeMcpProfileMutationSuccess(
-            alloc,
-            deps,
-            "Removed",
-            "from",
-            rest[1],
-            result.profile_path,
-        );
+        if (parsed.format == .json) {
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpRemoveSnapshot{
+                .server = parsed.server,
+                .profile_path = result.profile_path,
+            });
+        } else {
+            try writeMcpProfileMutationSuccess(
+                alloc,
+                deps,
+                "Removed",
+                "from",
+                parsed.server,
+                result.profile_path,
+            );
+        }
         return .handled_success;
     }
     if (std.mem.eql(u8, operation, "list")) {
-        const connect = rest.len == 2 and std.mem.eql(u8, rest[1], "--connect");
-        if (rest.len != 1 and !connect) {
-            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
-        }
+        const format = parseMcpOptionalJsonArgs(rest[1..]) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "list", rest[1..]);
+            return .handled_usage_error;
+        };
         var loaded = loadMcpCommandRuntime(alloc, cfg, deps) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "list", err);
+            try writeMcpOperationFailure(alloc, deps, "list", format, err);
             return .handled_failure;
         };
         defer loaded.deinit(alloc);
         try writeConfigDiagnostics(alloc, deps, loaded.startup.config_diagnostics);
         const listing = if (loaded.runtime) |runtime| listing: {
-            if (connect) {
-                runtime.connectAll(cfg.tool_set.registry);
-            } else {
-                try runtime.loadStoredCredentialsForHealthSnapshot();
-            }
+            try runtime.loadStoredCredentialsForHealthSnapshot();
             break :listing try runtime.listServersAndTools(alloc);
         } else try alloc.dupe(u8, "No MCP servers configured.\n");
         defer alloc.free(listing);
-        try writeStdout(deps, listing);
+        if (format == .json) {
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpListSnapshot{ .listing = listing });
+        } else {
+            try writeStdout(deps, listing);
+        }
         return .handled_success;
     }
-    if (std.mem.eql(u8, operation, "auth")) {
+    if (std.mem.eql(u8, operation, "login")) {
+        if (argsContainJson(rest[1..])) {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
+            return .handled_usage_error;
+        }
         if (rest.len != 2 or rest[1].len == 0) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
+            return .handled_usage_error;
         }
         var loaded = loadMcpCommandRuntime(alloc, cfg, deps) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "auth", err);
+            try writeMcpOperationFailure(alloc, deps, "login", .text, err);
             return .handled_failure;
         };
         defer loaded.deinit(alloc);
         try writeConfigDiagnostics(alloc, deps, loaded.startup.config_diagnostics);
         const runtime = loaded.runtime orelse {
-            try writeMcpOperationFailure(alloc, deps, "auth", error.McpServerNotFound);
+            try writeMcpOperationFailure(alloc, deps, "login", .text, error.McpServerNotFound);
             return .handled_failure;
         };
         var opener = cfg.url_opener;
@@ -2205,7 +2408,7 @@ fn runTopLevelMcp(
             &opener,
             openTopLevelMcpUrl,
         ) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "auth", err);
+            try writeMcpOperationFailure(alloc, deps, "login", .text, err);
             return .handled_failure;
         };
         defer result.deinit();
@@ -2233,7 +2436,8 @@ fn runTopLevelMcp(
                 try writeMcpOperationFailure(
                     alloc,
                     deps,
-                    "auth",
+                    "login",
+                    .text,
                     error.McpAuthorizationIssuerMismatch,
                 );
                 return .handled_failure;
@@ -2241,55 +2445,62 @@ fn runTopLevelMcp(
         }
     }
     if (std.mem.eql(u8, operation, "logout")) {
-        if (rest.len != 2 or rest[1].len == 0) {
-            try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-            return .handled_failure;
-        }
+        const parsed = parseMcpServerArgs(rest[1..]) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "logout", rest[1..]);
+            return .handled_usage_error;
+        };
         var loaded = loadMcpCommandRuntime(alloc, cfg, deps) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "logout", err);
+            try writeMcpOperationFailure(alloc, deps, "logout", parsed.format, err);
             return .handled_failure;
         };
         defer loaded.deinit(alloc);
         try writeConfigDiagnostics(alloc, deps, loaded.startup.config_diagnostics);
         const runtime = loaded.runtime orelse {
-            try writeMcpOperationFailure(alloc, deps, "logout", error.McpServerNotFound);
+            try writeMcpOperationFailure(alloc, deps, "logout", parsed.format, error.McpServerNotFound);
             return .handled_failure;
         };
-        const result = runtime.logoutServer(rest[1]) catch |err| {
-            try writeMcpOperationFailure(alloc, deps, "logout", err);
+        const result = runtime.logoutServer(parsed.server) catch |err| {
+            try writeMcpOperationFailure(alloc, deps, "logout", parsed.format, err);
             return .handled_failure;
         };
-        var encoded_name = try text_utils.encodeTerminalSafe(alloc, rest[1], 160);
-        defer encoded_name.deinit(alloc);
-        var out: std.Io.Writer.Allocating = .init(alloc);
-        defer out.deinit();
-        if (!result.removed) {
-            try out.writer.print(
-                "No stored MCP credentials found for '{s}'.\n",
-                .{encoded_name.bytes},
-            );
-        } else if (result.local_only) {
-            try out.writer.print(
-                "Logged out of MCP server '{s}' locally.\n",
-                .{encoded_name.bytes},
-            );
-        } else if (result.revocation_failed) {
-            try out.writer.print(
-                "Logged out of MCP server '{s}' locally; remote revocation failed.\n",
-                .{encoded_name.bytes},
-            );
+        if (parsed.format == .json) {
+            try writeMcpJsonOutput(alloc, deps, output_contracts.McpLogoutSnapshot{
+                .server = parsed.server,
+                .result = mcpLogoutSnapshotResult(result),
+            });
         } else {
-            try out.writer.print(
-                "Logged out of MCP server '{s}'.\n",
-                .{encoded_name.bytes},
-            );
+            var encoded_name = try text_utils.encodeTerminalSafe(alloc, parsed.server, 160);
+            defer encoded_name.deinit(alloc);
+            var out: std.Io.Writer.Allocating = .init(alloc);
+            defer out.deinit();
+            if (!result.removed) {
+                try out.writer.print(
+                    "No stored MCP credentials found for '{s}'.\n",
+                    .{encoded_name.bytes},
+                );
+            } else if (result.local_only) {
+                try out.writer.print(
+                    "Logged out of MCP server '{s}' locally.\n",
+                    .{encoded_name.bytes},
+                );
+            } else if (result.revocation_failed) {
+                try out.writer.print(
+                    "Logged out of MCP server '{s}' locally; remote revocation failed.\n",
+                    .{encoded_name.bytes},
+                );
+            } else {
+                try out.writer.print(
+                    "Logged out of MCP server '{s}'.\n",
+                    .{encoded_name.bytes},
+                );
+            }
+            try writeStdout(deps, out.written());
         }
-        try writeStdout(deps, out.written());
         return .handled_success;
     }
 
     try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
-    return .handled_failure;
+    return .handled_usage_error;
 }
 
 fn parseTopLevelProjectMcpAction(
@@ -2375,7 +2586,7 @@ fn writeMcpProfileMutationSuccess(
 fn writeMcpAddUsage(deps: RunDeps) !void {
     return writeStderr(
         deps,
-        "usage: fx mcp add NAME COMMAND [ARGS...] | fx mcp add --transport http NAME URL\n",
+        "usage: fiber mcp add NAME COMMAND [ARGS...] | fiber mcp add --transport http NAME URL\n",
     );
 }
 
@@ -2383,15 +2594,109 @@ fn writeMcpOperationFailure(
     alloc: Allocator,
     deps: RunDeps,
     operation: []const u8,
+    format: output_contracts.OutputFormat,
     err: anyerror,
 ) !void {
+    const message = try std.fmt.allocPrint(alloc, "fiber mcp {s} failed", .{operation});
+    defer alloc.free(message);
+    if (format == .json) {
+        try writeJsonCommandFailure(alloc, deps, mcpOutputKind(operation), err, message);
+        return;
+    }
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.print(
-        "fx mcp {s} failed: {s}.\n",
+        "fiber mcp {s} failed: {s}.\n",
         .{ operation, @errorName(err) },
     );
     try writeStderr(deps, out.written());
+}
+
+fn mcpOutputKind(operation: []const u8) []const u8 {
+    if (std.mem.eql(u8, operation, "list")) return output_contracts.Kind.mcp_list.jsonName();
+    if (std.mem.eql(u8, operation, "add")) return output_contracts.Kind.mcp_add.jsonName();
+    if (std.mem.eql(u8, operation, "remove")) return output_contracts.Kind.mcp_remove.jsonName();
+    if (std.mem.eql(u8, operation, "path")) return output_contracts.Kind.mcp_path.jsonName();
+    if (std.mem.eql(u8, operation, "logout")) return output_contracts.Kind.mcp_logout.jsonName();
+    if (std.mem.eql(u8, operation, "trust")) return output_contracts.Kind.mcp_trust.jsonName();
+    return "mcp";
+}
+
+fn writeMcpUsageOrJsonError(
+    alloc: Allocator,
+    command_catalog: CommandCatalog,
+    deps: RunDeps,
+    operation: []const u8,
+    args: []const [:0]const u8,
+) !void {
+    if (argsContainJson(args)) {
+        try writeJsonCommandFailure(
+            alloc,
+            deps,
+            mcpOutputKind(operation),
+            error.InvalidMcpArgs,
+            "fiber mcp: invalid arguments",
+        );
+    } else {
+        try writeTopLevelUsage(command_catalog, deps, .mcp);
+    }
+}
+
+fn parseMcpOptionalJsonArgs(args: []const [:0]const u8) error{InvalidMcpArgs}!output_contracts.OutputFormat {
+    if (args.len == 0) return .text;
+    if (args.len == 1 and std.mem.eql(u8, args[0], "--json")) return .json;
+    return error.InvalidMcpArgs;
+}
+
+const McpServerArgs = struct {
+    server: []const u8,
+    format: output_contracts.OutputFormat = .text,
+};
+
+fn parseMcpServerArgs(args: []const [:0]const u8) error{InvalidMcpArgs}!McpServerArgs {
+    var options: McpServerArgs = .{ .server = undefined };
+    var server_seen = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (server_seen) return error.InvalidMcpArgs;
+        server_seen = true;
+        if (arg.len == 0) return error.InvalidMcpArgs;
+        options.server = arg;
+    }
+    if (!server_seen) return error.InvalidMcpArgs;
+    return options;
+}
+
+fn mcpLogoutSnapshotResult(result: mcp_runtime.McpRuntime.LogoutResult) output_contracts.McpLogoutSnapshot.Result {
+    if (!result.removed) return .missing;
+    if (result.local_only) return .local_only;
+    if (result.revocation_failed) return .revocation_failed;
+    return .removed;
+}
+
+fn mcpTrustSnapshotFields(action: project_config.ProjectMcpAction) struct {
+    action: []const u8,
+    server: ?[]const u8,
+} {
+    return switch (action) {
+        .approve => |name| .{ .action = "approve", .server = name },
+        .reject => |name| .{ .action = "reject", .server = name },
+        .approve_all => .{ .action = "approve_all", .server = null },
+        .reset => .{ .action = "reset", .server = null },
+    };
+}
+
+fn writeMcpJsonOutput(
+    alloc: Allocator,
+    deps: RunDeps,
+    snapshot: anytype,
+) !void {
+    const text = try snapshot.render(alloc, .json);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, .json);
 }
 
 fn writeMcpProfileWarningIfPresent(
@@ -2415,7 +2720,7 @@ fn writeMcpProfileWarning(
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.print(
-        "fx: ~/.fx/mcp.json warning: {s}",
+        "fiber: ~/.fiber/mcp.json warning: {s}",
         .{@tagName(warning.cause)},
     );
     if (warning.key()) |key| {
@@ -2457,12 +2762,12 @@ fn writeUsageCommandFailure(
         return writeJsonCommandFailure(
             alloc,
             deps,
-            "usage",
+            output_contracts.Kind.usage.jsonName(),
             err,
             message,
         );
     }
-    try writeStderr(deps, "fx usage: ");
+    try writeStderr(deps, "fiber usage: ");
     try writeStderr(deps, message);
     try writeStderr(deps, "\n");
 }
@@ -2486,7 +2791,7 @@ fn writeWorkspaceCommandError(
 ) !void {
     if (!argsContainJson(args)) {
         if (output_contracts.workspaceErrorMessage(err)) |message| {
-            try writeStderr(deps, "fx workspace: ");
+            try writeStderr(deps, "fiber workspace: ");
             try writeStderr(deps, message);
             try writeStderr(deps, "\n");
             return;
@@ -2518,7 +2823,7 @@ fn writeWorkspaceIndeterminateError(
         .unconfirmed => "settings durability is uncertain; reloaded settings match neither the requested nor previous state",
     };
     if (!argsContainJson(args)) {
-        try writeStderr(deps, "fx workspace: ");
+        try writeStderr(deps, "fiber workspace: ");
         try writeStderr(deps, message);
         try writeStderr(deps, "\n");
         return;
@@ -2537,10 +2842,6 @@ fn argsContainJson(args: anytype) bool {
         if (std.mem.eql(u8, arg, "--json")) return true;
     }
     return false;
-}
-
-fn workflowLanguagePlaceholder() types.ConversationLanguage {
-    return types.ConversationLanguage.default();
 }
 
 fn permissionModeForSnapshot(mode: anytype) types.PermissionMode {
@@ -2574,22 +2875,6 @@ fn permissionRulesForSnapshot(alloc: Allocator, active_rules: anytype) !types.Pe
         };
     }
     return .{ .rules = rules };
-}
-
-fn loadLatestWorkspaceSessionDetail(
-    alloc: Allocator,
-    store: session_store.Store,
-) !session_store.ReadOnlyDetail {
-    var summary = try store.latestReadOnlyWorkspaceSummary(alloc);
-    defer summary.deinit(alloc);
-    return store.loadReadOnlyDetail(alloc, summary.id, .{});
-}
-
-fn loadLatestWorkspaceSessionSummary(
-    alloc: Allocator,
-    store: session_store.Store,
-) !session_store.SessionSummary {
-    return store.latestReadOnlyWorkspaceSummary(alloc);
 }
 
 fn catalogFailureDetail(failure: model_catalog.Failure) []const u8 {
@@ -2659,87 +2944,57 @@ fn writeLookupFailure(
 
     switch (err) {
         error.NoSavedSessions => {
-            try writeStderr(deps, "fx session: no saved sessions for this workspace\n");
+            try writeStderr(deps, "fiber session: no saved sessions for this workspace\n");
         },
         error.NoReadableSessions => {
-            try writeStderr(deps, "fx session: saved sessions are unreadable; run `fx doctor` for recovery guidance\n");
+            try writeStderr(deps, "fiber session: saved sessions are unreadable; run `fiber doctor` for recovery guidance\n");
         },
         error.SessionNotFound => {
-            try writeStderr(deps, "fx session: record not found\n");
+            try writeStderr(deps, "fiber session: record not found\n");
         },
         error.InvalidSessionFormat => {
             try writeStderr(
                 deps,
-                "fx session: record is corrupt; run `fx doctor` for recovery guidance\n",
+                "fiber session: record is corrupt; run `fiber doctor` for recovery guidance\n",
             );
         },
         error.UnsupportedSessionSchema => {
             try writeStderr(
                 deps,
-                "fx session: record uses an unsupported session version\n",
+                "fiber session: record uses an unsupported session version\n",
             );
         },
         error.InvalidSessionId => {
-            try writeStderr(deps, "fx session: invalid session id\n");
-        },
-        error.LegacySessionTooLarge => {
-            try writeStderr(
-                deps,
-                "fx session: legacy session is too large for automatic loading; run `fx session migrate <id> --allow-large`\n",
-            );
-        },
-        error.LegacySessionReadResourceExhausted => {
-            try writeStderr(
-                deps,
-                "fx session: legacy session could not be loaded with available resources\n",
-            );
-        },
-        error.LegacySessionMigrationResourceExhausted => {
-            try writeStderr(
-                deps,
-                "fx session: migration did not complete because resources were exhausted; the original session remains authoritative\n",
-            );
-        },
-        error.LegacySessionMigrationFailed, error.LegacySessionChanged => {
-            try writeStderr(
-                deps,
-                "fx session: migration did not complete; the original session remains authoritative\n",
-            );
-        },
-        error.LegacySessionMigrationIndeterminate => {
-            try writeStderr(
-                deps,
-                "fx session: migration outcome is indeterminate and will be resolved by the next exact writable load\n",
-            );
+            try writeStderr(deps, "fiber session: invalid session id\n");
         },
         error.SessionRecoveryNotNeeded => {
             try writeStderr(
                 deps,
-                "fx session: recovery was refused because the session has a valid commit boundary; resume it normally\n",
+                "fiber session: recovery was refused because the session has a valid commit boundary; resume it normally\n",
             );
         },
         error.SessionRecoveryRequiresCurrentSchema => {
             try writeStderr(
                 deps,
-                "fx session: recovery only applies to current schema-v3 sessions; migrate legacy sessions first\n",
+                "fiber session: recovery only applies to current schema-v3 sessions\n",
             );
         },
         error.SessionRecoveryUnsupportedSchema => {
             try writeStderr(
                 deps,
-                "fx session: recovery is unavailable for this unsupported session version\n",
+                "fiber session: recovery is unavailable for this unsupported session version\n",
             );
         },
         error.SessionRecoveryBoundaryInvalid => {
             try writeStderr(
                 deps,
-                "fx session: no exact trustworthy recovery boundary was found; the source was left unchanged\n",
+                "fiber session: no exact trustworthy recovery boundary was found; the source was left unchanged\n",
             );
         },
         error.SessionRecoveryIndeterminate => {
             try writeStderr(
                 deps,
-                "fx session: the recovery copy could not be confirmed; the source was left unchanged\n",
+                "fiber session: the recovery copy could not be confirmed; the source was left unchanged\n",
             );
         },
         error.SessionAuthorityBoundaryUnavailable,
@@ -2747,19 +3002,19 @@ fn writeLookupFailure(
         => {
             try writeStderr(
                 deps,
-                "fx session: session authority is temporarily unavailable while an incomplete commit is resolved\n",
+                "fiber session: session authority is temporarily unavailable while an incomplete commit is resolved\n",
             );
         },
         error.SessionAuthorityIntentCleanupPending => {
             try writeStderr(
                 deps,
-                "fx session: session authority is confirmed but transition cleanup is still pending\n",
+                "fiber session: session authority is confirmed but transition cleanup is still pending\n",
             );
         },
         error.SessionBusy, error.SessionLockUnsupported => {
             try writeStderr(
                 deps,
-                "fx session: session is busy or the filesystem cannot provide the required lock\n",
+                "fiber session: session is busy or the filesystem cannot provide the required lock\n",
             );
         },
         error.SessionPathUnsafe,
@@ -2768,14 +3023,14 @@ fn writeLookupFailure(
         => {
             try writeStderr(
                 deps,
-                "fx session: durable session storage is unsafe or does not support required private permissions\n",
+                "fiber session: durable session storage is unsafe or does not support required private permissions\n",
             );
         },
         error.DurableLayoutFailed, error.SessionStoreUnavailable => {
-            try writeStderr(deps, "fx session: durable session store is unavailable\n");
+            try writeStderr(deps, "fiber session: durable session store is unavailable\n");
         },
         error.HomeNotSet => {
-            try writeStderr(deps, "fx ");
+            try writeStderr(deps, "fiber ");
             try writeStderr(deps, kind);
             try writeStderr(deps, ": HOME is not set\n");
         },
@@ -2783,9 +3038,10 @@ fn writeLookupFailure(
     }
 }
 
-fn writeSessionDetailFailure(
+fn writeSessionCommandFailure(
     alloc: Allocator,
     deps: RunDeps,
+    kind: []const u8,
     session_id: []const u8,
     err: anyerror,
     format: output_contracts.OutputFormat,
@@ -2793,7 +3049,7 @@ fn writeSessionDetailFailure(
     const message = switch (err) {
         error.InvalidSessionFormat => try std.fmt.allocPrint(
             alloc,
-            "session {s} is corrupt; run `fx session recover {s}`",
+            "session {s} is corrupt; run `fiber session recover {s}`",
             .{ session_id, session_id },
         ),
         error.UnsupportedSessionSchema => try std.fmt.allocPrint(
@@ -2804,7 +3060,7 @@ fn writeSessionDetailFailure(
         else => return writeLookupFailure(
             alloc,
             deps,
-            "session",
+            kind,
             err,
             format,
         ),
@@ -2814,14 +3070,31 @@ fn writeSessionDetailFailure(
         return writeJsonCommandFailure(
             alloc,
             deps,
-            "session",
+            kind,
             err,
             message,
         );
     }
-    try writeStderr(deps, "fx session: ");
+    try writeStderr(deps, "fiber session: ");
     try writeStderr(deps, message);
     try writeStderr(deps, "\n");
+}
+
+fn writeSessionDetailFailure(
+    alloc: Allocator,
+    deps: RunDeps,
+    session_id: []const u8,
+    err: anyerror,
+    format: output_contracts.OutputFormat,
+) !void {
+    return writeSessionCommandFailure(
+        alloc,
+        deps,
+        output_contracts.Kind.session_show.jsonName(),
+        session_id,
+        err,
+        format,
+    );
 }
 
 fn commandFailureMessage(err: anyerror) ?[]const u8 {
@@ -2830,9 +3103,11 @@ fn commandFailureMessage(err: anyerror) ?[]const u8 {
         error.InvalidLocalSurfaceArgs,
         error.InvalidUsageArgs,
         error.InvalidSessionDetailArgs,
-        error.InvalidSessionMigrationArgs,
         error.InvalidSessionRecoveryArgs,
+        error.InvalidSessionRenameArgs,
+        error.InvalidSessionRemoveArgs,
         error.InvalidResumeArgs,
+        error.InvalidPermissionArgs,
         => "invalid arguments",
         else => null,
     };
@@ -2841,18 +3116,13 @@ fn commandFailureMessage(err: anyerror) ?[]const u8 {
 fn lookupFailureMessage(err: anyerror) ?[]const u8 {
     return switch (err) {
         error.NoSavedSessions => "no saved sessions for this workspace",
-        error.NoReadableSessions => "saved sessions are unreadable; run `fx doctor` for recovery guidance",
+        error.NoReadableSessions => "saved sessions are unreadable; run `fiber doctor` for recovery guidance",
         error.SessionNotFound => "record not found",
-        error.InvalidSessionFormat => "record is corrupt; run `fx doctor` for recovery guidance",
+        error.InvalidSessionFormat => "record is corrupt; run `fiber doctor` for recovery guidance",
         error.UnsupportedSessionSchema => "record uses an unsupported session version",
         error.InvalidSessionId => "invalid session id",
-        error.LegacySessionTooLarge => "legacy session is too large for automatic loading; run `fx session migrate <id> --allow-large`",
-        error.LegacySessionReadResourceExhausted => "legacy session could not be loaded with available resources",
-        error.LegacySessionMigrationResourceExhausted => "migration did not complete because resources were exhausted; the original session remains authoritative",
-        error.LegacySessionMigrationFailed, error.LegacySessionChanged => "migration did not complete; the original session remains authoritative",
-        error.LegacySessionMigrationIndeterminate => "migration outcome is indeterminate and will be resolved by the next exact writable load",
         error.SessionRecoveryNotNeeded => "recovery was refused because the session has a valid commit boundary; resume it normally",
-        error.SessionRecoveryRequiresCurrentSchema => "recovery only applies to current schema-v3 sessions; migrate legacy sessions first",
+        error.SessionRecoveryRequiresCurrentSchema => "recovery only applies to current schema-v3 sessions",
         error.SessionRecoveryUnsupportedSchema => "recovery is unavailable for this unsupported session version",
         error.SessionRecoveryBoundaryInvalid => "no exact trustworthy recovery boundary was found; the source was left unchanged",
         error.SessionRecoveryIndeterminate => "the recovery copy could not be confirmed; the source was left unchanged",
@@ -2883,7 +3153,7 @@ test "session detail failures separate corruption from unsupported schema" {
     );
     try std.testing.expectEqualStrings("", corrupt_text.stdout.written());
     try std.testing.expectEqualStrings(
-        "fx session: session broken-session is corrupt; run `fx session recover broken-session`\n",
+        "fiber session: session broken-session is corrupt; run `fiber session recover broken-session`\n",
         corrupt_text.stderr.written(),
     );
 
@@ -2901,7 +3171,7 @@ test "session detail failures separate corruption from unsupported schema" {
         std.mem.find(
             u8,
             corrupt_json.stdout.written(),
-            "\"error\":\"session broken-session is corrupt; run `fx session recover broken-session`\"",
+            "\"error\":\"session broken-session is corrupt; run `fiber session recover broken-session`\"",
         ) != null,
     );
     try std.testing.expect(
@@ -2923,7 +3193,7 @@ test "session detail failures separate corruption from unsupported schema" {
     );
     try std.testing.expectEqualStrings("", unsupported_text.stdout.written());
     try std.testing.expectEqualStrings(
-        "fx session: session future-session uses an unsupported session version\n",
+        "fiber session: session future-session uses an unsupported session version\n",
         unsupported_text.stderr.written(),
     );
 }
@@ -2934,13 +3204,13 @@ test "session recovery boundary failures keep stable text and json guidance" {
     try writeLookupFailure(
         std.testing.allocator,
         text_output.deps(),
-        "session",
+        output_contracts.Kind.session_recover.jsonName(),
         error.SessionRecoveryBoundaryInvalid,
         .text,
     );
     try std.testing.expectEqualStrings("", text_output.stdout.written());
     try std.testing.expectEqualStrings(
-        "fx session: no exact trustworthy recovery boundary was found; the source was left unchanged\n",
+        "fiber session: no exact trustworthy recovery boundary was found; the source was left unchanged\n",
         text_output.stderr.written(),
     );
 
@@ -2949,7 +3219,7 @@ test "session recovery boundary failures keep stable text and json guidance" {
     try writeLookupFailure(
         std.testing.allocator,
         json_output.deps(),
-        "session",
+        output_contracts.Kind.session_recover.jsonName(),
         error.SessionRecoveryBoundaryInvalid,
         .json,
     );
@@ -2976,12 +3246,10 @@ fn workflowConfig(cfg: Config) @import("cli_ask.zig").Config {
         .default_model = cfg.default_model,
         .default_agent_step_limit = cfg.default_agent_step_limit,
         .gateway_retry_count = cfg.gateway_retry_count,
-        .gateway_chat_url = cfg.gateway_provider.chat_url.resolve(cfg.gateway_chat_url),
         .gateway_models_path = cfg.models_path,
-        .gateway_provider = cfg.gateway_provider,
+        .oauth_transport = cfg.oauth_transport,
         .provider_set = cfg.provider_set,
         .process_provider = cfg.process_provider,
-        .secret_store = cfg.secret_store,
         .prompt_policy = cfg.prompt_policy,
         .skill_root_policy = cfg.skill_root_policy,
         .ignored_list_entries = cfg.ignored_list_entries,
@@ -3010,7 +3278,7 @@ fn workflowConfigWithLaunchModifiers(
 
 fn commandSupportsWorkspaceModifiers(command: Command) bool {
     return switch (command) {
-        .interactive, .ask, .acp, .pr, .issue, .resume_session => true,
+        .interactive, .ask, .resume_session => true,
         else => false,
     };
 }
@@ -3018,7 +3286,7 @@ fn commandSupportsWorkspaceModifiers(command: Command) bool {
 fn writeWorkspaceModifierUsage(deps: RunDeps) !void {
     try writeStderr(
         deps,
-        "fx: --add-dir and --no-additional-dirs are only supported for interactive, resume, ask, ACP, PR, and issue launches\n",
+        "fiber: --add-dir and --no-additional-dirs are only supported for interactive, resume, and ask launches\n",
     );
 }
 
@@ -3028,25 +3296,6 @@ fn globalLaunchErrorMessage(err: anyerror) ?[]const u8 {
         error.DuplicateAdditionalDirectorySuppression => "--no-additional-dirs may only be specified once",
         else => null,
     };
-}
-
-fn parseAcpArgs(args: []const [:0]const u8) !AcpOptions {
-    var opts = AcpOptions{};
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--model")) {
-            if (opts.model != null or i + 1 >= args.len) return error.InvalidAcpArgs;
-            i += 1;
-            opts.model = args[i];
-        } else if (std.mem.eql(u8, args[i], "--log-file")) {
-            if (opts.log_file != null or i + 1 >= args.len) return error.InvalidAcpArgs;
-            i += 1;
-            opts.log_file = args[i];
-        } else {
-            return error.InvalidAcpArgs;
-        }
-    }
-    return opts;
 }
 
 fn parseLocalSurfaceArgs(args: []const [:0]const u8) !LocalSurfaceOptions {
@@ -3064,7 +3313,6 @@ fn parseLocalSurfaceArgs(args: []const [:0]const u8) !LocalSurfaceOptions {
 fn parseUpgradeArgs(args: []const [:0]const u8) !UpgradeOptions {
     var options = UpgradeOptions{};
     var format_seen = false;
-    var channel_seen = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
@@ -3074,24 +3322,276 @@ fn parseUpgradeArgs(args: []const [:0]const u8) !UpgradeOptions {
             options.format = .json;
             continue;
         }
-        if (std.mem.eql(u8, arg, "--channel")) {
-            if (channel_seen or index + 1 >= args.len) return error.InvalidUpgradeArgs;
-            channel_seen = true;
-            index += 1;
-            options.channel = update_target.Channel.parse(args[index]) orelse
-                return error.InvalidUpgradeArgs;
-            continue;
-        }
-        if (std.mem.startsWith(u8, arg, "--channel=")) {
-            if (channel_seen) return error.InvalidUpgradeArgs;
-            channel_seen = true;
-            options.channel = update_target.Channel.parse(arg["--channel=".len..]) orelse
-                return error.InvalidUpgradeArgs;
-            continue;
-        }
         return error.InvalidUpgradeArgs;
     }
     return options;
+}
+
+fn executeSessionList(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    rest: []const [:0]const u8,
+) !RunResult {
+    const opts = parseSessionListArgs(rest) catch |err| {
+        try writeUsageOrJsonError(
+            alloc,
+            cfg.command_catalog,
+            deps,
+            .sessions,
+            output_contracts.Kind.session_list.jsonName(),
+            err,
+            rest,
+        );
+        return .handled_usage_error;
+    };
+
+    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace_root);
+
+    var store = session_store.Store.initReadOnly(alloc, workspace_root) catch |err| {
+        try writeLookupFailure(alloc, deps, output_contracts.Kind.session_list.jsonName(), err, opts.format);
+        return .handled_failure;
+    };
+    defer store.deinit(alloc);
+
+    var page = subagent_resume_admission.listVisiblePage(
+        store,
+        alloc,
+        opts.scope,
+        opts.continuation,
+        opts.limit,
+    ) catch |err| return err;
+    defer page.deinit(alloc);
+    const next_cursor = if (page.has_more and page.summaries.items.len > 0)
+        try formatSessionListCursor(
+            alloc,
+            page.summaries.items[page.summaries.items.len - 1],
+        )
+    else
+        null;
+    defer if (next_cursor) |cursor| alloc.free(cursor);
+
+    const text = try (output_contracts.SessionListSnapshot{
+        .sessions = page.summaries.items,
+        .has_more = page.has_more,
+        .next_cursor = next_cursor,
+        .skipped_invalid = page.skipped_invalid,
+        .all_workspaces = opts.scope == .all_workspaces,
+    }).render(alloc, opts.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, opts.format);
+    return .handled_success;
+}
+
+fn executeSessionShow(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    rest: []const [:0]const u8,
+) !RunResult {
+    var opts = parseSessionDetailArgs(alloc, rest) catch |err| {
+        try writeUsageOrJsonError(
+            alloc,
+            cfg.command_catalog,
+            deps,
+            .session,
+            output_contracts.Kind.session_show.jsonName(),
+            err,
+            rest,
+        );
+        return .handled_usage_error;
+    };
+    defer opts.deinit(alloc);
+
+    const target = opts.target orelse {
+        try writeUsageOrJsonError(
+            alloc,
+            cfg.command_catalog,
+            deps,
+            .session,
+            output_contracts.Kind.session_show.jsonName(),
+            error.InvalidSessionDetailArgs,
+            rest,
+        );
+        return .handled_usage_error;
+    };
+
+    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace_root);
+
+    var store = session_store.Store.initReadOnly(alloc, workspace_root) catch |err| {
+        try writeLookupFailure(alloc, deps, output_contracts.Kind.session_show.jsonName(), err, opts.format);
+        return .handled_failure;
+    };
+    defer store.deinit(alloc);
+
+    switch (target) {
+        .last => {
+            var summary = subagent_resume_admission.latestVisibleWorkspaceSummary(
+                store,
+                alloc,
+            ) catch |err| {
+                try writeLookupFailure(alloc, deps, output_contracts.Kind.session_show.jsonName(), err, opts.format);
+                return .handled_failure;
+            };
+            defer summary.deinit(alloc);
+
+            const text = try (output_contracts.SessionSummarySnapshot{
+                .summary = summary,
+            }).render(alloc, opts.format);
+            defer alloc.free(text);
+            try writeFormattedOutput(deps, text, opts.format);
+            return .handled_success;
+        },
+        .id => |id| {
+            var detail = subagent_resume_admission.loadVisibleReadOnlyDetail(
+                store,
+                alloc,
+                id,
+                .{},
+            ) catch |err| {
+                try writeSessionCommandFailure(
+                    alloc,
+                    deps,
+                    output_contracts.Kind.session_show.jsonName(),
+                    id,
+                    err,
+                    opts.format,
+                );
+                return .handled_failure;
+            };
+            defer detail.deinit(alloc);
+
+            const text = try (output_contracts.SessionDetailSnapshot{
+                .detail = detail,
+            }).render(alloc, opts.format);
+            defer alloc.free(text);
+            try writeFormattedOutput(deps, text, opts.format);
+            return .handled_success;
+        },
+    }
+}
+
+fn executeSessionRename(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    rest: []const [:0]const u8,
+) !RunResult {
+    var opts = parseSessionRenameArgs(alloc, rest) catch |err| {
+        try writeUsageOrJsonError(
+            alloc,
+            cfg.command_catalog,
+            deps,
+            .session,
+            output_contracts.Kind.session_rename.jsonName(),
+            err,
+            rest,
+        );
+        return .handled_usage_error;
+    };
+    defer opts.deinit(alloc);
+
+    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace_root);
+
+    var store = session_store.Store.init(alloc, workspace_root) catch |err| {
+        try writeLookupFailure(alloc, deps, output_contracts.Kind.session_rename.jsonName(), err, opts.format);
+        return .handled_failure;
+    };
+    defer store.deinit(alloc);
+
+    store.renameSessionDisplayTitle(alloc, opts.session_id, opts.title) catch |err| {
+        try writeSessionCommandFailure(
+            alloc,
+            deps,
+            output_contracts.Kind.session_rename.jsonName(),
+            opts.session_id,
+            err,
+            opts.format,
+        );
+        return .handled_failure;
+    };
+
+    const text = try (output_contracts.SessionRenameSnapshot{
+        .id = opts.session_id,
+        .title = opts.title,
+    }).render(alloc, opts.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, opts.format);
+    return .handled_success;
+}
+
+fn executeSessionRemove(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    rest: []const [:0]const u8,
+) !RunResult {
+    var opts = parseSessionRemoveArgs(alloc, rest) catch |err| {
+        try writeUsageOrJsonError(
+            alloc,
+            cfg.command_catalog,
+            deps,
+            .session,
+            output_contracts.Kind.session_remove.jsonName(),
+            err,
+            rest,
+        );
+        return .handled_usage_error;
+    };
+    defer opts.deinit(alloc);
+
+    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace_root);
+
+    var store = session_store.Store.init(alloc, workspace_root) catch |err| {
+        try writeLookupFailure(alloc, deps, output_contracts.Kind.session_remove.jsonName(), err, opts.format);
+        return .handled_failure;
+    };
+    defer store.deinit(alloc);
+
+    var loaded = store.resumeTargetForWrite(
+        alloc,
+        .{ .id = opts.session_id },
+        workspace_root,
+        .{},
+    ) catch |err| {
+        try writeSessionCommandFailure(
+            alloc,
+            deps,
+            output_contracts.Kind.session_remove.jsonName(),
+            opts.session_id,
+            err,
+            opts.format,
+        );
+        return .handled_failure;
+    };
+
+    const disposition = store.deleteCommittedSession(alloc, &loaded);
+    switch (disposition) {
+        .discarded => {},
+        .retained, .indeterminate => {
+            try writeSessionCommandFailure(
+                alloc,
+                deps,
+                output_contracts.Kind.session_remove.jsonName(),
+                opts.session_id,
+                error.SessionStoreUnavailable,
+                opts.format,
+            );
+            return .handled_failure;
+        },
+    }
+
+    const text = try (output_contracts.SessionRemoveSnapshot{
+        .id = opts.session_id,
+        .removed = true,
+    }).render(alloc, opts.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, opts.format);
+    return .handled_success;
 }
 
 fn parseSessionListArgs(args: []const [:0]const u8) !SessionListOptions {
@@ -3128,7 +3628,7 @@ fn parseSessionListArgs(args: []const [:0]const u8) !SessionListOptions {
             }
             continue;
         }
-        if (std.mem.eql(u8, arg, "--cursor")) {
+        if (std.mem.eql(u8, arg, "--continuation")) {
             if (cursor_seen or index + 1 >= args.len) return error.InvalidLocalSurfaceArgs;
             cursor_seen = true;
             index += 1;
@@ -3273,42 +3773,6 @@ fn parseSessionDetailArgs(
     return options;
 }
 
-fn parseSessionMigrationArgs(
-    alloc: Allocator,
-    args: []const [:0]const u8,
-) !SessionMigrationOptions {
-    var format: output_contracts.OutputFormat = .text;
-    var allow_large = false;
-    var session_id: ?[]u8 = null;
-    errdefer if (session_id) |id| alloc.free(id);
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
-        if (std.mem.eql(u8, arg, "--json")) {
-            format = .json;
-            continue;
-        }
-        if (std.mem.eql(u8, arg, "--allow-large")) {
-            allow_large = true;
-            continue;
-        }
-        if (session_id != null) return error.InvalidSessionMigrationArgs;
-        const exact_id = std.mem.eql(u8, arg, "--id");
-        if (exact_id) {
-            i += 1;
-            if (i >= args.len) return error.InvalidSessionMigrationArgs;
-        }
-        const trimmed = std.mem.trim(u8, args[i], " \t\r\n");
-        if (trimmed.len == 0) return error.InvalidSessionMigrationArgs;
-        session_id = try alloc.dupe(u8, trimmed);
-    }
-    return .{
-        .format = format,
-        .session_id = session_id orelse return error.InvalidSessionMigrationArgs,
-        .allow_large = allow_large,
-    };
-}
-
 fn parseSessionRecoveryArgs(
     alloc: Allocator,
     args: []const [:0]const u8,
@@ -3340,38 +3804,132 @@ fn parseSessionRecoveryArgs(
     };
 }
 
+fn parseSessionRenameArgs(
+    alloc: Allocator,
+    args: []const [:0]const u8,
+) !SessionRenameOptions {
+    var format: output_contracts.OutputFormat = .text;
+    var format_seen = false;
+    var owned_id: ?[]u8 = null;
+    var owned_title: ?[]u8 = null;
+    var title_start: ?usize = null;
+    errdefer {
+        if (owned_id) |value| alloc.free(value);
+        if (owned_title) |value| alloc.free(value);
+    }
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--json")) {
+            if (format_seen) return error.InvalidSessionRenameArgs;
+            format_seen = true;
+            format = .json;
+            continue;
+        }
+        if (owned_id != null) return error.InvalidSessionRenameArgs;
+        const exact_id = std.mem.eql(u8, arg, "--id");
+        if (exact_id) {
+            i += 1;
+            if (i >= args.len) return error.InvalidSessionRenameArgs;
+        }
+        const trimmed = std.mem.trim(u8, args[i], " \t\r\n");
+        if (trimmed.len == 0) return error.InvalidSessionRenameArgs;
+        owned_id = try alloc.dupe(u8, trimmed);
+        title_start = i + 1;
+        break;
+    }
+    if (owned_id == null or title_start == null or title_start.? >= args.len) {
+        return error.InvalidSessionRenameArgs;
+    }
+    owned_title = try joinValidatedSessionTitle(alloc, args[title_start.?..]);
+    return .{
+        .format = format,
+        .session_id = owned_id.?,
+        .title = owned_title.?,
+    };
+}
+
+fn parseSessionRemoveArgs(
+    alloc: Allocator,
+    args: []const [:0]const u8,
+) !SessionRemoveOptions {
+    var format: output_contracts.OutputFormat = .text;
+    var format_seen = false;
+    var owned_id: ?[]u8 = null;
+    errdefer if (owned_id) |value| alloc.free(value);
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--json")) {
+            if (format_seen) return error.InvalidSessionRemoveArgs;
+            format_seen = true;
+            format = .json;
+            continue;
+        }
+        if (owned_id != null) return error.InvalidSessionRemoveArgs;
+        const exact_id = std.mem.eql(u8, arg, "--id");
+        if (exact_id) {
+            i += 1;
+            if (i >= args.len) return error.InvalidSessionRemoveArgs;
+        }
+        const trimmed = std.mem.trim(u8, args[i], " \t\r\n");
+        if (trimmed.len == 0) return error.InvalidSessionRemoveArgs;
+        owned_id = try alloc.dupe(u8, trimmed);
+    }
+    return .{
+        .format = format,
+        .session_id = owned_id orelse return error.InvalidSessionRemoveArgs,
+    };
+}
+
+fn joinValidatedSessionTitle(
+    alloc: Allocator,
+    parts: []const [:0]const u8,
+) ![]u8 {
+    if (parts.len == 0) return error.InvalidSessionRenameArgs;
+    for (parts) |part| {
+        if (part.len > 0 and part[0] == '-') return error.InvalidSessionRenameArgs;
+    }
+    if (parts.len == 1) {
+        const validated = validateSessionTitle(parts[0]) catch return error.InvalidSessionRenameArgs;
+        return try alloc.dupe(u8, validated);
+    }
+
+    var total: usize = 0;
+    for (parts, 0..) |part, index| {
+        total += part.len;
+        if (index + 1 < parts.len) total += 1;
+    }
+    var combined = try alloc.alloc(u8, total);
+    errdefer alloc.free(combined);
+    var offset: usize = 0;
+    for (parts, 0..) |part, index| {
+        @memcpy(combined[offset..][0..part.len], part);
+        offset += part.len;
+        if (index + 1 < parts.len) {
+            combined[offset] = ' ';
+            offset += 1;
+        }
+    }
+    const validated = validateSessionTitle(combined) catch {
+        alloc.free(combined);
+        return error.InvalidSessionRenameArgs;
+    };
+    const owned = try alloc.dupe(u8, validated);
+    alloc.free(combined);
+    return owned;
+}
+
 fn parseResumeArgs(
     alloc: Allocator,
-    command_catalog: CommandCatalog,
     args: []const [:0]const u8,
-    top_level_alias: bool,
 ) !ResumeTarget {
     if (args.len == 0) return .last;
 
-    if (top_level_alias) {
-        if (std.mem.eql(u8, args[0], "--resume")) {
-            if (args.len == 1) return .last;
-            if (args.len != 2) return error.InvalidResumeArgs;
-            const id = std.mem.trim(u8, args[1], " \t\r\n");
-            if (id.len == 0) return error.InvalidResumeArgs;
-            if (std.mem.eql(u8, id, "last")) return .last;
-            return .{ .id = try alloc.dupe(u8, id) };
-        }
-        if (args.len != 1) return error.InvalidResumeArgs;
-        if (std.mem.eql(u8, args[0], resume_picker_alias)) return .pick;
-        if (command_specs.matchesTopLevel(command_catalog, args[0], .@"resume")) return .last;
-        if (!std.mem.startsWith(u8, args[0], resume_id_alias_prefix)) return error.InvalidResumeArgs;
-        const id = args[0][resume_id_alias_prefix.len..];
-        if (id.len == 0) return error.InvalidResumeArgs;
-        return .{ .id = try alloc.dupe(u8, id) };
-    }
-
-    if (std.mem.eql(u8, args[0], "--resume")) {
-        if (args.len == 2 and std.mem.eql(u8, args[1], "--last")) return .last;
-        return error.InvalidResumeArgs;
-    }
-
     const exact_id = std.mem.eql(u8, args[0], "--id");
+    if (!exact_id and args[0].len > 0 and args[0][0] == '-') return error.InvalidResumeArgs;
     const operand_index: usize = if (exact_id) 1 else 0;
     if (args.len != operand_index + 1) return error.InvalidResumeArgs;
 
@@ -3379,41 +3937,6 @@ fn parseResumeArgs(
     if (trimmed.len == 0) return error.InvalidResumeArgs;
     if (!exact_id and std.mem.eql(u8, trimmed, "last")) return .last;
     return .{ .id = try alloc.dupe(u8, trimmed) };
-}
-
-fn parseWorkflowArgs(alloc: Allocator, args: []const [:0]const u8) !WorkflowOptions {
-    var auto_permission = false;
-    var create = false;
-    var start_index: usize = 0;
-    while (start_index < args.len) : (start_index += 1) {
-        if (std.mem.eql(u8, args[start_index], "--auto")) {
-            auto_permission = true;
-            continue;
-        }
-        if (std.mem.eql(u8, args[start_index], "--create")) {
-            create = true;
-            continue;
-        }
-        break;
-    }
-
-    return .{
-        .auto_permission = auto_permission,
-        .create = create,
-        .context = try joinArgs(alloc, args[start_index..]),
-    };
-}
-
-fn joinArgs(alloc: Allocator, args: []const [:0]const u8) ![]u8 {
-    if (args.len == 0) return alloc.dupe(u8, "");
-
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    defer out.deinit();
-    for (args, 0..) |arg, i| {
-        if (i > 0) try out.writer.writeByte(' ');
-        try out.writer.writeAll(arg);
-    }
-    return try out.toOwnedSlice();
 }
 
 fn isVersionFlag(arg: []const u8) bool {
@@ -3434,22 +3957,6 @@ test "parse recognizes every top-level command and preserves unknown commands" {
         .ask => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
         else => return error.TestExpectedEqual,
     }
-    switch (parse(command_catalog, &.{ @constCast("acp"), @constCast("--model"), @constCast("m") })) {
-        .acp => |rest| try std.testing.expectEqual(@as(usize, 2), rest.len),
-        else => return error.TestExpectedEqual,
-    }
-    switch (parse(command_catalog, &.{ @constCast("pr"), @constCast("ready") })) {
-        .pr => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
-        else => return error.TestExpectedEqual,
-    }
-    switch (parse(command_catalog, &.{ @constCast("issue"), @constCast("flaky") })) {
-        .issue => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
-        else => return error.TestExpectedEqual,
-    }
-    switch (parse(command_catalog, &.{@constCast("setup")})) {
-        .setup => |rest| try std.testing.expectEqual(@as(usize, 0), rest.len),
-        else => return error.TestExpectedEqual,
-    }
     switch (parse(command_catalog, &.{ @constCast("status"), @constCast("--json") })) {
         .status => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
         else => return error.TestExpectedEqual,
@@ -3464,6 +3971,10 @@ test "parse recognizes every top-level command and preserves unknown commands" {
     }
     switch (parse(command_catalog, &.{ @constCast("mcp"), @constCast("add"), @constCast("fixture"), @constCast("node") })) {
         .mcp => |rest| try std.testing.expectEqual(@as(usize, 3), rest.len),
+        else => return error.TestExpectedEqual,
+    }
+    switch (parse(command_catalog, &.{ @constCast("auth"), @constCast("list") })) {
+        .auth => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{@constCast("doctor")})) {
@@ -3490,8 +4001,8 @@ test "parse recognizes every top-level command and preserves unknown commands" {
         .resume_session => |invocation| try std.testing.expectEqual(@as(usize, 1), invocation.args.len),
         else => return error.TestExpectedEqual,
     }
-    switch (parse(command_catalog, &.{ @constCast("credits"), @constCast("--json") })) {
-        .credits => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
+    switch (parse(command_catalog, &.{@constCast("continue")})) {
+        .resume_session => |invocation| try std.testing.expectEqual(@as(usize, 0), invocation.args.len),
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{ @constCast("usage"), @constCast("--period"), @constCast("24h") })) {
@@ -3502,8 +4013,16 @@ test "parse recognizes every top-level command and preserves unknown commands" {
         .upgrade => |rest| try std.testing.expectEqual(@as(usize, 0), rest.len),
         else => return error.TestExpectedEqual,
     }
+    switch (parse(command_catalog, &.{ @constCast("debug"), @constCast("replay"), @constCast("tape") })) {
+        .debug => |rest| {
+            try std.testing.expectEqual(@as(usize, 2), rest.len);
+            try std.testing.expectEqualStrings("replay", rest[0]);
+            try std.testing.expectEqualStrings("tape", rest[1]);
+        },
+        else => return error.TestExpectedEqual,
+    }
     switch (parse(command_catalog, &.{ @constCast("replay"), @constCast("tape") })) {
-        .replay => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
+        .unknown => |value| try std.testing.expectEqualStrings("replay", value),
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{@constCast("wat")})) {
@@ -3618,123 +4137,6 @@ test "additional directory flags fail closed when malformed" {
     );
 }
 
-test "parse acp args extracts known flags and rejects invalid arguments" {
-    const opts = try parseAcpArgs(&.{
-        @constCast("--model"),
-        @constCast("openai/gpt-4o"),
-        @constCast("--log-file"),
-        @constCast("/tmp/fx.log"),
-    });
-    try std.testing.expectEqualStrings("openai/gpt-4o", opts.model.?);
-    try std.testing.expectEqualStrings("/tmp/fx.log", opts.log_file.?);
-
-    try std.testing.expectError(error.InvalidAcpArgs, parseAcpArgs(&.{@constCast("--unknown")}));
-    try std.testing.expectError(error.InvalidAcpArgs, parseAcpArgs(&.{@constCast("--model")}));
-    try std.testing.expectError(error.InvalidAcpArgs, parseAcpArgs(&.{@constCast("--log-file")}));
-    try std.testing.expectError(
-        error.InvalidAcpArgs,
-        parseAcpArgs(&.{ @constCast("--model"), @constCast("first"), @constCast("--model"), @constCast("second") }),
-    );
-}
-
-test "ACP command routes parsed options and launch config through the injected runner" {
-    const Capture = struct {
-        expected: Config,
-        calls: usize = 0,
-        config_matches: bool = false,
-        launch_matches: bool = false,
-
-        fn run(raw: ?*anyopaque, _: Allocator, cfg: acp_runner.Config) anyerror!void {
-            const self: *@This() = @ptrCast(@alignCast(raw.?));
-            self.calls += 1;
-            const expected = self.expected;
-            self.config_matches =
-                std.mem.eql(u8, cfg.default_model, expected.default_model) and
-                cfg.default_agent_step_limit == expected.default_agent_step_limit and
-                cfg.gateway_retry_count == expected.gateway_retry_count and
-                std.mem.eql(
-                    u8,
-                    cfg.gateway_chat_url,
-                    expected.gateway_provider.chat_url.resolve(expected.gateway_chat_url),
-                ) and
-                std.mem.eql(u8, cfg.gateway_models_path, expected.models_path) and
-                cfg.gateway_provider.chat_url.resolve_fn == expected.gateway_provider.chat_url.resolve_fn and
-                std.mem.eql(u8, cfg.prompt_policy.system_prompt, expected.prompt_policy.system_prompt) and
-                cfg.ignored_list_entries.len == expected.ignored_list_entries.len and
-                cfg.max_list_entries == expected.max_list_entries and
-                cfg.max_read_file_bytes == expected.max_read_file_bytes and
-                cfg.max_read_file_lines == expected.max_read_file_lines and
-                cfg.max_read_file_line_len == expected.max_read_file_line_len and
-                cfg.max_command_output_bytes == expected.max_command_output_bytes and
-                cfg.max_tool_result_bytes == expected.max_tool_result_bytes and
-                cfg.max_history_turns == expected.max_history_turns and
-                std.mem.eql(
-                    u8,
-                    cfg.context_registry.defaultProvider().id,
-                    expected.context_registry.defaultProvider().id,
-                ) and
-                std.mem.eql(u8, cfg.mode_registry.default_mode_id, expected.mode_registry.default_mode_id) and
-                cfg.provider_set.gateway.permission_reviewer.?.review_fn == expected.provider_set.gateway.permission_reviewer.?.review_fn;
-
-            const limit_matches = cfg.context_limit_overrides.len == 1 and
-                cfg.context_limit_overrides[0].name == .project_instructions_total_bytes and
-                switch (cfg.context_limit_overrides[0].value) {
-                    .bytes => |bytes| bytes == 1234,
-                    .off => false,
-                };
-            self.launch_matches =
-                limit_matches and
-                cfg.additional_directories.len == 1 and
-                std.mem.eql(u8, cfg.additional_directories[0], "/tmp/acp-extra") and
-                cfg.saved_directories_suppressed and
-                std.mem.eql(u8, cfg.model_override.?, "model-override") and
-                std.mem.eql(u8, cfg.log_file.?, "/tmp/acp.log");
-        }
-    };
-
-    var cfg = testConfig();
-    cfg.provider_set.gateway.permission_reviewer = test_builtin_gateway.permission_reviewer.provider;
-    var capture = Capture{ .expected = cfg };
-    cfg.acp_runner = .{ .context = &capture, .run_fn = Capture.run };
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{
-            @constCast("--context-limit"),
-            @constCast("project_instructions_total_bytes=1234"),
-            @constCast("--add-dir"),
-            @constCast("/tmp/acp-extra"),
-            @constCast("--no-additional-dirs"),
-            @constCast("acp"),
-            @constCast("--model"),
-            @constCast("model-override"),
-            @constCast("--log-file"),
-            @constCast("/tmp/acp.log"),
-        },
-        cfg,
-        .{},
-    );
-
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), capture.calls);
-    try std.testing.expect(capture.config_matches);
-    try std.testing.expect(capture.launch_matches);
-}
-
-test "ACP runner errors preserve their identity" {
-    const Fixture = struct {
-        fn run(_: ?*anyopaque, _: Allocator, _: acp_runner.Config) anyerror!void {
-            return error.TestAcpRunnerFailed;
-        }
-    };
-
-    var cfg = testConfig();
-    cfg.acp_runner = .{ .run_fn = Fixture.run };
-    try std.testing.expectError(
-        error.TestAcpRunnerFailed,
-        runIfRequested(std.testing.allocator, &.{@constCast("acp")}, cfg),
-    );
-}
-
 test "parse local surface args accepts only json" {
     const empty = try parseLocalSurfaceArgs(&.{});
     try std.testing.expectEqual(output_contracts.OutputFormat.text, empty.format);
@@ -3743,32 +4145,6 @@ test "parse local surface args accepts only json" {
     try std.testing.expectEqual(output_contracts.OutputFormat.json, opts.format);
 
     try std.testing.expectError(error.InvalidLocalSurfaceArgs, parseLocalSurfaceArgs(&.{@constCast("--wat")}));
-}
-
-test "parse upgrade args accepts a remembered release channel" {
-    const defaults = try parseUpgradeArgs(&.{});
-    try std.testing.expectEqual(output_contracts.OutputFormat.text, defaults.format);
-    try std.testing.expect(defaults.channel == null);
-
-    const selected = try parseUpgradeArgs(&.{
-        @constCast("--channel"),
-        @constCast("dev"),
-        @constCast("--json"),
-    });
-    try std.testing.expectEqual(output_contracts.OutputFormat.json, selected.format);
-    try std.testing.expectEqual(update_target.Channel.dev, selected.channel.?);
-
-    const stable = try parseUpgradeArgs(&.{@constCast("--channel=stable")});
-    try std.testing.expectEqual(update_target.Channel.stable, stable.channel.?);
-
-    try std.testing.expectError(
-        error.InvalidUpgradeArgs,
-        parseUpgradeArgs(&.{ @constCast("--channel"), @constCast("nightly") }),
-    );
-    try std.testing.expectError(
-        error.InvalidUpgradeArgs,
-        parseUpgradeArgs(&.{ @constCast("--channel=dev"), @constCast("--channel=stable") }),
-    );
 }
 
 test "parse session list args supports bounded canonical pagination" {
@@ -3782,7 +4158,7 @@ test "parse session list args supports bounded canonical pagination" {
         @constCast("--all"),
         @constCast("--limit"),
         @constCast("2"),
-        @constCast("--cursor"),
+        @constCast("--continuation"),
         @constCast("v1:20:session-a"),
     });
     try std.testing.expectEqual(output_contracts.OutputFormat.json, paged.format);
@@ -3809,19 +4185,27 @@ test "parse session list args supports bounded canonical pagination" {
     );
     try std.testing.expectError(
         error.InvalidLocalSurfaceArgs,
+        parseSessionListArgs(&.{@constCast("--continuation")}),
+    );
+    try std.testing.expectError(
+        error.InvalidLocalSurfaceArgs,
+        parseSessionListArgs(&.{ @constCast("--continuation"), @constCast("v1:020:session-a") }),
+    );
+    try std.testing.expectError(
+        error.InvalidLocalSurfaceArgs,
+        parseSessionListArgs(&.{ @constCast("--continuation"), @constCast("v2:20:session-a") }),
+    );
+    try std.testing.expectError(
+        error.InvalidLocalSurfaceArgs,
+        parseSessionListArgs(&.{ @constCast("--continuation"), @constCast("v1:20:../unsafe") }),
+    );
+    try std.testing.expectError(
+        error.InvalidLocalSurfaceArgs,
         parseSessionListArgs(&.{@constCast("--cursor")}),
     );
     try std.testing.expectError(
         error.InvalidLocalSurfaceArgs,
-        parseSessionListArgs(&.{ @constCast("--cursor"), @constCast("v1:020:session-a") }),
-    );
-    try std.testing.expectError(
-        error.InvalidLocalSurfaceArgs,
-        parseSessionListArgs(&.{ @constCast("--cursor"), @constCast("v2:20:session-a") }),
-    );
-    try std.testing.expectError(
-        error.InvalidLocalSurfaceArgs,
-        parseSessionListArgs(&.{ @constCast("--cursor"), @constCast("v1:20:../unsafe") }),
+        parseSessionListArgs(&.{ @constCast("--cursor"), @constCast("v1:20:session-a") }),
     );
 }
 
@@ -3870,50 +4254,6 @@ test "parse session detail args treats last after id flag as exact id" {
     }
 }
 
-test "parse session migration args accepts positional and exact ids" {
-    var positional = try parseSessionMigrationArgs(std.testing.allocator, &.{
-        @constCast("session.v2"),
-        @constCast("--allow-large"),
-        @constCast("--json"),
-    });
-    defer positional.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("session.v2", positional.session_id);
-    try std.testing.expect(positional.allow_large);
-    try std.testing.expectEqual(output_contracts.OutputFormat.json, positional.format);
-
-    var exact = try parseSessionMigrationArgs(std.testing.allocator, &.{
-        @constCast("--id"),
-        @constCast("--allow-large"),
-        @constCast("--json"),
-    });
-    defer exact.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("--allow-large", exact.session_id);
-    try std.testing.expect(!exact.allow_large);
-    try std.testing.expectEqual(output_contracts.OutputFormat.json, exact.format);
-}
-
-test "parse session migration args rejects missing repeated and mixed targets" {
-    try std.testing.expectError(
-        error.InvalidSessionMigrationArgs,
-        parseSessionMigrationArgs(std.testing.allocator, &.{@constCast("--id")}),
-    );
-    try std.testing.expectError(
-        error.InvalidSessionMigrationArgs,
-        parseSessionMigrationArgs(std.testing.allocator, &.{
-            @constCast("session.v2"),
-            @constCast("--id"),
-            @constCast("session.v3"),
-        }),
-    );
-    try std.testing.expectError(
-        error.InvalidSessionMigrationArgs,
-        parseSessionMigrationArgs(std.testing.allocator, &.{
-            @constCast("session.v2"),
-            @constCast("session.v3"),
-        }),
-    );
-}
-
 test "parse session recovery args accepts exact ids and rejects ambiguity" {
     var positional = try parseSessionRecoveryArgs(
         std.testing.allocator,
@@ -3959,30 +4299,92 @@ test "parse session recovery args accepts exact ids and rejects ambiguity" {
 }
 
 test "parse resume args defaults to last owns ids and rejects invalid input" {
-    const command_catalog = testCommandCatalog();
-    const implicit = try parseResumeArgs(std.testing.allocator, command_catalog, &.{}, false);
+    const implicit = try parseResumeArgs(std.testing.allocator, &.{});
     try std.testing.expectEqual(ResumeTarget.last, implicit);
 
-    const explicit = try parseResumeArgs(std.testing.allocator, command_catalog, &.{@constCast("last")}, false);
+    const explicit = try parseResumeArgs(std.testing.allocator, &.{@constCast("last")});
     try std.testing.expectEqual(ResumeTarget.last, explicit);
 
-    var target = try parseResumeArgs(std.testing.allocator, command_catalog, &.{@constCast(" session-123 ")}, false);
+    var target = try parseResumeArgs(std.testing.allocator, &.{@constCast(" session-123 ")});
     defer target.deinit(std.testing.allocator);
     switch (target) {
         .id => |value| try std.testing.expectEqualStrings("session-123", value),
         else => return error.TestExpectedEqual,
     }
 
-    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, command_catalog, &.{ @constCast("a"), @constCast("b") }, false));
-    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, command_catalog, &.{@constCast("   ")}, false));
+    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{ @constCast("a"), @constCast("b") }));
+    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{@constCast("   ")}));
+    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{@constCast("--wat")}));
+    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{@constCast("--bogus")}));
+    try std.testing.expectError(error.InvalidResumeArgs, parseResumeArgs(std.testing.allocator, &.{@constCast("--json")}));
+}
+
+test "parse session subcommands require explicit show rename and remove forms" {
+    const alloc = std.testing.allocator;
+
+    var show = try parseSessionDetailArgs(alloc, &.{ @constCast("last"), @constCast("--json") });
+    defer show.deinit(alloc);
+    try std.testing.expectEqual(output_contracts.OutputFormat.json, show.format);
+    try std.testing.expectEqual(SessionDetailTarget.last, show.target.?);
+
+    var rename = try parseSessionRenameArgs(alloc, &.{
+        @constCast("session-a"),
+        @constCast("deploy"),
+        @constCast("pipeline"),
+    });
+    defer rename.deinit(alloc);
+    try std.testing.expectEqualStrings("session-a", rename.session_id);
+    try std.testing.expectEqualStrings("deploy pipeline", rename.title);
+
+    var remove = try parseSessionRemoveArgs(alloc, &.{ @constCast("--id"), @constCast("session-b") });
+    defer remove.deinit(alloc);
+    try std.testing.expectEqualStrings("session-b", remove.session_id);
+
+    try std.testing.expectError(
+        error.InvalidSessionRenameArgs,
+        parseSessionRenameArgs(alloc, &.{@constCast("session-a")}),
+    );
+    try std.testing.expectError(
+        error.InvalidSessionRemoveArgs,
+        parseSessionRemoveArgs(alloc, &.{}),
+    );
+}
+
+test "runIfRequested bare session target is a usage error" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("session"), @constCast("session-a") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+}
+
+test "runIfRequested resume rejects json flags" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("resume"), @constCast("--json") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    try std.testing.expectEqualStrings(
+        "usage: fiber session resume [last|<id>] | session resume --id <id> | resume [last|<id>] | resume --id <id>\n",
+        capture.stderr.written(),
+    );
 }
 
 test "parse resume args accepts explicit id flag" {
-    const command_catalog = testCommandCatalog();
-    var target = try parseResumeArgs(std.testing.allocator, command_catalog, &.{
+    var target = try parseResumeArgs(std.testing.allocator, &.{
         @constCast("--id"),
         @constCast("release.2026.06"),
-    }, false);
+    });
     defer target.deinit(std.testing.allocator);
 
     switch (target) {
@@ -3991,32 +4393,11 @@ test "parse resume args accepts explicit id flag" {
     }
 }
 
-test "parse resume args accepts an operand on the top-level resume flag" {
-    const command_catalog = testCommandCatalog();
-    var target = try parseResumeArgs(std.testing.allocator, command_catalog, &.{
-        @constCast("--resume"),
-        @constCast("session-123"),
-    }, true);
-    defer target.deinit(std.testing.allocator);
-
-    switch (target) {
-        .pick, .last => return error.TestExpectedExactResumeId,
-        .id => |id| try std.testing.expectEqualStrings("session-123", id),
-    }
-
-    const latest = try parseResumeArgs(std.testing.allocator, command_catalog, &.{
-        @constCast("--resume"),
-        @constCast("last"),
-    }, true);
-    try std.testing.expectEqual(ResumeTarget.last, latest);
-}
-
 test "parse resume args treats last after id flag as exact id" {
-    const command_catalog = testCommandCatalog();
-    var target = try parseResumeArgs(std.testing.allocator, command_catalog, &.{
+    var target = try parseResumeArgs(std.testing.allocator, &.{
         @constCast("--id"),
         @constCast("last"),
-    }, false);
+    });
     defer target.deinit(std.testing.allocator);
 
     switch (target) {
@@ -4032,9 +4413,6 @@ test "parseInteractiveLaunch shares native resume grammar" {
         args: []const [:0]const u8,
         expected_id: ?[]const u8,
     }{
-        .{ .args = &.{@constCast("--resume")}, .expected_id = null },
-        .{ .args = &.{ @constCast("--resume"), @constCast("last") }, .expected_id = null },
-        .{ .args = &.{ @constCast("--resume"), @constCast("session-123") }, .expected_id = "session-123" },
         .{ .args = &.{ @constCast("session"), @constCast("resume"), @constCast("last") }, .expected_id = null },
         .{ .args = &.{ @constCast("session"), @constCast("resume"), @constCast("--id"), @constCast("session.v3") }, .expected_id = "session.v3" },
     };
@@ -4059,44 +4437,9 @@ test "parseInteractiveLaunch shares native resume grammar" {
     }
 
     try std.testing.expectError(
-        error.InvalidResumeArgs,
-        parseInteractiveLaunch(
-            alloc,
-            &.{ @constCast("--resume"), @constCast("one"), @constCast("two") },
-            command_catalog,
-        ),
-    );
-    try std.testing.expectError(
         error.MissingAddDirectoryValue,
         parseInteractiveLaunch(alloc, &.{@constCast("--add-dir")}, command_catalog),
     );
-}
-
-test "parse workflow args consumes leading flags and joins remaining context exactly" {
-    var opts = try parseWorkflowArgs(std.testing.allocator, &.{
-        @constCast("--auto"),
-        @constCast("--create"),
-        @constCast("ready"),
-        @constCast("for"),
-        @constCast("review"),
-    });
-    defer opts.deinit(std.testing.allocator);
-    try std.testing.expect(opts.auto_permission);
-    try std.testing.expect(opts.create);
-    try std.testing.expectEqualStrings("ready for review", opts.context);
-
-    var later_flag = try parseWorkflowArgs(std.testing.allocator, &.{
-        @constCast("context"),
-        @constCast("--auto"),
-    });
-    defer later_flag.deinit(std.testing.allocator);
-    try std.testing.expect(!later_flag.auto_permission);
-    try std.testing.expect(!later_flag.create);
-    try std.testing.expectEqualStrings("context --auto", later_flag.context);
-
-    var empty = try parseWorkflowArgs(std.testing.allocator, &.{});
-    defer empty.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("", empty.context);
 }
 
 test "runIfRequested help writes top-level help" {
@@ -4105,7 +4448,7 @@ test "runIfRequested help writes top-level help" {
 
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{@constCast("help")}, testConfig(), capture.deps());
     try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expect(std.mem.startsWith(u8, capture.stdout.written(), "𝒇x v0.0.0\nFast, native coding agent for the terminal."));
+    try std.testing.expect(std.mem.startsWith(u8, capture.stdout.written(), "fiber v0.0.0\nFast, native coding agent for the terminal."));
     try std.testing.expect(std.mem.find(u8, capture.stdout.written(), testConfig().version) != null);
     try std.testing.expectEqualStrings("", capture.stderr.written());
 }
@@ -4135,7 +4478,7 @@ test "top-level MCP add mutates through the focused provider without startup" {
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqual(@as(usize, 1), mcp_profile_add_calls_for_test);
     try std.testing.expectEqualStrings(
-        "Saved MCP server 'fixture' to /tmp/test-home/.fx/mcp.json.\n",
+        "Saved MCP server 'fixture' to /tmp/test-home/.fiber/mcp.json.\n",
         capture.stdout.written(),
     );
     try std.testing.expectEqualStrings("", capture.stderr.written());
@@ -4166,8 +4509,8 @@ test "top-level MCP list loads configuration without discovery and remove uses i
         try std.testing.expect(std.mem.find(
             u8,
             capture.stdout.written(),
-            "state=disconnected",
-        ) != null);
+            "state=",
+        ) == null);
         try std.testing.expectEqualStrings("", capture.stderr.written());
     }
 
@@ -4187,7 +4530,7 @@ test "top-level MCP list loads configuration without discovery and remove uses i
         try std.testing.expectEqual(RunResult.handled_success, result);
         try std.testing.expectEqual(@as(usize, 1), mcp_profile_remove_calls_for_test);
         try std.testing.expectEqualStrings(
-            "Removed MCP server 'fixture' from /tmp/test-home/.fx/mcp.json.\n",
+            "Removed MCP server 'fixture' from /tmp/test-home/.fiber/mcp.json.\n",
             capture.stdout.written(),
         );
         try std.testing.expectEqualStrings("", capture.stderr.written());
@@ -4249,7 +4592,7 @@ test "workspace launch modifiers preserve supported command help" {
         deps,
     );
     try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expect(std.mem.startsWith(u8, capture.stdout.written(), "fx ask\n\n"));
+    try std.testing.expect(std.mem.startsWith(u8, capture.stdout.written(), "fiber ask\n\n"));
     try std.testing.expectEqualStrings("", capture.stderr.written());
 }
 
@@ -4264,9 +4607,9 @@ test "workspace launch modifiers still reject unsupported local command help" {
         testConfig(),
         deps,
     );
-    try std.testing.expectEqual(RunResult.handled_failure, result);
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
     try std.testing.expectEqualStrings("", capture.stdout.written());
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "only supported for interactive, resume, ask, ACP, PR, and issue launches") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "only supported for interactive, resume, and ask launches") != null);
 }
 
 test "global workspace launch option errors use user-facing copy" {
@@ -4276,11 +4619,11 @@ test "global workspace launch option errors use user-facing copy" {
     }{
         .{
             .args = &.{@constCast("--add-dir")},
-            .expected = "fx: --add-dir requires a directory path\n",
+            .expected = "fiber: --add-dir requires a directory path\n",
         },
         .{
             .args = &.{ @constCast("--no-additional-dirs"), @constCast("--no-additional-dirs") },
-            .expected = "fx: --no-additional-dirs may only be specified once\n",
+            .expected = "fiber: --no-additional-dirs may only be specified once\n",
         },
     };
 
@@ -4290,7 +4633,7 @@ test "global workspace launch option errors use user-facing copy" {
         const deps = capture.deps();
 
         const result = try runIfRequestedWithDeps(std.testing.allocator, case.args, testConfig(), deps);
-        try std.testing.expectEqual(RunResult.handled_failure, result);
+        try std.testing.expectEqual(RunResult.handled_usage_error, result);
         try std.testing.expectEqualStrings("", capture.stdout.written());
         try std.testing.expect(std.mem.startsWith(u8, capture.stderr.written(), case.expected));
         try std.testing.expect(std.mem.endsWith(u8, capture.stderr.written(), "<command>\n"));
@@ -4325,75 +4668,10 @@ test "runIfRequested version flags reject extra args" {
         defer capture.deinit();
 
         const result = try runIfRequestedWithDeps(std.testing.allocator, args, testConfig(), capture.deps());
-        try std.testing.expectEqual(RunResult.handled_failure, result);
+        try std.testing.expectEqual(RunResult.handled_usage_error, result);
         try std.testing.expectEqualStrings("", capture.stdout.written());
-        try std.testing.expectEqualStrings("usage: fx --version\n", capture.stderr.written());
+        try std.testing.expectEqualStrings("usage: fiber --version\n", capture.stderr.written());
     }
-}
-
-test "setup is a paste-only stored-key adapter" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    var cfg = testConfig();
-    cfg.secret_store = capture.secretStore();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
-    );
-
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_store_calls);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_read_calls);
-    try std.testing.expect(capture.setup_value_matched);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Paste AI Gateway API key") != null);
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "Vercel CLI") == null);
-    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), cfg.secret_store.backend_label) != null);
-}
-
-test "setup delegates secure input to an interactive host store" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    capture.setup_interactive_store = true;
-    var cfg = testConfig();
-    cfg.secret_store = capture.secretStore();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
-    );
-
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), capture.setup_store_calls);
-    try std.testing.expectEqual(@as(usize, 0), capture.setup_read_calls);
-    try std.testing.expect(!capture.setup_value_matched);
-}
-
-test "setup preserves the disabled secret-store failure" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    capture.setup_store_disabled = true;
-    var cfg = testConfig();
-    cfg.secret_store = capture.secretStore();
-
-    const result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("setup")},
-        cfg,
-        capture.deps(),
-    );
-
-    try std.testing.expectEqual(RunResult.handled_failure, result);
-    try std.testing.expectEqual(@as(usize, 0), capture.setup_store_calls);
-    try std.testing.expectEqual(@as(usize, 0), capture.setup_read_calls);
-    try std.testing.expectEqualStrings(
-        "fx setup: stored API keys are disabled by FX_DISABLE_KEYCHAIN\n",
-        capture.stderr.written(),
-    );
 }
 
 test "workspace indeterminate errors report the reconciled durable state" {
@@ -4476,7 +4754,7 @@ test "runIfRequested rejects removed record flag as unknown input" {
         ),
     );
 
-    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "fx: unknown subcommand: --record") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "fiber: unknown subcommand: --record") != null);
 }
 
 test "runNoConfigIfRequested handles help without config" {
@@ -4490,7 +4768,7 @@ test "runNoConfigIfRequested handles help without config" {
         testCommandCatalog(),
         capture.deps(),
     ));
-    try std.testing.expect(std.mem.startsWith(u8, capture.stdout.written(), "𝒇x v0.0.0\nFast, native coding agent for the terminal."));
+    try std.testing.expect(std.mem.startsWith(u8, capture.stdout.written(), "fiber v0.0.0\nFast, native coding agent for the terminal."));
     try std.testing.expectEqualStrings("", capture.stderr.written());
 
     try std.testing.expect(!try runNoConfigIfRequestedWithDeps(
@@ -4511,16 +4789,9 @@ test "CLI surface uses the supplied command catalog for parsing usage and help" 
             .usage = "guide",
             .summary = "Show injected help",
         },
-        .{
-            .kind = .setup,
-            .token = "start",
-            .usage = "start",
-            .summary = "Run injected setup",
-        },
     };
     const help_groups = [_]command_specs.TopLevelHelpGroup{
         .{ .entries = &.{
-            .{ .kind = .setup, .usage = "start" },
             .{ .kind = .help, .usage = "guide" },
         } },
     };
@@ -4532,8 +4803,8 @@ test "CLI surface uses the supplied command catalog for parsing usage and help" 
     };
 
     try std.testing.expectEqual(Command.help, parse(command_catalog, &.{@constCast("-?")}));
-    switch (parse(command_catalog, &.{@constCast("start")})) {
-        .setup => {},
+    switch (parse(command_catalog, &.{@constCast("bogus")})) {
+        .unknown => {},
         else => return error.TestExpectedEqual,
     }
 
@@ -4552,30 +4823,26 @@ test "CLI surface uses the supplied command catalog for parsing usage and help" 
     defer usage_capture.deinit();
     var cfg = testConfig();
     cfg.command_catalog = command_catalog;
-    const result = try runIfRequestedWithDeps(
+    try std.testing.expectError(error.UnknownCliCommand, runIfRequestedWithDeps(
         std.testing.allocator,
-        &.{ @constCast("start"), @constCast("unexpected") },
+        &.{ @constCast("bogus"), @constCast("unexpected") },
         cfg,
         usage_capture.deps(),
-    );
-    try std.testing.expectEqual(RunResult.handled_failure, result);
-    try std.testing.expectEqualStrings("usage: fx start\n", usage_capture.stderr.written());
+    ));
+    try std.testing.expect(std.mem.find(u8, usage_capture.stderr.written(), "fiber: unknown subcommand: bogus") != null);
+    try std.testing.expect(std.mem.find(u8, usage_capture.stderr.written(), "Injected command catalog.") != null);
 }
 
 test "workflow config does not carry placeholder gateway tools" {
     const skill_roots = [_]skill_contract.RootSpec{
         .{ .source = .workspace_shared, .path = "skills" },
     };
-    var chat_url_probe = ChatUrlProbe{};
     var surface_cfg = testConfig();
     surface_cfg.skill_root_policy.workspace_roots = &skill_roots;
-    surface_cfg.gateway_provider.chat_url = chat_url_probe.provider();
     const cfg = workflowConfig(surface_cfg);
     try std.testing.expect(!@hasField(@TypeOf(cfg), "gateway_tools_json"));
     try std.testing.expect(!@hasField(@TypeOf(cfg), "context_registry"));
     try std.testing.expectEqualStrings("test-model", cfg.default_model);
-    try std.testing.expectEqualStrings("http://127.0.0.1:43123/chat", cfg.gateway_chat_url);
-    try std.testing.expect(chat_url_probe.called);
     try std.testing.expectEqualStrings("surface", cfg.mode_registry.default_mode_id);
     try std.testing.expectEqualStrings("skills", cfg.skill_root_policy.workspace_roots[0].path);
     try std.testing.expect(cfg.load_mcp_runtime == noMcpRuntimeForTest);
@@ -4585,9 +4852,9 @@ test "runIfRequested invalid local flags write usage" {
     defer capture.deinit();
 
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--wat") }, testConfig(), capture.deps());
-    try std.testing.expectEqual(RunResult.handled_failure, result);
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
     try std.testing.expectEqualStrings("", capture.stdout.written());
-    try std.testing.expectEqualStrings("usage: fx status [--json]\n", capture.stderr.written());
+    try std.testing.expectEqualStrings("usage: fiber status [--json]\n", capture.stderr.written());
 }
 
 test "runIfRequested invalid json local flags write json error" {
@@ -4595,7 +4862,7 @@ test "runIfRequested invalid json local flags write json error" {
     defer capture.deinit();
 
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--json"), @constCast("--wat") }, testConfig(), capture.deps());
-    try std.testing.expectEqual(RunResult.handled_failure, result);
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
     try std.testing.expectEqualStrings("", capture.stderr.written());
     try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"kind\":\"status\"") != null);
     try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"code\":\"InvalidLocalSurfaceArgs\"") != null);
@@ -4613,137 +4880,44 @@ test "runIfRequested resume no args returns last target" {
     try std.testing.expectEqualStrings("", capture.stderr.written());
 }
 
-test "runIfRequested -r asks which session to resume" {
+test "runIfRequested continue returns last target like bare resume" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(std.testing.allocator, &.{@constCast("continue")}, testConfig(), capture.deps());
+    switch (result) {
+        .interactive => |launch| try std.testing.expectEqual(ResumeTarget.last, launch.requested_resume.?),
+        else => return error.TestExpectedEqual,
+    }
+    try std.testing.expectEqualStrings("", capture.stderr.written());
+}
+
+test "runIfRequested continue rejects extra arguments" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
 
     const result = try runIfRequestedWithDeps(
         std.testing.allocator,
-        &.{@constCast("-r")},
+        &.{ @constCast("continue"), @constCast("session.v3") },
         testConfig(),
         capture.deps(),
     );
-    switch (result) {
-        .interactive => |launch| try std.testing.expectEqual(ResumeTarget.pick, launch.requested_resume.?),
-        else => return error.TestExpectedEqual,
-    }
-    try std.testing.expectEqualStrings("", capture.stdout.written());
-    try std.testing.expectEqualStrings("", capture.stderr.written());
-
-    var extra_capture = CaptureOutput.init(std.testing.allocator);
-    defer extra_capture.deinit();
-    const extra = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{ @constCast("-r"), @constCast("session.123") },
-        testConfig(),
-        extra_capture.deps(),
-    );
-    try std.testing.expectEqual(RunResult.handled_failure, extra);
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    try std.testing.expectEqualStrings("usage: fiber continue\n", capture.stderr.written());
 }
 
-test "runIfRequested top-level resume aliases return the existing target" {
-    const aliases = [_][]const [:0]const u8{
-        &.{@constCast("--resume")},
-        &.{@constCast("--resume-last")},
-        &.{@constCast("--continue")},
-        &.{@constCast("-c")},
-    };
-    for (aliases) |args| {
-        var capture = CaptureOutput.init(std.testing.allocator);
-        defer capture.deinit();
-
-        const result = try runIfRequestedWithDeps(
-            std.testing.allocator,
-            args,
-            testConfig(),
-            capture.deps(),
-        );
-        switch (result) {
-            .interactive => |launch| try std.testing.expectEqual(ResumeTarget.last, launch.requested_resume.?),
-            else => return error.TestExpectedEqual,
-        }
-        try std.testing.expectEqualStrings("", capture.stdout.written());
-        try std.testing.expectEqualStrings("", capture.stderr.written());
-    }
-
-    var operand_capture = CaptureOutput.init(std.testing.allocator);
-    defer operand_capture.deinit();
-
-    const operand = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{ @constCast("--resume"), @constCast("session.123") },
-        testConfig(),
-        operand_capture.deps(),
-    );
-    switch (operand) {
-        .interactive => |launch_value| {
-            var launch = launch_value;
-            defer launch.deinit(std.testing.allocator);
-            switch (launch.requested_resume.?) {
-                .id => |id| try std.testing.expectEqualStrings("session.123", id),
-                .pick, .last => return error.TestExpectedExactResumeId,
-            }
-        },
-        else => return error.TestExpectedEqual,
-    }
-
+test "runIfRequested continue rejects json flags" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
 
-    const exact = try runIfRequestedWithDeps(
+    const result = try runIfRequestedWithDeps(
         std.testing.allocator,
-        &.{@constCast("--resume-session.123")},
+        &.{ @constCast("continue"), @constCast("--json") },
         testConfig(),
         capture.deps(),
     );
-    switch (exact) {
-        .interactive => |launch_value| {
-            var launch = launch_value;
-            defer launch.deinit(std.testing.allocator);
-            switch (launch.requested_resume.?) {
-                .id => |id| try std.testing.expectEqualStrings("session.123", id),
-                .pick, .last => return error.TestExpectedExactResumeId,
-            }
-        },
-        else => return error.TestExpectedEqual,
-    }
-
-    const nested = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{ @constCast("resume"), @constCast("--resume"), @constCast("--last") },
-        testConfig(),
-        capture.deps(),
-    );
-    switch (nested) {
-        .interactive => |launch| try std.testing.expectEqual(ResumeTarget.last, launch.requested_resume.?),
-        else => return error.TestExpectedEqual,
-    }
-}
-
-test "runIfRequested rejects malformed resume aliases with canonical usage" {
-    const cases = [_][]const [:0]const u8{
-        &.{@constCast("--resume-")},
-        &.{ @constCast("--resume-last"), @constCast("unexpected") },
-        &.{ @constCast("--continue"), @constCast("unexpected") },
-        &.{ @constCast("--resume"), @constCast("   ") },
-        &.{ @constCast("resume"), @constCast("--resume") },
-    };
-    for (cases) |args| {
-        var capture = CaptureOutput.init(std.testing.allocator);
-        defer capture.deinit();
-
-        const result = try runIfRequestedWithDeps(
-            std.testing.allocator,
-            args,
-            testConfig(),
-            capture.deps(),
-        );
-        try std.testing.expectEqual(RunResult.handled_failure, result);
-        try std.testing.expectEqualStrings(
-            "usage: fx session resume [last|<id>] | session resume --id <id> | --resume [last|<id>] | resume [last|<id>] | resume --id <id> | --resume-last | --continue | -c | -r | --resume-<id>\n",
-            capture.stderr.written(),
-        );
-    }
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    try std.testing.expectEqualStrings("usage: fiber continue\n", capture.stderr.written());
 }
 
 test "runIfRequested resume id returns owned id" {
@@ -4769,9 +4943,9 @@ test "runIfRequested invalid resume writes usage" {
     defer capture.deinit();
 
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("resume"), @constCast("a"), @constCast("b") }, testConfig(), capture.deps());
-    try std.testing.expectEqual(RunResult.handled_failure, result);
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
     try std.testing.expectEqualStrings(
-        "usage: fx session resume [last|<id>] | session resume --id <id> | --resume [last|<id>] | resume [last|<id>] | resume --id <id> | --resume-last | --continue | -c | -r | --resume-<id>\n",
+        "usage: fiber session resume [last|<id>] | session resume --id <id> | resume [last|<id>] | resume --id <id>\n",
         capture.stderr.written(),
     );
 }
@@ -4784,7 +4958,7 @@ test "runIfRequested unknown command writes header and help" {
         error.UnknownCliCommand,
         runIfRequestedWithDeps(std.testing.allocator, &.{@constCast("wat")}, testConfig(), capture.deps()),
     );
-    try std.testing.expect(std.mem.startsWith(u8, capture.stderr.written(), "fx: unknown subcommand: wat\n\n𝒇x v0.0.0\nFast, native coding agent for the terminal.\n"));
+    try std.testing.expect(std.mem.startsWith(u8, capture.stderr.written(), "fiber: unknown subcommand: wat\n\nfiber v0.0.0\nFast, native coding agent for the terminal.\n"));
 }
 
 test "runIfRequested bare version subcommand remains unknown" {
@@ -4795,7 +4969,7 @@ test "runIfRequested bare version subcommand remains unknown" {
         error.UnknownCliCommand,
         runIfRequestedWithDeps(std.testing.allocator, &.{@constCast("version")}, testConfig(), capture.deps()),
     );
-    try std.testing.expect(std.mem.startsWith(u8, capture.stderr.written(), "fx: unknown subcommand: version\n\n𝒇x v0.0.0\nFast, native coding agent for the terminal.\n"));
+    try std.testing.expect(std.mem.startsWith(u8, capture.stderr.written(), "fiber: unknown subcommand: version\n\nfiber v0.0.0\nFast, native coding agent for the terminal.\n"));
 }
 
 test "runIfRequested model fetch failure is handled" {
@@ -4803,7 +4977,7 @@ test "runIfRequested model fetch failure is handled" {
     defer capture.deinit();
     var probe = ModelFetchProbe{ .outcome = .failure };
     var cfg = testConfig();
-    cfg.provider_set.gateway.cli_model_catalog = probe.provider();
+    cfg.provider_set.codex.cli_model_catalog = probe.provider();
 
     var deps = capture.deps();
     deps.load_startup_state = failingStartupState;
@@ -4812,7 +4986,7 @@ test "runIfRequested model fetch failure is handled" {
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{@constCast("models")}, cfg, deps);
     try std.testing.expectEqual(RunResult.handled_failure, result);
     try std.testing.expectEqualStrings(
-        "fx models: could not list models: Unavailable\n",
+        "fiber models: could not list models: Unavailable\n",
         capture.stderr.written(),
     );
 }
@@ -4822,7 +4996,7 @@ test "runIfRequested model fetch failure preserves json output" {
     defer capture.deinit();
     var probe = ModelFetchProbe{ .outcome = .failure };
     var cfg = testConfig();
-    cfg.provider_set.gateway.cli_model_catalog = probe.provider();
+    cfg.provider_set.codex.cli_model_catalog = probe.provider();
 
     var deps = capture.deps();
     deps.load_catalog_startup_state = stubLoadCatalogStartupState;
@@ -4835,7 +5009,7 @@ test "runIfRequested model fetch failure preserves json output" {
     );
     try std.testing.expectEqual(RunResult.handled_failure, result);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"error\":\"could not list models: Unavailable\",\"code\":\"Unavailable\"}\n",
+        "{\"ok\":false,\"kind\":\"models\",\"error\":\"could not list models: Unavailable\",\"code\":\"Unavailable\"}\n",
         capture.stdout.written(),
     );
     try std.testing.expectEqualStrings("", capture.stderr.written());
@@ -4846,7 +5020,7 @@ test "runIfRequested model provider cancellation is handled" {
     defer capture.deinit();
     var probe = ModelFetchProbe{ .outcome = .cancelled };
     var cfg = testConfig();
-    cfg.provider_set.gateway.cli_model_catalog = probe.provider();
+    cfg.provider_set.codex.cli_model_catalog = probe.provider();
 
     var deps = capture.deps();
     deps.load_catalog_startup_state = stubLoadCatalogStartupState;
@@ -4854,7 +5028,7 @@ test "runIfRequested model provider cancellation is handled" {
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{@constCast("models")}, cfg, deps);
     try std.testing.expectEqual(RunResult.handled_failure, result);
     try std.testing.expectEqualStrings(
-        "fx models: could not list models: the request was cancelled\n",
+        "fiber models: could not list models: the request was cancelled\n",
         capture.stderr.written(),
     );
 }
@@ -4864,7 +5038,7 @@ test "runIfRequested models passes startup team to fetch seam" {
     defer capture.deinit();
     var probe = ModelFetchProbe{};
     var cfg = testConfig();
-    cfg.provider_set.gateway.cli_model_catalog = probe.provider();
+    cfg.provider_set.codex.cli_model_catalog = probe.provider();
 
     var deps = capture.deps();
     deps.load_catalog_startup_state = stubLoadCatalogStartupState;
@@ -4873,73 +5047,9 @@ test "runIfRequested models passes startup team to fetch seam" {
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expect(probe.called);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[\"private/blue-hornbill\"]}\n",
+        "{\"ok\":true,\"kind\":\"models\",\"data\":{\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[\"private/blue-hornbill\"]}}\n",
         capture.stdout.written(),
     );
-}
-
-test "runIfRequested credits renders through the configured provider" {
-    var capture = CaptureOutput.init(std.testing.allocator);
-    defer capture.deinit();
-    var probe = CreditsProviderProbe{ .outcome = .success };
-    var cfg = testConfig();
-    cfg.provider_set.gateway.credits = probe.provider();
-
-    var deps = capture.deps();
-    deps.load_startup_state = stubLoadStartupState;
-
-    const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("credits"), @constCast("--json") }, cfg, deps);
-    try std.testing.expectEqual(RunResult.handled_success, result);
-    try std.testing.expectEqual(@as(usize, 1), probe.calls);
-    try std.testing.expect(probe.saw_expected_input);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"balance\":\"10\",\"used\":\"2\",\"plan\":\"pro\"}\n",
-        capture.stdout.written(),
-    );
-}
-
-test "runIfRequested credits failures use nonzero text and json contracts" {
-    var text_capture = CaptureOutput.init(std.testing.allocator);
-    defer text_capture.deinit();
-    var text_probe = CreditsProviderProbe{ .outcome = .failure };
-    var text_cfg = testConfig();
-    text_cfg.provider_set.gateway.credits = text_probe.provider();
-    var text_deps = text_capture.deps();
-    text_deps.load_startup_state = stubLoadStartupState;
-
-    const text_result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{@constCast("credits")},
-        text_cfg,
-        text_deps,
-    );
-    try std.testing.expectEqual(RunResult.handled_failure, text_result);
-    try std.testing.expectEqualStrings("", text_capture.stdout.written());
-    try std.testing.expectEqualStrings(
-        "[credits] error: gateway unavailable\n",
-        text_capture.stderr.written(),
-    );
-
-    var json_capture = CaptureOutput.init(std.testing.allocator);
-    defer json_capture.deinit();
-    var json_probe = CreditsProviderProbe{ .outcome = .failure };
-    var json_cfg = testConfig();
-    json_cfg.provider_set.gateway.credits = json_probe.provider();
-    var json_deps = json_capture.deps();
-    json_deps.load_startup_state = stubLoadStartupState;
-
-    const json_result = try runIfRequestedWithDeps(
-        std.testing.allocator,
-        &.{ @constCast("credits"), @constCast("--json") },
-        json_cfg,
-        json_deps,
-    );
-    try std.testing.expectEqual(RunResult.handled_failure, json_result);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"error\":\"gateway unavailable\"}\n",
-        json_capture.stdout.written(),
-    );
-    try std.testing.expectEqualStrings("", json_capture.stderr.written());
 }
 
 test "runIfRequested local json success appends exactly one newline" {
@@ -4952,7 +5062,7 @@ test "runIfRequested local json success appends exactly one newline" {
     const result = try runIfRequestedWithDeps(std.testing.allocator, &.{ @constCast("status"), @constCast("--json") }, testConfig(), deps);
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"auto\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42,\"mcp\":{\"connection_check\":\"not_checked\",\"servers\":[],\"configuration_issues\":[],\"inspection_error\":null}}\n",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"test-model\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber auth login codex.\",\"permission_mode\":\"auto\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42,\"mcp\":{\"connection_check\":\"not_checked\",\"servers\":[],\"configuration_issues\":[],\"inspection_error\":null}}}\n",
         capture.stdout.written(),
     );
     try std.testing.expect(!std.mem.endsWith(u8, capture.stdout.written(), "\n\n"));
@@ -5017,7 +5127,7 @@ test "status and doctor inspect MCP configuration once per command" {
     try std.testing.expect(std.mem.find(
         u8,
         doctor_capture.stdout.written(),
-        "\"detail\":\"failed to load ~/.fx/mcp.json: McpConfigInvalidJson\"",
+        "\"detail\":\"failed to load ~/.fiber/mcp.json: McpConfigInvalidJson\"",
     ) != null);
 }
 
@@ -5027,7 +5137,7 @@ test "writeRenderedJsonLine falls back to heap and appends exactly one newline" 
 
     var tiny_buf: [8]u8 = undefined;
     const startup = app_lifecycle.StartupStatus{
-        .workspace_root = @constCast("/tmp/fx"),
+        .workspace_root = @constCast("/tmp/fiber"),
         .selected_model = "test-model",
         .permission_mode = .ask,
         .agent_step_limit = 42,
@@ -5041,7 +5151,7 @@ test "writeRenderedJsonLine falls back to heap and appends exactly one newline" 
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"test-model\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}\n",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"test-model\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber auth login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":42}}\n",
         capture.stdout.written(),
     );
 }
@@ -5055,9 +5165,9 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
         .{ .name = "gh", .status = .warn, .detail = "GitHub CLI not found in PATH" },
     };
     const snapshot = doctor_runtime.Snapshot{
-        .workspace_root = @constCast("/tmp/fx"),
+        .workspace_root = @constCast("/tmp/fiber"),
         .model = "test-model",
-        .auth = .{ .active_source = .ai_gateway_api_key },
+        .auth = .{ .active_source = .chatgpt_subscription },
         .permission_mode = .auto,
         .agent_step_limit = 42,
         .checks = checks[0..],
@@ -5072,7 +5182,7 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
     );
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"test-model\",\"auth\":\"AI_GATEWAY_API_KEY\",\"auth_refreshable\":false,\"permission_mode\":\"auto\",\"agent_step_limit\":42,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}\n",
+        "{\"ok\":true,\"kind\":\"doctor\",\"data\":{\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fiber\",\"model\":\"test-model\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"auto\",\"agent_step_limit\":42,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}}\n",
         capture.stdout.written(),
     );
 }
@@ -5080,11 +5190,6 @@ test "writeRenderedJsonLine renders doctor json through output contract" {
 const CaptureOutput = struct {
     stdout: std.Io.Writer.Allocating,
     stderr: std.Io.Writer.Allocating,
-    setup_store_calls: usize = 0,
-    setup_read_calls: usize = 0,
-    setup_value_matched: bool = false,
-    setup_interactive_store: bool = false,
-    setup_store_disabled: bool = false,
 
     fn init(alloc: Allocator) CaptureOutput {
         return .{
@@ -5102,22 +5207,8 @@ const CaptureOutput = struct {
         return .{
             .stdout_ctx = self,
             .stderr_ctx = self,
-            .setup_ctx = self,
             .write_stdout = captureStdout,
             .write_stderr = captureStderr,
-            .read_masked_key = captureReadMaskedKey,
-            .setup_terminal_available = captureSetupTerminalAvailable,
-        };
-    }
-
-    fn secretStore(self: *@This()) host.SecretStore {
-        return .{
-            .context = self,
-            .backend_label = "test credential store",
-            .is_disabled_fn = captureSecretStoreIsDisabled,
-            .load_fn = captureSecretStoreLoad,
-            .store_fn = captureSecretStoreWrite,
-            .store_interactive_fn = captureSecretStoreInteractiveWrite,
         };
     }
 };
@@ -5130,52 +5221,6 @@ fn captureStdout(ctx: ?*anyopaque, text: []const u8) !void {
 fn captureStderr(ctx: ?*anyopaque, text: []const u8) !void {
     const capture: *CaptureOutput = @ptrCast(@alignCast(ctx.?));
     try capture.stderr.writer.writeAll(text);
-}
-
-fn captureSetupTerminalAvailable(_: ?*anyopaque) bool {
-    return true;
-}
-
-fn captureReadMaskedKey(
-    ctx: ?*anyopaque,
-    alloc: Allocator,
-    _: WriteFn,
-    _: ?*anyopaque,
-) ![]u8 {
-    const capture: *CaptureOutput = @ptrCast(@alignCast(ctx.?));
-    capture.setup_read_calls += 1;
-    return alloc.dupe(u8, "paste-only-test-key");
-}
-
-fn captureSecretStoreIsDisabled(ctx: ?*anyopaque) bool {
-    const capture: *CaptureOutput = @ptrCast(@alignCast(ctx.?));
-    return capture.setup_store_disabled;
-}
-
-fn captureSecretStoreLoad(
-    _: ?*anyopaque,
-    _: Allocator,
-) host.SecretStoreLoadError!?[]u8 {
-    return null;
-}
-
-fn captureSecretStoreWrite(
-    ctx: ?*anyopaque,
-    _: Allocator,
-    value: []const u8,
-) host.SecretStoreWriteError!void {
-    const capture: *CaptureOutput = @ptrCast(@alignCast(ctx.?));
-    capture.setup_store_calls += 1;
-    capture.setup_value_matched = std.mem.eql(u8, value, "paste-only-test-key");
-}
-
-fn captureSecretStoreInteractiveWrite(
-    ctx: ?*anyopaque,
-) host.SecretStoreWriteError!bool {
-    const capture: *CaptureOutput = @ptrCast(@alignCast(ctx.?));
-    if (!capture.setup_interactive_store) return false;
-    capture.setup_store_calls += 1;
-    return true;
 }
 
 fn gatherNoopContextForTest(_: Allocator, _: context_contract.InitialContextInput) context_contract.ProviderError!context_contract.ProviderContext {
@@ -5222,7 +5267,7 @@ fn captureMcpProfileAddForTest(
         .http => return error.TestUnexpectedResult,
     }
     return .{
-        .profile_path = try alloc.dupe(u8, "/tmp/test-home/.fx/mcp.json"),
+        .profile_path = try alloc.dupe(u8, "/tmp/test-home/.fiber/mcp.json"),
     };
 }
 
@@ -5233,7 +5278,7 @@ fn captureMcpProfileRemoveForTest(
     mcp_profile_remove_calls_for_test += 1;
     try std.testing.expectEqualStrings("fixture", name);
     return .{
-        .profile_path = try alloc.dupe(u8, "/tmp/test-home/.fx/mcp.json"),
+        .profile_path = try alloc.dupe(u8, "/tmp/test-home/.fiber/mcp.json"),
         .removed = true,
     };
 }
@@ -5243,7 +5288,7 @@ fn configuredMcpRuntimeForTest(
     workspace_root: []const u8,
     _: @import("../mcp/elicitation.zig").Capabilities,
 ) !?*mcp_runtime.McpRuntime {
-    try std.testing.expectEqualStrings("/tmp/fx", workspace_root);
+    try std.testing.expectEqualStrings("/tmp/fiber", workspace_root);
     const runtime = try alloc.create(mcp_runtime.McpRuntime);
     errdefer alloc.destroy(runtime);
     runtime.* = mcp_runtime.McpRuntime.init(alloc);
@@ -5281,10 +5326,6 @@ fn stableCliTestEnviron() !*const std.process.Environ.Map {
     return map;
 }
 
-fn unexpectedAcpRunForTest(_: ?*anyopaque, _: Allocator, _: acp_runner.Config) anyerror!void {
-    return error.TestUnexpectedAcpRun;
-}
-
 fn testConfig() Config {
     return .{
         .version = "0.0.0",
@@ -5293,13 +5334,11 @@ fn testConfig() Config {
         .default_agent_step_limit = 42,
         .models_path = "/v1/models",
         .gateway_retry_count = 1,
-        .gateway_chat_url = "https://example.test/chat",
-        .gateway_provider = test_builtin_gateway.provider,
-        .provider_set = provider_set.gateway_only(test_builtin_gateway.provider_bundle),
+        .oauth_transport = test_builtin_gateway.oauth_transport_provider,
+        .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
-        .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "system" },
-        .skill_root_policy = .{ .managed_root_source = .global_fx },
+        .skill_root_policy = .{ .managed_root_source = .global_fiber },
         .ignored_list_entries = &.{},
         .max_list_entries = 10,
         .max_read_file_bytes = 1024,
@@ -5312,7 +5351,6 @@ fn testConfig() Config {
         .mode_registry = .{ .default_mode_id = "surface" },
         .inspect_mcp_profile_config = clearMcpConfigInspectionForTest,
         .load_mcp_runtime = noMcpRuntimeForTest,
-        .acp_runner = .{ .run_fn = unexpectedAcpRunForTest },
         .tool_set = .{
             .registry = .{ .tools = &.{} },
             .order = &.{},
@@ -5324,19 +5362,17 @@ fn testConfig() Config {
 fn stubLoadStartupState(
     alloc: Allocator,
     _: oauth_transport.Provider,
-    _: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !app_lifecycle.StartupState {
     var state = app_lifecycle.StartupState{ .agent_step_limit = default_agent_step_limit };
     errdefer state.deinit(alloc);
-    state.workspace_root = try alloc.dupe(u8, "/tmp/fx");
+    state.workspace_root = try alloc.dupe(u8, "/tmp/fiber");
     state.selected_model = try alloc.dupe(u8, default_model);
     state.credential = .{
         .token = try alloc.dupe(u8, "test-key"),
-        .source = .ai_gateway_api_key,
+        .source = .chatgpt_subscription,
     };
-    state.credential.?.team_id = try alloc.dupe(u8, "team_123");
     return state;
 }
 
@@ -5349,7 +5385,7 @@ fn stubLoadStartupStateWithoutCredentials(
         .agent_step_limit = default_agent_step_limit,
     };
     errdefer state.deinit(alloc);
-    state.workspace_root = try alloc.dupe(u8, "/tmp/fx");
+    state.workspace_root = try alloc.dupe(u8, "/tmp/fiber");
     return state;
 }
 
@@ -5363,20 +5399,18 @@ fn failingStartupStateWithoutCredentials(
 
 fn stubLoadCatalogStartupState(
     alloc: Allocator,
-    secret_store: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !app_lifecycle.StartupState {
-    return stubLoadStartupState(alloc, oauth_transport.unavailable_provider, secret_store, default_model, default_agent_step_limit);
+    return stubLoadStartupState(alloc, oauth_transport.unavailable_provider, default_model, default_agent_step_limit);
 }
 
 fn stubLoadStartupStatus(
     alloc: Allocator,
-    _: host.SecretStore,
     default_model: []const u8,
     default_agent_step_limit: usize,
 ) !app_lifecycle.StartupStatus {
-    const workspace_root = try alloc.dupe(u8, "/tmp/fx");
+    const workspace_root = try alloc.dupe(u8, "/tmp/fiber");
     errdefer alloc.free(workspace_root);
     const selected_model = try alloc.dupe(u8, default_model);
     errdefer alloc.free(selected_model);
@@ -5392,7 +5426,6 @@ fn stubLoadStartupStatus(
 fn failingStartupState(
     _: Allocator,
     _: oauth_transport.Provider,
-    _: host.SecretStore,
     _: []const u8,
     _: usize,
 ) !app_lifecycle.StartupState {
@@ -5435,8 +5468,7 @@ const ModelFetchProbe = struct {
         const self: *ModelFetchProbe = @ptrCast(@alignCast(raw.?));
         self.called = true;
         if (!std.mem.eql(u8, input.access.authorizationCredential() orelse "", "test-key") or
-            !std.mem.eql(u8, input.access.teamContext() orelse "", "team_123") or
-            input.access.credentialSource() != .ai_gateway_api_key or
+            input.access.credentialSource() != .chatgpt_subscription or
             !std.mem.eql(u8, input.endpoint, "/v1/models") or
             input.cancel_flag != null)
         {
@@ -5464,63 +5496,241 @@ const ModelFetchProbe = struct {
     }
 };
 
-const ChatUrlProbe = struct {
-    called: bool = false,
-
-    fn provider(self: *ChatUrlProbe) gateway_provider.ChatUrlProvider {
-        return .{
-            .context = self,
-            .resolve_fn = resolve,
-        };
+const TestTty = struct {
+    fn yes(_: ?*anyopaque) bool {
+        return true;
     }
 
-    fn resolve(raw: ?*anyopaque, fallback: []const u8) []const u8 {
-        const self: *ChatUrlProbe = @ptrCast(@alignCast(raw.?));
-        self.called = std.mem.eql(u8, fallback, "https://example.test/chat");
-        return "http://127.0.0.1:43123/chat";
+    fn no(_: ?*anyopaque) bool {
+        return false;
     }
 };
 
-const CreditsProviderProbe = struct {
-    outcome: enum { success, failure },
-    calls: usize = 0,
-    saw_expected_input: bool = false,
+test "resolveAuthLoginProvider proceeds without a tty when only one provider exists" {
+    // A single provider is unambiguous: `fiber auth login` must proceed without
+    // a tty, matching today's `fiber login` (no tty check at all). The tty gate
+    // (writeAuthLoginNonInteractiveError) only guards the >1-provider case,
+    // which is unreachable while provider_catalog.entries has one entry.
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+    var deps = capture.deps();
+    deps.stdin_is_tty = TestTty.no;
 
-    fn provider(self: *CreditsProviderProbe) gateway_provider.CreditsProvider {
-        return .{
-            .context = self,
-            .fetch_fn = fetch,
-        };
+    const provider = try resolveAuthLoginProvider(deps, null);
+    try std.testing.expectEqual(model_provider.ProviderId.codex, provider);
+    try std.testing.expectEqualStrings("", capture.stderr.written());
+}
+
+test "parse routes bare permissions and subcommands separately" {
+    const command_catalog = testCommandCatalog();
+    switch (parse(command_catalog, &.{@constCast("permissions")})) {
+        .permissions => |rest| try std.testing.expectEqual(@as(usize, 0), rest.len),
+        else => return error.TestExpectedEqual,
     }
-
-    fn fetch(
-        raw: ?*anyopaque,
-        alloc: Allocator,
-        input: gateway_provider.CreditsLookupInput,
-    ) output_contracts.CreditsSnapshot {
-        const self: *CreditsProviderProbe = @ptrCast(@alignCast(raw.?));
-        self.calls += 1;
-        self.saw_expected_input =
-            std.mem.eql(u8, input.credential orelse "", "test-key") and
-            std.mem.eql(u8, input.tenant orelse "", "team_123");
-        if (self.outcome == .failure) {
-            return ownedCreditsErrorSnapshot(alloc, "gateway unavailable");
-        }
-
-        var snapshot = output_contracts.CreditsSnapshot{};
-        snapshot.balance = alloc.dupe(u8, "10") catch return ownedCreditsErrorSnapshot(alloc, "invalid JSON response from gateway");
-        snapshot.used = alloc.dupe(u8, "2") catch {
-            snapshot.deinit(alloc);
-            return ownedCreditsErrorSnapshot(alloc, "invalid JSON response from gateway");
-        };
-        snapshot.plan = alloc.dupe(u8, "pro") catch {
-            snapshot.deinit(alloc);
-            return ownedCreditsErrorSnapshot(alloc, "invalid JSON response from gateway");
-        };
-        return snapshot;
+    switch (parse(command_catalog, &.{ @constCast("permissions"), @constCast("mode"), @constCast("auto") })) {
+        .permissions => |rest| {
+            try std.testing.expectEqual(@as(usize, 2), rest.len);
+            try std.testing.expectEqualStrings("mode", rest[0]);
+            try std.testing.expectEqualStrings("auto", rest[1]);
+        },
+        else => return error.TestExpectedEqual,
     }
-};
+    switch (parse(command_catalog, &.{ @constCast("permissions"), @constCast("rule"), @constCast("list") })) {
+        .permissions => |rest| {
+            try std.testing.expectEqual(@as(usize, 2), rest.len);
+            try std.testing.expectEqualStrings("rule", rest[0]);
+            try std.testing.expectEqualStrings("list", rest[1]);
+        },
+        else => return error.TestExpectedEqual,
+    }
+}
 
-fn ownedCreditsErrorSnapshot(alloc: Allocator, message: []const u8) output_contracts.CreditsSnapshot {
-    return .{ .err_message = alloc.dupe(u8, message) catch null };
+test "permissions mode argument parsing accepts mode and json" {
+    const parsed = try parsePermissionsModeArgs(&.{ @constCast("yolo"), @constCast("--json") });
+    try std.testing.expectEqual(types.PermissionMode.yolo, parsed.mode);
+    try std.testing.expectEqual(output_contracts.OutputFormat.json, parsed.format);
+    try std.testing.expectError(error.InvalidPermissionArgs, parsePermissionsModeArgs(&.{@constCast("wat")}));
+}
+
+test "permissions rule add argument parsing accepts scope flags and action" {
+    const parsed = try parsePermissionsRuleAddArgs(&.{
+        @constCast("--user"),
+        @constCast("bash"),
+        @constCast("git *"),
+        @constCast("allow"),
+    });
+    try std.testing.expectEqual(config_runtime.PermissionScope.user, parsed.scope);
+    try std.testing.expectEqualStrings("bash", parsed.permission);
+    try std.testing.expectEqualStrings("git *", parsed.pattern);
+    try std.testing.expectEqual(types.PermissionAction.allow, parsed.action);
+    try std.testing.expectError(error.InvalidPermissionArgs, parsePermissionsRuleAddArgs(&.{
+        @constCast("bash"),
+        @constCast("git *"),
+        @constCast("wat"),
+    }));
+}
+
+test "permissions rule add rejects invalid web_fetch pattern" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("permissions"), @constCast("rule"), @constCast("add"), @constCast("web_fetch"), @constCast("example.*"), @constCast("allow"), @constCast("--json") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"code\":\"InvalidPermissionArgs\"") != null);
+}
+
+test "auth login rejects --json" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("auth"), @constCast("login"), @constCast("--json") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+}
+
+test "auth list renders provider catalog json" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("auth"), @constCast("list"), @constCast("--json") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_success, result);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"kind\":\"auth.list\"") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"id\":\"codex\"") != null);
+}
+
+test "auth logout argument parsing accepts provider and json" {
+    const opts = try parseAuthSurfaceArgs(&.{ @constCast("codex"), @constCast("--json") });
+    try std.testing.expectEqual(model_provider.ProviderId.codex, opts.provider.?);
+    try std.testing.expectEqual(output_contracts.OutputFormat.json, opts.format);
+}
+
+test "parseLoginProvider accepts a single provider token" {
+    try std.testing.expectEqual(model_provider.ProviderId.codex, (try parseLoginProvider(&.{@constCast("codex")})).?);
+    try std.testing.expect((try parseLoginProvider(&.{})) == null);
+    try std.testing.expectError(error.InvalidLoginProviderArgs, parseLoginProvider(&.{ @constCast("codex"), @constCast("extra") }));
+}
+
+test "debug replay dispatches through cli replay with exit passthrough" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("debug"), @constCast("replay") },
+        testConfig(),
+        capture.deps(),
+    );
+    switch (result) {
+        .handled_exit => |code| try std.testing.expectEqual(@as(u8, 2), code),
+        else => return error.TestExpectedEqual,
+    }
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        capture.stderr.written(),
+        "fiber replay: missing tape path\n",
+    ));
+}
+
+test "bare replay is no longer a top-level command" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    try std.testing.expectError(error.UnknownCliCommand, runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("replay"), @constCast("tape") },
+        testConfig(),
+        capture.deps(),
+    ));
+    try std.testing.expect(std.mem.find(u8, capture.stderr.written(), "fiber: unknown subcommand: replay") != null);
+}
+
+test "top-level MCP auth subcommand is no longer recognized" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("mcp"), @constCast("auth"), @constCast("fixture") },
+        testConfig(),
+        capture.deps(),
+    );
+    try std.testing.expectEqual(RunResult.handled_usage_error, result);
+}
+
+test "top-level MCP login rejects --json and requires a server name" {
+    {
+        var capture = CaptureOutput.init(std.testing.allocator);
+        defer capture.deinit();
+
+        const result = try runIfRequestedWithDeps(
+            std.testing.allocator,
+            &.{ @constCast("mcp"), @constCast("login"), @constCast("--json") },
+            testConfig(),
+            capture.deps(),
+        );
+        try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    }
+    {
+        var capture = CaptureOutput.init(std.testing.allocator);
+        defer capture.deinit();
+
+        const result = try runIfRequestedWithDeps(
+            std.testing.allocator,
+            &.{ @constCast("mcp"), @constCast("login") },
+            testConfig(),
+            capture.deps(),
+        );
+        try std.testing.expectEqual(RunResult.handled_usage_error, result);
+    }
+}
+
+test "parseMcpServerArgs accepts server name and json flag" {
+    const parsed = try parseMcpServerArgs(&.{ @constCast("fixture"), @constCast("--json") });
+    try std.testing.expectEqualStrings("fixture", parsed.server);
+    try std.testing.expectEqual(output_contracts.OutputFormat.json, parsed.format);
+    try std.testing.expectError(error.InvalidMcpArgs, parseMcpServerArgs(&.{}));
+}
+
+test "top-level MCP add renders json envelope" {
+    const alloc = std.testing.allocator;
+    var capture = CaptureOutput.init(alloc);
+    defer capture.deinit();
+    var cfg = testConfig();
+    cfg.add_mcp_profile_server = captureMcpProfileAddForTest;
+    mcp_profile_add_calls_for_test = 0;
+    var deps = capture.deps();
+    deps.load_startup_state = failingStartupState;
+
+    const result = try runIfRequestedWithDeps(
+        alloc,
+        &.{
+            @constCast("mcp"),
+            @constCast("add"),
+            @constCast("fixture"),
+            @constCast("node"),
+            @constCast("server.js"),
+            @constCast("--json"),
+        },
+        cfg,
+        deps,
+    );
+    try std.testing.expectEqual(RunResult.handled_success, result);
+    try std.testing.expectEqual(@as(usize, 1), mcp_profile_add_calls_for_test);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"kind\":\"mcp.add\"") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"server\":\"fixture\"") != null);
+    try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "\"profile_path\":\"/tmp/test-home/.fiber/mcp.json\"") != null);
 }

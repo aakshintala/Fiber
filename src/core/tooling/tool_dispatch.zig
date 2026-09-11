@@ -50,11 +50,10 @@ pub const default_max_read_file_lines: usize = 400;
 pub const default_max_read_file_line_len: usize = 2000;
 
 pub const web_search_unavailable_message = "web_search is unavailable: no local runtime with a configured Gateway transport policy is installed";
-pub const web_fetch_unavailable_message = "web_fetch is unavailable: no local WebFetch runtime is installed";
 pub const terminal_unavailable_message =
     "{\"error\":{\"tool\":\"shell\",\"code\":\"unsupported_host\",\"retryable\":false}}";
 const terminal_saved_session_required_message =
-    "TTY shell actions require a saved fx session.";
+    "TTY shell actions require a saved fiber session.";
 const terminal_saved_session_required_suggestion =
     "Use shell.run with tty=false, or rerun without --no-save.";
 
@@ -120,10 +119,6 @@ pub const SelectedDynamicToolSinkFn = *const fn (
 
 pub const ContextNoticeSinkFn = *const fn (?*anyopaque, []const u8) error{OutOfMemory}!void;
 
-pub const TurnControl = enum {
-    return_to_user,
-};
-
 /// Erased, owned typed input decoded by a concrete tool.
 pub const ToolInput = struct {
     ptr: *anyopaque,
@@ -151,38 +146,6 @@ pub const ToolResult = union(enum) {
             .success => |body| alloc.free(body),
             .failure => |body| alloc.free(body),
         }
-    }
-};
-
-pub const HostToolProviderFn = *const fn (
-    *anyopaque,
-    Allocator,
-    []const u8,
-    []const u8,
-    usize,
-    ?*std.atomic.Value(bool),
-) DispatchError!ToolResult;
-
-pub const HostToolProvider = struct {
-    context: *anyopaque,
-    call_fn: HostToolProviderFn,
-
-    pub fn call(
-        self: HostToolProvider,
-        alloc: Allocator,
-        name: []const u8,
-        arguments_json: []const u8,
-        max_result_bytes: usize,
-        cancel_flag: ?*std.atomic.Value(bool),
-    ) DispatchError!ToolResult {
-        return self.call_fn(
-            self.context,
-            alloc,
-            name,
-            arguments_json,
-            max_result_bytes,
-            cancel_flag,
-        );
     }
 };
 
@@ -269,7 +232,6 @@ pub const DispatchContext = struct {
     run_command_backend: ?RunCommandBackend = null,
     subagent_provider: ?subagent_tool_provider.Provider = null,
     vision_provider: ?VisionProvider = null,
-    host_tool_provider: ?HostToolProvider = null,
     ask_question_ctx: ?*anyopaque = null,
     ask_question_batch: ?AskQuestionBatchFn = null,
     tool_capabilities: ToolCapabilities = .{},
@@ -303,7 +265,6 @@ pub const DispatchContext = struct {
     web_fetch_completion_sink: ?*?core_types.WebFetchCompletion = null,
     tool_result_memory_sink: ?*?core_types.ToolResultMemory = null,
     command_result_json_sink: ?*?[]const u8 = null,
-    turn_control_sink: ?*?TurnControl = null,
     result_commit_sink: ?*?result_commit.Token = null,
 };
 
@@ -464,7 +425,7 @@ pub const Tool = struct {
     model_schema: model_tool_schema.FunctionSchema,
     model_visible: bool = true,
     write_provider_advertisement_fn: ?WriteProviderAdvertisementFn = null,
-    /// Set when the provider runs the tool instead of fx dispatch. Such a tool
+    /// Set when the provider runs the tool instead of fiber dispatch. Such a tool
     /// never reaches a call-time permission check, so advertisement is its only
     /// enforcement point and requires an already-settled allow.
     provider_executed: bool = false,
@@ -965,11 +926,6 @@ pub fn reportToolResultMemory(ctx: DispatchContext, memory: core_types.ToolResul
 pub fn reportCommandResultJson(ctx: DispatchContext, json: []const u8) void {
     const sink = ctx.command_result_json_sink orelse return;
     sink.* = json;
-}
-
-pub fn reportTurnControl(ctx: DispatchContext, control: TurnControl) void {
-    const sink = ctx.turn_control_sink orelse return;
-    sink.* = control;
 }
 
 pub fn reportResultCommit(ctx: DispatchContext, token: result_commit.Token) void {
@@ -1544,7 +1500,6 @@ test "terminal tool capability facts follow the host support matrix" {
         .macos,
         .linux,
         .windows,
-        .wasi,
         .freebsd,
         .emscripten,
     };

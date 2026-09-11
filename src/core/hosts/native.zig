@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const host = @import("host.zig");
-const native_secret_store = @import("native_secret_store.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 
@@ -9,8 +8,6 @@ pub const clipboard = host.Clipboard{
     .copy_fn = copyToClipboard,
     .copy_file_fn = copy_file_to_clipboard,
 };
-
-pub const secret_store = native_secret_store.provider;
 
 fn copyToClipboard(_: ?*anyopaque, text: []const u8) host.ClipboardError!bool {
     const argv = clipboardCommand(builtin.os.tag) orelse return false;
@@ -258,7 +255,6 @@ test "native clipboard selects the platform command" {
         clipboardCommand(.linux).?,
     );
     try std.testing.expect(clipboardCommand(.windows) == null);
-    try std.testing.expect(clipboardCommand(.wasi) == null);
 }
 
 test "native clipboard accepts only a successful exit" {

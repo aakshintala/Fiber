@@ -431,10 +431,6 @@ pub fn SubmitRuntime(comptime App: type) type {
 
         pub const Intent = enum { queue, steer };
 
-        pub fn submitInput(app: *App, max_prompt_history: usize) !void {
-            try submit(app, max_prompt_history);
-        }
-
         pub fn submitSteering(app: *App, max_prompt_history: usize) !void {
             try submitWithIntent(app, max_prompt_history, .steer);
         }

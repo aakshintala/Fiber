@@ -5,26 +5,12 @@ const secret = @import("secret.zig");
 const Allocator = std.mem.Allocator;
 
 // Sign in with Vercel supports exactly openid, email, profile and offline_access,
-// and silently filters anything else. fx only needs identity plus a refresh token,
+// and silently filters anything else. fiber only needs identity plus a refresh token,
 // so it asks for those two and nothing more. An earlier `use:ai-gateway` entry was
 // never a real scope: it was dropped on every grant and bought nothing.
 pub const default_scope = "openid offline_access";
 
-/// Returns the first requested scope the issuer did not grant. A silently reduced
-/// grant is otherwise invisible until some later request fails with a 401.
-pub fn missingGrantedScope(requested: []const u8, granted: []const u8) ?[]const u8 {
-    var wanted = std.mem.tokenizeScalar(u8, requested, ' ');
-    while (wanted.next()) |scope| {
-        var have = std.mem.tokenizeScalar(u8, granted, ' ');
-        const found = while (have.next()) |candidate| {
-            if (std.mem.eql(u8, candidate, scope)) break true;
-        } else false;
-        if (!found) return scope;
-    }
-    return null;
-}
 pub const OAuthError = error{
-    InvalidIssuer,
     InvalidOAuthResponse,
     AuthorizationPending,
     SlowDown,
@@ -38,13 +24,11 @@ pub const Metadata = struct {
     issuer: []u8,
     device_authorization_endpoint: []u8,
     token_endpoint: []u8,
-    revocation_endpoint: ?[]u8 = null,
 
     pub fn deinit(self: *Metadata, alloc: Allocator) void {
         alloc.free(self.issuer);
         alloc.free(self.device_authorization_endpoint);
         alloc.free(self.token_endpoint);
-        if (self.revocation_endpoint) |value| alloc.free(value);
         self.* = undefined;
     }
 };
@@ -88,54 +72,11 @@ pub const PollResult = union(enum) {
     success: TokenSet,
 };
 
-pub const TokenTypeHint = enum {
-    access_token,
-    refresh_token,
-};
-
 pub fn expiry_timestamp_ms(now_ms: i64, expires_in_seconds: i64) OAuthError!i64 {
     if (expires_in_seconds <= 0) return OAuthError.InvalidOAuthResponse;
     const duration_ms = std.math.mul(i64, expires_in_seconds, std.time.ms_per_s) catch
         return OAuthError.InvalidOAuthResponse;
     return std.math.add(i64, now_ms, duration_ms) catch OAuthError.InvalidOAuthResponse;
-}
-
-pub fn discover(
-    alloc: Allocator,
-    transport: oauth_transport.Provider,
-    issuer_url: []const u8,
-) !Metadata {
-    const url = try std.fmt.allocPrint(alloc, "{s}/.well-known/openid-configuration", .{issuer_url});
-    defer alloc.free(url);
-    const bytes = try fetchJson(alloc, transport, .get, url, null, .{});
-    defer alloc.free(bytes);
-    var metadata = try parseMetadata(alloc, bytes);
-    errdefer metadata.deinit(alloc);
-    if (!std.mem.eql(u8, metadata.issuer, issuer_url)) return OAuthError.InvalidIssuer;
-    return metadata;
-}
-
-pub fn requestDeviceAuthorization(
-    alloc: Allocator,
-    transport: oauth_transport.Provider,
-    metadata: Metadata,
-    client_id: []const u8,
-) !DeviceAuthorization {
-    var form: FormBody = .{};
-    var writer: std.Io.Writer.Allocating = .init(alloc);
-    defer writer.deinit();
-    try form.append(&writer.writer, "client_id", client_id);
-    try form.append(&writer.writer, "scope", default_scope);
-    const bytes = try fetchJson(
-        alloc,
-        transport,
-        .post_form,
-        metadata.device_authorization_endpoint,
-        writer.written(),
-        .{},
-    );
-    defer secret.zeroAndFree(alloc, bytes);
-    return parseDeviceAuthorization(alloc, bytes);
 }
 
 pub fn pollDeviceTokenBounded(
@@ -173,56 +114,6 @@ pub fn pollDeviceTokenBounded(
     return .{ .success = try parseTokenSet(alloc, bytes) };
 }
 
-pub fn refreshToken(
-    alloc: Allocator,
-    transport: oauth_transport.Provider,
-    metadata: Metadata,
-    client_id: []const u8,
-    refresh_token: []const u8,
-) !TokenSet {
-    var form: FormBody = .{};
-    var writer: std.Io.Writer.Allocating = .init(alloc);
-    defer writer.deinit();
-    try form.append(&writer.writer, "client_id", client_id);
-    try form.append(&writer.writer, "grant_type", "refresh_token");
-    try form.append(&writer.writer, "refresh_token", refresh_token);
-    const bytes = try fetchJson(
-        alloc,
-        transport,
-        .post_form,
-        metadata.token_endpoint,
-        writer.written(),
-        .{},
-    );
-    defer secret.zeroAndFree(alloc, bytes);
-    return parseTokenSet(alloc, bytes);
-}
-
-pub fn revokeToken(
-    alloc: Allocator,
-    transport: oauth_transport.Provider,
-    endpoint: []const u8,
-    client_id: []const u8,
-    token: []const u8,
-    token_type_hint: TokenTypeHint,
-) !void {
-    var form: FormBody = .{};
-    var writer: std.Io.Writer.Allocating = .init(alloc);
-    defer writer.deinit();
-    try form.append(&writer.writer, "client_id", client_id);
-    try form.append(&writer.writer, "token", token);
-    try form.append(&writer.writer, "token_type_hint", @tagName(token_type_hint));
-    const bytes = try fetchJson(
-        alloc,
-        transport,
-        .post_form,
-        endpoint,
-        writer.written(),
-        .{},
-    );
-    secret.zeroAndFree(alloc, bytes);
-}
-
 pub fn parseMetadata(alloc: Allocator, bytes: []const u8) !Metadata {
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, bytes, .{});
     defer parsed.deinit();
@@ -234,13 +125,10 @@ pub fn parseMetadata(alloc: Allocator, bytes: []const u8) !Metadata {
     errdefer alloc.free(device_authorization_endpoint);
     const token_endpoint = try dupeRequiredString(alloc, object, "token_endpoint");
     errdefer alloc.free(token_endpoint);
-    const revocation_endpoint = try dupeOptionalString(alloc, object, "revocation_endpoint");
-    errdefer if (revocation_endpoint) |value| alloc.free(value);
     return .{
         .issuer = issuer_value,
         .device_authorization_endpoint = device_authorization_endpoint,
         .token_endpoint = token_endpoint,
-        .revocation_endpoint = revocation_endpoint,
     };
 }
 
@@ -382,7 +270,7 @@ fn requiredInteger(object: std.json.ObjectMap, key: []const u8) !i64 {
 fn check_metadata_allocation_failures(alloc: Allocator) !void {
     var metadata = try parseMetadata(
         alloc,
-        "{\"issuer\":\"https://vercel.com\",\"device_authorization_endpoint\":\"https://vercel.com/device\",\"token_endpoint\":\"https://vercel.com/token\",\"revocation_endpoint\":\"https://vercel.com/revoke\"}",
+        "{\"issuer\":\"https://vercel.com\",\"device_authorization_endpoint\":\"https://vercel.com/device\",\"token_endpoint\":\"https://vercel.com/token\"}",
     );
     defer metadata.deinit(alloc);
 }
@@ -443,46 +331,6 @@ fn optionalBytesEqual(left: ?[]const u8, right: ?[]const u8) bool {
     return std.mem.eql(u8, left.?, right.?);
 }
 
-test "oauth discovery maps protocol input through the injected transport" {
-    const issuer = "https://vercel.test";
-    var probe = TransportProbe{
-        .expected_method = .get,
-        .expected_url = issuer ++ "/.well-known/openid-configuration",
-        .response_body = "{\"issuer\":\"https://vercel.test\",\"device_authorization_endpoint\":\"https://vercel.test/device\",\"token_endpoint\":\"https://vercel.test/token\"}",
-    };
-
-    var metadata = try discover(std.testing.allocator, probe.provider(), issuer);
-    defer metadata.deinit(std.testing.allocator);
-
-    try std.testing.expect(probe.matched);
-    try std.testing.expectEqualStrings("https://vercel.test/token", metadata.token_endpoint);
-}
-
-test "oauth device authorization owns form mapping while transport owns execution" {
-    var probe = TransportProbe{
-        .expected_method = .post_form,
-        .expected_url = "https://vercel.test/device",
-        .expected_payload = "client_id=client%20id&scope=openid%20offline_access",
-        .response_body = "{\"device_code\":\"device\",\"user_code\":\"CODE\",\"verification_uri\":\"https://vercel.test/verify\",\"expires_in\":600,\"interval\":5}",
-    };
-    const metadata = Metadata{
-        .issuer = @constCast("https://vercel.test"),
-        .device_authorization_endpoint = @constCast("https://vercel.test/device"),
-        .token_endpoint = @constCast("https://vercel.test/token"),
-    };
-
-    var device = try requestDeviceAuthorization(
-        std.testing.allocator,
-        probe.provider(),
-        metadata,
-        "client id",
-    );
-    defer device.deinit(std.testing.allocator);
-
-    try std.testing.expect(probe.matched);
-    try std.testing.expectEqualStrings("device", device.device_code);
-}
-
 test "oauth polling forwards bounds and preserves pending responses" {
     var cancel_flag = std.atomic.Value(bool).init(false);
     const deadline = std.Io.Clock.Timestamp.fromNow(std.testing.io, .{
@@ -516,21 +364,6 @@ test "oauth polling forwards bounds and preserves pending responses" {
 
     try std.testing.expect(probe.matched);
     try std.testing.expectEqual(PollResult.pending, result);
-}
-
-test "a reduced grant names the scope the issuer withheld" {
-    try std.testing.expect(missingGrantedScope("openid offline_access", "openid offline_access") == null);
-    try std.testing.expect(missingGrantedScope("openid", "openid email profile") == null);
-    try std.testing.expectEqualStrings(
-        "offline_access",
-        missingGrantedScope("openid offline_access", "openid").?,
-    );
-    // The scope fx used to request was never advertised, so every grant dropped it.
-    try std.testing.expectEqualStrings(
-        "use:ai-gateway",
-        missingGrantedScope("openid offline_access use:ai-gateway", "openid offline_access").?,
-    );
-    try std.testing.expect(missingGrantedScope("", "openid") == null);
 }
 
 test "oauth parses metadata" {

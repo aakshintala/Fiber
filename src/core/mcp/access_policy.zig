@@ -139,7 +139,7 @@ pub const Decision = enum {
 /// filtered visibility, and every runtime/catalog/auth identity are included.
 pub fn authorityGeneration(view: View) u64 {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    hash.update("fx.mcp.access-authority.v1\x00");
+    hash.update("fiber.mcp.access-authority.v1\x00");
     hashU64(&hash, view.runtime_generation);
     hashString(&hash, view.owner_id);
     hashString(&hash, view.parent_id);
@@ -268,10 +268,10 @@ test "MCP view authorization intersects immutable and live authority" {
     live.features_visible = false;
     try std.testing.expectEqual(Decision.reject_features, authorize(captured, live, .{ .feature_server = "docs" }));
     live.features_visible = true;
-    live.servers[0].source = .acp;
+    live.servers[0].source = .workspace;
     try std.testing.expectEqual(Decision.reject_server, authorize(captured, live, .{ .feature_server = "docs" }));
     live.servers[0].source = .profile;
-    live.servers[0].scope = .acp_session;
+    live.servers[0].scope = .workspace;
     try std.testing.expectEqual(Decision.reject_server, authorize(captured, live, .{ .feature_server = "docs" }));
     live.servers[0].scope = .profile;
     live.servers[0].connection_generation += 1;

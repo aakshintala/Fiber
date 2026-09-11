@@ -1060,10 +1060,6 @@ test "credential backend selection is explicit and platform scoped" {
         StorageBackend.profile_file,
         selectStorageBackend(.linux, false, true),
     );
-    try std.testing.expectEqual(
-        StorageBackend.profile_file,
-        selectStorageBackend(.windows, false, true),
-    );
 }
 
 test "credential read decisions preserve the portable store during migration" {
@@ -1106,7 +1102,7 @@ const TestHome = struct {
         };
         errdefer result.map.deinit();
         try result.map.put("HOME", home);
-        try result.map.put("FX_DISABLE_KEYCHAIN", "1");
+        try result.map.put("FIBER_DISABLE_KEYCHAIN", "1");
         return result;
     }
 
@@ -1443,7 +1439,7 @@ test "credential store is private atomic and supports restart deletion" {
     defer loaded.deinit(alloc);
     try std.testing.expectEqualStrings("access-secret", loaded.access_token);
 
-    var root = try tmp.dir.openDir(std.testing.io, "home/.fx", .{ .iterate = true });
+    var root = try tmp.dir.openDir(std.testing.io, "home/.fiber", .{ .iterate = true });
     defer root.close(std.testing.io);
     const root_stat = try root.stat(std.testing.io);
     try std.testing.expectEqual(

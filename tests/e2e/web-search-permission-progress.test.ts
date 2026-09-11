@@ -5,14 +5,12 @@ import { join } from "node:path";
 import { runFx } from "../evals/eval-helpers";
 
 const TIMEOUT = 15_000;
-const NO_GATEWAY_AUTH = {
-  AI_GATEWAY_API_KEY: undefined,
-  VERCEL_OIDC_TOKEN: undefined,
-  FX_DISABLE_KEYCHAIN: "1",
+const NO_CODEX_AUTH = {
+  FIBER_DISABLE_KEYCHAIN: "1",
 };
 
-async function runWithoutGatewayAuth(args: string[]) {
-  const root = mkdtempSync(join(tmpdir(), "fx-web-search-no-auth-"));
+async function runWithoutCodexAuth(args: string[]) {
+  const root = mkdtempSync(join(tmpdir(), "fiber-web-search-no-auth-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(home);
@@ -20,7 +18,7 @@ async function runWithoutGatewayAuth(args: string[]) {
   try {
     return await runFx(args, {
       cwd: workspace,
-      env: { ...NO_GATEWAY_AUTH, HOME: home },
+      env: { ...NO_CODEX_AUTH, HOME: home },
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -36,14 +34,14 @@ describe("web_search permission progress", () => {
   test(
     "default ask emits no native search progress before authentication",
     async () => {
-      const result = await runWithoutGatewayAuth([
+      const result = await runWithoutCodexAuth([
         "ask",
-        "--auto",
+        "--permission-mode", "auto",
         "search the web for current news",
       ]);
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain("fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.");
+      expect(result.stderr).toContain("fiber needs a Codex subscription login for this model. Run fiber auth login codex.");
       expectNoSearchProgress(result.stderr);
     },
     TIMEOUT,

@@ -10,10 +10,17 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, HAS_API_KEY } from "../evals/eval-helpers";
-import { hasEmptyComposer, TmuxSession, tmuxAvailable } from "./tmux-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
+import {
+  chatGptAccessToken,
+  FAKE_CODEX_DEFAULT_MODEL,
+  hasEmptyComposer,
+  TmuxSession,
+  tmuxAvailable,
+  writeSeededChatGptLogin,
+} from "./tmux-helpers";
 
-const SKIP = !tmuxAvailable() || !HAS_API_KEY;
+const SKIP = !tmuxAvailable();
 const SKIP_TMUX = !tmuxAvailable();
 const TIMEOUT = 30_000;
 
@@ -25,7 +32,7 @@ afterEach(async () => {
 
 describe.skipIf(SKIP)("tui: startup and exit", () => {
   test(
-    "fx launches and shows prompt",
+    "fiber launches and shows prompt",
     async () => {
       session = await TmuxSession.create();
       const pane = await session.waitForComposer(10_000);
@@ -40,7 +47,7 @@ describe.skipIf(SKIP)("tui: startup and exit", () => {
       session = await TmuxSession.create();
       await session.waitForComposer(10_000);
       await session.sendText("/help");
-      const pane = await session.waitForText("Commands 35", 5_000);
+      const pane = await session.waitForText("Commands 20", 5_000);
       expect(pane).toContain("[All]");
       expect(pane).toContain("Tab Category");
       expect(pane).toContain("Enter Open");
@@ -66,7 +73,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
   test(
     "statusline hides the workspace identity by default",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-statusline-default-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-statusline-default-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace-default-hidden");
       const stderrPath = join(root, "stderr.log");
@@ -74,17 +81,16 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
       mkdirSync(join(workspace, ".git"), { recursive: true });
       writeFileSync(join(workspace, ".git", "HEAD"), "ref: refs/heads/default-hidden-branch\n");
       writeFileSync(stderrPath, "");
+      writeSeededChatGptLogin(home, chatGptAccessToken());
 
       try {
         session = await TmuxSession.create({
           cwd: workspace,
           env: {
             HOME: home,
-            AI_GATEWAY_API_KEY: undefined,
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_AUTO_UPGRADE: "0",
-            FX_DISABLE_KEYCHAIN: "1",
-            FX_SKIP_ONBOARDING: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
+            FIBER_SKIP_ONBOARDING: "1",
+            FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           },
           stderrPath,
           width: 100,
@@ -109,7 +115,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
   test(
     "/help keeps command descriptions close after a wide-to-narrow resize",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-help-columns-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-help-columns-")));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       mkdirSync(home, { recursive: true });
@@ -120,7 +126,6 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
           cwd: root,
           env: {
             HOME: home,
-            FX_AUTO_UPGRADE: "0",
           },
           stderrPath,
           width: 160,
@@ -129,8 +134,15 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
 
         await session.waitForComposer(10_000);
         await session.sendText("/help");
+        // The inline slash-completion menu carries the same command and
+        // description as the catalog /help prints, so match the executed
+        // command instead: only that clears the composer. Measuring the
+        // completion menu reads a column padded to "help" rather than to the
+        // catalog's widest name.
         const wide = await session.waitForPane(
-          (pane) => pane.includes("/help") && pane.includes("show available slash commands"),
+          (pane) => hasEmptyComposer(pane) &&
+            pane.includes("/help") &&
+            pane.includes("show available slash commands"),
           5_000,
         );
         const wideHelp = wide.split("\n").find(
@@ -167,18 +179,19 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
   test(
     "statusline refreshes the working directory and Git branch",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-statusline-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-statusline-")));
       const home = join(root, "home");
       const repository = join(root, "repository");
       const workspace = join(repository, "packages", "status-root");
       const headPath = join(repository, ".git", "HEAD");
       const stderrPath = join(root, "stderr.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
+      mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(join(repository, ".git"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
+      writeSeededChatGptLogin(home, chatGptAccessToken());
       writeFileSync(headPath, "ref: refs/heads/initial-branch\n");
       writeFileSync(
-        join(home, ".fx", "settings.json"),
+        join(home, ".fiber", "settings.json"),
         `${JSON.stringify({ statusLine: { workspace: true }, fast_mode: false })}\n`,
       );
       writeFileSync(stderrPath, "");
@@ -188,11 +201,9 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
           cwd: workspace,
           env: {
             HOME: home,
-            AI_GATEWAY_API_KEY: undefined,
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_AUTO_UPGRADE: "0",
-            FX_DISABLE_KEYCHAIN: "1",
-            FX_SKIP_ONBOARDING: "1",
+            FIBER_DISABLE_KEYCHAIN: "1",
+            FIBER_SKIP_ONBOARDING: "1",
+            FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
           },
           stderrPath,
           width: 100,
@@ -240,21 +251,20 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
   test(
     "restore the launch header without retaining prior output",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-fresh-session-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-fresh-session-")));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       mkdirSync(home, { recursive: true });
       writeFileSync(stderrPath, "");
 
-      const version = execFileSync(FX_BIN, ["--version"], { encoding: "utf8" }).trim();
-      const banner = `𝒇x v${version} · Run /help for commands`;
+      const version = execFileSync(FIBER_BIN, ["--version"], { encoding: "utf8" }).trim();
+      const banner = `fiber v${version} · Run /help for commands`;
 
       try {
         session = await TmuxSession.create({
           cwd: root,
           env: {
             HOME: home,
-            FX_AUTO_UPGRADE: "0",
           },
           stderrPath,
           width: 120,
@@ -264,7 +274,7 @@ describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {
         const initial = await session.waitForText(banner, 10_000);
         expect(initial.split(banner)).toHaveLength(2);
 
-        for (const command of ["/clear", "/reset", "/new"]) {
+        for (const command of ["/clear", "/new"]) {
           await session.sendText("/status");
           await session.waitForText("model=", 5_000);
           await session.sendText(command);
@@ -302,9 +312,9 @@ describe.skipIf(SKIP_TMUX)("tui: MCP startup", () => {
   test(
     "unresponsive MCP discovery does not block startup or shutdown",
     async () => {
-      const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-mcp-startup-")));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-mcp-startup-")));
       const home = join(root, "home");
-      mkdirSync(join(home, ".fx"), { recursive: true });
+      mkdirSync(join(home, ".fiber"), { recursive: true });
 
       let discoveryRequests = 0;
       const server = Bun.serve({
@@ -317,7 +327,7 @@ describe.skipIf(SKIP_TMUX)("tui: MCP startup", () => {
         },
       });
       writeFileSync(
-        join(home, ".fx", "mcp.json"),
+        join(home, ".fiber", "mcp.json"),
         JSON.stringify({
           mcp: {
             pending: {
@@ -334,7 +344,6 @@ describe.skipIf(SKIP_TMUX)("tui: MCP startup", () => {
           cwd: root,
           env: {
             HOME: home,
-            FX_AUTO_UPGRADE: "0",
           },
         });
         const pane = await session.waitForComposer(5_000);
@@ -372,91 +381,33 @@ describe.skipIf(SKIP_TMUX)("tui: MCP startup", () => {
 
 describe.skipIf(SKIP_TMUX)("tui: credential onboarding", () => {
   test(
-    "/setup opens an inline status-first hub",
-    async () => {
-      const home = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-direct-setup-")));
-      session = await TmuxSession.create({
-        env: {
-          AI_GATEWAY_API_KEY: undefined,
-          VERCEL_OIDC_TOKEN: undefined,
-          HOME: home,
-          FX_AUTO_UPGRADE: "0",
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_SKIP_ONBOARDING: "0",
-        },
-      });
-
-      await session.waitForComposer(TIMEOUT);
-      await session.sendText("/setup");
-      const setup = await session.waitForPane(
-        (pane) =>
-          pane.includes("Setup") &&
-          pane.includes("Connections") &&
-          pane.includes("Model provider") &&
-          pane.includes("Vercel team") &&
-          pane.includes("Credential source") &&
-          pane.includes("Enter Open") &&
-          pane.includes("Esc Close"),
-        TIMEOUT,
-      );
-      expect(setup).not.toContain("AI_GATEWAY_API_KEY");
-      expect(setup).not.toContain("fx login");
-      expect(setup).not.toContain("Vercel account");
-      expect(setup).not.toContain("run /login");
-
-      for (let index = 0; index < 2; index += 1) {
-        await session.sendKeys("Down");
-      }
-      await session.sendKeys("Enter");
-      await session.waitForPane(
-        (pane) => pane.includes("Credential source") && pane.includes("Automatic"),
-        TIMEOUT,
-      );
-      await session.sendKeys("Escape");
-      await session.waitForText("Setup", TIMEOUT);
-      await session.sendKeys("Escape");
-      await session.waitForComposer(TIMEOUT);
-    },
-    TIMEOUT,
-  );
-
-  test(
     "startup shows credential onboarding on the first frame and Escape remains session-only",
     async () => {
-      const home = realpathSync(mkdtempSync(join(tmpdir(), "fx-e2e-login-onboarding-")));
+      const home = realpathSync(mkdtempSync(join(tmpdir(), "fiber-e2e-login-onboarding-")));
       const env = {
-        AI_GATEWAY_API_KEY: undefined,
-        VERCEL_OIDC_TOKEN: undefined,
         HOME: home,
-        USER: "fx-e2e-login-onboarding",
-        FX_AUTO_UPGRADE: "0",
-        FX_DISABLE_KEYCHAIN: "1",
-        FX_NO_OPEN_BROWSER: "1",
-        FX_SKIP_ONBOARDING: "0",
+        USER: "fiber-e2e-login-onboarding",
+        FIBER_DISABLE_KEYCHAIN: "1",
+        FIBER_NO_OPEN_BROWSER: "1",
+        FIBER_SKIP_ONBOARDING: "0",
       };
 
       session = await TmuxSession.create({ env });
 
-      const initial = await session.waitForText("Welcome to fx", TIMEOUT);
-      expect(initial).toContain("Sign in with Vercel");
-      expect(initial).toContain("Add an API key");
-      expect(initial).toContain("Esc to set up later");
-      expect(initial).not.toContain("Change team");
-      expect(initial).not.toContain("Switch credential");
-      expect(initial).not.toContain("Skip for now");
+      const initial = await session.waitForText("› Connections", TIMEOUT);
+      expect(initial).not.toContain("Sign in with Vercel");
+      expect(initial).not.toContain("Add an API key");
 
       await session.sendKeys("Escape");
       const skipped = await session.waitForPane(
-        (pane) => !pane.includes("Welcome to fx") && !pane.includes("Sign in with Vercel"),
+        (pane) => !pane.includes("› Connections") && hasEmptyComposer(pane),
         TIMEOUT,
       );
-      expect(skipped).not.toContain("Add an API key");
+      expect(skipped).not.toContain("Esc to set up later");
 
       await session.kill();
       session = await TmuxSession.create({ env });
-      const restarted = await session.waitForText("Welcome to fx", TIMEOUT);
-      expect(restarted).toContain("Sign in with Vercel");
-      expect(restarted).toContain("Add an API key");
+      await session.waitForText("› Connections", TIMEOUT);
     },
     60_000,
   );

@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const command_output_content = @import("../tooling/command_output_content.zig");
 const io_mod = @import("../shared/io.zig");
 const text_utils = @import("../shared/text_utils.zig");
@@ -10,7 +9,7 @@ const session_child_store = @import("session_child_store.zig");
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const Stream = command_output_content.Stream;
-const replay_magic = "FXRPLY01";
+const replay_magic = "FBRPLY01";
 const frame_header_bytes: usize = 9;
 const max_frame_payload_bytes: usize = 1024 * 1024;
 const max_agent_line_bytes: usize = max_frame_payload_bytes;
@@ -162,9 +161,6 @@ pub const EphemeralStore = struct {
         alloc: Allocator,
         stem: []const u8,
     ) !OpenSpool {
-        if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-            return error.EphemeralReplayUnavailable;
-        }
         const handle = try std.fmt.allocPrint(alloc, "{s}.bin", .{stem});
         errdefer alloc.free(handle);
         const temp_name = try std.fmt.allocPrint(alloc, ".{s}.tmp", .{stem});
@@ -223,9 +219,6 @@ pub const EphemeralStore = struct {
 };
 
 fn duplicateFile(file: std.Io.File) !std.Io.File {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.EphemeralReplayUnavailable;
-    }
     const duplicated = std.c.fcntl(file.handle, std.c.F.DUPFD_CLOEXEC, @as(std.c.fd_t, 0));
     if (duplicated < 0) return error.EphemeralReplayUnavailable;
     return .{
@@ -821,7 +814,7 @@ fn randomReplayStem(alloc: Allocator) ![]u8 {
     const random_hex = std.fmt.bytesToHex(random, .lower);
     return std.fmt.allocPrint(
         alloc,
-        "fx-command-replay-{s}",
+        "fiber-command-replay-{s}",
         .{&random_hex},
     );
 }
@@ -1519,7 +1512,7 @@ test "saved and ephemeral replay backings share collision handling" {
     );
     defer capability.deinit();
 
-    const stem = "fx-command-replay-fixed-collision";
+    const stem = "fiber-command-replay-fixed-collision";
     var saved = try createSpoolWithStem(alloc, .{ .saved = &capability }, stem);
     defer {
         saved.file.deinit();
@@ -1907,7 +1900,7 @@ test "command replay reader rejects descriptor and frame corruption" {
     var malformed = try capability.createExclusiveFile(
         alloc,
         .command_artifacts,
-        "fx-command-replay-malformed.bin",
+        "fiber-command-replay-malformed.bin",
     );
     defer malformed.deinit();
     try malformed.writeAll("not-a-replay");
@@ -1916,19 +1909,19 @@ test "command replay reader rejects descriptor and frame corruption" {
     try std.testing.expectError(
         error.InvalidReplayHeader,
         Reader.open(alloc, &capability, .{
-            .handle = "fx-command-replay-malformed.bin",
+            .handle = "fiber-command-replay-malformed.bin",
             .framed_bytes = "not-a-replay".len,
         }),
     );
     try std.testing.expectError(
         error.ReplaySizeMismatch,
         Reader.open(alloc, &capability, .{
-            .handle = "fx-command-replay-malformed.bin",
+            .handle = "fiber-command-replay-malformed.bin",
             .framed_bytes = 1,
         }),
     );
 
-    const empty_handle = "fx-command-replay-empty-frame.bin";
+    const empty_handle = "fiber-command-replay-empty-frame.bin";
     var empty_replay = [_]u8{0} ** (replay_magic.len + frame_header_bytes);
     @memcpy(empty_replay[0..replay_magic.len], replay_magic);
     var empty_file = try capability.createExclusiveFile(
@@ -1971,7 +1964,7 @@ test "failed ephemeral replay reader construction leaves its backing reusable" {
     var store = EphemeralStore.initForTesting(alloc, temp_path);
     defer store.deinit();
 
-    var spool = try store.createSpoolWithStem(alloc, "fx-command-replay-invalid-header");
+    var spool = try store.createSpoolWithStem(alloc, "fiber-command-replay-invalid-header");
     defer {
         spool.file.deinit();
         store.delete(spool.handle);

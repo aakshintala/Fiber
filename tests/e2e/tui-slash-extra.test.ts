@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -10,30 +9,20 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  cleanupIsolatedTestHome,
-  createIsolatedTestHome,
-  HAS_API_KEY,
-} from "../evals/eval-helpers";
 import { readTrace } from "./tui-render-assertions";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
+  codexFinalText,
   hasEmptyComposer,
-  startDynamicFakeGateway,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const SKIP = !tmuxAvailable() || !HAS_API_KEY;
+const SKIP = !tmuxAvailable();
 const TIMEOUT = 30_000;
 const LONG_TIMEOUT = 120_000;
 const TRACE_SCOPES = "agent,worker,gateway,tool,permission,history,interrupt,prompt";
-const CLIPBOARD_PROGRAM = process.platform === "darwin"
-  ? "pbcopy"
-  : process.platform === "linux"
-    ? "xclip"
-    : null;
 
 let session: TmuxSession | null = null;
 
@@ -51,7 +40,7 @@ describe.skipIf(!tmuxAvailable())("tui: skills command recovery", () => {
   test(
     "invalid /skills create name reports an inline error and preserves the session",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-invalid-skill-name-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-invalid-skill-name-"));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       mkdirSync(home);
@@ -73,10 +62,10 @@ describe.skipIf(!tmuxAvailable())("tui: skills command recovery", () => {
         );
         expect(session.isAlive()).toBe(true);
         expect(hasEmptyComposer(rejected)).toBe(true);
-        expect(existsSync(join(home, ".fx", "escape-attempt"))).toBe(false);
+        expect(existsSync(join(home, ".fiber", "escape-attempt"))).toBe(false);
 
         await session.sendText("/skills path");
-        const recovered = await session.waitForText("fx managed install root:", 5_000);
+        const recovered = await session.waitForText("fiber managed install root:", 5_000);
         expect(hasEmptyComposer(recovered)).toBe(true);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
@@ -91,176 +80,27 @@ describe.skipIf(!tmuxAvailable())("tui: skills command recovery", () => {
   );
 });
 
-function startFakeCreditsGateway() {
-  const requests: Array<{
-    method: string;
-    path: string;
-    authorizationMatchesExpected: boolean;
-  }> = [];
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(request) {
-      requests.push({
-        method: request.method,
-        path: new URL(request.url).pathname,
-        authorizationMatchesExpected:
-          request.headers.get("authorization") ===
-          "Bearer credits-fake-key",
-      });
-      return Response.json(
-        { error: { code: "credit_card_required", message: "Buy credits to use AI Gateway." } },
-        { status: 403 },
-      );
-    },
-  });
-  return {
-    url: `http://127.0.0.1:${server.port}/v1/credits`,
-    requests,
-    stop() {
-      server.stop(true);
-    },
-  };
-}
-
-describe.skipIf(!tmuxAvailable())("tui: credits slash command", () => {
-  test(
-    "/credits shows actionable Gateway denial and returns to prompt",
-    async () => {
-      const gateway = startFakeCreditsGateway();
-      const home = createIsolatedTestHome();
-      try {
-        session = await TmuxSession.create({
-          env: {
-            HOME: home,
-            AI_GATEWAY_API_KEY: "credits-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_E2E_GATEWAY_CREDITS_URL: gateway.url,
-          },
-          width: 120,
-          height: 40,
-        });
-        await session.waitForComposer(10_000);
-
-        await session.sendText("/credits");
-        await session.waitForText("Buy credits to use AI Gateway.", 10_000);
-        await session.waitForComposer(10_000);
-
-        const scrollback = await session.captureFullScrollback();
-        expect(gateway.requests).toEqual([{
-          method: "GET",
-          path: "/v1/credits",
-          authorizationMatchesExpected: true,
-        }]);
-        expect(scrollback).toContain("API access denied");
-        expect(scrollback).toContain("HTTP 403");
-        expect(scrollback).toContain("Buy credits to use AI Gateway.");
-        expect(hasEmptyComposer(scrollback)).toBe(true);
-      } finally {
-        gateway.stop();
-        try {
-          if (session) {
-            await session.kill();
-            session = null;
-          }
-        } finally {
-          cleanupIsolatedTestHome(home);
-        }
-      }
-    },
-    TIMEOUT,
-  );
-});
-
-describe.skipIf(!tmuxAvailable() || CLIPBOARD_PROGRAM === null)("tui: clipboard host", () => {
-  test(
-    "/copy sends exact reply bytes to the host clipboard and reports process failure",
-    async () => {
-      if (CLIPBOARD_PROGRAM === null) throw new Error("unsupported clipboard platform");
-
-      const workDir = mkdtempSync(join(tmpdir(), "fx-clipboard-host-"));
-      const homeDir = join(workDir, "home");
-      const binDir = join(workDir, "bin");
-      const capturePath = join(workDir, "clipboard.txt");
-      const stderrPath = join(workDir, "stderr.log");
-      const clipboardPath = join(binDir, CLIPBOARD_PROGRAM);
-      mkdirSync(homeDir);
-      mkdirSync(binDir);
-      writeFileSync(clipboardPath, "#!/bin/sh\ncat > \"$FX_TEST_CLIPBOARD_CAPTURE\"\n");
-      chmodSync(clipboardPath, 0o755);
-
-      const reply = "clipboard host sentinel\nsecond line";
-      const gateway = startDynamicFakeGateway(() => fakeGatewayFinalText(reply));
-      try {
-        session = await TmuxSession.create({
-          cwd: workDir,
-          stderrPath,
-          env: {
-            HOME: homeDir,
-            AI_GATEWAY_API_KEY: "clipboard-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
-            FX_TEST_CLIPBOARD_CAPTURE: capturePath,
-            PATH: `${binDir}:${process.env.PATH ?? ""}`,
-          },
-        });
-        await session.waitForComposer(10_000);
-
-        await session.sendText("reply for clipboard");
-        await session.waitForText("clipboard host sentinel", 10_000);
-        await session.waitForComposer(10_000);
-        await session.sendText("/copy");
-        await session.waitForText("Copied to clipboard.", 5_000);
-
-        expect(readFileSync(capturePath, "utf8")).toBe(reply);
-
-        writeFileSync(clipboardPath, "#!/bin/sh\nexit 23\n");
-        await session.sendText("/copy");
-        await session.waitForText("Failed to copy to clipboard.", 5_000);
-        expect(readFileSync(stderrPath, "utf8")).toBe("");
-      } finally {
-        if (session) {
-          await session.kill();
-          session = null;
-        }
-        gateway.stop();
-        rmSync(workDir, { recursive: true, force: true });
-      }
-    },
-    TIMEOUT,
-  );
-});
-
 describe.skipIf(!tmuxAvailable())("tui: active session transitions", () => {
   test(
-    "active /clear cancels a fake Gateway turn and accepts a follow-up prompt",
+    "active /clear cancels a fake Codex turn and accepts a follow-up prompt",
     async () => {
-      const workDir = mkdtempSync(join(tmpdir(), "fx-active-clear-"));
-      const homeDir = mkdtempSync(join(tmpdir(), "fx-active-clear-home-"));
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-active-clear-"));
+      const homeDir = mkdtempSync(join(tmpdir(), "fiber-active-clear-home-"));
       const stderrPath = join(workDir, "stderr.log");
       let requestCount = 0;
-      const gateway = startDynamicFakeGateway(() => {
-        requestCount += 1;
-        if (requestCount > 1) return fakeGatewayFinalText("NATIVE_FOLLOWUP_OK");
-        return new Promise<Response>(() => {});
+      const codex = startFakeCodex({
+        route: () => {
+          requestCount += 1;
+          if (requestCount > 1) return codexFinalText("NATIVE_FOLLOWUP_OK");
+          return new Promise<string>(() => {});
+        },
       });
 
       try {
         session = await TmuxSession.create({
           cwd: workDir,
           stderrPath,
-          env: {
-            HOME: homeDir,
-            AI_GATEWAY_API_KEY: "active-clear-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
-          },
+          env: seededFakeCodexEnv(homeDir, codex),
           width: 120,
           height: 40,
         });
@@ -273,9 +113,9 @@ describe.skipIf(!tmuxAvailable())("tui: active session transitions", () => {
 
         await session.sendText("complete the follow-up");
         await session.waitForText("NATIVE_FOLLOWUP_OK", 10_000);
-        expect(gateway.requests).toHaveLength(2);
-        expect(gateway.requests[1].body).toContain("complete the follow-up");
-        expect(gateway.requests[1].body).not.toContain("start an active turn");
+        expect(codex.requests).toHaveLength(2);
+        expect(codex.requests[1].body).toContain("complete the follow-up");
+        expect(codex.requests[1].body).not.toContain("start an active turn");
         expect(session.isAlive()).toBe(true);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
@@ -283,7 +123,7 @@ describe.skipIf(!tmuxAvailable())("tui: active session transitions", () => {
           await session.kill();
           session = null;
         }
-        gateway.stop();
+        codex.stop();
         rmSync(workDir, { recursive: true, force: true });
         rmSync(homeDir, { recursive: true, force: true });
       }
@@ -309,32 +149,25 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/clear resets projected history before the next prompt",
     async () => {
-      const workDir = mkdtempSync(join(tmpdir(), "fx-row03-clear-"));
-      const homeDir = mkdtempSync(join(tmpdir(), "fx-row03-clear-home-"));
+      const workDir = mkdtempSync(join(tmpdir(), "fiber-row03-clear-"));
+      const homeDir = mkdtempSync(join(tmpdir(), "fiber-row03-clear-home-"));
       const tracePath = join(workDir, "trace.log");
-      mkdirSync(join(homeDir, ".fx"), { recursive: true });
+      mkdirSync(join(homeDir, ".fiber"), { recursive: true });
       writeFileSync(
-        join(homeDir, ".fx", "settings.json"),
+        join(homeDir, ".fiber", "settings.json"),
         JSON.stringify({ permission: { ask_user_question: "deny" } }),
       );
-      const gateway = startDynamicFakeGateway(() =>
-        fakeGatewayFinalText("pineapple fixture response")
-      );
+      const codex = startFakeCodex({
+        route: () => codexFinalText("pineapple fixture response"),
+      });
 
       try {
         session = await TmuxSession.create({
           cwd: workDir,
-          env: {
-            HOME: homeDir,
-            AI_GATEWAY_API_KEY: "clear-fake-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_MODEL: FAKE_GATEWAY_MODEL,
-            FX_TRACE_SCOPES: TRACE_SCOPES,
-            FX_TRACE_LOG: tracePath,
-          },
+          env: seededFakeCodexEnv(homeDir, codex, {
+            FIBER_TRACE_SCOPES: TRACE_SCOPES,
+            FIBER_TRACE_LOG: tracePath,
+          }),
           width: 120,
           height: 40,
         });
@@ -364,13 +197,13 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         expect(postClearEnd).toContain("history_turns=0");
         expect(postClearEnd).toContain("added_gateway_messages=0");
         expect(postClearEnd).toContain("projected_message_roles=none");
-        expect(gateway.requests).toHaveLength(2);
+        expect(codex.requests).toHaveLength(2);
       } finally {
         if (session) {
           await session.kill();
           session = null;
         }
-        gateway.stop();
+        codex.stop();
         rmSync(workDir, { recursive: true, force: true });
         rmSync(homeDir, { recursive: true, force: true });
       }
@@ -391,51 +224,21 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   );
 
   test(
-    "/stats shows session statistics",
+    "/usage opens the compact local usage dashboard",
     async () => {
-      session = await launchAndWait();
-      await session.sendText("/stats");
-      const pane = await session.waitForText(/stats|token|turn|step/i, 5_000);
-      expect(pane.toLowerCase()).toMatch(/stats|token|turn|step/);
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "/usage and /cost open the same compact local usage dashboard",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "fx-usage-empty-home-"));
+      const home = mkdtempSync(join(tmpdir(), "fiber-usage-empty-home-"));
       session = await TmuxSession.create({ env: { HOME: home } });
       await session.waitForComposer(10_000);
-      await session.sendText("/cost");
+      await session.sendText("/usage");
       const pane = await session.waitForText(
         /Tracking has not started/,
         5_000,
       );
       expect(pane).toContain("[30 days]");
       expect(pane).not.toMatch(/^● Usage/m);
-      expect(pane).toContain("Tab Scope");
-      expect(pane).toContain("R Refresh");
       expect(pane).toContain("Esc Close");
       await session.sendKeys("Escape");
       await session.waitForComposer(5_000);
-      await session.sendText("/usage");
-      const aliasPane = await session.waitForText(
-        /Tracking has not started/,
-        5_000,
-      );
-      expect(aliasPane).toContain("[30 days]");
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "/credits shows credit info",
-    async () => {
-      session = await launchAndWait();
-      await session.sendText("/credits");
-      const pane = await session.waitForText(/credit|balance|error|failed/i, 10_000);
-      expect(pane.length).toBeGreaterThan(0);
     },
     TIMEOUT,
   );
@@ -443,17 +246,17 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/mcp opens an inline menu without changing the transcript",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-mcp-menu-empty-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-mcp-menu-empty-"));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
-      writeFileSync(join(home, ".fx", "settings.json"), "{}");
+      mkdirSync(join(home, ".fiber"), { recursive: true });
+      writeFileSync(join(home, ".fiber", "settings.json"), "{}");
 
       try {
         session = await TmuxSession.create({
           cwd: root,
           stderrPath,
-          env: { HOME: home, FX_AUTO_UPGRADE: "0" },
+          env: { HOME: home },
           width: 100,
           height: 30,
         });
@@ -471,7 +274,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         expect(menu).not.toContain("MCP: no servers configured");
 
         await session.sendKeys("C");
-        const info = await session.waitForText("~/.fx/mcp.json", 5_000);
+        const info = await session.waitForText("~/.fiber/mcp.json", 5_000);
         expect(info).toContain("<workspace>/.mcp.json");
         await session.sendKeys("Escape");
         await session.waitForText("No MCP servers configured.", 5_000);
@@ -507,13 +310,13 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/mcp browses live typed catalogs and inserts a resource preview without submitting",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-mcp-menu-catalog-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-mcp-menu-catalog-"));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
       const wireLogPath = join(root, "mcp-wire.jsonl");
-      mkdirSync(join(home, ".fx"), { recursive: true });
+      mkdirSync(join(home, ".fiber"), { recursive: true });
       writeFileSync(
-        join(home, ".fx", "mcp.json"),
+        join(home, ".fiber", "mcp.json"),
         JSON.stringify({
           mcp: {
             fixture: {
@@ -522,9 +325,9 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
                 join(import.meta.dir, "fixtures", "mcp-modern-stdio.mjs"),
               ],
               environment: {
-                FX_MCP_MODE: "features",
-                FX_MCP_WIRE_LOG: wireLogPath,
-                FX_MCP_CATALOG_DELAY_MS: "25",
+                FIBER_MCP_MODE: "features",
+                FIBER_MCP_WIRE_LOG: wireLogPath,
+                FIBER_MCP_CATALOG_DELAY_MS: "25",
               },
             },
           },
@@ -535,7 +338,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         session = await TmuxSession.create({
           cwd: root,
           stderrPath,
-          env: { HOME: home, FX_AUTO_UPGRADE: "0" },
+          env: { HOME: home },
           width: 110,
           height: 32,
         });
@@ -567,7 +370,10 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         const toolPreview = await session.waitForText("untrusted metadata", 10_000);
         expect(toolPreview).toContain("mcp_fixture_echo");
         await session.sendKeys("Escape");
-        await session.waitForText("mcp_fixture_echo", 5_000);
+        await session.waitForPane(
+          (pane) => pane.includes("[Tools]") && !pane.includes("untrusted metadata"),
+          5_000,
+        );
 
         await session.sendKeys("Right");
         const resources = await session.waitForText("[Resources]", 10_000);
@@ -681,18 +487,18 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/mcp add and remove stay inside the menu and use the profile owner",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-mcp-menu-mutate-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-mcp-menu-mutate-"));
       const home = join(root, "home");
       const stderrPath = join(root, "stderr.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
-      writeFileSync(join(home, ".fx", "settings.json"), "{}");
+      mkdirSync(join(home, ".fiber"), { recursive: true });
+      writeFileSync(join(home, ".fiber", "settings.json"), "{}");
       const fixture = join(import.meta.dir, "fixtures", "mcp-modern-stdio.mjs");
 
       try {
         session = await TmuxSession.create({
           cwd: root,
           stderrPath,
-          env: { HOME: home, FX_AUTO_UPGRADE: "0" },
+          env: { HOME: home },
           width: 110,
           height: 32,
         });
@@ -709,7 +515,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
 
         const added = await session.waitForText("MCP configuration reloaded.", 15_000);
         expect(added).toContain("fixture");
-        const profile = JSON.parse(readFileSync(join(home, ".fx", "mcp.json"), "utf8"));
+        const profile = JSON.parse(readFileSync(join(home, ".fiber", "mcp.json"), "utf8"));
         expect(profile.mcp.fixture.command).toEqual([process.execPath, fixture]);
 
         await session.sendKeys("Enter");
@@ -741,13 +547,13 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
   test(
     "/mcp project trust approval and rejection remain menu-owned",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-mcp-menu-trust-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-mcp-menu-trust-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
-      mkdirSync(join(home, ".fx"), { recursive: true });
+      mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace);
-      writeFileSync(join(home, ".fx", "settings.json"), "{}");
+      writeFileSync(join(home, ".fiber", "settings.json"), "{}");
       writeFileSync(
         join(workspace, ".mcp.json"),
         JSON.stringify({
@@ -765,7 +571,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         session = await TmuxSession.create({
           cwd: workspace,
           stderrPath,
-          env: { HOME: home, FX_AUTO_UPGRADE: "0" },
+          env: { HOME: home },
           width: 110,
           height: 32,
         });
@@ -796,7 +602,7 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         await session.sendKeys("X");
         await session.waitForText("Reject this project MCP server?", 5_000);
         await session.sendKeys("Enter");
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         await session.waitForPane(() => {
           const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
           return Object.values(settings.workspaces ?? {}).some(
@@ -829,28 +635,6 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
       await session.sendText("/skills");
       const pane = await session.waitForText(/Skills [0-9]+|No skills available|All [0-9]+/i, 5_000);
       expect(pane).not.toContain("Visible skills (");
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "/alias shows alias list",
-    async () => {
-      session = await launchAndWait();
-      await session.sendText("/alias");
-      const pane = await session.waitForText(/alias|no|none|defined/i, 5_000);
-      expect(pane.toLowerCase()).toMatch(/alias|no|none|defined/);
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "/copy handles empty history gracefully",
-    async () => {
-      session = await launchAndWait();
-      await session.sendText("/copy");
-      const pane = await session.waitForText(/copy|copied|nothing|empty|clipboard/i, 5_000);
-      expect(pane.length).toBeGreaterThan(0);
     },
     TIMEOUT,
   );

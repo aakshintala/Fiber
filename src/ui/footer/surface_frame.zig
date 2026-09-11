@@ -1441,7 +1441,7 @@ fn footerGeometryForRows(rows: FooterRows, activity: ActivityPlacement) footer_v
 
 const surface_test_slash_specs = [_]command_specs.SlashSpec{
     .{ .kind = .help, .command = "/help", .help_entry = "/help", .completion_description = "show available slash commands", .presentation_category = .general },
-    .{ .kind = .feedback, .command = "/feedback", .help_entry = "/feedback", .completion_description = "open the fx feedback form", .presentation_category = .product },
+    .{ .kind = .trace, .command = "/trace", .help_entry = "/trace", .completion_description = "copy a private diagnostic trace", .presentation_category = .product },
 };
 const surface_test_slash_registry = command_specs.SlashRegistry{ .commands = surface_test_slash_specs[0..] };
 
@@ -1713,13 +1713,13 @@ test "surface footer measurement reserves rows for vertical slash completions" {
 test "surface footer measurement reserves six inline skill choices" {
     const alloc = std.testing.allocator;
     const skills = [_]@import("../../core/skills/skill_runtime.zig").Skill{
-        .{ .name = "one", .description = "", .path = "/tmp/one", .source = .global_fx },
-        .{ .name = "two", .description = "", .path = "/tmp/two", .source = .global_fx },
-        .{ .name = "three", .description = "", .path = "/tmp/three", .source = .global_fx },
-        .{ .name = "four", .description = "", .path = "/tmp/four", .source = .global_fx },
-        .{ .name = "five", .description = "", .path = "/tmp/five", .source = .global_fx },
-        .{ .name = "six", .description = "", .path = "/tmp/six", .source = .global_fx },
-        .{ .name = "seven", .description = "", .path = "/tmp/seven", .source = .global_fx },
+        .{ .name = "one", .description = "", .path = "/tmp/one", .source = .global_fiber },
+        .{ .name = "two", .description = "", .path = "/tmp/two", .source = .global_fiber },
+        .{ .name = "three", .description = "", .path = "/tmp/three", .source = .global_fiber },
+        .{ .name = "four", .description = "", .path = "/tmp/four", .source = .global_fiber },
+        .{ .name = "five", .description = "", .path = "/tmp/five", .source = .global_fiber },
+        .{ .name = "six", .description = "", .path = "/tmp/six", .source = .global_fiber },
+        .{ .name = "seven", .description = "", .path = "/tmp/seven", .source = .global_fiber },
     };
     var input = InputRuntime{};
     defer input.deinit(alloc);
@@ -1774,7 +1774,7 @@ test "surface footer measurement reserves capped picker rows for active list pic
 
     var slash_input = InputRuntime{};
     defer slash_input.deinit(alloc);
-    try slash_input.edit_state.input.appendSlice(alloc, "/fe");
+    try slash_input.edit_state.input.appendSlice(alloc, "/tr");
     slash_input.edit_state.cursor = slash_input.edit_state.input.items.len;
     var slash_shell = surfaceTestShell(24, 80);
     defer slash_shell.deinit(alloc);
@@ -1863,9 +1863,9 @@ test "surface footer measurement reserves only the compact auth picker rows" {
     var ctx = surfaceTestContext(&input);
     ctx.auth_picker = auth_runtime.PickerView{
         .active = true,
-        .available_sources = auth_runtime.SourceSet.initMany(&.{ .ai_gateway_api_key, .fx_login }),
-        .selected_choice = .{ .source = .fx_login },
-        .active_source = .fx_login,
+        .available_sources = auth_runtime.SourceSet.initMany(&.{ .chatgpt_subscription, .chatgpt_subscription }),
+        .selected_choice = .{ .source = .chatgpt_subscription },
+        .active_source = .chatgpt_subscription,
         .include_skip = false,
     };
 
@@ -1877,169 +1877,6 @@ test "surface footer measurement reserves only the compact auth picker rows" {
         .auth,
         picker_presentation.authPickerReservedRows(ctx.auth_picker, 24, 0, 0),
     );
-}
-
-test "surface footer places the cursor after the Vercel team query" {
-    const auth_runtime = @import("../../core/auth/auth_runtime.zig");
-    const login_flow = @import("../../core/auth/login_flow.zig");
-    const alloc = std.testing.allocator;
-    var approval = ApprovalPrompt{};
-    defer approval.deinit(alloc);
-    var input = InputRuntime{};
-    defer input.deinit(alloc);
-    var shell = surfaceTestShell(24, 80);
-    defer shell.deinit(alloc);
-    var team_id = "team_123".*;
-    var team_slug = "example-internal-team".*;
-    var team_name = "Example Internal Team".*;
-    const teams = [_]login_flow.Team{.{
-        .id = &team_id,
-        .slug = &team_slug,
-        .name = &team_name,
-    }};
-    var ctx = surfaceTestContext(&input);
-    ctx.auth_picker = auth_runtime.PickerView{
-        .active = true,
-        .available_sources = auth_runtime.SourceSet.initOne(.fx_login),
-        .selected_choice = .{ .team = 0 },
-        .active_source = .fx_login,
-        .include_skip = false,
-        .stage = .change_team,
-        .fx_login_session_available = true,
-        .teams = &teams,
-        .team_query = "play",
-    };
-
-    var metrics = Metrics{};
-    var force_redraw = false;
-    var frame = try prepareSurfaceFooterFrameWithReservation(
-        alloc,
-        &shell,
-        &metrics,
-        &force_redraw,
-        approval.projection(),
-        ctx,
-        .{},
-        FrameInvalidationSet.empty(),
-    );
-    defer frame.deinit(alloc);
-
-    try std.testing.expectEqual(frame.paint.footer.picker_start, frame.composed.cursor.row);
-    try std.testing.expectEqual(@as(u16, 27), frame.composed.cursor.col);
-    try std.testing.expect(frame.composed.cursor_visible);
-}
-
-test "surface footer keeps the Vercel team query and cursor visible at minimum height" {
-    const auth_runtime = @import("../../core/auth/auth_runtime.zig");
-    const alloc = std.testing.allocator;
-    var approval = ApprovalPrompt{};
-    defer approval.deinit(alloc);
-    var input = InputRuntime{};
-    defer input.deinit(alloc);
-    var shell = surfaceTestShell(5, 80);
-    defer shell.deinit(alloc);
-    var ctx = surfaceTestContext(&input);
-    ctx.auth_picker = auth_runtime.PickerView{
-        .active = true,
-        .available_sources = .empty,
-        .selected_choice = null,
-        .active_source = .fx_login,
-        .include_skip = false,
-        .stage = .change_team,
-        .fx_login_session_available = true,
-        .team_query = "play",
-    };
-
-    var measurement = try measureSurfaceFooter(alloc, &shell, approval.projection(), ctx);
-    defer measurement.deinit(alloc);
-    try std.testing.expectEqual(@as(u16, 1), measurement.picker_rows);
-
-    var metrics = Metrics{};
-    var force_redraw = false;
-    const reservation = try resolveSurfaceFooterReservation(
-        alloc,
-        &shell,
-        &force_redraw,
-        approval.projection(),
-        ctx,
-        currentSurfaceFooterTranscriptState(&shell),
-    );
-    var frame = try prepareSurfaceFooterFrameWithReservation(
-        alloc,
-        &shell,
-        &metrics,
-        &force_redraw,
-        approval.projection(),
-        ctx,
-        reservation,
-        FrameInvalidationSet.empty(),
-    );
-    defer frame.deinit(alloc);
-
-    var query_visible = false;
-    for (frame.composed.rows.items) |row| {
-        if (row.row == frame.paint.footer.picker_start) {
-            query_visible = std.mem.find(u8, row.text.items, "Search: play") != null;
-            break;
-        }
-    }
-    try std.testing.expect(query_visible);
-    try std.testing.expectEqual(frame.paint.footer.picker_start, frame.composed.cursor.row);
-    try std.testing.expectEqual(@as(u16, 27), frame.composed.cursor.col);
-    try std.testing.expect(frame.composed.cursor_visible);
-}
-
-test "surface footer keeps the selected auth source visible at minimum height" {
-    const auth_runtime = @import("../../core/auth/auth_runtime.zig");
-    const alloc = std.testing.allocator;
-    var approval = ApprovalPrompt{};
-    defer approval.deinit(alloc);
-    var input = InputRuntime{};
-    defer input.deinit(alloc);
-    var ctx = surfaceTestContext(&input);
-    ctx.auth_picker = auth_runtime.PickerView{
-        .active = true,
-        .available_sources = auth_runtime.SourceSet.initMany(&.{ .ai_gateway_api_key, .fx_login }),
-        .selected_choice = .{ .source = .fx_login },
-        .active_source = .ai_gateway_api_key,
-        .include_skip = false,
-        .stage = .switch_credential,
-    };
-
-    var shell = surfaceTestShell(5, 80);
-    defer shell.deinit(alloc);
-    shell.cursor_row = 1;
-
-    var measurement = try measureSurfaceFooter(alloc, &shell, approval.projection(), ctx);
-    defer measurement.deinit(alloc);
-    try std.testing.expectEqual(@as(u16, 1), measurement.picker_rows);
-
-    var metrics = Metrics{};
-    var force_redraw = false;
-    const reservation = try resolveSurfaceFooterReservation(
-        alloc,
-        &shell,
-        &force_redraw,
-        approval.projection(),
-        ctx,
-        currentSurfaceFooterTranscriptState(&shell),
-    );
-    var frame = try prepareSurfaceFooterFrameWithReservation(
-        alloc,
-        &shell,
-        &metrics,
-        &force_redraw,
-        approval.projection(),
-        ctx,
-        reservation,
-        FrameInvalidationSet.empty(),
-    );
-    defer frame.deinit(alloc);
-
-    for (frame.composed.rows.items) |row| {
-        if (std.mem.find(u8, row.text.items, "fx login") != null) return;
-    }
-    return error.SelectedAuthSourceNotVisible;
 }
 
 test "surface footer measurement caps active picker reservation in tiny terminals" {

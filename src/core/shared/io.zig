@@ -211,18 +211,6 @@ fn openExistingRegularFileWithPolicy(
         return error.DurablePathUnsafe;
     }
 
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        var file = try dir.openFile(getIo(), sub_path, .{
-            .mode = policy.mode,
-            .allow_directory = false,
-            .follow_symlinks = policy.final_symlink == .follow,
-        });
-        errdefer file.close(getIo());
-        const stat = try file.stat(getIo());
-        try verifyOpenedRegularFileWithPolicy(stat, policy);
-        return file;
-    }
-
     var flags: std.posix.O = .{
         .ACCMODE = switch (policy.mode) {
             .read_only => .RDONLY,
@@ -304,9 +292,6 @@ fn makeFileBlocking(file: *std.Io.File) !void {
 }
 
 test "read-only regular files remain valid when atomic replacement unlinks the descriptor" {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -388,7 +373,7 @@ pub fn getenv(key: []const u8) ?[]const u8 {
 }
 
 pub fn e2eFailIfDurableMutationAttempted() void {
-    const enabled = getenv("FX_E2E_FAIL_ON_DURABLE_MUTATION") orelse return;
+    const enabled = getenv("FIBER_E2E_FAIL_ON_DURABLE_MUTATION") orelse return;
     if (!std.mem.eql(u8, enabled, "1")) return;
     std.process.exit(86);
 }
@@ -421,13 +406,6 @@ pub fn cloneEnvironMap(
 }
 
 fn getenvFromBlock(block: std.process.Environ.Block, key: []const u8) ?[]const u8 {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .freestanding or builtin.os.tag == .other) {
-        return null;
-    }
-    if (comptime (builtin.os.tag == .wasi or builtin.os.tag == .emscripten) and !builtin.link_libc) {
-        return null;
-    }
-
     const view = block.view();
     for (view.slice) |entry_z| {
         const entry = std.mem.sliceTo(entry_z, 0);
@@ -585,7 +563,6 @@ fn verifyPrivateDirectory(dir: std.Io.Dir) !void {
 /// The handle must come from an `openDir` that requested iteration. Linux returns an
 /// `O_PATH` descriptor otherwise, and `fsync` rejects those with `EBADF`.
 pub fn syncVerifiedDir(dir: std.Io.Dir) !void {
-    if (comptime builtin.os.tag == .windows) return error.OperationUnsupported;
     while (true) {
         const rc = std.c.fsync(dir.handle);
         if (rc == 0) return;
@@ -965,9 +942,6 @@ pub fn dirRealpathAlloc(alloc: std.mem.Allocator, dir: std.Io.Dir, sub_path: []c
         const joined = try std.fs.path.join(alloc, &.{ dir_path, sub_path });
         defer alloc.free(joined);
         return realpathAlloc(alloc, joined);
-    } else if (comptime builtin.os.tag == .wasi) {
-        if (std.fs.path.isAbsolute(sub_path)) return alloc.dupe(u8, sub_path);
-        return std.fs.path.resolve(alloc, &.{sub_path});
     } else {
         @compileError("dirRealpathAlloc not implemented for this OS");
     }
@@ -990,7 +964,7 @@ test "getenv returns null before setEnvironMap" {
     global_environ = null;
     defer global_environ = previous;
 
-    try std.testing.expect(getenv("FX_IO_TEST") == null);
+    try std.testing.expect(getenv("FIBER_IO_TEST") == null);
 }
 
 test "getenv returns set value after setEnvironMap" {
@@ -1000,10 +974,10 @@ test "getenv returns set value after setEnvironMap" {
 
     var environ = std.process.Environ.Map.init(std.testing.allocator);
     defer environ.deinit();
-    try environ.put("FX_IO_TEST", "present");
+    try environ.put("FIBER_IO_TEST", "present");
 
     setEnvironMap(&environ);
-    try std.testing.expectEqualStrings("present", getenv("FX_IO_TEST").?);
+    try std.testing.expectEqualStrings("present", getenv("FIBER_IO_TEST").?);
     global_environ = null;
 }
 
@@ -1014,11 +988,11 @@ test "environMap returns borrowed process environment map" {
 
     var environ = std.process.Environ.Map.init(std.testing.allocator);
     defer environ.deinit();
-    try environ.put("FX_CORE2_IO_TEST", "present");
+    try environ.put("FIBER_CORE2_IO_TEST", "present");
 
     setEnvironMap(&environ);
     const borrowed = environMap().?;
-    try std.testing.expectEqualStrings("present", borrowed.get("FX_CORE2_IO_TEST").?);
+    try std.testing.expectEqualStrings("present", borrowed.get("FIBER_CORE2_IO_TEST").?);
     global_environ = null;
 }
 

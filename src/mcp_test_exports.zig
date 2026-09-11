@@ -8,7 +8,6 @@ const stdio_dispatcher = @import("core/mcp/stdio_dispatcher.zig");
 const tool_mcp_runtime = @import("core/tooling/tool_mcp_runtime.zig");
 
 pub const McpEnvVar = mcp_contract.McpEnvVar;
-pub const JsonSchema = @import("core/mcp/json_schema.zig");
 pub const McpRuntime = mcp_runtime.McpRuntime;
 pub const StdioDispatcher = stdio_dispatcher.StdioDispatcher;
 pub const Progress = stdio_dispatcher.Progress;
@@ -16,7 +15,6 @@ pub const InputRequired = tool_mcp_runtime.InputRequired;
 pub const InputOrigin = tool_mcp_runtime.InputOrigin;
 pub const Access = tool_mcp_runtime.Access;
 pub const ResolvedLiveView = tool_mcp_runtime.ResolvedLiveView;
-pub const AccessView = access_policy.View;
 
 pub fn authorityGeneration(view: access_policy.View) u64 {
     return access_policy.authorityGeneration(view);

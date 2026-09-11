@@ -14,13 +14,15 @@ import {
 } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewaySse,
+  chatGptAccessToken,
+  codexFinalText,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexEnv,
   hasEmptyComposer,
-  startFakeGateway,
+  startFakeCodex,
+  writeSeededChatGptLogin,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -107,7 +109,7 @@ function summarize(values: number[]) {
 
 function makePaths(label: string): Paths {
   const tempRoot = platform() === "darwin" ? "/private/tmp" : tmpdir();
-  const root = realpathSync(mkdtempSync(join(tempRoot, `fx-r-${label}-`)));
+  const root = realpathSync(mkdtempSync(join(tempRoot, `fiber-r-${label}-`)));
   return {
     root,
     home: join(root, "home"),
@@ -120,27 +122,22 @@ function makePaths(label: string): Paths {
   };
 }
 
-function gatewayEnv(home: string, gateway: ReturnType<typeof startFakeGateway>) {
-  return {
-    HOME: home,
-    AI_GATEWAY_API_KEY: "fake-resume-brutal-key",
-    VERCEL_OIDC_TOKEN: undefined,
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
+function codexEnv(home: string, codex: ReturnType<typeof startFakeCodex>) {
+  return fakeCodexEnv(home, codex, {
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
     NO_COLOR: "1",
-  };
+  });
 }
 
 function prepareFilesystem(paths: Paths, config: Config): void {
-  mkdirSync(join(paths.home, ".fx"), { recursive: true });
+  mkdirSync(join(paths.home, ".fiber"), { recursive: true });
+  writeSeededChatGptLogin(paths.home, chatGptAccessToken());
   mkdirSync(paths.workspace);
   mkdirSync(paths.foreignWorkspace);
   writeFileSync(paths.stderr, "");
   writeFileSync(paths.trace, "");
   writeFileSync(
-    join(paths.home, ".fx", "settings.json"),
+    join(paths.home, ".fiber", "settings.json"),
     JSON.stringify({
       sandbox: "none",
       permission_mode: "auto",
@@ -161,7 +158,7 @@ function prepareFilesystem(paths: Paths, config: Config): void {
   );
 }
 
-function historyBatch(batch: number, config: Config): Response {
+function historyBatch(batch: number, config: Config): string {
   const lines = Array.from(
     { length: config.chatLinesPerBatch },
     (_, line) => {
@@ -183,43 +180,56 @@ function historyBatch(batch: number, config: Config): Response {
       }
     },
   ).join("\n");
-  const events: object[] = [{
-    type: "text-delta",
-    id: `resume-answer-${batch}`,
-    delta: `${lines}\n`,
-  }];
+  const parts = [
+    `data: ${JSON.stringify({ type: "response.output_text.delta", delta: `${lines}\n` })}\n\n`,
+  ];
   for (let tool = 0; tool < config.toolsPerBatch; tool += 1) {
-    events.push({
-      type: "tool-call",
-      toolCallId: `resume-tool-${batch}-${tool}`,
-      toolName: "read_file",
-      input: {
-        path: "resume-tool-payload.txt",
-        line_start: (tool * 73) % 600,
-        line_count: 200,
-      },
-    });
+    const callId = `resume-tool-${batch}-${tool}`;
+    const args = {
+      path: "resume-tool-payload.txt",
+      line_start: (tool * 73) % 600,
+      line_count: 200,
+    };
+    parts.push(
+      `data: ${JSON.stringify({
+        type: "response.output_item.added",
+        output_index: tool,
+        item: { type: "function_call", call_id: callId, name: "read_file" },
+      })}\n\n` +
+        `data: ${JSON.stringify({
+          type: "response.function_call_arguments.done",
+          output_index: tool,
+          arguments: JSON.stringify(args),
+        })}\n\n`,
+    );
   }
-  events.push({
-    type: "finish",
-    finishReason: { unified: "tool-calls", raw: "tool-calls" },
-  });
-  return fakeGatewaySse(events);
+  parts.push(
+    'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":4,"output_tokens":2}}}\n\n',
+  );
+  return parts.join("");
+}
+
+// The Codex helper serves one callback instead of a finite queue, so the
+// old per-batch response array becomes route logic: each request carries the
+// full input history, so completed tool rounds select the next batch.
+function resumeRoute(config: Config) {
+  return (body: string) => {
+    const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+    const done = items.filter((item) => item.type === "function_call_output").length;
+    const batch = Math.floor(done / config.toolsPerBatch);
+    if (batch >= config.chatBatches) return codexFinalText(FINAL_MARKER);
+    return historyBatch(batch, config);
+  };
 }
 
 async function seedRealSession(paths: Paths, config: Config): Promise<IndexedSummary> {
-  const responses: Response[] = [];
-  for (let batch = 0; batch < config.chatBatches; batch += 1) {
-    responses.push(historyBatch(batch, config));
-  }
-  responses.push(fakeGatewayFinalText(FINAL_MARKER));
-  const gateway = startFakeGateway(responses);
+  const codex = startFakeCodex({ route: resumeRoute(config) });
   let session: TmuxSession | null = null;
   try {
     session = await TmuxSession.create({
-      cmd: FX_BIN,
+      cmd: FIBER_BIN,
       cwd: realpathSync(paths.workspace),
-      env: gatewayEnv(paths.home, gateway),
+      env: codexEnv(paths.home, codex),
       stderrPath: paths.stderr,
       width: 104,
       height: 30,
@@ -235,10 +245,10 @@ async function seedRealSession(paths: Paths, config: Config): Promise<IndexedSum
     expect(await session.waitForSessionEnd(TIMEOUT * 2)).toBe(true);
   } finally {
     if (session) await session.kill();
-    gateway.stop();
+    codex.stop();
   }
 
-  const indexPath = join(paths.home, ".fx", "sessions", "index.json");
+  const indexPath = join(paths.home, ".fiber", "sessions", "index.json");
   const parsed = JSON.parse(readFileSync(indexPath, "utf8")) as {
     sessions: IndexedSummary[];
   };
@@ -255,7 +265,7 @@ function installLargeCatalog(
   config: Config,
   real: IndexedSummary,
 ): void {
-  const sessionsRoot = join(paths.home, ".fx", "sessions");
+  const sessionsRoot = join(paths.home, ".fiber", "sessions");
   const base = Math.max(Date.now(), real.updated_at_ms + config.catalogEntries + 10);
   const entries: IndexedSummary[] = [];
   entries.push({
@@ -414,7 +424,7 @@ async function runStress(config: Config): Promise<Paths> {
   installLargeCatalog(paths, config, real);
   writeFileSync(paths.stderr, "");
 
-  const gateway = startFakeGateway([]);
+  const codex = startFakeCodex();
   const metrics: Metrics = {
     open: [],
     scope: [],
@@ -431,12 +441,12 @@ async function runStress(config: Config): Promise<Paths> {
   let passed = false;
   try {
     session = await TmuxSession.create({
-      cmd: FX_BIN,
+      cmd: FIBER_BIN,
       cwd: realpathSync(paths.workspace),
       env: {
-        ...gatewayEnv(paths.home, gateway),
-        FX_TRACE_LOG: paths.trace,
-        FX_TRACE_SCOPES: "core,session",
+        ...codexEnv(paths.home, codex),
+        FIBER_TRACE_LOG: paths.trace,
+        FIBER_TRACE_SCOPES: "core,session",
       },
       stderrPath: paths.stderr,
       width: 112,
@@ -487,7 +497,7 @@ async function runStress(config: Config): Promise<Paths> {
 
     const report = {
       config,
-      catalogBytes: statSync(join(paths.home, ".fx", "sessions", "index.json")).size,
+      catalogBytes: statSync(join(paths.home, ".fiber", "sessions", "index.json")).size,
       transitions: {
         open: summarize(metrics.open),
         scope: summarize(metrics.scope),
@@ -539,7 +549,7 @@ async function runStress(config: Config): Promise<Paths> {
       } catch {}
     }
     if (session) await session.kill();
-    gateway.stop();
+    codex.stop();
     if (config.retainArtifacts || config.profileSeconds !== undefined || !passed) {
       console.error(`retained resume stress artifacts at ${paths.root}`);
     } else {
@@ -563,7 +573,7 @@ test.skipIf(!tmuxAvailable())(
   300_000,
 );
 
-test.skipIf(!tmuxAvailable() || process.env.FX_RESUME_BRUTAL !== "1")(
+test.skipIf(!tmuxAvailable() || process.env.FIBER_RESUME_BRUTAL !== "1")(
   "/resume sustains one hundred mixed interaction cycles without resource drift",
   async () => {
     await runStress({
@@ -581,7 +591,7 @@ test.skipIf(!tmuxAvailable() || process.env.FX_RESUME_BRUTAL !== "1")(
 
 test.skipIf(
   !tmuxAvailable() ||
-    process.env.FX_RESUME_PROFILE !== "1" ||
+    process.env.FIBER_RESUME_PROFILE !== "1" ||
     platform() !== "darwin" ||
     !existsSync("/usr/bin/sample"),
 )(
@@ -603,10 +613,10 @@ test.skipIf(
   900_000,
 );
 
-test.skipIf(!tmuxAvailable() || process.env.FX_RESUME_50K !== "1")(
+test.skipIf(!tmuxAvailable() || process.env.FIBER_RESUME_50K !== "1")(
   "/resume survives a fifty-thousand-entry catalog and real fifty-thousand-line tool-heavy session",
   async () => {
-    const profileSeconds = process.env.FX_RESUME_PROFILE === "1" &&
+    const profileSeconds = process.env.FIBER_RESUME_PROFILE === "1" &&
         platform() === "darwin" &&
         existsSync("/usr/bin/sample")
       ? 30

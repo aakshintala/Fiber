@@ -8,12 +8,10 @@ const text_utils = @import("../shared/text_utils.zig");
 const tool_result_errors = @import("../tooling/tool_result_errors.zig");
 const session_permission_state = @import("../permissions/session_permission_state.zig");
 const image_attachments = @import("../images/image_attachments.zig");
-const generation_usage_provider = @import("generation_usage_provider.zig");
 const web_fetch_artifacts = @import("web_fetch_artifacts.zig");
 const command_replay_store = @import("command_replay_store.zig");
 pub const session_usage = @import("session_usage.zig");
 pub const profile_usage_runtime = @import("profile_usage_runtime.zig");
-const command_contract = @import("../execution/command_contract.zig");
 const sort_utils = @import("../shared/sort_utils.zig");
 const Allocator = std.mem.Allocator;
 
@@ -1615,26 +1613,6 @@ pub const SessionRuntime = struct {
     max_history_turns: usize,
     context_history_start: usize = 0,
 
-    pub fn init(
-        max_history_turns: usize,
-        provider: generation_usage_provider.Provider,
-    ) SessionRuntime {
-        return .{
-            .usage = session_usage.Usage.initFreshWithProvider(provider),
-            .max_history_turns = max_history_turns,
-        };
-    }
-
-    pub fn initWithProviders(
-        max_history_turns: usize,
-        providers: generation_usage_provider.Set,
-    ) SessionRuntime {
-        return .{
-            .usage = session_usage.Usage.initFreshWithProviders(providers),
-            .max_history_turns = max_history_turns,
-        };
-    }
-
     pub fn deinit(self: *SessionRuntime, alloc: Allocator) void {
         self.clearWebFetchArtifacts();
         self.usage.configurePublicationSink(null);
@@ -1852,22 +1830,6 @@ pub const SessionRuntime = struct {
 
     pub fn contextHistoryStart(self: *const SessionRuntime) usize {
         return self.context_history_start;
-    }
-
-    pub fn compactedTurnCount(self: *const SessionRuntime) usize {
-        if (self.agent.history.items.len == 0) return 0;
-        return switch (self.agent.history.items[0]) {
-            .compacted_summary => |entry| entry.removed_turn_count,
-            else => 0,
-        };
-    }
-
-    pub fn compactionCount(self: *const SessionRuntime) usize {
-        if (self.agent.history.items.len == 0) return 0;
-        return switch (self.agent.history.items[0]) {
-            .compacted_summary => |entry| entry.compaction_count,
-            else => 0,
-        };
     }
 
     pub fn snapshotHistory(self: *const SessionRuntime, alloc: Allocator) ![]HistoryTurn {
@@ -2331,7 +2293,7 @@ test "readable profile usage does not attach publishers or flush recovery" {
     try std.testing.expectEqual(checkpoint_calls, checkpoint.calls);
     try std.testing.expectError(
         error.FileNotFound,
-        tmp.dir.access(io_mod.getIo(), ".fx/usage.jsonl", .{}),
+        tmp.dir.access(io_mod.getIo(), ".fiber/usage.jsonl", .{}),
     );
 }
 

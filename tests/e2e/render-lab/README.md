@@ -14,7 +14,7 @@ The oracle is byte replay plus terminal-owned text/grid capture.
 Render Lab is designed to answer these questions:
 
 - Did the freshly built Fx binary emit coherent terminal bytes?
-- Did replaying those bytes through `fx replay` produce the expected model?
+- Did replaying those bytes through `fiber replay` produce the expected model?
 - Did the real terminal-owned text/grid settle after each user-visible event?
 - Did old shell scrollback stay outside Fx-owned viewport rows?
 - Did quit, relaunch, resize, and native clear-scrollback actions preserve the intended boundaries?
@@ -48,7 +48,7 @@ Zig VT tests
 tmux Render Lab
   Deterministic real PTY coverage. Good for resize, scrollback, cursor, ANSI, relaunch.
 
-FX_RECORD tape and fx replay
+FIBER_RECORD tape and fiber replay
   Byte-level recording of what Fx wrote plus replay through the built-in virtual terminal.
 
 Native Render Lab
@@ -66,7 +66,7 @@ It drives one tmux shell through this shape:
 
 1. Start a shell with temp `HOME`, `ZDOTDIR`, history, and workdir.
 2. Print shell markers and wrapped lines before Fx starts.
-3. Launch the freshly built `zig-out/bin/fx`.
+3. Launch the freshly built `zig-out/bin/fiber`.
 4. Run no-key slash commands such as `/status`.
 5. Quit Fx.
 6. Print more shell markers in the same shell.
@@ -91,7 +91,7 @@ cd /Users/example/Developer/Fx/fx-worktree-rendering/tests/e2e
 bun test tui-render-lab.test.ts
 ```
 
-This wrapper is CI-safe apart from requiring tmux. It does not require `AI_GATEWAY_API_KEY`.
+This wrapper is CI-safe apart from requiring tmux. It does not require provider credentials.
 
 ## Native Scenarios
 
@@ -116,20 +116,20 @@ Native scenarios are opt-in because they open and control real terminal applicat
 Common gate:
 
 ```bash
-FX_RENDER_LAB_NATIVE=1 bun run render-lab -- --scenario native-terminal-app-relaunch --runs 1 --out /private/tmp/fx-native
+FIBER_RENDER_LAB_NATIVE=1 bun run render-lab -- --scenario native-terminal-app-relaunch --runs 1 --out /private/tmp/fx-native
 ```
 
 Ghostty and Warp use clipboard-based selected-text capture, so they require an extra explicit gate:
 
 ```bash
-FX_RENDER_LAB_NATIVE=1 FX_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1 \
+FIBER_RENDER_LAB_NATIVE=1 FIBER_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1 \
   bun run render-lab -- --scenario native-ghostty-relaunch --runs 1 --out /private/tmp/fx-native-ghostty
 ```
 
 The Command-K scenario requires a second gate because it triggers real terminal clear-scrollback behavior:
 
 ```bash
-FX_RENDER_LAB_NATIVE=1 FX_RENDER_LAB_NATIVE_COMMAND_K=1 \
+FIBER_RENDER_LAB_NATIVE=1 FIBER_RENDER_LAB_NATIVE_COMMAND_K=1 \
   bun run render-lab -- --scenario native-terminal-app-command-k --runs 1 --out /private/tmp/fx-native-command-k
 ```
 
@@ -204,7 +204,7 @@ Important files:
 - `runtime-evidence.json`: compact witness summary for every frame.
 - `trace.log`: Fx debug trace for repaint, resize, footer, input, and related scopes.
 - `render.fxtape`: byte-level replay tape produced by the freshly built Fx binary.
-- `replay-summary.json`: structured `fx replay` output.
+- `replay-summary.json`: structured `fiber replay` output.
 - `final-grid.txt`: replay golden output for the final tape state.
 - `failure.md`: short human-readable failure list.
 - `repro.sh`: command to recreate the scenario.
@@ -332,21 +332,21 @@ Terminal.app:
 
 - Uses AppleScript `contents` from a native Terminal window.
 - Does not require clipboard capture for the relaunch scenario.
-- Command-K requires System Events and the explicit `FX_RENDER_LAB_NATIVE_COMMAND_K=1` gate.
+- Command-K requires System Events and the explicit `FIBER_RENDER_LAB_NATIVE_COMMAND_K=1` gate.
 - Current native smoke exposed an Apple Terminal path where the first shell marker was missing by final relaunch. Keep that failure visible until the product behavior is fixed or the invariant is intentionally revised.
 
 Ghostty:
 
 - Uses real Ghostty app launch.
 - Uses selected-text clipboard capture.
-- Requires `FX_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1`.
+- Requires `FIBER_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1`.
 - Useful when Ghostty scrollback, resize, or terminal-specific behavior diverges from tmux.
 
 Warp:
 
 - Uses real Warp app launch.
 - Uses selected-text clipboard capture.
-- Requires `FX_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1`.
+- Requires `FIBER_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD=1`.
 - Warp private OSC/DCS behavior should be metadata only unless a future adapter can expose a stable byte/text contract for it.
 
 ## Adding A Scenario
@@ -384,11 +384,11 @@ zig fmt src/
 cd tests/e2e
 bun test tui-render-lab.test.ts
 bun run render-lab -- --scenario same-shell-relaunch --runs 1 --out /private/tmp/fx-render-lab
-../../zig-out/bin/fx status --json
+../../zig-out/bin/fiber status --json
 git diff --check
 ```
 
-Use the exact freshly built binary from this checkout. Do not run bare `fx`.
+Use the exact freshly built binary from this checkout. Do not run bare `fiber`.
 
 If the bug was reported in a native terminal, also run the matching native scenario and include the artifact path in the run notes.
 

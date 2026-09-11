@@ -1045,10 +1045,6 @@ pub const State = struct {
         try self.menu_add_form.set(alloc, field_index, value);
     }
 
-    pub fn menuAddFieldValue(self: *const State, field_index: usize) []const u8 {
-        return self.menu_add_form.value(field_index);
-    }
-
     pub fn setMenuFeedback(self: *State, alloc: Allocator, text: []const u8) !void {
         const owned = try alloc.dupe(u8, text);
         if (self.menu_feedback) |previous| alloc.free(previous);
@@ -2719,7 +2715,7 @@ fn loadTestReloadRuntime(
     const command = try alloc.dupe(
         u8,
         switch (test_reload_mode) {
-            .optional_failed => "__fx_missing_mcp_executable__",
+            .optional_failed => "__fiber_missing_mcp_executable__",
             .stalled_candidate => "awk",
             else => "disabled",
         },

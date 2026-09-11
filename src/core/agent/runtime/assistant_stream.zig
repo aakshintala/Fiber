@@ -56,7 +56,6 @@ pub const SemanticPresentationSink = struct {
 
 pub const StreamChunkContext = struct {
     hooks: *const AgentRuntimeDeps,
-    flush_assistant_stream_per_content_chunk: bool = false,
     semantic_presentation: ?SemanticPresentationSink = null,
     token_progress: ?*runtime_telemetry.TurnSummaryAccumulator = null,
     turn_id: u64,
@@ -186,9 +185,6 @@ pub fn onStreamContentChunk(ctx: *anyopaque, chunk: []const u8) void {
         };
     }
     streamAssistantChunk(stream_ctx, chunk) catch {};
-    if (stream_ctx.flush_assistant_stream_per_content_chunk) {
-        flushAssistantStream(stream_ctx) catch {};
-    }
 }
 
 pub fn onStreamReasoningChunk(ctx: *anyopaque, chunk: []const u8) void {
@@ -927,7 +923,7 @@ const StreamTraceEntry = union(enum) {
     turn_phase: types.TurnPhase,
 };
 
-const ansi_span_fixture_env = "FX_TEST_C04_STREAM_ANSI_OSC8_FIXTURE";
+const ansi_span_fixture_env = "FIBER_TEST_C04_STREAM_ANSI_OSC8_FIXTURE";
 const ansi_span_test_name = "streamed presentation preserves ANSI OSC 8 code fence and table spans";
 
 fn ansi_span_fixture_enabled() bool {
@@ -983,8 +979,8 @@ fn assert_frozen_ansi_span_fixture() !void {
 
     const expected_spans = [_][]const u8{
         "\x1b[1mbold\x1b[22m and \x1b[3mitalic\x1b[23m\n",
-        "\x1b]8;id=fx-1;https://example.com\x1b\\\x1b[4mdocs\x1b[24m\x1b]8;;\x1b\\\n",
-        "\x1b]8;id=fx-2;https://example.com/docs\x1b\\\x1b[4mhttps://example.com/docs\x1b[24m\x1b]8;;\x1b\\,\n",
+        "\x1b]8;id=fiber-1;https://example.com\x1b\\\x1b[4mdocs\x1b[24m\x1b]8;;\x1b\\\n",
+        "\x1b]8;id=fiber-2;https://example.com/docs\x1b\\\x1b[4mhttps://example.com/docs\x1b[24m\x1b]8;;\x1b\\,\n",
         oversized_line,
         "\x1b[2m\xe2\x94\x82 \x1b[22mconst x = **literal**;\n",
         "\x1b[1mName\x1b[22m \xe2\x94\x82 \x1b[1mAge\x1b[22m\n" ++
@@ -1122,7 +1118,6 @@ test "presented recovery source seeds continuation without rendering twice" {
     var hook_set = capture.hooks();
     var stream_ctx = StreamChunkContext{
         .hooks = &hook_set,
-        .flush_assistant_stream_per_content_chunk = true,
         .turn_id = 1,
         .alloc = alloc,
     };
@@ -1136,6 +1131,7 @@ test "presented recovery source seeds continuation without rendering twice" {
 
     stream_ctx.beginRecoveryAttempt();
     onStreamContentChunk(&stream_ctx, "Partial output before EOF.Recovered final output once.");
+    try flushAssistantStream(&stream_ctx);
 
     try std.testing.expectEqualStrings(
         "Partial output before EOF.Recovered final output once.",

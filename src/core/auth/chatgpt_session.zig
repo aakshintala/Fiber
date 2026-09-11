@@ -1,6 +1,5 @@
 const std = @import("std");
 const debug_trace = @import("../shared/debug_trace.zig");
-const host_target = @import("../hosts/target.zig");
 const host = @import("../hosts/host.zig");
 const io_mod = @import("../shared/io.zig");
 const profile_paths = @import("../shared/profile_paths.zig");
@@ -50,38 +49,37 @@ pub const DeleteOutcome = enum {
 };
 
 pub const Mutation = struct {
-    fx_dir: io_mod.VerifiedDir,
+    fiber_dir: io_mod.VerifiedDir,
     lock: io_mod.TimedAdvisoryLock,
 
     pub fn deinit(self: *Mutation) void {
         self.lock.release();
-        self.fx_dir.close();
+        self.fiber_dir.close();
         self.* = undefined;
     }
 
     pub fn load(self: *Mutation, alloc: Allocator) !?Session {
-        return loadFromDir(alloc, &self.fx_dir.dir, true);
+        return loadFromDir(alloc, &self.fiber_dir.dir, true);
     }
 
     pub fn save(self: *Mutation, alloc: Allocator, session: Session) !void {
         const text = try stringify(alloc, session);
         defer secret.zeroAndFree(alloc, text);
-        try io_mod.durableReplaceVerified(alloc, &self.fx_dir, auth_file_name, text);
+        try io_mod.durableReplaceVerified(alloc, &self.fiber_dir, auth_file_name, text);
     }
 
     pub fn delete(self: *Mutation) !DeleteOutcome {
-        self.fx_dir.dir.deleteFile(io_mod.getIo(), auth_file_name) catch |err| switch (err) {
+        self.fiber_dir.dir.deleteFile(io_mod.getIo(), auth_file_name) catch |err| switch (err) {
             error.FileNotFound => return .missing,
             else => return err,
         };
         const durable: io_mod.DurableOps = .{};
-        durable.sync_dir(durable.ctx, self.fx_dir.dir) catch return .deleted_not_durable;
+        durable.sync_dir(durable.ctx, self.fiber_dir.dir) catch return .deleted_not_durable;
         return .deleted;
     }
 };
 
 pub fn load(alloc: Allocator) !?Session {
-    if (comptime host_target.is_wasm) return null;
     const home = io_mod.getenv("HOME") orelse return null;
     var home_dir = std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{ .iterate = true }) catch |err| {
         debug_trace.logf("auth", "ChatGPT session load failed step=open_home err={s}", .{@errorName(err)});
@@ -89,7 +87,7 @@ pub fn load(alloc: Allocator) !?Session {
     };
     defer home_dir.close(io_mod.getIo());
 
-    var fx_dir = home_dir.openDir(io_mod.getIo(), profile_paths.root_dir_name, .{
+    var fiber_dir = home_dir.openDir(io_mod.getIo(), profile_paths.root_dir_name, .{
         .iterate = true,
         .follow_symlinks = false,
     }) catch |err| {
@@ -98,12 +96,12 @@ pub fn load(alloc: Allocator) !?Session {
         }
         return null;
     };
-    defer fx_dir.close(io_mod.getIo());
-    return loadFromDir(alloc, &fx_dir, false);
+    defer fiber_dir.close(io_mod.getIo());
+    return loadFromDir(alloc, &fiber_dir, false);
 }
 
-fn loadFromDir(alloc: Allocator, fx_dir: *std.Io.Dir, report_open_failure: bool) !?Session {
-    var file = fx_dir.openFile(io_mod.getIo(), auth_file_name, .{
+fn loadFromDir(alloc: Allocator, fiber_dir: *std.Io.Dir, report_open_failure: bool) !?Session {
+    var file = fiber_dir.openFile(io_mod.getIo(), auth_file_name, .{
         .mode = .read_only,
         .allow_directory = false,
         .follow_symlinks = false,
@@ -136,25 +134,23 @@ fn loadFromDir(alloc: Allocator, fx_dir: *std.Io.Dir, report_open_failure: bool)
 }
 
 pub fn saveNewSession(alloc: Allocator, session: Session) !void {
-    if (comptime host_target.is_wasm) return error.ChatGptOAuthUnavailable;
     var mutation = try beginMutation();
     defer mutation.deinit();
     try mutation.save(alloc, session);
 }
 
 pub fn beginExistingMutation() !?Mutation {
-    if (comptime host_target.is_wasm) return null;
     const home = io_mod.getenv("HOME") orelse return error.HomeNotSet;
     var home_dir = io_mod.VerifiedDir{
         .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{ .iterate = true }),
     };
     defer home_dir.close();
 
-    const fx_dir = openExistingPrivateFxDir(&home_dir) catch |err| switch (err) {
+    const fiber_dir = openExistingPrivateFxDir(&home_dir) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };
-    return try lockMutation(fx_dir);
+    return try lockMutation(fiber_dir);
 }
 
 fn beginMutation() !Mutation {
@@ -164,20 +160,20 @@ fn beginMutation() !Mutation {
     };
     defer home_dir.close();
 
-    const fx_dir = try io_mod.openOrCreateVerifiedPrivateDir(&home_dir, profile_paths.root_dir_name);
-    return lockMutation(fx_dir);
+    const fiber_dir = try io_mod.openOrCreateVerifiedPrivateDir(&home_dir, profile_paths.root_dir_name);
+    return lockMutation(fiber_dir);
 }
 
-fn lockMutation(open_fx_dir: io_mod.VerifiedDir) !Mutation {
-    var fx_dir = open_fx_dir;
-    errdefer fx_dir.close();
+fn lockMutation(open_fiber_dir: io_mod.VerifiedDir) !Mutation {
+    var fiber_dir = open_fiber_dir;
+    errdefer fiber_dir.close();
     var lock = try io_mod.acquireTimedAdvisoryLock(
-        &fx_dir,
+        &fiber_dir,
         mutation_lock_file_name,
         mutation_lock_deadline_ms,
     );
     errdefer lock.release();
-    return .{ .fx_dir = fx_dir, .lock = lock };
+    return .{ .fiber_dir = fiber_dir, .lock = lock };
 }
 
 fn openExistingPrivateFxDir(home_dir: *io_mod.VerifiedDir) !io_mod.VerifiedDir {

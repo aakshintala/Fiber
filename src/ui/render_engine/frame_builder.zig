@@ -17,7 +17,6 @@ const Metrics = types.Metrics;
 
 pub const FrameBody = union(enum) {
     transcript,
-    subagent_panel: []const u8,
     none,
 };
 

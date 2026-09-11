@@ -41,12 +41,6 @@ const PermissionMode = types.PermissionMode;
 const ToolPermissionDecision = types.ToolPermissionDecision;
 const WorkerRuntime = worker_runtime.WorkerRuntime;
 
-pub const HostSandboxDefault = enum {
-    none,
-    allow_sandboxed,
-    prompt,
-};
-
 pub const SessionPermissionStateProvider = struct {
     context: *anyopaque,
     snapshot_fn: *const fn (
@@ -79,7 +73,6 @@ pub const Input = struct {
     mcp_runtime: tool_mcp_runtime.RuntimeCapabilities,
     context_limits: context_limits.Values = .{},
     auto_classifier: permission_auto_classifier.Classifier = .disabled(),
-    host_sandbox_default: HostSandboxDefault = .none,
 };
 
 fn registeredTool(input: Input, name: []const u8) ?*const tool_dispatch.Tool {
@@ -1423,15 +1416,6 @@ fn requestPermissionOutcomeResolved(
             vision_path_authority,
         );
     }
-    if (input.host_sandbox_default == .allow_sandboxed and
-        try isRunCommandCall(input, arena, call))
-    {
-        return shellPermissionOutcome(
-            try runCommandContext(input, arena, call),
-            .once,
-            .js_host,
-        );
-    }
     const resolution = try resolveOrdinaryPermissionOutcome(
         input,
         arena,
@@ -2055,21 +2039,14 @@ pub fn runCommandContext(
     const command = try tool_args.requiredStringArg(args, "command");
     const execution_mode: command_admission.CommandExecutionMode =
         if (tool_args.optionalBoolArg(args, "tty") orelse false) .tty else .captured;
-    const tool = registeredTool(input, call.name) orelse return error.NotRunCommand;
-    const cwd = switch (tool.captured_command_host) {
-        .workspace_clean => try arena.dupe(u8, input.workspace_root),
-        .native => blk: {
-            const cwd_arg = tool_args.nullablePlaceholderStringArg(args, "cwd") orelse ".";
-            break :blk if (std.mem.eql(u8, cwd_arg, "."))
-                try arena.dupe(u8, input.workspace_root)
-            else
-                try pathing.resolveWorkspaceOrExternalPath(arena, input.workspace_root, cwd_arg);
-        },
+    const cwd = blk: {
+        const cwd_arg = tool_args.nullablePlaceholderStringArg(args, "cwd") orelse ".";
+        break :blk if (std.mem.eql(u8, cwd_arg, "."))
+            try arena.dupe(u8, input.workspace_root)
+        else
+            try pathing.resolveWorkspaceOrExternalPath(arena, input.workspace_root, cwd_arg);
     };
-    const environment_value: command_environment.Environment = switch (tool.captured_command_host) {
-        .workspace_clean => .workspace_clean,
-        .native => try nativeCommandEnvironment(arena, args, execution_mode),
-    };
+    const environment_value: command_environment.Environment = try nativeCommandEnvironment(arena, args, execution_mode);
     return .{
         .command = command,
         .resolved_cwd = cwd,
@@ -2152,7 +2129,7 @@ pub fn permissionStateKeyForCall(
 
     var canonical: std.Io.Writer.Allocating = .init(arena);
     defer canonical.deinit();
-    try writeIdentityField(&canonical.writer, "fx-permission-state-v1");
+    try writeIdentityField(&canonical.writer, "fiber-permission-state-v1");
     var targets = try permissionTargetsForCall(input, arena, call);
     defer targets.deinit(arena);
     try writeIdentityField(&canonical.writer, call.name);
@@ -2238,7 +2215,7 @@ fn permissionStateKeyForPreparedFileMutation(
 ) !session_permission_state.RuleKey {
     var canonical: std.Io.Writer.Allocating = .init(arena);
     defer canonical.deinit();
-    try writeIdentityField(&canonical.writer, "fx-permission-state-file-v1");
+    try writeIdentityField(&canonical.writer, "fiber-permission-state-file-v1");
     try writeIdentityField(&canonical.writer, prepared.tool_name);
     try writeIdentityField(&canonical.writer, &prepared.arguments_hash);
     try writeIdentityField(&canonical.writer, prepared.target_path);
@@ -5313,7 +5290,7 @@ test "session deny narrows configured command allow" {
         .arguments_json = "{\"action\":\"run\",\"command\":\"touch configured.txt\"}",
     };
     const key = try permissionStateKeyForCall(input, arena, call);
-    try std.testing.expect(std.mem.find(u8, key.canonical, "fx-permission-state-v2") != null);
+    try std.testing.expect(std.mem.find(u8, key.canonical, "fiber-permission-state-v2") != null);
     try std.testing.expect(std.mem.find(u8, key.canonical, "restricted") == null);
     try std.testing.expect(std.mem.find(u8, key.canonical, "none") == null);
     var empty: session_permission_state.State = .{};
@@ -5386,90 +5363,6 @@ test "prepared session deny blocks local file mutation without setup effects" {
         error.FileNotFound,
         tmp.dir.openFile(io_mod.getIo(), "workspace/blocked.txt", .{}),
     );
-}
-
-test "js host workspace sandbox default is lowest priority and prompt disables it" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    var worker: WorkerRuntime = .{};
-    defer worker.deinit(std.testing.allocator);
-    var input = testInputWithClassifier(
-        &worker,
-        permission_auto_classifier.Classifier.disabled(),
-    );
-    input.host_sandbox_default = .allow_sandboxed;
-    const call = ToolCall{
-        .id = "browser-command",
-        .name = "shell",
-        .arguments_json = "{\"action\":\"run\",\"command\":\"touch created.txt\"}",
-    };
-
-    const allowed = try requestPermissionOutcome(
-        input,
-        arena_state.allocator(),
-        call,
-        .auto,
-        &.{},
-    );
-    try std.testing.expectEqual(ToolPermissionDecision.once, allowed.decision);
-    try std.testing.expectEqual(
-        command_admission.ShellAuthorizationSource.js_host,
-        allowed.execution_authority.?.run_command.shell_allowed.source,
-    );
-
-    var rules = [_]types.PermissionRule{.{
-        .permission = @constCast("bash"),
-        .pattern = @constCast("touch *"),
-        .action = .deny,
-    }};
-    input.permission_rules = .{ .rules = &rules };
-    const denied = try requestPermissionOutcome(
-        input,
-        arena_state.allocator(),
-        call,
-        .auto,
-        &.{},
-    );
-    try std.testing.expectEqual(ToolPermissionDecision.policy_denied, denied.decision);
-    try std.testing.expect(denied.execution_authority == null);
-
-    rules[0].action = .ask;
-    const asked = try requestPermissionOutcome(
-        input,
-        arena_state.allocator(),
-        call,
-        .auto,
-        &.{},
-    );
-    try std.testing.expectEqual(ToolPermissionDecision.permission_required, asked.decision);
-    try std.testing.expect(asked.execution_authority == null);
-
-    rules[0].action = .allow;
-    const explicitly_allowed = try requestPermissionOutcome(
-        input,
-        arena_state.allocator(),
-        call,
-        .auto,
-        &.{},
-    );
-    try std.testing.expectEqual(ToolPermissionDecision.once, explicitly_allowed.decision);
-    try std.testing.expectEqual(
-        command_admission.ShellAuthorizationSource.configured_rule,
-        explicitly_allowed.execution_authority.?.run_command.shell_allowed.source,
-    );
-
-    input.permission_rules = .{};
-    input.host_sandbox_default = .prompt;
-    const prompted = try requestPermissionOutcome(
-        input,
-        arena_state.allocator(),
-        call,
-        .auto,
-        &.{},
-    );
-    try std.testing.expectEqual(ToolPermissionDecision.deny, prompted.decision);
-    try std.testing.expectEqual(types.ToolPermissionDenialReason.review_unavailable, prompted.denial_reason.?);
-    try std.testing.expect(prompted.execution_authority == null);
 }
 
 test "built-in structured review sends exact arguments without redundant schema" {
@@ -5881,7 +5774,7 @@ test "automatic trusted-root write keeps persistence targets on reviewer path" {
         ".git/hooks/pre-commit",
         ".git/config",
         ".ssh/authorized_keys",
-        "Library/LaunchAgents/com.fx.smoke.plist",
+        "Library/LaunchAgents/com.fiber.smoke.plist",
     };
     for (relative_targets, 0..) |relative_target, index| {
         const target_path = try std.fs.path.join(arena, &.{ workspace, relative_target });

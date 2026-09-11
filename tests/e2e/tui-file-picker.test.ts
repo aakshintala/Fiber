@@ -13,12 +13,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, HAS_API_KEY, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, HAS_API_KEY, runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
+  chatGptAccessToken,
+  codexFinalText,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexEnv,
   isComposerLine,
-  startFakeGateway,
+  startFakeCodex,
+  writeSeededChatGptLogin,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -26,7 +29,7 @@ import {
 const HAS_TMUX = tmuxAvailable();
 const tmuxTest = test.skipIf(!HAS_TMUX);
 const liveTmuxTest = test.skipIf(
-  !HAS_TMUX || !HAS_API_KEY || process.env.FX_E2E_REAL_API !== "1",
+  !HAS_TMUX || !HAS_API_KEY || process.env.FIBER_E2E_REAL_API !== "1",
 );
 const TIMEOUT = 60_000;
 const LIFECYCLE_FILE_COUNT = 12_024;
@@ -36,13 +39,13 @@ const LIFECYCLE_CANDIDATE_COUNT = PART4_STRESS
   ? PART4_STRESS_CANDIDATE_COUNT
   : LIFECYCLE_FILE_COUNT + 1;
 const LIFECYCLE_CYCLES = boundedEnvInt(
-  "FX_FILE_PICKER_LIFECYCLE_CYCLES",
+  "FIBER_FILE_PICKER_LIFECYCLE_CYCLES",
   PART4_STRESS ? 100 : 25,
   PART4_STRESS ? 100 : 2,
   10_000,
 );
 const LIFECYCLE_MEASURED_CYCLES = boundedEnvInt(
-  "FX_FILE_PICKER_MEASURED_CYCLES",
+  "FIBER_FILE_PICKER_MEASURED_CYCLES",
   PART4_STRESS ? 120 : 12,
   PART4_STRESS ? 100 : 2,
   1_000,
@@ -55,12 +58,12 @@ const PROVISIONAL_STRESS_P95_MS = 500;
 const PROVISIONAL_STRESS_MAX_MS = 1_000;
 
 function stressCandidateCount(): number {
-  const raw = process.env.FX_FILE_PICKER_PART4_CANDIDATE_COUNT;
+  const raw = process.env.FIBER_FILE_PICKER_PART4_CANDIDATE_COUNT;
   if (raw === undefined || raw === "0") return 0;
   const value = Number.parseInt(raw, 10);
   if (!Number.isSafeInteger(value) || value < 50_000 || value > 100_000) {
     throw new Error(
-      "FX_FILE_PICKER_PART4_CANDIDATE_COUNT must be 0 or an integer in [50000, 100000]",
+      "FIBER_FILE_PICKER_PART4_CANDIDATE_COUNT must be 0 or an integer in [50000, 100000]",
     );
   }
   return value;
@@ -145,7 +148,7 @@ type Fixture = {
 };
 
 let session: TmuxSession | null = null;
-let gateway: ReturnType<typeof startFakeGateway> | null = null;
+let codex: ReturnType<typeof startFakeCodex> | null = null;
 let fixture: Fixture | null = null;
 let stressSamplerCleanup: (() => Promise<void>) | null = null;
 
@@ -154,8 +157,8 @@ afterEach(async () => {
   stressSamplerCleanup = null;
   await session?.kill();
   session = null;
-  gateway?.stop();
-  gateway = null;
+  codex?.stop();
+  codex = null;
   if (fixture) rmSync(fixture.root, { recursive: true, force: true });
   fixture = null;
 }, FIXTURE_CLEANUP_TIMEOUT);
@@ -164,15 +167,16 @@ function createFixture(prefix: string): Fixture {
   const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace, { recursive: true });
+  writeSeededChatGptLogin(home, chatGptAccessToken());
   const created = {
     root,
     home,
     workspace: realpathSync(workspace),
     stderrPath: join(root, "stderr.log"),
     tracePath: join(root, "trace.log"),
-    tapePath: join(root, "session.fxtape"),
+    tapePath: join(root, "session.fibertape"),
   };
   writeFileSync(created.stderrPath, "");
   writeFileSync(created.tracePath, "");
@@ -193,15 +197,18 @@ function initGit(workspace: string): void {
 
 async function startMockFx(
   current: Fixture,
-  responses: Response[] = [],
+  replies: string[] = [],
   startupWaitMs = 0,
   extraEnv: Record<string, string | undefined> = {},
 ): Promise<TmuxSession> {
-  gateway = startFakeGateway(responses);
+  const queue = [...replies];
+  codex = startFakeCodex({
+    route: () => codexFinalText(queue.shift() ?? "unexpected"),
+  });
   session = await TmuxSession.create({
-    cmd: FX_BIN,
+    cmd: FIBER_BIN,
     cwd: current.workspace,
-    env: mockFxEnvironment(current, gateway, extraEnv),
+    env: mockFxEnvironment(current, codex, extraEnv),
     width: 112,
     height: 32,
     stderrPath: current.stderrPath,
@@ -213,23 +220,17 @@ async function startMockFx(
 
 function mockFxEnvironment(
   current: Fixture,
-  activeGateway: ReturnType<typeof startFakeGateway>,
+  activeCodex: ReturnType<typeof startFakeCodex>,
   extraEnv: Record<string, string | undefined> = {},
 ): Record<string, string | undefined> {
-  return {
-    HOME: current.home,
-    AI_GATEWAY_API_KEY: "fake-file-picker-key",
-    VERCEL_OIDC_TOKEN: undefined,
-    FX_GATEWAY_BASE_URL: activeGateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: activeGateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
-    FX_TRACE_LOG: current.tracePath,
-    FX_TRACE_SCOPES: "input,core,prompt,gateway,resize",
-    FX_RECORD: current.tapePath,
-    FX_RECORD_INPUT: "1",
+  return fakeCodexEnv(current.home, activeCodex, {
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+    FIBER_TRACE_LOG: current.tracePath,
+    FIBER_TRACE_SCOPES: "input,core,prompt,gateway,resize",
+    FIBER_RECORD: current.tapePath,
+    FIBER_RECORD_INPUT: "1",
     ...extraEnv,
-  };
+  });
 }
 
 async function clearComposer(active: TmuxSession): Promise<void> {
@@ -244,15 +245,15 @@ async function composerPlainText(active: TmuxSession): Promise<string> {
     .trimEnd();
 }
 
-async function waitForGatewayRequestCount(expected: number): Promise<void> {
+async function waitForCodexRequestCount(expected: number): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < TIMEOUT) {
-    if ((gateway?.requests.length ?? 0) >= expected) return;
+    if ((codex?.requests.length ?? 0) >= expected) return;
     await Bun.sleep(25);
   }
   throw new Error(
-    `Timed out waiting for ${expected} gateway request(s); received ${
-      gateway?.requests.length ?? 0
+    `Timed out waiting for ${expected} codex request(s); received ${
+      codex?.requests.length ?? 0
     }`,
   );
 }
@@ -416,7 +417,7 @@ function expectCleanRuntime(current: Fixture, active: TmuxSession): void {
 async function replayTape(current: Fixture): Promise<void> {
   await session?.kill();
   session = null;
-  const replay = await runFx(["replay", current.tapePath], {
+  const replay = await runFx(["debug", "replay", current.tapePath], {
     cwd: current.workspace,
     env: { HOME: current.home },
     timeoutMs: TIMEOUT,
@@ -429,8 +430,8 @@ describe("@ file picker", () => {
   tmuxTest(
     "keeps the completed result visible through rapid large-index refreshes",
     async () => {
-      const current = createFixture("fx-file-picker-stable-refresh-");
-      const artifactDir = process.env.FX_FILE_PICKER_LIFECYCLE_ARTIFACT_DIR;
+      const current = createFixture("fiber-file-picker-stable-refresh-");
+      const artifactDir = process.env.FIBER_FILE_PICKER_LIFECYCLE_ARTIFACT_DIR;
       const fixtureStartedAt = performance.now();
       let fixtureFileCount = 0;
       let fixtureFileBytes = 0;
@@ -550,7 +551,7 @@ describe("@ file picker", () => {
 
       const active = await startMockFx(
         current,
-        PART4_STRESS ? [fakeGatewayFinalText("PART4_PROFILE_PROMPT_OK")] : [],
+        PART4_STRESS ? ["PART4_PROFILE_PROMPT_OK"] : [],
       );
       await active.sendLiteral(LIFECYCLE_QUERY);
       await active.waitForText(LIFECYCLE_RESULT, TIMEOUT);
@@ -599,8 +600,8 @@ describe("@ file picker", () => {
         }
       };
       stressSamplerCleanup = () => stopSamplers(true);
-      const profileReadyPath = process.env.FX_FILE_PICKER_PROFILE_READY;
-      const profileGoPath = process.env.FX_FILE_PICKER_PROFILE_GO;
+      const profileReadyPath = process.env.FIBER_FILE_PICKER_PROFILE_READY;
+      const profileGoPath = process.env.FIBER_FILE_PICKER_PROFILE_GO;
       if (profileReadyPath && profileGoPath) {
         writeFileSync(profileReadyPath, `${targetPid}\n`);
         await waitForFile(profileGoPath);
@@ -910,8 +911,8 @@ describe("@ file picker", () => {
         await active.sendLiteral(" inspect");
         await active.sendKeys("Enter");
         await active.waitForText("PART4_PROFILE_PROMPT_OK", TIMEOUT);
-        expect(gateway?.requests).toHaveLength(1);
-        expect(gateway?.requests[0]?.body).toContain(
+        expect(codex?.requests).toHaveLength(1);
+        expect(codex?.requests[0]?.body).toContain(
           "Review @nested/deep/ inspect",
         );
       }
@@ -1003,7 +1004,7 @@ describe("@ file picker", () => {
             {
               file: acceptedFilePrompt,
               directory: acceptedDirectoryPrompt,
-              gatewayRequestBody: gateway?.requests[0]?.body ?? null,
+              gatewayRequestBody: codex?.requests[0]?.body ?? null,
             },
             null,
             2,
@@ -1061,7 +1062,7 @@ describe("@ file picker", () => {
           join(artifactDir, "terminal-escapes.txt"),
           terminalRecordingEscapes,
         );
-        copyFileSync(current.tapePath, join(artifactDir, "session.fxtape"));
+        copyFileSync(current.tapePath, join(artifactDir, "session.fibertape"));
       }
 
       await active.kill();
@@ -1073,7 +1074,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "refreshes a completed startup index on the first picker episode",
     async () => {
-      const current = createFixture("fx-file-picker-first-episode-refresh-");
+      const current = createFixture("fiber-file-picker-first-episode-refresh-");
       initGit(current.workspace);
       writeFileSync(join(current.workspace, "startup-visible.txt"), "startup");
       git(current.workspace, "add", "startup-visible.txt");
@@ -1101,9 +1102,9 @@ describe("@ file picker", () => {
   tmuxTest(
     "submits an unmatched file mention without requiring dismissal",
     async () => {
-      const current = createFixture("fx-file-picker-unmatched-submit-");
+      const current = createFixture("fiber-file-picker-unmatched-submit-");
       const active = await startMockFx(current, [
-        fakeGatewayFinalText("UNMATCHED_FILE_PROMPT_OK"),
+        "UNMATCHED_FILE_PROMPT_OK",
       ]);
 
       await active.sendLiteral("review @definitely-not-present");
@@ -1111,8 +1112,8 @@ describe("@ file picker", () => {
       await active.sendKeys("Enter");
       await active.waitForText("UNMATCHED_FILE_PROMPT_OK", TIMEOUT);
 
-      expect(gateway?.requests).toHaveLength(1);
-      expect(gateway?.requests[0]?.body).toContain(
+      expect(codex?.requests).toHaveLength(1);
+      expect(codex?.requests[0]?.body).toContain(
         "review @definitely-not-present",
       );
       expect(readFileSync(current.tracePath, "utf8")).not.toContain(
@@ -1127,7 +1128,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "opens after quotes and parentheses and submits the selected path",
     async () => {
-      const current = createFixture("fx-file-picker-boundaries-");
+      const current = createFixture("fiber-file-picker-boundaries-");
       initGit(current.workspace);
       mkdirSync(join(current.workspace, "src"));
       writeFileSync(join(current.workspace, "src", "main.zig"), "fixture");
@@ -1135,7 +1136,7 @@ describe("@ file picker", () => {
 
       const active = await startMockFx(
         current,
-        [fakeGatewayFinalText("FILE_BOUNDARY_PROMPT_OK")],
+        ["FILE_BOUNDARY_PROMPT_OK"],
         1000,
       );
       await active.sendLiteral('Compare "@src/main');
@@ -1149,8 +1150,8 @@ describe("@ file picker", () => {
       await active.sendKeys("Enter");
       await active.waitForText("FILE_BOUNDARY_PROMPT_OK", TIMEOUT);
 
-      expect(gateway?.requests).toHaveLength(1);
-      expect(gateway?.requests[0]?.body).toContain(
+      expect(codex?.requests).toHaveLength(1);
+      expect(codex?.requests[0]?.body).toContain(
         "Review (@src/main.zig now)",
       );
       expectCleanRuntime(current, active);
@@ -1161,7 +1162,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "keeps shared-prefix paths distinguishable at narrow widths",
     async () => {
-      const current = createFixture("fx-file-picker-narrow-prefix-");
+      const current = createFixture("fiber-file-picker-narrow-prefix-");
       initGit(current.workspace);
       const directory = join(
         current.workspace,
@@ -1199,7 +1200,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "keeps duplicate basenames distinguishable at narrow widths",
     async () => {
-      const current = createFixture("fx-file-picker-duplicate-basename-");
+      const current = createFixture("fiber-file-picker-duplicate-basename-");
       initGit(current.workspace);
       const basename = "shared-component-id-with-a-very-long-name.zig";
       const directories = [
@@ -1239,7 +1240,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "workspace mutation exposes absolute added-root files and directories",
     async () => {
-      const current = createFixture("fx-file-picker-added-root-");
+      const current = createFixture("fiber-file-picker-added-root-");
       const shared = join(current.root, "shared");
       mkdirSync(join(shared, "added-root-directory"), { recursive: true });
       const sharedRoot = realpathSync(shared);
@@ -1283,7 +1284,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "shows a 50k result and releases zero-match Enter after dismissal",
     async () => {
-      const current = createFixture("fx-file-picker-repaint-");
+      const current = createFixture("fiber-file-picker-repaint-");
       for (let index = 0; index < 50_000; index += 1) {
         writeFileSync(
           join(current.workspace, `bulk-${index.toString().padStart(5, "0")}.txt`),
@@ -1293,7 +1294,7 @@ describe("@ file picker", () => {
       writeFileSync(join(current.workspace, "z_target_unique.txt"), "target");
 
       const active = await startMockFx(current, [
-        fakeGatewayFinalText("dismissed file prompt submitted"),
+        "dismissed file prompt submitted",
       ]);
       await active.sendLiteral("@z_target_unique");
       await active.waitForText("z_target_unique.txt", TIMEOUT);
@@ -1321,7 +1322,7 @@ describe("@ file picker", () => {
       );
       await active.sendKeys("Enter");
       await active.waitForText("dismissed file prompt submitted", TIMEOUT);
-      expect(gateway?.requests).toHaveLength(1);
+      expect(codex?.requests).toHaveLength(1);
       expectCleanRuntime(current, active);
       await replayTape(current);
     },
@@ -1331,7 +1332,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "updates tracked and untracked membership while preserving ignores",
     async () => {
-      const current = createFixture("fx-file-picker-refresh-");
+      const current = createFixture("fiber-file-picker-refresh-");
       initGit(current.workspace);
       writeFileSync(join(current.workspace, ".gitignore"), "ignored.txt\n");
       writeFileSync(join(current.workspace, "tracked.txt"), "tracked");
@@ -1354,7 +1355,7 @@ describe("@ file picker", () => {
         "file index generation ready generation=2",
       );
       await active.waitForText("no matching files", TIMEOUT);
-      expect(gateway?.requests).toHaveLength(0);
+      expect(codex?.requests).toHaveLength(0);
 
       await clearComposer(active);
       await active.sendLiteral("@untracked");
@@ -1366,7 +1367,7 @@ describe("@ file picker", () => {
       const untrackedPane = await active.capturePane();
       expect(untrackedPane).toContain("@untracked");
       expect(untrackedPane).toContain("untracked.txt");
-      expect(gateway?.requests).toHaveLength(0);
+      expect(codex?.requests).toHaveLength(0);
 
       await clearComposer(active);
       writeFileSync(join(current.workspace, "newly-tracked.txt"), "new");
@@ -1385,7 +1386,7 @@ describe("@ file picker", () => {
         "file index generation adopted",
       ]);
       await active.waitForText("no matching files", TIMEOUT);
-      expect(gateway?.requests).toHaveLength(0);
+      expect(codex?.requests).toHaveLength(0);
       expectCleanRuntime(current, active);
     },
     TIMEOUT,
@@ -1394,7 +1395,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "omits unsafe filenames while Unicode matches remain selectable",
     async () => {
-      const current = createFixture("fx-file-picker-safety-");
+      const current = createFixture("fiber-file-picker-safety-");
       initGit(current.workspace);
       const unsafe = "evil-\x1b[2J.txt";
       writeFileSync(join(current.workspace, unsafe), "unsafe");
@@ -1423,7 +1424,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "renders and accepts fuzzy results across typed file kind changes",
     async () => {
-      const current = createFixture("fx-file-picker-typed-integration-");
+      const current = createFixture("fiber-file-picker-typed-integration-");
       initGit(current.workspace);
       writeFileSync(
         join(current.workspace, ".gitignore"),
@@ -1465,7 +1466,7 @@ describe("@ file picker", () => {
 
       const active = await startMockFx(
         current,
-        [fakeGatewayFinalText("TYPED_PATH_PROMPT_OK")],
+        ["TYPED_PATH_PROMPT_OK"],
         1000,
       );
 
@@ -1491,8 +1492,8 @@ describe("@ file picker", () => {
       await active.sendLiteral(" now");
       await active.sendKeys("Enter");
       await active.waitForText("TYPED_PATH_PROMPT_OK", TIMEOUT);
-      expect(gateway?.requests).toHaveLength(1);
-      expect(gateway?.requests[0]?.body).toContain("Review @nested/deep/ now");
+      expect(codex?.requests).toHaveLength(1);
+      expect(codex?.requests[0]?.body).toContain("Review @nested/deep/ now");
 
       await clearComposer(active);
       const componentAdoption = nextFileIndexAdoption(current.tracePath);
@@ -1523,7 +1524,7 @@ describe("@ file picker", () => {
       ]);
       expect((await active.capturePane()).split("\n").filter(isComposerLine).join(""))
         .toContain("@flip-file.txt/");
-      expect(gateway?.requests).toHaveLength(1);
+      expect(codex?.requests).toHaveLength(1);
 
       await clearComposer(active);
       const stableDirectoryAdoption = nextFileIndexAdoption(current.tracePath);
@@ -1547,7 +1548,7 @@ describe("@ file picker", () => {
       ]);
       expect((await active.capturePane()).split("\n").filter(isComposerLine).join(""))
         .toContain("@flip-dir");
-      expect(gateway?.requests).toHaveLength(1);
+      expect(codex?.requests).toHaveLength(1);
       expectCleanRuntime(current, active);
       await replayTape(current);
     },
@@ -1557,7 +1558,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "browses current, parent, home, and absolute filesystem paths",
     async () => {
-      const current = createFixture("fx-file-picker-filesystem-");
+      const current = createFixture("fiber-file-picker-filesystem-");
       initGit(current.workspace);
       mkdirSync(join(current.workspace, "empty-workspace"));
       mkdirSync(join(current.workspace, "filled-dir"));
@@ -1580,7 +1581,7 @@ describe("@ file picker", () => {
 
       const active = await startMockFx(
         current,
-        [fakeGatewayFinalText("FILESYSTEM_PATH_PROMPT_OK")],
+        ["FILESYSTEM_PATH_PROMPT_OK"],
         1000,
       );
 
@@ -1648,21 +1649,21 @@ describe("@ file picker", () => {
       expect(await composerPlainText(active)).toBe('@"~/space dir/item.txt"');
       await active.sendLiteral(" Reply with FILESYSTEM_PATH_PROMPT_OK.");
       await active.sendKeys("Enter");
-      await waitForGatewayRequestCount(1);
+      await waitForCodexRequestCount(1);
       await active.waitForText("FILESYSTEM_PATH_PROMPT_OK", TIMEOUT);
 
-      expect(gateway?.requests).toHaveLength(1);
-      const request = JSON.parse(gateway!.requests[0]!.body) as {
-        prompt: Array<{ role: string; content: unknown }>;
+      expect(codex?.requests).toHaveLength(1);
+      const request = JSON.parse(codex!.requests[0]!.body) as {
+        input: Array<{ role: string; content: unknown }>;
       };
-      expect(request.prompt.at(-1)).toEqual({
+      expect(request.input.at(-1)).toEqual({
         role: "user",
         content: [{
-          type: "text",
+          type: "input_text",
           text: '@"~/space dir/item.txt" Reply with FILESYSTEM_PATH_PROMPT_OK.',
         }],
       });
-      expect(gateway?.requests[0]?.body).not.toContain(
+      expect(codex?.requests[0]?.body).not.toContain(
         "FILE_CONTENT_MUST_NOT_BE_ATTACHED_7C91",
       );
       expectCleanRuntime(current, active);
@@ -1673,7 +1674,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "claims a typed separator after end completion without duplicating it",
     async () => {
-      const current = createFixture("fx-file-picker-owned-spacing-");
+      const current = createFixture("fiber-file-picker-owned-spacing-");
       initGit(current.workspace);
       writeFileSync(join(current.workspace, "AGENTS.md"), "agents");
       writeFileSync(join(current.workspace, "README.md"), "readme");
@@ -1681,7 +1682,7 @@ describe("@ file picker", () => {
 
       const active = await startMockFx(
         current,
-        [fakeGatewayFinalText("FILE_PICKER_OWNED_SPACING_OK")],
+        ["FILE_PICKER_OWNED_SPACING_OK"],
         1000,
       );
       await active.sendLiteral("@AGEN");
@@ -1696,8 +1697,8 @@ describe("@ file picker", () => {
       await active.waitForText("@AGENTS.md @README.md", TIMEOUT);
       await active.sendKeys("Enter");
       await active.waitForText("FILE_PICKER_OWNED_SPACING_OK", TIMEOUT);
-      expect(gateway?.requests).toHaveLength(1);
-      expect(gateway?.requests[0]?.body).toContain("@AGENTS.md @README.md ");
+      expect(codex?.requests).toHaveLength(1);
+      expect(codex?.requests[0]?.body).toContain("@AGENTS.md @README.md ");
       expectCleanRuntime(current, active);
     },
     TIMEOUT,
@@ -1706,14 +1707,14 @@ describe("@ file picker", () => {
   tmuxTest(
     "middle completion preserves one separator and submits the exact prompt",
     async () => {
-      const current = createFixture("fx-file-picker-spacing-");
+      const current = createFixture("fiber-file-picker-spacing-");
       initGit(current.workspace);
       writeFileSync(join(current.workspace, "first-file.txt"), "first");
       git(current.workspace, "add", "first-file.txt");
 
       const active = await startMockFx(
         current,
-        [fakeGatewayFinalText("FILE_PICKER_MOCK_OK")],
+        ["FILE_PICKER_MOCK_OK"],
         1000,
       );
       await active.sendLiteral("Read @first- suffix");
@@ -1725,8 +1726,8 @@ describe("@ file picker", () => {
 
       await active.sendKeys("Enter");
       await active.waitForText("FILE_PICKER_MOCK_OK", TIMEOUT);
-      expect(gateway?.requests).toHaveLength(1);
-      expect(gateway?.requests[0]?.body).toContain("Read @first-file.txt suffix");
+      expect(codex?.requests).toHaveLength(1);
+      expect(codex?.requests[0]?.body).toContain("Read @first-file.txt suffix");
       expectCleanRuntime(current, active);
     },
     TIMEOUT,
@@ -1735,7 +1736,7 @@ describe("@ file picker", () => {
   tmuxTest(
     "persists a selected plain-text path across two process resume cycles",
     async () => {
-      const current = createFixture("fx-file-picker-resume-");
+      const current = createFixture("fiber-file-picker-resume-");
       initGit(current.workspace);
       writeFileSync(
         join(current.workspace, "resume-context.txt"),
@@ -1750,7 +1751,7 @@ describe("@ file picker", () => {
       ];
       const active = await startMockFx(
         current,
-        responses.map((text) => fakeGatewayFinalText(text)),
+        responses,
         1_000,
       );
       await active.sendLiteral("Remember @resume-context");
@@ -1759,8 +1760,8 @@ describe("@ file picker", () => {
       await active.sendLiteral(" exactly");
       await active.sendKeys("Enter");
       await active.waitForText(responses[0]!, TIMEOUT);
-      expect(gateway?.requests).toHaveLength(1);
-      expect(gateway?.requests[0]?.body).toContain(
+      expect(codex?.requests).toHaveLength(1);
+      expect(codex?.requests[0]?.body).toContain(
         "Remember @resume-context.txt exactly",
       );
 
@@ -1776,11 +1777,11 @@ describe("@ file picker", () => {
       });
       expect(listed.code).toBe(0);
       expect(listed.stderr).toBe("");
-      const sessionId = (JSON.parse(listed.stdout) as {
+      const sessionId = (JSON.parse(listed.stdout).data as {
         sessions: Array<{ id: string }>;
       }).sessions[0]?.id;
       expect(sessionId).toBeDefined();
-      const saved = await runFx(["session", "--id", sessionId!, "--json"], {
+      const saved = await runFx(["session", "show", "--id", sessionId!, "--json"], {
         cwd: current.workspace,
         env: { HOME: current.home },
         timeoutMs: TIMEOUT,
@@ -1791,12 +1792,12 @@ describe("@ file picker", () => {
 
       for (const cycle of [1, 2] as const) {
         writeFileSync(current.stderrPath, "");
-        const activeGateway = gateway!;
+        const activeCodex = codex!;
         session = await TmuxSession.create({
-          cmd: `${FX_BIN} --resume-last`,
+          cmd: `${FIBER_BIN} resume last`,
           cwd: current.workspace,
-          env: mockFxEnvironment(current, activeGateway, {
-            FX_RECORD: join(current.root, `resume-${cycle}.fxtape`),
+          env: mockFxEnvironment(current, activeCodex, {
+            FIBER_RECORD: join(current.root, `resume-${cycle}.fibertape`),
           }),
           width: cycle === 1 ? 48 : 160,
           height: cycle === 1 ? 12 : 50,
@@ -1807,11 +1808,11 @@ describe("@ file picker", () => {
         await session.waitForText("@resume-context.txt", TIMEOUT);
         await session.sendText(`Resume cycle ${cycle} keeps the path.`);
         await session.waitForText(responses[cycle]!, TIMEOUT);
-        expect(activeGateway.requests).toHaveLength(cycle + 1);
-        expect(activeGateway.requests[cycle]?.body).toContain(
+        expect(activeCodex.requests).toHaveLength(cycle + 1);
+        expect(activeCodex.requests[cycle]?.body).toContain(
           "Remember @resume-context.txt exactly",
         );
-        expect(activeGateway.requests[cycle]?.body).toContain(
+        expect(activeCodex.requests[cycle]?.body).toContain(
           `Resume cycle ${cycle} keeps the path.`,
         );
         expect(readFileSync(current.stderrPath, "utf8")).toBe("");
@@ -1821,7 +1822,7 @@ describe("@ file picker", () => {
       }
 
       const resumedSaved = await runFx(
-        ["session", "--id", sessionId!, "--json"],
+        ["session", "show", "--id", sessionId!, "--json"],
         {
           cwd: current.workspace,
           env: { HOME: current.home },
@@ -1840,7 +1841,7 @@ describe("@ file picker", () => {
   liveTmuxTest(
     "browses a home path and submits through the live Gateway",
     async () => {
-      const current = createFixture("fx-file-picker-live-");
+      const current = createFixture("fiber-file-picker-live-");
       initGit(current.workspace);
       mkdirSync(join(current.home, "live space"));
       writeFileSync(
@@ -1849,16 +1850,15 @@ describe("@ file picker", () => {
       );
 
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: current.workspace,
         env: {
           HOME: current.home,
           AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY,
           VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN,
-          FX_AUTO_UPGRADE: "0",
-          FX_MODEL: process.env.FX_FILE_PICKER_LIVE_MODEL ?? "anthropic/claude-sonnet-4.6",
-          FX_TRACE_LOG: current.tracePath,
-          FX_TRACE_SCOPES: "input,prompt,gateway",
+          FIBER_MODEL: process.env.FIBER_FILE_PICKER_LIVE_MODEL ?? "anthropic/claude-sonnet-4.6",
+          FIBER_TRACE_LOG: current.tracePath,
+          FIBER_TRACE_SCOPES: "input,prompt,gateway",
         },
         width: 112,
         height: 32,

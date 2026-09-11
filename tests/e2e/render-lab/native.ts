@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { FX_BIN, REPO_ROOT } from "../../evals/eval-helpers";
+import { FIBER_BIN, REPO_ROOT } from "../../evals/eval-helpers";
 import { analyzeRun } from "./analyzer";
 import {
   attachFrameEvidence,
@@ -27,9 +27,9 @@ import type {
   RenderLabManifest,
 } from "./types";
 
-export const NATIVE_GATE_ENV = "FX_RENDER_LAB_NATIVE";
-export const NATIVE_COMMAND_K_ENV = "FX_RENDER_LAB_NATIVE_COMMAND_K";
-export const NATIVE_CLIPBOARD_ENV = "FX_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD";
+export const NATIVE_GATE_ENV = "FIBER_RENDER_LAB_NATIVE";
+export const NATIVE_COMMAND_K_ENV = "FIBER_RENDER_LAB_NATIVE_COMMAND_K";
+export const NATIVE_CLIPBOARD_ENV = "FIBER_RENDER_LAB_NATIVE_ALLOW_CLIPBOARD";
 
 type NativeAdapterName = "terminal-app" | "ghostty" | "warp";
 type NativeCapture = "terminal-contents" | "clipboard";
@@ -72,7 +72,7 @@ type NativeController = {
   height: number;
 };
 
-const PROMPT_TEXT = "FX_RENDER_LAB%";
+const PROMPT_TEXT = "FIBER_RENDER_LAB%";
 const TRACE_SCOPES =
   "render,paint,resize,scroll,footer.clean,input";
 
@@ -116,7 +116,7 @@ const NATIVE_SCENARIOS: NativeScenario[] = [
     requiresClipboard: false,
     notes: [
       "Triggers the real macOS Terminal Command-K UI action through System Events.",
-      "Requires the additional FX_RENDER_LAB_NATIVE_COMMAND_K=1 gate because it clears scrollback.",
+      "Requires the additional FIBER_RENDER_LAB_NATIVE_COMMAND_K=1 gate because it clears scrollback.",
     ],
   },
   {
@@ -170,7 +170,7 @@ export async function runNativeRenderLab(
   const artifactDir = join(outRoot, `run-${timestampForPath(startedAt)}-${runNumber}`);
   mkdirSync(join(artifactDir, "replay", "frames"), { recursive: true });
 
-  const binarySha256 = sha256(FX_BIN);
+  const binarySha256 = sha256(FIBER_BIN);
   const shellMarkers = scenario.commandK
     ? [`SHELL_B_BEFORE_CLEAR_${runId}`, `SHELL_B_AFTER_CLEAR_${runId}`]
     : [
@@ -186,10 +186,10 @@ export async function runNativeRenderLab(
     completedAt: null,
     repoRoot: REPO_ROOT,
     artifactDir,
-    binaryPath: FX_BIN,
+    binaryPath: FIBER_BIN,
     binarySha256,
     traceLogPath: join(artifactDir, "trace.log"),
-    tapePath: join(artifactDir, "render.fxtape"),
+    tapePath: join(artifactDir, "render.fibertape"),
     finalGridPath: join(artifactDir, "final-grid.txt"),
     replaySummaryPath: join(artifactDir, "replay-summary.json"),
     runtimeEvidencePath: join(artifactDir, "runtime-evidence.json"),
@@ -363,11 +363,11 @@ async function launchFx(
   label: string,
 ): Promise<void> {
   await controller.sendText(
-    `FX_RECORD=${shQuote(context.manifest.tapePath)} FX_RECORD_INPUT=1 ${shQuote(FX_BIN)}`,
+    `FIBER_RECORD=${shQuote(context.manifest.tapePath)} FIBER_RECORD_INPUT=1 ${shQuote(FIBER_BIN)}`,
   );
-  await capture(context, controller, `${label}-fx-launch-requested`);
+  await capture(context, controller, `${label}-fiber-launch-requested`);
   await waitForText(controller, "Run /help for commands", 30_000);
-  await capture(context, controller, `${label}-fx-prompt-visible`);
+  await capture(context, controller, `${label}-fiber-prompt-visible`);
 }
 
 async function submitSlashCommand(
@@ -384,7 +384,7 @@ async function submitSlashCommand(
 
 async function quitFx(context: NativeContext, controller: NativeController, label: string): Promise<void> {
   await controller.sendText("/quit");
-  await capture(context, controller, `${label}-fx-quit-requested`);
+  await capture(context, controller, `${label}-fiber-quit-requested`);
   await waitForText(controller, PROMPT_TEXT, 20_000);
   await capture(context, controller, `${label}-post-quit-shell-prompt`);
 }
@@ -708,12 +708,12 @@ function preflightNative(scenario: NativeScenario): void {
   if (process.platform !== "darwin") {
     throw new Error(`${scenario.name} requires macOS native terminal automation`);
   }
-  if (!existsSync(FX_BIN)) {
-    throw new Error(`fx binary not found at ${FX_BIN}. Run zig build first.`);
+  if (!existsSync(FIBER_BIN)) {
+    throw new Error(`fiber binary not found at ${FIBER_BIN}. Run zig build first.`);
   }
-  const stat = statSync(FX_BIN);
+  const stat = statSync(FIBER_BIN);
   if (!stat.isFile() || (stat.mode & 0o111) === 0) {
-    throw new Error(`fx binary is not executable at ${FX_BIN}`);
+    throw new Error(`fiber binary is not executable at ${FIBER_BIN}`);
   }
   if (!existsSync(scenario.appPath)) {
     throw new Error(`${scenario.appName} app not found at ${scenario.appPath}`);
@@ -737,17 +737,13 @@ function startShellCommand(
         `SHELL_B_BEFORE_THIRD=${shQuote(manifest.markers.shell[2]!)}`,
       ];
   const env = [
-    "-u",
-    "AI_GATEWAY_API_KEY",
-    "-u",
-    "VERCEL_OIDC_TOKEN",
     `HOME=${shQuote(fixture.home)}`,
     `ZDOTDIR=${shQuote(fixture.zdotdir)}`,
     `HISTFILE=${shQuote(fixture.histfile)}`,
     `SHELL=${shQuote(zshPath())}`,
     `TERM_PROGRAM=${shQuote(scenario.termProgram)}`,
-    `FX_TRACE_LOG=${shQuote(manifest.traceLogPath)}`,
-    `FX_TRACE_SCOPES=${shQuote(TRACE_SCOPES)}`,
+    `FIBER_TRACE_LOG=${shQuote(manifest.traceLogPath)}`,
+    `FIBER_TRACE_SCOPES=${shQuote(TRACE_SCOPES)}`,
     ...markerEnv,
     shQuote(zshPath()),
     "-i",
@@ -770,7 +766,7 @@ function createFixture(runId: string): Fixture {
   writeFileSync(join(fixture.work, "run-id.txt"), `${runId}\n`);
   writeFileSync(
     join(fixture.zdotdir, ".zshrc"),
-    ["PROMPT='FX_RENDER_LAB%% '", "RPROMPT=''", "setopt NO_BEEP", ""].join("\n"),
+    ["PROMPT='FIBER_RENDER_LAB%% '", "RPROMPT=''", "setopt NO_BEEP", ""].join("\n"),
   );
   return fixture;
 }
@@ -797,8 +793,8 @@ function writeFrame(manifest: RenderLabManifest, frame: RenderLabFrame): void {
 async function writeReplaySummary(manifest: RenderLabManifest): Promise<void> {
   try {
     const output = execFileSync(
-      FX_BIN,
-      ["replay", manifest.tapePath, "--json", "--golden", manifest.finalGridPath],
+      FIBER_BIN,
+      ["debug", "replay", manifest.tapePath, "--json", "--golden", manifest.finalGridPath],
       { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
     const jsonLine = output.split(/\r?\n/).find((line) => line.trim().startsWith("{"));

@@ -224,10 +224,7 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
             .stdin = if (child_count == 0) .ignore else .pipe,
             .stdout = .pipe,
             .stderr = .pipe,
-            .pgid = if (builtin.os.tag != .windows and builtin.os.tag != .wasi)
-                (if (child_count == 0) 0 else group_id)
-            else
-                null,
+            .pgid = if (child_count == 0) 0 else group_id,
         }) catch |err| {
             return switch (err) {
                 error.FileNotFound => error.DirectExecutableUnavailable,
@@ -235,7 +232,7 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
             };
         };
         children[child_count] = child;
-        if (child_count == 0 and builtin.os.tag != .windows and builtin.os.tag != .wasi) {
+        if (child_count == 0) {
             group_id = child.id;
         }
         if (test_controls.after_spawn) |after_spawn| {
@@ -726,7 +723,6 @@ fn deadlineExpired(cfg: command_runner.Config) bool {
 }
 
 fn signalGroup(group_id: ?std.posix.pid_t, force: bool) void {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
     const pid = group_id orelse return;
     std.posix.kill(-pid, if (force) std.posix.SIG.KILL else std.posix.SIG.TERM) catch |err| switch (err) {
         error.ProcessNotFound => {},
@@ -1335,7 +1331,7 @@ test "direct executor reaps partial spawn and output-limit process groups" {
     };
 
     const sleep_argv = [_][]const u8{ "/bin/sleep", "10" };
-    const missing_argv = [_][]const u8{"/definitely/missing/fx-direct-second-stage"};
+    const missing_argv = [_][]const u8{"/definitely/missing/fiber-direct-second-stage"};
     const partial_stages = [_]command_effect.DirectStage{
         .{
             .executable = "/bin/sleep",
@@ -1343,7 +1339,7 @@ test "direct executor reaps partial spawn and output-limit process groups" {
             .environment_profile = .basic_read_only,
         },
         .{
-            .executable = "/definitely/missing/fx-direct-second-stage",
+            .executable = "/definitely/missing/fiber-direct-second-stage",
             .argv = &missing_argv,
             .environment_profile = .basic_read_only,
         },
@@ -1718,9 +1714,9 @@ test "direct executor treats downstream pipe closure as normal pipeline completi
 }
 
 test "direct executor fails closed for missing executable" {
-    const missing_argv = [_][]const u8{"/definitely/missing/fx-direct-command"};
+    const missing_argv = [_][]const u8{"/definitely/missing/fiber-direct-command"};
     const missing_stages = [_]command_effect.DirectStage{.{
-        .executable = "/definitely/missing/fx-direct-command",
+        .executable = "/definitely/missing/fiber-direct-command",
         .argv = &missing_argv,
         .environment_profile = .basic_read_only,
     }};

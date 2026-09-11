@@ -3,13 +3,11 @@ const builtin = @import("builtin");
 const app_process_runtime = @import("app_process_runtime.zig");
 const app_session_runtime = @import("app_session_runtime.zig");
 const auto_upgrade = @import("../upgrade/auto_upgrade.zig");
-const acp_runner = @import("../cli/acp_runner.zig");
 const cli_surface = @import("../cli/cli_surface.zig");
 const process_provider = @import("../execution/process_provider.zig");
-const gateway_provider = @import("../gateway/gateway_provider.zig");
+const oauth_transport = @import("../auth/oauth_transport.zig");
 const provider_set = @import("../gateway/provider_set.zig");
 const host = @import("../hosts/host.zig");
-const host_target = @import("../hosts/target.zig");
 const io_mod = @import("../shared/io.zig");
 const prompt_policy = @import("../config/prompt_policy.zig");
 const skill_contract = @import("../skills/skill_contract.zig");
@@ -21,7 +19,6 @@ const mcp_command_provider = @import("../mcp/command_provider.zig");
 const mcp_health = @import("../mcp/health.zig");
 const mcp_runtime = @import("../mcp/mcp_runtime.zig");
 const tool_set_contract = @import("../tooling/tool_set.zig");
-const update_target = @import("../upgrade/update_target.zig");
 const test_builtin_gateway = if (builtin.is_test)
     @import("../../builtins/gateway.zig")
 else
@@ -33,13 +30,7 @@ else
 
 const Allocator = std.mem.Allocator;
 
-const GracefulExitSigintGuard = if (host_target.is_wasm) struct {
-    fn install(_: bool) @This() {
-        return .{};
-    }
-
-    fn deinit(_: *@This()) void {}
-} else struct {
+const GracefulExitSigintGuard = struct {
     saved_action: ?std.posix.Sigaction = null,
 
     fn install(enabled: bool) @This() {
@@ -65,18 +56,15 @@ const GracefulExitSigintGuard = if (host_target.is_wasm) struct {
 pub const Config = struct {
     version: []const u8 = "",
     revision: []const u8 = "",
-    build_channel: update_target.Channel = .stable,
     command_catalog: command_specs.TopLevelRegistry,
     default_model: []const u8,
     default_agent_step_limit: usize,
     models_path: []const u8,
     gateway_retry_count: usize,
-    gateway_chat_url: []const u8,
-    gateway_provider: gateway_provider.Provider,
+    oauth_transport: oauth_transport.Provider,
     provider_set: provider_set.Set,
     process_provider: process_provider.Provider = process_provider.unavailable_provider,
     url_opener: host.UrlOpener,
-    secret_store: host.SecretStore,
     prompt_policy: prompt_policy.Policy,
     skill_root_policy: skill_contract.RootPolicy,
     ignored_list_entries: []const []const u8,
@@ -98,7 +86,6 @@ pub const Config = struct {
         mcp_command_provider.addProfileServerUnavailable,
     remove_mcp_profile_server: mcp_command_provider.RemoveProfileServerFn =
         mcp_command_provider.removeProfileServerUnavailable,
-    acp_runner: acp_runner.Runner,
 };
 
 pub fn run(comptime App: type, alloc: Allocator, args: []const [:0]const u8, cfg: Config) !void {
@@ -132,10 +119,7 @@ const ReplaceProcessFn = *const fn (
 ) std.process.ReplaceError;
 const RunDeps = struct {
     cli_ctx: ?*anyopaque = null,
-    run_if_requested: RunIfRequestedFn = if (host_target.is_wasm)
-        unavailableCliDispatch
-    else
-        runIfRequestedDefault,
+    run_if_requested: RunIfRequestedFn = runIfRequestedDefault,
     env_ctx: ?*anyopaque = null,
     getenv: GetenvFn = getenvDefault,
     stderr_ctx: ?*anyopaque = null,
@@ -160,12 +144,12 @@ fn runWithDeps(comptime App: type, alloc: Allocator, args: []const [:0]const u8,
         .exit => |code| return .{ .exit = code },
     }
 
-    return runInteractiveWithDeps(App, false, alloc, &launch, deps);
+    return runInteractiveWithDeps(App, alloc, &launch, deps);
 }
 
 pub fn runBeforeInteractive(alloc: Allocator, args: []const [:0]const u8, cfg: Config) !BeforeInteractiveResult {
     const run_result = cli_surface.runIfRequested(alloc, args, cliSurfaceConfig(cfg)) catch |err| switch (err) {
-        error.UnknownCliCommand => return .{ .exit = 1 },
+        error.UnknownCliCommand => return .{ .exit = 2 },
         else => {
             tryWriteErrorMessage(.{}, err);
             return .{ .exit = 1 };
@@ -175,25 +159,16 @@ pub fn runBeforeInteractive(alloc: Allocator, args: []const [:0]const u8, cfg: C
     return beforeInteractiveResultFromRunResult(alloc, run_result, benchEnabled());
 }
 
-pub fn runNoConfigBeforeInteractive(
-    alloc: Allocator,
-    args: []const [:0]const u8,
-    version: []const u8,
-    command_catalog: command_specs.TopLevelRegistry,
-) !?RunOutcome {
-    return if (try cli_surface.runNoConfigIfRequested(alloc, args, version, command_catalog)) .returned else null;
-}
-
 fn runBeforeInteractiveWithDeps(alloc: Allocator, args: []const [:0]const u8, cfg: Config, deps: RunDeps) !BeforeInteractiveResult {
     const run_result = deps.run_if_requested(deps.cli_ctx, alloc, args, cliSurfaceConfig(cfg)) catch |err| switch (err) {
-        error.UnknownCliCommand => return .{ .exit = 1 },
+        error.UnknownCliCommand => return .{ .exit = 2 },
         else => {
             tryWriteErrorMessage(deps, err);
             return .{ .exit = 1 };
         },
     };
 
-    return beforeInteractiveResultFromRunResult(alloc, run_result, deps.getenv(deps.env_ctx, "FX_BENCH") != null);
+    return beforeInteractiveResultFromRunResult(alloc, run_result, deps.getenv(deps.env_ctx, "FIBER_BENCH") != null);
 }
 
 fn beforeInteractiveResultFromRunResult(alloc: Allocator, run_result: cli_surface.RunResult, bench: bool) BeforeInteractiveResult {
@@ -208,79 +183,69 @@ fn beforeInteractiveResultFromRunResult(alloc: Allocator, run_result: cli_surfac
         },
         .handled_success => return .returned,
         .handled_failure => return .{ .exit = 1 },
+        .handled_usage_error => return .{ .exit = 2 },
         .handled_exit => |code| return if (code == 0) .returned else .{ .exit = code },
     }
 }
 
 fn benchEnabled() bool {
     if (comptime builtin.link_libc) {
-        return std.c.getenv("FX_BENCH") != null;
+        return std.c.getenv("FIBER_BENCH") != null;
     }
-    return io_mod.getenv("FX_BENCH") != null;
+    return io_mod.getenv("FIBER_BENCH") != null;
 }
 
 pub fn runInteractive(comptime App: type, alloc: Allocator, launch: *cli_surface.InteractiveLaunch) !RunOutcome {
-    return runInteractiveWithDeps(App, false, alloc, launch, .{});
+    return runInteractiveWithDeps(App, alloc, launch, .{});
 }
 
-/// Runs the interactive product without native CLI dispatch, process replacement,
-/// or a worker thread. Single-threaded hosts must arrange cooperative prompt work.
-pub fn runInteractiveCooperative(comptime App: type, alloc: Allocator, launch: *cli_surface.InteractiveLaunch) !RunOutcome {
-    return runInteractiveWithDeps(App, true, alloc, launch, .{});
-}
-
-fn unavailableCliDispatch(_: ?*anyopaque, _: Allocator, _: []const [:0]const u8, _: cli_surface.Config) anyerror!cli_surface.RunResult {
-    return error.UnknownCliCommand;
-}
-
-fn runInteractiveWithDeps(comptime App: type, comptime cooperative: bool, alloc: Allocator, launch: *cli_surface.InteractiveLaunch, deps: RunDeps) !RunOutcome {
-    const resume_requested = launch.requested_resume != null;
+fn runInteractiveWithDeps(comptime App: type, alloc: Allocator, launch: *cli_surface.InteractiveLaunch, deps: RunDeps) !RunOutcome {
     var app = App.init(alloc, launch) catch |err| {
         switch (err) {
             error.NotATerminal => {
-                writeStderr(deps, "fx requires an interactive terminal (TTY).\n");
+                writeStderr(deps, "fiber requires an interactive terminal (TTY).\n");
                 return .{ .exit = 1 };
             },
             error.TerminalTooSmall => {
-                writeStderr(deps, "fx needs at least 5 terminal rows.\n");
+                writeStderr(deps, "fiber needs at least 5 terminal rows.\n");
                 return .returned;
             },
             error.RecordingStartFailed => {
-                writeStderr(deps, "fx: unable to start terminal recording.\n");
+                writeStderr(deps, "fiber: unable to start terminal recording.\n");
                 return .{ .exit = 1 };
             },
             error.NoSavedSessions => {
-                writeStderr(deps, "fx: no saved sessions for this workspace.\n");
+                writeStderr(deps, "fiber: no saved sessions for this workspace.\n");
                 return .{ .exit = 1 };
             },
             error.SessionNotFound => {
-                writeStderr(deps, "fx: saved session not found.\n");
+                writeStderr(deps, "fiber: saved session not found.\n");
                 return .{ .exit = 1 };
             },
             error.SessionBusy => {
-                writeStderr(deps, "fx: another fx process may be using this session (running or suspended); check other terminals or run jobs, then use fg or quit that process\n");
+                writeStderr(deps, "fiber: another fiber process may be using this session (running or suspended); check other terminals or run jobs, then use fg or quit that process\n");
                 return .{ .exit = 1 };
             },
             error.SessionLockUnsupported => {
-                writeStderr(deps, "fx: the filesystem cannot provide the required session lock\n");
+                writeStderr(deps, "fiber: the filesystem cannot provide the required session lock\n");
                 return .{ .exit = 1 };
             },
             error.SessionAuthorityBoundaryUnavailable,
             error.SessionCommitBoundaryUnavailable,
             => {
-                writeStderr(deps, "fx: this session is being updated; wait a moment and retry\n");
+                writeStderr(deps, "fiber: this session is being updated; wait a moment and retry\n");
                 return .{ .exit = 1 };
             },
             error.OneOffSessionNotResumable => {
-                writeStderr(deps, "fx: subagent child sessions cannot be resumed directly; message the named agent from its parent session\n");
+                writeStderr(deps, "fiber: subagent child sessions cannot be resumed directly; message the named agent from its parent session\n");
                 return .{ .exit = 1 };
             },
             error.InvalidSessionFormat => {
-                writeStderr(deps, "fx: saved session is unreadable. Run `fx doctor`; if it is recoverable, use `fx session recover <id>`.\n");
+                writeStderr(deps, "fiber: saved session is unreadable. Run `fiber doctor`; if it is recoverable, use `fiber session recover <id>`.\n");
                 return .{ .exit = 1 };
             },
             error.UnsupportedSessionSchema => {
-                writeStderr(deps, "fx: saved session uses an unsupported version and cannot be resumed by this fx build.\n");
+                writeStderr(deps, "fiber: saved session uses an unsupported version and cannot be resumed by this fiber build.\n");
                 return .{ .exit = 1 };
             },
             else => {
@@ -289,29 +254,31 @@ fn runInteractiveWithDeps(comptime App: type, comptime cooperative: bool, alloc:
             },
         }
     };
-    if (comptime !cooperative) {
-        if (@hasDecl(App, "startMcpDiscovery")) app.startMcpDiscovery();
-        if (@hasDecl(App, "rebindAfterInit")) app.rebindAfterInit();
-    }
+    if (@hasDecl(App, "startMcpDiscovery")) app.startMcpDiscovery();
+    if (@hasDecl(App, "rebindAfterInit")) app.rebindAfterInit();
     var app_needs_deinit = true;
     defer if (app_needs_deinit) app.deinit();
-    if (comptime !cooperative and @hasField(App, "session") and
+    if (comptime @hasField(App, "session") and
         @hasDecl(@TypeOf(app.session), "attachProfileUsagePublisher"))
     {
         app.session.attachProfileUsagePublisher(app.alloc);
     }
-    if (comptime !cooperative) {
-        if (resume_requested) app.startResumedSessionReconciliation();
-        if (@hasDecl(App, "configureNotifications")) try app.configureNotifications();
-        if (@hasDecl(App, "playStartupSound")) app.playStartupSound();
-        if (@hasDecl(App, "startAutoUpgrade")) app.startAutoUpgrade();
-        if (@hasDecl(App, "startFileIndex")) app.startFileIndex();
-        startWorkerThread(App, &app, deps) catch |err| {
+    if (@hasDecl(App, "configureNotifications")) try app.configureNotifications();
+    if (@hasDecl(App, "playStartupSound")) app.playStartupSound();
+    if (@hasDecl(App, "startAutoUpgrade")) app.startAutoUpgrade();
+    if (@hasDecl(App, "startFileIndex")) app.startFileIndex();
+    startWorkerThread(App, &app, deps) catch |err| {
+        app.releaseTerminal();
+        reportUnexpectedInteractiveError(deps, err);
+        return err;
+    };
+    app.startModelCacheWarmup();
+    if (@hasDecl(App, "openModelPickerIfUnselected")) {
+        app.openModelPickerIfUnselected() catch |err| {
             app.releaseTerminal();
             reportUnexpectedInteractiveError(deps, err);
             return err;
         };
-        app.startModelCacheWarmup();
     }
 
     app.run() catch |err| {
@@ -320,27 +287,18 @@ fn runInteractiveWithDeps(comptime App: type, comptime cooperative: bool, alloc:
         reportUnexpectedInteractiveError(deps, err);
         return err;
     };
-    const relaunch_request: ?auto_upgrade.RelaunchRequest = if (comptime cooperative)
-        null
-    else if (comptime @hasDecl(App, "takeUpgradeRelaunchRequest"))
+    const relaunch_request: ?auto_upgrade.RelaunchRequest = if (comptime @hasDecl(App, "takeUpgradeRelaunchRequest"))
         app.takeUpgradeRelaunchRequest()
     else
         null;
-    const resume_handoff_columns: u16 = if (comptime cooperative)
-        0
-    else if (comptime @hasDecl(App, "resumeHandoffColumns"))
+    const resume_handoff_columns: u16 = if (comptime @hasDecl(App, "resumeHandoffColumns"))
         app.resumeHandoffColumns()
     else
         0;
-    var graceful_exit_sigint_guard = GracefulExitSigintGuard.install(
-        !cooperative and relaunch_request == null,
-    );
+    var graceful_exit_sigint_guard = GracefulExitSigintGuard.install(relaunch_request == null);
     defer graceful_exit_sigint_guard.deinit();
     app_needs_deinit = false;
-    const handoff_value = if (comptime cooperative) blk: {
-        app.deinit();
-        break :blk null;
-    } else app.deinitWithResumeHandoff();
+    const handoff_value = app.deinitWithResumeHandoff();
     if (relaunch_request) |request| {
         if (handoff_value) |value| {
             var handoff = value;
@@ -360,7 +318,7 @@ fn runInteractiveWithDeps(comptime App: type, comptime cooperative: bool, alloc:
         } else {
             writeStderr(
                 deps,
-                "fx: upgrade installed, but no validated resume handoff was available. Your conversation remains on disk; run `fx doctor`.\n",
+                "fiber: upgrade installed, but no validated resume handoff was available. Your conversation remains on disk; run `fiber doctor`.\n",
             );
         }
         return .{ .exit = 1 };
@@ -398,9 +356,9 @@ fn writeUpgradeRelaunchFailure(
     var buffer: [768]u8 = undefined;
     const message = std.fmt.bufPrint(
         &buffer,
-        "fx: upgrade installed, but relaunch failed: {s}\nContinue session with: fx --resume {s}\n",
+        "fiber: upgrade installed, but relaunch failed: {s}\nContinue session with: fiber resume {s}\n",
         .{ @errorName(err), session_id },
-    ) catch "fx: upgrade installed, but relaunch failed; run `fx doctor`.\n";
+    ) catch "fiber: upgrade installed, but relaunch failed; run `fiber doctor`.\n";
     writeStderr(deps, message);
 }
 
@@ -408,18 +366,15 @@ fn cliSurfaceConfig(cfg: Config) cli_surface.Config {
     return .{
         .version = cfg.version,
         .revision = cfg.revision,
-        .build_channel = cfg.build_channel,
         .command_catalog = cfg.command_catalog,
         .default_model = cfg.default_model,
         .default_agent_step_limit = cfg.default_agent_step_limit,
         .models_path = cfg.models_path,
         .gateway_retry_count = cfg.gateway_retry_count,
-        .gateway_chat_url = cfg.gateway_chat_url,
-        .gateway_provider = cfg.gateway_provider,
+        .oauth_transport = cfg.oauth_transport,
         .provider_set = cfg.provider_set,
         .process_provider = cfg.process_provider,
         .url_opener = cfg.url_opener,
-        .secret_store = cfg.secret_store,
         .prompt_policy = cfg.prompt_policy,
         .skill_root_policy = cfg.skill_root_policy,
         .ignored_list_entries = cfg.ignored_list_entries,
@@ -438,7 +393,6 @@ fn cliSurfaceConfig(cfg: Config) cli_surface.Config {
         .load_mcp_runtime = cfg.load_mcp_runtime,
         .add_mcp_profile_server = cfg.add_mcp_profile_server,
         .remove_mcp_profile_server = cfg.remove_mcp_profile_server,
-        .acp_runner = cfg.acp_runner,
     };
 }
 
@@ -472,13 +426,13 @@ fn writeRealStdout(_: ?*anyopaque, text: []const u8) !void {
 fn formatResumeHandoff(buffer: []u8, session_id: []const u8) ![]const u8 {
     return std.fmt.bufPrint(
         buffer,
-        "Continue session with: fx --resume {s}\n",
+        "Continue session with: fiber resume {s}\n",
         .{session_id},
     );
 }
 
 fn formatUnexpectedError(buffer: []u8, err: anyerror) ![]const u8 {
-    return std.fmt.bufPrint(buffer, "fx: {s}\n", .{@errorName(err)});
+    return std.fmt.bufPrint(buffer, "fiber: {s}\n", .{@errorName(err)});
 }
 
 fn reportUnexpectedInteractiveError(deps: RunDeps, err: anyerror) void {
@@ -492,7 +446,7 @@ fn writeStderr(deps: RunDeps, text: []const u8) void {
 }
 
 fn tryWriteErrorMessage(deps: RunDeps, err: anyerror) void {
-    writeStderr(deps, "fx: ");
+    writeStderr(deps, "fiber: ");
     writeStderr(deps, @errorName(err));
     writeStderr(deps, "\n");
 }
@@ -523,10 +477,6 @@ fn noMcpConfigInspectionForTest(
     return .clear;
 }
 
-fn unexpectedAcpRunForTest(_: ?*anyopaque, _: Allocator, _: acp_runner.Config) anyerror!void {
-    return error.TestUnexpectedAcpRun;
-}
-
 fn testConfig() Config {
     return .{
         .version = "0.2.10",
@@ -535,13 +485,11 @@ fn testConfig() Config {
         .default_agent_step_limit = 12,
         .models_path = "/models",
         .gateway_retry_count = 2,
-        .gateway_chat_url = "https://gateway/chat",
-        .gateway_provider = test_builtin_gateway.provider,
-        .provider_set = provider_set.gateway_only(test_builtin_gateway.provider_bundle),
+        .oauth_transport = test_builtin_gateway.oauth_transport_provider,
+        .provider_set = provider_set.Set{ .codex = test_builtin_gateway.provider_bundle },
         .url_opener = host.unavailable_url_opener,
-        .secret_store = host.unavailable_secret_store,
         .prompt_policy = .{ .system_prompt = "system" },
-        .skill_root_policy = .{ .managed_root_source = .global_fx },
+        .skill_root_policy = .{ .managed_root_source = .global_fiber },
         .ignored_list_entries = &.{ ".git", "zig-out" },
         .max_list_entries = 100,
         .max_read_file_bytes = 1024,
@@ -554,7 +502,6 @@ fn testConfig() Config {
         .mode_registry = .{ .default_mode_id = "entry" },
         .inspect_mcp_profile_config = noMcpConfigInspectionForTest,
         .load_mcp_runtime = noMcpRuntimeForTest,
-        .acp_runner = .{ .run_fn = unexpectedAcpRunForTest },
         .tool_set = .{
             .registry = .{ .tools = &.{} },
             .order = &.{"entry_test_tool"},
@@ -678,7 +625,7 @@ fn runIfRequestedForTest(ctx: ?*anyopaque, _: Allocator, _: []const [:0]const u8
 
 fn getenvForTest(ctx: ?*anyopaque, key: []const u8) ?[]const u8 {
     const capture: *TestCapture = @ptrCast(@alignCast(ctx.?));
-    if (std.mem.eql(u8, key, "FX_BENCH")) return capture.bench_value;
+    if (std.mem.eql(u8, key, "FIBER_BENCH")) return capture.bench_value;
     return null;
 }
 
@@ -780,10 +727,6 @@ const TestApp = struct {
         appendTestEvent("terminal-release");
     }
 
-    fn startResumedSessionReconciliation(_: *TestApp) void {
-        appendTestEvent("resume-reconciliation");
-    }
-
     fn startAutoUpgrade(_: *TestApp) void {
         appendTestEvent("auto-upgrade");
     }
@@ -819,9 +762,7 @@ test "app entry returns after handled CLI success without initializing app" {
     };
     var cfg = testConfig();
     var url_opener_context: u8 = 0;
-    var secret_store_context: u8 = 0;
     cfg.url_opener.context = &url_opener_context;
-    cfg.secret_store.context = &secret_store_context;
     cfg.skill_root_policy.workspace_roots = &skill_roots;
     const outcome = try runWithDeps(TestApp, alloc, &.{@constCast("help")}, cfg, capture.deps());
 
@@ -833,14 +774,10 @@ test "app entry returns after handled CLI success without initializing app" {
     try std.testing.expectEqualStrings("entry", capture.seen_config.?.mode_registry.default_mode_id);
     try std.testing.expectEqualStrings("entry_test_tool", capture.seen_config.?.tool_set.order[0]);
     try std.testing.expectEqualStrings("skills", capture.seen_config.?.skill_root_policy.workspace_roots[0].path);
-    try std.testing.expect(capture.seen_config.?.gateway_provider.chat_url.resolve_fn == test_builtin_gateway.chat_url_provider.resolve_fn);
-    try std.testing.expect(capture.seen_config.?.provider_set.gateway.cli_model_catalog.?.fetch_fn == test_builtin_gateway.cli_model_catalog_provider.fetch_fn);
-    try std.testing.expect(capture.seen_config.?.provider_set.gateway.fx_search.?.execute_fn == test_builtin_gateway.default_web_search_provider.execute_fn);
-    try std.testing.expect(capture.seen_config.?.provider_set.gateway.model_catalog.?.fetch_fn == test_builtin_gateway.model_catalog_provider.fetch_fn);
+    try std.testing.expect(capture.seen_config.?.provider_set.codex.cli_model_catalog.?.fetch_fn == test_builtin_gateway.provider_bundle.cli_model_catalog.?.fetch_fn);
+    try std.testing.expect(capture.seen_config.?.provider_set.codex.model_catalog.?.fetch_fn == test_builtin_gateway.provider_bundle.model_catalog.?.fetch_fn);
     try std.testing.expect(capture.seen_config.?.url_opener.context == cfg.url_opener.context);
     try std.testing.expect(capture.seen_config.?.url_opener.open_fn == cfg.url_opener.open_fn);
-    try std.testing.expect(capture.seen_config.?.secret_store.context == cfg.secret_store.context);
-    try std.testing.expect(capture.seen_config.?.secret_store.load_fn == cfg.secret_store.load_fn);
     try std.testing.expect(capture.seen_config.?.inspect_mcp_profile_config == noMcpConfigInspectionForTest);
     try std.testing.expect(capture.seen_config.?.load_mcp_runtime == noMcpRuntimeForTest);
     try std.testing.expectEqual(@as(usize, 0), test_event_count);
@@ -860,7 +797,7 @@ test "app entry maps handled CLI exit without initializing app" {
     const alloc = std.testing.allocator;
     var capture = TestCapture.init(.{ .handled_exit = 42 });
     defer capture.deinit();
-    const outcome = try runWithDeps(TestApp, alloc, &.{ @constCast("replay"), @constCast("tape") }, testConfig(), capture.deps());
+    const outcome = try runWithDeps(TestApp, alloc, &.{ @constCast("debug"), @constCast("replay"), @constCast("tape") }, testConfig(), capture.deps());
 
     try std.testing.expectEqual(@as(u8, 42), outcome.exit);
     try std.testing.expectEqual(@as(usize, 1), capture.cli_calls);
@@ -871,14 +808,34 @@ test "app entry returns after handled zero exit without initializing app" {
     const alloc = std.testing.allocator;
     var capture = TestCapture.init(.{ .handled_exit = 0 });
     defer capture.deinit();
-    const outcome = try runWithDeps(TestApp, alloc, &.{ @constCast("replay"), @constCast("tape") }, testConfig(), capture.deps());
+    const outcome = try runWithDeps(TestApp, alloc, &.{ @constCast("debug"), @constCast("replay"), @constCast("tape") }, testConfig(), capture.deps());
 
     try std.testing.expectEqual(RunOutcome.returned, outcome);
     try std.testing.expectEqual(@as(usize, 1), capture.cli_calls);
     try std.testing.expectEqual(@as(usize, 0), test_event_count);
 }
 
-test "app entry honors FX_BENCH before app initialization" {
+fn unknownCliCommandForTest(_: ?*anyopaque, _: Allocator, _: []const [:0]const u8, _: cli_surface.Config) !cli_surface.RunResult {
+    return error.UnknownCliCommand;
+}
+
+test "runBeforeInteractiveWithDeps maps unknown cli command to exit 2" {
+    const alloc = std.testing.allocator;
+    var capture = TestCapture.init(.handled_success);
+    defer capture.deinit();
+    var deps = capture.deps();
+    deps.run_if_requested = unknownCliCommandForTest;
+
+    const result = try runBeforeInteractiveWithDeps(
+        alloc,
+        &.{@constCast("wat")},
+        testConfig(),
+        deps,
+    );
+    try std.testing.expectEqual(@as(u8, 2), result.exit);
+}
+
+test "app entry honors FIBER_BENCH before app initialization" {
     const alloc = std.testing.allocator;
     var capture = TestCapture.init(.{ .interactive = .{} });
     defer capture.deinit();
@@ -912,7 +869,7 @@ test "app entry writes exact resume handoff after interactive teardown" {
 
     try std.testing.expectEqual(RunOutcome.returned, outcome);
     try std.testing.expectEqualStrings(
-        "Continue session with: fx --resume session-123\n",
+        "Continue session with: fiber resume session-123\n",
         capture.stdout.written(),
     );
     try std.testing.expectEqual(@as(usize, 1), capture.stdout_calls);
@@ -953,7 +910,7 @@ test "app entry bounds graceful-exit SIGINT suppression to handoff lifetime" {
 
     try std.testing.expectEqual(RunOutcome.returned, outcome);
     try std.testing.expectEqualStrings(
-        "Continue session with: fx --resume session-123\n",
+        "Continue session with: fiber resume session-123\n",
         capture.stdout.written(),
     );
     try std.testing.expectEqual(@as(usize, 0), test_sigint_count.load(.seq_cst));
@@ -967,7 +924,7 @@ test "app entry relaunches only after teardown with the validated handoff" {
     var capture = TestCapture.init(.{ .interactive = .{} });
     defer capture.deinit();
     capture.resume_handoff_id = "session-123";
-    capture.upgrade_relaunch_path = "/tmp/fx-upgraded";
+    capture.upgrade_relaunch_path = "/tmp/fiber-upgraded";
     capture.record_stderr_event = true;
 
     const outcome = try runWithDeps(
@@ -981,7 +938,7 @@ test "app entry relaunches only after teardown with the validated handoff" {
     try std.testing.expectEqual(@as(u8, 1), outcome.exit);
     try std.testing.expectEqual(@as(usize, 1), capture.replace_calls);
     try std.testing.expectEqual(@as(usize, 4), capture.replace_arg_count);
-    try std.testing.expectEqualStrings("/tmp/fx-upgraded", capture.replaceArg(0));
+    try std.testing.expectEqualStrings("/tmp/fiber-upgraded", capture.replaceArg(0));
     try std.testing.expectEqualStrings("resume", capture.replaceArg(1));
     try std.testing.expectEqualStrings("session-123", capture.replaceArg(2));
     try std.testing.expectEqualStrings("--upgrade-relaunch", capture.replaceArg(3));
@@ -993,7 +950,7 @@ test "app entry relaunches only after teardown with the validated handoff" {
     try std.testing.expect(std.mem.find(
         u8,
         capture.stderr.written(),
-        "fx --resume session-123",
+        "fiber resume session-123",
     ) != null);
     try expectEvents(&.{
         "init:none",
@@ -1014,7 +971,7 @@ test "app entry never relaunches without a validated handoff" {
     const alloc = std.testing.allocator;
     var capture = TestCapture.init(.{ .interactive = .{} });
     defer capture.deinit();
-    capture.upgrade_relaunch_path = "/tmp/fx-upgraded";
+    capture.upgrade_relaunch_path = "/tmp/fiber-upgraded";
 
     const outcome = try runWithDeps(
         TestApp,
@@ -1061,7 +1018,7 @@ test "app entry reports unexpected init errors once and preserves identity" {
     capture.record_stderr_event = true;
 
     try std.testing.expectError(error.TestInitFailed, runWithDeps(TestApp, alloc, &.{}, testConfig(), capture.deps()));
-    try std.testing.expectEqualStrings("fx: TestInitFailed\n", capture.stderr.written());
+    try std.testing.expectEqualStrings("fiber: TestInitFailed\n", capture.stderr.written());
     try std.testing.expectEqual(@as(usize, 1), capture.stderr_calls);
     try expectEvents(&.{ "init:none", "stderr-attempt" });
 }
@@ -1074,7 +1031,7 @@ test "app entry releases terminal before reporting worker start errors" {
     capture.record_stderr_event = true;
 
     try std.testing.expectError(error.TestWorkerStartFailed, runWithDeps(TestApp, alloc, &.{}, testConfig(), capture.deps()));
-    try std.testing.expectEqualStrings("fx: TestWorkerStartFailed\n", capture.stderr.written());
+    try std.testing.expectEqualStrings("fiber: TestWorkerStartFailed\n", capture.stderr.written());
     try std.testing.expectEqual(@as(usize, 1), capture.stderr_calls);
     try expectEvents(&.{ "init:none", "mcp-discovery", "rebind-after-init", "auto-upgrade", "file-index", "worker-thread", "terminal-release", "stderr-attempt", "deinit" });
 }
@@ -1100,7 +1057,7 @@ test "app entry releases terminal before reporting initial context failures exac
         var expected_stderr_buf: [64]u8 = undefined;
         const expected_stderr = try std.fmt.bufPrint(
             &expected_stderr_buf,
-            "fx: {s}\n",
+            "fiber: {s}\n",
             .{@errorName(expected_error)},
         );
         try std.testing.expectEqualStrings(expected_stderr, capture.stderr.written());
@@ -1129,7 +1086,7 @@ test "app entry reports run errors before deinit and outer cleanup" {
     capture.record_stderr_event = true;
 
     try std.testing.expectError(error.TestRunFailed, runWithOuterCleanup(TestApp, alloc, &.{}, testConfig(), capture.deps()));
-    try std.testing.expectEqualStrings("fx: TestRunFailed\n", capture.stderr.written());
+    try std.testing.expectEqualStrings("fiber: TestRunFailed\n", capture.stderr.written());
     try std.testing.expectEqual(@as(usize, 1), capture.stderr_calls);
     try std.testing.expectEqual(@as(usize, 0), capture.stdout_calls);
     try expectEvents(&.{ "init:none", "mcp-discovery", "rebind-after-init", "auto-upgrade", "file-index", "worker-thread", "model-cache", "run", "terminal-release", "stderr-attempt", "deinit", "outer-defer" });
@@ -1204,7 +1161,7 @@ test "app entry passes requested resume into app init" {
     const outcome = try runWithDeps(TestApp, alloc, &.{ @constCast("resume"), @constCast("session-123") }, testConfig(), capture.deps());
 
     try std.testing.expectEqual(RunOutcome.returned, outcome);
-    try expectEvents(&.{ "init:session-123", "mcp-discovery", "rebind-after-init", "resume-reconciliation", "auto-upgrade", "file-index", "worker-thread", "model-cache", "run", "terminal-release", "deinit" });
+    try expectEvents(&.{ "init:session-123", "mcp-discovery", "rebind-after-init", "auto-upgrade", "file-index", "worker-thread", "model-cache", "run", "terminal-release", "deinit" });
 }
 
 test "app entry maps noninteractive terminal startup to exit one" {
@@ -1215,7 +1172,7 @@ test "app entry maps noninteractive terminal startup to exit one" {
     const outcome = try runWithDeps(TestApp, alloc, &.{}, testConfig(), capture.deps());
 
     try std.testing.expectEqual(@as(u8, 1), outcome.exit);
-    try std.testing.expectEqualStrings("fx requires an interactive terminal (TTY).\n", capture.stderr.written());
+    try std.testing.expectEqualStrings("fiber requires an interactive terminal (TTY).\n", capture.stderr.written());
     try expectEvents(&.{"init:none"});
 }
 
@@ -1227,7 +1184,7 @@ test "app entry maps missing saved sessions to exit one" {
     const outcome = try runWithDeps(TestApp, alloc, &.{}, testConfig(), capture.deps());
 
     try std.testing.expectEqual(@as(u8, 1), outcome.exit);
-    try std.testing.expectEqualStrings("fx: no saved sessions for this workspace.\n", capture.stderr.written());
+    try std.testing.expectEqualStrings("fiber: no saved sessions for this workspace.\n", capture.stderr.written());
 }
 
 test "app entry maps unavailable session state to one expected startup failure" {
@@ -1238,23 +1195,23 @@ test "app entry maps unavailable session state to one expected startup failure" 
     }{
         .{
             .init_error = error.SessionBusy,
-            .message = "fx: another fx process may be using this session (running or suspended); check other terminals or run jobs, then use fg or quit that process\n",
+            .message = "fiber: another fiber process may be using this session (running or suspended); check other terminals or run jobs, then use fg or quit that process\n",
         },
         .{
             .init_error = error.SessionLockUnsupported,
-            .message = "fx: the filesystem cannot provide the required session lock\n",
+            .message = "fiber: the filesystem cannot provide the required session lock\n",
         },
         .{
             .init_error = error.SessionAuthorityBoundaryUnavailable,
-            .message = "fx: this session is being updated; wait a moment and retry\n",
+            .message = "fiber: this session is being updated; wait a moment and retry\n",
         },
         .{
             .init_error = error.SessionCommitBoundaryUnavailable,
-            .message = "fx: this session is being updated; wait a moment and retry\n",
+            .message = "fiber: this session is being updated; wait a moment and retry\n",
         },
         .{
             .init_error = error.OneOffSessionNotResumable,
-            .message = "fx: subagent child sessions cannot be resumed directly; message the named agent from its parent session\n",
+            .message = "fiber: subagent child sessions cannot be resumed directly; message the named agent from its parent session\n",
         },
     };
 

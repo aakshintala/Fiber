@@ -7,7 +7,7 @@ const sort_utils = @import("../../core/shared/sort_utils.zig");
 
 const TranscriptEntry = transcript_blocks.TranscriptEntry;
 const ToolDetailRecord = transcript_blocks.ToolDetailRecord;
-const cancellation_follow_up = " · What can fx do differently?";
+const cancellation_follow_up = " · What can fiber do differently?";
 
 pub const Projection = struct {
     entry_actions: std.ArrayList(transcript_blocks.EntryRenderAction) = .empty,
@@ -55,50 +55,6 @@ pub const Projection = struct {
             .kind = kind,
             .bytes = bytes,
         } });
-    }
-
-    pub fn replaceSuffix(
-        self: *Projection,
-        alloc: std.mem.Allocator,
-        start_index: usize,
-        suffix: *Projection,
-    ) !void {
-        std.debug.assert(start_index <= self.entry_actions.items.len);
-        try self.entry_actions.ensureTotalCapacity(
-            alloc,
-            start_index + suffix.entry_actions.items.len,
-        );
-        var retained_owned_count: usize = 0;
-        for (self.owned_overrides.items) |owned| {
-            if (owned.entry_index < start_index) retained_owned_count += 1;
-        }
-        try self.owned_overrides.ensureTotalCapacity(
-            alloc,
-            retained_owned_count + suffix.owned_overrides.items.len,
-        );
-
-        var retained_index: usize = 0;
-        for (self.owned_overrides.items) |owned| {
-            if (owned.entry_index < start_index) {
-                self.owned_overrides.items[retained_index] = owned;
-                retained_index += 1;
-            } else {
-                alloc.free(owned.bytes);
-            }
-        }
-        self.owned_overrides.items.len = retained_index;
-        self.entry_actions.items.len = start_index;
-        for (suffix.entry_actions.items) |action| {
-            self.entry_actions.appendAssumeCapacity(action);
-        }
-        for (suffix.owned_overrides.items) |owned| {
-            self.owned_overrides.appendAssumeCapacity(.{
-                .entry_index = start_index + owned.entry_index,
-                .bytes = owned.bytes,
-            });
-        }
-        suffix.entry_actions.items.len = 0;
-        suffix.owned_overrides.items.len = 0;
     }
 };
 
@@ -1322,7 +1278,7 @@ test "tool-heavy groups render every canonical action" {
 test "minimal tool group keeps cancellation in the header and child row" {
     const alloc = std.testing.allocator;
     const entries = [_]TranscriptEntry{
-        .{ .raw_bytes = .{ .id = 1, .bytes = "■ Cancelled sleep 30 · What can fx do differently?", .class = .tool_status } },
+        .{ .raw_bytes = .{ .id = 1, .bytes = "■ Cancelled sleep 30 · What can fiber do differently?", .class = .tool_status } },
     };
     const details = [_]ToolDetailRecord{
         .{ .entry_id = 1, .tool_name = @constCast("run_command"), .activity_kind = .command, .outcome = .cancelled },
@@ -1334,7 +1290,7 @@ test "minimal tool group keeps cancellation in the header and child row" {
     try std.testing.expectEqualStrings(
         "● 1 tool call · 1 command · 1 cancelled\n" ++
             "└ Cancelled sleep 30\n\n" ++
-            "■ Cancelled sleep 30 · What can fx do differently?",
+            "■ Cancelled sleep 30 · What can fiber do differently?",
         projection.entry_actions.items[0].override.bytes,
     );
 }

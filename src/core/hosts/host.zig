@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const wasm = @import("wasm.zig");
 
 pub const TerminalSupport = enum {
     unsupported,
@@ -12,8 +11,6 @@ pub const TerminalSupport = enum {
 };
 
 pub const Capabilities = struct {
-    process_control: bool,
-    url_open: bool,
     native_url_open: bool,
     terminal: TerminalSupport,
 };
@@ -78,117 +75,11 @@ fn ignoreTerminalTitleSet(_: ?*anyopaque, _: []const u8) void {}
 
 fn ignoreTerminalTitleClear(_: ?*anyopaque) void {}
 
-pub const SecretStoreLoadError = std.mem.Allocator.Error || error{
-    StoredKeyInsecure,
-    StoredKeyUnreadable,
-};
-
-pub const SecretStoreWriteError = std.mem.Allocator.Error || error{
-    StoredKeyWriteFailed,
-};
-
 pub const SecretStorePresence = enum {
     present,
     missing,
     unavailable,
 };
-
-pub const SecretStore = struct {
-    context: ?*anyopaque = null,
-    backend_label: []const u8,
-    is_disabled_fn: *const fn (?*anyopaque) bool,
-    presence_fn: *const fn (?*anyopaque) SecretStorePresence = unavailableSecretStorePresence,
-    load_fn: *const fn (
-        ?*anyopaque,
-        std.mem.Allocator,
-    ) SecretStoreLoadError!?[]u8,
-    store_fn: *const fn (
-        ?*anyopaque,
-        std.mem.Allocator,
-        []const u8,
-    ) SecretStoreWriteError!void,
-    store_interactive_fn: *const fn (
-        ?*anyopaque,
-    ) SecretStoreWriteError!bool,
-
-    pub fn isDisabled(self: SecretStore) bool {
-        return self.is_disabled_fn(self.context);
-    }
-
-    /// Reports only whether a secret exists. No secret bytes are returned or
-    /// transferred across this host boundary.
-    pub fn presence(self: SecretStore) SecretStorePresence {
-        return self.presence_fn(self.context);
-    }
-
-    /// Returns an owned secret, or null when none is stored. The caller must
-    /// zero and free a returned secret with the allocator passed to this call.
-    pub fn load(
-        self: SecretStore,
-        alloc: std.mem.Allocator,
-    ) SecretStoreLoadError!?[]u8 {
-        return self.load_fn(self.context, alloc);
-    }
-
-    /// Borrows `value` for this call. The caller retains ownership.
-    pub fn store(
-        self: SecretStore,
-        alloc: std.mem.Allocator,
-        value: []const u8,
-    ) SecretStoreWriteError!void {
-        return self.store_fn(self.context, alloc, value);
-    }
-
-    /// Lets the host collect and store a secret without exposing its bytes to
-    /// Core. Returns false when the host has no interactive secret prompt.
-    pub fn storeInteractive(
-        self: SecretStore,
-    ) SecretStoreWriteError!bool {
-        return self.store_interactive_fn(self.context);
-    }
-};
-
-pub const unavailable_secret_store: SecretStore = .{
-    .backend_label = "configured credential store",
-    .is_disabled_fn = unavailableSecretStoreIsDisabled,
-    .presence_fn = missingSecretStorePresence,
-    .load_fn = unavailableSecretStoreLoad,
-    .store_fn = unavailableSecretStoreWrite,
-    .store_interactive_fn = unavailableSecretStoreInteractiveWrite,
-};
-
-fn unavailableSecretStoreIsDisabled(_: ?*anyopaque) bool {
-    return false;
-}
-
-fn unavailableSecretStorePresence(_: ?*anyopaque) SecretStorePresence {
-    return .unavailable;
-}
-
-fn missingSecretStorePresence(_: ?*anyopaque) SecretStorePresence {
-    return .missing;
-}
-
-fn unavailableSecretStoreLoad(
-    _: ?*anyopaque,
-    _: std.mem.Allocator,
-) SecretStoreLoadError!?[]u8 {
-    return null;
-}
-
-fn unavailableSecretStoreWrite(
-    _: ?*anyopaque,
-    _: std.mem.Allocator,
-    _: []const u8,
-) SecretStoreWriteError!void {
-    return error.StoredKeyWriteFailed;
-}
-
-fn unavailableSecretStoreInteractiveWrite(
-    _: ?*anyopaque,
-) SecretStoreWriteError!bool {
-    return false;
-}
 
 pub const ClipboardError = error{CopyFailed};
 
@@ -237,21 +128,10 @@ pub const Clipboard = struct {
 };
 
 pub fn current() Capabilities {
-    return capabilitiesForTarget(builtin.cpu.arch, builtin.os.tag);
+    return capabilitiesForTarget(builtin.os.tag);
 }
 
-fn capabilitiesForTarget(
-    arch: std.Target.Cpu.Arch,
-    os_tag: std.Target.Os.Tag,
-) Capabilities {
-    if (wasm.isTarget(arch)) {
-        return .{
-            .process_control = wasm.process_control,
-            .url_open = false,
-            .native_url_open = false,
-            .terminal = terminalSupportForOs(os_tag),
-        };
-    }
+fn capabilitiesForTarget(os_tag: std.Target.Os.Tag) Capabilities {
     return nativeForOs(os_tag);
 }
 
@@ -264,8 +144,6 @@ pub fn terminalSupportForOs(os_tag: std.Target.Os.Tag) TerminalSupport {
 
 pub fn nativeForOs(os_tag: std.Target.Os.Tag) Capabilities {
     return .{
-        .process_control = os_tag != .windows and os_tag != .wasi,
-        .url_open = os_tag == .macos or os_tag == .linux,
         .native_url_open = os_tag == .macos,
         .terminal = terminalSupportForOs(os_tag),
     };
@@ -274,13 +152,6 @@ pub fn nativeForOs(os_tag: std.Target.Os.Tag) Capabilities {
 /// Returns an owned description of the current operating system. The caller
 /// owns the returned slice and must free it with `alloc`.
 pub fn operatingSystemText(alloc: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
-    if (comptime wasm.isTarget(builtin.cpu.arch)) {
-        return wasm.operatingSystemText(alloc, builtin.os.tag);
-    }
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        return alloc.dupe(u8, @tagName(builtin.os.tag));
-    }
-
     const uts = std.posix.uname();
     const sysname = std.mem.sliceTo(&uts.sysname, 0);
     const release = std.mem.sliceTo(&uts.release, 0);
@@ -329,30 +200,14 @@ test "unavailable terminal title accepts set and clear" {
     unavailable_terminal_title.clear();
 }
 
-test "native host capabilities expose process and URL support" {
+test "native host capabilities expose native URL and terminal support" {
     const macos = nativeForOs(.macos);
-    try std.testing.expect(macos.process_control);
-    try std.testing.expect(macos.url_open);
     try std.testing.expect(macos.native_url_open);
     try std.testing.expectEqual(TerminalSupport.supported, macos.terminal);
 
     const linux = nativeForOs(.linux);
-    try std.testing.expect(linux.process_control);
-    try std.testing.expect(linux.url_open);
     try std.testing.expect(!linux.native_url_open);
     try std.testing.expectEqual(TerminalSupport.supported, linux.terminal);
-
-    const windows = nativeForOs(.windows);
-    try std.testing.expect(!windows.process_control);
-    try std.testing.expect(!windows.url_open);
-    try std.testing.expect(!windows.native_url_open);
-    try std.testing.expectEqual(TerminalSupport.unsupported, windows.terminal);
-
-    const wasi = nativeForOs(.wasi);
-    try std.testing.expect(!wasi.process_control);
-    try std.testing.expect(!wasi.url_open);
-    try std.testing.expect(!wasi.native_url_open);
-    try std.testing.expectEqual(TerminalSupport.unsupported, wasi.terminal);
 
     try std.testing.expectEqual(
         TerminalSupport.unsupported,
@@ -360,35 +215,11 @@ test "native host capabilities expose process and URL support" {
     );
 }
 
-test "host boundary routes WebAssembly targets to WASM capabilities" {
-    const emscripten = capabilitiesForTarget(.wasm32, .emscripten);
-    try std.testing.expect(!emscripten.process_control);
-    try std.testing.expect(!emscripten.url_open);
-    try std.testing.expect(!emscripten.native_url_open);
-    try std.testing.expectEqual(TerminalSupport.unsupported, emscripten.terminal);
-
-    const wasi = capabilitiesForTarget(.wasm64, .wasi);
-    try std.testing.expect(!wasi.process_control);
-    try std.testing.expect(!wasi.url_open);
-    try std.testing.expect(!wasi.native_url_open);
-    try std.testing.expectEqual(TerminalSupport.unsupported, wasi.terminal);
-}
-
 test "unavailable URL opener keeps the manual fallback available" {
     try std.testing.expect(!try unavailable_url_opener.open(
         std.testing.allocator,
         "https://example.test",
     ));
-}
-
-test "unavailable secret store reports absence and refuses writes" {
-    try std.testing.expect(!unavailable_secret_store.isDisabled());
-    try std.testing.expect((try unavailable_secret_store.load(std.testing.allocator)) == null);
-    try std.testing.expectError(
-        error.StoredKeyWriteFailed,
-        unavailable_secret_store.store(std.testing.allocator, "secret"),
-    );
-    try std.testing.expect(!try unavailable_secret_store.storeInteractive());
 }
 
 test "unavailable clipboard rejects text and file references" {
@@ -401,7 +232,4 @@ test "current host describes its operating system" {
     defer std.testing.allocator.free(text);
 
     try std.testing.expect(text.len > 0);
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        try std.testing.expectEqualStrings(@tagName(builtin.os.tag), text);
-    }
 }

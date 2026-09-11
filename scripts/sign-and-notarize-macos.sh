@@ -8,12 +8,12 @@ signing_identity="Developer ID Application: Vercel, Inc (JW6Y669B67)"
 signing_identifier="com.vercel.fx"
 signing_team_id="JW6Y669B67"
 
-openssl_bin="${FX_SIGNING_OPENSSL_BIN:-/usr/bin/openssl}"
-security_bin="${FX_SIGNING_SECURITY_BIN:-/usr/bin/security}"
-codesign_bin="${FX_SIGNING_CODESIGN_BIN:-/usr/bin/codesign}"
-ditto_bin="${FX_SIGNING_DITTO_BIN:-/usr/bin/ditto}"
-xcrun_bin="${FX_SIGNING_XCRUN_BIN:-/usr/bin/xcrun}"
-jq_bin="${FX_SIGNING_JQ_BIN:-/usr/bin/jq}"
+openssl_bin="${FIBER_SIGNING_OPENSSL_BIN:-/usr/bin/openssl}"
+security_bin="${FIBER_SIGNING_SECURITY_BIN:-/usr/bin/security}"
+codesign_bin="${FIBER_SIGNING_CODESIGN_BIN:-/usr/bin/codesign}"
+ditto_bin="${FIBER_SIGNING_DITTO_BIN:-/usr/bin/ditto}"
+xcrun_bin="${FIBER_SIGNING_XCRUN_BIN:-/usr/bin/xcrun}"
+jq_bin="${FIBER_SIGNING_JQ_BIN:-/usr/bin/jq}"
 
 binary_path="${1:?usage: sign-and-notarize-macos.sh <binary-path>}"
 for required_name in \

@@ -76,11 +76,6 @@ pub const ActivityState = union(enum) {
     };
 };
 
-pub const BodyMode = enum {
-    transcript,
-    subagent_panel,
-};
-
 pub const CommittedLayoutSnapshot = struct {
     layout_id: u64 = 0,
     owned_top: u16 = 1,
@@ -159,7 +154,6 @@ pub const SolveInput = struct {
     footer: FooterMeasurement,
     transcript: TranscriptFlowPreview,
     activity: ActivityState = .none,
-    body_mode: BodyMode = .transcript,
     prior: CommittedLayoutSnapshot = .{},
     placement_policy: FramePlacementPolicy = .compact_until_full,
 };
@@ -245,9 +239,7 @@ pub fn solve(input: SolveInput) FrameLayout {
 
     const reserved_activity_rows = reservation.boundary_gap +| reservation.activity_rows +| reservation.footer_gap;
     const body_capacity = available_rows -| footer_height -| reserved_activity_rows;
-    const natural_body_rows = switch (input.body_mode) {
-        .transcript, .subagent_panel => input.transcript.natural_visual_rows,
-    };
+    const natural_body_rows = input.transcript.natural_visual_rows;
     const transcript_height = @min(natural_body_rows, body_capacity);
     const solved_frame_height = @min(available_rows, transcript_height +| reserved_activity_rows +| footer_height);
     const owned_band = rectFromTopHeight(owned_top, solved_frame_height);

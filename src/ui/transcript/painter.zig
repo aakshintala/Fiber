@@ -19,7 +19,6 @@ const command_output_content = @import("../../core/tooling/command_output_conten
 const render_engine = @import("../render_engine.zig");
 const source_preparation = @import("source_preparation.zig");
 const transcript_release = @import("../../core/output/transcript_release.zig");
-const transcript_writer = @import("writer.zig");
 const vt_emulator = @import("../../core/terminal/engine.zig");
 
 const Allocator = std.mem.Allocator;
@@ -1201,13 +1200,6 @@ pub const PreparedTranscriptSurfacePaint = struct {
             self.source_line_provenance
         else
             self.line_provenance.items;
-    }
-
-    pub fn rowProvenance(self: *const PreparedTranscriptSurfacePaint, row: u16) ?transcript_blocks.LineProvenance {
-        for (self.row_provenance.items) |item| {
-            if (item.row == row) return item.source;
-        }
-        return null;
     }
 
     pub fn projectionArea(self: *const PreparedTranscriptSurfacePaint) render_engine.frame_layout.FrameRect {
@@ -2845,7 +2837,7 @@ test "document append preparation emits terminal-ready newlines" {
 }
 
 test "document append preparation preserves presentation boundaries" {
-    const open = "\x1b]8;id=fx-42;https://example.com\x1b\\";
+    const open = "\x1b]8;id=fiber-42;https://example.com\x1b\\";
     const raw = "old\nnew";
     const close = "\x1b]8;;\x1b\\";
     const source = open ++ raw ++ close;
@@ -3405,11 +3397,6 @@ fn paintTranscriptIntoSurfaceWithLimit(
         .replaceable_start_row = rendered_rows.replaceable_start_row,
     };
 }
-
-const TestFullRepaintMode = enum {
-    enabled,
-    diagnostic_wipe_only,
-};
 
 const TestFooterGeometry = struct {
     top: u16 = 0,
@@ -3972,7 +3959,7 @@ test "resize history offset replays the welcome tail when history returns" {
 
 test "transcript surface painter renders welcome plus user rows" {
     const alloc = std.testing.allocator;
-    var batch = try transcriptTestBatch(alloc, "fx welcome\n\n╭ user prompt\n╰ done", 24);
+    var batch = try transcriptTestBatch(alloc, "fiber welcome\n\n╭ user prompt\n╰ done", 24);
     defer batch.deinit(alloc);
     const layout = testLayout(24, 10, 6);
     var target = try expectTranscriptSurfacePaint(alloc, layout, .{
@@ -3983,7 +3970,7 @@ test "transcript surface painter renders welcome plus user rows" {
         .line_count = batch.lines.len,
     }, batch);
     defer target.deinit();
-    try expectGridContains(&target, alloc, "fx welcome");
+    try expectGridContains(&target, alloc, "fiber welcome");
     try expectGridContains(&target, alloc, "user prompt");
 }
 

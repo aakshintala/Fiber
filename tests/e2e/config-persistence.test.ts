@@ -13,49 +13,49 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
+  chatGptAccessToken,
   composerContains,
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  codexFinalText,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
   hasEmptyComposer,
-  startFakeGateway,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
+  writeSeededChatGptLogin,
 } from "./tmux-helpers";
 
 const TIMEOUT = 20_000;
 const NO_AUTH = {
   AI_GATEWAY_API_KEY: "",
   VERCEL_OIDC_TOKEN: "",
-  FX_MODEL: undefined,
+  FIBER_MODEL: undefined,
   NO_COLOR: "1",
 };
+const CODEX_MODEL = "gpt-5.4";
+const CODEX_PICKER_MODEL = "gpt-5.6-sol";
 
 const serialTest = test.serial;
-const SELECTED_COMPLETION_SGR = "\x1b[1m\x1b[38;5;255m";
-
-function selectedModelStageRow(paneEscapes: string, label: string): string | null {
-  return paneEscapes.split("\n").find((line) => {
-    const visible = line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").trim();
-    return line.includes(SELECTED_COMPLETION_SGR) && visible === label;
-  }) ?? null;
-}
-
-async function waitForSelectedModelStage(
-  active: TmuxSession,
-  label: string,
-  timeoutMs: number,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  let last: string | null = null;
+async function waitForStatuslineSetting(
+  settingsPath: string,
+  key: string,
+  expected: boolean,
+): Promise<void> {
+  const deadline = Date.now() + TIMEOUT;
+  let actual: unknown;
   while (Date.now() < deadline) {
-    last = selectedModelStageRow(await active.capturePaneEscapes(), label);
-    if (last !== null) return last;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    if (existsSync(settingsPath)) {
+      actual = JSON.parse(readFileSync(settingsPath, "utf8")).statusLine?.[key];
+      if (actual === expected) return;
+    }
+    await Bun.sleep(25);
   }
-  throw new Error(`Timed out waiting for selected model option ${label}; last=${last}`);
+  throw new Error(
+    `Timed out waiting for statusLine.${key}=${expected}; last=${JSON.stringify(actual)}`,
+  );
 }
 
 async function disablePromptHistory(
@@ -87,6 +87,19 @@ async function disablePromptHistory(
   );
 }
 
+// NO_AUTH clears FIBER_MODEL, so these fixtures start from a profile with a
+// credential and no model chosen. That is the first-run shape, and fiber opens
+// the model picker there rather than leaving the user to discover /model, which
+// seeds "/model " into the composer. So a test types the filter alone instead of
+// the whole command.
+async function filterStartupModelPicker(
+  session: TmuxSession,
+  filter: string,
+): Promise<void> {
+  await session.waitForPane((pane) => pane.includes("/model"), TIMEOUT);
+  await session.sendLiteral(filter);
+}
+
 function tree(root: string, relative = ""): string[] {
   const path = relative ? join(root, relative) : root;
   const entries = readdirSync(path, { withFileTypes: true });
@@ -100,18 +113,10 @@ function tree(root: string, relative = ""): string[] {
 }
 
 function migrationSnapshotPath(home: string, field: string): string {
-  const backups = join(home, ".fx", "backups");
+  const backups = join(home, ".fiber", "backups");
   const name = `settings.json.preference-migration.${field}.json`;
   expect(readdirSync(backups)).toContain(name);
   return join(backups, name);
-}
-
-function clearedPaneWithoutAllowlistRules(pane: string): boolean {
-  return (
-    hasEmptyComposer(pane) &&
-    !pane.includes("● Allowlist:") &&
-    !pane.includes("user *")
-  );
 }
 
 describe.skipIf(!tmuxAvailable())("config persistence", () => {
@@ -128,33 +133,26 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "user preferences migrate globally and load in another project",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-config-persistence-"));
-      const gateway = startFakeGateway([], {
-        models: [{
-          id: "anthropic/claude-opus-4.7",
-          type: "language",
-          tags: ["tool-use"],
-          reasoning_options: [{ type: "effort", values: ["high"] }],
-          fast_options: [{ type: "toggle" }],
-        }],
-      });
+      const root = mkdtempSync(join(tmpdir(), "fiber-config-persistence-"));
+      const codex = startFakeCodex();
       try {
         const home = join(root, "home");
         const workspaceA = join(root, "workspace-a");
         const workspaceB = join(root, "workspace-b");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspaceA);
         mkdirSync(workspaceB);
         const workspaceARoot = realpathSync(workspaceA);
         const workspaceBRoot = realpathSync(workspaceB);
         const projectABytes = "{\"project_future\":{\"name\":\"a\"}}\n";
         const projectBBytes = "{\"project_future\":{\"name\":\"b\"}}\n";
-        writeFileSync(join(workspaceA, ".fx.json"), projectABytes);
-        writeFileSync(join(workspaceB, ".fx.json"), projectBBytes);
+        writeFileSync(join(workspaceA, ".fiber.json"), projectABytes);
+        writeFileSync(join(workspaceB, ".fiber.json"), projectBBytes);
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             future_global: { nested: "preserve-me" },
             workspaces: {
@@ -194,11 +192,9 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           }) + "\n",
           { mode: 0o600 },
         );
-        const catalogEnv = {
+        const catalogEnv = seededFakeCodexEnv(home, codex, {
           ...NO_AUTH,
-          HOME: home,
-          FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-        };
+        });
 
         session = await TmuxSession.create({
           cwd: workspaceARoot,
@@ -208,68 +204,48 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForText("Run /help", TIMEOUT);
         await session.sendKeys("BTab");
         await session.waitForText("auto ·", TIMEOUT);
-        await session.pasteText("/model anthropic/claude-opus-4.7 auto normal");
+        await session.pasteText(`/model ${CODEX_MODEL} auto`);
         const beforeModelCommit = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(beforeModelCommit).not.toHaveProperty("model");
         await session.sendKeys("Enter");
-        await session.waitForText("● Switched to anthropic/claude-opus-4.7", TIMEOUT);
-        await session.sendText("/fast");
-        await session.waitForText("● Fast: on", TIMEOUT);
-        await session.sendText("/statusline context");
-        await session.waitForText("● Statusline: context:", TIMEOUT);
-        await session.sendText("/statusline session");
-        await session.waitForText("● Statusline: session:", TIMEOUT);
-        await session.sendText("/statusline workspace");
-        await session.waitForText("● Statusline: workspace:", TIMEOUT);
+        await session.waitForText(`● Switched to ${CODEX_MODEL}`, TIMEOUT);
         await session.sendText("/settings startup-scrollback off");
         await session.waitForText("startup_scrollback: off", TIMEOUT);
-        await disablePromptHistory(session, join(home, ".fx", "settings.json"));
+        await disablePromptHistory(session, join(home, ".fiber", "settings.json"));
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
-        const stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
-        expect(stored.models.gateway).toBe("anthropic/claude-opus-4.7");
+        const stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
+        expect(stored.models.codex).toBe(CODEX_MODEL);
         expect(stored.permission_mode).toBe("auto");
         expect(stored.effort).toBe("auto");
-        expect(stored.fast_mode).toBe(true);
-        expect(stored.fast_mode_model_bound).toBe(true);
         expect(stored.startup_scrollback).toBe(false);
         expect(stored.prompt_history).toMatchObject({ enabled: false });
-        expect(stored.statusLine).toMatchObject({
-          context: true,
-          session: true,
-          workspace: true,
-        });
         expect(stored.future_global).toEqual({ nested: "preserve-me" });
-        for (const [workspaceRoot, futureWorkspace, historyFuture, statusFuture] of [
-          [workspaceARoot, "a", "keep-a-history", "keep-a-status"],
-          [workspaceBRoot, "b", "keep-b-history", "keep-b-status"],
+        for (const [workspaceRoot, futureWorkspace, historyFuture] of [
+          [workspaceARoot, "a", "keep-a-history"],
+          [workspaceBRoot, "b", "keep-b-history"],
         ] as const) {
           const override = stored.workspaces[workspaceRoot];
           expect(override).not.toHaveProperty("model");
           expect(override).not.toHaveProperty("permission_mode");
           expect(override).not.toHaveProperty("effort");
-          expect(override).not.toHaveProperty("fast_mode");
           expect(override).not.toHaveProperty("startup_scrollback");
           expect(override.prompt_history).toEqual({ future: historyFuture });
-          expect(override.statusLine).toEqual({ sandbox: false, workspace: false, future: statusFuture });
           expect(override.future_workspace).toEqual({ nested: futureWorkspace });
         }
-        expect(readFileSync(join(workspaceA, ".fx.json"), "utf8")).toBe(projectABytes);
-        expect(readFileSync(join(workspaceB, ".fx.json"), "utf8")).toBe(projectBBytes);
+        expect(readFileSync(join(workspaceA, ".fiber.json"), "utf8")).toBe(projectABytes);
+        expect(readFileSync(join(workspaceB, ".fiber.json"), "utf8")).toBe(projectBBytes);
 
         const migrationSnapshots = [
           "model",
           "permission_mode",
           "effort",
-          "fast_mode",
           "startup_scrollback",
           "prompt_history_enabled",
-          "statusline_context",
-          "statusline_session",
         ].map((field) => migrationSnapshotPath(home, field));
         for (const snapshotPath of migrationSnapshots) {
           expect(statSync(snapshotPath).mode & 0o777).toBe(0o600);
@@ -281,32 +257,11 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           stderrPath: stderrBPath,
         });
         const startup = await session.waitForText(
-          "auto · opus 4.7 · ⚡︎",
+          `auto · ${CODEX_MODEL}`,
           TIMEOUT,
         );
-        expect(startup).toContain("auto · opus 4.7 · ⚡︎");
+        expect(startup).toContain(`auto · ${CODEX_MODEL}`);
         expect(startup).not.toContain("adaptive");
-        expect(startup).not.toContain("⚡︎ fast");
-        await session.sendText("/settings");
-        const pane = await session.waitForText("←→ Change", TIMEOUT);
-        expect(pane).toContain("anthropic/claude-opus-4.7");
-        expect(pane).toContain("Startup scrollback");
-        expect(pane).toContain("Prompt history");
-        await session.sendKeys("Escape");
-        await session.waitForPane(
-          (current) =>
-            hasEmptyComposer(current) && !current.includes("←→ Change"),
-          TIMEOUT,
-        );
-        await session.sendText("/statusline");
-        const statusline = await session.waitForText("Context  ", TIMEOUT);
-        expect(statusline).toContain("Status line");
-        expect(statusline).not.toContain("Sandbox");
-        expect(statusline).toContain("Context");
-        expect(statusline).toContain("Session");
-        expect(statusline).toContain("off  on");
-        await session.sendKeys("Escape");
-        await session.waitForComposer(TIMEOUT);
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
@@ -315,7 +270,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           cwd: workspaceBRoot,
           env: {
             ...catalogEnv,
-            FX_MODEL: "openai/gpt-5",
+            FIBER_MODEL: CODEX_MODEL,
           },
           stderrPath: stderrBPath,
         });
@@ -325,13 +280,13 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         const afterOverride = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
-        expect(afterOverride.models.gateway).toBe("anthropic/claude-opus-4.7");
+        expect(afterOverride.models.codex).toBe(CODEX_MODEL);
         expect(readFileSync(stderrAPath, "utf8")).toBe("");
         expect(readFileSync(stderrBPath, "utf8")).toBe("");
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -339,135 +294,19 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   );
 
   serialTest(
-    "unscoped allowlist stays local while explicit user rules cross projects",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-config-permission-scopes-"));
-      try {
-        const home = join(root, "home");
-        const workspaceA = join(root, "workspace-a");
-        const workspaceB = join(root, "workspace-b");
-        const stderrAPath = join(root, "stderr-a.log");
-        const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        mkdirSync(workspaceA);
-        mkdirSync(workspaceB);
-        const workspaceARoot = realpathSync(workspaceA);
-        const workspaceBRoot = realpathSync(workspaceB);
-        writeFileSync(
-          join(home, ".fx", "settings.json"),
-          JSON.stringify({
-            permission: {
-              " bash ": {
-                " padded * ": "allow",
-              },
-            },
-          }) + "\n",
-          { mode: 0o600 },
-        );
-
-        session = await TmuxSession.create({
-          cwd: workspaceARoot,
-          env: { ...NO_AUTH, HOME: home },
-          stderrPath: stderrAPath,
-        });
-        await session.waitForText("Run /help", TIMEOUT);
-        await session.sendText('/allowlist add command "local-a *"');
-        await session.waitForText("(scope=local)", TIMEOUT);
-        await session.sendText('/allowlist user add command "user *"');
-        await session.waitForText("(scope=user)", TIMEOUT);
-        await session.sendText("/quit");
-        await session.waitForSessionEnd(TIMEOUT);
-        session = null;
-
-        const afterA = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
-        );
-        expect(afterA.permission.bash["user *"]).toBe("allow");
-        expect(afterA.workspaces[workspaceARoot].permission.bash["local-a *"]).toBe(
-          "allow",
-        );
-        expect(afterA.workspaces).not.toHaveProperty(workspaceBRoot);
-
-        session = await TmuxSession.create({
-          cwd: workspaceBRoot,
-          env: { ...NO_AUTH, HOME: home },
-          stderrPath: stderrBPath,
-        });
-        await session.waitForText("Run /help", TIMEOUT);
-        await session.sendText("/allowlist view local");
-        await session.waitForText(
-          "● Allowlist: local persistent allow rules: (none)",
-          TIMEOUT,
-        );
-        await session.sendText("/allowlist view user");
-        await session.waitForText("user *", TIMEOUT);
-        await session.sendText('/allowlist user remove command "padded *"');
-        await session.waitForText("● Allowlist: removed command", TIMEOUT);
-        await session.sendText("/clear");
-        await session.waitForPane(
-          clearedPaneWithoutAllowlistRules,
-          TIMEOUT,
-        );
-        await session.sendText("/allowlist view effective");
-        const inherited = await session.waitForText("user *", TIMEOUT);
-        expect(inherited).toContain("● Allowlist: effective persistent allow rules:");
-
-        await session.sendText('/allowlist add command "local-b *"');
-        await session.waitForText("(scope=local)", TIMEOUT);
-        await session.sendText("/allowlist view user");
-        const shadowed = await session.waitForText(
-          "user rules are shadowed by local settings",
-          TIMEOUT,
-        );
-        expect(shadowed).toContain("user *");
-        await session.sendText("/clear");
-        await session.waitForPane(
-          clearedPaneWithoutAllowlistRules,
-          TIMEOUT,
-        );
-        await session.sendText("/allowlist view effective");
-        const localEffective = await session.waitForText("local-b *", TIMEOUT);
-        expect(localEffective).not.toContain("user *");
-
-        await session.sendText('/allowlist user remove command "user *"');
-        await session.waitForText("● Allowlist: removed command", TIMEOUT);
-        await session.sendText("/quit");
-        await session.waitForSessionEnd(TIMEOUT);
-        session = null;
-
-        const afterB = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
-        );
-        expect(afterB.permission).toEqual({});
-        expect(afterB.workspaces[workspaceARoot].permission.bash["local-a *"]).toBe(
-          "allow",
-        );
-        expect(afterB.workspaces[workspaceBRoot].permission.bash["local-b *"]).toBe(
-          "allow",
-        );
-        expect(readFileSync(stderrAPath, "utf8")).toBe("");
-        expect(readFileSync(stderrBPath, "utf8")).toBe("");
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    90_000,
-  );
-
-  serialTest(
     "legacy output settings remain inert and output text follows prompt admission",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-config-output-shadow-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-config-output-shadow-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
         const projectBytes =
           "{\"output_level\":{\"legacy\":true},\"future\":{\"keep\":true}}\n";
-        writeFileSync(join(workspace, ".fx.json"), projectBytes);
+        writeFileSync(join(workspace, ".fiber.json"), projectBytes);
         const unrelatedWorkspace = join(root, "unrelated-workspace");
         const settingsBytes =
           JSON.stringify({
@@ -485,7 +324,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
             },
           }) + "\n";
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           settingsBytes,
           { mode: 0o600 },
         );
@@ -497,7 +336,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         });
         await session.waitForText("Run /help", TIMEOUT);
         await session.sendText("/output quiet");
-        await session.waitForText("fx needs access to Vercel AI Gateway", TIMEOUT);
+        await session.waitForText("Codex needs a subscription login", TIMEOUT);
         expect(composerContains(await session.capturePane(), "/output quiet")).toBe(
           true,
         );
@@ -514,7 +353,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         const stored = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(stored.output_level).toEqual({ legacy: true });
         expect(stored.startup_scrollback).toBe(false);
@@ -526,7 +365,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           model: 123,
           future_workspace: { preserve: true },
         });
-        expect(readFileSync(join(workspace, ".fx.json"), "utf8")).toBe(projectBytes);
+        expect(readFileSync(join(workspace, ".fiber.json"), "utf8")).toBe(projectBytes);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
         rmSync(root, { recursive: true, force: true });
@@ -539,59 +378,51 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "Escape keeps the model picker dismissed until the model trigger restarts",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-model-picker-dismissal-"));
-      const gateway = startFakeGateway([], {
-        models: [{
-          id: "xai/grok-build-1",
-          type: "language",
-          released: 1,
-          tags: ["tool-use"],
-        }],
-      });
+      const root = mkdtempSync(join(tmpdir(), "fiber-model-picker-dismissal-"));
+      const codex = startFakeCodex({ extraModels: [CODEX_PICKER_MODEL] });
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         writeFileSync(
-          join(home, ".fx", "settings.json"),
-          JSON.stringify({ model: "openai/gpt-5" }) + "\n",
+          join(home, ".fiber", "settings.json"),
+          JSON.stringify({ model: CODEX_MODEL }) + "\n",
         );
 
         session = await TmuxSession.create({
           cwd: realpathSync(workspace),
-          env: {
+          env: seededFakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            HOME: home,
-            FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-          },
+          }),
           stderrPath,
         });
         await session.waitForText("Run /help", TIMEOUT);
         await session.sendLiteral("/model");
         await session.sendKeys("Tab");
-        await session.waitForText("xai/grok-build-1", TIMEOUT);
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
 
         await session.sendKeys("Escape");
         await session.waitForPane(
           (pane) =>
             composerContains(pane, "/model") &&
-            !pane.includes("xai/grok-build-1"),
+            !pane.includes(CODEX_PICKER_MODEL),
           TIMEOUT,
         );
         await session.sendLiteral("x");
         await session.waitForPane(
           (pane) =>
             composerContains(pane, "/model x") &&
-            !pane.includes("xai/grok-build-1"),
+            !pane.includes(CODEX_PICKER_MODEL),
           TIMEOUT,
         );
 
         await session.sendKeys("C-u");
         await session.sendLiteral("/model");
         await session.sendKeys("Tab");
-        await session.waitForText("xai/grok-build-1", TIMEOUT);
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
 
         await session.sendKeys("C-u");
         await session.sendText("/quit");
@@ -599,175 +430,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
-        gateway.stop();
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    30_000,
-  );
-
-  test(
-    "Fast indicator remains stable while model catalog resolves",
-    async () => {
-      const cases = [
-        {
-          label: "normal",
-          model: "moonshotai/kimi-k3",
-          fastMode: false,
-          modelBound: true,
-          supportsFastMode: true,
-          expectedFastIndicator: false,
-        },
-        {
-          label: "toggle",
-          model: "moonshotai/kimi-k3",
-          fastMode: true,
-          modelBound: true,
-          supportsFastMode: true,
-          expectedFastIndicator: true,
-        },
-        {
-          label: "intrinsic",
-          model: "moonshotai/kimi-k3-fast",
-          fastMode: false,
-          modelBound: true,
-          supportsFastMode: false,
-          expectedFastIndicator: true,
-        },
-        {
-          label: "legacy-unbound",
-          model: "zai/glm-5.3",
-          fastMode: true,
-          modelBound: false,
-          supportsFastMode: false,
-          expectedFastIndicator: false,
-        },
-      ] as const;
-
-      for (const testCase of cases) {
-        const root = mkdtempSync(join(tmpdir(), `fx-startup-fast-${testCase.label}-`));
-        let releaseCatalog: (() => void) | null = null;
-        const catalogRelease = new Promise<void>((resolve) => {
-          releaseCatalog = resolve;
-        });
-        const gateway = startFakeGateway([], {
-          models: async () => {
-            await catalogRelease;
-            return [{
-              id: testCase.model,
-              type: "language",
-              released: 1,
-              tags: ["reasoning", "tool-use"],
-              pricing: testCase.supportsFastMode
-                ? { fast: { input: "0.1", output: "0.2" } }
-                : undefined,
-            }];
-          },
-        });
-        try {
-          const home = join(root, "home");
-          const workspace = join(root, "workspace");
-          const stderrPath = join(root, "stderr.log");
-          mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-          mkdirSync(workspace);
-          writeFileSync(
-            join(home, ".fx", "settings.json"),
-            JSON.stringify({
-              model: testCase.model,
-              permission_mode: "auto",
-              fast_mode: testCase.fastMode,
-              fast_mode_model_bound: testCase.modelBound,
-            }) + "\n",
-            { mode: 0o600 },
-          );
-
-          session = await TmuxSession.create({
-            cwd: realpathSync(workspace),
-            env: {
-              ...NO_AUTH,
-              HOME: home,
-              FX_AUTO_UPGRADE: "0",
-              FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-            },
-            stderrPath,
-          });
-          const modelLabel = testCase.model.split("/").at(-1)!;
-          const before = await session.waitForText(`auto · ${modelLabel}`, TIMEOUT);
-          expect(before.includes("⚡︎")).toBe(testCase.expectedFastIndicator);
-          releaseCatalog?.();
-          releaseCatalog = null;
-
-          await session.sendText("/model");
-          await session.waitForText(testCase.model, TIMEOUT);
-          await session.sendKeys("Escape");
-          const settled = await session.waitForStableComposer(TIMEOUT);
-          expect(settled.includes("⚡︎")).toBe(testCase.expectedFastIndicator);
-
-          await session.sendText("/quit");
-          await session.waitForSessionEnd(TIMEOUT);
-          session = null;
-          expect(readFileSync(stderrPath, "utf8")).toBe("");
-        } finally {
-          releaseCatalog?.();
-          gateway.stop();
-          rmSync(root, { recursive: true, force: true });
-        }
-      }
-    },
-    60_000,
-  );
-
-  test(
-    "Fast command rejects an intrinsic Fast alias",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-fast-unsupported-"));
-      const gateway = startFakeGateway([], {
-        models: [{
-          id: "anthropic/claude-opus-4.8-fast",
-          type: "language",
-          released: 1,
-          tags: ["reasoning", "tool-use"],
-        }],
-      });
-      try {
-        const home = join(root, "home");
-        const workspace = join(root, "workspace");
-        const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        mkdirSync(workspace);
-        const settingsPath = join(home, ".fx", "settings.json");
-        const initialSettings = JSON.stringify({
-          model: "anthropic/claude-opus-4.8-fast",
-          fast_mode: false,
-        }) + "\n";
-        writeFileSync(settingsPath, initialSettings, { mode: 0o600 });
-
-        session = await TmuxSession.create({
-          cwd: realpathSync(workspace),
-          env: {
-            ...NO_AUTH,
-            AI_GATEWAY_API_KEY: "fake-standard-key",
-            HOME: home,
-            FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-          },
-          stderrPath,
-        });
-        await session.waitForText("Run /help", TIMEOUT);
-        await session.sendText("/fast");
-        const pane = await session.waitForText(
-          "This model does not come with a fast mode.",
-          TIMEOUT,
-        );
-        expect(pane).toContain("⚡︎");
-        expect(gateway.requests).toHaveLength(0);
-        expect(readFileSync(settingsPath, "utf8")).toBe(initialSettings);
-
-        await session.sendText("/quit");
-        await session.waitForSessionEnd(TIMEOUT);
-        session = null;
-        expect(readFileSync(stderrPath, "utf8")).toBe("");
-      } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -777,36 +440,27 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   test(
     "settings reasoning effort changes without mutating the selected model",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-settings-effort-"));
-      const gateway = startFakeGateway([], {
-        models: [{
-          id: "zai/glm-5.2",
-          type: "language",
-          released: 1,
-          tags: ["reasoning", "tool-use"],
-          reasoning_options: [{ type: "effort", values: ["low", "medium"] }],
-        }],
-      });
+      const root = mkdtempSync(join(tmpdir(), "fiber-settings-effort-"));
+      const codex = startFakeCodex();
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        const settingsPath = join(home, ".fx", "settings.json");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        const settingsPath = join(home, ".fiber", "settings.json");
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         writeFileSync(
           settingsPath,
-          JSON.stringify({ model: "zai/glm-5.2", effort: "low" }) + "\n",
+          JSON.stringify({ model: CODEX_MODEL, effort: "low" }) + "\n",
           { mode: 0o600 },
         );
 
         session = await TmuxSession.create({
           cwd: realpathSync(workspace),
-          env: {
+          env: seededFakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            HOME: home,
-            FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-          },
+          }),
           stderrPath,
         });
         await session.waitForText("Run /help", TIMEOUT);
@@ -819,16 +473,16 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
 
         let stored = JSON.parse(readFileSync(settingsPath, "utf8"));
         const persistenceDeadline = Date.now() + TIMEOUT;
-        while (stored.effort !== "medium" && Date.now() < persistenceDeadline) {
+        while (stored.effort !== "high" && Date.now() < persistenceDeadline) {
           await Bun.sleep(25);
           stored = JSON.parse(readFileSync(settingsPath, "utf8"));
         }
         expect(stored).toMatchObject({
-          model: "zai/glm-5.2",
-          effort: "medium",
+          model: CODEX_MODEL,
+          effort: "high",
         });
         expect(session.paneStatus()).toEqual({ dead: false, status: null });
-        expect(await session.capturePane()).toContain("medium");
+        expect(await session.capturePane()).toContain("high");
 
         await session.sendKeys("Escape");
         await session.waitForComposer(TIMEOUT);
@@ -837,9 +491,9 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         expect(readFileSync(stderrPath, "utf8")).toBe("");
-        expect(gateway.requests).toHaveLength(0);
+        expect(codex.requests).toHaveLength(0);
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -847,150 +501,104 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   );
 
   test(
-    "Opus 4.8 Fast pricing drives picker request and persistence",
+    "Codex picker effort drives request and persistence",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-anthropic-capabilities-"));
-      const gateway = startFakeGateway(
-        [fakeGatewayFinalText("Opus fast complete")],
-        {
-          models: [
-            {
-              id: "openai/gpt-5",
-              type: "language",
-              released: 1,
-              tags: ["tool-use"],
-            },
-            {
-              id: "anthropic/claude-opus-4.8",
-              type: "language",
-              released: 1,
-              tags: ["fast", "tool-use"],
-              reasoning_options: [{ type: "effort", values: ["high", "xhigh"] }],
-              pricing: {
-                fast: { input: "0.1", output: "0.2" },
-              },
-            },
-          ],
-        },
-      );
+      const root = mkdtempSync(join(tmpdir(), "fiber-anthropic-capabilities-"));
+      const replies = ["Codex selected model complete"];
+      let replyIndex = 0;
+      const codex = startFakeCodex({
+        extraModels: [CODEX_PICKER_MODEL],
+        route: () => codexFinalText(replies[replyIndex++] ?? "unexpected"),
+      });
       try {
         const home = join(root, "home");
         const opusWorkspace = join(root, "opus-workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(opusWorkspace);
         const opusRoot = realpathSync(opusWorkspace);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         const initialSettings = JSON.stringify({
-          model: "anthropic/claude-opus-4.8",
+          model: CODEX_PICKER_MODEL,
           effort: "high",
           fast_mode: false,
-          credential_source: "fx_login",
         }) + "\n";
         writeFileSync(
           settingsPath,
           initialSettings,
           { mode: 0o600 },
         );
-        writeFileSync(
-          join(home, ".fx", "auth.json"),
-          JSON.stringify({
-            version: 1,
-            issuer: "https://vercel.com",
-            client_id: "test-client",
-            access_token: "fake-fx-login-token",
-            refresh_token: "fake-fx-login-refresh-token",
-            expires_at_ms: Date.now() + 60 * 60 * 1000,
-            scope: "openid",
-            token_type: "Bearer",
-            team_id: "team_fast_test",
-            team_slug: "fast-test-team",
-          }) + "\n",
-          { mode: 0o600 },
-        );
-        const gatewayEnv = {
+        const catalogEnv = seededFakeCodexEnv(home, codex, {
           ...NO_AUTH,
-          AI_GATEWAY_API_KEY: undefined,
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_DISABLE_KEYCHAIN: "1",
-          HOME: home,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-        };
+          FIBER_DISABLE_KEYCHAIN: "1",
+        });
 
         session = await TmuxSession.create({
           cwd: opusRoot,
-          env: gatewayEnv,
+          env: catalogEnv,
           stderrPath,
         });
         await session.waitForText("Run /help", TIMEOUT);
-        await session.sendLiteral("/model openai");
-        await session.waitForText("openai/gpt-5", TIMEOUT);
+        await session.sendLiteral(`/model ${CODEX_MODEL}`);
+        await session.waitForText(CODEX_MODEL, TIMEOUT);
         await session.sendKeys("C-u");
         await session.waitForPane(
           (pane) =>
             hasEmptyComposer(pane) &&
-            !pane.includes("openai/gpt-5"),
+            !composerContains(pane, CODEX_MODEL),
           TIMEOUT,
         );
         await session.sendLiteral("/model");
         await session.sendKeys("Tab");
-        await session.waitForText("anthropic/claude-opus-4.8", TIMEOUT);
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
         expect(readFileSync(settingsPath, "utf8")).toBe(initialSettings);
         await session.sendKeys("Enter");
-        // Gateway order is preserved after fx's default sentinel.
         await session.waitForText("default", TIMEOUT);
         for (let i = 0; i < 2; i += 1) await session.sendKeys("Down");
-        await session.waitForText("xhigh", TIMEOUT);
+        await session.waitForText("high", TIMEOUT);
         await session.sendKeys("Enter");
-        await session.waitForText("normal", TIMEOUT);
-        await session.sendLiteral("fast");
-        await session.waitForText("/model anthropic/claude-opus-4.8 xhigh fast", TIMEOUT);
-        await session.sendKeys("Enter");
-        const selectedFastStatus = await session.waitForText("opus 4.8 · xhigh · ⚡︎", TIMEOUT);
-        expect(selectedFastStatus).not.toContain("⚡︎ fast");
-        await session.sendText("Use fast.");
-        await session.waitForText("Opus fast complete", TIMEOUT);
-        expect(gateway.requests).toHaveLength(1);
-        expect(gateway.requests[0]!.headers.get("ai-language-model-id")).toBe(
-          "anthropic/claude-opus-4.8",
+        const selectedStatus = await session.waitForText(
+          `${CODEX_PICKER_MODEL} · high`,
+          TIMEOUT,
         );
-        expect(gateway.requests[0]!.headers.get("authorization")).toBe(
-          "Bearer fake-fx-login-token",
+        await session.sendText("Use the selected model.");
+        await session.waitForText("Codex selected model complete", TIMEOUT);
+        expect(codex.requests).toHaveLength(1);
+        const request = JSON.parse(codex.requests[0]!.body);
+        expect(request.model).toBe(CODEX_PICKER_MODEL);
+        expect(codex.requests[0]!.authorization).toBe(
+          `Bearer ${chatGptAccessToken()}`,
         );
-        expect(gateway.requests[0]!.headers.get("x-vercel-ai-gateway-team")).toBe(
-          "team_fast_test",
-        );
-        expect(JSON.parse(gateway.requests[0]!.body)).not.toHaveProperty("fast");
-        expect(JSON.parse(gateway.requests[0]!.body)).toMatchObject({
-          providerOptions: { gateway: { speed: "fast" } },
-        });
+        expect(request).not.toHaveProperty("service_tier");
+        expect(request.reasoning).toEqual({ effort: "high", summary: "auto" });
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
         const stored = JSON.parse(readFileSync(settingsPath, "utf8"));
         expect(stored).toMatchObject({
-          models: { gateway: "anthropic/claude-opus-4.8" },
-          effort: "xhigh",
-          fast_mode: true,
+          models: { codex: CODEX_PICKER_MODEL },
+          effort: "high",
+          fast_mode: false,
         });
 
         session = await TmuxSession.create({
           cwd: opusRoot,
-          env: gatewayEnv,
+          env: catalogEnv,
           stderrPath,
         });
-        const restoredFastStatus = await session.waitForText("opus 4.8 · xhigh · ⚡︎", TIMEOUT);
-        expect(restoredFastStatus).not.toContain("⚡︎ fast");
+        const restoredStatus = await session.waitForText(
+          `${CODEX_PICKER_MODEL} · high`,
+          TIMEOUT,
+        );
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -998,136 +606,99 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   );
 
   test(
-    "GPT 5.6 Sol priority pricing drives the Fast request",
+    "GPT 5.6 Sol picker effort drives the request",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-openai-capabilities-"));
-      const gateway = startFakeGateway(
-        [
-          fakeGatewayFinalText("GPT 5.6 stale effort filtered"),
-          fakeGatewayFinalText("GPT 5.6 max fast complete"),
-        ],
-        {
-          models: [{
-            id: "openai/gpt-5.6-sol",
-            type: "language",
-            owned_by: "openai",
-            released: 1,
-            tags: ["reasoning", "tool-use"],
-            reasoning_options: [{
-              type: "effort",
-              values: ["future-tier", "max"],
-            }],
-            context_window: 1_050_000,
-            max_tokens: 128_000,
-            pricing: {
-              service_tiers: {
-                priority: { input: "0.1", output: "0.2" },
-              },
-            },
-          }],
-        },
-      );
+      const root = mkdtempSync(join(tmpdir(), "fiber-openai-capabilities-"));
+      const replies = [
+        "GPT 5.6 stale effort filtered",
+        "GPT 5.6 selected effort complete",
+      ];
+      let replyIndex = 0;
+      const codex = startFakeCodex({
+        extraModels: [CODEX_PICKER_MODEL],
+        route: () => codexFinalText(replies[replyIndex++] ?? "unexpected"),
+      });
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
-            model: "openai/gpt-5.6-sol",
+            model: CODEX_PICKER_MODEL,
             effort: "minimal",
-            fast_mode: true,
           }) + "\n",
           { mode: 0o600 },
         );
-        const gatewayEnv = {
+        const catalogEnv = seededFakeCodexEnv(home, codex, {
           ...NO_AUTH,
-          AI_GATEWAY_API_KEY: "fake-capability-key",
-          HOME: home,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-        };
+        });
 
         const staleResult = await runFx(
-          ["ask", "--auto", "--json", "--no-save", "Use stale minimal fast."],
+          ["ask", "--permission-mode", "auto", "--json", "--no-save", "Use stale minimal effort."],
           {
             cwd: workspaceRoot,
-            env: gatewayEnv,
+            env: catalogEnv,
             timeoutMs: TIMEOUT,
           },
         );
         expect(staleResult.code).toBe(0);
-        expect(gateway.requests).toHaveLength(1);
-        expect(JSON.parse(gateway.requests[0]!.body)).not.toHaveProperty(
-          "reasoning",
-        );
-        expect(JSON.parse(gateway.requests[0]!.body)).not.toHaveProperty("fast");
-        expect(JSON.parse(gateway.requests[0]!.body)).toMatchObject({
-          providerOptions: { gateway: { speed: "fast" } },
-        });
+        expect(codex.requests).toHaveLength(1);
+        const staleRequest = JSON.parse(codex.requests[0]!.body);
+        expect(staleRequest).not.toHaveProperty("reasoning");
+        expect(staleRequest).not.toHaveProperty("service_tier");
         expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
-          model: "openai/gpt-5.6-sol",
+          model: CODEX_PICKER_MODEL,
           effort: "minimal",
-          fast_mode: true,
         });
 
         session = await TmuxSession.create({
           cwd: workspaceRoot,
-          env: gatewayEnv,
+          env: catalogEnv,
           stderrPath,
         });
         await session.waitForText("Run /help", TIMEOUT);
         await session.sendLiteral("/model sol");
-        await session.waitForText("openai/gpt-5.6-sol", TIMEOUT);
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
         await session.sendKeys("Enter");
         const efforts = await session.waitForText("default", TIMEOUT);
         expect(efforts).not.toContain("minimal");
         for (let i = 0; i < 2; i += 1) await session.sendKeys("Down");
-        await session.waitForText("max", TIMEOUT);
+        await session.waitForText("high", TIMEOUT);
         await session.sendKeys("Enter");
-        await session.waitForText("normal", TIMEOUT);
-        await session.sendLiteral("fast");
-        await session.waitForText("/model openai/gpt-5.6-sol max fast", TIMEOUT);
-        await session.sendKeys("Enter");
-        const selected = await session.waitForText("gpt-5.6-sol · max · ⚡︎", TIMEOUT);
-        expect(selected).not.toContain("⚡︎ fast");
+        await session.waitForText(`${CODEX_PICKER_MODEL} · high`, TIMEOUT);
         await session.waitForComposer(TIMEOUT);
 
         const stored = JSON.parse(
           readFileSync(settingsPath, "utf8"),
         );
         expect(stored).toMatchObject({
-          models: { gateway: "openai/gpt-5.6-sol" },
-          effort: "max",
-          fast_mode: true,
+          models: { codex: CODEX_PICKER_MODEL },
+          effort: "high",
         });
 
-        await session.sendText("Use max fast.");
-        await session.waitForText("GPT 5.6 max fast complete", TIMEOUT);
-        expect(gateway.requests).toHaveLength(2);
-        expect(gateway.requests[1]!.headers.get("ai-language-model-id")).toBe(
-          "openai/gpt-5.6-sol",
+        await session.sendText("Use the selected model.");
+        await session.waitForText("GPT 5.6 selected effort complete", TIMEOUT);
+        expect(codex.requests).toHaveLength(2);
+        const followUp = JSON.parse(codex.requests[1]!.body);
+        expect(followUp.model).toBe(CODEX_PICKER_MODEL);
+        expect(codex.requests[1]!.authorization).toBe(
+          `Bearer ${chatGptAccessToken()}`,
         );
-        expect(gateway.requests[1]!.headers.get("authorization")).toBe(
-          "Bearer fake-capability-key",
-        );
-        expect(JSON.parse(gateway.requests[1]!.body)).toMatchObject({
-          reasoning: "max",
-          providerOptions: { gateway: { speed: "fast" } },
-        });
-        expect(JSON.parse(gateway.requests[1]!.body)).not.toHaveProperty("fast");
+        expect(followUp.reasoning).toEqual({ effort: "high", summary: "auto" });
+        expect(followUp).not.toHaveProperty("service_tier");
 
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -1135,61 +706,47 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   );
 
   test(
-    "Fable 5 xhigh picker selection persists without fast mode",
+    "Codex picker selection persists with the selected effort",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-fable-capabilities-"));
-      const gateway = startFakeGateway([], {
-        models: [{
-          id: "anthropic/claude-fable-5",
-          type: "language",
-          released: 1,
-            tags: ["reasoning", "tool-use"],
-            reasoning_options: [{ type: "effort", values: ["high", "xhigh"] }],
-            context_window: 1_000_000,
-          max_tokens: 128_000,
-        }],
-      });
+      const root = mkdtempSync(join(tmpdir(), "fiber-fable-capabilities-"));
+      const codex = startFakeCodex({ extraModels: [CODEX_PICKER_MODEL] });
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
 
         session = await TmuxSession.create({
           cwd: workspaceRoot,
-          env: {
+          env: seededFakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            HOME: home,
-            FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-          },
+          }),
           stderrPath,
         });
         await session.waitForText("Run /help", TIMEOUT);
-        await session.sendLiteral("/model fable");
-        await session.waitForText("anthropic/claude-fable-5", TIMEOUT);
+        await filterStartupModelPicker(session, "sol");
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
         await session.sendKeys("Enter");
         await session.waitForText("default", TIMEOUT);
         for (let i = 0; i < 2; i += 1) await session.sendKeys("Down");
-        await session.waitForText("xhigh", TIMEOUT);
+        await session.waitForText("high", TIMEOUT);
         await session.sendKeys("Enter");
-        const selected = await session.waitForText("fable-5 · xhigh", TIMEOUT);
-        expect(selected).not.toContain("⚡︎");
+        await session.waitForText(`${CODEX_PICKER_MODEL} · high`, TIMEOUT);
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
-        const stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+        const stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         expect(stored).toMatchObject({
-          models: { gateway: "anthropic/claude-fable-5" },
-          effort: "xhigh",
+          models: { codex: CODEX_PICKER_MODEL },
+          effort: "high",
         });
-        expect(stored.fast_mode).toBe(false);
-        expect(stored.fast_mode_model_bound).toBe(true);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -1199,21 +756,15 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   test(
     "model picker selection persists when a matching skill exists",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-model-picker-skill-"));
-      const gateway = startFakeGateway([], {
-        models: [{
-          id: "xai/grok-build-1",
-          type: "language",
-          released: 1,
-          tags: ["tool-use"],
-        }],
-      });
+      const root = mkdtempSync(join(tmpdir(), "fiber-model-picker-skill-"));
+      const codex = startFakeCodex({ extraModels: [CODEX_PICKER_MODEL] });
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        const skillRoot = join(home, ".fx", "skills", "model-helper");
+        const skillRoot = join(home, ".fiber", "skills", "model-helper");
         mkdirSync(skillRoot, { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         writeFileSync(
           join(skillRoot, "SKILL.md"),
@@ -1223,20 +774,19 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
 
         session = await TmuxSession.create({
           cwd: workspaceRoot,
-          env: {
+          env: seededFakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            HOME: home,
-            FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-          },
+          }),
           stderrPath,
         });
-        await session.waitForComposer(TIMEOUT);
-        await session.sendLiteral("/model");
-        await session.sendKeys("Tab");
-        const pickerPane = await session.waitForText("xai/grok-build-1", TIMEOUT);
-        expect(pickerPane).toContain("xai/grok-build-1");
+        await session.waitForText("Run /help", TIMEOUT);
+        await filterStartupModelPicker(session, "sol");
+        const pickerPane = await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
+        expect(pickerPane).toContain(CODEX_PICKER_MODEL);
         await session.sendKeys("Enter");
-        await session.waitForText("● Switched to xai/grok-build-1", TIMEOUT);
+        await session.waitForText("default", TIMEOUT);
+        await session.sendKeys("Enter");
+        await session.waitForText(`● Switched to ${CODEX_PICKER_MODEL}`, TIMEOUT);
         await session.waitForPane(
           (pane) =>
             hasEmptyComposer(pane) &&
@@ -1245,16 +795,14 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         );
         expect(await session.capturePane()).not.toContain("saved to user settings");
 
-        const stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
-        expect(stored.models.gateway).toBe("xai/grok-build-1");
-        expect(stored).not.toHaveProperty("effort");
-        expect(stored.fast_mode).toBe(false);
-        expect(stored.fast_mode_model_bound).toBe(true);
+        const stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
+        expect(stored.models.codex).toBe(CODEX_PICKER_MODEL);
+        expect(stored.effort).toBe("auto");
 
         const scrollback = await session.captureFullScrollbackEscapes();
-        expect(scrollback).toContain("grok-build-1");
-        expect(scrollback).toContain("● Switched to xai/grok-build-1");
-        expect(gateway.requests).toHaveLength(0);
+        expect(scrollback).toContain(CODEX_PICKER_MODEL);
+        expect(scrollback).toContain(`● Switched to ${CODEX_PICKER_MODEL}`);
+        expect(codex.requests).toHaveLength(0);
 
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
@@ -1262,7 +810,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
 
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -1270,131 +818,90 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   );
 
   test(
-    "Gateway catalog reasoning drives portable effort requests and persistence",
+    "Codex catalog reasoning drives portable effort requests and persistence",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-gateway-capabilities-"));
-      const gateway = startFakeGateway(
-        [
-          fakeGatewayFinalText("portable auto complete"),
-          fakeGatewayFinalText("portable future complete"),
-        ],
-        {
-          models: [{
-            id: "provider/new-reasoning-model",
-            type: "language",
-            released: 99,
-            tags: ["reasoning", "tool-use"],
-            reasoning_options: [{
-              type: "effort",
-              values: ["future-tier", "high"],
-            }],
-            context_window: 750_000,
-            max_tokens: 32_000,
-          }],
-        },
-      );
+      const root = mkdtempSync(join(tmpdir(), "fiber-codex-capabilities-"));
+      const replies = ["portable auto complete", "portable future complete"];
+      let replyIndex = 0;
+      const codex = startFakeCodex({
+        extraModels: [CODEX_PICKER_MODEL],
+        route: () => codexFinalText(replies[replyIndex++] ?? "unexpected"),
+      });
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
 
         session = await TmuxSession.create({
           cwd: workspaceRoot,
-          env: {
+          env: seededFakeCodexEnv(home, codex, {
             ...NO_AUTH,
-            AI_GATEWAY_API_KEY: "fake-capability-key",
-            VERCEL_OIDC_TOKEN: undefined,
-            HOME: home,
-            FX_GATEWAY_BASE_URL: gateway.baseUrl,
-            FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-            FX_E2E_GATEWAY_MODELS_URL: `${gateway.baseUrl}/coding-agent/v1/models`,
-          },
+          }),
           stderrPath,
         });
         await session.waitForText("Run /help", TIMEOUT);
-        await session.sendText("/statusline context");
-        await session.waitForText("● Statusline: context: on", TIMEOUT);
-        await session.sendLiteral("/model new-reasoning");
-        await session.waitForText("provider/new-reasoning-model", TIMEOUT);
+        await filterStartupModelPicker(session, "sol");
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
         await session.sendKeys("Enter");
         const autoEffortPicker = await session.waitForText("default", TIMEOUT);
-        expect(autoEffortPicker).toContain("future-tier");
+        expect(autoEffortPicker).toContain("low");
         expect(autoEffortPicker).toContain("high");
         await session.sendKeys("Enter");
-        await session.waitForText("● Switched to provider/new-reasoning-model", TIMEOUT);
+        await session.waitForText(`● Switched to ${CODEX_PICKER_MODEL}`, TIMEOUT);
 
-        let stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
-        expect(stored.models.gateway).toBe("provider/new-reasoning-model");
-        expect(stored.fast_mode).toBe(false);
-        expect(stored.fast_mode_model_bound).toBe(true);
+        let stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
+        expect(stored.models.codex).toBe(CODEX_PICKER_MODEL);
 
         await session.sendText("Use portable auto.");
         await session.waitForText("portable auto complete", TIMEOUT);
-        const footer = await session.waitForText("Context: 0k/750k 0%", TIMEOUT);
-        expect(footer).toContain("new-reasoning-model");
-        expect(gateway.requests).toHaveLength(1);
-        expect(gateway.requests[0]!.headers.get("ai-language-model-id")).toBe(
-          "provider/new-reasoning-model",
-        );
-        expect(
-          gateway.requests[0]!.headers.get(
-            "ai-language-model-specification-version",
-          ),
-        ).toBe("4");
-        expect(JSON.parse(gateway.requests[0]!.body)).not.toHaveProperty("reasoning");
+        expect(codex.requests).toHaveLength(1);
+        const firstRequest = JSON.parse(codex.requests[0]!.body);
+        expect(firstRequest.model).toBe(CODEX_PICKER_MODEL);
+        expect(firstRequest).not.toHaveProperty("reasoning");
 
-        await session.sendLiteral("/model new-reasoning");
-        await session.waitForText("provider/new-reasoning-model", TIMEOUT);
+        await session.sendLiteral("/model sol");
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
         await session.sendKeys("Enter");
         await session.waitForText("default", TIMEOUT);
         await session.sendKeys("Down");
-        await session.waitForText("future-tier", TIMEOUT);
+        await session.waitForText("low", TIMEOUT);
         await session.sendKeys("Enter");
-        await session.waitForText("· future-tier", TIMEOUT);
+        await session.waitForText("· low", TIMEOUT);
 
-        stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+        stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         const persistenceDeadline = Date.now() + TIMEOUT;
-        while (stored.effort !== "future-tier" && Date.now() < persistenceDeadline) {
+        while (stored.effort !== "low" && Date.now() < persistenceDeadline) {
           await Bun.sleep(25);
-          stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+          stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         }
         expect(stored).toMatchObject({
-          models: { gateway: "provider/new-reasoning-model" },
-          effort: "future-tier",
+          models: { codex: CODEX_PICKER_MODEL },
+          effort: "low",
         });
 
         await session.sendText("Use portable future.");
         await session.waitForText("portable future complete", TIMEOUT);
-        expect(gateway.requests).toHaveLength(2);
-        expect(
-          gateway.requests[1]!.headers.get(
-            "ai-language-model-specification-version",
-          ),
-        ).toBe("4");
-        expect(JSON.parse(gateway.requests[1]!.body)).toMatchObject({
-          reasoning: "future-tier",
-        });
-        expect(JSON.parse(gateway.requests[1]!.body)).not.toHaveProperty(
-          "providerOptions",
-        );
+        expect(codex.requests).toHaveLength(2);
+        const secondRequest = JSON.parse(codex.requests[1]!.body);
+        expect(secondRequest.reasoning).toEqual({ effort: "low", summary: "auto" });
+        expect(secondRequest).not.toHaveProperty("service_tier");
 
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
-        stored = JSON.parse(readFileSync(join(home, ".fx", "settings.json"), "utf8"));
+        stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
         expect(stored).toMatchObject({
-          models: { gateway: "provider/new-reasoning-model" },
-          effort: "future-tier",
+          models: { codex: CODEX_PICKER_MODEL },
+          effort: "low",
         });
-        expect(stored.fast_mode).toBe(false);
-        expect(stored.fast_mode_model_bound).toBe(true);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
-        gateway.stop();
+        codex.stop();
         rmSync(root, { recursive: true, force: true });
       }
     },
@@ -1404,13 +911,13 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "settings persistence remains available when session storage is unavailable",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-config-first-write-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-config-first-write-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        writeFileSync(join(home, ".fx", "sessions"), "blocked\n", {
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeFileSync(join(home, ".fiber", "sessions"), "blocked\n", {
           mode: 0o600,
         });
         mkdirSync(workspace);
@@ -1432,62 +939,18 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         expect(tree(home)).toEqual([
-          ".fx",
-          ".fx/history.jsonl",
-          ".fx/history.lock",
-          ".fx/sessions",
-          ".fx/settings.json",
-          ".fx/settings.lock",
+          ".fiber",
+          ".fiber/history.jsonl",
+          ".fiber/history.lock",
+          ".fiber/sessions",
+          ".fiber/settings.json",
+          ".fiber/settings.lock",
         ]);
-        expect(statSync(join(home, ".fx")).mode & 0o777).toBe(0o700);
-        expect(statSync(join(home, ".fx", "history.jsonl")).mode & 0o777).toBe(0o600);
-        expect(statSync(join(home, ".fx", "history.lock")).mode & 0o777).toBe(0o600);
-        expect(statSync(join(home, ".fx", "settings.json")).mode & 0o777).toBe(0o600);
-        expect(statSync(join(home, ".fx", "settings.lock")).mode & 0o777).toBe(0o600);
-        expect(readFileSync(stderrPath, "utf8")).toBe("");
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-    30_000,
-  );
-
-  serialTest(
-    "workspace statusline stays active when user settings cannot be saved",
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-statusline-write-failure-"));
-      try {
-        const home = join(root, "home");
-        const workspace = join(root, "workspace-write-failure-visible");
-        const settingsPath = join(home, ".fx", "settings.json");
-        const externalSettings = join(root, "external-settings.json");
-        const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
-        mkdirSync(workspace);
-        writeFileSync(settingsPath, '{"statusLine":{"workspace":false}}\n', { mode: 0o600 });
-        writeFileSync(externalSettings, '{"statusLine":{"workspace":false}}\n', { mode: 0o600 });
-
-        session = await TmuxSession.create({
-          cwd: realpathSync(workspace),
-          env: { ...NO_AUTH, HOME: home },
-          stderrPath,
-        });
-        await session.waitForText("Run /help", TIMEOUT);
-        expect(await session.capturePane()).not.toContain("workspace-write-failure-visible");
-
-        rmSync(settingsPath);
-        symlinkSync(externalSettings, settingsPath);
-        await session.sendText("/statusline workspace");
-        await session.waitForText("active for this process but not saved to user settings", TIMEOUT);
-        await session.waitForPane(
-          (pane) => pane.includes("workspace-write-failure-visible"),
-          TIMEOUT,
-        );
-        expect(JSON.parse(readFileSync(externalSettings, "utf8")).statusLine.workspace).toBe(false);
-
-        await session.sendText("/quit");
-        await session.waitForSessionEnd(TIMEOUT);
-        session = null;
+        expect(statSync(join(home, ".fiber")).mode & 0o777).toBe(0o700);
+        expect(statSync(join(home, ".fiber", "history.jsonl")).mode & 0o777).toBe(0o600);
+        expect(statSync(join(home, ".fiber", "history.lock")).mode & 0o777).toBe(0o600);
+        expect(statSync(join(home, ".fiber", "settings.json")).mode & 0o777).toBe(0o600);
+        expect(statSync(join(home, ".fiber", "settings.lock")).mode & 0o777).toBe(0o600);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
       } finally {
         rmSync(root, { recursive: true, force: true });
@@ -1497,14 +960,14 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   );
 
   serialTest("config diagnostics preserve invalid, oversized, and unsafe primaries", async () => {
-    const root = mkdtempSync(join(tmpdir(), "fx-config-diagnostics-"));
+    const root = mkdtempSync(join(tmpdir(), "fiber-config-diagnostics-"));
     try {
       const home = join(root, "home");
       const workspace = join(root, "workspace");
-      mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+      mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
       mkdirSync(workspace);
       const workspaceRoot = realpathSync(workspace);
-      const settingsPath = join(home, ".fx", "settings.json");
+      const settingsPath = join(home, ".fiber", "settings.json");
 
       const malformed = "{bad\n";
       writeFileSync(settingsPath, malformed, { mode: 0o600 });
@@ -1591,15 +1054,15 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "concurrent global mutations preserve both values and unknown keys",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-config-concurrent-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-config-concurrent-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             future_global: { nested: "keep-global" },
             workspaces: {
@@ -1612,7 +1075,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           }) + "\n",
           { mode: 0o600 },
         );
-        writeFileSync(join(home, ".fx", "sessions"), "blocked\n", {
+        writeFileSync(join(home, ".fiber", "sessions"), "blocked\n", {
           mode: 0o600,
         });
         const env = {
@@ -1628,14 +1091,20 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           session.waitForText("Run /help", TIMEOUT),
           secondSession.waitForText("Run /help", TIMEOUT),
         ]);
+        await secondSession.sendText("/settings");
+        await secondSession.waitForText("←→ Change", TIMEOUT);
+        await secondSession.sendLiteral("status line context");
+        await secondSession.waitForText(/Status line context\s+off/, TIMEOUT);
         await Promise.all([
           session.sendText("/settings startup-scrollback off"),
-          secondSession.sendText("/statusline context"),
+          secondSession.sendKeys("Right"),
         ]);
         await Promise.all([
           session.waitForText("startup_scrollback: off", TIMEOUT),
-          secondSession.waitForText("● Statusline: context:", TIMEOUT),
+          waitForStatuslineSetting(join(home, ".fiber", "settings.json"), "context", true),
         ]);
+        await secondSession.sendKeys("Escape");
+        await secondSession.waitForComposer(TIMEOUT);
         await Promise.all([
           session.sendText("/quit"),
           secondSession.sendText("/quit"),
@@ -1648,7 +1117,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         secondSession = null;
 
         const stored = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(stored.future_global).toEqual({ nested: "keep-global" });
         expect(stored.startup_scrollback).toBe(false);
@@ -1668,7 +1137,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "stale workspace mutations preserve an ordered remove and add",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-concurrent-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-concurrent-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -1676,7 +1145,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const launch = join(root, "launch");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(added);
         mkdirSync(launch);
@@ -1689,7 +1158,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           return realpathSync(path);
         });
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             workspaces: {
               [workspaceRoot]: {
@@ -1699,7 +1168,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           }) + "\n",
           { mode: 0o600 },
         );
-        writeFileSync(join(home, ".fx", "sessions"), "blocked\n", {
+        writeFileSync(join(home, ".fiber", "sessions"), "blocked\n", {
           mode: 0o600,
         });
         const env = {
@@ -1714,7 +1183,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
             stderrPath: stderrAPath,
           }),
           TmuxSession.create({
-            cmd: `${FX_BIN} --add-dir ${launchRoot}`,
+            cmd: `${FIBER_BIN} --add-dir ${launchRoot}`,
             cwd: workspaceRoot,
             env,
             stderrPath: stderrBPath,
@@ -1744,7 +1213,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         secondSession = null;
 
         const stored = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(
           stored.workspaces[workspaceRoot].additional_directories,
@@ -1761,14 +1230,14 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace add rejects effective capacity without changing settings",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-capacity-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-capacity-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const added = join(root, "added");
         const launch = join(root, "launch");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(added);
         mkdirSync(launch);
@@ -1780,7 +1249,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           mkdirSync(path);
           return realpathSync(path);
         });
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         const originalSettings =
           JSON.stringify({
             workspaces: {
@@ -1790,12 +1259,12 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
             },
           }) + "\n";
         writeFileSync(settingsPath, originalSettings, { mode: 0o600 });
-        writeFileSync(join(home, ".fx", "sessions"), "blocked\n", {
+        writeFileSync(join(home, ".fiber", "sessions"), "blocked\n", {
           mode: 0o600,
         });
 
         session = await TmuxSession.create({
-          cmd: `${FX_BIN} --add-dir ${launchRoot}`,
+          cmd: `${FIBER_BIN} --add-dir ${launchRoot}`,
           cwd: workspaceRoot,
           env: {
             ...NO_AUTH,
@@ -1825,19 +1294,19 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace removal persists after an observed source disappears",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-source-disappears-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-source-disappears-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const shared = join(root, "shared");
         const savedLink = join(root, "saved-link");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(shared);
         symlinkSync(shared, savedLink, "dir");
         const workspaceRoot = realpathSync(workspace);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -1879,7 +1348,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace removal persists after an observed source retargets",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-source-moves-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-source-moves-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -1887,14 +1356,14 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const second = join(root, "second");
         const savedLink = join(root, "saved-link");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(first);
         mkdirSync(second);
         symlinkSync(first, savedLink, "dir");
         const workspaceRoot = realpathSync(workspace);
         const firstRoot = realpathSync(first);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -1937,7 +1406,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace removal consumes a concurrent exact canonical replacement",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-target-replaced-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-target-replaced-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -1946,7 +1415,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const unseenAfter = join(root, "unseen-after");
         const targetLink = join(root, "target-link");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(target);
         mkdirSync(unseenBefore);
@@ -1956,7 +1425,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const targetRoot = realpathSync(target);
         const unseenBeforeRoot = realpathSync(unseenBefore);
         const unseenAfterRoot = realpathSync(unseenAfter);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -2025,7 +1494,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace removal prefers a concurrent canonical survivor before restart",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-survivor-moves-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-survivor-moves-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -2039,7 +1508,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const survivorLinkB = join(root, "survivor-link-b");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(removed);
         mkdirSync(survivor);
@@ -2055,7 +1524,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const retargetRoot = realpathSync(retarget);
         const unseenBeforeRoot = realpathSync(unseenBefore);
         const unseenAfterRoot = realpathSync(unseenAfter);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -2143,7 +1612,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace removal uses observed identity and preserves an unseen source",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-source-retarget-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-source-retarget-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -2152,14 +1621,14 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const savedLink = join(root, "saved-link");
         const unseenLink = join(root, "unseen-link");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(first);
         mkdirSync(second);
         symlinkSync(first, savedLink, "dir");
         const workspaceRoot = realpathSync(workspace);
         const firstRoot = realpathSync(first);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -2216,7 +1685,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace add canonicalizes observed aliases before restart",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-source-restart-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-source-restart-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -2226,7 +1695,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const savedLink = join(root, "saved-link");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(first);
         mkdirSync(second);
@@ -2236,7 +1705,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const firstRoot = realpathSync(first);
         const secondRoot = realpathSync(second);
         const addedRoot = realpathSync(added);
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         writeFileSync(
           settingsPath,
           JSON.stringify({
@@ -2301,14 +1770,14 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace slash mutations persist across restart and remove cleanly",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-slash-persistence-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-slash-persistence-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const shared = join(root, "shared project");
         const stderrAPath = join(root, "stderr-a.log");
         const stderrBPath = join(root, "stderr-b.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(shared);
         const workspaceRoot = realpathSync(workspace);
@@ -2337,7 +1806,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         session = null;
 
         const stored = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(stored.workspaces[workspaceRoot].additional_directories).toEqual([
           sharedRoot,
@@ -2362,7 +1831,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         secondSession = null;
 
         const cleared = JSON.parse(
-          readFileSync(join(home, ".fx", "settings.json"), "utf8"),
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
         );
         expect(cleared.workspaces?.[workspaceRoot]?.additional_directories).toBeUndefined();
         expect(readFileSync(stderrAPath, "utf8")).toBe("");
@@ -2377,13 +1846,13 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace list marks a directory deleted during the session unavailable",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-live-availability-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-live-availability-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const shared = join(root, "shared");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(shared);
         const workspaceRoot = realpathSync(workspace);
@@ -2436,7 +1905,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace list restores canonical access through a new symlinked ancestor",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-restored-canonical-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-restored-canonical-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
@@ -2447,15 +1916,16 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const stderrPath = join(root, "stderr.log");
         const fixture = "RESTORED_CANONICAL_ROOT_FIXTURE";
         const instructionSentinel = "RESTORED_ROOT_AGENTS_MUST_NOT_LOAD";
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(shared, { recursive: true });
         writeFileSync(join(shared, "fixture.txt"), `${fixture}\n`);
         writeFileSync(join(shared, "AGENTS.md"), `${instructionSentinel}\n`);
         const workspaceRoot = realpathSync(workspace);
         const sharedRoot = realpathSync(shared);
+        writeSeededChatGptLogin(home, chatGptAccessToken());
         writeFileSync(
-          join(home, ".fx", "settings.json"),
+          join(home, ".fiber", "settings.json"),
           JSON.stringify({
             sandbox: "none",
             permission_mode: "auto",
@@ -2466,26 +1936,25 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           }),
         );
 
-        const gateway = startFakeGateway([
-          fakeGatewayToolCall("restored-root-read", "read_file", {
-            path: join(source, "fixture.txt"),
-            line_count: 10,
-          }),
-          fakeGatewayFinalText("RESTORED_CANONICAL_ROOT_COMPLETE"),
-        ]);
+        const fixturePath = join(source, "fixture.txt");
+        const codex = startFakeCodex({
+          route: (body) => {
+            const items = JSON.parse(body).input ?? [];
+            if (items.some((item: { type?: string }) => item.type === "function_call_output")) {
+              return codexFinalText("RESTORED_CANONICAL_ROOT_COMPLETE");
+            }
+            return codexToolCall("restored-root-read", "read_file", {
+              path: fixturePath,
+              line_count: 10,
+            });
+          },
+        });
         try {
           session = await TmuxSession.create({
             cwd: workspaceRoot,
-            env: {
-              HOME: home,
-              AI_GATEWAY_API_KEY: "fake-restored-root-key",
-              VERCEL_OIDC_TOKEN: undefined,
-              FX_AUTO_UPGRADE: "0",
-              FX_GATEWAY_BASE_URL: gateway.baseUrl,
-              FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_E2E_GATEWAY_CHAT_URL: gateway.chatUrl,
-              FX_MODEL: FAKE_GATEWAY_MODEL,
-            },
+            env: seededFakeCodexEnv(home, codex, {
+              FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+            }),
             stderrPath,
           });
           await session.waitForText("Run /help", TIMEOUT);
@@ -2502,13 +1971,13 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
 
           await session.sendText("Read the restored workspace fixture once.");
           await session.waitForText("RESTORED_CANONICAL_ROOT_COMPLETE", TIMEOUT);
-          expect(gateway.requests).toHaveLength(2);
-          for (const request of gateway.requests) {
+          expect(codex.requests).toHaveLength(2);
+          for (const request of codex.requests) {
             expect(request.body).not.toContain(instructionSentinel);
             expect(request.body).not.toContain("target outside workspace");
             expect(request.body).not.toContain("Not executed");
           }
-          expect(gateway.requests[1]!.body).toContain(fixture);
+          expect(codex.requests[1]!.body).toContain(fixture);
           expect(readFileSync(stderrPath, "utf8")).toBe("");
           expect(session.isAlive()).toBe(true);
           expect(session.isPaneAlive()).toBe(true);
@@ -2517,7 +1986,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
           await session.waitForSessionEnd(TIMEOUT);
           session = null;
         } finally {
-          gateway.stop();
+          codex.stop();
         }
       } finally {
         rmSync(root, { recursive: true, force: true });
@@ -2529,14 +1998,14 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   serialTest(
     "workspace slash removal explains launch restoration and uses friendly errors",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-workspace-launch-removal-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-workspace-launch-removal-"));
       try {
         const home = join(root, "home");
         const workspace = join(root, "workspace");
         const shared = join(root, "shared");
         const unknown = join(root, "unknown");
         const stderrPath = join(root, "stderr.log");
-        mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
         mkdirSync(workspace);
         mkdirSync(shared);
         mkdirSync(unknown);
@@ -2549,7 +2018,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         };
 
         session = await TmuxSession.create({
-          cmd: `${FX_BIN} --add-dir ${sharedRoot}`,
+          cmd: `${FIBER_BIN} --add-dir ${sharedRoot}`,
           cwd: workspaceRoot,
           env,
           stderrPath,
@@ -2586,7 +2055,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
-        const settingsPath = join(home, ".fx", "settings.json");
+        const settingsPath = join(home, ".fiber", "settings.json");
         if (statSync(settingsPath, { throwIfNoEntry: false })) {
           const stored = JSON.parse(readFileSync(settingsPath, "utf8"));
           expect(

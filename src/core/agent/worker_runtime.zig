@@ -3,7 +3,6 @@ const secret = @import("../auth/secret.zig");
 const io_mod = @import("../shared/io.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const diff_mod = @import("../output/diff.zig");
-const file_mutation_contract = @import("../tooling/file_mutation_contract.zig");
 const image_attachments = @import("../images/image_attachments.zig");
 const context_contract = @import("../workspace/context_contract.zig");
 const auto_classifier_context = @import("../permissions/auto_classifier_context.zig");
@@ -63,9 +62,8 @@ pub const QueuedPrompt = struct {
     images: []types.ImageAttachment,
     authorized_image_catalog: []types.ImageAttachment = &.{},
     model: []u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     api_key: []u8,
-    gateway_team: ?[]u8 = null,
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]u8 = null,
     permission_mode: types.PermissionMode,
@@ -1246,12 +1244,6 @@ pub const WorkerRuntime = struct {
         }
     }
 
-    pub fn isProcessing(self: *WorkerRuntime) bool {
-        self.worker_mutex.lockUncancelable(io_mod.getIo());
-        defer self.worker_mutex.unlock(io_mod.getIo());
-        return self.worker_processing;
-    }
-
     pub fn snapshotState(
         self: *WorkerRuntime,
         alloc: std.mem.Allocator,
@@ -1951,7 +1943,7 @@ test "terminal recovery pause admits continuation before worker cleanup" {
                 .assistant_source = @constCast("partial response"),
                 .cause = .network_interrupted,
                 .action = .paused,
-                .authority = .{ .provider = .gateway, .model = @constCast("model") },
+                .authority = .{ .provider = .codex, .model = @constCast("model") },
                 .requested_fast_mode = false,
                 .fast_mode = false,
                 .max_provider_attempts = 10,
@@ -2138,22 +2130,6 @@ fn appendGrantToQueuedPrompt(alloc: std.mem.Allocator, prompt: *QueuedPrompt, to
     prompt.grants = next;
 }
 
-fn dupeStringSlice(alloc: std.mem.Allocator, values: []const []const u8) ![][]u8 {
-    if (values.len == 0) return &.{};
-    const copy = try alloc.alloc([]u8, values.len);
-    errdefer alloc.free(copy);
-
-    var filled: usize = 0;
-    errdefer {
-        var i: usize = 0;
-        while (i < filled) : (i += 1) alloc.free(copy[i]);
-    }
-    while (filled < values.len) : (filled += 1) {
-        copy[filled] = try alloc.dupe(u8, values[filled]);
-    }
-    return copy;
-}
-
 fn freeStringSlice(alloc: std.mem.Allocator, values: [][]u8) void {
     for (values) |value| alloc.free(value);
     if (values.len > 0) alloc.free(values);
@@ -2185,7 +2161,6 @@ pub fn freeQueuedPrompt(alloc: std.mem.Allocator, prompt: QueuedPrompt) void {
     types.freeImageAttachmentSlice(alloc, prompt.authorized_image_catalog);
     alloc.free(prompt.model);
     secret.zeroAndFree(alloc, prompt.api_key);
-    if (prompt.gateway_team) |team| alloc.free(team);
     if (prompt.account_id) |account_id| alloc.free(account_id);
     types.freeHistoryTurnSlice(alloc, prompt.history);
     if (prompt.root_user_intent_context.len > 0) alloc.free(prompt.root_user_intent_context);
@@ -4803,7 +4778,7 @@ test "typed lifecycle worker events duplicate and free every payload variant" {
         .{ .terminal = .{
             .id = .{ .turn_id = 1, .call_id = "final" },
             .outcome = .{ .kind = .completed, .summary = "Listed files" },
-            .command_artifact_handle = "fx-command-final.log",
+            .command_artifact_handle = "fiber-command-final.log",
         } },
         .{ .turn_finished = .{ .turn_id = 1, .outcome = .completed } },
     };
@@ -5583,7 +5558,7 @@ test "question batch snapshot answer and cancellation" {
 test "question batch source distinguishes route recovery from agent questions" {
     const alloc = std.testing.allocator;
     const options = [_]types.QuestionOption{.{ .label = "Try again later", .description = null }};
-    const entries = [_]types.QuestionBatchEntry{.{ .question = "Route failed. What should fx do?", .options = &options }};
+    const entries = [_]types.QuestionBatchEntry{.{ .question = "Route failed. What should fiber do?", .options = &options }};
 
     var route_runtime = WorkerRuntime{};
     defer route_runtime.deinit(alloc);

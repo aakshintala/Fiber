@@ -5,7 +5,6 @@ const command_contract = @import("command_contract.zig");
 const command_environment = @import("command_environment.zig");
 const command_runner = @import("command_runner.zig");
 const contract = @import("managed_execution_contract.zig");
-const debug_trace = @import("../shared/debug_trace.zig");
 const execution_router = @import("router.zig");
 const io_mod = @import("../shared/io.zig");
 const types = @import("../shared/types.zig");
@@ -1422,7 +1421,6 @@ fn dupeEnvironment(
 ) !command_environment.Environment {
     return switch (environment) {
         .legacy => .legacy,
-        .workspace_clean => .workspace_clean,
         .clean => |path| .{ .clean = try alloc.dupe(u8, path) },
         .user => |path| .{ .user = try alloc.dupe(u8, path) },
     };
@@ -1472,7 +1470,6 @@ fn testAuthority(input: StartCapturedInput) command_admission.CommandExecutionAu
 }
 
 test "captured managed execution yields one handle and delivers ordered output once" {
-    if (comptime builtin.os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1511,7 +1508,6 @@ test "captured managed execution yields one handle and delivers ordered output o
 }
 
 test "generated captured execution identities do not depend on provider call ids" {
-    if (comptime builtin.os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1547,7 +1543,6 @@ test "generated captured execution identities do not depend on provider call ids
 }
 
 test "captured managed execution capacity rejects before spawn" {
-    if (comptime builtin.os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1579,7 +1574,6 @@ test "captured managed execution capacity rejects before spawn" {
 }
 
 test "captured managed execution exposes full output only by opaque replay handle" {
-    if (comptime builtin.os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();

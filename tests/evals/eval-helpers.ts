@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-export const FX_BIN = resolve(import.meta.dirname, "../../zig-out/bin/fx");
+export const FIBER_BIN = resolve(import.meta.dirname, "../../zig-out/bin/fiber");
 export const REPO_ROOT = resolve(import.meta.dirname, "../..");
 
 export const EVAL_MODELS = [
@@ -50,7 +50,7 @@ function loadDotEnv(): Record<string, string> {
 export function shouldLoadDotEnv(
   environment: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return environment.FX_E2E_DISABLE_DOTENV !== "1";
+  return environment.FIBER_E2E_DISABLE_DOTENV !== "1";
 }
 
 const dotEnvVars = shouldLoadDotEnv() ? loadDotEnv() : {};
@@ -99,9 +99,9 @@ export interface EvalOptions {
   setup?: (dir: string) => Promise<void>;
 }
 
-const PREFIX = "fx-eval-";
-const HOME_PREFIX = "fx-eval-home-";
-const TEST_HOME_PREFIX = "fx-test-home-";
+const PREFIX = "fiber-eval-";
+const HOME_PREFIX = "fiber-eval-home-";
+const TEST_HOME_PREFIX = "fiber-test-home-";
 
 export function createWorkDir(): string {
   return mkdtempSync(join(tmpdir(), PREFIX));
@@ -123,9 +123,9 @@ export function cleanupIsolatedTestHome(home: string): void {
 
 function createEvalHome(): string {
   const home = mkdtempSync(join(tmpdir(), HOME_PREFIX));
-  mkdirSync(join(home, ".fx"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
   writeFileSync(
-    join(home, ".fx", "settings.json"),
+    join(home, ".fiber", "settings.json"),
     JSON.stringify({
       permission_mode: "auto",
       permission: {
@@ -153,7 +153,7 @@ export function buildEvalProcessEnv(
     NO_COLOR: "1",
     HOME: home,
     PATH: process.env.PATH ?? "",
-    FX_MODEL: model,
+    FIBER_MODEL: model,
   };
 }
 
@@ -171,15 +171,15 @@ export async function runEval(
       await setup(workDir);
     }
 
-    if (!existsSync(FX_BIN)) {
+    if (!existsSync(FIBER_BIN)) {
       throw new Error(
-        `fx binary not found at ${FX_BIN}. Run 'zig build' first.`,
+        `fiber binary not found at ${FIBER_BIN}. Run 'zig build' first.`,
       );
     }
 
     const args = [
       "ask",
-      "--auto",
+      "--permission-mode", "auto",
       "--json",
       "--no-save",
       "--timeout",
@@ -193,7 +193,7 @@ export async function runEval(
       code: number | null;
     }>((resolvePromise) => {
       const env = buildEvalProcessEnv(home, model);
-      const child = nodeSpawn(FX_BIN, args, {
+      const child = nodeSpawn(FIBER_BIN, args, {
         env,
         cwd: workDir,
         stdio: ["pipe", "pipe", "pipe"],
@@ -219,7 +219,7 @@ export async function runEval(
       json = JSON.parse(result.stdout.trim());
     } catch {
       throw new Error(
-        `Failed to parse fx JSON output.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+        `Failed to parse fiber JSON output.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
       );
     }
 
@@ -241,7 +241,7 @@ export async function runEval(
 
     if (json.error) {
       throw new Error(
-        `fx returned error: ${json.error}\nstderr: ${result.stderr.slice(-1000)}`,
+        `fiber returned error: ${json.error}\nstderr: ${result.stderr.slice(-1000)}`,
       );
     }
 
@@ -442,7 +442,7 @@ function captureFxProcessState(): string {
     return execFileSync("ps", ["-axo", "pid,ppid,stat,etime,command"], {
       encoding: "utf8",
     }).split("\n").filter((line) =>
-      line.includes("/zig-out/bin/fx") ||
+      line.includes("/zig-out/bin/fiber") ||
       line.includes("mcp-modern-") ||
       line.includes("mcp-legacy-") ||
       line.includes("bun test")
@@ -461,8 +461,8 @@ export async function runFx(
     timeoutMs?: number;
   } = {},
 ): Promise<FxRunResult> {
-  if (!existsSync(FX_BIN)) {
-    throw new Error(`fx binary not found at ${FX_BIN}. Run 'zig build' first.`);
+  if (!existsSync(FIBER_BIN)) {
+    throw new Error(`fiber binary not found at ${FIBER_BIN}. Run 'zig build' first.`);
   }
 
   const { cwd, timeoutMs = 15_000 } = opts;
@@ -482,7 +482,7 @@ export async function runFx(
         env[key] = value;
       }
     }
-    const child = nodeSpawn(FX_BIN, args, {
+    const child = nodeSpawn(FIBER_BIN, args, {
       env,
       cwd: cwd ?? REPO_ROOT,
       stdio: ["pipe", "pipe", "pipe"],
@@ -522,6 +522,10 @@ export async function runFx(
   });
 }
 
+// Live, model-backed suites need real Codex credentials. This used to key off
+// AI_GATEWAY_API_KEY / VERCEL_OIDC_TOKEN, which the Codex-only runtime never
+// sets, so every gated suite skipped silently and reported success.
 export const HAS_API_KEY: boolean = !!(
-  process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN
+  process.env.FIBER_E2E_LIVE ||
+  existsSync(join(process.env.HOME ?? "", ".fiber", "chatgpt-auth.json"))
 );

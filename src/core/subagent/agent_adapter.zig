@@ -149,10 +149,8 @@ pub fn run(
         const resolution = credentials.resolveForProvider(
             turn.alloc,
             config.tool_context.oauth_transport,
-            config.tool_context.secret_store,
             .refresh_if_needed,
             admission.provider,
-            config.tool_context.credential_source,
         ) catch |err| {
             if (err == error.OutOfMemory) return error.OutOfMemory;
             turn.setFailureDiagnostic("model_credential_resolution_failed", @errorName(err)) catch
@@ -166,17 +164,14 @@ pub fn run(
             return error.ProviderFailed;
         };
         routed_config.tool_context.api_key = credential.token;
-        routed_config.tool_context.gateway_team = credential.gatewayTeam();
         routed_config.tool_context.credential_source = credential.source;
         routed_config.tool_context.account_id = credential.accountId();
     }
     routed_config.tool_context.model = admission.model;
     routed_config.tool_context.provider = admission.provider;
     routed_config.tool_context.provider_capabilities = config.provider_set.select(admission.provider).capabilities;
-    if (!routed_config.tool_context.provider_capabilities.fx_search) {
-        routed_config.tool_context.web_search_backend = null;
-        routed_config.tool_context.web_search_runtime_ready = false;
-    }
+    routed_config.tool_context.web_search_backend = null;
+    routed_config.tool_context.web_search_runtime_ready = false;
     const trace_context = debug_trace.TraceContext{
         .turn_id = debug_trace.nextTurnId(),
         .subagent_id = debug_trace.nextSubagentId(),
@@ -202,10 +197,6 @@ pub fn run(
         .model = arena.dupe(u8, admission.model) catch return error.OutOfMemory,
         .provider = admission.provider,
         .api_key = arena.dupe(u8, routed_config.tool_context.api_key) catch return error.OutOfMemory,
-        .gateway_team = if (routed_config.tool_context.gateway_team) |team|
-            arena.dupe(u8, team) catch return error.OutOfMemory
-        else
-            null,
         .credential_source = routed_config.tool_context.credential_source,
         .account_id = if (routed_config.tool_context.account_id) |account_id|
             arena.dupe(u8, account_id) catch return error.OutOfMemory
@@ -275,7 +266,6 @@ pub fn run(
             .skills_prompt_section = config.skills_prompt_section,
             .explicit_skills_prompt_section = config.explicit_skills_prompt_section,
             .gateway_retry_count = config.tool_context.gateway_retry_count,
-            .gateway_chat_url = config.tool_context.gateway_chat_url,
             .advertised_tool_names = child_tool_names,
             .advertised_functions = child_functions,
             .provider_capabilities = config.provider_set.select(admission.provider).capabilities,
@@ -774,4 +764,3 @@ fn pushLiveOutputChunk(
         .text = @constCast(text),
     } });
 }
-fn discardBackgroundUrl(_: *anyopaque, _: u64, _: []const u8) void {}

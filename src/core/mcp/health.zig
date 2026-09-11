@@ -224,48 +224,73 @@ pub fn render(alloc: Allocator, snapshot: Snapshot) ![]u8 {
         });
     }
     for (snapshot.servers) |server| {
-        try out.writer.print(
-            "  {s} source={s} scope={s} policy={s} transport={s} state={s} auth={s}\n",
-            .{
-                server.configured_name,
-                @tagName(server.source),
-                @tagName(server.scope),
-                if (server.required) "required" else "optional",
-                @tagName(server.transport),
-                @tagName(server.connection),
-                @tagName(server.authentication),
-            },
-        );
+        // `disconnected` means no transport was ever opened, so the field
+        // carries no information in the transport-free list path and is
+        // omitted. Every other connection value is a real observation.
+        if (server.connection == .disconnected) {
+            try out.writer.print(
+                "  {s} source={s} scope={s} policy={s} transport={s} auth={s}\n",
+                .{
+                    server.configured_name,
+                    @tagName(server.source),
+                    @tagName(server.scope),
+                    if (server.required) "required" else "optional",
+                    @tagName(server.transport),
+                    @tagName(server.authentication),
+                },
+            );
+        } else {
+            try out.writer.print(
+                "  {s} source={s} scope={s} policy={s} transport={s} state={s} auth={s}\n",
+                .{
+                    server.configured_name,
+                    @tagName(server.source),
+                    @tagName(server.scope),
+                    if (server.required) "required" else "optional",
+                    @tagName(server.transport),
+                    @tagName(server.connection),
+                    @tagName(server.authentication),
+                },
+            );
+        }
         if (server.workspace_admission) |admission| {
             try out.writer.print("    admission={s}\n", .{@tagName(admission)});
         }
-        try out.writer.print(
-            "    negotiated_name={s} negotiated_version={s} protocol={s}\n",
-            .{
-                server.negotiated_name orelse "unavailable",
-                server.negotiated_version orelse "unavailable",
-                server.protocol_version orelse "unavailable",
-            },
-        );
-        try out.writer.writeAll("    tools=");
-        try writeOptionalCount(&out.writer, server.counts.tools);
-        try out.writer.writeAll(" resources=");
-        try writeOptionalCount(&out.writer, server.counts.resources);
-        try out.writer.writeAll(" templates=");
-        try writeOptionalCount(&out.writer, server.counts.resource_templates);
-        try out.writer.writeAll(" prompts=");
-        try writeOptionalCount(&out.writer, server.counts.prompts);
-        try out.writer.print(
-            " cache={s} subscription={s}\n",
-            .{ @tagName(server.cache_freshness), @tagName(server.subscription) },
-        );
-        try out.writer.print("    retry_attempt={d} retry_in_ms=", .{server.retry_attempt});
-        if (server.retry_in_ms) |value| try out.writer.print("{d}", .{value}) else try out.writer.writeAll("none");
-        try out.writer.print(
-            " discovery={s}",
-            .{if (server.last_successful_discovery_ms == null) "pending" else "completed"},
-        );
-        try out.writer.writeByte('\n');
+        if (server.negotiated_name != null or server.negotiated_version != null or server.protocol_version != null) {
+            try out.writer.print(
+                "    negotiated_name={s} negotiated_version={s} protocol={s}\n",
+                .{
+                    server.negotiated_name orelse "unavailable",
+                    server.negotiated_version orelse "unavailable",
+                    server.protocol_version orelse "unavailable",
+                },
+            );
+        }
+        const counts_known = server.counts.tools != null or server.counts.resources != null or
+            server.counts.resource_templates != null or server.counts.prompts != null;
+        if (counts_known or server.cache_freshness != .unavailable or server.subscription != .unavailable) {
+            try out.writer.writeAll("    tools=");
+            try writeOptionalCount(&out.writer, server.counts.tools);
+            try out.writer.writeAll(" resources=");
+            try writeOptionalCount(&out.writer, server.counts.resources);
+            try out.writer.writeAll(" templates=");
+            try writeOptionalCount(&out.writer, server.counts.resource_templates);
+            try out.writer.writeAll(" prompts=");
+            try writeOptionalCount(&out.writer, server.counts.prompts);
+            try out.writer.print(
+                " cache={s} subscription={s}\n",
+                .{ @tagName(server.cache_freshness), @tagName(server.subscription) },
+            );
+        }
+        if (server.retry_attempt != 0 or server.retry_in_ms != null or server.last_successful_discovery_ms != null) {
+            try out.writer.print("    retry_attempt={d} retry_in_ms=", .{server.retry_attempt});
+            if (server.retry_in_ms) |value| try out.writer.print("{d}", .{value}) else try out.writer.writeAll("none");
+            try out.writer.print(
+                " discovery={s}",
+                .{if (server.last_successful_discovery_ms == null) "pending" else "completed"},
+            );
+            try out.writer.writeByte('\n');
+        }
         if (server.failure) |failure| try out.writer.print("    failure={s}\n", .{failure});
     }
     if (snapshot.configuration_issues.len > 0) {
@@ -458,6 +483,24 @@ test "health rendering includes complete typed state without secret-bearing conf
     try std.testing.expect(std.mem.find(u8, output, "catalog_generation") == null);
     try std.testing.expect(std.mem.find(u8, output, "Authorization") == null);
     try std.testing.expect(std.mem.find(u8, output, "https://") == null);
+}
+
+test "health rendering omits transport-product lines before discovery" {
+    const alloc = std.testing.allocator;
+    var server = emptyServerSnapshot();
+    server.configured_name = try alloc.dupe(u8, "fixture");
+    server.transport = .http;
+    server.authentication = .authenticated;
+    var snapshot = Snapshot{ .captured_at_ms = 0, .servers = try alloc.dupe(ServerSnapshot, &.{server}) };
+    defer snapshot.deinit(alloc);
+
+    const output = try render(alloc, snapshot);
+    defer alloc.free(output);
+    try std.testing.expectEqualStrings(
+        "MCP health (1 server):\n" ++
+            "  fixture source=profile scope=profile policy=optional transport=http auth=authenticated\n",
+        output,
+    );
 }
 
 test "compact health summary reports actionable aggregate state" {

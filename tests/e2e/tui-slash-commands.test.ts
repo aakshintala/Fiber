@@ -10,12 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, HAS_API_KEY } from "../evals/eval-helpers";
+import { FIBER_BIN, HAS_API_KEY } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
-  startFakeGateway,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -25,19 +21,17 @@ const SKIP = TMUX_SKIP || !HAS_API_KEY;
 const TIMEOUT = 30_000;
 
 let session: TmuxSession | null = null;
-let gateway: ReturnType<typeof startFakeGateway> | null = null;
 const tempDirs: string[] = [];
 
 afterEach(async () => {
   if (session) { await session.kill(); session = null; }
-  if (gateway) { gateway.stop(); gateway = null; }
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
 async function launchAndWait(): Promise<TmuxSession> {
-  const root = mkdtempSync(join(tmpdir(), "fx-slash-commands-"));
+  const root = mkdtempSync(join(tmpdir(), "fiber-slash-commands-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   mkdirSync(home);
@@ -55,7 +49,7 @@ async function launchNoKeyAndWait(): Promise<{
   terminal: TmuxSession;
   stderrPath: string;
 }> {
-  const root = mkdtempSync(join(tmpdir(), "fx-slash-commands-no-key-"));
+  const root = mkdtempSync(join(tmpdir(), "fiber-slash-commands-no-key-"));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   const stderrPath = join(root, "stderr.log");
@@ -68,10 +62,9 @@ async function launchNoKeyAndWait(): Promise<{
     env: {
       HOME: home,
       AI_GATEWAY_API_KEY: undefined,
-      FX_AUTO_UPGRADE: "0",
-      FX_DISABLE_KEYCHAIN: "1",
-      FX_PERMISSION_MODE: undefined,
-      FX_SKIP_ONBOARDING: "1",
+      FIBER_DISABLE_KEYCHAIN: "1",
+      FIBER_PERMISSION_MODE: undefined,
+      FIBER_SKIP_ONBOARDING: "1",
       VERCEL_OIDC_TOKEN: undefined,
     },
   });
@@ -119,11 +112,11 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
   test(
     "compact status notice preserves native scrollback",
     async () => {
-      const root = mkdtempSync(join(tmpdir(), "fx-status-compact-"));
+      const root = mkdtempSync(join(tmpdir(), "fiber-status-compact-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
       const stderrPath = join(root, "stderr.log");
-      const tapePath = join(root, "session.fxtape");
+      const tapePath = join(root, "session.fibertape");
       mkdirSync(home);
       mkdirSync(workspace);
       tempDirs.push(root);
@@ -136,12 +129,10 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
         minimumHistoryLines: 2000,
         env: {
           HOME: home,
-          AI_GATEWAY_API_KEY: "status-compact-key",
-          FX_AUTO_UPGRADE: "0",
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_PERMISSION_MODE: "auto",
-          FX_RECORD: tapePath,
-          FX_RECORD_INPUT: "1",
+          FIBER_DISABLE_KEYCHAIN: "1",
+          FIBER_PERMISSION_MODE: "auto",
+          FIBER_RECORD: tapePath,
+          FIBER_RECORD_INPUT: "1",
           VERCEL_OIDC_TOKEN: undefined,
           NO_COLOR: "1",
         },
@@ -168,11 +159,11 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
       expect(await session.waitForSessionEnd(5_000)).toBe(true);
       session = null;
 
-      const replay = JSON.parse(execFileSync(FX_BIN, ["replay", tapePath, "--json"], {
+      const replay = JSON.parse(execFileSync(FIBER_BIN, ["debug", "replay", tapePath, "--json"], {
         encoding: "utf8",
       }));
-      expect(replay.frame_count).toBeGreaterThan(0);
-      expect(replay.stdout_bytes).toBeGreaterThan(0);
+      expect(replay.data.frame_count).toBeGreaterThan(0);
+      expect(replay.data.stdout_bytes).toBeGreaterThan(0);
     },
     TIMEOUT,
   );
@@ -198,7 +189,7 @@ describe.skipIf(SKIP)("tui: slash commands", () => {
       const pane = await session.waitForText("←→ Change", 5_000);
       expect(pane).toContain("Settings");
       expect(pane).toContain("↑↓ Navigate");
-      expect(pane).not.toContain("[All]");
+      expect(pane).toContain("[All]");
     },
     TIMEOUT,
   );

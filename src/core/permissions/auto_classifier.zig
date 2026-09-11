@@ -12,7 +12,12 @@ const types = @import("../shared/types.zig");
 pub const tool_name = "permission_decision";
 const max_rationale_bytes: usize = 240;
 const max_review_packet_bytes: usize = 16 * 1024;
-pub const gateway_reviewer_model = "moonshotai/kimi-k3";
+/// Fallback reviewer model for a Reviewer built without an explicit one.
+/// Production always sets `model` explicitly; `openai_codex_permission_reviewer`
+/// passes `openai_codex_models.reviewer_model`. Kept as a literal rather than an
+/// import so `core` does not depend on `gateway`; a test in
+/// `gateway/openai_codex_permission_reviewer.zig` fails if the two drift apart.
+pub const default_reviewer_model = "codex-auto-review";
 
 pub const Risk = enum {
     low,
@@ -328,7 +333,6 @@ pub const ProviderInput = struct {
     credential: []const u8 = "",
     credential_source: ?types.CredentialSource = null,
     account_id: ?[]const u8 = null,
-    tenant: ?[]const u8 = null,
     endpoint: []const u8 = "",
     cancel_flag: ?*std.atomic.Value(bool) = null,
     usage: ?*session_usage.Usage = null,
@@ -355,7 +359,7 @@ pub const Reviewer = struct {
     override_fn: ?OverrideFn = null,
     cancel_flag: ?*std.atomic.Value(bool) = null,
     timeout_ms: u32 = default_timeout_ms,
-    model: []const u8 = gateway_reviewer_model,
+    model: []const u8 = default_reviewer_model,
 
     pub const default_timeout_ms: u32 = 30_000;
 
@@ -916,7 +920,7 @@ test "review view selection uses only normalized action and origin facts" {
     for ([_][]const u8{
         "vercel deploy --prod",
         "rm -rf dist",
-        "gh pr create --body \"$(cat .fx-pr-body.md)\"",
+        "gh pr create --body \"$(cat .fiber-pr-body.md)\"",
         "./cleanup --all",
         "find generated -delete",
         "git restore .",
@@ -1158,7 +1162,7 @@ const schema_properties = [_]model_tool_schema.Property{
 
 pub const function_schema: model_tool_schema.FunctionSchema = .{
     .name = tool_name,
-    .description = "Return bounded safety advice for one exact fx action.",
+    .description = "Return bounded safety advice for one exact fiber action.",
     .input_schema = .{
         .properties = schema_properties[0..],
         .required = schema_required[0..],
@@ -1180,7 +1184,7 @@ test "automatic review model-facing tool contract stays byte exact" {
     std.crypto.hash.sha2.Sha256.hash(tools_json, &digest, .{});
     const actual_hex = std.fmt.bytesToHex(digest, .lower);
     try std.testing.expectEqualStrings(
-        "a8000b05e90c3a89d1a54a7a38c1250e45447b8826564989c50eeaf81cadda12",
+        "202349d4a591aa2a0f504cf2ee4af05bea9a90d242a96894c2b3bbdb56e3779e",
         &actual_hex,
     );
 }
@@ -1303,7 +1307,6 @@ test "automatic reviewer classifier routes through the registered provider" {
         ) anyerror!ParseOutcome {
             const self: *@This() = @ptrCast(@alignCast(raw_ctx orelse return error.MissingProviderContext));
             self.saw_input = std.mem.eql(u8, input.credential, "test-key") and
-                std.mem.eql(u8, input.tenant orelse "", "team_1") and
                 std.mem.eql(u8, input.endpoint, "https://example.test/chat") and
                 std.meta.activeTag(request.action) == .tool;
             return .invalid;
@@ -1316,7 +1319,6 @@ test "automatic reviewer classifier routes through the registered provider" {
         .review_fn = State.review,
     }, .{
         .credential = "test-key",
-        .tenant = "team_1",
         .endpoint = "https://example.test/chat",
     });
     const outcome = try classifier.review(std.testing.allocator, .{
@@ -1955,7 +1957,7 @@ test "normal automatic review serializes the pending call without root task text
             self.saw_pending_results =
                 std.mem.count(u8, payload, "\"role\":\"tool\"") == 1 and
                 std.mem.count(u8, payload, "pending review") == 1;
-            self.saw_reviewer_model = std.mem.eql(u8, model, gateway_reviewer_model);
+            self.saw_reviewer_model = std.mem.eql(u8, model, default_reviewer_model);
             self.saw_review_settings =
                 std.mem.find(u8, payload, "\"maxOutputTokens\":2048") != null and
                 std.mem.find(u8, payload, "\"toolChoice\":{\"type\":\"required\"}") != null and

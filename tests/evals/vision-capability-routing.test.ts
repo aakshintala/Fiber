@@ -20,7 +20,7 @@ import {
 const TIMEOUT = 180_000;
 const KIMI_MODEL = "moonshotai/kimi-k3";
 const GLM_MODEL = "zai/glm-5.2-fast";
-const UNKNOWN_MODEL = "unknown/fx-vision-capability-probe-not-real";
+const UNKNOWN_MODEL = "unknown/fiber-vision-capability-probe-not-real";
 const IMAGE_FIXTURE = join(REPO_ROOT, "tests/e2e/fixtures/favicon.png");
 
 type Root = {
@@ -42,7 +42,7 @@ function createRoot(name: string): Root {
   const root = realpathSync(mkdtempSync(join(tmpdir(), `${name}-`)));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(workspace);
   roots.push(root);
   return {
@@ -56,12 +56,11 @@ function createRoot(name: string): Root {
 function liveEnv(root: Root, model: string) {
   return {
     HOME: root.home,
-    FX_MODEL: model,
-    FX_AUTO_UPGRADE: "0",
-    FX_DISABLE_KEYCHAIN: "1",
-    FX_SKIP_ONBOARDING: "1",
-    FX_TRACE_LOG: root.tracePath,
-    FX_TRACE_SCOPES: "agent,gateway,catalog,tool",
+    FIBER_MODEL: model,
+    FIBER_DISABLE_KEYCHAIN: "1",
+    FIBER_SKIP_ONBOARDING: "1",
+    FIBER_TRACE_LOG: root.tracePath,
+    FIBER_TRACE_SCOPES: "agent,gateway,catalog,tool",
   };
 }
 
@@ -85,14 +84,14 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
   test(
     "Kimi reads native image input while Vision remains unavailable",
     async () => {
-      const root = createRoot("fx-live-native-vision");
+      const root = createRoot("fiber-live-native-vision");
       const imagePath = join(root.workspace, "glyph.png");
       copyFileSync(IMAGE_FIXTURE, imagePath);
 
       const result = await runFx(
         [
           "ask",
-          "--yolo",
+          "--permission-mode", "yolo",
           "--json",
           "--no-save",
           "--no-color",
@@ -111,7 +110,7 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
       expect(result.code, result.stderr).toBe(0);
       expect(json.exit_code).toBe(0);
       expect(json.model).toBe(KIMI_MODEL);
-      expect(normalizedLetters(json.final_output || json.output)).toBe("fx");
+      expect(normalizedLetters(json.final_output || json.output)).toBe("fiber");
       expect(json.tool_calls.filter((call) => call.name === "vision")).toEqual([]);
 
       const trace = readFileSync(root.tracePath, "utf8");
@@ -127,14 +126,14 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
   test(
     "GLM uses required Vision for attached image input",
     async () => {
-      const root = createRoot("fx-live-required-vision");
+      const root = createRoot("fiber-live-required-vision");
       const imagePath = join(root.workspace, "glyph.png");
       copyFileSync(IMAGE_FIXTURE, imagePath);
 
       const result = await runFx(
         [
           "ask",
-          "--yolo",
+          "--permission-mode", "yolo",
           "--json",
           "--no-save",
           "--no-color",
@@ -153,7 +152,7 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
       expect(result.code, result.stderr).toBe(0);
       expect(json.exit_code).toBe(0);
       expect(json.model).toBe(GLM_MODEL);
-      expect(normalizedLetters(json.final_output || json.output)).toBe("fx");
+      expect(normalizedLetters(json.final_output || json.output)).toBe("fiber");
       expect(successfulVisionCalls(json)).toHaveLength(1);
 
       const trace = readFileSync(root.tracePath, "utf8");
@@ -172,14 +171,14 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
   test(
     "GLM exposes optional Vision for a workspace image path",
     async () => {
-      const root = createRoot("fx-live-optional-vision");
+      const root = createRoot("fiber-live-optional-vision");
       const imagePath = join(root.workspace, "glyph.png");
       copyFileSync(IMAGE_FIXTURE, imagePath);
 
       const result = await runFx(
         [
           "ask",
-          "--yolo",
+          "--permission-mode", "yolo",
           "--json",
           "--no-save",
           "--no-color",
@@ -196,7 +195,7 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
       expect(result.code, result.stderr).toBe(0);
       expect(json.exit_code).toBe(0);
       expect(json.model).toBe(GLM_MODEL);
-      expect(normalizedLetters(json.final_output || json.output)).toBe("fx");
+      expect(normalizedLetters(json.final_output || json.output)).toBe("fiber");
       expect(successfulVisionCalls(json)).toHaveLength(1);
 
       const trace = readFileSync(root.tracePath, "utf8");
@@ -212,14 +211,14 @@ describe.skipIf(!HAS_API_KEY)("eval: live Vision capability routing", () => {
   test(
     "unknown model capability rejects image input after a real catalog lookup",
     async () => {
-      const root = createRoot("fx-live-unknown-vision");
+      const root = createRoot("fiber-live-unknown-vision");
       const imagePath = join(root.workspace, "glyph.png");
       copyFileSync(IMAGE_FIXTURE, imagePath);
 
       const result = await runFx(
         [
           "ask",
-          "--yolo",
+          "--permission-mode", "yolo",
           "--json",
           "--no-save",
           "--no-color",

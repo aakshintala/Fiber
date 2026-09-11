@@ -5,9 +5,9 @@ const types = @import("../core/shared/types.zig");
 const io_mod = @import("../core/shared/io.zig");
 const debug_trace = @import("../core/shared/debug_trace.zig");
 const session_usage = @import("../core/session/session_usage.zig");
-const vercel_protocol = @import("vercel_protocol.zig");
 
 const Allocator = std.mem.Allocator;
+const pending_tool_review_result_text = "Tool call has not executed; it is pending permission review.";
 
 pub const BuildFn = *const fn (Allocator, stream_provider.RequestData) anyerror![]u8;
 pub const SendFn = *const fn (
@@ -70,7 +70,7 @@ fn buildReviewPayload(
     cancel_flag: *std.atomic.Value(bool),
 ) ![]u8 {
     const runtime: *Runtime = @ptrCast(@alignCast(raw));
-    const expanded = try vercel_protocol.expandPendingToolReviewMessages(
+    const expanded = try expandPendingToolReviewMessages(
         alloc,
         messages,
         target_call_id,
@@ -101,7 +101,7 @@ pub fn buildPayloadForTest(
     var runtime = Runtime{
         .input = .{},
         .adapter = .{
-            .source = .ai_gateway_api_key,
+            .source = .chatgpt_subscription,
             .model = model,
             .build_fn = build_fn,
             .validate_fn = validateUnavailable,
@@ -121,6 +121,45 @@ pub fn buildPayloadForTest(
 }
 
 fn validateUnavailable(_: Allocator, _: permission_auto_classifier.ProviderInput) !void {}
+
+fn expandPendingToolReviewMessages(
+    alloc: Allocator,
+    messages: []const types.ChatMessage,
+    target_call_id: []const u8,
+    deadline: std.Io.Clock.Timestamp,
+    cancel_flag: *std.atomic.Value(bool),
+) ![]types.ChatMessage {
+    _ = deadline;
+    _ = cancel_flag;
+    if (messages.len < 2 or target_call_id.len == 0) return error.InvalidReviewHistory;
+    const pending = messages[messages.len - 2];
+    const instruction = messages[messages.len - 1];
+    if (pending.role != .assistant or pending.tool_calls.len == 0) return error.InvalidReviewHistory;
+    if (instruction.role != .system or instruction.content == null) return error.InvalidReviewHistory;
+
+    var target_matches: usize = 0;
+    for (pending.tool_calls) |call| {
+        if (std.mem.eql(u8, call.id, target_call_id)) target_matches += 1;
+    }
+    if (target_matches != 1) return error.InvalidReviewHistory;
+
+    const pending_index = messages.len - 2;
+    const expanded_len = try std.math.add(usize, messages.len, pending.tool_calls.len);
+    const expanded = try alloc.alloc(types.ChatMessage, expanded_len);
+    errdefer alloc.free(expanded);
+
+    @memcpy(expanded[0 .. pending_index + 1], messages[0 .. pending_index + 1]);
+    for (pending.tool_calls, 0..) |call, i| {
+        expanded[pending_index + 1 + i] = .{
+            .role = .tool,
+            .content = pending_tool_review_result_text,
+            .tool_call_id = call.id,
+            .tool_name = call.name,
+        };
+    }
+    expanded[expanded.len - 1] = messages[messages.len - 1];
+    return expanded;
+}
 
 const OwnedResult = struct {
     result: stream_provider.Result,
@@ -175,7 +214,6 @@ fn sendReview(
             .secret = runtime.input.credential,
             .source = runtime.adapter.source,
             .account_id = runtime.input.account_id,
-            .tenant = runtime.input.tenant,
         },
         .model = model,
         .retry_count = 1,

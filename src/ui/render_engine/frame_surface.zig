@@ -257,7 +257,7 @@ pub const FrameSurface = struct {
     }
 
     /// Feed ANSI bytes with DECAWM disabled. Footer rows are painted as
-    /// terminal lines, and fx keeps autowrap disabled session-wide.
+    /// terminal lines, and fiber keeps autowrap disabled session-wide.
     pub fn writeAnsiBandNoWrap(
         self: *FrameSurface,
         start_row: u16,
@@ -346,7 +346,7 @@ pub const FrameSurface = struct {
         return target;
     }
 
-    /// Removes fx-owned color, emphasis, and hyperlink presentation while
+    /// Removes fiber-owned color, emphasis, and hyperlink presentation while
     /// preserving glyphs, geometry, ownership, and shell-owned cells.
     pub fn neutralizeFxOwnedPresentation(self: *FrameSurface) void {
         for (self.cells) |*cell| {
@@ -688,7 +688,7 @@ test "frame surface preserves shell rows from shadow" {
     try std.testing.expectEqual(paint_plan.CellOwner.preserved_shell, surface.cellAt(1, 1).?.owner);
 }
 
-test "frame surface presentation neutralization preserves shell cells and fx geometry" {
+test "frame surface presentation neutralization preserves shell cells and fiber geometry" {
     var shadow = try shadowGrid(std.testing.allocator, 8, 6);
     defer shadow.deinit();
     try shadow.feed("\x1b[1;1H\x1b[31mS\x1b]8;;https://shell.example\x1b\\H\x1b]8;;\x1b\\\x1b[0m");
@@ -698,24 +698,24 @@ test "frame surface presentation neutralization preserves shell cells and fx geo
     _ = try surface.writeAnsiBand(
         2,
         1,
-        "\x1b[1;32mF\x1b]8;;https://fx.example\x1b\\X\x1b]8;;\x1b\\\x1b[0m",
+        "\x1b[1;32mF\x1b]8;;https://fiber.example\x1b\\X\x1b]8;;\x1b\\\x1b[0m",
         .transcript,
         .same_owner,
     );
     const preserved_before = surface.cellAt(1, 1).?;
-    const fx_before = surface.cellAt(2, 1).?;
-    try std.testing.expect(!fx_before.style.eql(.{}));
+    const fiber_before = surface.cellAt(2, 1).?;
+    try std.testing.expect(!fiber_before.style.eql(.{}));
 
     surface.neutralizeFxOwnedPresentation();
 
     const preserved_after = surface.cellAt(1, 1).?;
-    const fx_after = surface.cellAt(2, 1).?;
+    const fiber_after = surface.cellAt(2, 1).?;
     try std.testing.expect(std.meta.eql(preserved_before, preserved_after));
-    try std.testing.expectEqual(fx_before.codepoint, fx_after.codepoint);
-    try std.testing.expectEqual(fx_before.width, fx_after.width);
-    try std.testing.expectEqual(fx_before.combining_suffix_id, fx_after.combining_suffix_id);
-    try std.testing.expectEqual(fx_before.owner, fx_after.owner);
-    try std.testing.expect(fx_after.style.eql(.{}));
+    try std.testing.expectEqual(fiber_before.codepoint, fiber_after.codepoint);
+    try std.testing.expectEqual(fiber_before.width, fiber_after.width);
+    try std.testing.expectEqual(fiber_before.combining_suffix_id, fiber_after.combining_suffix_id);
+    try std.testing.expectEqual(fiber_before.owner, fiber_after.owner);
+    try std.testing.expect(fiber_after.style.eql(.{}));
 }
 
 test "frame surface initializes transcript footer and activity owners" {
@@ -761,7 +761,7 @@ test "full-terminal scroll invalidation does not allow painting preserved shell 
     var surface = try FrameSurface.initFromShadow(std.testing.allocator, plan, shadow);
     defer surface.deinit();
 
-    try std.testing.expectError(error.WriteOutsideBand, surface.writeAnsiBand(1, 1, "fx", .transcript, .same_owner));
+    try std.testing.expectError(error.WriteOutsideBand, surface.writeAnsiBand(1, 1, "fiber", .transcript, .same_owner));
     try std.testing.expectEqual(paint_plan.CellOwner.preserved_shell, surface.cellAt(1, 1).?.owner);
 }
 

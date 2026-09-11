@@ -11,12 +11,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "../evals/eval-helpers";
 import {
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeShellRun,
-  startFakeGateway,
+  chatGptAccessToken,
+  codexFinalText,
+  codexToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
+  fakeCodexEnv,
+  startFakeCodex,
+  writeSeededChatGptLogin,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
@@ -27,11 +30,12 @@ const COMMAND_APPROVAL_PROMPT = "Would you like to run the following command?";
 function createNotificationRoot(
   notifications = { turn_end: true, attention_required: true },
 ) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-notifications-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-notifications-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  const profile = join(home, ".fx");
+  const profile = join(home, ".fiber");
   mkdirSync(profile, { recursive: true, mode: 0o700 });
+  writeSeededChatGptLogin(home, chatGptAccessToken());
   mkdirSync(workspace, { recursive: true });
   chmodSync(profile, 0o700);
   const settingsPath = join(profile, "settings.json");
@@ -49,24 +53,18 @@ function createNotificationRoot(
 
 function notificationEnv(
   home: string,
-  gateway: ReturnType<typeof startFakeGateway>,
+  codex: ReturnType<typeof startFakeCodex>,
   tracePath: string,
 ) {
-  return {
-    HOME: home,
-    AI_GATEWAY_API_KEY: "fake-notification-key",
-    VERCEL_OIDC_TOKEN: undefined,
-    FX_GATEWAY_BASE_URL: gateway.baseUrl,
-    FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-    FX_MODEL: FAKE_GATEWAY_MODEL,
-    FX_AUTO_UPGRADE: "0",
-    // Sound behavior under test: skip the harness-wide FX_SOUND=0 default so
+  return fakeCodexEnv(home, codex, {
+    FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+    // Sound behavior under test: skip the harness-wide FIBER_SOUND=0 default so
     // the fixture settings and platform default stay authoritative.
-    FX_SOUND: undefined,
-    FX_TRACE_LOG: tracePath,
-    FX_TRACE_SCOPES: "hooks,notifications",
+    FIBER_SOUND: undefined,
+    FIBER_TRACE_LOG: tracePath,
+    FIBER_TRACE_SCOPES: "hooks,notifications",
     NO_COLOR: "1",
-  };
+  });
 }
 
 async function waitForTrace(
@@ -123,97 +121,21 @@ function handlerTurnId(trace: string, lifecycleEvent: string) {
 }
 
 test.skipIf(!tmuxAvailable())(
-  "/sound toggles both events immediately and persists the profile",
-  async () => {
-    const fixture = createNotificationRoot({
-      turn_end: false,
-      attention_required: false,
-    });
-    const gateway = startFakeGateway([
-      fakeGatewayFinalText("NOTIFICATION_COMMAND_COMPLETE"),
-    ]);
-    const tracePath = join(fixture.root, "trace.log");
-    const stderrPath = join(fixture.root, "stderr.log");
-    const settingsPath = join(fixture.home, ".fx", "settings.json");
-    writeFileSync(stderrPath, "");
-    let session: TmuxSession | null = null;
-    try {
-      session = await TmuxSession.create({
-        cmd: FX_BIN,
-        cwd: fixture.workspace,
-        env: notificationEnv(fixture.home, gateway, tracePath),
-        stderrPath,
-      });
-      await session.waitForComposer(TIMEOUT);
-      await session.sendText("/sound");
-      await session.waitForText("● Sound: on", TIMEOUT);
-      expect(await session.captureFullScrollback()).not.toContain(
-        "saved to user settings",
-      );
-
-      let settings = JSON.parse(readFileSync(settingsPath, "utf8"));
-      expect(settings.notifications).toEqual({
-        turn_end: true,
-        attention_required: true,
-        max: false,
-      });
-
-      await session.sendText("/sound off");
-      await session.waitForText("● Sound: off", TIMEOUT);
-      settings = JSON.parse(readFileSync(settingsPath, "utf8"));
-      expect(settings.notifications).toEqual({
-        turn_end: false,
-        attention_required: false,
-        max: false,
-      });
-
-      await session.sendText("/sound on");
-      await session.waitForPane(
-        (pane) => (pane.match(/● Sound: on/g)?.length ?? 0) >= 2,
-        TIMEOUT,
-      );
-      settings = JSON.parse(readFileSync(settingsPath, "utf8"));
-      expect(settings.notifications).toEqual({
-        turn_end: true,
-        attention_required: true,
-        max: false,
-      });
-
-      await session.sendText("Finish this command-enabled notification fixture.");
-      await session.waitForText("NOTIFICATION_COMMAND_COMPLETE", TIMEOUT);
-      const trace = await waitForTrace(
-        tracePath,
-        (value) => handlerStartCount(value, "PostTurnEnd") === 1,
-      );
-
-      expect(handlerStartCount(trace, "PostTurnEnd")).toBe(1);
-      expect(trace).toContain("handler=fx.sound.turn_end");
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
-    } finally {
-      if (session) await session.kill();
-      gateway.stop();
-      rmSync(fixture.root, { recursive: true, force: true });
-    }
-  },
-  TIMEOUT,
-);
-
-test.skipIf(!tmuxAvailable())(
   "notifications sound handler runs after a real interactive turn",
   async () => {
     const fixture = createNotificationRoot();
-    const gateway = startFakeGateway([
-      fakeGatewayFinalText("NOTIFICATION_TURN_COMPLETE"),
-    ]);
+    const codex = startFakeCodex({
+      route: () => codexFinalText("NOTIFICATION_TURN_COMPLETE"),
+    });
     const tracePath = join(fixture.root, "trace.log");
     const stderrPath = join(fixture.root, "stderr.log");
     writeFileSync(stderrPath, "");
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
-        env: notificationEnv(fixture.home, gateway, tracePath),
+        env: notificationEnv(fixture.home, codex, tracePath),
         stderrPath,
       });
       await session.waitForComposer(TIMEOUT);
@@ -225,11 +147,11 @@ test.skipIf(!tmuxAvailable())(
       );
 
       expect(handlerStartCount(trace, "PostTurnEnd")).toBe(1);
-      expect(trace).toContain("handler=fx.sound.turn_end");
+      expect(trace).toContain("handler=fiber.sound.turn_end");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     } finally {
       if (session) await session.kill();
-      gateway.stop();
+      codex.stop();
       rmSync(fixture.root, { recursive: true, force: true });
     }
   },
@@ -237,25 +159,25 @@ test.skipIf(!tmuxAvailable())(
 );
 
 test(
-  "fx ask keeps redirected stdout JSON and stderr byte-clean with notifications enabled",
+  "fiber ask keeps redirected stdout JSON and stderr byte-clean with notifications enabled",
   async () => {
     const fixture = createNotificationRoot();
-    const gateway = startFakeGateway([
-      fakeGatewayFinalText("NOTIFICATION_ASK_COMPLETE"),
-    ]);
+    const codex = startFakeCodex({
+      route: () => codexFinalText("NOTIFICATION_ASK_COMPLETE"),
+    });
     const tracePath = join(fixture.root, "trace.log");
     try {
       const result = await runFx(
         ["ask", "--json", "--no-save", "Finish the ask notification fixture."],
         {
           cwd: fixture.workspace,
-          env: notificationEnv(fixture.home, gateway, tracePath),
+          env: notificationEnv(fixture.home, codex, tracePath),
           timeoutMs: TIMEOUT,
         },
       );
 
       expect(result.code).toBe(0);
-      expect(JSON.parse(result.stdout).output.trim()).toBe("NOTIFICATION_ASK_COMPLETE");
+      expect(JSON.parse(result.stdout).data.output.trim()).toBe("NOTIFICATION_ASK_COMPLETE");
       expect(result.stderr).toBe("");
       const trace = await waitForTrace(
         tracePath,
@@ -263,7 +185,7 @@ test(
       );
       expect(trace).toContain("scope=ask");
     } finally {
-      gateway.stop();
+      codex.stop();
       rmSync(fixture.root, { recursive: true, force: true });
     }
   },
@@ -271,23 +193,31 @@ test(
 );
 
 test.skipIf(!tmuxAvailable())(
-  "fx ask correlates permission attention and turn-end notifications",
+  "fiber ask correlates permission attention and turn-end notifications",
   async () => {
     const fixture = createNotificationRoot();
     const marker = join(fixture.workspace, "ask-permission-marker.txt");
-    const gateway = startFakeGateway([
-      fakeShellRun("ask_permission_1", "touch ask-permission-marker.txt", {
-        timeout_ms: 600_000,
-      }),
-      fakeGatewayFinalText("NOTIFICATION_ASK_PERMISSION_COMPLETE"),
-    ]);
+    const codex = startFakeCodex({
+      route: (body) => {
+        const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+        if (items.some((item) => item.type === "function_call_output")) {
+          return codexFinalText("NOTIFICATION_ASK_PERMISSION_COMPLETE");
+        }
+        return codexToolCall("ask_permission_1", "shell", {
+          action: "run",
+          command: "touch ask-permission-marker.txt",
+          yield_time_ms: 30_000,
+          timeout_ms: 600_000,
+        });
+      },
+    });
     const tracePath = join(fixture.root, "trace.log");
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: `${FX_BIN} ask --no-save "Try the prepared command."`,
+        cmd: `${FIBER_BIN} ask --no-save "Try the prepared command."`,
         cwd: fixture.workspace,
-        env: notificationEnv(fixture.home, gateway, tracePath),
+        env: notificationEnv(fixture.home, codex, tracePath),
         remainOnExit: true,
       });
       await session.waitForText("Approve? [y/N]", TIMEOUT);
@@ -309,7 +239,7 @@ test.skipIf(!tmuxAvailable())(
       expect(existsSync(marker)).toBe(false);
     } finally {
       if (session) await session.kill();
-      gateway.stop();
+      codex.stop();
       rmSync(fixture.root, { recursive: true, force: true });
     }
   },
@@ -326,12 +256,20 @@ test.skipIf(!tmuxAvailable())(
       attention_required: true,
     });
     const marker = join(fixture.workspace, "permission-marker.txt");
-    const gateway = startFakeGateway([
-      fakeShellRun("permission_1", "touch permission-marker.txt", {
-        timeout_ms: 600_000,
-      }),
-      fakeGatewayFinalText("NOTIFICATION_PERMISSION_COMPLETE"),
-    ]);
+    const codex = startFakeCodex({
+      route: (body) => {
+        const items = (JSON.parse(body).input ?? []) as Array<{ type?: string }>;
+        if (items.some((item) => item.type === "function_call_output")) {
+          return codexFinalText("NOTIFICATION_PERMISSION_COMPLETE");
+        }
+        return codexToolCall("permission_1", "shell", {
+          action: "run",
+          command: "touch permission-marker.txt",
+          yield_time_ms: 30_000,
+          timeout_ms: 600_000,
+        });
+      },
+    });
     const tracePath = join(fixture.root, "trace.log");
     const stderrPath = join(fixture.root, "stderr.log");
     const paneOutputPath = join(fixture.root, "pane-output.bin");
@@ -340,9 +278,9 @@ test.skipIf(!tmuxAvailable())(
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
-        env: notificationEnv(fixture.home, gateway, tracePath),
+        env: notificationEnv(fixture.home, codex, tracePath),
         stderrPath,
       });
       await session.waitForComposer(TIMEOUT);
@@ -355,7 +293,7 @@ test.skipIf(!tmuxAvailable())(
       );
 
       expect(handlerStartCount(waitingTrace, "AttentionRequired")).toBe(1);
-      expect(waitingTrace).toContain("handler=fx.sound.attention_required");
+      expect(waitingTrace).toContain("handler=fiber.sound.attention_required");
       expect(existsSync(marker)).toBe(false);
       await waitForBellCount(paneOutputPath, 1);
       await Bun.sleep(250);
@@ -367,7 +305,7 @@ test.skipIf(!tmuxAvailable())(
       expect(readFileSync(stderrPath, "utf8")).toBe("");
     } finally {
       if (session) await session.kill();
-      gateway.stop();
+      codex.stop();
       rmSync(fixture.root, { recursive: true, force: true });
     }
   },

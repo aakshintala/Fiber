@@ -27,6 +27,70 @@ pub const OutputFormat = enum {
     json,
 };
 
+pub const Kind = enum {
+    auth_list,
+    auth_status,
+    auth_logout,
+    status,
+    permissions,
+    permissions_mode,
+    permissions_rule_list,
+    permissions_rule_add,
+    permissions_rule_remove,
+    mcp_list,
+    mcp_add,
+    mcp_remove,
+    mcp_path,
+    mcp_logout,
+    mcp_trust,
+    models,
+    models_use,
+    doctor,
+    session_list,
+    session_show,
+    session_recover,
+    session_rename,
+    session_remove,
+    usage,
+    upgrade,
+    workspace,
+    ask,
+    debug_replay,
+
+    pub fn jsonName(self: Kind) []const u8 {
+        return switch (self) {
+            .auth_list => "auth.list",
+            .auth_status => "auth.status",
+            .auth_logout => "auth.logout",
+            .status => "status",
+            .permissions => "permissions",
+            .permissions_mode => "permissions.mode",
+            .permissions_rule_list => "permissions.rule.list",
+            .permissions_rule_add => "permissions.rule.add",
+            .permissions_rule_remove => "permissions.rule.remove",
+            .mcp_list => "mcp.list",
+            .mcp_add => "mcp.add",
+            .mcp_remove => "mcp.remove",
+            .mcp_path => "mcp.path",
+            .mcp_logout => "mcp.logout",
+            .mcp_trust => "mcp.trust",
+            .models => "models",
+            .models_use => "models.use",
+            .doctor => "doctor",
+            .session_list => "session.list",
+            .session_show => "session.show",
+            .session_recover => "session.recover",
+            .session_rename => "session.rename",
+            .session_remove => "session.remove",
+            .usage => "usage",
+            .upgrade => "upgrade",
+            .workspace => "workspace",
+            .ask => "ask",
+            .debug_replay => "debug.replay",
+        };
+    }
+};
+
 pub const CommandFailureSnapshot = struct {
     kind: []const u8,
     message: []const u8,
@@ -36,7 +100,7 @@ pub const CommandFailureSnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.writeAll("{\"kind\":");
+        try out.writer.writeAll("{\"ok\":false,\"kind\":");
         try std.json.Stringify.value(self.kind, .{}, &out.writer);
         try out.writer.writeAll(",\"error\":");
         try std.json.Stringify.value(self.message, .{}, &out.writer);
@@ -130,7 +194,10 @@ pub const UsageSnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.writeAll("{\"kind\":\"usage\",\"schema_version\":1,\"period\":");
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"schema_version\":1,\"period\":",
+            .{Kind.usage.jsonName()},
+        );
         try std.json.Stringify.value(report.scope.cliValue() orelse "session", .{}, &out.writer);
         try out.writer.print(
             ",\"snapshot_time_ms\":{d},\"window_start_ms\":{d},\"coverage\":{{\"status\":",
@@ -163,7 +230,7 @@ pub const UsageSnapshot = struct {
             try writeUsageTotalsJson(&out.writer, model.totals);
             try out.writer.writeByte('}');
         }
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 };
@@ -322,7 +389,10 @@ pub const WorkspaceSnapshot = struct {
 
         const action = if (self.mutation) |mutation| mutation.action else "list";
         const changed = if (self.mutation) |mutation| mutation.saved_changed or mutation.runtime_changed else false;
-        try out.writer.writeAll("{\"kind\":\"workspace\",\"action\":");
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"action\":",
+            .{Kind.workspace.jsonName()},
+        );
         try std.json.Stringify.value(action, .{}, &out.writer);
         try out.writer.print(",\"changed\":{}", .{changed});
         try out.writer.writeAll(",\"primary_directory\":");
@@ -351,7 +421,7 @@ pub const WorkspaceSnapshot = struct {
                 entry.active,
             });
         }
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 };
@@ -362,36 +432,16 @@ fn writeTerminalSafe(writer: *std.Io.Writer, alloc: Allocator, raw: []const u8) 
     try writer.writeAll(encoded.bytes);
 }
 
-fn gatewayProviderConnected(auth: auth_runtime.StatusSnapshot) bool {
-    const source = auth.active_source orelse return auth.gateway_connected;
-    return auth.gateway_connected or (source != .chatgpt_subscription and source != .grok_subscription);
-}
-
 fn chatGptProviderConnected(auth: auth_runtime.StatusSnapshot) bool {
     return auth.chatgpt_connected or auth.active_source == .chatgpt_subscription;
 }
 
-fn grokProviderConnected(auth: auth_runtime.StatusSnapshot) bool {
-    return auth.grok_connected or auth.active_source == .grok_subscription;
-}
-
 fn writeConnectedProvidersText(writer: *std.Io.Writer, auth: auth_runtime.StatusSnapshot) !void {
-    var wrote_provider = false;
-    if (gatewayProviderConnected(auth)) {
-        try writer.writeAll("Vercel AI Gateway");
-        wrote_provider = true;
-    }
     if (chatGptProviderConnected(auth)) {
-        if (wrote_provider) try writer.writeAll(", Codex");
-        if (!wrote_provider) try writer.writeAll("Codex");
-        wrote_provider = true;
+        try writer.writeAll("Codex");
+    } else {
+        try writer.writeAll("none");
     }
-    if (grokProviderConnected(auth)) {
-        if (wrote_provider) try writer.writeAll(", Grok");
-        if (!wrote_provider) try writer.writeAll("Grok");
-        wrote_provider = true;
-    }
-    if (!wrote_provider) try writer.writeAll("none");
 }
 
 pub const McpLocalSnapshot = struct {
@@ -460,7 +510,11 @@ pub const McpLocalSnapshot = struct {
 
 pub const StatusSnapshot = struct {
     model: []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
+    // Not rendered. Fiber publishes no releases and therefore has no channels,
+    // so reporting one was a constant lie. The fields stay so update support,
+    // which lands before v0.0.1, has somewhere to put a real value; restoring
+    // them means restoring the print and JSON lines that named them.
     update_channel: []const u8 = "stable",
     build_channel: []const u8 = "stable",
     build_revision: []const u8 = "",
@@ -487,11 +541,7 @@ pub const StatusSnapshot = struct {
         defer out.deinit();
 
         try out.writer.print("[status] model={s}\n", .{self.model});
-        if (self.provider != .gateway) {
-            try out.writer.print("[status] model_source={s}\n", .{provider_catalog.label(self.provider)});
-        }
-        try out.writer.print("[status] update_channel={s}\n", .{self.update_channel});
-        try out.writer.print("[status] build_channel={s}\n", .{self.build_channel});
+
         if (self.build_revision.len > 0) {
             try out.writer.print("[status] build_revision={s}\n", .{self.build_revision});
         }
@@ -513,18 +563,13 @@ pub const StatusSnapshot = struct {
             );
         }
         try out.writer.print("[status] auth={s}\n", .{self.auth.activeSourceLabel()});
-        if (self.provider != .gateway) {
-            try out.writer.writeAll("[status] connected_providers=");
-            try writeConnectedProvidersText(&out.writer, self.auth);
-            try out.writer.writeByte('\n');
-        }
+        try out.writer.writeAll("[status] connected_providers=");
+        try writeConnectedProvidersText(&out.writer, self.auth);
+        try out.writer.writeByte('\n');
         try out.writer.print("[status] auth_refreshable={}\n", .{self.auth.refreshable()});
         if (self.auth.expired) try out.writer.writeAll("[status] auth_expired=true\n");
         if (self.auth_help) |help| {
             try out.writer.print("[status] auth_help={s}\n", .{help});
-        }
-        if (self.auth.team) |team| {
-            try out.writer.print("[status] team={s}\n", .{team});
         }
         try out.writer.print("[status] permission_mode={s}\n", .{permissionModeLabel(self.permission_mode)});
         try out.writer.print("[status] workspace={s}\n", .{self.workspace_root});
@@ -540,24 +585,17 @@ pub const StatusSnapshot = struct {
         defer out.deinit();
 
         try out.writer.print("model={s}\n", .{self.model});
-        if (self.provider != .gateway) {
-            try out.writer.print("model_source={s}\n", .{provider_catalog.label(self.provider)});
-        }
-        try out.writer.print("update_channel={s}\n", .{self.update_channel});
-        try out.writer.print("build_channel={s}\n", .{self.build_channel});
+
         if (self.build_revision.len > 0) {
             try out.writer.print("build_revision={s}\n", .{self.build_revision});
         }
         try out.writer.print("auth={s}\n", .{self.auth.activeSourceLabel()});
-        if (self.provider != .gateway) {
-            try out.writer.writeAll("connected_providers=");
-            try writeConnectedProvidersText(&out.writer, self.auth);
-            try out.writer.writeByte('\n');
-        }
+        try out.writer.writeAll("connected_providers=");
+        try writeConnectedProvidersText(&out.writer, self.auth);
+        try out.writer.writeByte('\n');
         try out.writer.print("auth_refreshable={}\n", .{self.auth.refreshable()});
         if (self.auth.expired) try out.writer.writeAll("auth_expired=true\n");
         if (self.auth_help) |help| try out.writer.print("auth_help={s}\n", .{help});
-        if (self.auth.team) |team| try out.writer.print("team={s}\n", .{team});
         try out.writer.print("permission_mode={s}\n", .{permissionModeLabel(self.permission_mode)});
         try out.writer.print("workspace={s}\n", .{self.workspace_root});
         try out.writer.print("history_turns={d}\n", .{self.history_turns});
@@ -575,16 +613,9 @@ pub const StatusSnapshot = struct {
     }
 
     pub fn writeJson(self: StatusSnapshot, writer: *std.Io.Writer) !void {
-        try writer.writeAll("{\"kind\":\"status\",\"model\":");
+        try writer.print("{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"model\":", .{Kind.status.jsonName()});
         try std.json.Stringify.value(self.model, .{}, writer);
-        if (self.provider != .gateway) {
-            try writer.writeAll(",\"model_source\":");
-            try std.json.Stringify.value(provider_catalog.label(self.provider), .{}, writer);
-        }
-        try writer.writeAll(",\"update_channel\":");
-        try std.json.Stringify.value(self.update_channel, .{}, writer);
-        try writer.writeAll(",\"build_channel\":");
-        try std.json.Stringify.value(self.build_channel, .{}, writer);
+
         try writer.writeAll(",\"build_revision\":");
         try std.json.Stringify.value(self.build_revision, .{}, writer);
         if (self.mcp_config_error) |error_name| {
@@ -607,33 +638,16 @@ pub const StatusSnapshot = struct {
         }
         try writer.writeAll(",\"auth\":");
         try std.json.Stringify.value(self.auth.activeSourceLabel(), .{}, writer);
-        if (self.provider != .gateway) {
-            try writer.writeAll(",\"connected_providers\":[");
-            var wrote_provider = false;
-            if (gatewayProviderConnected(self.auth)) {
-                try std.json.Stringify.value("vercel-ai-gateway", .{}, writer);
-                wrote_provider = true;
-            }
-            if (chatGptProviderConnected(self.auth)) {
-                if (wrote_provider) try writer.writeByte(',');
-                try std.json.Stringify.value("codex", .{}, writer);
-                wrote_provider = true;
-            }
-            if (grokProviderConnected(self.auth)) {
-                if (wrote_provider) try writer.writeByte(',');
-                try std.json.Stringify.value("grok", .{}, writer);
-            }
-            try writer.writeByte(']');
+        try writer.writeAll(",\"connected_providers\":[");
+        if (chatGptProviderConnected(self.auth)) {
+            try std.json.Stringify.value("codex", .{}, writer);
         }
+        try writer.writeByte(']');
         try writer.print(",\"auth_refreshable\":{}", .{self.auth.refreshable()});
         if (self.auth.expired) try writer.writeAll(",\"auth_expired\":true");
         if (self.auth_help) |help| {
             try writer.writeAll(",\"auth_help\":");
             try std.json.Stringify.value(help, .{}, writer);
-        }
-        if (self.auth.team) |team| {
-            try writer.writeAll(",\"team\":");
-            try std.json.Stringify.value(team, .{}, writer);
         }
         try writer.writeAll(",\"permission_mode\":");
         try std.json.Stringify.value(permissionModeLabel(self.permission_mode), .{}, writer);
@@ -646,7 +660,7 @@ pub const StatusSnapshot = struct {
             try writer.writeAll(",\"mcp\":");
             try mcp.writeJson(writer);
         }
-        try writer.writeByte('}');
+        try writer.writeAll("}}");
     }
 };
 
@@ -716,7 +730,10 @@ pub const PermissionsSnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.writeAll("{\"kind\":\"permissions\",\"mode\":");
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"mode\":",
+            .{Kind.permissions.jsonName()},
+        );
         try std.json.Stringify.value(permissionModeLabel(self.mode), .{}, &out.writer);
         try out.writer.print(",\"grant_count\":{d}", .{self.grants.len});
         try out.writer.writeAll(",\"grant_scope\":\"session\"");
@@ -740,14 +757,14 @@ pub const PermissionsSnapshot = struct {
             try out.writer.writeByte('}');
         }
 
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 };
 
 pub const ModelListSnapshot = struct {
     ids: []const []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     limit: ?usize = null,
     private_models_hidden: bool = false,
     public_only_reason: ?credentials.CatalogPublicOnlyReason = null,
@@ -775,11 +792,7 @@ pub const ModelListSnapshot = struct {
 
         const shown = self.shownCount();
         for (self.ids[0..shown]) |id| {
-            if (self.provider != .gateway) {
-                try out.writer.print(" - {s} · {s}\n", .{ id, provider_catalog.label(self.provider) });
-            } else {
-                try out.writer.print(" - {s}\n", .{id});
-            }
+            try out.writer.print(" - {s}\n", .{id});
         }
         if (self.ids.len > shown) {
             try out.writer.print(" ... and {d} more\n", .{self.ids.len - shown});
@@ -803,11 +816,7 @@ pub const ModelListSnapshot = struct {
         try out.writer.print("{d} available", .{self.ids.len});
         const shown = self.shownCount();
         for (self.ids[0..shown]) |id| {
-            if (self.provider != .gateway) {
-                try out.writer.print("\n - {s} · {s}", .{ id, provider_catalog.label(self.provider) });
-            } else {
-                try out.writer.print("\n - {s}", .{id});
-            }
+            try out.writer.print("\n - {s}", .{id});
         }
         if (self.ids.len > shown) try out.writer.print("\n ... and {d} more", .{self.ids.len - shown});
         if (self.catalogExplanation()) |explanation| try out.writer.print("\n{s}", .{explanation});
@@ -820,25 +829,14 @@ pub const ModelListSnapshot = struct {
 
         const shown = self.shownCount();
         try out.writer.print(
-            "{{\"kind\":\"models\",\"count\":{d},\"shown_count\":{d},\"more_count\":{d},\"private_models_hidden\":{},\"ids\":[",
-            .{ self.ids.len, shown, self.ids.len - shown, self.private_models_hidden },
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"count\":{d},\"shown_count\":{d},\"more_count\":{d},\"private_models_hidden\":{},\"ids\":[",
+            .{ Kind.models.jsonName(), self.ids.len, shown, self.ids.len - shown, self.private_models_hidden },
         );
         for (self.ids[0..shown], 0..) |id, i| {
             if (i > 0) try out.writer.writeByte(',');
             try std.json.Stringify.value(id, .{}, &out.writer);
         }
-        if (self.provider != .gateway) {
-            try out.writer.writeAll("],\"models\":[");
-            for (self.ids[0..shown], 0..) |id, i| {
-                if (i > 0) try out.writer.writeByte(',');
-                try out.writer.writeAll("{\"id\":");
-                try std.json.Stringify.value(id, .{}, &out.writer);
-                try out.writer.writeAll(",\"source\":");
-                try std.json.Stringify.value(provider_catalog.label(self.provider), .{}, &out.writer);
-                try out.writer.writeByte('}');
-            }
-        }
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 
@@ -847,25 +845,600 @@ pub const ModelListSnapshot = struct {
     }
 
     fn emptyCatalogProviderName(self: ModelListSnapshot) []const u8 {
-        return switch (self.provider) {
-            .gateway => "gateway",
-            .codex => provider_catalog.label(.codex),
-            .grok => provider_catalog.label(.grok),
-        };
+        _ = self;
+        return provider_catalog.label(.codex);
     }
 
     fn catalogExplanation(self: ModelListSnapshot) ?[]const u8 {
         if (!self.private_models_hidden) return null;
         const reason = self.public_only_reason orelse return "Using the public model catalog.";
         return switch (reason) {
-            .no_credential => "Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.",
-            .fx_login_team_required => "Choose a Vercel team to load its private models.",
-            .fx_login_refresh_required => "Vercel sign-in must refresh before team-private models can load.",
-            .credential_refresh_failed => "Vercel sign-in refresh failed; using the public model catalog.",
-            .authenticated_credential_rejected => "Your Gateway credential was rejected; using the public model catalog.",
+            .no_credential => "Using the public model catalog; sign in with Codex for the authenticated catalog.",
+            .credential_refresh_failed => "Codex sign-in refresh failed; using the public model catalog.",
+            .authenticated_credential_rejected => "Your Codex credential was rejected; using the public model catalog.",
             .chatgpt_subscription => "Codex models require an authenticated Codex catalog.",
-            .grok_subscription => "Grok models require an authenticated Grok catalog.",
         };
+    }
+};
+
+pub const AuthListEntry = struct {
+    id: []const u8,
+    name: []const u8,
+    connected: bool,
+};
+
+pub const AuthListSnapshot = struct {
+    providers: []const AuthListEntry,
+
+    pub fn render(self: AuthListSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: AuthListSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print("[auth] {d} provider{s}\n", .{ self.providers.len, if (self.providers.len == 1) "" else "s" });
+        for (self.providers) |entry| {
+            try out.writer.print(" - {s} ({s}) connected={}\n", .{ entry.name, entry.id, entry.connected });
+        }
+        return try out.toOwnedSlice();
+    }
+
+    pub fn renderJson(self: AuthListSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"providers\":[",
+            .{Kind.auth_list.jsonName()},
+        );
+        for (self.providers, 0..) |entry, index| {
+            if (index > 0) try out.writer.writeByte(',');
+            try out.writer.writeAll("{\"id\":");
+            try std.json.Stringify.value(entry.id, .{}, &out.writer);
+            try out.writer.writeAll(",\"name\":");
+            try std.json.Stringify.value(entry.name, .{}, &out.writer);
+            try out.writer.print(",\"connected\":{}}}", .{entry.connected});
+        }
+        try out.writer.writeAll("]}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const AuthStatusSnapshot = struct {
+    provider: model_provider.ProviderId,
+    status: auth_runtime.StatusSnapshot,
+
+    fn providerSlug(self: AuthStatusSnapshot) []const u8 {
+        return provider_catalog.find(self.provider).slug;
+    }
+
+    pub fn render(self: AuthStatusSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: AuthStatusSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print("[auth] provider={s}\n", .{self.providerSlug()});
+        try out.writer.print("[auth] active_source={s}\n", .{self.status.activeSourceLabel()});
+        if (self.status.required_source) |source| {
+            try out.writer.print("[auth] required_source={s}\n", .{credentials.sourceLabel(source)});
+        }
+        try out.writer.print("[auth] chatgpt_connected={}\n", .{self.status.chatgpt_connected});
+        try out.writer.print("[auth] expired={}\n", .{self.status.expired});
+        try out.writer.print("[auth] refreshable={}\n", .{self.status.refreshable()});
+        if (self.status.expires_at_ms) |expires_at_ms| {
+            try out.writer.print("[auth] expires_at_ms={d}\n", .{expires_at_ms});
+        }
+        return try out.toOwnedSlice();
+    }
+
+    pub fn renderJson(self: AuthStatusSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"provider\":",
+            .{Kind.auth_status.jsonName()},
+        );
+        try std.json.Stringify.value(self.providerSlug(), .{}, &out.writer);
+        try out.writer.writeAll(",\"active_source\":");
+        if (self.status.active_source) |source| {
+            try std.json.Stringify.value(credentials.sourceLabel(source), .{}, &out.writer);
+        } else {
+            try out.writer.writeAll("null");
+        }
+        try out.writer.writeAll(",\"required_source\":");
+        if (self.status.required_source) |source| {
+            try std.json.Stringify.value(credentials.sourceLabel(source), .{}, &out.writer);
+        } else {
+            try out.writer.writeAll("null");
+        }
+        try out.writer.print(",\"chatgpt_connected\":{},\"expired\":{},\"refreshable\":{}", .{
+            self.status.chatgpt_connected,
+            self.status.expired,
+            self.status.refreshable(),
+        });
+        try out.writer.writeAll(",\"expires_at_ms\":");
+        if (self.status.expires_at_ms) |expires_at_ms| {
+            try out.writer.print("{d}", .{expires_at_ms});
+        } else {
+            try out.writer.writeAll("null");
+        }
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const PermissionsModeSnapshot = struct {
+    mode: types.PermissionMode,
+
+    pub fn render(self: PermissionsModeSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: PermissionsModeSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(alloc, "[permissions] mode={s}\n", .{permissionModeLabel(self.mode)});
+    }
+
+    pub fn renderJson(self: PermissionsModeSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"mode\":",
+            .{Kind.permissions_mode.jsonName()},
+        );
+        try std.json.Stringify.value(permissionModeLabel(self.mode), .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const PermissionsRuleListEntry = struct {
+    scope: []const u8,
+    permission: []const u8,
+    pattern: []const u8,
+    action: types.PermissionAction,
+};
+
+pub const PermissionsRuleListSnapshot = struct {
+    rules: []const PermissionsRuleListEntry,
+    user_shadowed_by_local: bool = false,
+
+    pub fn render(self: PermissionsRuleListSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: PermissionsRuleListSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        if (self.rules.len == 0) {
+            try out.writer.writeAll("[permissions] configured rules: (none)\n");
+            return try out.toOwnedSlice();
+        }
+
+        try out.writer.writeAll("[permissions] configured rules:\n");
+        for (self.rules) |rule| {
+            try out.writer.print(
+                " - scope={s} {s} {s} -> {s}\n",
+                .{ rule.scope, @tagName(rule.action), rule.permission, rule.pattern },
+            );
+        }
+        if (self.user_shadowed_by_local) {
+            try out.writer.writeAll("[permissions] note: workspace-local rules shadow matching user rules\n");
+        }
+        return try out.toOwnedSlice();
+    }
+
+    pub fn renderJson(self: PermissionsRuleListSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"user_shadowed_by_local\":{},\"rules\":[",
+            .{ Kind.permissions_rule_list.jsonName(), self.user_shadowed_by_local },
+        );
+        for (self.rules, 0..) |rule, index| {
+            if (index > 0) try out.writer.writeByte(',');
+            try out.writer.writeAll("{\"scope\":");
+            try std.json.Stringify.value(rule.scope, .{}, &out.writer);
+            try out.writer.writeAll(",\"permission\":");
+            try std.json.Stringify.value(rule.permission, .{}, &out.writer);
+            try out.writer.writeAll(",\"pattern\":");
+            try std.json.Stringify.value(rule.pattern, .{}, &out.writer);
+            try out.writer.writeAll(",\"action\":");
+            try std.json.Stringify.value(@tagName(rule.action), .{}, &out.writer);
+            try out.writer.writeByte('}');
+        }
+        try out.writer.writeAll("]}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const PermissionsRuleAddSnapshot = struct {
+    scope: []const u8,
+    permission: []const u8,
+    pattern: []const u8,
+    action: types.PermissionAction,
+    changed: bool,
+
+    pub fn render(self: PermissionsRuleAddSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: PermissionsRuleAddSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "[permissions] added scope={s} {s} {s} -> {s} changed={}\n",
+            .{ self.scope, @tagName(self.action), self.permission, self.pattern, self.changed },
+        );
+    }
+
+    pub fn renderJson(self: PermissionsRuleAddSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"scope\":",
+            .{Kind.permissions_rule_add.jsonName()},
+        );
+        try std.json.Stringify.value(self.scope, .{}, &out.writer);
+        try out.writer.writeAll(",\"permission\":");
+        try std.json.Stringify.value(self.permission, .{}, &out.writer);
+        try out.writer.writeAll(",\"pattern\":");
+        try std.json.Stringify.value(self.pattern, .{}, &out.writer);
+        try out.writer.writeAll(",\"action\":");
+        try std.json.Stringify.value(@tagName(self.action), .{}, &out.writer);
+        try out.writer.print(",\"changed\":{}}}", .{self.changed});
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const PermissionsRuleRemoveSnapshot = struct {
+    scope: []const u8,
+    permission: []const u8,
+    pattern: []const u8,
+    removed: bool,
+
+    pub fn render(self: PermissionsRuleRemoveSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: PermissionsRuleRemoveSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "[permissions] removed scope={s} {s} {s} removed={}\n",
+            .{ self.scope, self.permission, self.pattern, self.removed },
+        );
+    }
+
+    pub fn renderJson(self: PermissionsRuleRemoveSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"scope\":",
+            .{Kind.permissions_rule_remove.jsonName()},
+        );
+        try std.json.Stringify.value(self.scope, .{}, &out.writer);
+        try out.writer.writeAll(",\"permission\":");
+        try std.json.Stringify.value(self.permission, .{}, &out.writer);
+        try out.writer.writeAll(",\"pattern\":");
+        try std.json.Stringify.value(self.pattern, .{}, &out.writer);
+        try out.writer.print(",\"removed\":{}}}", .{self.removed});
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpListSnapshot = struct {
+    listing: []const u8,
+
+    pub fn render(self: McpListSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpListSnapshot, alloc: Allocator) ![]u8 {
+        return alloc.dupe(u8, self.listing);
+    }
+
+    pub fn renderJson(self: McpListSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"listing\":",
+            .{Kind.mcp_list.jsonName()},
+        );
+        try std.json.Stringify.value(self.listing, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpAddSnapshot = struct {
+    server: []const u8,
+    profile_path: []const u8,
+
+    pub fn render(self: McpAddSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpAddSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "Saved MCP server '{s}' to {s}.\n",
+            .{ self.server, self.profile_path },
+        );
+    }
+
+    pub fn renderJson(self: McpAddSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"server\":",
+            .{Kind.mcp_add.jsonName()},
+        );
+        try std.json.Stringify.value(self.server, .{}, &out.writer);
+        try out.writer.writeAll(",\"profile_path\":");
+        try std.json.Stringify.value(self.profile_path, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpRemoveSnapshot = struct {
+    server: []const u8,
+    profile_path: []const u8,
+
+    pub fn render(self: McpRemoveSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpRemoveSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "Removed MCP server '{s}' from {s}.\n",
+            .{ self.server, self.profile_path },
+        );
+    }
+
+    pub fn renderJson(self: McpRemoveSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"server\":",
+            .{Kind.mcp_remove.jsonName()},
+        );
+        try std.json.Stringify.value(self.server, .{}, &out.writer);
+        try out.writer.writeAll(",\"profile_path\":");
+        try std.json.Stringify.value(self.profile_path, .{}, &out.writer);
+        try out.writer.writeAll(",\"removed\":true}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpPathSnapshot = struct {
+    path: []const u8,
+
+    pub fn render(self: McpPathSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpPathSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(alloc, "{s}\n", .{self.path});
+    }
+
+    pub fn renderJson(self: McpPathSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"path\":",
+            .{Kind.mcp_path.jsonName()},
+        );
+        try std.json.Stringify.value(self.path, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpLogoutSnapshot = struct {
+    pub const Result = enum {
+        removed,
+        missing,
+        local_only,
+        revocation_failed,
+    };
+
+    server: []const u8,
+    result: Result,
+
+    pub fn render(self: McpLogoutSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpLogoutSnapshot, alloc: Allocator) ![]u8 {
+        return switch (self.result) {
+            .missing => std.fmt.allocPrint(
+                alloc,
+                "No stored MCP credentials found for '{s}'.\n",
+                .{self.server},
+            ),
+            .local_only => std.fmt.allocPrint(
+                alloc,
+                "Logged out of MCP server '{s}' locally.\n",
+                .{self.server},
+            ),
+            .revocation_failed => std.fmt.allocPrint(
+                alloc,
+                "Logged out of MCP server '{s}' locally; remote revocation failed.\n",
+                .{self.server},
+            ),
+            .removed => std.fmt.allocPrint(
+                alloc,
+                "Logged out of MCP server '{s}'.\n",
+                .{self.server},
+            ),
+        };
+    }
+
+    pub fn renderJson(self: McpLogoutSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"server\":",
+            .{Kind.mcp_logout.jsonName()},
+        );
+        try std.json.Stringify.value(self.server, .{}, &out.writer);
+        try out.writer.writeAll(",\"result\":");
+        try std.json.Stringify.value(@tagName(self.result), .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const McpTrustSnapshot = struct {
+    workspace_root: []const u8,
+    action: []const u8,
+    server: ?[]const u8 = null,
+
+    pub fn render(self: McpTrustSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpTrustSnapshot, alloc: Allocator) ![]u8 {
+        if (self.server) |name| {
+            if (std.mem.eql(u8, self.action, "approve")) {
+                return std.fmt.allocPrint(
+                    alloc,
+                    "Approved project MCP server '{s}' for {s}.\n",
+                    .{ name, self.workspace_root },
+                );
+            }
+            return std.fmt.allocPrint(
+                alloc,
+                "Rejected project MCP server '{s}' for {s}.\n",
+                .{ name, self.workspace_root },
+            );
+        }
+        if (std.mem.eql(u8, self.action, "approve_all")) {
+            return std.fmt.allocPrint(
+                alloc,
+                "Approved all project MCP servers for {s}.\n",
+                .{self.workspace_root},
+            );
+        }
+        return std.fmt.allocPrint(
+            alloc,
+            "Reset project MCP trust for {s}.\n",
+            .{self.workspace_root},
+        );
+    }
+
+    pub fn renderJson(self: McpTrustSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"workspace_root\":",
+            .{Kind.mcp_trust.jsonName()},
+        );
+        try std.json.Stringify.value(self.workspace_root, .{}, &out.writer);
+        try out.writer.writeAll(",\"action\":");
+        try std.json.Stringify.value(self.action, .{}, &out.writer);
+        try out.writer.writeAll(",\"server\":");
+        try std.json.Stringify.value(self.server, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const AuthLogoutSnapshot = struct {
+    provider: model_provider.ProviderId,
+    result: enum {
+        deleted,
+        missing,
+    },
+
+    fn providerSlug(self: AuthLogoutSnapshot) []const u8 {
+        return provider_catalog.find(self.provider).slug;
+    }
+
+    fn providerName(self: AuthLogoutSnapshot) []const u8 {
+        return provider_catalog.find(self.provider).name;
+    }
+
+    pub fn render(self: AuthLogoutSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: AuthLogoutSnapshot, alloc: Allocator) ![]u8 {
+        return switch (self.result) {
+            .deleted => std.fmt.allocPrint(alloc, "Signed out of {s}.\n", .{self.providerName()}),
+            .missing => std.fmt.allocPrint(alloc, "No {s} login session found.\n", .{self.providerName()}),
+        };
+    }
+
+    pub fn renderJson(self: AuthLogoutSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"provider\":",
+            .{Kind.auth_logout.jsonName()},
+        );
+        try std.json.Stringify.value(self.providerSlug(), .{}, &out.writer);
+        try out.writer.writeAll(",\"result\":");
+        try std.json.Stringify.value(@tagName(self.result), .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
     }
 };
 
@@ -908,13 +1481,13 @@ pub const SessionListSnapshot = struct {
         }
         if (self.has_more) {
             try out.writer.print(
-                "[sessions] more saved sessions; continue with `fx sessions {s}--cursor {s}`\n",
+                "[sessions] more saved sessions; continue with `fiber sessions {s}--continuation {s}`\n",
                 .{ if (self.all_workspaces) "--all " else "", self.next_cursor orelse "" },
             );
         }
         if (self.skipped_invalid > 0) {
             try out.writer.print(
-                "[sessions] warning: skipped {d} unreadable saved session{s}; run `fx doctor` for recovery guidance\n",
+                "[sessions] warning: skipped {d} unreadable saved session{s}; run `fiber doctor` for recovery guidance\n",
                 .{ self.skipped_invalid, if (self.skipped_invalid == 1) "" else "s" },
             );
         }
@@ -924,13 +1497,16 @@ pub const SessionListSnapshot = struct {
 
     pub fn renderJson(self: SessionListSnapshot, alloc: Allocator) ![]u8 {
         if (self.sessions.len == 0 and self.skipped_invalid == 0) {
-            return alloc.dupe(u8, "{\"kind\":\"sessions\",\"count\":0,\"sessions\":[]}");
+            return alloc.dupe(u8, "{\"ok\":true,\"kind\":\"session.list\",\"data\":{\"count\":0,\"sessions\":[]}}");
         }
 
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.print("{{\"kind\":\"sessions\",\"count\":{d}", .{self.sessions.len});
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"count\":{d}",
+            .{ Kind.session_list.jsonName(), self.sessions.len },
+        );
         if (self.skipped_invalid > 0) {
             try out.writer.print(",\"skipped_invalid\":{d}", .{self.skipped_invalid});
         }
@@ -949,7 +1525,7 @@ pub const SessionListSnapshot = struct {
             try std.json.Stringify.value(entry.conversation_language.view(), .{}, &out.writer);
             try out.writer.writeByte('}');
         }
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 };
@@ -1061,7 +1637,10 @@ pub const SessionSummarySnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.writeAll("{\"kind\":\"session_summary\",\"id\":");
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"id\":",
+            .{Kind.session_show.jsonName()},
+        );
         try std.json.Stringify.value(self.summary.id, .{}, &out.writer);
         try writeSessionDisplayJsonFields(&out.writer, self.summary);
         try out.writer.print(
@@ -1077,7 +1656,7 @@ pub const SessionSummarySnapshot = struct {
             .{},
             &out.writer,
         );
-        try out.writer.writeByte('}');
+        try out.writer.writeAll("}}");
         return out.toOwnedSlice();
     }
 };
@@ -1148,7 +1727,10 @@ pub const SessionDetailSnapshot = struct {
         defer out.deinit();
 
         const state = self.detail.state;
-        try out.writer.writeAll("{\"kind\":\"session_detail\",\"id\":");
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"id\":",
+            .{Kind.session_show.jsonName()},
+        );
         try std.json.Stringify.value(state.id, .{}, &out.writer);
         try out.writer.print(",\"created_at_ms\":{d},\"updated_at_ms\":{d},\"history_len\":{d}", .{ state.created_at_ms, state.updated_at_ms, state.history.len });
         try out.writer.writeAll(",\"conversation_language\":");
@@ -1160,59 +1742,114 @@ pub const SessionDetailSnapshot = struct {
             try writeSessionHistoryTurnJson(&out.writer, turn);
         }
 
-        try out.writer.writeAll("]}");
+        try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
     }
 };
 
-pub const SessionMigrationSnapshot = struct {
-    result: session_store.SessionMigrationResult,
+pub const ModelUseSnapshot = struct {
+    model: []const u8,
+    /// False when the catalog could not be reached, so the id went in
+    /// unchecked. Provisioning an unauthenticated or offline machine is a
+    /// legitimate reason to set a model fiber cannot verify yet.
+    verified: bool,
 
-    pub fn render(self: SessionMigrationSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+    pub fn render(self: ModelUseSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
         return switch (format) {
             .text => self.renderText(alloc),
             .json => self.renderJson(alloc),
         };
     }
 
-    pub fn renderText(self: SessionMigrationSnapshot, alloc: Allocator) ![]u8 {
-        var out: std.Io.Writer.Allocating = .init(alloc);
-        defer out.deinit();
-
-        try out.writer.print(
-            "[session migration] {s}\nstatus: {s}\nsource_schema_version: {d}\nsource_bytes: {d}\n",
-            .{
-                self.result.session_id,
-                sessionMigrationStatusLabel(self.result.status),
-                self.result.source_schema_version,
-                self.result.source_bytes,
-            },
+    pub fn renderText(self: ModelUseSnapshot, alloc: Allocator) ![]u8 {
+        if (self.verified) {
+            return std.fmt.allocPrint(alloc, "[models] default {s}\n", .{self.model});
+        }
+        return std.fmt.allocPrint(
+            alloc,
+            "[models] default {s} (unverified: the model catalog was unreachable)\n",
+            .{self.model},
         );
-        return try out.toOwnedSlice();
     }
 
-    pub fn renderJson(self: SessionMigrationSnapshot, alloc: Allocator) ![]u8 {
+    pub fn renderJson(self: ModelUseSnapshot, alloc: Allocator) ![]u8 {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
-
-        try out.writer.writeAll("{\"kind\":\"session_migration\",\"id\":");
-        try std.json.Stringify.value(self.result.session_id, .{}, &out.writer);
-        try out.writer.writeAll(",\"status\":");
-        try std.json.Stringify.value(sessionMigrationStatusLabel(self.result.status), .{}, &out.writer);
         try out.writer.print(
-            ",\"source_schema_version\":{d},\"source_bytes\":{d}}}",
-            .{ self.result.source_schema_version, self.result.source_bytes },
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"model\":",
+            .{Kind.models_use.jsonName()},
         );
+        try std.json.Stringify.value(self.model, .{}, &out.writer);
+        try out.writer.print(",\"verified\":{}}}}}", .{self.verified});
         return try out.toOwnedSlice();
     }
 };
 
-fn sessionMigrationStatusLabel(status: session_store.SessionMigrationStatus) []const u8 {
-    return switch (status) {
-        .migrated => "migrated",
-        .already_current => "already_current",
-    };
-}
+pub const SessionRenameSnapshot = struct {
+    id: []const u8,
+    title: []const u8,
+
+    pub fn render(self: SessionRenameSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: SessionRenameSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "[session] renamed {s} title={s}\n",
+            .{ self.id, self.title },
+        );
+    }
+
+    pub fn renderJson(self: SessionRenameSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"id\":",
+            .{Kind.session_rename.jsonName()},
+        );
+        try std.json.Stringify.value(self.id, .{}, &out.writer);
+        try out.writer.writeAll(",\"title\":");
+        try std.json.Stringify.value(self.title, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const SessionRemoveSnapshot = struct {
+    id: []const u8,
+    removed: bool,
+
+    pub fn render(self: SessionRemoveSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: SessionRemoveSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(
+            alloc,
+            "[session] removed {s} removed={}\n",
+            .{ self.id, self.removed },
+        );
+    }
+
+    pub fn renderJson(self: SessionRemoveSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"id\":",
+            .{Kind.session_remove.jsonName()},
+        );
+        try std.json.Stringify.value(self.id, .{}, &out.writer);
+        try out.writer.print(",\"removed\":{}}}", .{self.removed});
+        return try out.toOwnedSlice();
+    }
+};
 
 pub const SessionRecoverySnapshot = struct {
     result: session_store.SessionRecoveryResult,
@@ -1235,7 +1872,7 @@ pub const SessionRecoverySnapshot = struct {
         if (self.result.status == .indeterminate) {
             return std.fmt.allocPrint(
                 alloc,
-                "[session recovery] could not confirm target {s}\nsource: {s} (unchanged)\nresolve: fx --resume {s}\ninspect: fx doctor\n",
+                "[session recovery] could not confirm target {s}\nsource: {s} (unchanged)\nresolve: fiber resume {s}\ninspect: fiber doctor\n",
                 .{
                     self.result.recovered_session_id,
                     self.result.source_session_id,
@@ -1246,7 +1883,7 @@ pub const SessionRecoverySnapshot = struct {
         if (self.result.status == .recovered_with_unverified_artifacts) {
             return std.fmt.allocPrint(
                 alloc,
-                "[session recovery] copied {s} to {s}\nhistory_turns: {d}\nwarning: legacy command artifacts could not be authenticated\nresume: fx --resume {s}\n",
+                "[session recovery] copied {s} to {s}\nhistory_turns: {d}\nwarning: legacy command artifacts could not be authenticated\nresume: fiber resume {s}\n",
                 .{
                     self.result.source_session_id,
                     self.result.recovered_session_id,
@@ -1257,7 +1894,7 @@ pub const SessionRecoverySnapshot = struct {
         }
         return std.fmt.allocPrint(
             alloc,
-            "[session recovery] copied {s} to {s}\nhistory_turns: {d}\nresume: fx --resume {s}\n",
+            "[session recovery] copied {s} to {s}\nhistory_turns: {d}\nresume: fiber resume {s}\n",
             .{
                 self.result.source_session_id,
                 self.result.recovered_session_id,
@@ -1273,8 +1910,9 @@ pub const SessionRecoverySnapshot = struct {
     ) ![]u8 {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
-        try out.writer.writeAll(
-            "{\"kind\":\"session_recovery\",\"source_id\":",
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"source_id\":",
+            .{Kind.session_recover.jsonName()},
         );
         try std.json.Stringify.value(
             self.result.source_session_id,
@@ -1294,9 +1932,10 @@ pub const SessionRecoverySnapshot = struct {
             &out.writer,
         );
         try out.writer.print(
-            ",\"history_turns\":{d}}}",
+            ",\"history_turns\":{d}",
             .{self.result.history_len},
         );
+        try out.writer.writeAll("}}");
         return try out.toOwnedSlice();
     }
 };
@@ -1304,7 +1943,7 @@ pub const SessionRecoverySnapshot = struct {
 pub const DoctorSnapshot = struct {
     workspace_root: []const u8,
     model: []const u8,
-    provider: model_provider.ProviderId = .gateway,
+    provider: model_provider.ProviderId = .codex,
     auth: auth_runtime.StatusSnapshot = .{},
     permission_mode: types.PermissionMode,
     agent_step_limit: usize,
@@ -1329,15 +1968,9 @@ pub const DoctorSnapshot = struct {
         );
         try out.writer.print("[doctor] workspace={s}\n", .{self.workspace_root});
         try out.writer.print("[doctor] model={s}\n", .{self.model});
-        if (self.provider != .gateway) {
-            try out.writer.print("[doctor] model_source={s}\n", .{provider_catalog.label(self.provider)});
-        }
         try out.writer.print("[doctor] auth={s}\n", .{self.auth.activeSourceLabel()});
         try out.writer.print("[doctor] auth_refreshable={}\n", .{self.auth.refreshable()});
         if (self.auth.expired) try out.writer.writeAll("[doctor] auth_expired=true\n");
-        if (self.auth.team) |team| {
-            try out.writer.print("[doctor] team={s}\n", .{team});
-        }
         try out.writer.print("[doctor] permission_mode={s}\n", .{permissionModeLabel(self.permission_mode)});
         try out.writer.print("[doctor] agent_step_limit={d}\n", .{self.agent_step_limit});
         if (self.mcp) |mcp| try mcp.writeText(&out.writer, alloc, "doctor");
@@ -1364,25 +1997,19 @@ pub const DoctorSnapshot = struct {
     pub fn writeJson(self: DoctorSnapshot, writer: *std.Io.Writer) !void {
         const counts = countDoctorChecks(self.checks);
         try writer.print(
-            "{{\"kind\":\"doctor\",\"ok_count\":{d},\"warn_count\":{d},\"fail_count\":{d}",
-            .{ counts.ok, counts.warn, counts.fail },
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"ok_count\":{d},\"warn_count\":{d},\"fail_count\":{d}",
+            .{ Kind.doctor.jsonName(), counts.ok, counts.warn, counts.fail },
         );
         try writer.writeAll(",\"workspace\":");
         try std.json.Stringify.value(self.workspace_root, .{}, writer);
         try writer.writeAll(",\"model\":");
         try std.json.Stringify.value(self.model, .{}, writer);
-        if (self.provider != .gateway) {
-            try writer.writeAll(",\"model_source\":");
-            try std.json.Stringify.value(provider_catalog.label(self.provider), .{}, writer);
-        }
+
         try writer.writeAll(",\"auth\":");
         try std.json.Stringify.value(self.auth.activeSourceLabel(), .{}, writer);
         try writer.print(",\"auth_refreshable\":{}", .{self.auth.refreshable()});
         if (self.auth.expired) try writer.writeAll(",\"auth_expired\":true");
-        if (self.auth.team) |team| {
-            try writer.writeAll(",\"team\":");
-            try std.json.Stringify.value(team, .{}, writer);
-        }
+
         try writer.writeAll(",\"permission_mode\":");
         try std.json.Stringify.value(permissionModeLabel(self.permission_mode), .{}, writer);
         try writer.print(",\"agent_step_limit\":{d},\"checks\":[", .{self.agent_step_limit});
@@ -1403,130 +2030,13 @@ pub const DoctorSnapshot = struct {
             try writer.writeAll(",\"mcp\":");
             try mcp.writeJson(writer);
         }
-        try writer.writeByte('}');
-    }
-};
-
-pub const CreditsSnapshot = struct {
-    balance: ?[]const u8 = null,
-    used: ?[]const u8 = null,
-    plan: ?[]const u8 = null,
-    raw_json: ?[]const u8 = null,
-    err_message: ?[]const u8 = null,
-
-    /// Frees provider-owned fields. `raw_json` remains borrowed presentation
-    /// input and is not released here.
-    pub fn deinit(self: *CreditsSnapshot, alloc: Allocator) void {
-        if (self.balance) |value| alloc.free(value);
-        if (self.used) |value| alloc.free(value);
-        if (self.plan) |value| alloc.free(value);
-        if (self.err_message) |value| alloc.free(value);
-        self.* = undefined;
-    }
-
-    pub fn render(self: CreditsSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
-        return switch (format) {
-            .text => self.renderText(alloc),
-            .json => self.renderJson(alloc),
-        };
-    }
-
-    pub fn renderText(self: CreditsSnapshot, alloc: Allocator) ![]u8 {
-        var out: std.Io.Writer.Allocating = .init(alloc);
-        defer out.deinit();
-
-        if (self.err_message) |msg| {
-            try out.writer.print("[credits] error: {s}\n", .{msg});
-            return try out.toOwnedSlice();
-        }
-
-        if (self.balance) |b| {
-            try out.writer.print("[credits] balance={s}\n", .{b});
-        }
-        if (self.used) |u| {
-            try out.writer.print("[credits] used={s}\n", .{u});
-        }
-        if (self.plan) |p| {
-            try out.writer.print("[credits] plan={s}\n", .{p});
-        }
-
-        if (self.balance == null and self.used == null and self.plan == null) {
-            if (self.raw_json) |raw| {
-                try out.writer.print("[credits] {s}\n", .{raw});
-            } else {
-                try out.writer.writeAll("[credits] no data returned by gateway\n");
-            }
-        }
-
-        return try out.toOwnedSlice();
-    }
-
-    pub fn renderInteractiveBody(self: CreditsSnapshot, alloc: Allocator) ![]u8 {
-        var out: std.Io.Writer.Allocating = .init(alloc);
-        defer out.deinit();
-
-        if (self.err_message) |msg| return alloc.dupe(u8, msg);
-        var wrote_field = false;
-        if (self.balance) |balance| {
-            try out.writer.print("balance={s}", .{balance});
-            wrote_field = true;
-        }
-        if (self.used) |used| {
-            if (wrote_field) try out.writer.writeByte('\n');
-            try out.writer.print("used={s}", .{used});
-            wrote_field = true;
-        }
-        if (self.plan) |plan| {
-            if (wrote_field) try out.writer.writeByte('\n');
-            try out.writer.print("plan={s}", .{plan});
-            wrote_field = true;
-        }
-        if (self.balance == null and self.used == null and self.plan == null) {
-            if (self.raw_json) |raw| {
-                try out.writer.writeAll(raw);
-            } else {
-                try out.writer.writeAll("no data returned by gateway");
-            }
-        }
-        return try out.toOwnedSlice();
-    }
-
-    pub fn renderJson(self: CreditsSnapshot, alloc: Allocator) ![]u8 {
-        var out: std.Io.Writer.Allocating = .init(alloc);
-        defer out.deinit();
-
-        try out.writer.writeAll("{\"kind\":\"credits\"");
-
-        if (self.err_message) |msg| {
-            try out.writer.writeAll(",\"error\":");
-            try std.json.Stringify.value(msg, .{}, &out.writer);
-            try out.writer.writeByte('}');
-            return try out.toOwnedSlice();
-        }
-
-        inline for (.{ .{ "balance", self.balance }, .{ "used", self.used }, .{ "plan", self.plan } }) |pair| {
-            try out.writer.writeAll(",\"");
-            try out.writer.writeAll(pair[0]);
-            try out.writer.writeAll("\":");
-            if (pair[1]) |val| {
-                try std.json.Stringify.value(val, .{}, &out.writer);
-            } else {
-                try out.writer.writeAll("null");
-            }
-        }
-
-        try out.writer.writeByte('}');
-        return try out.toOwnedSlice();
+        try writer.writeAll("}}");
     }
 };
 
 pub const UpgradeSnapshot = struct {
     current: []const u8,
     latest: []const u8,
-    channel: []const u8 = "stable",
-    current_channel: []const u8 = "stable",
-    current_revision: []const u8 = "",
-    latest_revision: []const u8 = "",
     status: Status,
     err_message: ?[]const u8 = null,
 
@@ -1563,21 +2073,11 @@ pub const UpgradeSnapshot = struct {
         switch (self.status) {
             .upgraded => {
                 try out.writer.writeAll("upgraded to ");
-                if (std.mem.eql(u8, self.channel, "dev") and self.latest_revision.len > 0) {
-                    try out.writer.print("dev {s} (", .{shortRevision(self.latest_revision)});
-                    try writeVersionWithPrefix(&out.writer, self.latest);
-                    try out.writer.writeByte(')');
-                } else {
-                    try writeVersionWithPrefix(&out.writer, self.latest);
-                }
+                try writeVersionWithPrefix(&out.writer, self.latest);
                 try out.writer.writeByte('\n');
             },
             .up_to_date => {
-                if (std.mem.eql(u8, self.channel, "dev") and self.latest_revision.len > 0) {
-                    try out.writer.print("fx dev {s} is already up to date (", .{shortRevision(self.latest_revision)});
-                } else {
-                    try out.writer.writeAll("fx is already up to date (");
-                }
+                try out.writer.writeAll("fiber is already up to date (");
                 try writeVersionWithPrefix(&out.writer, self.latest);
                 try out.writer.writeAll(")\n");
             },
@@ -1591,42 +2091,25 @@ pub const UpgradeSnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.writeAll("{\"kind\":\"upgrade\"");
+        try out.writer.print("{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{", .{Kind.upgrade.jsonName()});
 
         if (self.err_message) |msg| {
-            try out.writer.writeAll(",\"error\":");
+            try out.writer.writeAll("\"error\":");
             try std.json.Stringify.value(msg, .{}, &out.writer);
-            try out.writer.writeByte('}');
+            try out.writer.writeAll("}}");
             return try out.toOwnedSlice();
         }
 
-        try out.writer.writeAll(",\"current\":");
+        try out.writer.writeAll("\"current\":");
         try std.json.Stringify.value(self.current, .{}, &out.writer);
         try out.writer.writeAll(",\"latest\":");
         try std.json.Stringify.value(self.latest, .{}, &out.writer);
-        if (!std.mem.eql(u8, self.channel, "stable") or
-            !std.mem.eql(u8, self.current_channel, "stable") or
-            self.latest_revision.len > 0)
-        {
-            try out.writer.writeAll(",\"channel\":");
-            try std.json.Stringify.value(self.channel, .{}, &out.writer);
-            try out.writer.writeAll(",\"current_channel\":");
-            try std.json.Stringify.value(self.current_channel, .{}, &out.writer);
-            try out.writer.writeAll(",\"current_revision\":");
-            try std.json.Stringify.value(self.current_revision, .{}, &out.writer);
-            try out.writer.writeAll(",\"latest_revision\":");
-            try std.json.Stringify.value(self.latest_revision, .{}, &out.writer);
-        }
         try out.writer.writeAll(",\"status\":");
         try std.json.Stringify.value(self.status.label(), .{}, &out.writer);
-        try out.writer.writeByte('}');
+        try out.writer.writeAll("}}");
         return try out.toOwnedSlice();
     }
 };
-
-fn shortRevision(revision: []const u8) []const u8 {
-    return revision[0..@min(revision.len, 12)];
-}
 
 fn writeVersionWithPrefix(writer: *std.Io.Writer, version: []const u8) !void {
     if (version.len == 0 or version[0] != 'v') {
@@ -1843,14 +2326,6 @@ fn writeSessionHistoryTurnJson(writer: *std.Io.Writer, turn: types.HistoryTurn) 
     }
 }
 
-fn writeHexBytes(writer: *std.Io.Writer, bytes: []const u8) !void {
-    const alphabet = "0123456789abcdef";
-    for (bytes) |byte| {
-        try writer.writeByte(alphabet[byte >> 4]);
-        try writer.writeByte(alphabet[byte & 0x0f]);
-    }
-}
-
 fn writeSessionUserTurnJson(writer: *std.Io.Writer, user: types.UserTurn) !void {
     try writer.writeAll("{\"text\":");
     try std.json.Stringify.value(user.text, .{}, writer);
@@ -1870,14 +2345,14 @@ fn writeSessionUserTurnJson(writer: *std.Io.Writer, user: types.UserTurn) !void 
 
 test "command failure snapshot renders stable escaped json" {
     const rendered = try (CommandFailureSnapshot{
-        .kind = "models",
+        .kind = Kind.models.jsonName(),
         .message = "could not list \"models\"",
         .code = "ConnectionRefused",
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(rendered);
 
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"error\":\"could not list \\\"models\\\"\",\"code\":\"ConnectionRefused\"}",
+        "{\"ok\":false,\"kind\":\"models\",\"error\":\"could not list \\\"models\\\"\",\"code\":\"ConnectionRefused\"}",
         rendered,
     );
 }
@@ -1885,9 +2360,9 @@ test "command failure snapshot renders stable escaped json" {
 test "core status snapshot text and json stay stable" {
     const snapshot = StatusSnapshot{
         .model = "alpha",
-        .auth_help = "fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.",
+        .auth_help = "fiber needs a Codex subscription login for this model. Run fiber auth login codex.",
         .permission_mode = .ask,
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .history_turns = 3,
         .session_permission_grants = 1,
         .agent_step_limit = 24,
@@ -1896,24 +2371,24 @@ test "core status snapshot text and json stay stable" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=missing\n[status] auth_refreshable=false\n[status] auth_help=fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\n[status] permission_mode=ask\n[status] workspace=/tmp/fx\n[status] history_turns=3\n[status] session_permission_grants=1\n[status] agent_step_limit=24\n",
+        "[status] model=alpha\n[status] auth=missing\n[status] connected_providers=none\n[status] auth_refreshable=false\n[status] auth_help=fiber needs a Codex subscription login for this model. Run fiber auth login codex.\n[status] permission_mode=ask\n[status] workspace=/tmp/fiber\n[status] history_turns=3\n[status] session_permission_grants=1\n[status] agent_step_limit=24\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"missing\",\"auth_refreshable\":false,\"auth_help\":\"fx needs access to Vercel AI Gateway. Run fx login to sign in, fx setup to use an API key, or set AI_GATEWAY_API_KEY.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"alpha\",\"build_revision\":\"\",\"auth\":\"missing\",\"connected_providers\":[],\"auth_refreshable\":false,\"auth_help\":\"fiber needs a Codex subscription login for this model. Run fiber auth login codex.\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":3,\"session_permission_grants\":1,\"agent_step_limit\":24}}",
         json,
     );
 }
 
-test "core status snapshot includes selected team when present" {
+test "core status snapshot renders codex auth without team state" {
     const snapshot = StatusSnapshot{
         .model = "alpha",
-        .auth = .{ .active_source = .fx_login, .team = "example-team" },
+        .auth = .{ .active_source = .chatgpt_subscription },
         .permission_mode = .ask,
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = 24,
@@ -1922,14 +2397,14 @@ test "core status snapshot includes selected team when present" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[status] model=alpha\n[status] update_channel=stable\n[status] build_channel=stable\n[status] auth=fx login\n[status] auth_refreshable=true\n[status] team=example-team\n[status] permission_mode=ask\n[status] workspace=/tmp/fx\n[status] history_turns=0\n[status] session_permission_grants=0\n[status] agent_step_limit=24\n",
+        "[status] model=alpha\n[status] auth=Codex subscription\n[status] connected_providers=Codex\n[status] auth_refreshable=true\n[status] permission_mode=ask\n[status] workspace=/tmp/fiber\n[status] history_turns=0\n[status] session_permission_grants=0\n[status] agent_step_limit=24\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"status\",\"model\":\"alpha\",\"update_channel\":\"stable\",\"build_channel\":\"stable\",\"build_revision\":\"\",\"auth\":\"fx login\",\"auth_refreshable\":true,\"team\":\"example-team\",\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fx\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}",
+        "{\"ok\":true,\"kind\":\"status\",\"data\":{\"model\":\"alpha\",\"build_revision\":\"\",\"auth\":\"Codex subscription\",\"connected_providers\":[\"codex\"],\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"workspace\":\"/tmp/fiber\",\"history_turns\":0,\"session_permission_grants\":0,\"agent_step_limit\":24}}",
         json,
     );
 }
@@ -1940,31 +2415,30 @@ test "status distinguishes the selected model route from connected providers" {
         .provider = .codex,
         .auth = .{
             .active_source = .chatgpt_subscription,
-            .gateway_connected = true,
             .chatgpt_connected = true,
         },
         .permission_mode = .auto,
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = 24,
     };
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
-    try std.testing.expect(std.mem.find(u8, text, "model_source=Codex subscription") != null);
-    try std.testing.expect(std.mem.find(u8, text, "connected_providers=Vercel AI Gateway, Codex") != null);
+    try std.testing.expect(std.mem.find(u8, text, "[status] model=gpt-5.4\n") != null);
+    try std.testing.expect(std.mem.find(u8, text, "connected_providers=Codex") != null);
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
-    try std.testing.expect(std.mem.find(u8, json, "\"model_source\":\"Codex subscription\"") != null);
-    try std.testing.expect(std.mem.find(u8, json, "\"connected_providers\":[\"vercel-ai-gateway\",\"codex\"]") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"model\":\"gpt-5.4\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"connected_providers\":[\"codex\"]") != null);
 }
 
 test "MCP config diagnostic renders in status text and JSON but not interactive body" {
     const snapshot = StatusSnapshot{
         .model = "alpha",
         .permission_mode = .ask,
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = 24,
@@ -2039,7 +2513,7 @@ test "status and doctor share a side-effect-free MCP inspection contract" {
     const status = StatusSnapshot{
         .model = "alpha",
         .permission_mode = .auto,
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .history_turns = 0,
         .session_permission_grants = 0,
         .agent_step_limit = 24,
@@ -2063,7 +2537,7 @@ test "status and doctor share a side-effect-free MCP inspection contract" {
     try std.testing.expect(std.mem.find(u8, status_json, "broken entry was ignored") != null);
 
     const doctor = DoctorSnapshot{
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .model = "alpha",
         .permission_mode = .auto,
         .agent_step_limit = 24,
@@ -2105,7 +2579,7 @@ test "core permissions snapshot text and json stay stable" {
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"permissions\",\"mode\":\"auto\",\"grant_count\":2,\"grant_scope\":\"session\",\"runtime_grants_available\":true,\"rules_scope\":\"persistent_config\",\"rules\":[{\"permission\":\"edit\",\"pattern\":\"src/*\",\"action\":\"allow\"},{\"permission\":\"open_url\",\"pattern\":\"*\",\"action\":\"ask\"}],\"grants\":[{\"tool_name\":\"write_file\",\"target_path\":\"/tmp/workspace/src/app.zig\",\"display_target\":\"src/app.zig\"},{\"tool_name\":\"run_command\",\"target_path\":\"/tmp/workspace::npm test\",\"display_target\":\"/tmp/workspace::npm test\"}]}",
+        "{\"ok\":true,\"kind\":\"permissions\",\"data\":{\"mode\":\"auto\",\"grant_count\":2,\"grant_scope\":\"session\",\"runtime_grants_available\":true,\"rules_scope\":\"persistent_config\",\"rules\":[{\"permission\":\"edit\",\"pattern\":\"src/*\",\"action\":\"allow\"},{\"permission\":\"open_url\",\"pattern\":\"*\",\"action\":\"ask\"}],\"grants\":[{\"tool_name\":\"write_file\",\"target_path\":\"/tmp/workspace/src/app.zig\",\"display_target\":\"src/app.zig\"},{\"tool_name\":\"run_command\",\"target_path\":\"/tmp/workspace::npm test\",\"display_target\":\"/tmp/workspace::npm test\"}]}}",
         json,
     );
 }
@@ -2122,23 +2596,23 @@ test "model list explains public-only and rejected-credential catalogs" {
     }{
         .{
             .snapshot = .{ .ids = &ids, .private_models_hidden = true, .public_only_reason = .no_credential },
-            .text = "[models] 1 available\n - alpha\n[models] Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.\n",
-            .body = "1 available\n - alpha\nUsing the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.",
+            .text = "[models] 1 available\n - alpha\n[models] Using the public model catalog; sign in with Codex for the authenticated catalog.\n",
+            .body = "1 available\n - alpha\nUsing the public model catalog; sign in with Codex for the authenticated catalog.",
         },
         .{
             .snapshot = rejected,
-            .text = "[models] 1 available\n - alpha\n[models] Your Gateway credential was rejected; using the public model catalog.\n",
-            .body = "1 available\n - alpha\nYour Gateway credential was rejected; using the public model catalog.",
+            .text = "[models] 1 available\n - alpha\n[models] Your Codex credential was rejected; using the public model catalog.\n",
+            .body = "1 available\n - alpha\nYour Codex credential was rejected; using the public model catalog.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .private_models_hidden = true, .public_only_reason = .no_credential },
-            .text = "[models] no models returned by gateway\n[models] Using the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.\n",
-            .body = "no models returned by gateway\nUsing the public model catalog; sign in with Vercel or use an AI Gateway API key for team-private models.",
+            .text = "[models] no models returned by Codex subscription\n[models] Using the public model catalog; sign in with Codex for the authenticated catalog.\n",
+            .body = "no models returned by Codex subscription\nUsing the public model catalog; sign in with Codex for the authenticated catalog.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .private_models_hidden = true, .public_only_reason = .authenticated_credential_rejected },
-            .text = "[models] no models returned by gateway\n[models] Your Gateway credential was rejected; using the public model catalog.\n",
-            .body = "no models returned by gateway\nYour Gateway credential was rejected; using the public model catalog.",
+            .text = "[models] no models returned by Codex subscription\n[models] Your Codex credential was rejected; using the public model catalog.\n",
+            .body = "no models returned by Codex subscription\nYour Codex credential was rejected; using the public model catalog.",
         },
         .{
             .snapshot = .{ .ids = &.{}, .provider = .codex },
@@ -2160,7 +2634,7 @@ test "model list explains public-only and rejected-credential catalogs" {
     const json = try rejected.renderJson(alloc);
     defer alloc.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":true,\"ids\":[\"alpha\"]}",
+        "{\"ok\":true,\"kind\":\"models\",\"data\":{\"count\":1,\"shown_count\":1,\"more_count\":0,\"private_models_hidden\":true,\"ids\":[\"alpha\"]}}",
         json,
     );
 
@@ -2193,19 +2667,72 @@ test "core model list snapshot handles limits and empty lists" {
     const limit_json = try (ModelListSnapshot{ .ids = &ids, .limit = 2 }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(limit_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":3,\"shown_count\":2,\"more_count\":1,\"private_models_hidden\":false,\"ids\":[\"alpha\",\"beta\"]}",
+        "{\"ok\":true,\"kind\":\"models\",\"data\":{\"count\":3,\"shown_count\":2,\"more_count\":1,\"private_models_hidden\":false,\"ids\":[\"alpha\",\"beta\"]}}",
         limit_json,
     );
 
     const empty_text = try (ModelListSnapshot{ .ids = &.{} }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(empty_text);
-    try std.testing.expectEqualStrings("[models] no models returned by gateway\n", empty_text);
+    try std.testing.expectEqualStrings("[models] no models returned by Codex subscription\n", empty_text);
 
     const empty_json = try (ModelListSnapshot{ .ids = &.{} }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(empty_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"models\",\"count\":0,\"shown_count\":0,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[]}",
+        "{\"ok\":true,\"kind\":\"models\",\"data\":{\"count\":0,\"shown_count\":0,\"more_count\":0,\"private_models_hidden\":false,\"ids\":[]}}",
         empty_json,
+    );
+}
+
+test "Mcp logout snapshot renders stable json" {
+    const json = try (McpLogoutSnapshot{
+        .server = "fixture",
+        .result = .removed,
+    }).renderJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    try std.testing.expectEqualStrings(
+        "{\"ok\":true,\"kind\":\"mcp.logout\",\"data\":{\"server\":\"fixture\",\"result\":\"removed\"}}",
+        json,
+    );
+}
+
+test "auth list and status snapshots render stable text and json" {
+    const providers = [_]AuthListEntry{
+        .{ .id = "codex", .name = "Codex", .connected = true },
+    };
+    const list_text = try (AuthListSnapshot{ .providers = &providers }).renderText(std.testing.allocator);
+    defer std.testing.allocator.free(list_text);
+    try std.testing.expectEqualStrings(
+        "[auth] 1 provider\n - Codex (codex) connected=true\n",
+        list_text,
+    );
+
+    const list_json = try (AuthListSnapshot{ .providers = &providers }).renderJson(std.testing.allocator);
+    defer std.testing.allocator.free(list_json);
+    try std.testing.expectEqualStrings(
+        "{\"ok\":true,\"kind\":\"auth.list\",\"data\":{\"providers\":[{\"id\":\"codex\",\"name\":\"Codex\",\"connected\":true}]}}",
+        list_json,
+    );
+
+    const status = AuthStatusSnapshot{
+        .provider = .codex,
+        .status = .{
+            .active_source = .chatgpt_subscription,
+            .chatgpt_connected = true,
+            .expires_at_ms = 1_700_000_000_000,
+        },
+    };
+    const status_text = try status.renderText(std.testing.allocator);
+    defer std.testing.allocator.free(status_text);
+    try std.testing.expectEqualStrings(
+        "[auth] provider=codex\n[auth] active_source=Codex subscription\n[auth] chatgpt_connected=true\n[auth] expired=false\n[auth] refreshable=true\n[auth] expires_at_ms=1700000000000\n",
+        status_text,
+    );
+
+    const status_json = try status.renderJson(std.testing.allocator);
+    defer std.testing.allocator.free(status_json);
+    try std.testing.expectEqualStrings(
+        "{\"ok\":true,\"kind\":\"auth.status\",\"data\":{\"provider\":\"codex\",\"active_source\":\"Codex subscription\",\"required_source\":null,\"chatgpt_connected\":true,\"expired\":false,\"refreshable\":true,\"expires_at_ms\":1700000000000}}",
+        status_json,
     );
 }
 
@@ -2235,7 +2762,7 @@ test "core session list snapshot text and json stay stable" {
     const json = try (SessionListSnapshot{ .sessions = &sessions }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"sessions\",\"count\":1,\"sessions\":[{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session title\\npreview line\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}]}",
+        "{\"ok\":true,\"kind\":\"session.list\",\"data\":{\"count\":1,\"sessions\":[{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session title\\npreview line\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}]}}",
         json,
     );
 
@@ -2247,7 +2774,7 @@ test "core session list snapshot text and json stay stable" {
     defer std.testing.allocator.free(paged_text);
     try std.testing.expectEqualStrings(
         "[sessions] 1 saved\n - Session title\n   id=abc | 3 turns | Spanish | updated 1970-01-01 00:00:00.002 UTC\n" ++
-            "[sessions] more saved sessions; continue with `fx sessions --cursor v1:2:abc`\n",
+            "[sessions] more saved sessions; continue with `fiber sessions --continuation v1:2:abc`\n",
         paged_text,
     );
 
@@ -2258,7 +2785,7 @@ test "core session list snapshot text and json stay stable" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(paged_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"sessions\",\"count\":1,\"has_more\":true,\"next_cursor\":\"v1:2:abc\",\"sessions\":[{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session title\\npreview line\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}]}",
+        "{\"ok\":true,\"kind\":\"session.list\",\"data\":{\"count\":1,\"has_more\":true,\"next_cursor\":\"v1:2:abc\",\"sessions\":[{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session title\\npreview line\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}]}}",
         paged_json,
     );
 
@@ -2309,7 +2836,7 @@ test "core session list snapshot text and json stay stable" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(warning_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"sessions\",\"count\":0,\"skipped_invalid\":2,\"sessions\":[]}",
+        "{\"ok\":true,\"kind\":\"session.list\",\"data\":{\"count\":0,\"skipped_invalid\":2,\"sessions\":[]}}",
         warning_json,
     );
 }
@@ -2383,7 +2910,7 @@ test "core session summary snapshot text and json stay stable" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_summary\",\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session preview\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}",
+        "{\"ok\":true,\"kind\":\"session.show\",\"data\":{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session preview\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}}",
         json,
     );
 }
@@ -2403,7 +2930,7 @@ test "core session JSON uses fallback title for metadata-missing summaries" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_summary\",\"id\":\"old-session\",\"title\":\"Untitled session\",\"preview\":null,\"workspace_root\":null,\"origin_workspace_root\":null,\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":1,\"conversation_language\":\"en\"}",
+        "{\"ok\":true,\"kind\":\"session.show\",\"data\":{\"id\":\"old-session\",\"title\":\"Untitled session\",\"preview\":null,\"workspace_root\":null,\"origin_workspace_root\":null,\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":1,\"conversation_language\":\"en\"}}",
         json,
     );
 }
@@ -2412,7 +2939,7 @@ test "core empty session detail snapshot text and json stay stable" {
     const detail = session_store.ReadOnlyDetail{
         .summary = .{
             .id = @constCast("sess-empty"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("en"),
@@ -2420,8 +2947,8 @@ test "core empty session detail snapshot text and json stay stable" {
         },
         .state = .{
             .id = @constCast("sess-empty"),
-            .origin_workspace_root = @constCast("/tmp/fx"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .origin_workspace_root = @constCast("/tmp/fiber"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("en"),
@@ -2447,7 +2974,7 @@ test "core empty session detail snapshot text and json stay stable" {
     const json = try (SessionDetailSnapshot{ .detail = detail }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_detail\",\"id\":\"sess-empty\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":0,\"conversation_language\":\"en\",\"history\":[]}",
+        "{\"ok\":true,\"kind\":\"session.show\",\"data\":{\"id\":\"sess-empty\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":0,\"conversation_language\":\"en\",\"history\":[]}}",
         json,
     );
 }
@@ -2487,7 +3014,7 @@ test "core session detail snapshot preserves history variant shapes" {
     const detail = session_store.ReadOnlyDetail{
         .summary = .{
             .id = @constCast("sess-history"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("es"),
@@ -2495,8 +3022,8 @@ test "core session detail snapshot preserves history variant shapes" {
         },
         .state = .{
             .id = @constCast("sess-history"),
-            .origin_workspace_root = @constCast("/tmp/fx"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .origin_workspace_root = @constCast("/tmp/fiber"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("es"),
@@ -2545,7 +3072,7 @@ test "core session detail JSON includes assistant execution memory" {
         .output_bytes = 48,
         .stored_output_bytes = 48,
         .command_output_replay = .{ .available = .{
-            .handle = "fx-command-replay-private-sentinel.bin",
+            .handle = "fiber-command-replay-private-sentinel.bin",
             .framed_bytes = 77,
         } },
         .command_process_presentation = .{ .exit_code = 9 },
@@ -2572,7 +3099,7 @@ test "core session detail JSON includes assistant execution memory" {
     const detail = session_store.ReadOnlyDetail{
         .summary = .{
             .id = @constCast("sess-exec"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("en"),
@@ -2580,8 +3107,8 @@ test "core session detail JSON includes assistant execution memory" {
         },
         .state = .{
             .id = @constCast("sess-exec"),
-            .origin_workspace_root = @constCast("/tmp/fx"),
-            .workspace_root = @constCast("/tmp/fx"),
+            .origin_workspace_root = @constCast("/tmp/fiber"),
+            .workspace_root = @constCast("/tmp/fiber"),
             .created_at_ms = 1,
             .updated_at_ms = 2,
             .conversation_language = types.ConversationLanguage.literal("en"),
@@ -2605,35 +3132,12 @@ test "core session detail JSON includes assistant execution memory" {
     try std.testing.expect(std.mem.find(u8, json, "artifact-file.pdf") != null);
     try std.testing.expect(std.mem.find(u8, json, "command_output_replay") == null);
     try std.testing.expect(std.mem.find(u8, json, "command_process_presentation") == null);
-    try std.testing.expect(std.mem.find(u8, json, "fx-command-replay-private-sentinel.bin") == null);
+    try std.testing.expect(std.mem.find(u8, json, "fiber-command-replay-private-sentinel.bin") == null);
 
     const text = try (SessionDetailSnapshot{ .detail = detail }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expect(std.mem.find(u8, text, "started_at_ms") == null);
     try std.testing.expect(std.mem.find(u8, text, "input_tokens") == null);
-}
-
-test "core session migration snapshot text and json stay stable" {
-    const result = session_store.SessionMigrationResult{
-        .session_id = @constCast("session.v3"),
-        .source_schema_version = 2,
-        .source_bytes = 4096,
-        .status = .migrated,
-    };
-
-    const text = try (SessionMigrationSnapshot{ .result = result }).renderText(std.testing.allocator);
-    defer std.testing.allocator.free(text);
-    try std.testing.expectEqualStrings(
-        "[session migration] session.v3\nstatus: migrated\nsource_schema_version: 2\nsource_bytes: 4096\n",
-        text,
-    );
-
-    const json = try (SessionMigrationSnapshot{ .result = result }).renderJson(std.testing.allocator);
-    defer std.testing.allocator.free(json);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_migration\",\"id\":\"session.v3\",\"status\":\"migrated\",\"source_schema_version\":2,\"source_bytes\":4096}",
-        json,
-    );
 }
 
 test "core session recovery snapshot text and json stay stable" {
@@ -2648,7 +3152,7 @@ test "core session recovery snapshot text and json stay stable" {
     );
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[session recovery] copied source-session to recovered-session\nhistory_turns: 4\nresume: fx --resume recovered-session\n",
+        "[session recovery] copied source-session to recovered-session\nhistory_turns: 4\nresume: fiber resume recovered-session\n",
         text,
     );
 
@@ -2657,7 +3161,7 @@ test "core session recovery snapshot text and json stay stable" {
     );
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_recovery\",\"source_id\":\"source-session\",\"recovered_id\":\"recovered-session\",\"status\":\"recovered\",\"history_turns\":4}",
+        "{\"ok\":true,\"kind\":\"session.recover\",\"data\":{\"source_id\":\"source-session\",\"recovered_id\":\"recovered-session\",\"status\":\"recovered\",\"history_turns\":4}}",
         json,
     );
 
@@ -2672,7 +3176,7 @@ test "core session recovery snapshot text and json stay stable" {
     }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(partial_text);
     try std.testing.expectEqualStrings(
-        "[session recovery] copied source-session to partial-session\nhistory_turns: 4\nwarning: legacy command artifacts could not be authenticated\nresume: fx --resume partial-session\n",
+        "[session recovery] copied source-session to partial-session\nhistory_turns: 4\nwarning: legacy command artifacts could not be authenticated\nresume: fiber resume partial-session\n",
         partial_text,
     );
     const partial_json = try (SessionRecoverySnapshot{
@@ -2680,7 +3184,7 @@ test "core session recovery snapshot text and json stay stable" {
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(partial_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"session_recovery\",\"source_id\":\"source-session\",\"recovered_id\":\"partial-session\",\"status\":\"recovered_with_unverified_artifacts\",\"history_turns\":4}",
+        "{\"ok\":true,\"kind\":\"session.recover\",\"data\":{\"source_id\":\"source-session\",\"recovered_id\":\"partial-session\",\"status\":\"recovered_with_unverified_artifacts\",\"history_turns\":4}}",
         partial_json,
     );
 
@@ -2695,7 +3199,7 @@ test "core session recovery snapshot text and json stay stable" {
     }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(warning);
     try std.testing.expectEqualStrings(
-        "[session recovery] could not confirm target target-session\nsource: source-session (unchanged)\nresolve: fx --resume target-session\ninspect: fx doctor\n",
+        "[session recovery] could not confirm target target-session\nsource: source-session (unchanged)\nresolve: fiber resume target-session\ninspect: fiber doctor\n",
         warning,
     );
 }
@@ -2706,9 +3210,9 @@ test "core doctor snapshot text and json stay stable" {
         .{ .name = @constCast("gh"), .status = .warn, .detail = @constCast("GitHub CLI not found in PATH") },
     };
     const snapshot = DoctorSnapshot{
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .model = "alpha",
-        .auth = .{ .active_source = .ai_gateway_api_key },
+        .auth = .{ .active_source = .chatgpt_subscription },
         .permission_mode = .ask,
         .agent_step_limit = 24,
         .checks = &checks,
@@ -2717,14 +3221,14 @@ test "core doctor snapshot text and json stay stable" {
     const text = try snapshot.renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[doctor] ok=1 warn=1 fail=0\n[doctor] workspace=/tmp/fx\n[doctor] model=alpha\n[doctor] auth=AI_GATEWAY_API_KEY\n[doctor] auth_refreshable=false\n[doctor] permission_mode=ask\n[doctor] agent_step_limit=24\n[ok] auth: AI_GATEWAY_API_KEY is configured\n[warn] gh: GitHub CLI not found in PATH\n",
+        "[doctor] ok=1 warn=1 fail=0\n[doctor] workspace=/tmp/fiber\n[doctor] model=alpha\n[doctor] auth=Codex subscription\n[doctor] auth_refreshable=true\n[doctor] permission_mode=ask\n[doctor] agent_step_limit=24\n[ok] auth: AI_GATEWAY_API_KEY is configured\n[warn] gh: GitHub CLI not found in PATH\n",
         text,
     );
 
     const json = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"doctor\",\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fx\",\"model\":\"alpha\",\"auth\":\"AI_GATEWAY_API_KEY\",\"auth_refreshable\":false,\"permission_mode\":\"ask\",\"agent_step_limit\":24,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}",
+        "{\"ok\":true,\"kind\":\"doctor\",\"data\":{\"ok_count\":1,\"warn_count\":1,\"fail_count\":0,\"workspace\":\"/tmp/fiber\",\"model\":\"alpha\",\"auth\":\"Codex subscription\",\"auth_refreshable\":true,\"permission_mode\":\"ask\",\"agent_step_limit\":24,\"checks\":[{\"name\":\"auth\",\"status\":\"ok\",\"detail\":\"AI_GATEWAY_API_KEY is configured\"},{\"name\":\"gh\",\"status\":\"warn\",\"detail\":\"GitHub CLI not found in PATH\"}]}}",
         json,
     );
 }
@@ -2736,7 +3240,7 @@ test "doctor text escapes hostile check details while json preserves data" {
         .detail = "warning key=bad\n\x1b]0;pwn\x07",
     }};
     const snapshot = DoctorSnapshot{
-        .workspace_root = "/tmp/fx",
+        .workspace_root = "/tmp/fiber",
         .model = "alpha",
         .permission_mode = .ask,
         .agent_step_limit = 24,
@@ -2761,56 +3265,6 @@ test "doctor text escapes hostile check details while json preserves data" {
     ) != null);
 }
 
-test "core credits snapshot renders error output" {
-    const snapshot = CreditsSnapshot{ .err_message = "gateway unavailable" };
-
-    const text = try snapshot.renderText(std.testing.allocator);
-    defer std.testing.allocator.free(text);
-    try std.testing.expectEqualStrings("[credits] error: gateway unavailable\n", text);
-
-    const json = try snapshot.renderJson(std.testing.allocator);
-    defer std.testing.allocator.free(json);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"error\":\"gateway unavailable\"}",
-        json,
-    );
-}
-
-test "core credits snapshot renders parsed, raw, and empty fallbacks" {
-    const parsed = CreditsSnapshot{ .balance = "10", .used = "2", .plan = "pro" };
-
-    const parsed_text = try parsed.renderText(std.testing.allocator);
-    defer std.testing.allocator.free(parsed_text);
-    try std.testing.expectEqualStrings(
-        "[credits] balance=10\n[credits] used=2\n[credits] plan=pro\n",
-        parsed_text,
-    );
-
-    const parsed_json = try parsed.renderJson(std.testing.allocator);
-    defer std.testing.allocator.free(parsed_json);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"balance\":\"10\",\"used\":\"2\",\"plan\":\"pro\"}",
-        parsed_json,
-    );
-
-    const raw = CreditsSnapshot{ .raw_json = "{\"raw\":true}" };
-
-    const raw_text = try raw.renderText(std.testing.allocator);
-    defer std.testing.allocator.free(raw_text);
-    try std.testing.expectEqualStrings("[credits] {\"raw\":true}\n", raw_text);
-
-    const raw_json = try raw.renderJson(std.testing.allocator);
-    defer std.testing.allocator.free(raw_json);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"credits\",\"balance\":null,\"used\":null,\"plan\":null}",
-        raw_json,
-    );
-
-    const empty_text = try (CreditsSnapshot{}).renderText(std.testing.allocator);
-    defer std.testing.allocator.free(empty_text);
-    try std.testing.expectEqualStrings("[credits] no data returned by gateway\n", empty_text);
-}
-
 test "core upgrade snapshot renders errors and statuses" {
     const error_snapshot = UpgradeSnapshot{
         .current = "0.2.9",
@@ -2826,7 +3280,7 @@ test "core upgrade snapshot renders errors and statuses" {
     const error_json = try error_snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(error_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"upgrade\",\"error\":\"download failed\"}",
+        "{\"ok\":true,\"kind\":\"upgrade\",\"data\":{\"error\":\"download failed\"}}",
         error_json,
     );
 
@@ -2841,12 +3295,11 @@ test "core upgrade snapshot renders errors and statuses" {
     const upgraded_json = try (UpgradeSnapshot{
         .current = "0.2.9",
         .latest = "0.2.10",
-        .current_revision = "0123456789ab",
         .status = .upgraded,
     }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(upgraded_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"upgrade\",\"current\":\"0.2.9\",\"latest\":\"0.2.10\",\"status\":\"upgraded\"}",
+        "{\"ok\":true,\"kind\":\"upgrade\",\"data\":{\"current\":\"0.2.9\",\"latest\":\"0.2.10\",\"status\":\"upgraded\"}}",
         upgraded_json,
     );
 
@@ -2866,7 +3319,7 @@ test "core upgrade snapshot renders errors and statuses" {
 
     const up_to_date_text = try up_to_date.renderText(std.testing.allocator);
     defer std.testing.allocator.free(up_to_date_text);
-    try std.testing.expectEqualStrings("fx is already up to date (v0.2.10)\n", up_to_date_text);
+    try std.testing.expectEqualStrings("fiber is already up to date (v0.2.10)\n", up_to_date_text);
 
     const failed_text = try (UpgradeSnapshot{
         .current = "0.2.9",
@@ -2879,31 +3332,8 @@ test "core upgrade snapshot renders errors and statuses" {
     const up_to_date_json = try up_to_date.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(up_to_date_json);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"upgrade\",\"current\":\"0.2.9\",\"latest\":\"0.2.10\",\"status\":\"up_to_date\"}",
+        "{\"ok\":true,\"kind\":\"upgrade\",\"data\":{\"current\":\"0.2.9\",\"latest\":\"0.2.10\",\"status\":\"up_to_date\"}}",
         up_to_date_json,
-    );
-}
-
-test "core upgrade snapshot identifies dev revisions" {
-    const snapshot = UpgradeSnapshot{
-        .current = "0.3.66",
-        .latest = "0.3.66",
-        .channel = "dev",
-        .current_channel = "stable",
-        .current_revision = "111111111111",
-        .latest_revision = "abcdef0123456789abcdef0123456789abcdef01",
-        .status = .upgraded,
-    };
-
-    const text = try snapshot.renderText(std.testing.allocator);
-    defer std.testing.allocator.free(text);
-    try std.testing.expectEqualStrings("upgraded to dev abcdef012345 (v0.3.66)\n", text);
-
-    const json = try snapshot.renderJson(std.testing.allocator);
-    defer std.testing.allocator.free(json);
-    try std.testing.expectEqualStrings(
-        "{\"kind\":\"upgrade\",\"current\":\"0.3.66\",\"latest\":\"0.3.66\",\"channel\":\"dev\",\"current_channel\":\"stable\",\"current_revision\":\"111111111111\",\"latest_revision\":\"abcdef0123456789abcdef0123456789abcdef01\",\"status\":\"upgraded\"}",
-        json,
     );
 }
 
@@ -2946,7 +3376,7 @@ test "workspace snapshot renders source availability and mutation in text and js
     const json_output = try snapshot.renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json_output);
     try std.testing.expectEqualStrings(
-        "{\"kind\":\"workspace\",\"action\":\"remove\",\"changed\":true,\"primary_directory\":\"/tmp/project\",\"saved_suppressed\":false,\"limit\":16,\"path\":\"/tmp/removed\",\"saved_changed\":false,\"runtime_changed\":true,\"launch_flag_can_restore\":true,\"additional_directories\":[{\"path\":\"/tmp/shared\",\"saved\":true,\"command_line\":false,\"available\":true,\"active\":true},{\"path\":\"/tmp/run-only\",\"saved\":false,\"command_line\":true,\"available\":true,\"active\":true}]}",
+        "{\"ok\":true,\"kind\":\"workspace\",\"data\":{\"action\":\"remove\",\"changed\":true,\"primary_directory\":\"/tmp/project\",\"saved_suppressed\":false,\"limit\":16,\"path\":\"/tmp/removed\",\"saved_changed\":false,\"runtime_changed\":true,\"launch_flag_can_restore\":true,\"additional_directories\":[{\"path\":\"/tmp/shared\",\"saved\":true,\"command_line\":false,\"available\":true,\"active\":true},{\"path\":\"/tmp/run-only\",\"saved\":false,\"command_line\":true,\"available\":true,\"active\":true}]}}",
         json_output,
     );
 
@@ -3042,15 +3472,16 @@ test "usage text and JSON render the same optional and ordered facts" {
     defer alloc.free(json);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, json, .{});
     defer parsed.deinit();
+    const data = parsed.value.object.get("data").?.object;
     try std.testing.expectEqualStrings(
         "7d",
-        parsed.value.object.get("period").?.string,
+        data.get("period").?.string,
     );
     try std.testing.expect(
-        parsed.value.object.get("totals").?.object.get("reasoning_tokens").? == .null,
+        data.get("totals").?.object.get("reasoning_tokens").? == .null,
     );
     try std.testing.expectEqualStrings(
         "provider/model",
-        parsed.value.object.get("models").?.array.items[0].object.get("model").?.string,
+        data.get("models").?.array.items[0].object.get("model").?.string,
     );
 }

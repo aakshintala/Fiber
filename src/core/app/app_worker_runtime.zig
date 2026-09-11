@@ -3,7 +3,6 @@ const activity_status = @import("../output/activity_status.zig");
 const app_session_runtime = @import("app_session_runtime.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const diff_mod = @import("../output/diff.zig");
-const file_mutation_contract = @import("../tooling/file_mutation_contract.zig");
 const command_output_content = @import("../tooling/command_output_content.zig");
 const io_mod = @import("../shared/io.zig");
 const permission_request = @import("../permissions/permission_request.zig");
@@ -35,13 +34,6 @@ const reset_style = ui_render.reset_style;
 
 test {
     _ = activity_runtime;
-}
-
-fn allocDimmedTranscriptLine(alloc: std.mem.Allocator, text: []const u8) ![]u8 {
-    if (std.mem.endsWith(u8, text, "\n")) {
-        return std.fmt.allocPrint(alloc, "{s}{s}{s}\n", .{ ui_render.dim_style, text[0 .. text.len - 1], reset_style });
-    }
-    return std.fmt.allocPrint(alloc, "{s}{s}{s}", .{ ui_render.dim_style, text, reset_style });
 }
 
 fn discardTable(_: *anyopaque, table: assistant_presentation.TablePayload) !void {
@@ -1460,11 +1452,6 @@ const FakePacer = struct {
     flushed: usize = 0,
     completed_assistant_presentation_tail: bool = false,
 
-    fn flushPendingText(self: *FakePacer, callbacks: anytype) !void {
-        _ = callbacks;
-        self.flushed += 1;
-    }
-
     fn hasCompletedAssistantPresentationTail(self: *const FakePacer) bool {
         return self.completed_assistant_presentation_tail;
     }
@@ -1476,28 +1463,8 @@ const FakeSubagents = struct {
     child_shell: FakeShell = .{},
     child_render_requests: render_request.RenderRequestState = .{},
 
-    const ChildPresentationView = struct {
-        chat: struct {
-            busy_value: bool,
-
-            fn busy(self: @This()) bool {
-                return self.busy_value;
-            }
-        },
-    };
-
     fn isViewActive(self: FakeSubagents) bool {
         return self.view_active;
-    }
-
-    fn childPresentationView(self: *FakeSubagents) ?ChildPresentationView {
-        if (!self.view_active) return null;
-        return .{ .chat = .{ .busy_value = self.child_busy } };
-    }
-
-    fn childConversationRuntime(self: *FakeSubagents) ?*FakeShell {
-        if (!self.view_active) return null;
-        return &self.child_shell;
     }
 
     fn activeRenderRequests(self: *FakeSubagents) *render_request.RenderRequestState {
@@ -1983,7 +1950,7 @@ test "core.app_worker_runtime assistant chunk trace is metadata only" {
 
     var app = FakeApp.init(alloc);
     defer app.deinit();
-    const secret = "FX_ASSISTANT_CHUNK_SECRET";
+    const secret = "FIBER_ASSISTANT_CHUNK_SECRET";
     try Runtime(FakeApp).pushText(&app, secret);
     try tickNoop(&app);
     debug_trace.shutdown();
@@ -2006,7 +1973,13 @@ test "core.app_worker_runtime assistant chunk trace is metadata only" {
         trace,
         "event=assistant_chunk_applied",
     ) != null);
-    try std.testing.expect(std.mem.find(u8, trace, "chunk_bytes=25") != null);
+    const expected_chunk_bytes = try std.fmt.allocPrint(
+        alloc,
+        "chunk_bytes={d}",
+        .{secret.len},
+    );
+    defer alloc.free(expected_chunk_bytes);
+    try std.testing.expect(std.mem.find(u8, trace, expected_chunk_bytes) != null);
     try std.testing.expect(std.mem.find(u8, trace, secret) == null);
 }
 
@@ -2357,7 +2330,7 @@ test "core.app_worker_runtime recovery pause replaces cancelled waiting status" 
 
     switch (app.shell.activityProjection()) {
         .turn_thinking => |thinking| try std.testing.expectEqualStrings(
-            "⚠ Mac woke from sleep · connection still unavailable · recovery paused · attempt 2/10 · /continue to resume",
+            "⚠ Mac woke from sleep · connection still unavailable · recovery paused · attempt 2/10 · /retry to resume",
             thinking.label,
         ),
         .none, .tool_slot => return error.TestUnexpectedResult,

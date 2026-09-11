@@ -6,8 +6,6 @@ const app_commands = @import("app_commands.zig");
 const app_lifecycle = @import("app_lifecycle.zig");
 const app_permission_runtime = @import("app_permission_runtime.zig");
 const app_session_runtime = @import("app_session_runtime.zig");
-const app_terminal_runtime = @import("app_terminal_runtime.zig");
-const managed_execution = @import("../execution/managed_execution.zig");
 const terminal_ui_projection = @import("../terminal/ui_projection.zig");
 const worker_runtime = @import("../agent/worker_runtime.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
@@ -20,14 +18,12 @@ const provider_runtime = @import("provider_runtime.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const diff_mod = @import("../output/diff.zig");
 const io_mod = @import("../shared/io.zig");
-const text_utils = @import("../shared/text_utils.zig");
 const permission_request = @import("../permissions/permission_request.zig");
 const skill_runtime = @import("../skills/skill_runtime.zig");
 const types = @import("../shared/types.zig");
 const file_index = @import("../workspace/file_index.zig");
 const statusline_identity = @import("../workspace/statusline_identity.zig");
 const activity_runtime = @import("../output/activity_runtime.zig");
-const transcript_presentation = @import("../output/transcript_presentation.zig");
 const event_loop = @import("../../ui/event_loop.zig");
 const surface_frame = @import("../../ui/footer/surface_frame.zig");
 const surface_invalidation = @import("../../ui/footer/surface_invalidation.zig");
@@ -38,7 +34,6 @@ const input_presentation = @import("../../ui/footer/input_presentation.zig");
 const footer_viewport = @import("../../ui/footer/viewport.zig");
 const render_request = @import("../../ui/render_request.zig");
 const ui_input = @import("../../ui/input/runtime.zig");
-const input_visual_layout = @import("../../ui/input/visual_layout.zig");
 const registered_entities = @import("../input/registered_entities.zig");
 const approval_screen = @import("../../ui/approval_screen.zig");
 const full_transcript_screen = @import("../../ui/full_transcript_screen.zig");
@@ -47,11 +42,8 @@ const render_engine = @import("../../ui/render_engine.zig");
 const build_checkpoint = @import("../../ui/render_engine/build_checkpoint.zig");
 const shell_runtime = @import("../../ui/shell_runtime.zig");
 const shimmer_runtime = @import("../../ui/transcript/shimmer_runtime.zig");
-const ui_terminal = @import("../../ui/terminal/terminal.zig");
 const vt_emulator = @import("../terminal/engine.zig");
 const transcript_painter = @import("../../ui/transcript/painter.zig");
-const command_output_runtime = @import("../../ui/transcript/command_output_runtime.zig");
-const resume_projection = @import("../../ui/transcript/resume_projection.zig");
 const transcript_runtime = @import("../../ui/transcript/runtime.zig");
 const ui_render = @import("../../ui/render.zig");
 const assistant_pacer = @import("../../ui/assistant/pacer.zig");
@@ -1316,7 +1308,6 @@ pub fn Runtime(comptime App: type) type {
                         .footer = neutral_footer,
                         .transcript = transcript_preview,
                         .activity = frame_activity,
-                        .body_mode = .transcript,
                         .prior = active_committed_layout,
                     },
                     FixedPointTranscriptContext(App).prepareCandidate,
@@ -1871,10 +1862,6 @@ pub fn Runtime(comptime App: type) type {
             return false;
         }
 
-        fn catalogMenuActive(app: *const App) bool {
-            return modelMenuActive(app) and !settingsMenuActive(app);
-        }
-
         fn activityProjection(app: *const App) activity_runtime.ActivityProjection {
             return shell_runtime.activityProjection(&app.shell);
         }
@@ -1902,45 +1889,6 @@ pub fn Runtime(comptime App: type) type {
             };
         }
     };
-}
-
-fn managedExecutionProjection(
-    alloc: std.mem.Allocator,
-    runtime: *managed_execution.Runtime,
-) !terminal_ui_projection.Snapshot {
-    const executions = try runtime.list(alloc);
-    defer {
-        for (executions) |*execution| execution.deinit(alloc);
-        alloc.free(executions);
-    }
-    const rows = try alloc.alloc(terminal_ui_projection.Row, executions.len);
-    var initialized: usize = 0;
-    errdefer {
-        for (rows[0..initialized]) |*row| {
-            alloc.free(row.label);
-            alloc.free(row.session_id);
-        }
-        alloc.free(rows);
-    }
-    for (executions, rows) |execution, *row| {
-        const session_id = try alloc.dupe(u8, execution.execution_id);
-        errdefer alloc.free(session_id);
-        row.* = .{
-            .session_id = session_id,
-            .label = try alloc.dupe(u8, execution.command),
-            .lifecycle = switch (execution.state) {
-                .running => .running,
-                .completed => .exited,
-                .stopped => .closed,
-                .lost => .lost,
-            },
-            .attention = .{},
-            .backend = .native,
-            .attachable = execution.backend == .tty,
-        };
-        initialized += 1;
-    }
-    return .{ .alloc = alloc, .rows = rows };
 }
 
 fn renderReasonNames(
@@ -2144,11 +2092,6 @@ fn FramePaintContext(comptime App: type) type {
                         _ = try self.presentation_shell.paintPreparedTranscriptIntoSurface(self.app.alloc, surface, prepared);
                     }
                 },
-                .subagent_panel => |text| {
-                    if (surface.plan.transcript_band.isEmpty() or text.len == 0) return;
-                    const rows = surface.plan.transcript_band.bottom - surface.plan.transcript_band.top + 1;
-                    _ = try surface.writeAnsiBand(surface.plan.transcript_band.top, rows, text, .transcript, .same_owner);
-                },
                 .none => {},
             }
         }
@@ -2303,7 +2246,6 @@ fn fixedPointTestInput(
     owned_top: u16,
     transcript_rows: u16,
     footer_rows: u16,
-    body_mode: render_engine.frame_layout.BodyMode,
 ) render_engine.frame_layout.SolveInput {
     return .{
         .terminal = .{
@@ -2322,7 +2264,6 @@ fn fixedPointTestInput(
             .max_rows = footer_rows,
         },
         .transcript = .{ .natural_visual_rows = transcript_rows },
-        .body_mode = body_mode,
     };
 }
 
@@ -2465,9 +2406,9 @@ test "assistant tail writability changes remain traceable" {
 
 test "core.app_render_runtime fixed point retry resumes after acknowledged release" {
     var first_ctx = FixedPointTestContext{ .inline_advance_rows = 3 };
-    const first = try solveFixedPointForTest(&first_ctx, fixedPointTestInput(12, 5, 1, 3, .transcript));
+    const first = try solveFixedPointForTest(&first_ctx, fixedPointTestInput(12, 5, 1, 3));
     var shell = transcript_runtime.TranscriptRuntime{
-        .layout = fixedPointTestInput(12, 5, 1, 3, .transcript).terminal,
+        .layout = fixedPointTestInput(12, 5, 1, 3).terminal,
         .owned_top_row = 5,
         .viewport_top_row = 5,
     };
@@ -2475,7 +2416,7 @@ test "core.app_render_runtime fixed point retry resumes after acknowledged relea
     try shell.ackPreservedRowRelease(first.scroll_plan, first.scroll_plan.terminal_scroll_rows);
 
     var retry_ctx = FixedPointTestContext{};
-    const retry = try solveFixedPointForTest(&retry_ctx, fixedPointTestInput(12, shell.owned_top_row, 1, 3, .transcript));
+    const retry = try solveFixedPointForTest(&retry_ctx, fixedPointTestInput(12, shell.owned_top_row, 1, 3));
 
     try std.testing.expectEqual(@as(u16, 1), shell.owned_top_row);
     try std.testing.expectEqual(@as(u16, 0), retry.scroll_plan.preserved_release_rows);
@@ -2484,9 +2425,9 @@ test "core.app_render_runtime fixed point retry resumes after acknowledged relea
 
 test "core.app_render_runtime fixed point shrink acknowledgment resumes from normalized ownership" {
     var first_ctx = FixedPointTestContext{};
-    const first = try solveFixedPointForTest(&first_ctx, fixedPointTestInput(5, 9, 0, 5, .transcript));
+    const first = try solveFixedPointForTest(&first_ctx, fixedPointTestInput(5, 9, 0, 5));
     var shell = transcript_runtime.TranscriptRuntime{
-        .layout = fixedPointTestInput(5, 9, 0, 5, .transcript).terminal,
+        .layout = fixedPointTestInput(5, 9, 0, 5).terminal,
         .owned_top_row = 9,
         .viewport_top_row = 9,
     };
@@ -2494,7 +2435,7 @@ test "core.app_render_runtime fixed point shrink acknowledgment resumes from nor
     try shell.ackPreservedRowRelease(first.scroll_plan, 2);
 
     var retry_ctx = FixedPointTestContext{};
-    const retry = try solveFixedPointForTest(&retry_ctx, fixedPointTestInput(5, shell.owned_top_row, 0, 5, .transcript));
+    const retry = try solveFixedPointForTest(&retry_ctx, fixedPointTestInput(5, shell.owned_top_row, 0, 5));
 
     try std.testing.expectEqual(@as(u16, 3), shell.owned_top_row);
     try std.testing.expectEqual(@as(u16, 2), retry.scroll_plan.preserved_release_rows);
@@ -3384,7 +3325,7 @@ test "core.app_render_runtime keeps configured controls visible while model capa
     );
 }
 
-test "core.app_render_runtime keeps Kimi fast indicator stable across catalog hydration" {
+test "core.app_render_runtime keeps the fast indicator stable across catalog hydration" {
     const cases = [_]struct {
         model: []const u8,
         fast_mode: bool,
@@ -3392,9 +3333,9 @@ test "core.app_render_runtime keeps Kimi fast indicator stable across catalog hy
         supports_fast_mode: bool,
         expected_indicator: bool,
     }{
-        .{ .model = "moonshotai/kimi-k3", .fast_mode = false, .intrinsic_fast = false, .supports_fast_mode = true, .expected_indicator = false },
-        .{ .model = "moonshotai/kimi-k3", .fast_mode = true, .intrinsic_fast = false, .supports_fast_mode = true, .expected_indicator = true },
-        .{ .model = "moonshotai/kimi-k3-fast", .fast_mode = false, .intrinsic_fast = true, .supports_fast_mode = false, .expected_indicator = true },
+        .{ .model = "zai/glm-5.2", .fast_mode = false, .intrinsic_fast = false, .supports_fast_mode = true, .expected_indicator = false },
+        .{ .model = "zai/glm-5.2", .fast_mode = true, .intrinsic_fast = false, .supports_fast_mode = true, .expected_indicator = true },
+        .{ .model = "zai/glm-5.2-fast", .fast_mode = false, .intrinsic_fast = true, .supports_fast_mode = false, .expected_indicator = true },
     };
 
     for (cases) |case| {
@@ -3459,7 +3400,7 @@ test "core.app_render_runtime projects only the visible inline completion suffix
         .name = "managed-menu",
         .description = "",
         .path = "/tmp/managed-menu/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     app.skills.items = @constCast(&skills);
     try app.input_runtime.textReplacementState().replace(alloc, "explain $man");
@@ -3743,7 +3684,7 @@ test "core.app_render_runtime main skill menu origins share the inline footer" {
         .name = "pure-core",
         .description = "Keep data transformations pure.",
         .path = "/skills/pure-core/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     var app = CoordinatorTestApp{
         .alloc = alloc,
@@ -3803,7 +3744,7 @@ test "core.app_render_runtime main skill menu origins share the inline footer" {
         .{ .label = "Keep going", .description = null },
     };
     const entries = [_]types.QuestionBatchEntry{
-        .{ .question = "What should fx do next?", .options = &options },
+        .{ .question = "What should fiber do next?", .options = &options },
     };
     try app.question_prompt.syncFrom(alloc, &entries);
     app.shell.render_requests.request(.modal);
@@ -4006,13 +3947,13 @@ test "core.app_render_runtime inline menus survive the VT size and resize matrix
     defer file.close(io_mod.getIo());
 
     const skills = [_]skill_runtime.Skill{
-        .{ .name = "one", .description = "", .path = "/skills/one/SKILL.md", .source = .global_fx },
-        .{ .name = "two", .description = "", .path = "/skills/two/SKILL.md", .source = .global_fx },
-        .{ .name = "three", .description = "", .path = "/skills/three/SKILL.md", .source = .global_fx },
-        .{ .name = "four", .description = "", .path = "/skills/four/SKILL.md", .source = .global_fx },
-        .{ .name = "five", .description = "", .path = "/skills/five/SKILL.md", .source = .global_fx },
-        .{ .name = "six", .description = "", .path = "/skills/six/SKILL.md", .source = .global_fx },
-        .{ .name = "seven", .description = "", .path = "/skills/seven/SKILL.md", .source = .global_fx },
+        .{ .name = "one", .description = "", .path = "/skills/one/SKILL.md", .source = .global_fiber },
+        .{ .name = "two", .description = "", .path = "/skills/two/SKILL.md", .source = .global_fiber },
+        .{ .name = "three", .description = "", .path = "/skills/three/SKILL.md", .source = .global_fiber },
+        .{ .name = "four", .description = "", .path = "/skills/four/SKILL.md", .source = .global_fiber },
+        .{ .name = "five", .description = "", .path = "/skills/five/SKILL.md", .source = .global_fiber },
+        .{ .name = "six", .description = "", .path = "/skills/six/SKILL.md", .source = .global_fiber },
+        .{ .name = "seven", .description = "", .path = "/skills/seven/SKILL.md", .source = .global_fiber },
     };
     var summaries: [25]@import("../session/session_store.zig").SessionSummary = undefined;
     for (&summaries) |*summary| {
@@ -4154,13 +4095,13 @@ test "core.app_render_runtime width-changed queued editor keeps mention navigati
     defer file.close(io_mod.getIo());
 
     const skills = [_]skill_runtime.Skill{
-        .{ .name = "one", .description = "", .path = "/tmp/one", .source = .global_fx },
-        .{ .name = "two", .description = "", .path = "/tmp/two", .source = .global_fx },
-        .{ .name = "three", .description = "", .path = "/tmp/three", .source = .global_fx },
-        .{ .name = "four", .description = "", .path = "/tmp/four", .source = .global_fx },
-        .{ .name = "five", .description = "", .path = "/tmp/five", .source = .global_fx },
-        .{ .name = "six", .description = "", .path = "/tmp/six", .source = .global_fx },
-        .{ .name = "seven", .description = "", .path = "/tmp/seven", .source = .global_fx },
+        .{ .name = "one", .description = "", .path = "/tmp/one", .source = .global_fiber },
+        .{ .name = "two", .description = "", .path = "/tmp/two", .source = .global_fiber },
+        .{ .name = "three", .description = "", .path = "/tmp/three", .source = .global_fiber },
+        .{ .name = "four", .description = "", .path = "/tmp/four", .source = .global_fiber },
+        .{ .name = "five", .description = "", .path = "/tmp/five", .source = .global_fiber },
+        .{ .name = "six", .description = "", .path = "/tmp/six", .source = .global_fiber },
+        .{ .name = "seven", .description = "", .path = "/tmp/seven", .source = .global_fiber },
     };
     var app = CoordinatorTestApp{
         .alloc = alloc,
@@ -4246,7 +4187,7 @@ test "core.app_render_runtime active setup hub stays on the inline transcript su
     };
     defer app.deinit();
     try app.selected_model.appendSlice(alloc, "test-model");
-    app.auth.openPicker(alloc);
+    app.auth.openPicker();
     try app.shell.initBacking(alloc);
     try app.shell.enableShadowVt(alloc);
     try app.shell.writeTranscript(alloc, &app.metrics, "setup transcript stays behind\n", true);
@@ -4257,12 +4198,12 @@ test "core.app_render_runtime active setup hub stays on the inline transcript su
     try std.testing.expect(!app.terminal.catalogMenuScreenActive());
     try std.testing.expect(try coordinatorGridContains(app.shell.shadow_vt.?.*, "Setup"));
     try std.testing.expect(try coordinatorGridContains(app.shell.shadow_vt.?.*, "Connections"));
-    try std.testing.expect(try coordinatorGridContains(app.shell.shadow_vt.?.*, "Credential source"));
+    try std.testing.expect(!(try coordinatorGridContains(app.shell.shadow_vt.?.*, "Credential source")));
     try std.testing.expect(try coordinatorGridContains(app.shell.shadow_vt.?.*, "Enter Open"));
     try std.testing.expect(!(try coordinatorGridContains(app.shell.shadow_vt.?.*, "test-model")));
     try std.testing.expect(try coordinatorGridContains(app.shell.shadow_vt.?.*, "setup transcript stays behind"));
 
-    app.auth.closePicker(alloc);
+    app.auth.closePicker();
     app.shell.render_requests.request(.footer);
     try Runtime(CoordinatorTestApp).flushRequestedFrame(&app);
 
@@ -4350,7 +4291,7 @@ test "core.app_render_runtime file approval returns to the preserved inline skil
         .name = "pure-core",
         .description = "Keep data transformations pure.",
         .path = "/skills/pure-core/SKILL.md",
-        .source = .global_fx,
+        .source = .global_fiber,
     }};
     const preview_lines = [_]diff_mod.PreviewLine{
         .{ .op = .addition, .new_line = 1, .text = "after" },
@@ -4760,7 +4701,7 @@ test "core.app_render_runtime question prompt exits the full transcript screen b
         .{ .label = "Keep going", .description = null },
     };
     const entries = [_]types.QuestionBatchEntry{
-        .{ .question = "What should fx do next?", .options = &options },
+        .{ .question = "What should fiber do next?", .options = &options },
     };
     try app.question_prompt.syncFrom(alloc, &entries);
 
@@ -5335,7 +5276,7 @@ test "core.app_render_runtime coordinator physically scrolls preserved shell row
 
     var terminal = try vt_emulator.Grid.init(alloc, layout.cols, layout.rows);
     defer terminal.deinit();
-    const shell_markers = "\x1b[1;1HSHELL01\nSHELL02\nSHELL03\nSHELL04\nSHELL05\nSHELL06\nSHELL07\n$ fx";
+    const shell_markers = "\x1b[1;1HSHELL01\nSHELL02\nSHELL03\nSHELL04\nSHELL05\nSHELL06\nSHELL07\n$ fiber";
     try terminal.feed(shell_markers);
     try app.shell.shadow_vt.?.feed(shell_markers);
 

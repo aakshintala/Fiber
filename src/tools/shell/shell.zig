@@ -321,7 +321,7 @@ fn validateRun(
         );
     };
     if (!input.tty) {
-        _ = commandEnvironment(arena, ctx, input.profile) catch |err| {
+        _ = commandEnvironment(arena, input.profile) catch |err| {
             return try std.fmt.allocPrint(
                 ctx.allocator,
                 "shell run profile is invalid: {s}",
@@ -371,7 +371,6 @@ fn callRun(
     };
     const environment = commandEnvironment(
         request_arena,
-        ctx,
         input.profile,
     ) catch |err| {
         return .{ .failure = try std.fmt.allocPrint(
@@ -1493,13 +1492,8 @@ fn resolveCwd(
 
 fn commandEnvironment(
     alloc: Allocator,
-    ctx: tool_dispatch.DispatchContext,
     profile: ?command_environment.Profile,
 ) !command_environment.Environment {
-    if (ctx.captured_command_host == .workspace_clean) {
-        if (profile != null) return error.InvalidWorkspaceInput;
-        return .workspace_clean;
-    }
     var login_shell_buffer: [4096]u8 = undefined;
     const configured = shell_resolver.configuredLoginShellInto(&login_shell_buffer);
     return shell_resolver.environment(alloc, configured, profile);
@@ -1830,7 +1824,7 @@ test "shell snapshot keeps bounded head tail and control metadata" {
         .state = .{ .completed = .{ .exit_code = 0 } },
         .output_delta = @constCast(output),
         .output_truncated = false,
-        .output_file = @constCast("fx-command-replay-large.bin"),
+        .output_file = @constCast("fiber-command-replay-large.bin"),
     }, null);
     defer alloc.free(body);
 
@@ -1839,7 +1833,7 @@ test "shell snapshot keeps bounded head tail and control metadata" {
     defer parsed.deinit();
     const object = parsed.value.object;
     try std.testing.expectEqualStrings(
-        "fx-command-replay-large.bin",
+        "fiber-command-replay-large.bin",
         object.get("full_output_handle").?.string,
     );
     try std.testing.expect(object.get("output_truncated").?.bool);
@@ -1860,7 +1854,7 @@ test "shell snapshot projects hostile bytes as readable terminal-safe text" {
         .state = .{ .completed = .{ .exit_code = 0 } },
         .output_delta = @constCast(raw),
         .output_truncated = false,
-        .output_file = @constCast("fx-command-replay-hostile.bin"),
+        .output_file = @constCast("fiber-command-replay-hostile.bin"),
     }, null);
     defer alloc.free(body);
 
@@ -1877,7 +1871,7 @@ test "shell snapshot projects hostile bytes as readable terminal-safe text" {
     try std.testing.expect(std.mem.find(u8, output_value.string, "\\xff") != null);
     try std.testing.expect(std.mem.find(u8, output_value.string, "CONTROL_TAIL") != null);
     try std.testing.expectEqualStrings(
-        "fx-command-replay-hostile.bin",
+        "fiber-command-replay-hostile.bin",
         parsed.value.object.get("full_output_handle").?.string,
     );
 }
@@ -1893,7 +1887,7 @@ test "shell snapshot keeps a hostile output tail within the result limit" {
         .state = .{ .completed = .{ .exit_code = 0 } },
         .output_delta = @constCast(raw),
         .output_truncated = false,
-        .output_file = @constCast("fx-command-replay-hostile-large.bin"),
+        .output_file = @constCast("fiber-command-replay-hostile-large.bin"),
     }, null);
     defer alloc.free(body);
 
@@ -1936,7 +1930,6 @@ test "running shell snapshot leaves continuation intent to the caller" {
 }
 
 test "registered shell run yields and waits through one managed execution" {
-    if (comptime @import("builtin").os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = managed_execution.Runtime.init(alloc);
     defer runtime.deinit();
@@ -1973,7 +1966,6 @@ test "registered shell run yields and waits through one managed execution" {
     defer environment_arena_state.deinit();
     const environment = try commandEnvironment(
         environment_arena_state.allocator(),
-        .{ .allocator = alloc, .workspace_root = "/tmp" },
         .clean,
     );
     const command_ctx = command_admission.CommandContext{
@@ -2073,7 +2065,6 @@ test "registered shell run yields and waits through one managed execution" {
 }
 
 test "shell delivery advances only after result commit" {
-    if (comptime @import("builtin").os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = managed_execution.Runtime.init(alloc);
     defer runtime.deinit();

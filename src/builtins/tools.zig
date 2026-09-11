@@ -1,6 +1,4 @@
 const std = @import("std");
-const std_builtin = @import("builtin");
-const builtin_gateway = @import("gateway.zig");
 const terminal_contracts = @import("../core/terminal/contracts.zig");
 const managed_execution_contract = @import("../core/execution/managed_execution_contract.zig");
 const model_tool_schema = @import("../core/tooling/model_tool_schema.zig");
@@ -13,8 +11,6 @@ const tool_set_contract = @import("../core/tooling/tool_set.zig");
 const tool_specs = @import("../core/tooling/tool_specs.zig");
 const types = @import("../core/shared/types.zig");
 const lexical_relevance = @import("../core/shared/lexical_relevance.zig");
-const capability_retrieval = @import("../core/tooling/capability_retrieval.zig");
-const permission_gate = @import("../core/permissions/permission_gate.zig");
 const ask_user_question_impl = @import("../tools/agent/ask_user_question.zig");
 const subagent_impl = @import("../tools/agent/subagent.zig");
 const vision_impl = @import("../tools/agent/vision.zig");
@@ -30,15 +26,6 @@ const skill_impl = @import("../tools/skills/skill.zig");
 const capability_search_impl = @import("../tools/capabilities/capability_search.zig");
 const web_fetch_impl = @import("../tools/web/fetch.zig");
 const web_search_impl = @import("../tools/web/search.zig");
-const test_io_mod = if (std_builtin.is_test)
-    @import("../core/shared/io.zig")
-else
-    struct {};
-const test_session_child_store = if (std_builtin.is_test)
-    @import("../core/session/session_child_store.zig")
-else
-    struct {};
-
 const Allocator = std.mem.Allocator;
 
 pub const ToolSpec = tool_specs.ToolSpec;
@@ -167,7 +154,7 @@ const skill_description =
 const capability_search_description =
     "Find relevant installed skills and configured MCP tools from one natural-language task. The runtime owns domain routing, ranking, catalog bounds, and terminal no-match handling. Set server only when an exact configured MCP alias is already known. Load one exact skill result with skill or select one exact MCP result with mcp_select_tool. Do not guess identities or repeat a no-match search.";
 const install_skill_description =
-    "Install a reusable skill from a supported source into fx managed skill storage. When to use: the user asks to install a skill or pastes a skills install command. When NOT to use: no installation is required, install packages, fetch unrelated repos, or modify project code.";
+    "Install a reusable skill from a supported source into fiber managed skill storage. When to use: the user asks to install a skill or pastes a skills install command. When NOT to use: no installation is required, install packages, fetch unrelated repos, or modify project code.";
 const mcp_select_tool_description =
     "Exact-select one configured MCP/dynamic tool by name so its executable schema is advertised on the next model step. When to use: after discovering the exact specialized tool name in configured metadata. When NOT to use: guessing partial names, selecting built-in tools, or executing the dynamic tool directly.";
 const mcp_features_description =
@@ -190,7 +177,7 @@ const ask_user_question_question_schema = model_tool_schema.ObjectSchema{
 };
 
 const subagent_description =
-    "Delegate work and receive one terminal child result. Use run for one temporary child and one task. Use message with a stable name to create or continue a persistent conversation in this parent session. Optional instructions replace only that child's system overlay; fx preserves its trusted base prompt. fx owns timing, worker identities, cancellation, permissions, persistence, and cleanup.";
+    "Delegate work and receive one terminal child result. Use run for one temporary child and one task. Use message with a stable name to create or continue a persistent conversation in this parent session. Optional instructions replace only that child's system overlay; fiber preserves its trusted base prompt. fiber owns timing, worker identities, cancellation, permissions, persistence, and cleanup.";
 
 const subagent_model_run_properties = [_]model_tool_schema.Property{
     .{ .name = "action", .json_type = .string, .shape = &.{ .enum_values = &.{"run"} } },
@@ -200,8 +187,8 @@ const subagent_model_run_properties = [_]model_tool_schema.Property{
 const subagent_model_message_properties = [_]model_tool_schema.Property{
     .{ .name = "action", .json_type = .string, .shape = &.{ .enum_values = &.{"message"} } },
     .{ .name = "agent", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_agent_name_bytes }, .description = "Stable lowercase name for one persistent conversation in this parent session. A new valid name creates it; later calls continue it." },
-    .{ .name = "instructions", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_instructions_bytes }, .description = "Optional persistent instructions for this child. When present, replaces its child-specific system overlay before this message; when omitted, preserves the existing overlay. Cannot replace fx's trusted base prompt or widen authority." },
-    .{ .name = "message", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_message_bytes }, .description = "Next message for that named agent. fx creates it on first use and continues it afterward." },
+    .{ .name = "instructions", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_instructions_bytes }, .description = "Optional persistent instructions for this child. When present, replaces its child-specific system overlay before this message; when omitted, preserves the existing overlay. Cannot replace fiber's trusted base prompt or widen authority." },
+    .{ .name = "message", .json_type = .string, .bounds = &.{ .min_length = 1, .max_length = subagent_domain.max_message_bytes }, .description = "Next message for that named agent. fiber creates it on first use and continues it afterward." },
 };
 
 const subagent_model_action_schemas = [_]model_tool_schema.ObjectSchema{
@@ -408,24 +395,6 @@ pub const web_fetch = ToolSpec{
     .irreversible_fn = web_fetch_impl.isIrreversible,
 };
 
-fn writeWebSearchGatewayAdvertisement(
-    alloc: Allocator,
-    writer: *std.Io.Writer,
-) tool_dispatch.ProviderAdvertisementError!void {
-    const policy = builtin_gateway.default_web_search_policy;
-    const provider_tools = try builtin_gateway.providerToolsJson(alloc, .{
-        .backend = try builtin_gateway.selectedWebSearchBackend(),
-        .max_results = policy.max_results,
-        .max_output_tokens = policy.max_output_tokens,
-        .max_output_chars = policy.max_output_chars,
-    });
-    defer alloc.free(provider_tools);
-    if (provider_tools.len < 2 or provider_tools[0] != '[' or provider_tools[provider_tools.len - 1] != ']') {
-        return error.InvalidGatewayAdvertisement;
-    }
-    try writer.writeAll(provider_tools[1 .. provider_tools.len - 1]);
-}
-
 pub const web_search = ToolSpec{
     .name = "web_search",
     .description = web_search_description,
@@ -442,8 +411,6 @@ pub const web_search = ToolSpec{
             .additional_properties = false,
         },
     },
-    .write_provider_advertisement_fn = writeWebSearchGatewayAdvertisement,
-    .provider_executed = true,
     .executor_kind = .web_search,
     .activity_kind = .read,
     .requires_approval = false,
@@ -938,7 +905,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "7fed627d6a17a6c38bf2bd635c074121c2fb5eae8be33f124bb42abe47dfbe34",
+        "613e12cadb4423b9ad8691903dcb30d8835875a841b0c1f7605d211aa6bb6cb8",
         &actual_hex,
     );
 }
@@ -966,22 +933,6 @@ fn schemaProperty(schema: model_tool_schema.ObjectSchema, name: []const u8) ?mod
         if (std.mem.eql(u8, property.name, name)) return property;
     }
     return null;
-}
-
-fn schemaEnumValues(property: model_tool_schema.Property) []const []const u8 {
-    const shape = property.shape orelse return &.{};
-    return switch (shape.*) {
-        .enum_values => |values| values,
-        else => &.{},
-    };
-}
-
-fn schemaObject(property: model_tool_schema.Property) ?*const model_tool_schema.ObjectSchema {
-    const shape = property.shape orelse return null;
-    return switch (shape.*) {
-        .object => |object| object,
-        else => null,
-    };
 }
 
 fn nameInSet(names: []const []const u8, wanted: []const u8) bool {
@@ -1307,20 +1258,10 @@ test "built-in web_search is registered in default production tools" {
     try std.testing.expect(lookup("web_search") != null);
 }
 
-test "built-in web_search owns its Gateway provider advertisement" {
+test "built-in web_search does not advertise a Gateway provider" {
     const registered = registry.lookup("web_search") orelse return error.TestExpectedEqual;
-    const write_advertisement = registered.write_provider_advertisement_fn orelse return error.TestExpectedEqual;
-
-    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer out.deinit();
-    try write_advertisement(std.testing.allocator, &out.writer);
-    const json = try out.toOwnedSlice();
-    defer std.testing.allocator.free(json);
-
-    try std.testing.expectEqualStrings(
-        "{\"type\":\"provider\",\"id\":\"gateway.exa_search\",\"name\":\"exa_search\",\"args\":{\"numResults\":10,\"contents\":{\"highlights\":true}}}",
-        json,
-    );
+    try std.testing.expect(registered.write_provider_advertisement_fn == null);
+    try std.testing.expect(!registered.provider_executed);
 }
 
 fn expectWebSearchSchemaContains(needle: []const u8) !void {
@@ -1760,12 +1701,6 @@ test "built-in registry uses executable web_fetch implementation" {
     try std.testing.expect(std.mem.find(u8, body, "\"tool_name\":\"web_fetch\"") != null);
     try std.testing.expect(std.mem.find(u8, body, "web_fetch failed") != null);
     try std.testing.expect(std.mem.find(u8, body, "UnsupportedScheme") != null);
-}
-
-fn expectRegisteredNames(names: []const []const u8) !void {
-    for (names) |name| {
-        try std.testing.expect(registry.lookup(name) != null);
-    }
 }
 
 test "built-in read-only tool set matches plan inspection tools" {

@@ -11,7 +11,6 @@ const workspace_config = @import("../core/mcp/workspace_config.zig");
 const mcp_runtime = @import("../core/mcp/mcp_runtime.zig");
 const config_runtime = @import("../core/config/config_runtime.zig");
 const elicitation = @import("../core/mcp/elicitation.zig");
-const streamable_http = @import("../core/mcp/streamable_http.zig");
 const profile_paths = @import("../core/shared/profile_paths.zig");
 const text_utils = @import("../core/shared/text_utils.zig");
 
@@ -186,7 +185,7 @@ fn handleCommand(alloc: Allocator, rest: []const u8, command_request: CommandReq
         return switch (authentication) {
             .started => lineParts(
                 alloc,
-                &.{ "Waiting for MCP authentication for '", name, "'. You can continue using fx while the browser flow completes." },
+                &.{ "Waiting for MCP authentication for '", name, "'. You can continue using fiber while the browser flow completes." },
                 false,
             ),
             .busy => lineParts(
@@ -1228,23 +1227,22 @@ fn tmpPath(alloc: Allocator, root: []const u8, name: []const u8) ![]u8 {
 }
 
 test "saving MCP config replaces the file durably" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const original = "{\"mcp\":{\"stale\":{\"command\":\"echo\"}}}";
-    try writeTempFile(&tmp, "home/.fx/mcp.json", original);
-    const path = try tmpDirPath(alloc, tmp.dir, "home/.fx/mcp.json");
+    try writeTempFile(&tmp, "home/.fiber/mcp.json", original);
+    const path = try tmpDirPath(alloc, tmp.dir, "home/.fiber/mcp.json");
     defer alloc.free(path);
 
-    var fx_dir = try tmp.dir.openDir(io_mod.getIo(), "home/.fx", .{ .iterate = true });
-    defer fx_dir.close(io_mod.getIo());
+    var fiber_dir = try tmp.dir.openDir(io_mod.getIo(), "home/.fiber", .{ .iterate = true });
+    defer fiber_dir.close(io_mod.getIo());
 
     // Seed a group-readable mode so the 0600 assertion below cannot pass just
     // because the developer's umask already produced it.
     {
-        var seed = try fx_dir.openFile(io_mod.getIo(), "mcp.json", .{ .mode = .read_write });
+        var seed = try fiber_dir.openFile(io_mod.getIo(), "mcp.json", .{ .mode = .read_write });
         defer seed.close(io_mod.getIo());
         try seed.setPermissions(io_mod.getIo(), std.Io.File.Permissions.fromMode(0o644));
     }
@@ -1252,7 +1250,7 @@ test "saving MCP config replaces the file durably" {
     // Hold the pre-save file open. A rename-over leaves this descriptor on the
     // old, unlinked inode; an in-place truncate would empty it instead, which
     // is the failure this save must not have.
-    var held = try fx_dir.openFile(io_mod.getIo(), "mcp.json", .{});
+    var held = try fiber_dir.openFile(io_mod.getIo(), "mcp.json", .{});
     defer held.close(io_mod.getIo());
 
     try saveConfigsToPath(alloc, path, &.{});
@@ -1267,10 +1265,10 @@ test "saving MCP config replaces the file durably" {
     defer alloc.free(written);
     try std.testing.expect(std.mem.find(u8, written, "stale") == null);
 
-    const stat = try fx_dir.statFile(io_mod.getIo(), "mcp.json", .{ .follow_symlinks = false });
+    const stat = try fiber_dir.statFile(io_mod.getIo(), "mcp.json", .{ .follow_symlinks = false });
     try std.testing.expectEqual(@as(u32, 0o600), stat.permissions.toMode() & 0o777);
 
-    var it = fx_dir.iterate();
+    var it = fiber_dir.iterate();
     var entries: usize = 0;
     while (try it.next(io_mod.getIo())) |entry| {
         entries += 1;
@@ -1321,7 +1319,7 @@ test "MCP config diagnostic treats nonblocking profile states as clear" {
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     const home_path = try tmpDirPath(alloc, tmp.dir, "home");
     defer alloc.free(home_path);
 
@@ -1335,7 +1333,7 @@ test "MCP config diagnostic treats nonblocking profile states as clear" {
         }
     }
 
-    try writeTempFile(&tmp, "home/.fx/mcp.json", "{\"mcp\":{}}");
+    try writeTempFile(&tmp, "home/.fiber/mcp.json", "{\"mcp\":{}}");
     {
         const test_home = try TestHome.install(alloc, home_path);
         defer test_home.deinit();
@@ -1351,7 +1349,7 @@ test "MCP config diagnostic preserves the startup parser error" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try writeTempFile(&tmp, "home/.fx/mcp.json", "{invalid json");
+    try writeTempFile(&tmp, "home/.fiber/mcp.json", "{invalid json");
     const home_path = try tmpDirPath(alloc, tmp.dir, "home");
     defer alloc.free(home_path);
 
@@ -1441,7 +1439,7 @@ test "workspace MCP missing environment variable is actionable and secret free" 
         .{workspace_root},
     );
     defer alloc.free(settings);
-    try writeTempFile(&tmp, "home/.fx/settings.json", settings);
+    try writeTempFile(&tmp, "home/.fiber/settings.json", settings);
     const home_path = try tmpDirPath(alloc, tmp.dir, "home");
     defer alloc.free(home_path);
     const environment = try TestHome.install(alloc, home_path);
@@ -1468,7 +1466,7 @@ test "built-in MCP runtime loads disabled configured servers without spawning" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeTempFile(&tmp, "home/.fx/mcp.json",
+    try writeTempFile(&tmp, "home/.fiber/mcp.json",
         \\{"mcp":{"noop":{"type":"local","command":["node","server.js"],"enabled":false}}}
     );
     const home_path = try tmpDirPath(alloc, tmp.dir, "home");
@@ -1494,7 +1492,7 @@ test "built-in MCP runtime loading leaves enabled servers disconnected" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try writeTempFile(&tmp, "home/.fx/mcp.json",
+    try writeTempFile(&tmp, "home/.fiber/mcp.json",
         \\{"mcp":{"pending":{"type":"local","command":["false"],"enabled":true}}}
     );
     const home_path = try tmpDirPath(alloc, tmp.dir, "home");
@@ -1808,19 +1806,18 @@ test "built-in MCP command rejects invalid remote add forms without mutation" {
 }
 
 test "saving MCP config refuses a symlinked target" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const external = "{\"mcp\":{\"fs\":{\"command\":\"node\"}}}";
     try writeTempFile(&tmp, "home/external.json", external);
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     const external_path = try tmpDirPath(alloc, tmp.dir, "home/external.json");
     defer alloc.free(external_path);
-    try tmp.dir.symLink(io_mod.getIo(), external_path, "home/.fx/mcp.json", .{ .is_directory = false });
+    try tmp.dir.symLink(io_mod.getIo(), external_path, "home/.fiber/mcp.json", .{ .is_directory = false });
 
-    const path = try std.fs.path.join(alloc, &.{ std.fs.path.dirname(external_path).?, ".fx", "mcp.json" });
+    const path = try std.fs.path.join(alloc, &.{ std.fs.path.dirname(external_path).?, ".fiber", "mcp.json" });
     defer alloc.free(path);
 
     // The durable helper refuses a target that is not a plain private file, so
@@ -1833,17 +1830,16 @@ test "saving MCP config refuses a symlinked target" {
 }
 
 test "built-in MCP command reports a failed save instead of a missing server" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var fixture = ListFixture{ .text = "" };
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     try writeTempFile(&tmp, "home/external.json", "{\"mcp\":{\"fs\":{\"command\":\"node\"}}}");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     const external_path = try tmpDirPath(alloc, tmp.dir, "home/external.json");
     defer alloc.free(external_path);
-    try tmp.dir.symLink(io_mod.getIo(), external_path, "home/.fx/mcp.json", .{ .is_directory = false });
+    try tmp.dir.symLink(io_mod.getIo(), external_path, "home/.fiber/mcp.json", .{ .is_directory = false });
 
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
     defer alloc.free(home);
@@ -1856,7 +1852,6 @@ test "built-in MCP command reports a failed save instead of a missing server" {
 }
 
 test "adding an MCP server creates the profile directory privately" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var fixture = ListFixture{ .text = "" };
     var tmp = std.testing.tmpDir(.{});
@@ -1869,9 +1864,9 @@ test "adding an MCP server creates the profile directory privately" {
     defer result.deinit(alloc);
     try expectLine(result, "Saved MCP server 'fs'.", true);
 
-    const dir_stat = try tmp.dir.statFile(io_mod.getIo(), "home/.fx", .{ .follow_symlinks = false });
+    const dir_stat = try tmp.dir.statFile(io_mod.getIo(), "home/.fiber", .{ .follow_symlinks = false });
     try std.testing.expectEqual(@as(u32, 0o700), dir_stat.permissions.toMode() & 0o777);
-    const file_stat = try tmp.dir.statFile(io_mod.getIo(), "home/.fx/mcp.json", .{ .follow_symlinks = false });
+    const file_stat = try tmp.dir.statFile(io_mod.getIo(), "home/.fiber/mcp.json", .{ .follow_symlinks = false });
     try std.testing.expectEqual(@as(u32, 0o600), file_stat.permissions.toMode() & 0o777);
 }
 
@@ -1980,7 +1975,7 @@ test "MCP auth requires explicit browser confirmation and logout stays non-secre
     defer started.deinit(alloc);
     try expectLine(
         started,
-        "Waiting for MCP authentication for 'remote'. You can continue using fx while the browser flow completes.",
+        "Waiting for MCP authentication for 'remote'. You can continue using fiber while the browser flow completes.",
         false,
     );
     try std.testing.expectEqual(@as(usize, 2), fixture.validation_calls);
@@ -2192,7 +2187,7 @@ test "loadConfigFromJson preserves HTTP identity headers and timeouts" {
 test "remote config keeps credential references and OAuth policy without secrets" {
     const alloc = std.testing.allocator;
     const json =
-        \\{"mcp":{"api":{"type":"http","url":"https://api.example.com/mcp","header_env":{"X-Workspace":"MCP_WORKSPACE"},"bearer_token_env":"MCP_TOKEN","oauth":{"resource":"https://api.example.com/mcp","issuer":"https://login.example.com","client_id":"fx-client","client_secret_env":"MCP_CLIENT_SECRET","client_metadata_url":"https://client.example/fx.json","scopes":["tools.read","tools.call"]}}}}
+        \\{"mcp":{"api":{"type":"http","url":"https://api.example.com/mcp","header_env":{"X-Workspace":"MCP_WORKSPACE"},"bearer_token_env":"MCP_TOKEN","oauth":{"resource":"https://api.example.com/mcp","issuer":"https://login.example.com","client_id":"fiber-client","client_secret_env":"MCP_CLIENT_SECRET","client_metadata_url":"https://client.example/fiber.json","scopes":["tools.read","tools.call"]}}}}
     ;
     var configs = try loadConfigFromJson(alloc, json);
     defer freeConfigs(alloc, &configs);
@@ -2209,14 +2204,14 @@ test "remote config keeps credential references and OAuth policy without secrets
         auth.resource.?,
     );
     try std.testing.expectEqualStrings("https://login.example.com", auth.issuer.?);
-    try std.testing.expectEqualStrings("fx-client", auth.client_id.?);
+    try std.testing.expectEqualStrings("fiber-client", auth.client_id.?);
     try std.testing.expectEqualStrings("MCP_CLIENT_SECRET", auth.client_secret_env.?);
     try std.testing.expectEqual(@as(usize, 2), auth.scopes.len);
 }
 
 test "profile config rejects a mixed set containing invalid client metadata URLs" {
     const json =
-        \\{"mcp":{"loopback":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"http://127.0.0.1:4321/client.json"}},"pathless":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example"}},"root":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example/"}},"valid":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example/fx.json"}}}}
+        \\{"mcp":{"loopback":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"http://127.0.0.1:4321/client.json"}},"pathless":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example"}},"root":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example/"}},"valid":{"type":"http","url":"https://api.example.com/mcp","oauth":{"client_metadata_url":"https://client.example/fiber.json"}}}}
     ;
     try std.testing.expectError(
         error.McpConfigInvalidOAuth,
@@ -2419,7 +2414,7 @@ test "addProfileServerToPath roundtrips local replacement and remove" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
     defer alloc.free(home);
     const path = try configPathFromHome(alloc, home);
@@ -2460,7 +2455,7 @@ test "profile mutation preserves canonical files with suspicious sibling maps" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
     const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
     defer alloc.free(home);
     const path = try configPathFromHome(alloc, home);
@@ -2468,7 +2463,7 @@ test "profile mutation preserves canonical files with suspicious sibling maps" {
     const original =
         "{\"mcp\":{\"canonical\":{\"command\":\"one\"}},\"MCP-Servers\":{\"shadow\":{\"command\":\"two\"}},\"metadata\":{\"owner\":\"team\"}}";
     try tmp.dir.writeFile(io_mod.getIo(), .{
-        .sub_path = "home/.fx/mcp.json",
+        .sub_path = "home/.fiber/mcp.json",
         .data = original,
     });
 

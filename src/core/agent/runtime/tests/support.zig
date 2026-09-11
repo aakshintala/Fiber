@@ -118,7 +118,6 @@ pub const VisionAgentToolRuntime = struct {
             .agent_stream_provider = self.agent_stream_provider,
             .model = "anthropic/claude-opus-4.6",
             .gateway_retry_count = 1,
-            .gateway_chat_url = "https://example.invalid",
             .agent_step_limit = 8,
             .tool_registry = .{ .tools = vision_agent_test_tools[0..] },
             .permission_mode = .ask,
@@ -244,7 +243,7 @@ pub const FakeGateway = struct {
     }
 
     pub fn provider(self: *FakeGateway) agent_stream_provider.Provider {
-        var result = builtin_gateway.agent_stream_provider;
+        var result = agent_stream_provider.unavailable_provider;
         result.context = self;
         result.stream_fn = fakeGatewayStream;
         return result;
@@ -1725,7 +1724,7 @@ pub const PromptFixture = struct {
             .images = self.images[0..],
             .model = @constCast("anthropic/claude-opus-4.6"),
             .api_key = @constCast("key"),
-            .credential_source = .ai_gateway_api_key,
+            .credential_source = .chatgpt_subscription,
             .permission_mode = .ask,
             .history = self.history[0..],
             .grants = self.grants[0..],
@@ -1737,7 +1736,6 @@ pub const PromptFixture = struct {
             .system_prompt = "system",
             .gateway_retry_count = 1,
             .max_provider_attempts = model_response_recovery.default_max_provider_attempts,
-            .gateway_chat_url = "https://example.invalid",
             .agent_step_limit = 8,
             .cancel_flag = &self.cancel_flag,
             .workspace_root = self.workspace_root,

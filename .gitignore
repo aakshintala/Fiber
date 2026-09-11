@@ -14,6 +14,7 @@ sdk/dist/
 
 # Workspace-local runtime state
 /skills/
+/.scratch/
 
 # Local environment files
 .env

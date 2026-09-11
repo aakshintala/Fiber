@@ -18,7 +18,6 @@ const composer_insertion = @import("../../core/input/composer_insertion.zig");
 const kill_ring = @import("../../core/input/kill_ring.zig");
 const entity_spans = @import("../../core/shared/entity_spans.zig");
 const input_action = @import("../../core/input/input_action.zig");
-const vertical_navigation = @import("../../core/input/vertical_navigation.zig");
 const visual_layout = @import("visual_layout.zig");
 const escape_parser = @import("escape_parser.zig");
 const shortcuts = @import("shortcuts.zig");
@@ -38,7 +37,7 @@ pub const DeferredTerminalInputSource = enum {
 pub const TerminalInputOwner = enum {
     theme_monitor,
     paste,
-    fx_input,
+    fiber_input,
 };
 
 pub fn terminalInputOwner(
@@ -48,15 +47,13 @@ pub fn terminalInputOwner(
     if (monitor.ownsInput()) return .theme_monitor;
     if (paste_active) return .paste;
     if (monitor.enabled) return .theme_monitor;
-    return .fx_input;
+    return .fiber_input;
 }
 
 const InputEscapeAction = input_action.Action;
 const MouseInput = escape_parser.MouseInput;
 
 pub const shortcutFromControlByte = shortcuts.fromControlByte;
-pub const shortcutFromFocusedEditorControlByte = shortcuts.fromFocusedEditorControlByte;
-pub const shortcutFromEscapeAction = shortcuts.fromEscapeAction;
 
 pub fn approvalActionFromByte(byte: u8) ?approval_decision.Action {
     return switch (byte) {

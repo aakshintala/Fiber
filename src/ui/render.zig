@@ -1,24 +1,18 @@
 const std = @import("std");
-const build_options = @import("build_options");
 const io_mod = @import("../core/shared/io.zig");
 const host = @import("../core/hosts/host.zig");
 const display_width = @import("../core/shared/display_width.zig");
 const text_utils = @import("../core/shared/text_utils.zig");
 const types = @import("../core/shared/types.zig");
-const image_attachments = @import("../core/images/image_attachments.zig");
 const assistant_presentation = @import("../core/agent/assistant_presentation.zig");
 const main = @import("../main.zig");
 const theme_detection = @import("terminal/theme_detection.zig");
 const theme_protocol = @import("terminal/theme_protocol.zig");
 const visual_layout = @import("input/visual_layout.zig");
-const update_target = @import("../core/upgrade/update_target.zig");
 
-pub const input_prefix = "❯ ";
 pub const TerminalRgb = user_message_card.Rgb;
 pub const reset_style = "\x1b[0m";
 pub const bold_style = "\x1b[1m";
-pub const app_name = "fx";
-pub const right_tag = "/fx";
 pub const ask_activity_label = "⏺ Asking";
 
 const user_message_card = @import("assistant/user_message_card.zig");
@@ -125,7 +119,6 @@ pub fn themeNeedsUpdate(light: bool, terminal_bg: ?TerminalRgb) bool {
 }
 
 // Explicit theme overrides skip OSC 11, leaving `rgb` null for fallback shading.
-pub const ThemeDetection = theme_detection.Detection;
 pub const TerminalBackground = theme_protocol.Background;
 pub const explicitThemeOverride = theme_detection.explicitThemeOverride;
 pub const detectTheme = theme_detection.detectTheme;
@@ -165,41 +158,23 @@ pub fn buildInputLineForRow(input: []const u8, cursor: usize, line_index: usize,
     };
 }
 
-const build_channel = update_target.Channel.parse(build_options.update_channel) orelse .stable;
 const welcome_build_label_bytes: usize = 96;
-const dev_revision_bytes: usize = 7;
-
-/// Dev builds ship on every merged PR, so the version alone cannot identify the
-/// binary: the header carries the commit and a brighter `[dev]` tag.
 fn writeBuildLabel(
     out: []u8,
-    channel: update_target.Channel,
     version_text: []const u8,
-    revision: []const u8,
 ) ![]const u8 {
-    if (channel != .dev) return std.fmt.bufPrint(out, "v{s}", .{version_text});
-    if (revision.len < dev_revision_bytes or std.mem.eql(u8, revision, "unknown")) {
-        return std.fmt.bufPrint(out, "v{s} {s}[dev]{s}", .{ version_text, hint_style, dim_style });
-    }
-    return std.fmt.bufPrint(out, "v{s}-{s} {s}[dev]{s}", .{
-        version_text,
-        revision[0..dev_revision_bytes],
-        hint_style,
-        dim_style,
-    });
+    return std.fmt.bufPrint(out, "v{s}", .{version_text});
 }
 
 pub fn welcomeMessage(alloc: std.mem.Allocator) ![]u8 {
     var label_buf: [welcome_build_label_bytes]u8 = undefined;
     const build_label = try writeBuildLabel(
         &label_buf,
-        build_channel,
         main.version,
-        build_options.git_commit,
     );
     return std.fmt.allocPrint(
         alloc,
-        "{s}𝒇x{s}{s} {s} · Run /help for commands" ++ reset_style ++ "\n\n",
+        "{s}fiber{s}{s} {s} · Run /help for commands" ++ reset_style ++ "\n\n",
         .{ subtitle_style, reset_style, dim_style, build_label },
     );
 }
@@ -559,10 +534,6 @@ fn appendSpacesToBuffer(out: []u8, len: *usize, count: usize) void {
     }
 }
 
-pub fn isPrintableAscii(byte: u8) bool {
-    return byte >= 32 and byte <= 126;
-}
-
 test "input line wraps to the cursor row" {
     var buf: [64]u8 = undefined;
     const view = buildInputLine("abcdefghijklmnopqrstuvwxyz", 26, 16, &buf);
@@ -681,7 +652,7 @@ fn titleOutput(raw: ?*anyopaque) std.Io.File {
 }
 
 const terminal_title_osc_prefix = "\x1b]2;";
-const terminal_title_display_prefix = "fx · ";
+const terminal_title_display_prefix = "fiber · ";
 const terminal_title_max_content_bytes: usize = 128;
 const terminal_title_max_label_bytes = terminal_title_max_content_bytes - terminal_title_display_prefix.len;
 
@@ -747,7 +718,7 @@ test "terminal title writes the label to the caller's output file" {
     defer written_file.close(io_mod.getIo());
     const written = try io_mod.readFileToEnd(alloc, &written_file, 128);
     defer alloc.free(written);
-    try std.testing.expectEqualStrings("\x1b]2;fx · release notes\x07", written);
+    try std.testing.expectEqualStrings("\x1b]2;fiber · release notes\x07", written);
 }
 
 test "terminal title sanitizes and bounds untrusted labels" {
@@ -764,7 +735,7 @@ test "terminal title sanitizes and bounds untrusted labels" {
     const written = try io_mod.readFileToEnd(alloc, &written_file, 512);
     defer alloc.free(written);
     try std.testing.expect(written.len <= terminal_title_osc_prefix.len + terminal_title_max_content_bytes + 1);
-    try std.testing.expect(std.mem.startsWith(u8, written, "\x1b]2;fx · safe]2;owned"));
+    try std.testing.expect(std.mem.startsWith(u8, written, "\x1b]2;fiber · safe]2;owned"));
     try std.testing.expect(std.mem.endsWith(u8, written, "...\x07"));
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, written, "\x07"));
     try std.testing.expect(std.mem.find(u8, written[terminal_title_osc_prefix.len..], "\x1b") == null);
@@ -793,7 +764,7 @@ pub fn formatResumeHandoff(
     terminal_cols: u16,
 ) ![]const u8 {
     const label = "Continue session with:";
-    const command = "fx --resume ";
+    const command = "fiber resume ";
     const single_row_width = label.len + 1 + command.len + session_id.len;
     const separator = if (single_row_width <= terminal_cols) " " else "\n  ";
     return std.fmt.bufPrint(
@@ -817,18 +788,18 @@ test "resume handoff uses one row only when the full instruction fits" {
     initTheme(false, null);
     defer initTheme(false, null);
 
-    const single_row = "Continue session with: fx --resume session-123";
+    const single_row = "Continue session with: fiber resume session-123";
     var exact_buffer: [128]u8 = undefined;
     const exact = try formatResumeHandoff(&exact_buffer, "session-123", single_row.len);
     try std.testing.expectEqualStrings(
-        "\x1b[38;5;245mContinue session with: fx --resume session-123\x1b[0m\n",
+        "\x1b[38;5;245mContinue session with: fiber resume session-123\x1b[0m\n",
         exact,
     );
 
     var narrow_buffer: [128]u8 = undefined;
     const narrow = try formatResumeHandoff(&narrow_buffer, "session-123", single_row.len - 1);
     try std.testing.expectEqualStrings(
-        "\x1b[38;5;245mContinue session with:\n  fx --resume session-123\x1b[0m\n",
+        "\x1b[38;5;245mContinue session with:\n  fiber resume session-123\x1b[0m\n",
         narrow,
     );
 }
@@ -840,7 +811,7 @@ test "resume handoff follows the active muted theme shade" {
     var buffer: [128]u8 = undefined;
     const message = try formatResumeHandoff(&buffer, "session-123", 80);
     try std.testing.expectEqualStrings(
-        "\x1b[38;5;247mContinue session with: fx --resume session-123\x1b[0m\n",
+        "\x1b[38;5;247mContinue session with: fiber resume session-123\x1b[0m\n",
         message,
     );
 }
@@ -875,7 +846,7 @@ test "welcomeMessage shows version and help hint" {
     const message = try welcomeMessage(std.testing.allocator);
     defer std.testing.allocator.free(message);
 
-    try std.testing.expect(std.mem.find(u8, message, "𝒇x") != null);
+    try std.testing.expect(std.mem.find(u8, message, "fiber") != null);
     try std.testing.expect(std.mem.find(u8, message, main.version) != null);
     try std.testing.expect(std.mem.find(u8, message, "/help") != null);
 }
@@ -888,13 +859,11 @@ test "welcomeMessage keeps only the app name bright" {
     var label_buf: [welcome_build_label_bytes]u8 = undefined;
     const build_label = try writeBuildLabel(
         &label_buf,
-        build_channel,
         main.version,
-        build_options.git_commit,
     );
     const expected = try std.fmt.allocPrint(
         std.testing.allocator,
-        "{s}𝒇x{s}{s} {s} · Run /help for commands" ++ reset_style ++ "\n\n",
+        "{s}fiber{s}{s} {s} · Run /help for commands" ++ reset_style ++ "\n\n",
         .{ subtitle_style, reset_style, dim_style, build_label },
     );
     defer std.testing.allocator.free(expected);
@@ -904,40 +873,8 @@ test "welcomeMessage keeps only the app name bright" {
 
 test "build label stays bare on the stable channel" {
     var buf: [welcome_build_label_bytes]u8 = undefined;
-    const label = try writeBuildLabel(&buf, .stable, "0.0.4", "abcdef123456");
+    const label = try writeBuildLabel(&buf, "0.0.4");
     try std.testing.expectEqualStrings("v0.0.4", label);
-}
-
-test "dev build label carries the commit and restores the dim run after the tag" {
-    initTheme(false, null);
-
-    var buf: [welcome_build_label_bytes]u8 = undefined;
-    const label = try writeBuildLabel(&buf, .dev, "0.0.5", "abcdef123456");
-
-    const expected = try std.fmt.allocPrint(
-        std.testing.allocator,
-        "v0.0.5-abcdef1 {s}[dev]{s}",
-        .{ hint_style, dim_style },
-    );
-    defer std.testing.allocator.free(expected);
-
-    try std.testing.expectEqualStrings(expected, label);
-}
-
-test "dev build label drops an unresolved revision" {
-    initTheme(false, null);
-
-    var buf: [welcome_build_label_bytes]u8 = undefined;
-    const label = try writeBuildLabel(&buf, .dev, "0.0.5", "unknown");
-
-    const expected = try std.fmt.allocPrint(
-        std.testing.allocator,
-        "v0.0.5 {s}[dev]{s}",
-        .{ hint_style, dim_style },
-    );
-    defer std.testing.allocator.free(expected);
-
-    try std.testing.expectEqualStrings(expected, label);
 }
 
 test "buildHintLine advertises queue without persistent steering hint while streaming" {
@@ -1017,11 +954,11 @@ test "buildHintLine omits the session segment when no title is cached" {
 test "buildHintLine shows the workspace and Git branch" {
     var buf: [256]u8 = undefined;
     const line = buildHintLine(false, false, true, "openai/gpt-5", .ask, 0, null, false, .auto, false, .{
-        .workspace_label = "/workspace/code/fx",
+        .workspace_label = "/workspace/code/fiber",
         .git_branch = "feature/statusline",
     }, 100, &buf);
     try std.testing.expectEqualStrings(
-        "ask · gpt-5 · /workspace/code/fx (feature/statusline)",
+        "ask · gpt-5 · /workspace/code/fiber (feature/statusline)",
         line,
     );
 }
@@ -1029,14 +966,11 @@ test "buildHintLine shows the workspace and Git branch" {
 test "buildHintLine keeps workspace and branch readable at narrow widths" {
     var buf: [256]u8 = undefined;
     const line = buildHintLine(false, false, true, "openai/gpt-5", .ask, 0, null, false, .auto, false, .{
-        .workspace_label = "/a/very/long/path/to/fx-repo",
-        .git_branch = "feature/statusline",
+        .workspace_label = "/a/very/long/path/fiber-repo",
+        .git_branch = "feat/statusline",
     }, 36, &buf);
     try std.testing.expectEqual(@as(usize, 36), display_width.visibleWidthIgnoringAnsi(line));
-    try std.testing.expect(std.mem.startsWith(u8, line, "ask · gpt-5 · "));
-    try std.testing.expect(std.mem.find(u8, line, "fx-repo") != null);
-    try std.testing.expect(std.mem.find(u8, line, "feature/") != null);
-    try std.testing.expect(std.mem.endsWith(u8, line, "…)"));
+    try std.testing.expectEqualStrings("ask · gpt-5 · …er-repo (feat/statu…)", line);
 }
 
 test "buildHintLine workspace identity does not displace existing status segments" {
@@ -1066,11 +1000,11 @@ test "buildHintLine shows a non-Git workspace without branch punctuation" {
 test "buildHintLine labels detached HEAD" {
     var buf: [128]u8 = undefined;
     const line = buildHintLine(false, false, true, "openai/gpt-5", .ask, 0, null, false, .auto, false, .{
-        .workspace_label = "/tmp/fx",
+        .workspace_label = "/tmp/fiber",
         .git_branch = "detached:0123456789ab",
     }, 80, &buf);
     try std.testing.expectEqualStrings(
-        "ask · gpt-5 · /tmp/fx (detached:0123456789ab)",
+        "ask · gpt-5 · /tmp/fiber (detached:0123456789ab)",
         line,
     );
 }

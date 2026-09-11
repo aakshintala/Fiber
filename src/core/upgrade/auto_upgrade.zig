@@ -1,13 +1,6 @@
 const std = @import("std");
 const io_mod = @import("../shared/io.zig");
-const helpers = @import("upgrade_helpers.zig");
 const update_target = @import("update_target.zig");
-
-const Allocator = std.mem.Allocator;
-
-const check_interval_ms: u64 = 30 * 60 * 1000;
-const initial_delay_ms: u64 = 10_000;
-const sleep_increment_ms: u64 = 50;
 
 pub const State = enum(u8) {
     idle = 0,
@@ -27,54 +20,15 @@ pub const RelaunchRequest = struct {
     }
 };
 
-pub fn shouldEnableForCurrentExecutable() bool {
-    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const n = std.process.executablePath(io_mod.getIo(), &exe_buf) catch return true;
-    return !isDevelopmentBuildPath(exe_buf[0..n]);
-}
-
-pub fn isDevelopmentBuildPath(path: []const u8) bool {
-    return std.mem.find(u8, path, "/zig-out/bin/") != null or
-        std.mem.find(u8, path, "\\zig-out\\bin\\") != null;
-}
-
 pub const AutoUpgrade = struct {
     state: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(State.idle)),
-    should_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     render_dirty: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    thread: ?std.Thread = null,
 
     version_mutex: std.Io.Mutex = .init,
     latest_version_buf: [64]u8 = undefined,
     latest_version_len: u8 = 0,
 
-    selected_channel: update_target.Channel = .stable,
-
     relaunch_request: ?RelaunchRequest = null,
-
-    pub fn configure_channel(self: *AutoUpgrade, selected: update_target.Channel) void {
-        self.selected_channel = selected;
-    }
-
-    pub fn channel(self: *const AutoUpgrade) update_target.Channel {
-        return self.selected_channel;
-    }
-
-    pub fn start(
-        self: *AutoUpgrade,
-        alloc: Allocator,
-        current: update_target.CurrentBuild,
-    ) void {
-        self.thread = std.Thread.spawn(.{}, runLoop, .{ self, alloc, current }) catch return;
-    }
-
-    pub fn stop(self: *AutoUpgrade) void {
-        self.should_stop.store(true, .release);
-        if (self.thread) |t| {
-            t.join();
-            self.thread = null;
-        }
-    }
 
     pub fn getState(self: *const AutoUpgrade) State {
         return @enumFromInt(self.state.load(.acquire));
@@ -145,116 +99,6 @@ pub const AutoUpgrade = struct {
     fn markRenderDirty(self: *AutoUpgrade) void {
         self.render_dirty.store(true, .release);
     }
-
-    fn runLoop(
-        self: *AutoUpgrade,
-        alloc: Allocator,
-        current: update_target.CurrentBuild,
-    ) void {
-        self.sleepInterruptible(initial_delay_ms);
-
-        while (!self.should_stop.load(.acquire)) {
-            if (self.getState() == .ready) return;
-            self.setState(.checking);
-            self.runOnce(alloc, current);
-
-            const post_state = self.getState();
-            if (post_state == .ready) return;
-
-            if (post_state != .failed) self.setState(.waiting);
-            self.sleepInterruptible(check_interval_ms);
-        }
-    }
-
-    fn runOnce(
-        self: *AutoUpgrade,
-        alloc: Allocator,
-        current: update_target.CurrentBuild,
-    ) void {
-        const cdn_base = helpers.resolveCdnBase();
-        var target = helpers.fetchTarget(alloc, self.selected_channel, cdn_base) catch return;
-        defer target.deinit(alloc);
-
-        if (!target.shouldInstall(current)) return;
-
-        var label_buf: [64]u8 = undefined;
-        const label = target.writeDisplayLabel(&label_buf) catch return;
-        self.setLatestVersion(label);
-        self.setState(.downloading);
-
-        self.downloadAndInstall(alloc, target, cdn_base) catch {
-            self.setState(.failed);
-            return;
-        };
-        self.setState(.ready);
-    }
-
-    const InstallError = error{
-        AllocFailed,
-        DownloadFailed,
-        ChecksumFailed,
-        ExtractionFailed,
-        SelfExeNotFound,
-        InstallFailed,
-        Cancelled,
-    };
-
-    fn downloadAndInstall(
-        self: *AutoUpgrade,
-        alloc: Allocator,
-        target: update_target.Target,
-        cdn_base: []const u8,
-    ) InstallError!void {
-        var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
-        defer client.deinit();
-
-        const tmp_base: []const u8 = io_mod.getenv("TMPDIR") orelse "/tmp";
-        var rand_buf: [8]u8 = undefined;
-        io_mod.getIo().random(&rand_buf);
-        const rand_hex = std.fmt.bytesToHex(rand_buf, .lower);
-        const tmp_dir = std.fmt.allocPrint(alloc, "{s}/fx-auto-upgrade-{s}", .{ tmp_base, rand_hex }) catch return error.AllocFailed;
-        defer alloc.free(tmp_dir);
-        defer std.Io.Dir.cwd().deleteTree(io_mod.getIo(), tmp_dir) catch {};
-
-        std.Io.Dir.createDirAbsolute(io_mod.getIo(), tmp_dir, .default_dir) catch return error.ExtractionFailed;
-
-        const archive_path = std.fmt.allocPrint(alloc, "{s}/fx.tar.gz", .{tmp_dir}) catch return error.AllocFailed;
-        defer alloc.free(archive_path);
-
-        const archive_url = std.fmt.allocPrint(alloc, "{s}/{s}/fx-{s}.tar.gz", .{ cdn_base, target.artifactRef(), helpers.platform }) catch return error.AllocFailed;
-        defer alloc.free(archive_url);
-
-        helpers.downloadFileStreaming(&client, archive_url, archive_path) catch return error.DownloadFailed;
-
-        if (self.should_stop.load(.acquire)) return error.Cancelled;
-
-        const checksum_url = std.fmt.allocPrint(alloc, "{s}/{s}/fx-{s}.tar.gz.sha256", .{ cdn_base, target.artifactRef(), helpers.platform }) catch return error.AllocFailed;
-        defer alloc.free(checksum_url);
-
-        helpers.verifyChecksum(&client, archive_path, checksum_url) catch return error.ChecksumFailed;
-
-        if (self.should_stop.load(.acquire)) return error.Cancelled;
-
-        helpers.extractTarGz(alloc, archive_path, tmp_dir) catch return error.ExtractionFailed;
-
-        if (self.should_stop.load(.acquire)) return error.Cancelled;
-
-        const extracted_bin = std.fmt.allocPrint(alloc, "{s}/fx", .{tmp_dir}) catch return error.AllocFailed;
-        defer alloc.free(extracted_bin);
-
-        var self_exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const self_exe = helpers.currentExecutablePath(&self_exe_buf) catch return error.SelfExeNotFound;
-        io_mod.copyFileAtomic(alloc, extracted_bin, self_exe) catch return error.InstallFailed;
-    }
-
-    fn sleepInterruptible(self: *AutoUpgrade, total_ms: u64) void {
-        var remaining = total_ms;
-        while (remaining > 0 and !self.should_stop.load(.acquire)) {
-            const chunk = @min(remaining, sleep_increment_ms);
-            io_mod.sleep(chunk * @as(u64, std.time.ns_per_ms));
-            remaining -|= chunk;
-        }
-    }
 };
 
 test "statusLabel idle returns empty" {
@@ -262,20 +106,6 @@ test "statusLabel idle returns empty" {
     var buf: [64]u8 = undefined;
     const label = au.statusLabel(&buf);
     try std.testing.expectEqual(@as(usize, 0), label.len);
-}
-
-test "selected release channel is owned by the upgrade runtime" {
-    var au = AutoUpgrade{};
-    try std.testing.expectEqual(update_target.Channel.stable, au.channel());
-
-    au.configure_channel(.dev);
-    try std.testing.expectEqual(update_target.Channel.dev, au.channel());
-}
-
-test "development build paths disable auto upgrade" {
-    try std.testing.expect(isDevelopmentBuildPath("/repo/zig-out/bin/fx"));
-    try std.testing.expect(isDevelopmentBuildPath("C:\\repo\\zig-out\\bin\\fx.exe"));
-    try std.testing.expect(!isDevelopmentBuildPath("/Users/me/.local/bin/fx"));
 }
 
 test "statusLabel downloading shows ellipsis" {
@@ -306,13 +136,13 @@ test "setLatestVersion stores normalized version" {
 
 test "relaunch request owns the executable path and is consumed once" {
     var au = AutoUpgrade{};
-    var source = [_]u8{ '/', 't', 'm', 'p', '/', 'f', 'x' };
+    var source = [_]u8{ '/', 't', 'm', 'p', '/', 'f', 'i', 'b', 'e', 'r' };
     try au.requestRelaunch(&source);
     source[1] = 'x';
 
     const request = au.takeRelaunchRequest() orelse
         return error.TestExpectedRelaunchRequest;
-    try std.testing.expectEqualStrings("/tmp/fx", request.executablePath());
+    try std.testing.expectEqualStrings("/tmp/fiber", request.executablePath());
     try std.testing.expect(au.takeRelaunchRequest() == null);
 }
 

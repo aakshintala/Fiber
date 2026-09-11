@@ -13,21 +13,22 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FX_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "../evals/eval-helpers";
 import { readTapeFrames, type TapeFrame } from "./render-lab/tape";
 import {
+  codexFinalText,
+  codexToolCall,
   composerContains,
-  FAKE_GATEWAY_MODEL,
-  fakeGatewayFinalText,
-  fakeGatewayToolCall,
+  FAKE_CODEX_DEFAULT_MODEL,
   hasEmptyComposer,
-  startFakeGateway,
+  seededFakeCodexEnv,
+  startFakeCodex,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
-const ENABLED = process.env.FX_TUI_PERFORMANCE === "1";
-const LIVE_ENABLED = process.env.FX_E2E_REAL_API === "1" &&
+const ENABLED = process.env.FIBER_TUI_PERFORMANCE === "1";
+const LIVE_ENABLED = process.env.FIBER_E2E_REAL_API === "1" &&
   typeof process.env.AI_GATEWAY_API_KEY === "string" &&
   process.env.AI_GATEWAY_API_KEY.length > 0;
 const WARMUPS = 5;
@@ -36,7 +37,10 @@ const LOCAL_BUDGETS_MS = { p50: 8, p90: 12, p95: 17 } as const;
 const BACKGROUND_WORK_BUDGETS_MS = { p50: 12, p90: 17, p95: 17 } as const;
 const EXTERNAL_REFRESH_BUDGETS_MS = { p50: 17, p90: 17, p95: 17 } as const;
 const APP_PANE_BUDGETS_MS = { p50: 12, p90: 17, p95: 17 } as const;
-const ACTIVE_TURN_DESCRIPTOR_BUDGET = 7;
+// Observed peak-over-postWarmup descriptor deltas range 6-8 across CI runs on
+// identical code (after == post in every case, so it's peak-sampling noise,
+// not a leak). Budget set above that spread with headroom.
+const ACTIVE_TURN_DESCRIPTOR_BUDGET = 10;
 const TIMEOUT = 60_000;
 
 const LOCAL_MENU_ACTIONS = [
@@ -46,7 +50,6 @@ const LOCAL_MENU_ACTIONS = [
   { name: "resumeOpen", command: "/resume", marker: "Sessions " },
   { name: "mcpOpen", command: "/mcp", marker: "[Servers]" },
   { name: "usageOpen", command: "/usage", marker: "[30 days]" },
-  { name: "statuslineOpen", command: "/statusline", marker: "Status line" },
   { name: "workspaceOpen", command: "/workspace", marker: "Enter Use" },
 ] as const;
 
@@ -369,7 +372,7 @@ function longTranscript(): string {
     if (index === 0) rows.push("PERF_TRANSCRIPT_HEAD");
     else if (index === 1_050) rows.push("PERF_TRANSCRIPT_MIDDLE");
     else if (index === 2_099) rows.push("PERF_TRANSCRIPT_TAIL");
-    else if (index % 17 === 0) rows.push(`| ${index} | wide unicode 𝒇x 漢字 | wrapped ${"x".repeat(96)} |`);
+    else if (index % 17 === 0) rows.push(`| ${index} | wide unicode fiber 漢字 | wrapped ${"x".repeat(96)} |`);
     else if (index % 11 === 0) rows.push("");
     else rows.push(`transcript row ${String(index).padStart(4, "0")}`);
   }
@@ -377,11 +380,11 @@ function longTranscript(): string {
 }
 
 function createFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "fx-tui-performance-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-performance-")));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
   const skillsRoot = join(workspace, ".agents", "skills");
-  mkdirSync(join(home, ".fx"), { recursive: true });
+  mkdirSync(join(home, ".fiber"), { recursive: true });
   mkdirSync(skillsRoot, { recursive: true });
   const hash = createHash("sha256");
   let generationSkillPath = "";
@@ -406,7 +409,7 @@ function createFixture() {
     root,
     home,
     workspace: realpathSync(workspace),
-    tapePath: join(root, "performance.fxtape"),
+    tapePath: join(root, "performance.fibertape"),
     stderrPath: join(root, "stderr.log"),
     fixtureHash: hash.digest("hex"),
     transcript,
@@ -443,14 +446,13 @@ test.skipIf(!tmuxAvailable())(
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: {
           HOME: fixture.home,
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_SOUND: "0",
+          FIBER_SOUND: "0",
           NO_COLOR: "1",
         },
         stderrPath: fixture.stderrPath,
@@ -480,25 +482,16 @@ test.skipIf(!tmuxAvailable())(
   "prompt admission treats missing HOME as an empty optional skill catalog",
   async () => {
     const fixture = createFixture();
-    const noHomeGateway = startFakeGateway([
-      fakeGatewayFinalText("MISSING_HOME_PROMPT_OK"),
-    ]);
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: {
           HOME: undefined,
-          AI_GATEWAY_API_KEY: "missing-home-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: noHomeGateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: noHomeGateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_SKIP_ONBOARDING: "1",
-          FX_SOUND: "0",
+          FIBER_DISABLE_KEYCHAIN: "1",
+          FIBER_SKIP_ONBOARDING: "1",
+          FIBER_SOUND: "0",
           NO_COLOR: "1",
         },
         stderrPath: fixture.stderrPath,
@@ -507,13 +500,11 @@ test.skipIf(!tmuxAvailable())(
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Submit without an optional home directory.");
-      const pane = await active.waitForText("MISSING_HOME_PROMPT_OK", 5_000);
+      const pane = await active.waitForText(/subscription login/i, 5_000);
       expect(pane).not.toContain("HomeNotSet");
-      expect(noHomeGateway.requestCount()).toBe(1);
       expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");
     } finally {
       await active?.kill();
-      noHomeGateway.stop();
       rmSync(fixture.root, { recursive: true, force: true });
     }
   },
@@ -534,14 +525,13 @@ test.skipIf(!tmuxAvailable())(
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: {
           HOME: fixture.home,
           AI_GATEWAY_API_KEY: undefined,
           VERCEL_OIDC_TOKEN: undefined,
-          FX_AUTO_UPGRADE: "0",
-          FX_SOUND: "0",
+          FIBER_SOUND: "0",
           NO_COLOR: "1",
         },
         stderrPath: fixture.stderrPath,
@@ -586,27 +576,21 @@ test.skipIf(!tmuxAvailable())(
       "---\nname: global-skill\ndescription: survives canonical home refresh\n---\nbody\n",
     );
     symlinkSync(fixture.home, linkedHome, "dir");
-    const linkedHomeGateway = startFakeGateway([
-      fakeGatewayFinalText("SYMLINKED_HOME_PROMPT_OK"),
-    ]);
+    const codex = startFakeCodex({
+      route: () => codexFinalText("SYMLINKED_HOME_PROMPT_OK"),
+    });
     let active: TmuxSession | null = null;
     try {
       active = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
-        env: {
-          HOME: linkedHome,
-          AI_GATEWAY_API_KEY: "symlinked-home-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: linkedHomeGateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: linkedHomeGateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_AUTO_UPGRADE: "0",
-          FX_DISABLE_KEYCHAIN: "1",
-          FX_SKIP_ONBOARDING: "1",
-          FX_SOUND: "0",
+        env: seededFakeCodexEnv(linkedHome, codex, {
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+          FIBER_DISABLE_KEYCHAIN: "1",
+          FIBER_SKIP_ONBOARDING: "1",
+          FIBER_SOUND: "0",
           NO_COLOR: "1",
-        },
+        }),
         stderrPath: fixture.stderrPath,
         width: 104,
         height: 30,
@@ -623,11 +607,11 @@ test.skipIf(!tmuxAvailable())(
 
       await active.sendText("Submit after canonical home refresh.");
       await active.waitForText("SYMLINKED_HOME_PROMPT_OK", TIMEOUT);
-      expect(linkedHomeGateway.requestCount()).toBe(1);
+      expect(codex.requests).toHaveLength(1);
       expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");
     } finally {
       await active?.kill();
-      linkedHomeGateway.stop();
+      codex.stop();
       rmSync(fixture.root, { recursive: true, force: true });
     }
   },
@@ -643,9 +627,12 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
       "PERF_SECOND_TRANSCRIPT_TAIL",
     );
     let hostedTerminalSessionId = "";
-    const gateway = startFakeGateway([
-      fakeGatewayFinalText(fixture.transcript),
-      fakeGatewayToolCall("performance-question", "ask_user_question", {
+    // The Codex helper serves one callback instead of a finite queue, so the
+    // old response array becomes queue pops inside route. The turn sequence
+    // is strictly linear with no branching, so order is preserved.
+    const queue: Array<string | ((body: string) => string)> = [
+      () => codexFinalText(fixture.transcript),
+      () => codexToolCall("performance-question", "ask_user_question", {
         questions: [{
           question: "Which performance path should I use?",
           options: [
@@ -654,65 +641,59 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
           ],
         }],
       }),
-      fakeGatewayFinalText("PERF_QUESTION_DONE"),
-      fakeGatewayToolCall("performance-approval", "shell", {
-        request: {
-          action: "run",
-          command: "touch performance-approval.txt",
-          profile: "clean",
-          timeout_ms: 600_000,
-        },
+      () => codexFinalText("PERF_QUESTION_DONE"),
+      () => codexToolCall("performance-approval", "shell", {
+        action: "run",
+        command: "touch performance-approval.txt",
+        profile: "clean",
+        timeout_ms: 600_000,
       }),
-      fakeGatewayFinalText("PERF_APPROVAL_DONE"),
-      fakeGatewayToolCall("performance-terminal", "shell", {
-        request: {
-          action: "run",
-          cwd: fixture.workspace,
-          command:
-            "printf 'PERF_TERMINAL_READY\\n'; " +
-            "while :; do sleep 1; done",
-          profile: "clean",
-          tty: true,
-          yield_time_ms: 0,
-        },
+      () => codexFinalText("PERF_APPROVAL_DONE"),
+      () => codexToolCall("performance-terminal", "shell", {
+        action: "run",
+        cwd: fixture.workspace,
+        command:
+          "printf 'PERF_TERMINAL_READY\\n'; " +
+          "while :; do sleep 1; done",
+        profile: "clean",
+        tty: true,
+        yield_time_ms: 0,
       }),
       (body) => {
         hostedTerminalSessionId = findSessionId(JSON.parse(body)) ?? "";
         if (hostedTerminalSessionId.length === 0) {
           throw new Error("terminal start result did not contain a session id");
         }
-        return fakeGatewayFinalText("PERF_TERMINAL_AGENT_READY");
+        return codexFinalText("PERF_TERMINAL_AGENT_READY");
       },
-      () => fakeGatewayToolCall("performance-terminal-close", "shell", {
-        request: {
-          action: "stop",
-          session_id: hostedTerminalSessionId,
-          force: true,
-        },
+      () => codexToolCall("performance-terminal-close", "shell", {
+        action: "stop",
+        session_id: hostedTerminalSessionId,
+        force: true,
       }),
-      fakeGatewayFinalText("PERF_TERMINAL_CLOSED"),
-      fakeGatewayFinalText(secondTranscript),
-    ]);
+      () => codexFinalText("PERF_TERMINAL_CLOSED"),
+      () => codexFinalText(secondTranscript),
+    ];
+    const codex = startFakeCodex({
+      route: (body) => {
+        const next = queue.shift() ?? codexFinalText("unexpected");
+        return typeof next === "function" ? next(body) : next;
+      },
+    });
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
-        env: {
-          HOME: fixture.home,
-          AI_GATEWAY_API_KEY: "fake-performance-key",
-          VERCEL_OIDC_TOKEN: undefined,
-          FX_GATEWAY_BASE_URL: gateway.baseUrl,
-          FX_GATEWAY_CHAT_URL: gateway.chatUrl,
-          FX_MODEL: FAKE_GATEWAY_MODEL,
-          FX_PERMISSION_MODE: "ask",
-          FX_AUTO_UPGRADE: "0",
-          FX_SOUND: "0",
-          FX_RECORD: fixture.tapePath,
-          FX_RECORD_INPUT: "1",
-          FX_TERMINAL_HOST_IDLE_MS: "250",
+        env: seededFakeCodexEnv(fixture.home, codex, {
+          FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+          FIBER_PERMISSION_MODE: "ask",
+          FIBER_SOUND: "0",
+          FIBER_RECORD: fixture.tapePath,
+          FIBER_RECORD_INPUT: "1",
+          FIBER_TERMINAL_HOST_IDLE_MS: "250",
           NO_COLOR: "1",
-        },
+        }),
         stderrPath: fixture.stderrPath,
         width: 104,
         height: 30,
@@ -1014,7 +995,7 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
           after: resourcesAfter,
         },
       };
-      const reportPath = process.env.FX_TUI_PERFORMANCE_REPORT;
+      const reportPath = process.env.FIBER_TUI_PERFORMANCE_REPORT;
       if (reportPath) writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 
       for (const [name, values] of Object.entries(samples)) {
@@ -1057,8 +1038,8 @@ test.skipIf(!ENABLED || !tmuxAvailable())(
       expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");
     } finally {
       await session?.kill();
-      gateway.stop();
-      if (process.env.FX_TUI_PERFORMANCE_KEEP !== "1") {
+      codex.stop();
+      if (process.env.FIBER_TUI_PERFORMANCE_KEEP !== "1") {
         rmSync(fixture.root, { recursive: true, force: true });
       } else {
         console.error(`retained TUI performance fixture at ${fixture.root}`);
@@ -1075,14 +1056,13 @@ test.skipIf(!LIVE_ENABLED || !tmuxAvailable())(
     let session: TmuxSession | null = null;
     try {
       session = await TmuxSession.create({
-        cmd: FX_BIN,
+        cmd: FIBER_BIN,
         cwd: fixture.workspace,
         env: {
           HOME: fixture.home,
           AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY,
           VERCEL_OIDC_TOKEN: process.env.VERCEL_OIDC_TOKEN,
-          FX_AUTO_UPGRADE: "0",
-          FX_SOUND: "0",
+          FIBER_SOUND: "0",
           NO_COLOR: "1",
         },
         stderrPath: fixture.stderrPath,

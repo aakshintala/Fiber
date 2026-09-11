@@ -1,7 +1,5 @@
 const std = @import("std");
-const mcp_test_exports = @import("mcp_test_exports");
-
-const json_schema = mcp_test_exports.JsonSchema;
+const json_schema = @import("json_schema");
 
 const Allocator = std.mem.Allocator;
 

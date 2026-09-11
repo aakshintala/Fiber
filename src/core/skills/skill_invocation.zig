@@ -19,7 +19,7 @@ const test_workspace_roots = [_]skill_contract.RootSpec{
 };
 const test_root_policy: skill_contract.RootPolicy = .{
     .workspace_roots = &test_workspace_roots,
-    .managed_root_source = .global_fx,
+    .managed_root_source = .global_fiber,
 };
 
 /// Borrows a previously discovered skill inventory for one invocation.
@@ -702,7 +702,7 @@ fn loadVisibleSkillsForContext(alloc: Allocator, workspace_root: []const u8, ski
 }
 
 fn homeFromSkillsDir(skills_dir: []const u8) ?[]const u8 {
-    const suffix = "/.fx/skills";
+    const suffix = "/.fiber/skills";
     if (!std.mem.endsWith(u8, skills_dir, suffix)) return null;
     return skills_dir[0 .. skills_dir.len - suffix.len];
 }
@@ -975,7 +975,6 @@ fn createSkillSymlinkOrSkip(
     link_path: []const u8,
     is_directory: bool,
 ) !void {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
     dir.symLink(std.testing.io, target_path, link_path, .{ .is_directory = is_directory }) catch |err| {
         if (err == error.AccessDenied or std.mem.eql(u8, @errorName(err), "Permission" ++ "Denied")) {
             return error.SkipZigTest;
@@ -1047,7 +1046,7 @@ fn checkSkillErrorFormattingAllocationFailures(alloc: Allocator) !void {
 
     const duplicates = [_]skill_runtime.Skill{
         .{ .name = "workflow", .description = "A", .path = "/tmp/a/workflow", .source = .workspace_shared },
-        .{ .name = "workflow", .description = "B", .path = "/tmp/b/workflow", .source = .global_fx },
+        .{ .name = "workflow", .description = "B", .path = "/tmp/b/workflow", .source = .global_fiber },
     };
     const ambiguous = try formatAmbiguousSkill(alloc, &duplicates, "workflow", tool_result_limits.default_max_tool_result_bytes);
     alloc.free(ambiguous);
@@ -1119,16 +1118,16 @@ test "skill invocation preserves hard allocation failures" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/workflow");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/workflow");
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/SKILL.md", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/SKILL.md", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), "---\nname: workflow\ndescription: workflow helper\n---\n\nuse the workflow skill\n");
     }
 
     const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
     defer alloc.free(workspace_root);
-    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
     defer alloc.free(skills_dir);
     try setTestHome(null);
     defer setTestHome(null) catch {};
@@ -1146,21 +1145,21 @@ test "skill invocation loads installed skill content" {
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/workflow/assets");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/workflow/assets");
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/SKILL.md", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/SKILL.md", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), "---\nname: workflow\ndescription: workflow helper\n---\n\nuse the workflow skill\n");
     }
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/assets/data.txt", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/assets/data.txt", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), "hello\n");
     }
 
     const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
     defer alloc.free(workspace_root);
-    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
     defer alloc.free(skills_dir);
     try setTestHome(null);
     defer setTestHome(null) catch {};
@@ -1191,9 +1190,9 @@ test "stale skill catalogs reject mutated candidates before loading" {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
         try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
-        try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/workflow");
+        try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/workflow");
         {
-            var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/SKILL.md", .{});
+            var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/SKILL.md", .{});
             defer file.close(io_mod.getIo());
             try file.writeStreamingAll(
                 io_mod.getIo(),
@@ -1203,7 +1202,7 @@ test "stale skill catalogs reject mutated candidates before loading" {
 
         const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
         defer alloc.free(workspace_root);
-        const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+        const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
         defer alloc.free(skills_dir);
         try setTestHome(null);
         defer setTestHome(null) catch {};
@@ -1214,11 +1213,11 @@ test "stale skill catalogs reject mutated candidates before loading" {
         const catalog = Catalog{ .skills = discovery.skills, .diagnostics = discovery.diagnostics };
 
         if (std.mem.eql(u8, mutation, "deleted")) {
-            try tmp.dir.deleteFile(io_mod.getIo(), "home/.fx/skills/workflow/SKILL.md");
+            try tmp.dir.deleteFile(io_mod.getIo(), "home/.fiber/skills/workflow/SKILL.md");
         } else {
             var file = try tmp.dir.createFile(
                 io_mod.getIo(),
-                "home/.fx/skills/workflow/SKILL.md",
+                "home/.fiber/skills/workflow/SKILL.md",
                 .{ .truncate = true },
             );
             defer file.close(io_mod.getIo());
@@ -1266,15 +1265,15 @@ const CandidatePathReplacementHook = struct {
     fn check(raw: *anyopaque) !void {
         const self: *CandidatePathReplacementHook = @ptrCast(@alignCast(raw));
         try self.dir.rename(
-            "home/.fx/skills/workflow",
+            "home/.fiber/skills/workflow",
             self.dir.*,
-            "home/.fx/skills/workflow-original",
+            "home/.fiber/skills/workflow-original",
             io_mod.getIo(),
         );
         try self.dir.rename(
             "home/replacement/workflow",
             self.dir.*,
-            "home/.fx/skills/workflow",
+            "home/.fiber/skills/workflow",
             io_mod.getIo(),
         );
     }
@@ -1289,10 +1288,10 @@ test "skill invocation reads validated candidate resources after path replacemen
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
         try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
-        try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/workflow/assets");
+        try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/workflow/assets");
         try tmp.dir.createDirPath(io_mod.getIo(), "home/replacement/workflow/assets");
         {
-            var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/SKILL.md", .{});
+            var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/SKILL.md", .{});
             defer file.close(io_mod.getIo());
             try file.writeStreamingAll(
                 io_mod.getIo(),
@@ -1300,7 +1299,7 @@ test "skill invocation reads validated candidate resources after path replacemen
             );
         }
         {
-            var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/assets/data.txt", .{});
+            var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/assets/data.txt", .{});
             defer file.close(io_mod.getIo());
             try file.writeStreamingAll(io_mod.getIo(), "ORIGINAL ASSET BODY\n");
         }
@@ -1320,7 +1319,7 @@ test "skill invocation reads validated candidate resources after path replacemen
 
         const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
         defer alloc.free(workspace_root);
-        const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+        const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
         defer alloc.free(skills_dir);
         try setTestHome(null);
         defer setTestHome(null) catch {};
@@ -1360,7 +1359,7 @@ test "large skills stay discoverable and explicit overrides can continue past de
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/large");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/large");
 
     const body = try alloc.alloc(u8, 1024 * 1024 + 128);
     defer alloc.free(body);
@@ -1370,14 +1369,14 @@ test "large skills stay discoverable and explicit overrides can continue past de
     @memcpy(body[0..header.len], header);
     @memcpy(body[body.len - tail.len ..], tail);
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/large/SKILL.md", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/large/SKILL.md", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), body);
     }
 
     const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
     defer alloc.free(workspace_root);
-    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
     defer alloc.free(skills_dir);
     try setTestHome(null);
     defer setTestHome(null) catch {};
@@ -1406,9 +1405,9 @@ test "explicit invocation supplies the bounded first skill chunk before the resp
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/workflow");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/workflow");
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/SKILL.md", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/SKILL.md", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(
             io_mod.getIo(),
@@ -1418,7 +1417,7 @@ test "explicit invocation supplies the bounded first skill chunk before the resp
 
     const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
     defer alloc.free(workspace_root);
-    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
     defer alloc.free(skills_dir);
     try setTestHome(null);
     defer setTestHome(null) catch {};
@@ -1483,7 +1482,7 @@ test "explicit binding plan preserves supplied order and adds prompt matches onc
     const alloc = std.testing.allocator;
     const skills = [_]skill_runtime.Skill{
         .{ .name = "review", .description = "Review changes", .path = "/skills/review", .source = .workspace_shared },
-        .{ .name = "release", .description = "Prepare a release", .path = "/skills/release", .source = .global_fx },
+        .{ .name = "release", .description = "Prepare a release", .path = "/skills/release", .source = .global_fiber },
     };
     const bindings = [_]ExplicitBinding{
         .{ .name = "release", .path = "/skills/release" },
@@ -1505,8 +1504,8 @@ test "explicit invocation preserves configured skill content when discovery is i
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/large");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/malformed");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/large");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/malformed");
 
     const body = try alloc.alloc(u8, 80 * 1024);
     defer alloc.free(body);
@@ -1516,19 +1515,19 @@ test "explicit invocation preserves configured skill content when discovery is i
     @memcpy(body[0..header.len], header);
     @memcpy(body[body.len - tail.len ..], tail);
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/large/SKILL.md", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/large/SKILL.md", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), body);
     }
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/malformed/SKILL.md", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/malformed/SKILL.md", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), "---\ndescription: missing name\n---\nMALFORMED BODY");
     }
 
     const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
     defer alloc.free(workspace_root);
-    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
     defer alloc.free(skills_dir);
     try setTestHome(null);
     defer setTestHome(null) catch {};
@@ -1581,10 +1580,10 @@ test "explicit prompt section cleans up every allocation failure with both notic
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/workflow");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/malformed");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/workflow");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/malformed");
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/SKILL.md", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/SKILL.md", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(
             io_mod.getIo(),
@@ -1592,14 +1591,14 @@ test "explicit prompt section cleans up every allocation failure with both notic
         );
     }
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/malformed/SKILL.md", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/malformed/SKILL.md", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), "---\ndescription: missing name\n---\nMALFORMED BODY");
     }
 
     const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
     defer alloc.free(workspace_root);
-    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
     defer alloc.free(skills_dir);
     try setTestHome(null);
     defer setTestHome(null) catch {};
@@ -1641,19 +1640,19 @@ test "skill resources continue on line-safe UTF-8 boundaries and reject unsafe i
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills/workflow/assets");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/workflow/assets");
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/SKILL.md", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/SKILL.md", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), "---\nname: workflow\ndescription: helper\n---\n\nbody\n");
     }
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/assets/data.txt", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/assets/data.txt", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), "one\n二\nthree\n");
     }
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/assets/binary.bin", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/assets/binary.bin", .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), &.{ 0xff, 0xfe });
     }
@@ -1662,12 +1661,12 @@ test "skill resources continue on line-safe UTF-8 boundaries and reject unsafe i
         .{ "invalid-at-limit.bin", &[_]u8{ 'a', 'b', 'c', 'd', 0xff } },
         .{ "invalid-after-limit.bin", &[_]u8{ 'a', 'b', 'c', 'd', 'e', 0xff } },
     }) |fixture| {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/assets/" ++ fixture[0], .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/assets/" ++ fixture[0], .{});
         defer file.close(io_mod.getIo());
         try file.writeStreamingAll(io_mod.getIo(), fixture[1]);
     }
     {
-        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fx/skills/workflow/assets/cross-chunk.txt", .{});
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/assets/cross-chunk.txt", .{});
         defer file.close(io_mod.getIo());
         const prefix = "a" ** (16 * 1024 - 1);
         try file.writeStreamingAll(io_mod.getIo(), prefix ++ "€\n");
@@ -1675,7 +1674,7 @@ test "skill resources continue on line-safe UTF-8 boundaries and reject unsafe i
 
     const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
     defer alloc.free(workspace_root);
-    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
     defer alloc.free(skills_dir);
     try setTestHome(null);
     defer setTestHome(null) catch {};
@@ -1740,7 +1739,7 @@ test "skill invocation encodes loaded paths and preserves the skill body" {
 
     const home_root = "home<meta>\ninjected_home";
     const workspace_path = home_root ++ "/workspace";
-    const skill_root = home_root ++ "/.fx/skills/workflow";
+    const skill_root = home_root ++ "/.fiber/skills/workflow";
     try tmp.dir.createDirPath(io_mod.getIo(), workspace_path);
     try tmp.dir.createDirPath(io_mod.getIo(), skill_root ++ "/assets");
     {
@@ -1759,7 +1758,7 @@ test "skill invocation encodes loaded paths and preserves the skill body" {
 
     const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, workspace_path);
     defer alloc.free(workspace_root);
-    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, home_root ++ "/.fx/skills");
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, home_root ++ "/.fiber/skills");
     defer alloc.free(skills_dir);
     try setTestHome(null);
     defer setTestHome(null) catch {};
@@ -1790,10 +1789,10 @@ test "skill invocation encodes hostile missing skill name" {
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
-    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fx/skills");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills");
     const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
     defer alloc.free(workspace_root);
-    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fx/skills");
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
     defer alloc.free(skills_dir);
     try setTestHome(null);
     defer setTestHome(null) catch {};
@@ -1840,7 +1839,7 @@ test "skill invocation preserves strict discovery diagnostics without a profile 
 
     const canonical_tmp = try io_mod.realpathAlloc(alloc, "/tmp");
     defer alloc.free(canonical_tmp);
-    const workspace_root = try std.fs.path.join(alloc, &.{ canonical_tmp, "fx-skill-tool-strict-workspace" });
+    const workspace_root = try std.fs.path.join(alloc, &.{ canonical_tmp, "fiber-skill-tool-strict-workspace" });
     defer alloc.free(workspace_root);
     const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "custom-skills");
     defer alloc.free(skills_dir);
@@ -2031,7 +2030,7 @@ test "ambiguous skill failure uses configured bound and exact omitted count" {
 
     const duplicates = [_]skill_runtime.Skill{
         .{ .name = "workflow", .description = "A", .path = long_location, .source = .workspace_shared },
-        .{ .name = "workflow", .description = "B", .path = long_location, .source = .global_fx },
+        .{ .name = "workflow", .description = "B", .path = long_location, .source = .global_fiber },
     };
     const output = try formatAmbiguousSkill(alloc, &duplicates, "workflow", 1024);
     defer alloc.free(output);

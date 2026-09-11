@@ -1,25 +1,11 @@
 const std = @import("std");
 const credentials = @import("../auth/credentials.zig");
-const oauth_transport = @import("../auth/oauth_transport.zig");
 const model_capabilities = @import("../config/model_capabilities.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
-const output_contracts = @import("../output/output_contracts.zig");
 const model_catalog = @import("model_catalog.zig");
 const model_catalog_metadata = @import("model_catalog_metadata.zig");
 
 const Allocator = std.mem.Allocator;
-
-pub const ResolveChatUrlFn = *const fn (?*anyopaque, []const u8) []const u8;
-
-pub const ChatUrlProvider = struct {
-    /// When set, context must remain valid until every in-flight `resolve` returns.
-    context: ?*anyopaque = null,
-    resolve_fn: ResolveChatUrlFn,
-
-    pub fn resolve(self: ChatUrlProvider, fallback: []const u8) []const u8 {
-        return self.resolve_fn(self.context, fallback);
-    }
-};
 
 pub const CliModelCatalogInput = struct {
     access: credentials.CatalogAccess = .{ .public_only = .no_credential },
@@ -55,90 +41,6 @@ pub const CliModelCatalogProvider = struct {
         return self.fetch_fn(self.context, alloc, input);
     }
 };
-
-pub const CreditsLookupInput = struct {
-    credential: ?[]const u8,
-    credential_source: ?credentials.Source = null,
-    tenant: ?[]const u8,
-};
-
-pub const FetchCreditsFn = *const fn (
-    ?*anyopaque,
-    Allocator,
-    CreditsLookupInput,
-) output_contracts.CreditsSnapshot;
-
-pub const CreditsProvider = struct {
-    /// When set, context must remain valid until every in-flight `fetch` returns.
-    context: ?*anyopaque = null,
-    fetch_fn: FetchCreditsFn,
-
-    /// The returned snapshot owns its populated provider fields. The caller
-    /// must call `CreditsSnapshot.deinit`.
-    pub fn fetch(
-        self: CreditsProvider,
-        alloc: Allocator,
-        input: CreditsLookupInput,
-    ) output_contracts.CreditsSnapshot {
-        return self.fetch_fn(self.context, alloc, input);
-    }
-};
-
-fn fetchCreditsUnavailable(
-    _: ?*anyopaque,
-    alloc: Allocator,
-    _: CreditsLookupInput,
-) output_contracts.CreditsSnapshot {
-    return .{
-        .err_message = alloc.dupe(u8, "Credits are unavailable for the selected provider.") catch null,
-    };
-}
-
-pub const unavailable_credits_provider = CreditsProvider{
-    .fetch_fn = fetchCreditsUnavailable,
-};
-
-pub const Provider = struct {
-    oauth_transport: oauth_transport.Provider,
-    chat_url: ChatUrlProvider,
-};
-
-test "credits lookup dispatches through the injected provider" {
-    const Fake = struct {
-        calls: usize = 0,
-        saw_expected_input: bool = false,
-
-        fn fetch(
-            raw: ?*anyopaque,
-            alloc: Allocator,
-            input: CreditsLookupInput,
-        ) output_contracts.CreditsSnapshot {
-            const self: *@This() = @ptrCast(@alignCast(raw.?));
-            self.calls += 1;
-            self.saw_expected_input =
-                std.mem.eql(u8, input.credential orelse "", "credential") and
-                std.mem.eql(u8, input.tenant orelse "", "tenant");
-            return .{
-                .balance = alloc.dupe(u8, "10") catch null,
-            };
-        }
-    };
-
-    var fake: Fake = .{};
-    const provider = CreditsProvider{
-        .context = &fake,
-        .fetch_fn = Fake.fetch,
-    };
-    var snapshot = provider.fetch(std.testing.allocator, .{
-        .credential = "credential",
-        .tenant = "tenant",
-    });
-    defer snapshot.deinit(std.testing.allocator);
-
-    try std.testing.expectEqual(@as(usize, 1), fake.calls);
-    try std.testing.expect(fake.saw_expected_input);
-    try std.testing.expectEqualStrings("10", snapshot.balance.?);
-}
 
 const CapabilityResolverState = enum {
     idle,
@@ -236,11 +138,6 @@ pub const CapabilityResolver = struct {
         return fallback;
     }
 
-    pub fn catalogEntries(self: *const CapabilityResolver) ?[]const model_catalog.ModelCatalogEntry {
-        if (self.state != .ready) return null;
-        return self.catalog.items;
-    }
-
     pub fn adoptOwnedCatalog(
         self: *CapabilityResolver,
         alloc: Allocator,
@@ -290,13 +187,11 @@ const FakeCatalog = struct {
         if (self.outcome == .authenticated_rejected_then_ready) {
             if (self.calls == 1) {
                 self.saw_authenticated_access =
-                    std.mem.eql(u8, input.access.authorizationCredential() orelse "", "test-key") and
-                    std.mem.eql(u8, input.access.teamContext() orelse "", "team_123");
+                    std.mem.eql(u8, input.access.authorizationCredential() orelse "", "test-key");
                 return .{ .failure = .{ .category = .authentication, .http_status = .unauthorized } };
             }
             self.saw_public_retry =
                 input.access.authorizationCredential() == null and
-                input.access.teamContext() == null and
                 input.access.publicOnlyReason() == .authenticated_credential_rejected;
             self.outcome = .ready;
         }
@@ -358,29 +253,6 @@ test "available capabilities never fetch and use a completed catalog snapshot" {
     try std.testing.expectEqual(@as(?u32, 32_000), warm.max_output_tokens);
 }
 
-const FakeChatUrl = struct {
-    resolved: []const u8,
-
-    fn resolve(raw: ?*anyopaque, fallback: []const u8) []const u8 {
-        const self: *FakeChatUrl = @ptrCast(@alignCast(raw.?));
-        _ = fallback;
-        return self.resolved;
-    }
-};
-
-test "gateway provider resolves chat url through the injected policy" {
-    var fake = FakeChatUrl{ .resolved = "http://127.0.0.1:43123/chat" };
-    const provider = ChatUrlProvider{
-        .context = &fake,
-        .resolve_fn = FakeChatUrl.resolve,
-    };
-
-    try std.testing.expectEqualStrings(
-        fake.resolved,
-        provider.resolve("https://fallback.test/chat"),
-    );
-}
-
 test "capability resolver leaves a cancelled catalog fetch retryable" {
     var resolver: CapabilityResolver = .{};
     defer resolver.deinit(std.testing.allocator);
@@ -427,7 +299,7 @@ test "capability resolver uses provider catalog metadata" {
         std.testing.allocator,
         fake.provider(),
         .{
-            .access = credentials.catalogAccessForCredential(.ai_gateway_api_key, "test-key", "team_123"),
+            .access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key"),
             .endpoint = "/v1/models",
             .cancel_flag = &cancel_flag,
         },
@@ -456,7 +328,7 @@ test "capability resolver uses provider catalog metadata" {
     try std.testing.expectEqual(model_capabilities.ImageInputSupport.unknown, missing.image_input_support);
 }
 
-test "capability resolver retries rejected authenticated catalog access anonymously" {
+test "capability resolver keeps a rejected authenticated catalog access terminal" {
     var resolver: CapabilityResolver = .{};
     defer resolver.deinit(std.testing.allocator);
     var fake = FakeCatalog{ .outcome = .authenticated_rejected_then_ready };
@@ -465,17 +337,17 @@ test "capability resolver retries rejected authenticated catalog access anonymou
         std.testing.allocator,
         fake.provider(),
         .{
-            .access = credentials.catalogAccessForCredential(.ai_gateway_api_key, "test-key", "team_123"),
+            .access = credentials.catalogAccessForCredential(.chatgpt_subscription, "test-key"),
             .endpoint = "/v1/models",
         },
         "provider/model",
         .{},
     );
 
-    try std.testing.expectEqual(@as(usize, 2), fake.calls);
+    try std.testing.expectEqual(@as(usize, 1), fake.calls);
     try std.testing.expect(fake.saw_authenticated_access);
-    try std.testing.expect(fake.saw_public_retry);
-    try std.testing.expect(capabilities.supports_vision);
+    try std.testing.expect(!fake.saw_public_retry);
+    try std.testing.expect(!capabilities.supports_vision);
 }
 
 test "capability resolver degrades terminal catalog failures to local capabilities" {

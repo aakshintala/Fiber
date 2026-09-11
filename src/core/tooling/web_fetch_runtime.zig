@@ -175,12 +175,6 @@ pub const Runtime = struct {
         self.evictOverBudgetLocked();
     }
 
-    pub fn convertedBytes(self: *Runtime) usize {
-        self.lock();
-        defer self.unlock();
-        return self.converted_bytes;
-    }
-
     pub fn entryCount(self: *Runtime) usize {
         self.lock();
         defer self.unlock();

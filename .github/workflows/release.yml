@@ -19,27 +19,19 @@ jobs:
       needed: ${{ steps.check.outputs.needed }}
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 
+      # The decision lives in scripts/release_decision.py so it can be tested
+      # without a live publication. A prerelease is refused before the tag is
+      # ever consulted, so a lookup failure cannot become a publication.
       - name: Check if release needed
         id: check
         run: |
-          VERSION=$(grep 'pub const version' src/main.zig | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::src/main.zig version is not strict SemVer"
-            exit 1
-          fi
-          TAG="v${VERSION}"
-          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-            echo "Tag ${TAG} exists, no release needed"
-          else
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-            echo "Tag ${TAG} missing, release needed"
-          fi
+          python3 -m scripts.release_decision \
+            --source src/main.zig \
+            --github-output "$GITHUB_OUTPUT"
 
   build-linux:
     needs: check-version
@@ -55,7 +47,7 @@ jobs:
           - name: linux-aarch64
             target: aarch64-linux
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Setup Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -67,61 +59,19 @@ jobs:
 
       - name: Package
         run: |
-          package_dir="$RUNNER_TEMP/fx-package-${{ matrix.name }}"
+          package_dir="$RUNNER_TEMP/fiber-package-${{ matrix.name }}"
           mkdir -p "$package_dir"
-          cp zig-out/bin/fx LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
-          tar -czf fx-${{ matrix.name }}.tar.gz -C "$package_dir" fx LICENSE THIRD_PARTY_NOTICES.md
-          sha256sum fx-${{ matrix.name }}.tar.gz > fx-${{ matrix.name }}.tar.gz.sha256
+          cp zig-out/bin/fiber LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
+          tar -czf fiber-${{ matrix.name }}.tar.gz -C "$package_dir" fiber LICENSE THIRD_PARTY_NOTICES.md
+          sha256sum fiber-${{ matrix.name }}.tar.gz > fiber-${{ matrix.name }}.tar.gz.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fx-${{ matrix.name }}
+          name: fiber-${{ matrix.name }}
           path: |
-            fx-${{ matrix.name }}.tar.gz
-            fx-${{ matrix.name }}.tar.gz.sha256
-
-  build-macos-x86_64:
-    needs: check-version
-    if: needs.check-version.outputs.needed == 'true'
-    name: Build macos-x86_64
-    runs-on: macos-15-intel
-    environment: apple-signing
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Setup Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
-        with:
-          version: "0.16.0"
-
-      - name: Build
-        run: zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
-
-      - name: Sign and notarize
-        env:
-          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
-          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: scripts/sign-and-notarize-macos.sh zig-out/bin/fx
-
-      - name: Package
-        run: |
-          package_dir="$RUNNER_TEMP/fx-package-macos-x86_64"
-          mkdir -p "$package_dir"
-          cp zig-out/bin/fx LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
-          tar -czf fx-macos-x86_64.tar.gz -C "$package_dir" fx LICENSE THIRD_PARTY_NOTICES.md
-          shasum -a 256 fx-macos-x86_64.tar.gz > fx-macos-x86_64.tar.gz.sha256
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fx-macos-x86_64
-          path: |
-            fx-macos-x86_64.tar.gz
-            fx-macos-x86_64.tar.gz.sha256
+            fiber-${{ matrix.name }}.tar.gz
+            fiber-${{ matrix.name }}.tar.gz.sha256
 
   build-macos-arm64:
     needs: check-version
@@ -142,7 +92,7 @@ jobs:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Require native arm64 host
         run: test "$(uname -m)" = arm64
@@ -151,13 +101,13 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: pgso-evidence-macos-arm64-${{ github.sha }}
-          path: ${{ runner.temp }}/fx-pgso-aggregate
+          path: ${{ runner.temp }}/fiber-pgso-aggregate
 
       - name: Restore executable mode
-        run: chmod +x "$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx"
+        run: chmod +x "$RUNNER_TEMP/fiber-pgso-aggregate/candidate/fiber"
 
       - name: Confirm release eligibility
-        run: python3 -m scripts.pgso report --output-dir "$RUNNER_TEMP/fx-pgso-aggregate" >/dev/null
+        run: python3 -m scripts.pgso report --output-dir "$RUNNER_TEMP/fiber-pgso-aggregate" >/dev/null
 
       - name: Sign and notarize stable release candidate
         env:
@@ -166,40 +116,40 @@ jobs:
           APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: scripts/sign-and-notarize-macos.sh "$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx"
+        run: scripts/sign-and-notarize-macos.sh "$RUNNER_TEMP/fiber-pgso-aggregate/candidate/fiber"
 
       - name: Package stable release candidate
         run: |
-          archive="$RUNNER_TEMP/fx-macos-aarch64.tar.gz"
-          package_dir="$RUNNER_TEMP/fx-release-package"
+          archive="$RUNNER_TEMP/fiber-macos-aarch64.tar.gz"
+          package_dir="$RUNNER_TEMP/fiber-release-package"
           mkdir -p "$package_dir"
-          cp "$RUNNER_TEMP/fx-pgso-aggregate/candidate/fx" LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
-          tar -czf "$archive" -C "$package_dir" fx LICENSE THIRD_PARTY_NOTICES.md
+          cp "$RUNNER_TEMP/fiber-pgso-aggregate/candidate/fiber" LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
+          tar -czf "$archive" -C "$package_dir" fiber LICENSE THIRD_PARTY_NOTICES.md
           cd "$RUNNER_TEMP"
-          shasum -a 256 fx-macos-aarch64.tar.gz > fx-macos-aarch64.tar.gz.sha256
+          shasum -a 256 fiber-macos-aarch64.tar.gz > fiber-macos-aarch64.tar.gz.sha256
 
       - name: Upload stable release artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fx-macos-aarch64
+          name: fiber-macos-aarch64
           path: |
-            ${{ runner.temp }}/fx-macos-aarch64.tar.gz
-            ${{ runner.temp }}/fx-macos-aarch64.tar.gz.sha256
+            ${{ runner.temp }}/fiber-macos-aarch64.tar.gz
+            ${{ runner.temp }}/fiber-macos-aarch64.tar.gz.sha256
           if-no-files-found: error
 
   release:
-    needs: [check-version, build-linux, build-macos-x86_64, sign-macos-arm64]
+    needs: [check-version, build-linux, sign-macos-arm64]
     runs-on: ubuntu-latest
     environment: release
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Download artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: fx-*
+          pattern: fiber-*
           merge-multiple: true
 
       - name: Create git tag
@@ -227,46 +177,5 @@ jobs:
           tag_name: ${{ needs.check-version.outputs.version }}
           body_path: /tmp/release-notes.md
           files: |
-            fx-*.tar.gz
-            fx-*.tar.gz.sha256
-
-      - name: Publish to CDN
-        env:
-          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
-          VERSION: ${{ needs.check-version.outputs.version }}
-        run: |
-          set -euo pipefail
-          [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          CDN_BASE="cli"
-
-          for FILE in fx-*.tar.gz fx-*.tar.gz.sha256; do
-            [ -f "$FILE" ] || continue
-            CONTENT_TYPE="application/octet-stream"
-            [[ "$FILE" == *.sha256 ]] && CONTENT_TYPE="text/plain"
-            [[ "$FILE" == *.tar.gz ]] && [[ "$FILE" != *.sha256 ]] && CONTENT_TYPE="application/gzip"
-
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-              -X PUT "https://blob.vercel-storage.com/${CDN_BASE}/${VERSION}/${FILE}" \
-              -H "Authorization: Bearer ${BLOB_READ_WRITE_TOKEN}" \
-              -H "x-api-version: 7" \
-              -H "x-content-type: ${CONTENT_TYPE}" \
-              -H "x-add-random-suffix: 0" \
-              -H "x-cache-control-max-age: 31536000" \
-              --data-binary "@${FILE}")
-            echo "Uploaded ${FILE} -> ${CDN_BASE}/${VERSION}/${FILE} ($HTTP_CODE)"
-            if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-              echo "::error::Failed to upload ${FILE} to CDN ($HTTP_CODE)"
-              exit 1
-            fi
-          done
-
-          echo -n "$VERSION" > /tmp/latest.txt
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X PUT "https://blob.vercel-storage.com/${CDN_BASE}/latest.txt" \
-            -H "Authorization: Bearer ${BLOB_READ_WRITE_TOKEN}" \
-            -H "x-api-version: 7" \
-            -H "x-content-type: text/plain" \
-            -H "x-add-random-suffix: 0" \
-            -H "x-cache-control-max-age: 60" \
-            --data-binary "@/tmp/latest.txt")
-          echo "Updated latest.txt to $VERSION ($HTTP_CODE)"
+            fiber-*.tar.gz
+            fiber-*.tar.gz.sha256
