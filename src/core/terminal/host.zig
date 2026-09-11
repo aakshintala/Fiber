@@ -579,6 +579,7 @@ fn runSupported(alloc: Allocator, config: Config) !void {
     cleanupIdentity(&paths.host_dir);
     endpoint_created = false;
     cleanupEndpoint(paths.endpointDir());
+    cleanupOwnedEmptyFallbackDir(&paths.transport_dir, paths.transport_root_path);
     debug_trace.logf("terminal_host", "host exited idle=true", .{});
 }
 
@@ -1543,6 +1544,56 @@ fn cleanupIdentity(host_dir: *io_mod.VerifiedDir) void {
     host_dir.dir.deleteFile(io_mod.getIo(), identity_name) catch {};
 }
 
+/// Removes the host's own hashed fallback directory once it retires, and only
+/// then: non-fallback layouts have no transport dir, a surviving endpoint
+/// means the directory is still active or shared, the path shape plus a fresh
+/// ownership check prove Fiber owns it, and the remove itself only succeeds
+/// when the directory is empty.
+fn cleanupOwnedEmptyFallbackDir(
+    transport_dir: *?io_mod.VerifiedDir,
+    transport_root_path: []const u8,
+) void {
+    const transport = &(transport_dir.* orelse return);
+    const zio = io_mod.getIo();
+    if (transport.dir.statFile(
+        zio,
+        endpoint_name,
+        .{ .follow_symlinks = false },
+    )) |_| return else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return,
+    }
+    const uid = std.c.getuid();
+    if (!isOwnedFallbackTransportRoot(transport_root_path, uid)) return;
+    const stat = transport.dir.stat(zio) catch return;
+    const owner = directoryOwner(transport.dir) catch return;
+    validatePrivateRuntimeDir(stat, owner, uid) catch return;
+    std.Io.Dir.deleteDirAbsolute(zio, transport_root_path) catch return;
+    transport.close();
+    transport_dir.* = null;
+}
+
+fn isOwnedFallbackTransportRoot(path: []const u8, uid: std.c.uid_t) bool {
+    const base = runtimeBase(builtin.os.tag) orelse return false;
+    const parent = std.fs.path.dirname(path) orelse return false;
+    if (!std.mem.eql(u8, parent, base)) return false;
+    const prefix = "fiber-terminal-";
+    const name = std.fs.path.basename(path);
+    if (!std.mem.startsWith(u8, name, prefix)) return false;
+    const rest = name[prefix.len..];
+    const dash = std.mem.findScalar(u8, rest, '-') orelse return false;
+    const uid_text = rest[0..dash];
+    const hex = rest[dash + 1 ..];
+    if (hex.len != transport_hash_bytes * 2) return false;
+    const want_uid = std.fmt.parseInt(std.c.uid_t, uid_text, 10) catch return false;
+    if (want_uid != uid) return false;
+    for (hex) |c| switch (c) {
+        '0'...'9', 'a'...'f' => {},
+        else => return false,
+    };
+    return true;
+}
+
 fn verifyEndpointPermissions(host_dir: *io_mod.VerifiedDir) !void {
     const stat = try host_dir.dir.statFile(
         io_mod.getIo(),
@@ -1903,4 +1954,254 @@ test "a client that leaves during the drain window still drains" {
 
     try std.testing.expect(drainConnectedClients(&state, 2_000));
     try std.testing.expectEqual(@as(usize, 0), state.connected_clients.load(.acquire));
+}
+
+test "fallback transport roots are owned only with the exact runtime shape" {
+    const base = runtimeBase(builtin.os.tag) orelse
+        return error.SkipZigTest;
+    const uid = std.c.getuid();
+    const alloc = std.testing.allocator;
+
+    const owned = try std.fmt.allocPrint(
+        alloc,
+        "{s}/fiber-terminal-{d}-0123456789abcdef0123456789abcdef",
+        .{ base, uid },
+    );
+    defer alloc.free(owned);
+    try std.testing.expect(isOwnedFallbackTransportRoot(owned, uid));
+
+    const foreign_uid = try std.fmt.allocPrint(
+        alloc,
+        "{s}/fiber-terminal-{d}-0123456789abcdef0123456789abcdef",
+        .{ base, uid +% 1 },
+    );
+    defer alloc.free(foreign_uid);
+    try std.testing.expect(!isOwnedFallbackTransportRoot(foreign_uid, uid));
+
+    const bad_names = [_][]const u8{
+        "other-terminal-501-0123456789abcdef0123456789abcdef",
+        "fiber-terminal-501-0123456789abcdef",
+        "fiber-terminal-501-0123456789ABCDEF0123456789ABCDEF",
+        "fiber-terminal-501-0123456789abcdeZ0123456789abcdef",
+        "fiber-terminal--0123456789abcdef0123456789abcdef",
+        "fiber-terminal-501",
+        "fiber-terminal-",
+    };
+    for (bad_names) |name| {
+        const path = try std.fs.path.join(alloc, &.{ base, name });
+        defer alloc.free(path);
+        try std.testing.expect(!isOwnedFallbackTransportRoot(path, uid));
+    }
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const tmp_base = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(tmp_base);
+    if (!std.mem.eql(u8, tmp_base, base)) {
+        const displaced = try std.fmt.allocPrint(
+            alloc,
+            "{s}/fiber-terminal-{d}-0123456789abcdef0123456789abcdef",
+            .{ tmp_base, uid },
+        );
+        defer alloc.free(displaced);
+        try std.testing.expect(!isOwnedFallbackTransportRoot(displaced, uid));
+    }
+}
+
+test "retiring a host removes its own empty fallback directory" {
+    if (!isSupported()) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const base = runtimeBase(builtin.os.tag).?;
+    const uid = std.c.getuid();
+    const name = try std.fmt.allocPrint(
+        alloc,
+        "fiber-terminal-{d}-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        .{uid},
+    );
+    defer alloc.free(name);
+    const root = try std.fs.path.join(alloc, &.{ base, name });
+    defer alloc.free(root);
+
+    var parent = try std.Io.Dir.openDirAbsolute(
+        std.testing.io,
+        base,
+        .{ .iterate = true, .follow_symlinks = false },
+    );
+    defer parent.close(std.testing.io);
+    std.Io.Dir.deleteDirAbsolute(std.testing.io, root) catch {};
+    try parent.createDir(
+        std.testing.io,
+        name,
+        std.Io.File.Permissions.fromMode(0o700),
+    );
+    var slot: ?io_mod.VerifiedDir = .{
+        .dir = try parent.openDir(
+            std.testing.io,
+            name,
+            .{ .iterate = true, .follow_symlinks = false },
+        ),
+    };
+    errdefer if (slot) |*dir| dir.close();
+
+    cleanupOwnedEmptyFallbackDir(&slot, root);
+
+    try std.testing.expect(slot == null);
+    var reopened = std.Io.Dir.openDirAbsolute(
+        std.testing.io,
+        root,
+        .{ .iterate = true, .follow_symlinks = false },
+    ) catch |err| {
+        try std.testing.expectEqual(error.FileNotFound, err);
+        return;
+    };
+    reopened.close(std.testing.io);
+    return error.TestExpectedFileNotFound;
+}
+
+test "fallback cleanup leaves non-empty directories alone" {
+    if (!isSupported()) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const base = runtimeBase(builtin.os.tag).?;
+    const uid = std.c.getuid();
+    const name = try std.fmt.allocPrint(
+        alloc,
+        "fiber-terminal-{d}-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        .{uid},
+    );
+    defer alloc.free(name);
+    const root = try std.fs.path.join(alloc, &.{ base, name });
+    defer alloc.free(root);
+
+    var parent = try std.Io.Dir.openDirAbsolute(
+        std.testing.io,
+        base,
+        .{ .iterate = true, .follow_symlinks = false },
+    );
+    defer parent.close(std.testing.io);
+    std.Io.Dir.deleteDirAbsolute(std.testing.io, root) catch {};
+    try parent.createDir(
+        std.testing.io,
+        name,
+        std.Io.File.Permissions.fromMode(0o700),
+    );
+    var dir = try parent.openDir(
+        std.testing.io,
+        name,
+        .{ .iterate = true, .follow_symlinks = false },
+    );
+    var slot: ?io_mod.VerifiedDir = .{ .dir = dir };
+    defer if (slot) |*open| open.close();
+
+    var keeper = try dir.createFile(
+        std.testing.io,
+        "tmux.sock",
+        .{ .read = true },
+    );
+    keeper.close(std.testing.io);
+
+    cleanupOwnedEmptyFallbackDir(&slot, root);
+
+    try std.testing.expect(slot != null);
+    var check = try parent.openDir(
+        std.testing.io,
+        name,
+        .{ .iterate = true, .follow_symlinks = false },
+    );
+    defer check.close(std.testing.io);
+    try check.access(
+        std.testing.io,
+        "tmux.sock",
+        .{},
+    );
+    slot.?.dir.deleteFile(std.testing.io, "tmux.sock") catch {};
+    var owned = slot.?;
+    slot = null;
+    owned.close();
+    std.Io.Dir.deleteDirAbsolute(std.testing.io, root) catch {};
+}
+
+test "fallback cleanup never touches an active endpoint" {
+    if (!isSupported()) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const base = runtimeBase(builtin.os.tag).?;
+    const uid = std.c.getuid();
+    const name = try std.fmt.allocPrint(
+        alloc,
+        "fiber-terminal-{d}-cccccccccccccccccccccccccccccccc",
+        .{uid},
+    );
+    defer alloc.free(name);
+    const root = try std.fs.path.join(alloc, &.{ base, name });
+    defer alloc.free(root);
+
+    var parent = try std.Io.Dir.openDirAbsolute(
+        std.testing.io,
+        base,
+        .{ .iterate = true, .follow_symlinks = false },
+    );
+    defer parent.close(std.testing.io);
+    std.Io.Dir.deleteDirAbsolute(std.testing.io, root) catch {};
+    try parent.createDir(
+        std.testing.io,
+        name,
+        std.Io.File.Permissions.fromMode(0o700),
+    );
+    var dir = try parent.openDir(
+        std.testing.io,
+        name,
+        .{ .iterate = true, .follow_symlinks = false },
+    );
+    var slot: ?io_mod.VerifiedDir = .{ .dir = dir };
+    defer if (slot) |*open| open.close();
+
+    var endpoint = try dir.createFile(
+        std.testing.io,
+        endpoint_name,
+        .{ .read = true },
+    );
+    endpoint.close(std.testing.io);
+
+    cleanupOwnedEmptyFallbackDir(&slot, root);
+
+    try std.testing.expect(slot != null);
+    var check = try parent.openDir(
+        std.testing.io,
+        name,
+        .{ .iterate = true, .follow_symlinks = false },
+    );
+    defer check.close(std.testing.io);
+    try check.access(std.testing.io, endpoint_name, .{});
+    slot.?.dir.deleteFile(std.testing.io, endpoint_name) catch {};
+    var owned = slot.?;
+    slot = null;
+    owned.close();
+    std.Io.Dir.deleteDirAbsolute(std.testing.io, root) catch {};
+}
+
+test "fallback cleanup never touches directories Fiber does not own" {
+    if (!isSupported()) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(
+        std.testing.io,
+        "foreign",
+        std.Io.File.Permissions.fromMode(0o700),
+    );
+    const dir = try tmp.dir.openDir(
+        std.testing.io,
+        "foreign",
+        .{ .iterate = true, .follow_symlinks = false },
+    );
+    var slot: ?io_mod.VerifiedDir = .{ .dir = dir };
+    defer if (slot) |*open| open.close();
+
+    const foreign_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "foreign");
+    defer alloc.free(foreign_root);
+
+    cleanupOwnedEmptyFallbackDir(&slot, foreign_root);
+
+    try std.testing.expect(slot != null);
+    try tmp.dir.access(std.testing.io, "foreign", .{});
 }
