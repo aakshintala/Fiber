@@ -1096,6 +1096,7 @@ fn writeUserTurn(writer: *std.Io.Writer, user: session.UserTurn) !void {
         try writeSnapshotLocator(writer, image.snapshot_path);
         try writer.writeAll(",\"snapshot_sha256\":");
         try writeOptionalDurableBytes(writer, image.snapshot_sha256);
+        try writer.print(",\"width_px\":{d},\"height_px\":{d}", .{ image.width_px, image.height_px });
         try writer.writeByte('}');
     }
     try writer.writeByte(']');
@@ -1451,12 +1452,23 @@ fn parseUserTurn(alloc: Allocator, value: std.json.Value) !session.UserTurn {
         );
         errdefer if (snapshot_sha256) |sha256_bytes| alloc.free(sha256_bytes);
         if ((snapshot_path == null) != (snapshot_sha256 == null)) return error.InvalidSessionFormat;
+        // Dimensions postdate older sessions; missing keys bill the fallback.
+        const width_px = if (image.get("width_px")) |dims_value|
+            try parseOptionalU32(dims_value) orelse 0
+        else
+            0;
+        const height_px = if (image.get("height_px")) |dims_value|
+            try parseOptionalU32(dims_value) orelse 0
+        else
+            0;
         images[i] = .{
             .id = try requireUsize(image, "id"),
             .path = path,
             .media_type = media_type,
             .snapshot_path = snapshot_path,
             .snapshot_sha256 = snapshot_sha256,
+            .width_px = width_px,
+            .height_px = height_px,
         };
         parsed_count += 1;
     }
@@ -1477,7 +1489,9 @@ fn imageAttachmentObject(value: std.json.Value) !std.json.ObjectMap {
         } else if (std.mem.eql(u8, entry.key_ptr.*, "media_type")) {
             has_media_type = true;
         } else if (std.mem.eql(u8, entry.key_ptr.*, "snapshot_path") or
-            std.mem.eql(u8, entry.key_ptr.*, "snapshot_sha256"))
+            std.mem.eql(u8, entry.key_ptr.*, "snapshot_sha256") or
+            std.mem.eql(u8, entry.key_ptr.*, "width_px") or
+            std.mem.eql(u8, entry.key_ptr.*, "height_px"))
         {
             continue;
         } else {
@@ -3574,6 +3588,8 @@ fn expectUserTurnEqual(expected: session.UserTurn, actual: session.UserTurn) !vo
         try std.testing.expectEqualSlices(u8, image.media_type, got.media_type);
         try expectOptionalBytesEqual(image.snapshot_path, got.snapshot_path);
         try expectOptionalBytesEqual(image.snapshot_sha256, got.snapshot_sha256);
+        try std.testing.expectEqual(image.width_px, got.width_px);
+        try std.testing.expectEqual(image.height_px, got.height_px);
     }
 }
 
@@ -3617,6 +3633,48 @@ test "durable image snapshots serialize as session-relative locators" {
         encoded.written(),
         "\"snapshot_path\":\"images/image-1-deadbeef.bin\"",
     ) != null);
+}
+
+test "durable image dimensions round trip and default for legacy state" {
+    const alloc = std.testing.allocator;
+    var images = [_]session.ImageAttachment{.{
+        .id = 3,
+        .path = @constCast("/tmp/dims.png"),
+        .media_type = @constCast("image/png"),
+        .width_px = 800,
+        .height_px = 600,
+    }};
+    const user: session.UserTurn = .{ .text = @constCast("look [Image #3]"), .images = &images };
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try writeUserTurn(&encoded.writer, user);
+    try std.testing.expect(std.mem.find(u8, encoded.written(), "\"width_px\":800") != null);
+    try std.testing.expect(std.mem.find(u8, encoded.written(), "\"height_px\":600") != null);
+
+    var parsed_json = try std.json.parseFromSlice(std.json.Value, alloc, encoded.written(), .{});
+    defer parsed_json.deinit();
+    const round_tripped = try parseUserTurn(alloc, parsed_json.value);
+    defer {
+        alloc.free(round_tripped.text);
+        types.freeImageAttachmentSlice(alloc, round_tripped.images);
+    }
+    try expectUserTurnEqual(user, round_tripped);
+
+    // Sessions written before dimensions existed carry no keys and bill fallback.
+    var legacy_json = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        "{\"text\":\"old\",\"images\":[{\"id\":1,\"path\":\"/tmp/old.png\",\"media_type\":\"image/png\",\"snapshot_path\":null,\"snapshot_sha256\":null}]}",
+        .{},
+    );
+    defer legacy_json.deinit();
+    const legacy = try parseUserTurn(alloc, legacy_json.value);
+    defer {
+        alloc.free(legacy.text);
+        types.freeImageAttachmentSlice(alloc, legacy.images);
+    }
+    try std.testing.expectEqual(@as(u32, 0), legacy.images[0].width_px);
+    try std.testing.expectEqual(@as(u32, 0), legacy.images[0].height_px);
 }
 
 test "codec structural helpers enforce exact objects and required strings" {

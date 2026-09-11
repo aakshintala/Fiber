@@ -927,6 +927,11 @@ pub const ImageAttachment = struct {
     media_type: []u8,
     snapshot_path: ?[]u8 = null,
     snapshot_sha256: ?[]u8 = null,
+    /// Decoded snapshot dimensions in pixels. Zero means unknown (legacy or
+    /// undecodable images); the history budget then charges the pipeline's
+    /// maximum producible size instead of zero.
+    width_px: u32 = 0,
+    height_px: u32 = 0,
 };
 
 pub const UserTurn = struct {
@@ -2446,6 +2451,8 @@ pub fn dupeImageAttachmentSlice(alloc: std.mem.Allocator, attachments: []const I
             .media_type = media_type,
             .snapshot_path = snapshot_path,
             .snapshot_sha256 = snapshot_sha256,
+            .width_px = attachment.width_px,
+            .height_px = attachment.height_px,
         };
         copied += 1;
     }
