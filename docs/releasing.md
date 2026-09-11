@@ -57,19 +57,25 @@ Do not create version tags manually. Do not change `build.zig.zon` version (it i
 Run the prompt below with any model available to the releaser and paste the
 result between the release markers. There is no pinned model or delivery
 path: the fx workflow that once called the Vercel AI Gateway was deleted at
-the fork and does not carry over. Collect the diff stat, the `src/` diff,
-and the commit log since the previous release tag first (the fork point
-while no tag exists yet):
+commit 993688a5 and does not carry over. Collect the diff stat, the `src/`
+diff, and the commit log since the previous release tag first (the
+`fork-point` tag while no release tag exists yet):
 
 ```sh
-PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo fork-point)
 git diff --stat "$PREV_TAG..HEAD"
-git diff "$PREV_TAG..HEAD" -- src/
+git diff "$PREV_TAG..HEAD" -- src/ > /tmp/src-diff.txt
+DIFF_SIZE=$(wc -c < /tmp/src-diff.txt | tr -d ' ')
+if [ "$DIFF_SIZE" -gt 81920 ]; then
+  head -c 81920 /tmp/src-diff.txt > /tmp/src-diff-short.txt
+  printf '\n\n[diff truncated at 80KB — %s bytes total]' "$DIFF_SIZE" >> /tmp/src-diff-short.txt
+fi
 git log "$PREV_TAG..HEAD" --oneline
 ```
 
-The `src/` diff is the source of truth. The commit log is research context
-only.
+Send all three artifacts to the model in one message naming the version
+under review and the previous tag. The `src/` diff is the source of truth;
+the commit log is private research context only.
 
 ```text
 You write changelogs for Fiber, an open-source AI-powered CLI tool written in Zig.
@@ -101,6 +107,8 @@ step of the deleted `prepare-release.yml`.
 * Every `###` heading is one of Breaking Changes, New Features,
   Improvements, Bug Fixes, Security.
 * Every bullet matches `- **Name:** Description`.
+* Every bullet traces to the diff: spot-check that each bullet maps to at
+  least one `src/` diff hunk, and drop bullets with none.
 * No pull request or issue numbers, tracker links, commit hashes,
   contributor names, or Contributors section.
 * No internal details such as CI, tests, website work, branch history, or
