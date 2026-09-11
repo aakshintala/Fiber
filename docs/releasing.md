@@ -23,7 +23,7 @@ Whether automated or manual, the changelog is public product copy. Describe obse
 
 Public changelog entries must:
 
-* Spell the product name `fiber`. Preserve different casing only when it is part of an exact code identifier such as `FIBER_MODEL`.
+* Spell the product name `Fiber`. Preserve different casing only when it is part of an exact code identifier such as `FIBER_MODEL`.
 * Use only relevant sections from `### Breaking Changes`, `### New Features`, `### Improvements`, `### Bug Fixes`, and `### Security`. Omit empty sections.
 * Bold a short feature or fix name, then describe the user-visible change after a colon.
 * Omit pull request numbers, issue numbers, commit hashes, contributor names, and author attribution.
@@ -51,4 +51,69 @@ Only the current release should have markers; remove `<!-- release:start -->` an
 Do not add a `### Contributors` section or tracker references. Use descriptive section names.
 
 Do not create version tags manually. Do not change `build.zig.zon` version (it is a placeholder).
+
+## Generating the changelog
+
+Run the prompt below with any model available to the releaser and paste the
+result between the release markers. There is no pinned model or delivery
+path: the fx workflow that once called the Vercel AI Gateway was deleted at
+the fork and does not carry over. Collect the diff stat, the `src/` diff,
+and the commit log since the previous release tag first (the fork point
+while no tag exists yet):
+
+```sh
+PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+git diff --stat "$PREV_TAG..HEAD"
+git diff "$PREV_TAG..HEAD" -- src/
+git log "$PREV_TAG..HEAD" --oneline
+```
+
+The `src/` diff is the source of truth. The commit log is research context
+only.
+
+```text
+You write changelogs for Fiber, an open-source AI-powered CLI tool written in Zig.
+
+You will receive the actual code diff since the last release, a diff stat summary, and a commit log. Treat the commit log as private research context.
+
+Rules:
+- Base your changelog ONLY on what the diff actually shows. Do not trust commit messages or PR descriptions as authoritative — they go stale. The diff is the source of truth.
+- Write public, user-facing product notes. Describe observable behavior and outcomes, not how the work was implemented or delivered.
+- Always spell the product name Fiber. Preserve different casing only for exact code identifiers such as FIBER_MODEL.
+- Group changes under ### Breaking Changes, ### New Features, ### Improvements, ### Bug Fixes, and ### Security as appropriate. Omit empty sections.
+- Bold a short feature or fix name, then describe the user-visible change after a colon.
+- Do not include pull request or issue numbers, links to trackers, commit hashes, contributor names, author attribution, or a Contributors section.
+- Do not include internal details such as repository moves, website or marketing work, CDN layout, CI workflows, tests or fixtures, branch history, or implementation-only refactors. Translate relevant work into its public user outcome or omit it.
+- Do not force every commit into the changelog. Omit changes without a public user outcome.
+- Output ONLY the changelog body (the content that goes between the release markers). Do not include the ## version heading, do not include the <!-- release:start/end --> markers, do not include any preamble or explanation.
+- Do not use emojis.
+```
+
+### Dry run
+
+Prove the output on the real diff before editing `CHANGELOG.md`: generate
+the body for the range under review, check every item below, and only then
+paste it between the markers. The checklist is adapted from the validation
+step of the deleted `prepare-release.yml`.
+
+* The output is only the changelog body: no version heading, no release
+  markers, no preamble.
+* Every `###` heading is one of Breaking Changes, New Features,
+  Improvements, Bug Fixes, Security.
+* Every bullet matches `- **Name:** Description`.
+* No pull request or issue numbers, tracker links, commit hashes,
+  contributor names, or Contributors section.
+* No internal details such as CI, tests, website work, branch history, or
+  refactors without a user outcome.
+* The product name is spelled Fiber except in exact code identifiers.
+* No emojis.
+
+Worked example: this procedure run against the shell poll clamp (empty
+`interact` observations wait at least five seconds) produced:
+
+```markdown
+### Improvements
+
+- **Shell observation wait:** Observing a running shell session without sending input now waits at least five seconds, so empty polls come back with useful output instead of spinning.
+```
 
