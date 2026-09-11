@@ -1626,8 +1626,13 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     defer explicit_skills.deinit(alloc);
     if (explicit_skills.notice) |notice| try pushContextNotice(@ptrCast(&ctx), notice);
     if (explicit_skills.diagnostic_notice) |notice| try pushContextNotice(@ptrCast(&ctx), notice);
-    if (explicit_skills.load_notice) |notice| try pushSystemNotice(@ptrCast(&ctx), notice.body);
-    if (explicit_skills.load_details) |details| try pushSystemNotice(@ptrCast(&ctx), details);
+    if (explicit_skills.load_notice) |notice| try pushSkillLoadNotice(@ptrCast(&ctx), notice);
+    if (explicit_skills.load_details) |details| try pushSkillLoadNotice(@ptrCast(&ctx), .{
+        .topic = "skills",
+        .tone = .warning,
+        .body = details,
+        .visibility = .full_only,
+    });
     ctx.subagent_skills_prompt = try alloc.dupe(u8, skills_section);
     ctx.subagent_explicit_skills_prompt = try alloc.dupe(u8, explicit_skills.text);
     const context_history = try ctx.session.snapshotContextHistory(alloc);
@@ -2861,6 +2866,14 @@ fn pushSystemNotice(raw_ctx: *anyopaque, text: []const u8) !void {
     });
     try ctx.writeStderr("[notice] ");
     try ctx.writeStderr(text);
+    try ctx.writeStderr("\n");
+}
+
+fn pushSkillLoadNotice(raw_ctx: *anyopaque, notice: types.SemanticNotice) !void {
+    const ctx: *AskContext = @ptrCast(@alignCast(raw_ctx));
+    if (ctx.presenter) |presenter| return presenter.pushNotice(notice);
+    try ctx.writeStderr("[notice] ");
+    try ctx.writeStderr(notice.body);
     try ctx.writeStderr("\n");
 }
 

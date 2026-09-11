@@ -984,6 +984,17 @@ pub fn Runtime(comptime App: type) type {
             defer explicit_skills.deinit(alloc);
             skill_catalog.deinit();
             skill_catalog_owned = false;
+            if (explicit_skills.load_notice) |notice| {
+                app_worker_runtime.Runtime(App).pushSemanticNotice(app, notice) catch return error.OutOfMemory;
+            }
+            if (explicit_skills.load_details) |details| {
+                app_worker_runtime.Runtime(App).pushSemanticNotice(app, .{
+                    .topic = "skills",
+                    .tone = .warning,
+                    .body = details,
+                    .visibility = .full_only,
+                }) catch return error.OutOfMemory;
+            }
             const prompt_policy = app.promptPolicy();
             var tool_context = childToolContext(app.subagentToolContextForAdmission(admission));
             tool_context.managed_executions = turn.managedExecutionRuntime();
