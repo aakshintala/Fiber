@@ -159,6 +159,12 @@ fn defaultYieldTime(action: Action) u32 {
     };
 }
 
+fn interactWaitCeilingMs(input: Input) u32 {
+    const chars = input.chars orelse "";
+    if (chars.len != 0) return input.yield_time_ms;
+    return @max(input.yield_time_ms, managed_contract.default_wait_ceiling_ms);
+}
+
 fn decodeFailure(
     ctx: tool_dispatch.DispatchContext,
 ) tool_dispatch.DispatchError!tool_dispatch.DecodeResult {
@@ -439,7 +445,7 @@ fn callInteract(
     var prepared = runtime.wait(
         ctx.allocator,
         session_id,
-        input.yield_time_ms,
+        interactWaitCeilingMs(input),
         ctx.cancel_flag,
     ) catch |err| return runtimeFailure(ctx, err);
     defer prepared.deinit(ctx.allocator);
@@ -683,11 +689,12 @@ fn callTtyInteract(
     const waiter_id = runtime.reserveExternalWait(session_id) catch |err|
         return runtimeFailure(ctx, err);
     defer runtime.releaseExternalWait(session_id, waiter_id);
-    if (state == .running and input.yield_time_ms != 0) {
+    const wait_ceiling_ms = interactWaitCeilingMs(input);
+    if (state == .running and wait_ceiling_ms != 0) {
         var waited = executeAuthorizedTerminal(ctx, session_id, .{ .wait = .{
             .session_id = session_id,
             .return_when = .exit,
-            .safety_ceiling_ms = input.yield_time_ms,
+            .safety_ceiling_ms = wait_ceiling_ms,
             .authority = null,
         } }) catch |err| return runtimeFailure(ctx, err);
         defer waited.deinit(ctx.allocator);
@@ -1623,6 +1630,33 @@ test "shell interact classification follows optional input" {
     }) orelse return error.TestUnexpectedResult;
     defer alloc.free(failure);
     try std.testing.expect(std.mem.find(u8, failure, "exceed") != null);
+}
+
+test "empty interact observations wait at least five seconds" {
+    try std.testing.expectEqual(
+        @as(u32, 5_000),
+        interactWaitCeilingMs(.{ .action = .interact, .yield_time_ms = 0 }),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 5_000),
+        interactWaitCeilingMs(.{ .action = .interact, .yield_time_ms = 100, .chars = "" }),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 5_000),
+        interactWaitCeilingMs(.{ .action = .interact, .yield_time_ms = 5_000 }),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 30_000),
+        interactWaitCeilingMs(.{ .action = .interact, .yield_time_ms = 30_000 }),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 0),
+        interactWaitCeilingMs(.{ .action = .interact, .yield_time_ms = 0, .chars = "x" }),
+    );
+    try std.testing.expectEqual(
+        @as(u32, 100),
+        interactWaitCeilingMs(.{ .action = .interact, .yield_time_ms = 100, .chars = "x\n" }),
+    );
 }
 
 test "TTY execution requires matching shell authority" {
