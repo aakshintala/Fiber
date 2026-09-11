@@ -3245,9 +3245,9 @@ fn formatToolResultEvidenceLine(arena: Allocator, result: core_types.PersistedTo
 fn estimateHistoryTurnTokens(turn: HistoryTurn) usize {
     return switch (turn) {
         .compacted_summary => |entry| estimateTextTokens(entry.summary),
-        .assistant => |entry| estimateTextTokens(entry.user.text) + estimateUserImagesTokens(entry.user.images) + estimateTextTokens(entry.assistant) + estimateExecutionTokens(entry.execution),
+        .assistant => |entry| estimateTextTokens(entry.user.text) + estimate_user_images_tokens(entry.user.images) + estimateTextTokens(entry.assistant) + estimateExecutionTokens(entry.execution),
         .interrupted => |entry| estimateTextTokens(entry.user.text) +
-            estimateUserImagesTokens(entry.user.images) +
+            estimate_user_images_tokens(entry.user.images) +
             (if (entry.assistant) |assistant| estimateTextTokens(assistant) else 0) +
             estimateExecutionTokens(entry.execution),
     };
@@ -3256,9 +3256,9 @@ fn estimateHistoryTurnTokens(turn: HistoryTurn) usize {
 /// Charges each retained image at its provider token cost. Every retained
 /// image is resent with the request, so charging zero lets image-heavy
 /// history silently exceed the provider's context window.
-fn estimateUserImagesTokens(images: []const ImageAttachment) usize {
+fn estimate_user_images_tokens(images: []const ImageAttachment) usize {
     var total: usize = 0;
-    for (images) |image| total += image_attachments.estimateImageTokens(image);
+    for (images) |image| total += image_attachments.estimate_image_tokens(image);
     return total;
 }
 
@@ -4070,16 +4070,22 @@ test "budgeted Message and Chat projections retain latest turn and identical tri
         .id = 7,
         .path = @constCast("/tmp/background.png"),
         .media_type = @constCast("image/png"),
+        .width_px = 2000,
+        .height_px = 2000,
     }};
     var interrupted_images = [_]ImageAttachment{.{
         .id = 8,
         .path = @constCast("/tmp/interrupted.jpg"),
         .media_type = @constCast("image/jpeg"),
+        .width_px = 2000,
+        .height_px = 2000,
     }};
     var latest_images = [_]ImageAttachment{.{
         .id = 9,
         .path = @constCast("/tmp/latest.webp"),
         .media_type = @constCast("image/webp"),
+        .width_px = 2000,
+        .height_px = 2000,
     }};
     const history = [_]HistoryTurn{
         .{ .compacted_summary = .{
@@ -4259,10 +4265,16 @@ test "history budget charges images at provider tile cost" {
         .assistant = @constCast("hi there"),
     } };
     const unknown_cost = estimateHistoryTurnTokens(with_unknown);
-    try std.testing.expectEqual(@as(usize, 7 + image_attachments.unknown_image_tokens), unknown_cost);
-    // A ~5 MiB base64 payload billed as text would exceed a million tokens;
-    // the dimension-based charge stays in the hundreds.
-    try std.testing.expect(unknown_cost < 1000);
+    // Unknowns bill the pipeline maximum through the same public estimate
+    // the budget uses; still orders of magnitude below a multi-MiB base64
+    // payload charged as text (millions of tokens).
+    const probe: ImageAttachment = .{
+        .id = 9,
+        .path = @constCast("/tmp/probe.png"),
+        .media_type = @constCast("image/png"),
+    };
+    try std.testing.expectEqual(@as(usize, 7 + image_attachments.estimate_image_tokens(probe)), unknown_cost);
+    try std.testing.expect(unknown_cost < 2000);
 
     const interrupted: HistoryTurn = .{ .interrupted = .{
         .user = .{ .text = @constCast("hello world"), .images = known_images[0..] },

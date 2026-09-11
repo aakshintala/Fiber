@@ -503,7 +503,7 @@ pub fn captureInlineImageBytes(
     if (!std.mem.eql(u8, attachment.media_type, declared_media_type)) {
         return error.ImageSnapshotMediaTypeMismatch;
     }
-    if (imageDimensions(bytes)) |dims| {
+    if (image_dimensions(bytes)) |dims| {
         attachment.width_px = dims.width;
         attachment.height_px = dims.height;
     }
@@ -662,7 +662,7 @@ fn captureImageSnapshotFromOpenFileWithBudget(
     // The probe allocates nothing so a best-effort read can neither fail the
     // capture nor disturb allocator-sensitive callers.
     if (attachment.snapshot_path) |snapshot| {
-        if (probeSnapshotDimensions(snapshot)) |dims| {
+        if (probe_snapshot_dimensions(snapshot)) |dims| {
             attachment.width_px = dims.width;
             attachment.height_px = dims.height;
         }
@@ -671,7 +671,7 @@ fn captureImageSnapshotFromOpenFileWithBudget(
 
 const max_dimension_probe_bytes: usize = 64 * 1024;
 
-fn probeSnapshotDimensions(snapshot_path: []const u8) ?ImageDimensions {
+fn probe_snapshot_dimensions(snapshot_path: []const u8) ?ImageDimensions {
     var file = openSnapshotFileNoFollow(snapshot_path) catch return null;
     defer file.close(io_mod.getIo());
     var probe_buf: [max_dimension_probe_bytes]u8 = undefined;
@@ -683,7 +683,7 @@ fn probeSnapshotDimensions(snapshot_path: []const u8) ?ImageDimensions {
         if (n == 0) break;
         total += n;
     }
-    return imageDimensions(probe_buf[0..total]);
+    return image_dimensions(probe_buf[0..total]);
 }
 
 fn streamSourceToFile(
@@ -1895,31 +1895,48 @@ fn detectMediaTypeFromBytes(bytes: []const u8) ?[]const u8 {
 }
 
 /// Decoded snapshot dimensions in pixels.
-pub const ImageDimensions = struct {
+const ImageDimensions = struct {
     width: u32,
     height: u32,
 };
 
-/// Provider token cost of one image input, mirrored from OpenAI's documented
-/// vision pricing for high-detail images: fit within 2048px preserving aspect
-/// ratio, scale the shortest side to 768px, then 85 base tokens plus 170 per
-/// 512px tile. This must stay a function of dimensions, never of base64
-/// length: byte size is compression-dependent and charging it as text reports
-/// false context exhaustion.
-pub fn estimateImageTokens(attachment: types.ImageAttachment) usize {
+/// Provider token cost of one image input, mirrored from the provider's
+/// documented vision pricing for high-detail images: fit within 2048px
+/// preserving aspect ratio, then fit the shortest side within 768px, then 85
+/// base tokens plus 170 per 512px tile. The "fit within" bounds are caps,
+/// never upscale targets: a side already under its bound bills as-is. This
+/// must stay a function of dimensions, never of base64 length: byte size is
+/// compression-dependent and charging it as text reports false context
+/// exhaustion.
+///
+/// Calibration note: the only exact provider numbers available
+/// (`types.Usage` / `ProviderBilling.input_tokens`, recorded per completed
+/// generation in session_usage.zig) are whole-request aggregates, every
+/// retained turn, image, and tool result billed together with no per-image
+/// breakdown. A per-request estimate-vs-actual delta therefore cannot tell
+/// image miscalibration apart from text growth, and the estimate guards a
+/// future request while the exact total attaches to a past one, so there is
+/// no signal to feed a correction factor without laundering text growth
+/// into image pricing. The tile constants above are the calibration; live
+/// recalibration stays future work for the compaction epic.
+pub fn estimate_image_tokens(attachment: types.ImageAttachment) usize {
     if (attachment.width_px > 0 and attachment.height_px > 0) {
-        return imageTileTokens(attachment.width_px, attachment.height_px);
+        return image_tile_tokens(attachment.width_px, attachment.height_px);
     }
     return unknown_image_tokens;
 }
 
 /// Conservative charge for images without decoded dimensions (legacy history
-/// or undecodable headers): the tile cost of the largest snapshot the
-/// capture pipeline can produce, which `sips -Z 2000` caps at 2000px per
-/// side. Calibrated against the provider formula, not against byte size.
-pub const unknown_image_tokens: usize = imageTileTokens(2000, 2000);
+/// or undecodable headers): the most expensive tile grid the capture
+/// pipeline can produce. `sips -Z 2000` caps each side at 2000px, so the
+/// widest grid is 4 tiles by 2: a 2000px side needs four 512px tiles, and
+/// the other side bills at most two (768px after the downscale prices two
+/// tiles, and anything already under 768px bills as-is at two or fewer).
+/// 85 + 8 * 170 = 1445, deliberately above any typical image: an unknown
+/// must never sneak an over-window request past the budget.
+const unknown_image_tokens: usize = image_tile_tokens(2000, 768);
 
-fn imageTileTokens(width: u32, height: u32) usize {
+fn image_tile_tokens(width: u32, height: u32) usize {
     var scaled_width: usize = width;
     var scaled_height: usize = height;
     const longest = @max(scaled_width, scaled_height);
@@ -1927,8 +1944,12 @@ fn imageTileTokens(width: u32, height: u32) usize {
         scaled_width = (scaled_width * 2048 + longest - 1) / longest;
         scaled_height = (scaled_height * 2048 + longest - 1) / longest;
     }
+    // Downscale only. Scaling a short side already under 768px up to 768
+    // would overcharge small images 2-3x (512x512 would bill 4 tiles
+    // instead of 1) in exactly the false-exhaustion direction this budget
+    // exists to prevent.
     const shortest = @min(scaled_width, scaled_height);
-    if (shortest != 768) {
+    if (shortest > 768) {
         scaled_width = (scaled_width * 768 + shortest - 1) / shortest;
         scaled_height = (scaled_height * 768 + shortest - 1) / shortest;
     }
@@ -1939,7 +1960,7 @@ fn imageTileTokens(width: u32, height: u32) usize {
 /// Decodes pixel dimensions from encoded bytes for the formats
 /// `detectMediaTypeFromBytes` accepts. Returns null for truncated or
 /// unrecognized headers; callers then bill `unknown_image_tokens`.
-pub fn imageDimensions(bytes: []const u8) ?ImageDimensions {
+fn image_dimensions(bytes: []const u8) ?ImageDimensions {
     if (bytes.len >= 24 and
         std.mem.eql(u8, bytes[0..8], "\x89PNG\r\n\x1a\n") and
         std.mem.eql(u8, bytes[12..16], "IHDR"))
@@ -1961,15 +1982,15 @@ pub fn imageDimensions(bytes: []const u8) ?ImageDimensions {
         std.mem.eql(u8, bytes[0..4], "RIFF") and
         std.mem.eql(u8, bytes[8..12], "WEBP"))
     {
-        return webpDimensions(bytes);
+        return webp_dimensions(bytes);
     }
     if (bytes.len >= 4 and bytes[0] == 0xff and bytes[1] == 0xd8 and bytes[2] == 0xff) {
-        return jpegDimensions(bytes);
+        return jpeg_dimensions(bytes);
     }
     return null;
 }
 
-fn webpDimensions(bytes: []const u8) ?ImageDimensions {
+fn webp_dimensions(bytes: []const u8) ?ImageDimensions {
     if (bytes.len < 21) return null;
     if (std.mem.eql(u8, bytes[12..16], "VP8X")) {
         if (bytes.len < 30) return null;
@@ -1999,7 +2020,7 @@ fn webpDimensions(bytes: []const u8) ?ImageDimensions {
     return null;
 }
 
-fn jpegDimensions(bytes: []const u8) ?ImageDimensions {
+fn jpeg_dimensions(bytes: []const u8) ?ImageDimensions {
     var i: usize = 2;
     while (i < bytes.len) {
         if (bytes[i] != 0xff) return null;
@@ -2551,19 +2572,19 @@ test "image dimensions decode png gif jpeg and webp headers" {
         "\x00\x00\x00\x0dIHDR" ++
         "\x00\x00\x04\x00" ++ // 1024
         "\x00\x00\x02\x00"; // 512
-    const png_dims = imageDimensions(png).?;
+    const png_dims = image_dimensions(png).?;
     try std.testing.expectEqual(@as(u32, 1024), png_dims.width);
     try std.testing.expectEqual(@as(u32, 512), png_dims.height);
 
     const gif = "GIF89a" ++ "\x00\x02\xf0\x00"; // 512x240
-    const gif_dims = imageDimensions(gif).?;
+    const gif_dims = image_dimensions(gif).?;
     try std.testing.expectEqual(@as(u32, 512), gif_dims.width);
     try std.testing.expectEqual(@as(u32, 240), gif_dims.height);
 
     // SOI, APP0 filler, SOF0 with 800x600.
     const jpeg = "\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" ++
         "\xff\xc0\x00\x0b\x08\x02\x58\x03\x20\x01\x01\x11\x00";
-    const jpeg_dims = imageDimensions(jpeg).?;
+    const jpeg_dims = image_dimensions(jpeg).?;
     try std.testing.expectEqual(@as(u32, 800), jpeg_dims.width);
     try std.testing.expectEqual(@as(u32, 600), jpeg_dims.height);
 
@@ -2571,54 +2592,59 @@ test "image dimensions decode png gif jpeg and webp headers" {
     const webp_x = "RIFF\x00\x00\x00\x00WEBPVP8X\x00\x00\x00\x00\x00\x00\x00\x00" ++
         "\x3f\x03\x00" ++ // 832 - 1
         "\xdf\x01\x00"; // 480 - 1
-    const webp_x_dims = imageDimensions(webp_x).?;
+    const webp_x_dims = image_dimensions(webp_x).?;
     try std.testing.expectEqual(@as(u32, 832), webp_x_dims.width);
     try std.testing.expectEqual(@as(u32, 480), webp_x_dims.height);
 
     // Lossy VP8 frame header with 14-bit dimensions.
     const webp = "RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00" ++
         "\x00\x00\x00\x9d\x01\x2a\x40\x01\xf0\x00"; // 320x240
-    const webp_dims = imageDimensions(webp).?;
+    const webp_dims = image_dimensions(webp).?;
     try std.testing.expectEqual(@as(u32, 320), webp_dims.width);
     try std.testing.expectEqual(@as(u32, 240), webp_dims.height);
 
     // Lossless VP8L packs width-1/height-1 into 28 bits.
     const webp_l = "RIFF\x00\x00\x00\x00WEBPVP8L\x00\x00\x00\x00\x2f" ++
         "\x3f\xc1\x3b\x00"; // 320x240 after unpacking
-    const webp_l_dims = imageDimensions(webp_l).?;
+    const webp_l_dims = image_dimensions(webp_l).?;
     try std.testing.expectEqual(@as(u32, 320), webp_l_dims.width);
     try std.testing.expectEqual(@as(u32, 240), webp_l_dims.height);
 }
 
 test "image dimensions reject truncated zero and unknown headers" {
-    try std.testing.expect(imageDimensions("") == null);
-    try std.testing.expect(imageDimensions("\x89PNG\r\n\x1a\nIHDR") == null);
-    try std.testing.expect(imageDimensions("GIF89a\x00") == null);
-    try std.testing.expect(imageDimensions("\xff\xd8\xff\xc0") == null);
-    try std.testing.expect(imageDimensions("RIFF\x00\x00\x00\x00WEBP") == null);
-    try std.testing.expect(imageDimensions("not an image at all") == null);
+    try std.testing.expect(image_dimensions("") == null);
+    try std.testing.expect(image_dimensions("\x89PNG\r\n\x1a\nIHDR") == null);
+    try std.testing.expect(image_dimensions("GIF89a\x00") == null);
+    try std.testing.expect(image_dimensions("\xff\xd8\xff\xc0") == null);
+    try std.testing.expect(image_dimensions("RIFF\x00\x00\x00\x00WEBP") == null);
+    try std.testing.expect(image_dimensions("not an image at all") == null);
     const zero_png = "\x89PNG\r\n\x1a\n" ++
         "\x00\x00\x00\x0dIHDR" ++
         "\x00\x00\x00\x00" ++
         "\x00\x00\x02\x00";
-    try std.testing.expect(imageDimensions(zero_png) == null);
+    try std.testing.expect(image_dimensions(zero_png) == null);
 }
 
 test "image token pricing follows provider tile math, not byte size" {
-    // 2000x2000 (the capture pipeline maximum): fits 2048 untouched,
-    // shortest side scales to 768, 2x2 tiles, 85 + 4 * 170.
-    try std.testing.expectEqual(@as(usize, 765), imageTileTokens(2000, 2000));
-    // 1024x512 scales to 1536x768: 3x2 tiles, 85 + 6 * 170.
-    try std.testing.expectEqual(@as(usize, 1105), imageTileTokens(1024, 512));
+    // 2000x2000: fits 2048 untouched, shortest side downscales to 768x768,
+    // 2x2 tiles, 85 + 4 * 170.
+    try std.testing.expectEqual(@as(usize, 765), image_tile_tokens(2000, 2000));
+    // 2000x1000: shortest side 1000 downscales to 1536x768, 3x2 tiles.
+    try std.testing.expectEqual(@as(usize, 1105), image_tile_tokens(2000, 1000));
+    // Small images bill as-is, never scaled up: 512x512 is a single tile,
+    // 600x400 is 2x1 tiles.
+    try std.testing.expectEqual(@as(usize, 255), image_tile_tokens(512, 512));
+    try std.testing.expectEqual(@as(usize, 425), image_tile_tokens(600, 400));
+    try std.testing.expectEqual(@as(usize, 425), image_tile_tokens(1024, 512));
     // Unknown dimensions conservatively bill the pipeline maximum.
-    try std.testing.expectEqual(@as(usize, 765), unknown_image_tokens);
-    try std.testing.expectEqual(unknown_image_tokens, estimateImageTokens(.{
+    try std.testing.expectEqual(@as(usize, 1445), unknown_image_tokens);
+    try std.testing.expectEqual(unknown_image_tokens, estimate_image_tokens(.{
         .path = @constCast("/tmp/unknown.png"),
         .media_type = @constCast("image/png"),
     }));
     // A 5 MiB encoded image billed as text would exceed a million tokens;
     // the dimension charge stays in the hundreds.
-    const charged = estimateImageTokens(.{
+    const charged = estimate_image_tokens(.{
         .path = @constCast("/tmp/big.png"),
         .media_type = @constCast("image/png"),
         .width_px = 2000,
@@ -2626,6 +2652,24 @@ test "image token pricing follows provider tile math, not byte size" {
     });
     try std.testing.expectEqual(@as(usize, 765), charged);
     try std.testing.expect(charged < 1000);
+}
+
+test "unknown image fallback covers every pipeline-plausible dimension cost" {
+    // `sips -Z 2000` caps each side at 2000px; sweep that whole space so the
+    // fallback stays above every dimension the pipeline can produce.
+    var w: u32 = 1;
+    while (w <= 2000) : (w += 37) {
+        var h: u32 = 1;
+        while (h <= 2000) : (h += 53) {
+            try std.testing.expect(image_tile_tokens(w, h) <= unknown_image_tokens);
+        }
+    }
+    // Exact tile-boundary edges around the 4x2 maximum grid.
+    try std.testing.expectEqual(@as(usize, 1445), image_tile_tokens(2000, 768));
+    try std.testing.expectEqual(@as(usize, 1445), image_tile_tokens(2000, 600));
+    try std.testing.expectEqual(@as(usize, 1445), image_tile_tokens(2000, 513));
+    try std.testing.expectEqual(@as(usize, 1445), image_tile_tokens(769, 2000));
+    try std.testing.expectEqual(@as(usize, 765), image_tile_tokens(2000, 512));
 }
 
 test "loadImageAttachment accepts files larger than header length" {
