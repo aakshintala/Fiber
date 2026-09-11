@@ -2100,13 +2100,21 @@ pub fn billingProjectionEql(first: Snapshot, second: Snapshot) bool {
     return true;
 }
 
+fn snapshotHasUnknownCost(snapshot: Snapshot) bool {
+    if (snapshot.total_cost == null) return true;
+    for (snapshot.models) |model| {
+        if (model.total_cost == null) return true;
+    }
+    return false;
+}
+
 pub fn writeSnapshot(writer: *std.Io.Writer, snapshot: Snapshot) !void {
     try validateSnapshot(snapshot);
     // Keep the durable session payload in the exact pre-usage-dashboard
-    // shape. This froze because older fiber binaries reject unknown snapshot
-    // fields instead of ignoring them. Fiber keeps no fiber compatibility and
-    // has published no release, so nothing enforces the constraint now;
-    // widening the shape is a later-phase decision, not a rename.
+    // shape while every cost is known, so older binaries keep parsing
+    // priced sessions. Unknown spend is a new persisted snapshot version
+    // that appends a schema marker; older binaries reject the versioned
+    // shape outright instead of misreading unknown as zero.
     // Richer metrics and recovery hints live in the validated session sidecar.
     try writer.writeAll("{\"billing\":");
     try std.json.Stringify.value(@tagName(snapshot.billing), .{}, writer);
@@ -2173,14 +2181,22 @@ pub fn writeSnapshot(writer: *std.Io.Writer, snapshot: Snapshot) !void {
         try writePendingAuthority(writer, pending);
         try writer.writeByte('}');
     }
-    try writer.writeAll("]}");
+    try writer.writeAll("]");
+    if (snapshotHasUnknownCost(snapshot)) {
+        try writer.writeAll(",\"schema_version\":2}");
+    } else {
+        try writer.writeAll("}");
+    }
 }
 
 /// Writes the current usage schema for storage outside the rollback-readable
-/// session event stream.
+/// session event stream. Schema 4 is the first version whose costs may be
+/// unknown (null); schemas 2 and 3 stay numeric-only on the read path, and
+/// older readers reject schema 4 at the version gate instead of choking on
+/// null costs.
 pub fn writeRichSnapshot(writer: *std.Io.Writer, snapshot: Snapshot) !void {
     try validateSnapshot(snapshot);
-    try writer.writeAll("{\"schema_version\":3,\"billing\":");
+    try writer.writeAll("{\"schema_version\":4,\"billing\":");
     try std.json.Stringify.value(@tagName(snapshot.billing), .{}, writer);
     try writer.print(
         ",\"api_duration_complete\":{s},\"wall_duration_complete\":{s},\"code_complete\":{s},\"next_sequence\":{d},\"settled_through_sequence\":{d},\"api_duration_ms\":{d},\"wall_duration_ms\":{d},\"total_cost\":",
@@ -2310,16 +2326,29 @@ pub fn parseSnapshotValue(alloc: Allocator, value: std.json.Value) !Snapshot {
     if (value != .object) {
         return error.InvalidUsageSnapshot;
     }
-    const legacy = value.object.count() == 18;
+    const field_count = value.object.count();
+    const legacy = field_count == 18;
+    const versioned = field_count == 19;
+    const rich = field_count == 23;
     const schema_version = if (legacy)
         @as(u64, 1)
     else
         try parseNonNegativeInteger(value.object.get("schema_version"));
-    if (!legacy) {
-        if (value.object.count() != 23 or (schema_version != 2 and schema_version != 3)) {
+    if (legacy) {
+        // Rollback-readable shape: numeric costs only.
+    } else if (versioned) {
+        if (schema_version != 2) return error.InvalidUsageSnapshot;
+    } else if (rich) {
+        if (schema_version != 2 and schema_version != 3 and schema_version != 4) {
             return error.InvalidUsageSnapshot;
         }
+    } else {
+        return error.InvalidUsageSnapshot;
     }
+    // Only the nullable-cost generations (versioned legacy snapshots and
+    // rich schema 4) may carry null; older versions stay numeric-only.
+    const allow_null_cost = versioned or schema_version == 4;
+    const slim = legacy or versioned;
     const billing_value = value.object.get("billing") orelse return error.InvalidUsageSnapshot;
     if (billing_value != .string) return error.InvalidUsageSnapshot;
     const billing = std.meta.stringToEnum(Availability, billing_value.string) orelse
@@ -2333,19 +2362,23 @@ pub fn parseSnapshotValue(alloc: Allocator, value: std.json.Value) !Snapshot {
     );
     const api_duration_ms = try parseNonNegativeInteger(value.object.get("api_duration_ms"));
     const wall_duration_ms = try parseNonNegativeInteger(value.object.get("wall_duration_ms"));
-    const total_cost = try parseOptionalNonNegativeNumber(value.object.get("total_cost"));
+    const total_cost = if (allow_null_cost)
+        try parseOptionalNonNegativeNumber(value.object.get("total_cost"))
+    else
+        parseNonNegativeNumber(value.object.get("total_cost")) catch
+            return error.InvalidUsageSnapshot;
     const input_tokens = try parseNonNegativeInteger(value.object.get("input_tokens"));
     const output_tokens = try parseNonNegativeInteger(value.object.get("output_tokens"));
     const cache_read_tokens = try parseNonNegativeInteger(value.object.get("cache_read_tokens"));
     const cache_write_tokens = try parseNonNegativeInteger(value.object.get("cache_write_tokens"));
-    const reasoning_tokens = if (legacy)
+    const reasoning_tokens = if (slim)
         null
     else blk: {
         const field = value.object.get("reasoning_tokens") orelse
             return error.InvalidUsageSnapshot;
         break :blk try parseOptionalNonNegativeInteger(field);
     };
-    const request_count = if (legacy)
+    const request_count = if (slim)
         null
     else blk: {
         const field = value.object.get("request_count") orelse
@@ -2369,7 +2402,7 @@ pub fn parseSnapshotValue(alloc: Allocator, value: std.json.Value) !Snapshot {
     var model_count: usize = 0;
     errdefer for (models[0..model_count]) |*model| model.deinit(alloc);
     for (models_value.array.items, 0..) |model_value, index| {
-        const expected_model_fields: usize = if (legacy) 8 else 10;
+        const expected_model_fields: usize = if (slim) 8 else 10;
         if (model_value != .object or
             model_value.object.count() != expected_model_fields)
         {
@@ -2378,19 +2411,23 @@ pub fn parseSnapshotValue(alloc: Allocator, value: std.json.Value) !Snapshot {
         const model_name = model_value.object.get("model") orelse return error.InvalidUsageSnapshot;
         if (model_name != .string) return error.InvalidUsageSnapshot;
         const first_sequence = try parseNonNegativeInteger(model_value.object.get("first_sequence"));
-        const model_total_cost = try parseOptionalNonNegativeNumber(model_value.object.get("total_cost"));
+        const model_total_cost = if (allow_null_cost)
+            try parseOptionalNonNegativeNumber(model_value.object.get("total_cost"))
+        else
+            parseNonNegativeNumber(model_value.object.get("total_cost")) catch
+                return error.InvalidUsageSnapshot;
         const model_input_tokens = try parseNonNegativeInteger(model_value.object.get("input_tokens"));
         const model_output_tokens = try parseNonNegativeInteger(model_value.object.get("output_tokens"));
         const model_cache_read_tokens = try parseNonNegativeInteger(model_value.object.get("cache_read_tokens"));
         const model_cache_write_tokens = try parseNonNegativeInteger(model_value.object.get("cache_write_tokens"));
-        const model_reasoning_tokens = if (legacy)
+        const model_reasoning_tokens = if (slim)
             null
         else blk: {
             const field = model_value.object.get("reasoning_tokens") orelse
                 return error.InvalidUsageSnapshot;
             break :blk try parseOptionalNonNegativeInteger(field);
         };
-        const model_request_count = if (legacy)
+        const model_request_count = if (slim)
             null
         else blk: {
             const field = model_value.object.get("request_count") orelse
@@ -2487,7 +2524,7 @@ pub fn parseSnapshotValue(alloc: Allocator, value: std.json.Value) !Snapshot {
         pending_count += 1;
     }
 
-    const publication_backlog = if (legacy) blk: {
+    const publication_backlog = if (slim) blk: {
         break :blk try alloc.alloc(usage_report.GenerationFact, 0);
     } else blk: {
         const backlog_value = value.object.get("publication_backlog") orelse
@@ -2508,6 +2545,7 @@ pub fn parseSnapshotValue(alloc: Allocator, value: std.json.Value) !Snapshot {
             backlog[index] = generation_fact_codec.parse(
                 alloc,
                 fact_value,
+                allow_null_cost,
             ) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.InvalidGenerationFact => return error.InvalidUsageSnapshot,
@@ -2521,7 +2559,7 @@ pub fn parseSnapshotValue(alloc: Allocator, value: std.json.Value) !Snapshot {
         if (publication_backlog.len > 0) alloc.free(publication_backlog);
     }
 
-    const incidents = if (legacy) blk: {
+    const incidents = if (slim) blk: {
         break :blk try alloc.alloc(usage_report.Incident, 0);
     } else blk: {
         const incidents_value = value.object.get("incidents") orelse
@@ -4667,6 +4705,223 @@ test "rich usage snapshot preserves optional metrics and recovery state" {
         usage_report.Incident,
         snapshot.incidents,
         decoded.incidents,
+    );
+}
+
+test "unknown spend versions the rollback snapshot instead of widening it" {
+    const alloc = std.testing.allocator;
+    var usage = Usage.initFresh();
+    defer usage.deinit(alloc);
+    const sequence = try usage.reserveInvocation();
+    try usage.finishObservedInvocation(
+        alloc,
+        sequence,
+        10,
+        .observed_generation,
+        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "exact/codex",
+        null,
+    );
+    try usage.applyGeneration(alloc, .{
+        .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        .model = "codex/gpt-test",
+        .total_cost = null,
+        .input_tokens = 130,
+        .output_tokens = 25,
+        .cache_read_tokens = 20,
+        .cache_write_tokens = 10,
+        .billable_web_search_calls = 0,
+    });
+
+    var snapshot = try usage.snapshot(alloc);
+    defer snapshot.deinit(alloc);
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try writeSnapshot(&encoded.writer, snapshot);
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        encoded.written(),
+        .{},
+    );
+    defer parsed.deinit();
+    // The versioned shape keeps every legacy field and appends one marker,
+    // so older binaries fail closed on the field count instead of reading
+    // unknown spend as zero.
+    try std.testing.expectEqual(@as(usize, 19), parsed.value.object.count());
+    const marker = parsed.value.object.get("schema_version").?;
+    try std.testing.expectEqual(@as(i64, 2), marker.integer);
+    try std.testing.expect(parsed.value.object.get("total_cost").? == .null);
+
+    var decoded = try parseSnapshotValue(alloc, parsed.value);
+    defer decoded.deinit(alloc);
+    try std.testing.expect(decoded.total_cost == null);
+    try std.testing.expect(decoded.models[0].total_cost == null);
+    try std.testing.expectEqual(@as(u64, 130), decoded.input_tokens);
+    try std.testing.expectEqual(@as(u64, 25), decoded.output_tokens);
+
+    // The same payload without the marker is the legacy rollback shape,
+    // which never carried null costs and still rejects them.
+    const suffix = ",\"schema_version\":2}";
+    try std.testing.expect(std.mem.endsWith(u8, encoded.written(), suffix));
+    var legacy_bytes: std.Io.Writer.Allocating = .init(alloc);
+    defer legacy_bytes.deinit();
+    try legacy_bytes.writer.writeAll(encoded.written()[0 .. encoded.written().len - suffix.len]);
+    try legacy_bytes.writer.writeAll("}");
+    var legacy_parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        legacy_bytes.written(),
+        .{},
+    );
+    defer legacy_parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 18), legacy_parsed.value.object.count());
+    try std.testing.expectError(
+        error.InvalidUsageSnapshot,
+        parseSnapshotValue(alloc, legacy_parsed.value),
+    );
+}
+
+test "rich snapshot versions nullable costs while decoding numeric schema 3" {
+    const alloc = std.testing.allocator;
+    const Publisher = struct {
+        fn fail(_: *anyopaque, _: usage_report.ProfileEvent) !void {
+            return error.InjectedPublicationFailure;
+        }
+    };
+    var publisher_context: u8 = 0;
+    var usage = Usage.initFresh();
+    defer usage.deinit(alloc);
+    usage.configurePublicationSink(.{
+        .context = &publisher_context,
+        .allocator = alloc,
+        .publish = Publisher.fail,
+    });
+    const sequence = try usage.reserveInvocation();
+    try usage.finishObservedInvocation(
+        alloc,
+        sequence,
+        10,
+        .observed_generation,
+        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "exact/codex",
+        null,
+    );
+    try usage.applyGeneration(alloc, .{
+        .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        .model = "codex/gpt-test",
+        .total_cost = null,
+        .input_tokens = 130,
+        .output_tokens = 25,
+        .cache_read_tokens = 20,
+        .cache_write_tokens = 10,
+        .billable_web_search_calls = 0,
+    });
+
+    var snapshot = try usage.snapshot(alloc);
+    defer snapshot.deinit(alloc);
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try writeRichSnapshot(&encoded.writer, snapshot);
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        encoded.written(),
+        .{},
+    );
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 23), parsed.value.object.count());
+    try std.testing.expectEqual(
+        @as(i64, 4),
+        parsed.value.object.get("schema_version").?.integer,
+    );
+    var decoded = try parseSnapshotValue(alloc, parsed.value);
+    defer decoded.deinit(alloc);
+    try std.testing.expect(decoded.total_cost == null);
+    try std.testing.expect(decoded.models[0].total_cost == null);
+    try std.testing.expectEqual(@as(usize, 1), decoded.publication_backlog.len);
+    try std.testing.expect(decoded.publication_backlog[0].total_cost == null);
+    try std.testing.expectEqual(@as(u64, 155), decoded.input_tokens + decoded.output_tokens);
+
+    // Relabeling the version back to 3 must fail: schema 3 never carried
+    // null costs, matching what older schema-3 readers enforce.
+    const downgraded = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        encoded.written(),
+        "\"schema_version\":4",
+        "\"schema_version\":3",
+    );
+    defer alloc.free(downgraded);
+    var downgraded_parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        downgraded,
+        .{},
+    );
+    defer downgraded_parsed.deinit();
+    try std.testing.expectError(
+        error.InvalidUsageSnapshot,
+        parseSnapshotValue(alloc, downgraded_parsed.value),
+    );
+}
+
+test "rich snapshot still decodes numeric schema 3 payloads" {
+    const alloc = std.testing.allocator;
+    var usage = Usage.initFresh();
+    defer usage.deinit(alloc);
+    const sequence = try usage.reserveInvocation();
+    try usage.finishObservedInvocation(
+        alloc,
+        sequence,
+        10,
+        .observed_generation,
+        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "exact/codex",
+        null,
+    );
+    try usage.applyGeneration(alloc, .{
+        .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        .model = "codex/gpt-test",
+        .total_cost = 0.25,
+        .input_tokens = 10,
+        .output_tokens = 4,
+        .cache_read_tokens = 0,
+        .cache_write_tokens = 0,
+        .billable_web_search_calls = 0,
+    });
+
+    var snapshot = try usage.snapshot(alloc);
+    defer snapshot.deinit(alloc);
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try writeRichSnapshot(&encoded.writer, snapshot);
+    const schema3 = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        encoded.written(),
+        "\"schema_version\":4",
+        "\"schema_version\":3",
+    );
+    defer alloc.free(schema3);
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        schema3,
+        .{},
+    );
+    defer parsed.deinit();
+    var decoded = try parseSnapshotValue(alloc, parsed.value);
+    defer decoded.deinit(alloc);
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 0.25),
+        decoded.total_cost orelse -1,
+        1e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 0.25),
+        decoded.models[0].total_cost orelse -1,
+        1e-12,
     );
 }
 

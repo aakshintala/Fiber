@@ -890,9 +890,19 @@ fn writeGeneration(
     writer: *std.Io.Writer,
     fact: usage_report.GenerationFact,
 ) !void {
-    try writer.writeAll(
-        "{\"schema_version\":1,\"kind\":\"generation\",\"fact\":",
-    );
+    // Nullable costs are a newer record version. Numeric costs (including
+    // zero) keep the v1 label so older readers keep parsing priced history;
+    // only unknown spend moves to v2, which v1 readers reject outright
+    // instead of misreading it as free.
+    if (fact.total_cost == null) {
+        try writer.writeAll(
+            "{\"schema_version\":2,\"kind\":\"generation\",\"fact\":",
+        );
+    } else {
+        try writer.writeAll(
+            "{\"schema_version\":1,\"kind\":\"generation\",\"fact\":",
+        );
+    }
     try generation_fact_codec.write(writer, fact);
     try writer.writeAll("}\n");
 }
@@ -933,14 +943,15 @@ fn parseRecord(alloc: Allocator, line: []const u8) !ParsedRecord {
     const schema = try parseU64(parsed.value.object.get("schema_version"));
     const kind_value = parsed.value.object.get("kind") orelse
         return error.InvalidUsageStore;
-    if (schema != 1 or kind_value != .string) return error.InvalidUsageStore;
+    if (kind_value != .string) return error.InvalidUsageStore;
+    if (schema != 1 and schema != 2) return error.InvalidUsageStore;
 
     if (std.mem.eql(u8, kind_value.string, "coverage")) {
-        if (parsed.value.object.count() != 3) return error.InvalidUsageStore;
+        if (schema != 1 or parsed.value.object.count() != 3) return error.InvalidUsageStore;
         return .{ .coverage = try parseI64(parsed.value.object.get("started_at_ms")) };
     }
     if (std.mem.eql(u8, kind_value.string, "pending")) {
-        if (parsed.value.object.count() != 4) return error.InvalidUsageStore;
+        if (schema != 1 or parsed.value.object.count() != 4) return error.InvalidUsageStore;
         const id_value = parsed.value.object.get("id") orelse
             return error.InvalidUsageStore;
         if (id_value != .string) return error.InvalidUsageStore;
@@ -957,7 +968,7 @@ fn parseRecord(alloc: Allocator, line: []const u8) !ParsedRecord {
         return .{ .pending = marker };
     }
     if (std.mem.eql(u8, kind_value.string, "incident")) {
-        if (parsed.value.object.count() != 4) return error.InvalidUsageStore;
+        if (schema != 1 or parsed.value.object.count() != 4) return error.InvalidUsageStore;
         const completeness_value = parsed.value.object.get("completeness") orelse
             return error.InvalidUsageStore;
         if (completeness_value != .string) return error.InvalidUsageStore;
@@ -980,9 +991,12 @@ fn parseRecord(alloc: Allocator, line: []const u8) !ParsedRecord {
     }
     const fact_value = parsed.value.object.get("fact") orelse
         return error.InvalidUsageStore;
+    // Only v2 generation records may carry unknown spend; a null cost under
+    // the v1 label is rejected, matching what older v1 readers enforce.
     return .{ .generation = generation_fact_codec.parse(
         alloc,
         fact_value,
+        schema == 2,
     ) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.InvalidGenerationFact => return error.InvalidUsageStore,
@@ -1673,4 +1687,115 @@ test "profile usage store refuses a symlinked ledger leaf" {
     );
     defer alloc.free(outside_bytes);
     try std.testing.expectEqualStrings("outside", outside_bytes);
+}
+
+test "generation records version nullable cost separately from numeric v1" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(home);
+    var store = try Store.initFromHome(alloc, home);
+    defer store.deinit(alloc);
+
+    var priced = try makeTestFact(
+        alloc,
+        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        1000,
+        10,
+    );
+    defer priced.deinit(alloc);
+    try std.testing.expectEqual(
+        AppendOutcome.appended,
+        try store.appendFact(alloc, priced),
+    );
+
+    var unpriced = try makeTestFact(
+        alloc,
+        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        2000,
+        20,
+    );
+    unpriced.total_cost = null;
+    defer unpriced.deinit(alloc);
+    try std.testing.expectEqual(
+        AppendOutcome.appended,
+        try store.appendFact(alloc, unpriced),
+    );
+
+    var file = (try store.openUsage(false, false)).?;
+    defer file.close(io_mod.getIo());
+    const length = try file.length(io_mod.getIo());
+    const bytes = try alloc.alloc(u8, @intCast(length));
+    defer alloc.free(bytes);
+    const read_count = try file.readPositionalAll(io_mod.getIo(), bytes, 0);
+    try std.testing.expectEqual(bytes.len, read_count);
+
+    // The pre-nullable-cost reader gate accepted only schema 1, so a v2
+    // record documents the downgrade behavior: older binaries reject the
+    // store instead of misreading unknown spend.
+    const old_gate_accepts = struct {
+        fn accepts(line: []const u8) bool {
+            return std.mem.indexOf(u8, line, "\"schema_version\":1,") != null;
+        }
+    }.accepts;
+
+    var lines: usize = 0;
+    var priced_records: usize = 0;
+    var unpriced_records: usize = 0;
+    var split = std.mem.splitScalar(u8, bytes, '\n');
+    while (split.next()) |line| {
+        if (line.len == 0) continue;
+        lines += 1;
+        if (std.mem.indexOf(u8, line, "\"kind\":\"generation\"") == null) continue;
+        if (std.mem.indexOf(u8, line, "\"total_cost\":null") != null) {
+            unpriced_records += 1;
+            try std.testing.expect(!old_gate_accepts(line));
+        } else {
+            priced_records += 1;
+            try std.testing.expect(old_gate_accepts(line));
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 3), lines);
+    try std.testing.expectEqual(@as(usize, 1), priced_records);
+    try std.testing.expectEqual(@as(usize, 1), unpriced_records);
+
+    var loaded = try store.load(alloc);
+    defer loaded.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 2), loaded.facts.len);
+    try std.testing.expect(usage_report.GenerationFact.eql(priced, loaded.facts[0]));
+    try std.testing.expect(usage_report.GenerationFact.eql(unpriced, loaded.facts[1]));
+    try std.testing.expect(loaded.facts[1].total_cost == null);
+}
+
+test "usage store rejects unknown spend mislabeled as schema version 1" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(
+        io_mod.getIo(),
+        ".fiber",
+        std.Io.File.Permissions.fromMode(0o700),
+    );
+    var profile = try tmp.dir.openDir(io_mod.getIo(), ".fiber", .{ .iterate = true });
+    defer profile.close(io_mod.getIo());
+    profile.setPermissions(io_mod.getIo(), .fromMode(0o700)) catch
+        return error.SkipZigTest;
+
+    const contents =
+        "{\"schema_version\":1,\"kind\":\"coverage\",\"started_at_ms\":1}\n" ++
+        "{\"schema_version\":1,\"kind\":\"generation\",\"fact\":{\"id\":\"gen_01ARZ3NDEKTSV4RRFFQ69G5FAV\",\"created_at_ms\":1,\"model\":\"provider/model\",\"input_tokens\":1,\"output_tokens\":1,\"cache_read_tokens\":0,\"cache_write_tokens\":0,\"reasoning_tokens\":null,\"billable_web_search_calls\":0,\"total_cost\":null}}\n";
+    var file = try profile.createFile(io_mod.getIo(), usage_file, .{
+        .permissions = private_file_permissions,
+    });
+    try file.writeStreamingAll(io_mod.getIo(), contents);
+    file.close(io_mod.getIo());
+
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(home);
+    var store = try Store.initFromHome(alloc, home);
+    defer store.deinit(alloc);
+    // v1 never carried null costs, so new readers hold that line: this is
+    // the same rejection an older v1 binary applies to the record.
+    try std.testing.expectError(error.InvalidUsageStore, store.load(alloc));
 }
