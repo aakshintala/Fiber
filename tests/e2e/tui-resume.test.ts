@@ -934,7 +934,11 @@ test.skipIf(!tmuxAvailable())(
         timeoutMs: TIMEOUT,
       });
       expect(ask.code).toBe(0);
-      expect(ask.stderr).toBe("");
+      // Seeded settings carry the inert legacy `sandbox` key, which issue #26
+      // reports as an unknown-config-key diagnostic on stderr.
+      expect(ask.stderr).toBe(
+        "fiber ask: config user: unknown_config_key; key=sandbox; unknown configuration key; check the spelling or remove it\n",
+      );
       expect(JSON.parse(ask.stdout).data.session_id).toBeTruthy();
 
       const resumeGateway = startCodexQueue([]);
@@ -1191,11 +1195,23 @@ printf '${trailingMarker}   '
       expect(fullTail).toContain(splitMarker);
       expect(fullTail).toContain(trailingMarker);
       expect(fullTail).not.toContain("lines more (ctrl o");
+      // The Config notice for the seeded `sandbox` key adds startup rows above
+      // the retained output, pushing the output head below the top viewport
+      // fold: page to the top, then step back down until both head markers
+      // are visible. The wheel-down event is the same row step the viewport
+      // walk below uses, so fullHead lands where that walk expects it.
       await active.sendHexBytes(
-        Array.from({ length: 80 }, () => ["1b", "5b", "35", "7e"]).flat(),
+        Array.from({ length: 120 }, () => ["1b", "5b", "35", "7e"]).flat(),
       );
+      for (let step = 0; step < 10; step += 1) {
+        const viewport = await active.capturePane();
+        if (viewport.includes(ansiMarker) && viewport.includes(crMarker)) break;
+        await active.sendHexBytes(["1b", "5b", "3c", "36", "35", "3b", "31", "3b", "31", "4d"]);
+        await active.waitForPane((pane) => pane !== viewport, TIMEOUT);
+      }
       await active.waitForText(ansiMarker, TIMEOUT);
       const fullHead = await active.capturePane();
+      expect(fullHead).toContain("Config: 1 configuration issue");
       expect(fullHead).toContain(ansiMarker);
       expect(fullHead).toContain(crMarker);
       expect(fullHead).not.toContain("CR_STAGE_01");
