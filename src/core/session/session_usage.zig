@@ -1891,7 +1891,7 @@ pub fn validateSnapshot(snapshot: Snapshot) !void {
         if (@abs(total_cost - known_cost) > cost_tolerance) {
             return error.InvalidUsageSnapshot;
         }
-    } else if (!unknown_cost and snapshot.models.len > 0) {
+    } else if (!unknown_cost) {
         return error.InvalidUsageSnapshot;
     }
     for (snapshot.pending, 0..) |generation, index| {
@@ -3667,6 +3667,21 @@ test "snapshot validation keeps known and unknown spend consistent" {
     try std.testing.expectError(error.InvalidUsageSnapshot, validateSnapshot(snapshot));
 }
 
+test "empty snapshot rejects unknown aggregate spend" {
+    const alloc = std.testing.allocator;
+    var usage = Usage.initFresh();
+    defer usage.deinit(alloc);
+
+    var snapshot = try usage.snapshot(alloc);
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 0), snapshot.models.len);
+    try validateSnapshot(snapshot);
+    // No model carries unknown cost, so a null aggregate is impossible:
+    // restoring it would pin later priced generations as unknown.
+    snapshot.total_cost = null;
+    try std.testing.expectError(error.InvalidUsageSnapshot, validateSnapshot(snapshot));
+}
+
 test "usage deduplicates terminal and generation callbacks" {
     const alloc = std.testing.allocator;
     var usage = Usage.initFresh();
@@ -4745,6 +4760,34 @@ test "unknown spend versions the rollback snapshot instead of widening it" {
         .{},
     );
     defer parsed.deinit();
+    // Test-only fixture modeling the pre-nullable-cost snapshot reader:
+    // exactly the 18 legacy fields with numeric-only costs.
+    const legacySnapshotAccepts = struct {
+        fn accepts(value: std.json.Value) bool {
+            if (value != .object) return false;
+            if (value.object.count() != 18) return false;
+            if (!isNonNegativeNumber(value.object.get("total_cost"))) return false;
+            const models_value = value.object.get("models") orelse return false;
+            if (models_value != .array) return false;
+            for (models_value.array.items) |model_value| {
+                if (model_value != .object) return false;
+                if (!isNonNegativeNumber(model_value.object.get("total_cost"))) return false;
+            }
+            return true;
+        }
+        fn isNonNegativeNumber(value: ?std.json.Value) bool {
+            const actual = value orelse return false;
+            const number: f64 = switch (actual) {
+                .integer => |integer| if (integer >= 0)
+                    @floatFromInt(integer)
+                else
+                    return false,
+                .float => |float| float,
+                else => return false,
+            };
+            return std.math.isFinite(number) and number >= 0;
+        }
+    }.accepts;
     // The versioned shape keeps every legacy field and appends one marker,
     // so older binaries fail closed on the field count instead of reading
     // unknown spend as zero.
@@ -4752,6 +4795,7 @@ test "unknown spend versions the rollback snapshot instead of widening it" {
     const marker = parsed.value.object.get("schema_version").?;
     try std.testing.expectEqual(@as(i64, 2), marker.integer);
     try std.testing.expect(parsed.value.object.get("total_cost").? == .null);
+    try std.testing.expect(!legacySnapshotAccepts(parsed.value));
 
     var decoded = try parseSnapshotValue(alloc, parsed.value);
     defer decoded.deinit(alloc);
@@ -4776,6 +4820,7 @@ test "unknown spend versions the rollback snapshot instead of widening it" {
     );
     defer legacy_parsed.deinit();
     try std.testing.expectEqual(@as(usize, 18), legacy_parsed.value.object.count());
+    try std.testing.expect(!legacySnapshotAccepts(legacy_parsed.value));
     try std.testing.expectError(
         error.InvalidUsageSnapshot,
         parseSnapshotValue(alloc, legacy_parsed.value),
@@ -4922,6 +4967,105 @@ test "rich snapshot still decodes numeric schema 3 payloads" {
         @as(f64, 0.25),
         decoded.models[0].total_cost orelse -1,
         1e-12,
+    );
+}
+
+test "rich schema 2 accepts numeric costs and rejects unknown spend" {
+    const alloc = std.testing.allocator;
+    const Publisher = struct {
+        fn fail(_: *anyopaque, _: usage_report.ProfileEvent) !void {
+            return error.InjectedPublicationFailure;
+        }
+    };
+    var publisher_context: u8 = 0;
+    var usage = Usage.initFresh();
+    defer usage.deinit(alloc);
+    usage.configurePublicationSink(.{
+        .context = &publisher_context,
+        .allocator = alloc,
+        .publish = Publisher.fail,
+    });
+    const sequence = try usage.reserveInvocation();
+    try usage.finishObservedInvocation(
+        alloc,
+        sequence,
+        10,
+        .observed_generation,
+        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "exact/codex",
+        null,
+    );
+    try usage.applyGeneration(alloc, .{
+        .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        .model = "codex/gpt-test",
+        .total_cost = 0.25,
+        .input_tokens = 10,
+        .output_tokens = 4,
+        .cache_read_tokens = 0,
+        .cache_write_tokens = 0,
+        .billable_web_search_calls = 0,
+    });
+
+    var snapshot = try usage.snapshot(alloc);
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.publication_backlog.len);
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try writeRichSnapshot(&encoded.writer, snapshot);
+    const schema2 = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        encoded.written(),
+        "\"schema_version\":4",
+        "\"schema_version\":2",
+    );
+    defer alloc.free(schema2);
+
+    // Numeric costs stay readable under the older rich version.
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        schema2,
+        .{},
+    );
+    defer parsed.deinit();
+    var decoded = try parseSnapshotValue(alloc, parsed.value);
+    defer decoded.deinit(alloc);
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 0.25),
+        decoded.total_cost orelse -1,
+        1e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 0.25),
+        decoded.models[0].total_cost orelse -1,
+        1e-12,
+    );
+    try std.testing.expectApproxEqAbs(
+        @as(f64, 0.25),
+        decoded.publication_backlog[0].total_cost orelse -1,
+        1e-12,
+    );
+
+    // Schema 2 never carried null costs: each null position rejects.
+    parsed.value.object.getPtr("total_cost").?.* = .null;
+    try std.testing.expectError(
+        error.InvalidUsageSnapshot,
+        parseSnapshotValue(alloc, parsed.value),
+    );
+    parsed.value.object.getPtr("total_cost").?.* = .{ .float = 0.25 };
+    var models_value = parsed.value.object.get("models").?;
+    models_value.array.items[0].object.getPtr("total_cost").?.* = .null;
+    try std.testing.expectError(
+        error.InvalidUsageSnapshot,
+        parseSnapshotValue(alloc, parsed.value),
+    );
+    models_value.array.items[0].object.getPtr("total_cost").?.* = .{ .float = 0.25 };
+    var backlog_value = parsed.value.object.get("publication_backlog").?;
+    backlog_value.array.items[0].object.getPtr("total_cost").?.* = .null;
+    try std.testing.expectError(
+        error.InvalidUsageSnapshot,
+        parseSnapshotValue(alloc, parsed.value),
     );
 }
 

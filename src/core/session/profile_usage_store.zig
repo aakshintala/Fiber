@@ -1731,12 +1731,34 @@ test "generation records version nullable cost separately from numeric v1" {
     const read_count = try file.readPositionalAll(io_mod.getIo(), bytes, 0);
     try std.testing.expectEqual(bytes.len, read_count);
 
-    // The pre-nullable-cost reader gate accepted only schema 1, so a v2
+    // Test-only fixture modeling the pre-nullable-cost v1 record reader:
+    // schema 1, exactly three envelope fields, numeric-only fact cost. A v2
     // record documents the downgrade behavior: older binaries reject the
     // store instead of misreading unknown spend.
-    const old_gate_accepts = struct {
-        fn accepts(line: []const u8) bool {
-            return std.mem.indexOf(u8, line, "\"schema_version\":1,") != null;
+    const legacyRecordAccepts = struct {
+        fn accepts(alloc_arg: Allocator, line: []const u8) bool {
+            var parsed = std.json.parseFromSlice(
+                std.json.Value,
+                alloc_arg,
+                line,
+                .{},
+            ) catch return false;
+            defer parsed.deinit();
+            if (parsed.value != .object) return false;
+            if (parsed.value.object.count() != 3) return false;
+            const schema_value = parsed.value.object.get("schema_version") orelse return false;
+            if (schema_value != .integer or schema_value.integer != 1) return false;
+            const kind_value = parsed.value.object.get("kind") orelse return false;
+            if (kind_value != .string or
+                !std.mem.eql(u8, kind_value.string, "generation")) return false;
+            const fact_value = parsed.value.object.get("fact") orelse return false;
+            var fact = generation_fact_codec.parse(
+                alloc_arg,
+                fact_value,
+                false,
+            ) catch return false;
+            fact.deinit(alloc_arg);
+            return true;
         }
     }.accepts;
 
@@ -1750,10 +1772,10 @@ test "generation records version nullable cost separately from numeric v1" {
         if (std.mem.indexOf(u8, line, "\"kind\":\"generation\"") == null) continue;
         if (std.mem.indexOf(u8, line, "\"total_cost\":null") != null) {
             unpriced_records += 1;
-            try std.testing.expect(!old_gate_accepts(line));
+            try std.testing.expect(!legacyRecordAccepts(alloc, line));
         } else {
             priced_records += 1;
-            try std.testing.expect(old_gate_accepts(line));
+            try std.testing.expect(legacyRecordAccepts(alloc, line));
         }
     }
     try std.testing.expectEqual(@as(usize, 3), lines);
