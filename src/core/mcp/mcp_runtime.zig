@@ -10210,6 +10210,94 @@ test "doctor probes never refresh stored credentials" {
     try std.testing.expectEqualStrings("original-token", server.auth_credentials.?.access_token);
 }
 
+const doctor_probe_challenge_port: u16 = 18471;
+
+fn doctorProbeContentLength(headers: []const u8) usize {
+    var lines = std.mem.splitSequence(u8, headers, "\r\n");
+    while (lines.next()) |line| {
+        if (line.len < 15) continue;
+        if (std.ascii.eqlIgnoreCase(line[0..15], "content-length:")) {
+            return std.fmt.parseInt(usize, std.mem.trim(u8, line[15..], " \t"), 10) catch 0;
+        }
+    }
+    return 0;
+}
+
+/// Loopback stub answering one discovery POST with 401 so a real doctor
+/// probe can hit the auth-challenge path. Poll-bounded throughout: the
+/// test can never hang on join.
+fn doctorProbeChallengeStub(listener: *std.Io.net.Server) void {
+    const io = std.testing.io;
+    var poll_fds = [_]std.posix.pollfd{.{
+        .fd = listener.socket.handle,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    const ready = std.posix.poll(&poll_fds, 5_000) catch return;
+    if (ready <= 0 or poll_fds[0].revents == 0) return;
+    var stream = listener.accept(io) catch return;
+    defer stream.close(io);
+    var socket_buffer: [4096]u8 = undefined;
+    var reader = stream.reader(io, &socket_buffer);
+    var header: [8192]u8 = undefined;
+    var header_len: usize = 0;
+    var content_length: usize = 0;
+    while (header_len < header.len) {
+        const byte = reader.interface.takeByte() catch return;
+        header[header_len] = byte;
+        header_len += 1;
+        if (std.mem.endsWith(u8, header[0..header_len], "\r\n\r\n")) {
+            content_length = doctorProbeContentLength(header[0..header_len]);
+            break;
+        }
+    } else return;
+    var remaining = content_length;
+    while (remaining > 0) {
+        _ = reader.interface.takeByte() catch return;
+        remaining -= 1;
+    }
+    var write_buffer: [512]u8 = undefined;
+    var writer = stream.writer(io, &write_buffer);
+    writer.interface.writeAll("HTTP/1.1 401 Unauthorized\r\n" ++
+        "WWW-Authenticate: Bearer scope=\"doctor-test\"\r\n" ++
+        "Content-Length: 0\r\nConnection: close\r\n\r\n") catch return;
+    writer.interface.flush() catch return;
+}
+
+test "doctor probe performs zero credential store operations" {
+    const alloc = std.testing.allocator;
+    const loads_before = mcp_auth_store.TestStoreCounters.loads.load(.seq_cst);
+    const saves_before = mcp_auth_store.TestStoreCounters.saves.load(.seq_cst);
+    var address = try std.Io.net.IpAddress.parse("127.0.0.1", doctor_probe_challenge_port);
+    var listener = try address.listen(std.testing.io, .{ .reuse_address = true });
+    defer listener.deinit(std.testing.io);
+    const stub = try std.Thread.spawn(.{}, doctorProbeChallengeStub, .{&listener});
+    defer stub.join();
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    const url = try std.fmt.allocPrint(alloc, "http://127.0.0.1:{d}/mcp", .{doctor_probe_challenge_port});
+    defer alloc.free(url);
+    try runtime.addServer(.{
+        .name = try alloc.dupe(u8, "challenged"),
+        .transport = .http,
+        .url = try alloc.dupe(u8, url),
+        .allow_stored_credentials = true,
+    });
+    runtime.connectAllForDoctor(.{});
+    try std.testing.expectEqual(loads_before, mcp_auth_store.TestStoreCounters.loads.load(.seq_cst));
+    try std.testing.expectEqual(saves_before, mcp_auth_store.TestStoreCounters.saves.load(.seq_cst));
+    const probed = &runtime.servers.items[0];
+    try std.testing.expectEqual(ServerState.failed, probed.state);
+    try std.testing.expect(probed.auth_challenge_present.load(.acquire));
+    try std.testing.expect(probed.auth_credentials == null);
+    try std.testing.expect(probed.pending_auth_challenge == null);
+    var snapshot = try runtime.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(health.ConnectionState.failed, snapshot.servers[0].connection);
+    try std.testing.expectEqual(health.AuthenticationState.required, snapshot.servers[0].authentication);
+    try std.testing.expectEqual(health.DoctorFailure.auth_required, snapshot.servers[0].doctor_failure);
+}
+
 test "doctor probe challenge fails fast without touching the store" {
     const alloc = std.testing.allocator;
     var runtime = McpRuntime.init(alloc);
@@ -12534,9 +12622,11 @@ fn authenticatedPost(
             return error.McpAuthenticationRequired;
         }
         // Doctor probes stop at the challenge: no pending-challenge store,
-        // no automated authorize, no credential save.
+        // no automated authorize, no credential save. The in-memory flag
+        // records that auth was required for honest health reporting.
         if (doctorReadOnlyProbe(server)) {
             response.deinit(request_alloc);
+            server.auth_challenge_present.store(true, .release);
             markAuthenticationRequired(owner_alloc, server);
             return error.McpAuthenticationRequired;
         }
