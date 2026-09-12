@@ -302,8 +302,8 @@ Numbers are stable; #37 carries the rationale for each.
 | --- | --- | --- |
 | 1 | Routing seam, presets, credential store, Responses (Codex folded in), Chat Completions, history transform, `reviewer_model` | OpenCode Go: glm-5.3-flash, deepseek-v4.1-flash, muse-spark-1.3-contributor. #39 becomes a preset over the Responses adapter |
 | 2 | Anthropic Messages adapter | #38, and `opencode-go/qwen3.8-flash` and `minimax-m3` |
-| 3 | Remaining providers as presets | #41, #42, #44, #45 |
-| Later | Extension system, then Lua catalog and quota adapters | #43 Databricks discovery with per-connection catalog state (18), overage attribution with the split usage display (26, 27), the Codex catalog |
+| 3 | User-configured endpoints as connections | #45 |
+| Later | Extension system, then Lua catalog and quota adapters | Gateways, whose catalogs are too large or too vendor-specific for a static preset: #43 Databricks, #41 OpenRouter, #44 Vercel AI Gateway, with per-connection catalog state (18). Overage attribution with the split usage display (26, 27). The Codex catalog |
 
 Codex folds onto the generic Responses adapter in slice 1 rather than keeping a
 second Responses path. **Divergence:** pi keeps `openai-codex-responses.js`
