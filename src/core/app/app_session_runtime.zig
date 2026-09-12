@@ -6,6 +6,7 @@ const model_provider = @import("../config/model_provider.zig");
 const assistant_presentation = @import("../agent/assistant_presentation.zig");
 const tool_admission = @import("../agent/runtime/tool_admission.zig");
 const tool_presentation = @import("../agent/runtime/tool_presentation.zig");
+const tooling_presentation = @import("../tooling/tool_presentation.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const host_capability = @import("../hosts/host.zig");
 const diff = @import("../output/diff.zig");
@@ -3193,6 +3194,17 @@ pub fn Runtime(comptime App: type) type {
                         if (entry.cancelled_command) |presentation| {
                             try writeCancelledCommandPresentation(app, sink, entry.tool_call.?, presentation);
                         }
+                        // The typed .interrupted turn is the cancellation signal:
+                        // replay the interrupted subagent row so resumed
+                        // transcripts match the live one. Non-subagent calls
+                        // project to null and keep their existing rendering.
+                        if (entry.tool_call) |call| {
+                            if (try tooling_presentation.subagentStatusLine(app.alloc, call, .interrupted)) |line| {
+                                defer app.alloc.free(line);
+                                const entry_id = try writeCompletedToolStatus(sink, .cancelled, line);
+                                try sink.attachHistoricalToolCallWithoutResult(entry_id, call);
+                            }
+                        }
                         try sink.appendNotice(session_runtime.interruptedTurnNotice(entry));
                         if (entry.execution.turn_summary) |summary| {
                             try sink.appendTurnSummary(summary);
@@ -3364,14 +3376,13 @@ pub fn Runtime(comptime App: type) type {
                     null,
                     &.{},
                 )
-            else
-                try app.describeToolActionDeniedWithAdvertised(
-                    action_arena.allocator(),
-                    call,
-                    null,
-                    "Failed",
-                    &.{},
-                );
+            else if (try tooling_presentation.subagentStatusLine(action_arena.allocator(), call, .failed)) |line| line else try app.describeToolActionDeniedWithAdvertised(
+                action_arena.allocator(),
+                call,
+                null,
+                "Failed",
+                &.{},
+            );
             const formatted_action = if (outcome_decision) |decision|
                 if (decision.detail) |detail|
                     try std.fmt.allocPrint(
@@ -7621,6 +7632,30 @@ test "zero-output cancelled command restores detail without an output block" {
     try std.testing.expectEqual(@as(usize, 1), app.cancelled_command_detail_count);
     try std.testing.expect(!app.cancelled_command_replayed_output);
     try std.testing.expectEqual(@as(usize, 1), app.historical_tool_detail_entry_ids.items.len);
+}
+
+test "interrupted subagent call replays its interrupted row across resume" {
+    // Live cancel renders "reviewer interrupted" via the typed cancel path,
+    // so resume must replay the same row from the typed .interrupted turn.
+    const alloc = std.testing.allocator;
+    var app = try TestApp.init(alloc, "/workspace");
+    defer app.deinit();
+    const history = [_]types.HistoryTurn{.{ .interrupted = .{
+        .user = .{ .text = @constCast("run child") },
+        .tool_call = .{
+            .id = "child",
+            .name = "subagent",
+            .arguments_json = "{\"request\":{\"action\":\"message\",\"agent\":\"reviewer\",\"message\":\"Check replay\"}}",
+        },
+    } }};
+
+    try Runtime(TestApp).replayHistory(&app, &history);
+
+    try std.testing.expectEqual(@as(usize, 1), app.completed_tool_statuses.items.len);
+    try std.testing.expect(std.mem.find(u8, app.completed_tool_statuses.items[0], "reviewer interrupted") != null);
+    try std.testing.expect(std.mem.find(u8, app.completed_tool_statuses.items[0], "Check replay") != null);
+    try std.testing.expectEqual(@as(usize, 1), app.completed_tool_outcomes.items.len);
+    try std.testing.expectEqual(types.ToolOutcomeKind.cancelled, app.completed_tool_outcomes.items[0]);
 }
 
 test "cancelled command replay rejects unsafe handles without partial output" {

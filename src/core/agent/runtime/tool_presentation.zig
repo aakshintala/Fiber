@@ -870,7 +870,8 @@ pub fn finishCancelledToolStatus(
         "Stopped waiting for"
     else
         "Cancelled";
-    const line = try hooks.describe_tool_action_denied(
+    // The cancel path itself is the typed interruption signal.
+    const line = (try tooling_presentation.subagentStatusLine(arena, call, .interrupted)) orelse try hooks.describe_tool_action_denied(
         hooks.ctx,
         arena,
         call,
@@ -978,6 +979,11 @@ pub fn finishExecutedToolStatus(
                 advertised_dynamic_tool_names,
             ),
         .failure => blk: {
+            // Typed execution status distinguishes failure from interruption
+            // without matching display labels or reply text.
+            if (try tooling_presentation.subagentStatusLine(arena, call, if (result.cancelled) .interrupted else .failed)) |line| {
+                break :blk line;
+            }
             const base = try hooks.describe_tool_action_denied(
                 hooks.ctx,
                 arena,
@@ -2097,6 +2103,78 @@ test "file edit preflight failure reports the exact mismatch" {
         "Failed edit_file: old_string not found in file",
         terminal.outcome.summary,
     );
+}
+
+test "subagent terminal rows derive failure and interruption from typed status" {
+    const alloc = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const call: ToolCall = .{
+        .id = "child",
+        .name = "subagent",
+        .arguments_json = "{\"request\":{\"action\":\"message\",\"agent\":\"reviewer\",\"message\":\"Check replay\"}}",
+    };
+    const failure_output = "{\"ok\":false,\"result\":null,\"error_code\":\"child_failed\"}";
+
+    var failed_capture = ProvisionalStatusTestCapture{ .alloc = alloc };
+    defer failed_capture.deinit();
+    try finishExecutedToolStatus(
+        &failed_capture.hooks(),
+        arena,
+        9,
+        call,
+        true,
+        null,
+        .{ .status = .failure, .model_output = failure_output },
+        failure_output,
+        .{ .output_bytes = failure_output.len, .stored_output_bytes = failure_output.len },
+        null,
+        &.{},
+    );
+    try std.testing.expectEqual(@as(usize, 1), failed_capture.events.items.len);
+    const failed = failed_capture.events.items[0].terminal;
+    try std.testing.expectEqual(types.ToolOutcomeKind.failed, failed.outcome.kind);
+    try std.testing.expect(std.mem.find(u8, failed.outcome.summary, "reviewer failed") != null);
+    try std.testing.expect(std.mem.find(u8, failed.outcome.summary, "Check replay") != null);
+
+    var interrupted_capture = ProvisionalStatusTestCapture{ .alloc = alloc };
+    defer interrupted_capture.deinit();
+    try finishExecutedToolStatus(
+        &interrupted_capture.hooks(),
+        arena,
+        9,
+        call,
+        true,
+        null,
+        .{ .status = .failure, .cancelled = true, .model_output = failure_output },
+        failure_output,
+        .{ .output_bytes = failure_output.len, .stored_output_bytes = failure_output.len },
+        null,
+        &.{},
+    );
+    try std.testing.expectEqual(@as(usize, 1), interrupted_capture.events.items.len);
+    const interrupted = interrupted_capture.events.items[0].terminal;
+    try std.testing.expectEqual(types.ToolOutcomeKind.failed, interrupted.outcome.kind);
+    try std.testing.expect(std.mem.find(u8, interrupted.outcome.summary, "reviewer interrupted") != null);
+
+    var cancelled_capture = ProvisionalStatusTestCapture{ .alloc = alloc };
+    defer cancelled_capture.deinit();
+    try finishCancelledToolStatus(
+        &cancelled_capture.hooks(),
+        arena,
+        9,
+        call,
+        true,
+        null,
+        .{ .status = .failure, .cancelled = true, .model_output = "command cancelled\n" },
+        &.{},
+    );
+    try std.testing.expectEqual(@as(usize, 1), cancelled_capture.events.items.len);
+    const cancelled = cancelled_capture.events.items[0].terminal;
+    try std.testing.expectEqual(types.ToolOutcomeKind.cancelled, cancelled.outcome.kind);
+    try std.testing.expect(std.mem.find(u8, cancelled.outcome.summary, "reviewer interrupted") != null);
+    try std.testing.expect(std.mem.find(u8, cancelled.outcome.summary, "Check replay") != null);
 }
 
 test "dynamic MCP failure derives a bounded terminal-safe detail from the safe result" {

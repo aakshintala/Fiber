@@ -25,12 +25,188 @@ pub const ToolActionInput = struct {
     workspace_root: []const u8 = "",
     display_target: ?[]const u8 = null,
     is_available_dynamic_mcp_tool: bool = false,
+    completed: bool = false,
 };
 
 pub const RunCommandActivity = struct {
     detail: []const u8,
     compatibility_tool: ?*const tool_dispatch.Tool,
 };
+
+/// Typed terminal state for one subagent transcript row. Active and
+/// completed rows derive from the typed lifecycle state; failed rows derive
+/// from the typed execution status and interrupted rows from the typed
+/// cancellation signal. Display labels never participate.
+pub const SubagentActionState = enum {
+    active,
+    completed,
+    failed,
+    interrupted,
+};
+
+pub const SubagentAction = struct {
+    label: []u8,
+    detail: []u8,
+
+    pub fn deinit(self: SubagentAction, alloc: Allocator) void {
+        alloc.free(self.label);
+        alloc.free(self.detail);
+    }
+};
+
+/// Projects one subagent transcript row from the typed request arguments and
+/// the typed terminal state. Returns null unless the call targets the
+/// subagent tool with a valid run/message request; callers keep their generic
+/// row then. Full requests and replies stay in the tool details. The caller
+/// owns the returned label and detail.
+pub fn subagentAction(
+    alloc: Allocator,
+    call: ToolCall,
+    state: SubagentActionState,
+) Allocator.Error!?SubagentAction {
+    if (!std.mem.eql(u8, call.name, "subagent")) return null;
+    var scratch_state = std.heap.ArenaAllocator.init(alloc);
+    defer scratch_state.deinit();
+    const scratch = scratch_state.allocator();
+    const outer = tool_args.parseToolArgsObject(scratch, call.arguments_json) catch |err| return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => null,
+    };
+    const args = if (outer.get("request")) |request| switch (request) {
+        .object => |object| object,
+        else => return null,
+    } else outer;
+    const action = tool_args.optionalStringArg(args, "action") orelse return null;
+    const named = std.mem.eql(u8, action, "message");
+    if (!named and !std.mem.eql(u8, action, "run")) return null;
+    const raw_name = if (named) tool_args.optionalStringArg(args, "agent") orelse return null else "Subagent";
+    const raw_preview = tool_args.optionalStringArg(args, if (named) "message" else "task") orelse return null;
+    const name = try text_utils.encodeTerminalSafe(scratch, raw_name, 64);
+    const preview = try subagentPreview(scratch, raw_preview);
+    const label = switch (state) {
+        .active => try std.fmt.allocPrint(alloc, "{s} working", .{name.bytes}),
+        .completed => try std.fmt.allocPrint(alloc, "{s} {s}", .{ name.bytes, if (named) "replied" else "finished" }),
+        .failed => try std.fmt.allocPrint(alloc, "{s} failed", .{name.bytes}),
+        .interrupted => try std.fmt.allocPrint(alloc, "{s} interrupted", .{name.bytes}),
+    };
+    errdefer alloc.free(label);
+    const detail = if (preview.len == 0)
+        try alloc.dupe(u8, "")
+    else
+        try std.fmt.allocPrint(alloc, "· {s}", .{preview});
+    return .{ .label = label, .detail = detail };
+}
+
+fn subagentPreview(alloc: Allocator, raw: []const u8) Allocator.Error![]u8 {
+    var buffer: [124]u8 = undefined;
+    var len: usize = 0;
+    var pending_space = false;
+    // Bound scanning even when a large request contains only whitespace.
+    const source = raw[0..text_utils.utf8BackwardBoundary(raw, @min(raw.len, 16 * 1024))];
+    for (source) |byte| {
+        if (std.ascii.isWhitespace(byte)) {
+            pending_space = len > 0;
+            continue;
+        }
+        if (pending_space) {
+            buffer[len] = ' ';
+            len += 1;
+            pending_space = false;
+        }
+        if (len == buffer.len) break;
+        buffer[len] = byte;
+        len += 1;
+        if (len == buffer.len) break;
+    }
+    const encoded = try text_utils.encodeTerminalSafe(alloc, buffer[0..len], 120);
+    return encoded.bytes;
+}
+
+/// The caller owns the returned styled transcript row.
+pub fn formatSubagentStatusLine(alloc: Allocator, action: SubagentAction) ![]u8 {
+    return std.fmt.allocPrint(alloc, "● {s}\x1b[0m \x1b[38;5;245m{s}\x1b[0m", .{ action.label, action.detail });
+}
+
+/// Projects one styled subagent transcript row, or null for other tools.
+/// Callers use this instead of repeating the project-and-style sequence.
+/// The caller owns the returned row.
+pub fn subagentStatusLine(alloc: Allocator, call: ToolCall, state: SubagentActionState) Allocator.Error!?[]u8 {
+    const action = try subagentAction(alloc, call, state) orelse return null;
+    defer action.deinit(alloc);
+    return try formatSubagentStatusLine(alloc, action);
+}
+
+/// The caller owns the returned plain subagent row.
+fn formatSubagentPlainAction(alloc: Allocator, call: ToolCall, state: SubagentActionState) Allocator.Error!?[]u8 {
+    const action = try subagentAction(alloc, call, state) orelse return null;
+    defer action.deinit(alloc);
+    return try std.fmt.allocPrint(alloc, "{s}{s}{s}", .{ action.label, if (action.detail.len == 0) "" else " ", action.detail });
+}
+
+test "subagent rows project request identity state and bounded safe previews" {
+    const alloc = std.testing.allocator;
+    const cases = [_]struct { args: []const u8, state: SubagentActionState, label: []const u8, detail: []const u8 }{
+        .{ .args = "{\"request\":{\"action\":\"run\",\"task\":\" Check\\n cancellation\\tcleanup \"}}", .state = .active, .label = "Subagent working", .detail = "· Check cancellation cleanup" },
+        .{ .args = "{\"action\":\"run\",\"task\":\"Check cleanup\"}", .state = .completed, .label = "Subagent finished", .detail = "· Check cleanup" },
+        .{ .args = "{\"request\":{\"action\":\"message\",\"agent\":\"reviewer\",\"message\":\"Check replay\",\"instructions\":\"Never display this\"}}", .state = .completed, .label = "reviewer replied", .detail = "· Check replay" },
+        .{ .args = "{\"action\":\"message\",\"agent\":\"reviewer\",\"message\":\"Check again\"}", .state = .active, .label = "reviewer working", .detail = "· Check again" },
+        .{ .args = "{\"action\":\"message\",\"agent\":\"reviewer\",\"message\":\"Check again\"}", .state = .failed, .label = "reviewer failed", .detail = "· Check again" },
+        .{ .args = "{\"action\":\"run\",\"task\":\"Check again\"}", .state = .interrupted, .label = "Subagent interrupted", .detail = "· Check again" },
+    };
+    for (cases) |case| {
+        const action = (try subagentAction(alloc, .{ .id = "child", .name = "subagent", .arguments_json = case.args }, case.state)).?;
+        defer action.deinit(alloc);
+        try std.testing.expectEqualStrings(case.label, action.label);
+        try std.testing.expectEqualStrings(case.detail, action.detail);
+    }
+    for ([_][]const u8{ "{", "[]", "{\"request\":null}", "{\"action\":\"inspect\"}", "{\"action\":\"message\",\"message\":\"hello\"}" }) |args| {
+        try std.testing.expectEqual(@as(?SubagentAction, null), try subagentAction(alloc, .{ .id = "child", .name = "subagent", .arguments_json = args }, .active));
+    }
+    try std.testing.expectEqual(@as(?SubagentAction, null), try subagentAction(alloc, .{ .id = "other", .name = "read_file", .arguments_json = "{\"path\":\"x\"}" }, .active));
+    const unsafe = (try subagentAction(alloc, .{ .id = "child", .name = "subagent", .arguments_json = "{\"action\":\"message\",\"agent\":\"a\\u001b[2J\",\"message\":\"Check 日本語\\u001b[31m\"}" }, .active)).?;
+    defer unsafe.deinit(alloc);
+    try std.testing.expect(text_utils.isTerminalSafe(unsafe.label));
+    try std.testing.expect(text_utils.isTerminalSafe(unsafe.detail));
+    try std.testing.expect(std.mem.find(u8, unsafe.detail, "日本語") != null);
+    const long = try subagentPreview(alloc, "日本語" ** 100);
+    defer alloc.free(long);
+    try std.testing.expect(long.len <= 120);
+    try std.testing.expect(text_utils.isTerminalSafe(long));
+    try std.testing.expect(std.mem.endsWith(u8, long, "..."));
+}
+
+test "subagent plain and styled rows share one projection" {
+    const alloc = std.testing.allocator;
+    const call: ToolCall = .{ .id = "child", .name = "subagent", .arguments_json = "{\"request\":{\"action\":\"message\",\"agent\":\"reviewer\",\"message\":\"Check replay\"}}" };
+    const plain = (try formatSubagentPlainAction(alloc, call, .completed)).?;
+    defer alloc.free(plain);
+    try std.testing.expectEqualStrings("reviewer replied · Check replay", plain);
+
+    const action = (try subagentAction(alloc, call, .completed)).?;
+    defer action.deinit(alloc);
+    const styled = try formatSubagentStatusLine(alloc, action);
+    defer alloc.free(styled);
+    try std.testing.expectEqualStrings("● reviewer replied\x1b[0m \x1b[38;5;245m· Check replay\x1b[0m", styled);
+}
+
+test "plain subagent rows thread the completed state" {
+    // cli_ask.describeToolActionCompleted routes completed rows through
+    // formatPlainAction: a finished subagent renders finished/replied,
+    // not working.
+    const alloc = std.testing.allocator;
+    const registry = tool_dispatch.Registry{ .tools = &.{test_builtin_tools.subagent} };
+    const call: ToolCall = .{ .id = "child", .name = "subagent", .arguments_json = "{\"request\":{\"action\":\"message\",\"agent\":\"reviewer\",\"message\":\"Check replay\"}}" };
+    const active = try formatPlainAction(alloc, .{ .tool_registry = registry, .call = call });
+    defer alloc.free(active);
+    try std.testing.expectEqualStrings("reviewer working · Check replay", active);
+    const completed = try formatPlainAction(alloc, .{ .tool_registry = registry, .call = call, .completed = true });
+    defer alloc.free(completed);
+    try std.testing.expectEqualStrings("reviewer replied · Check replay", completed);
+    const one_off: ToolCall = .{ .id = "run", .name = "subagent", .arguments_json = "{\"request\":{\"action\":\"run\",\"task\":\"Check cleanup\"}}" };
+    const one_off_completed = try formatPlainAction(alloc, .{ .tool_registry = registry, .call = one_off, .completed = true });
+    defer alloc.free(one_off_completed);
+    try std.testing.expectEqualStrings("Subagent finished · Check cleanup", one_off_completed);
+}
 
 pub fn isProviderSearchAlias(name: []const u8) bool {
     return std.mem.eql(u8, name, "exa_search") or
@@ -287,6 +463,7 @@ fn formatTerminalDisplayTarget(
 /// The caller owns the returned allocation and must free it with `alloc`.
 pub fn formatPlainAction(alloc: Allocator, input: ToolActionInput) ![]const u8 {
     const call = input.call;
+    if (try formatSubagentPlainAction(alloc, call, if (input.completed) .completed else .active)) |line| return line;
     if (file_mutation_contract.isToolName(call.name)) {
         const spec = input.tool_registry.lookup(call.name) orelse
             return std.fmt.allocPrint(alloc, "Working: {s}", .{call.name});

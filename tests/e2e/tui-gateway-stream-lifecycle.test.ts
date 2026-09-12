@@ -4768,4 +4768,221 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
     },
     TIMEOUT * 2,
   );
+
+  test(
+    "subagent rows show named states and task previews through resume",
+    async () => {
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-subagent-rows-")));
+      const home = join(root, "home");
+      const workspace = join(root, "workspace");
+      const stderrPath = join(root, "stderr.log");
+      const resumedStderrPath = join(root, "resumed-stderr.log");
+      mkdirSync(join(home, ".fiber"), { recursive: true });
+      mkdirSync(workspace, { recursive: true });
+      writeFileSync(join(home, ".fiber", "settings.json"), JSON.stringify({}));
+
+      const rootPrompt = "SUBAGENT_ROW_ROOT_PROMPT";
+      const oneOffTask = "Check one-off row cleanup";
+      const replayTask = "Check named row replay";
+      const invalidTask = "Check invalid row failure";
+      const finalText = "SUBAGENT_ROWS_FINISHED";
+      let releaseOneOff!: () => void;
+      let releaseReplay!: () => void;
+      const oneOffGate = new Promise<void>((resolve) => { releaseOneOff = resolve; });
+      const replayGate = new Promise<void>((resolve) => { releaseReplay = resolve; });
+      const hasToolResult = (body: string, callId: string): boolean => {
+        const input = (JSON.parse(body) as { input?: Array<Record<string, unknown>> }).input ?? [];
+        return input.some((part) => part.type === "function_call_output" && part.call_id === callId);
+      };
+      const rowGateway = serveCodexQueue(async (body) => {
+        if (hasToolResult(body, "row_invalid")) return codexFinalText(finalText);
+        if (hasToolResult(body, "row_message")) {
+          return codexToolCall("row_invalid", "subagent", {
+            request: { action: "message", agent: "Invalid Agent", message: invalidTask },
+          });
+        }
+        if (hasToolResult(body, "row_run")) {
+          return codexToolCall("row_message", "subagent", {
+            request: { action: "message", agent: "reviewer", message: replayTask },
+          });
+        }
+        if (body.includes(replayTask)) {
+          await replayGate;
+          return codexFinalText("CHILD_ROW_REPLAY_DONE");
+        }
+        if (body.includes(oneOffTask)) {
+          await oneOffGate;
+          return codexFinalText("CHILD_ROW_ONE_OFF_DONE");
+        }
+        return codexToolCall("row_run", "subagent", {
+          request: { action: "run", task: oneOffTask },
+        });
+      });
+      gateway = rowGateway;
+      const gatewayEnv = seededFakeCodexEnv(home, rowGateway, {
+        FIBER_PERMISSION_MODE: "auto",
+        FIBER_MODEL: MODEL,
+      });
+      session = await TmuxSession.create({
+        cwd: workspace,
+        width: 110,
+        height: 30,
+        minimumHistoryLines: 200,
+        stderrPath,
+        env: gatewayEnv,
+      });
+      try {
+        await session.waitForComposer(TIMEOUT);
+        await session.sendText(rootPrompt);
+
+        await session.waitForText("Subagent working", TIMEOUT);
+        expect(await session.captureFullScrollback()).toContain(oneOffTask);
+        releaseOneOff();
+        await session.waitForText(`Subagent finished · ${oneOffTask}`, TIMEOUT);
+
+        await session.waitForText("reviewer working", TIMEOUT);
+        expect(await session.captureFullScrollback()).toContain(replayTask);
+        releaseReplay();
+        await session.waitForText(`reviewer replied · ${replayTask}`, TIMEOUT);
+
+        await session.waitForText(`Invalid Agent failed · ${invalidTask}`, TIMEOUT);
+        await session.waitForText(finalText, TIMEOUT);
+
+        const compact = await session.captureFullScrollback();
+        expect(compact).toContain("● 3 tool calls · 3 subagent");
+        expect(countOccurrences(compact, `Subagent finished · ${oneOffTask}`)).toBe(1);
+        expect(countOccurrences(compact, `reviewer replied · ${replayTask}`)).toBe(1);
+        expect(countOccurrences(compact, `Invalid Agent failed · ${invalidTask}`)).toBe(1);
+        expect(compact).not.toContain("Managed subagent");
+        expect(compact).not.toContain("Managing subagent");
+        expect(compact).not.toContain("Invalid Agent replied");
+
+        await session.sendKeys("C-o");
+        await session.waitForText("Full detail", TIMEOUT);
+        let details = await session.capturePane();
+        for (let page = 0; page < 8 && !details.includes("CHILD_ROW_ONE_OFF_DONE"); page += 1) {
+          await session.sendKeys("PPage");
+          details += await session.capturePane();
+        }
+        expect(details).toContain("CHILD_ROW_ONE_OFF_DONE");
+        expect(details).toContain(oneOffTask);
+        expect(details).toContain("CHILD_ROW_REPLAY_DONE");
+        await session.sendKeys("C-o");
+        await session.waitForText(finalText, TIMEOUT);
+
+        const requestCount = rowGateway.requests.length;
+        expect(readFileSync(stderrPath, "utf8")).toBe("");
+        await session.sendText("/quit");
+        expect(await session.waitForSessionEnd(TIMEOUT)).toBe(true);
+        await session.kill();
+        session = null;
+
+        session = await TmuxSession.create({
+          cmd: `${FIBER_BIN} resume last`,
+          cwd: workspace,
+          width: 110,
+          height: 30,
+          stderrPath: resumedStderrPath,
+          env: gatewayEnv,
+        });
+        await session.waitForText(finalText, TIMEOUT);
+        const resumed = await session.captureFullScrollback();
+        expect(resumed).toContain("● 3 tool calls · 3 subagent");
+        expect(resumed).toContain(`Subagent finished · ${oneOffTask}`);
+        expect(resumed).toContain(`reviewer replied · ${replayTask}`);
+        expect(resumed).toContain(`Invalid Agent failed · ${invalidTask}`);
+        expect(resumed).not.toContain("Managed subagent");
+        expect(rowGateway.requests.length).toBe(requestCount);
+        expect(readFileSync(resumedStderrPath, "utf8")).toBe("");
+      } finally {
+        releaseOneOff();
+        releaseReplay();
+      }
+    },
+    TIMEOUT * 3,
+  );
+
+  test(
+    "subagent interrupted rows match across resume",
+    async () => {
+      root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-subagent-interrupt-")));
+      const home = join(root, "home");
+      const workspace = join(root, "workspace");
+      const stderrPath = join(root, "stderr.log");
+      const resumedStderrPath = join(root, "resumed-stderr.log");
+      mkdirSync(join(home, ".fiber"), { recursive: true });
+      mkdirSync(workspace, { recursive: true });
+      writeFileSync(join(home, ".fiber", "settings.json"), JSON.stringify({}));
+
+      const rootPrompt = "SUBAGENT_INTERRUPT_ROOT_PROMPT";
+      const interruptTask = "Check interrupt row resume";
+      let releaseChild!: () => void;
+      const childGate = new Promise<void>((resolve) => { releaseChild = resolve; });
+      const interruptGateway = serveCodexQueue(async (body) => {
+        if (body.includes(interruptTask)) {
+          await childGate;
+          return codexFinalText("CHILD_INTERRUPT_DONE");
+        }
+        return codexToolCall("row_interrupt", "subagent", {
+          request: { action: "run", task: interruptTask },
+        });
+      });
+      gateway = interruptGateway;
+      const gatewayEnv = seededFakeCodexEnv(home, interruptGateway, {
+        FIBER_PERMISSION_MODE: "auto",
+        FIBER_MODEL: MODEL,
+      });
+      session = await TmuxSession.create({
+        cwd: workspace,
+        width: 110,
+        height: 30,
+        minimumHistoryLines: 200,
+        stderrPath,
+        env: gatewayEnv,
+      });
+      try {
+        await session.waitForComposer(TIMEOUT);
+        await session.sendText(rootPrompt);
+
+        await session.waitForText("Subagent working", TIMEOUT);
+        await waitForCondition(
+          () => interruptGateway.requests.some((request) => request.body.includes(interruptTask)),
+          "held subagent child request",
+        );
+        await session.sendKeys("C-c");
+        await session.waitForText(`Subagent interrupted · ${interruptTask}`, TIMEOUT);
+
+        const live = await session.captureFullScrollback();
+        expect(live).toContain(`Subagent interrupted · ${interruptTask}`);
+        expect(live).not.toContain("Subagent failed");
+
+        const requestCount = interruptGateway.requests.length;
+        expect(readFileSync(stderrPath, "utf8")).toBe("");
+        await session.waitForComposer(TIMEOUT);
+        await session.sendText("/quit");
+        expect(await session.waitForSessionEnd(TIMEOUT)).toBe(true);
+        await session.kill();
+        session = null;
+
+        session = await TmuxSession.create({
+          cmd: `${FIBER_BIN} resume last`,
+          cwd: workspace,
+          width: 110,
+          height: 30,
+          stderrPath: resumedStderrPath,
+          env: gatewayEnv,
+        });
+        await session.waitForText(interruptTask, TIMEOUT);
+        const resumed = await session.captureFullScrollback();
+        expect(resumed).toContain(`Subagent interrupted · ${interruptTask}`);
+        expect(resumed).not.toContain("Subagent working");
+        expect(resumed).not.toContain("Subagent failed");
+        expect(interruptGateway.requests.length).toBe(requestCount);
+        expect(readFileSync(resumedStderrPath, "utf8")).toBe("");
+      } finally {
+        releaseChild();
+      }
+    },
+    TIMEOUT * 3,
+  );
 });

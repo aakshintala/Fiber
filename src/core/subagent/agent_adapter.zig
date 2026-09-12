@@ -357,7 +357,7 @@ fn runtimeDeps(context: *Context) agent_runtime.AgentRuntimeDeps {
         .request_prepared_file_mutation_permission = requestPreparedFileMutationPermission,
         .resolve_tool_action_display_target = resolveToolActionDisplayTarget,
         .describe_tool_action = describeToolAction,
-        .describe_tool_action_completed = describeToolAction,
+        .describe_tool_action_completed = describeToolActionCompleted,
         .describe_tool_action_denied = describeToolActionDenied,
         .permission_target_for_call = permissionTargetForCall,
         .execute_tool_call = executeToolCall,
@@ -607,6 +607,17 @@ fn describeToolAction(raw: *anyopaque, arena: Allocator, call: types.ToolCall, f
         .call = call,
         .workspace_root = context.config.tool_context.workspace_root,
         .display_target = file_path,
+    });
+}
+
+fn describeToolActionCompleted(raw: *anyopaque, arena: Allocator, call: types.ToolCall, file_path: ?[]const u8, _: []const []const u8) ![]const u8 {
+    const context: *Context = @ptrCast(@alignCast(raw));
+    return tool_presentation.formatPlainAction(arena, .{
+        .tool_registry = context.config.tool_context.tool_registry,
+        .call = call,
+        .workspace_root = context.config.tool_context.workspace_root,
+        .display_target = file_path,
+        .completed = true,
     });
 }
 

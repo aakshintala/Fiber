@@ -2327,6 +2327,7 @@ fn describeToolActionCompleted(raw_ctx: *anyopaque, arena: Allocator, call: Tool
         .workspace_root = ctx.workspace_root,
         .display_target = display_target,
         .is_available_dynamic_mcp_tool = lifecycleDynamicMcpToolAvailable(ctx, call.name, advertised_dynamic_tool_names),
+        .completed = true,
     });
 }
 
