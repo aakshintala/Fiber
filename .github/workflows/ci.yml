@@ -181,6 +181,9 @@ jobs:
 
   e2e:
     name: E2E (${{ matrix.platform.name }}, shard ${{ matrix.shard.label }})
+    # An empty platform list (docs-only scope) fails matrix evaluation, so
+    # skip the job instead; the aggregate passes on skipped jobs.
+    if: needs.e2e-platforms.outputs.platforms != '[]'
     needs: e2e-platforms
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 240
