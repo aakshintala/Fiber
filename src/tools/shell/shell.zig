@@ -1157,7 +1157,11 @@ fn finishPrepared(
     handoffPreparedDelivery(ctx, runtime, prepared.reservation_id) catch {
         return .{ .failure = try ctx.allocator.dupe(u8, "shell result commit failed") };
     };
-    return if (action == .command and snapshotFailed(prepared.snapshot.state))
+    const failed = switch (action) {
+        .command => snapshotFailed(prepared.snapshot.state),
+        .stop => stop_result_failed(prepared.snapshot.state),
+    };
+    return if (failed)
         .{ .failure = body }
     else
         .{ .success = body };
@@ -1171,7 +1175,7 @@ fn publishSnapshotMetadata(
         ctx.tool_result_memory_sink == null) return;
     const status: ?command_contract.CommandStatus = switch (snapshot.state) {
         .completed => |value| value,
-        .stopped => |value| value,
+        .stopped => |value| stopProjectedStatus(value),
         .lost => .indeterminate,
         .running => return,
     };
@@ -1400,7 +1404,7 @@ fn formatSnapshotRaw(
 ) ![]u8 {
     const status = switch (snapshot.state) {
         .completed => |value| value,
-        .stopped => |value| value,
+        .stopped => |value| stopProjectedStatus(value),
         .lost => .indeterminate,
         .running => null,
     };
@@ -1456,6 +1460,85 @@ fn snapshotFailed(state: managed_execution.SnapshotState) bool {
         },
         .stopped, .lost => true,
     };
+}
+
+// A stop reports success only when an exit was observed. Lost workers,
+// missing stops, and stops without an exit status fail closed so callers
+// never read them as clean stops.
+fn stop_result_failed(state: managed_execution.SnapshotState) bool {
+    return switch (state) {
+        .lost => true,
+        .stopped => |status| if (status) |value| switch (value) {
+            .exit_code, .signal => false,
+            .indeterminate, .finished => true,
+        } else true,
+        .running, .completed => false,
+    };
+}
+
+// Missing and finished stop outcomes project as indeterminate so metadata
+// never reads a stop without an observed exit as a clean stop.
+fn stopProjectedStatus(status: ?command_contract.CommandStatus) command_contract.CommandStatus {
+    const observed = status orelse return .indeterminate;
+    return switch (observed) {
+        .finished => .indeterminate,
+        .exit_code, .signal, .indeterminate => observed,
+    };
+}
+
+test "shell stop fails closed without an observed exit" {
+    try std.testing.expect(stop_result_failed(.lost));
+    try std.testing.expect(stop_result_failed(.{ .stopped = .indeterminate }));
+    try std.testing.expect(stop_result_failed(.{ .stopped = .finished }));
+    try std.testing.expect(stop_result_failed(.{ .stopped = null }));
+    try std.testing.expect(!stop_result_failed(.{ .stopped = .{ .exit_code = 0 } }));
+    try std.testing.expect(!stop_result_failed(.{ .stopped = .{ .signal = 9 } }));
+    try std.testing.expect(!stop_result_failed(.{ .completed = .{ .exit_code = 0 } }));
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        stopProjectedStatus(null),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        stopProjectedStatus(.finished),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus{ .exit_code = 0 },
+        stopProjectedStatus(.{ .exit_code = 0 }),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus{ .signal = 9 },
+        stopProjectedStatus(.{ .signal = 9 }),
+    );
+}
+
+test "stopped shell metadata projects missing exits as indeterminate" {
+    const alloc = std.testing.allocator;
+    const states = [_]managed_execution.SnapshotState{
+        .{ .stopped = null },
+        .{ .stopped = .finished },
+    };
+    for (states) |state| {
+        var command_result_json: ?[]const u8 = null;
+        defer if (command_result_json) |json| alloc.free(@constCast(json));
+        try publishSnapshotMetadata(.{
+            .allocator = alloc,
+            .command_result_json_sink = &command_result_json,
+        }, .{
+            .execution_id = @constCast("shell-stopped-meta"),
+            .command = @constCast("sleep 60"),
+            .cwd = @constCast("/tmp"),
+            .retained = true,
+            .state = state,
+            .output_delta = @constCast(""),
+            .output_truncated = false,
+        });
+        try std.testing.expect(std.mem.find(
+            u8,
+            command_result_json orelse return error.TestExpectedEqual,
+            "\"termination_indeterminate\":true",
+        ) != null);
+    }
 }
 
 fn runtimeFailure(
