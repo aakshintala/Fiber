@@ -1397,8 +1397,14 @@ pub fn Runtime(comptime App: type) type {
                         !presentation_shell.pending_scroll_compact
                     else
                         footer_frame.paint.preserve_scrollback,
+                    // Never reset the physical terminal while the alternate
+                    // screen owns rendering: 3J clears primary scrollback on
+                    // most terminals. The pending flag survives (only a
+                    // transcript-committing frame clears it) so the reset
+                    // still runs once the primary screen is restored.
+                    // Reimplements upstream vercel-labs/fx 388eb2a0.
                     .reset_terminal = shouldResetPhysicalTerminal(
-                        false,
+                        render_reconciliation.alternate_screen_owns_rendering,
                         app.shell.terminal_reset_pending,
                     ),
                 });
@@ -5046,13 +5052,29 @@ test "core.app_render_runtime changed resized full transcript close preserves pr
         .hint_row = 18,
     };
     try app.shell.requestTerminalResetAfterResize(&app.metrics, null);
+    var resize_offset = try file.length(io_mod.getIo());
     try app.shell.writeTranscript(
         alloc,
         &app.metrics,
         "new output while review is open\n",
         true,
     );
+    for (0..100_000) |_| {
+        try app.shell.prewarmFullTranscriptPage(null, null);
+        _ = try app.shell.pollFullTranscriptPageLoad();
+        if (app.shell.fullTranscriptPreparedForOpen()) break;
+        std.Thread.yield() catch std.atomic.spinLoopHint();
+    }
+    try std.testing.expect(app.shell.fullTranscriptPreparedForOpen());
+    app.shell.render_requests.request(.transcript);
     try Runtime(CoordinatorTestApp).flushRequestedFrame(&app);
+    const resize_bytes = try readCoordinatorFrameBytes(alloc, file, &resize_offset);
+    defer alloc.free(resize_bytes);
+    // The pending resize reset must not fire while the full transcript owns
+    // the alternate screen: 3J clears primary scrollback on most terminals.
+    try std.testing.expect(app.terminal.fullTranscriptScreenActive());
+    try std.testing.expect(std.mem.find(u8, resize_bytes, "\x1b[3J") == null);
+    try std.testing.expect(app.shell.terminal_reset_pending);
 
     var read_offset = try file.length(io_mod.getIo());
     try app_lifecycle.closeFullTranscript(app.alloc, &app.terminal, &app.shell, &app.metrics);
