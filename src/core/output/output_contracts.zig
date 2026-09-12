@@ -43,6 +43,7 @@ pub const Kind = enum {
     mcp_path,
     mcp_logout,
     mcp_trust,
+    mcp_doctor,
     models,
     models_use,
     doctor,
@@ -74,6 +75,7 @@ pub const Kind = enum {
             .mcp_path => "mcp.path",
             .mcp_logout => "mcp.logout",
             .mcp_trust => "mcp.trust",
+            .mcp_doctor => "mcp.doctor",
             .models => "models",
             .models_use => "models.use",
             .doctor => "doctor",
@@ -1412,6 +1414,486 @@ pub const McpTrustSnapshot = struct {
         return try out.toOwnedSlice();
     }
 };
+
+const doctor_redacted_marker = "[redacted]";
+
+const doctor_secret_key_fragments = [_][]const u8{
+    "token",
+    "bearer",
+    "secret",
+    "passwd",
+    "password",
+    "apikey",
+    "api_key",
+    "authorization",
+    "cookie",
+    "credential",
+};
+
+fn doctorNameLooksSecret(name: []const u8) bool {
+    for (doctor_secret_key_fragments) |fragment| {
+        if (name.len < fragment.len) continue;
+        var i: usize = 0;
+        while (i + fragment.len <= name.len) : (i += 1) {
+            var match = true;
+            for (fragment, 0..) |c, j| {
+                if (std.ascii.toLower(name[i + j]) != c) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return true;
+        }
+    }
+    return false;
+}
+
+fn doctorIsKeyChar(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_' or c == '.' or c == '-';
+}
+
+fn doctorIsValueTerminator(c: u8) bool {
+    return c <= ' ' or c == ',' or c == ';' or c == '}' or c == ']' or c == '&';
+}
+
+fn doctorSchemeIsAuth(scheme: []const u8) bool {
+    if (scheme.len != 6 and scheme.len != 5) return false;
+    var lower: [6]u8 = undefined;
+    for (scheme, 0..) |c, i| lower[i] = std.ascii.toLower(c);
+    return std.mem.eql(u8, lower[0..scheme.len], "bearer") or
+        std.mem.eql(u8, lower[0..scheme.len], "basic");
+}
+
+/// Redacts credential-looking material from doctor detail strings. Failure
+/// text is static today, but this keeps a future secret-bearing message
+/// (tokens, headers, URLs with credentials) from reaching terminal or JSON
+/// output. The caller owns the returned slice.
+pub fn redactSecretText(alloc: Allocator, input: []const u8) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    errdefer out.deinit();
+    var i: usize = 0;
+    while (i < input.len) {
+        if (input[i] == '"' or input[i] == '\'') {
+            const quote = input[i];
+            var j = i + 1;
+            while (j < input.len and input[j] != quote) : (j += 1) {}
+            if (j < input.len) {
+                const name = input[i + 1 .. j];
+                var k = j + 1;
+                while (k < input.len and input[k] == ' ') : (k += 1) {}
+                if (k < input.len and (input[k] == ':' or input[k] == '=')) {
+                    k += 1;
+                    while (k < input.len and input[k] == ' ') : (k += 1) {}
+                    if (doctorNameLooksSecret(name)) {
+                        try out.writer.writeAll(input[i..k]);
+                        try out.writer.writeAll(doctor_redacted_marker);
+                        i = doctorSkipSchemeValue(input, k);
+                        continue;
+                    }
+                }
+            }
+            try out.writer.writeByte(input[i]);
+            i += 1;
+            continue;
+        }
+        if (doctorIsKeyChar(input[i]) and (i == 0 or !doctorIsKeyChar(input[i - 1]))) {
+            var j = i;
+            while (j < input.len and doctorIsKeyChar(input[j])) : (j += 1) {}
+            const name = input[i..j];
+            var k = j;
+            while (k < input.len and input[k] == ' ') : (k += 1) {}
+            if (k < input.len and (input[k] == ':' or input[k] == '=')) {
+                const sep = k;
+                k += 1;
+                while (k < input.len and input[k] == ' ') : (k += 1) {}
+                if (doctorNameLooksSecret(name)) {
+                    try out.writer.writeAll(input[i..sep]);
+                    try out.writer.writeByte(input[sep]);
+                    if (input[sep] == ':' and k < input.len and input[k] != ' ') {
+                        // Keep `key:value` compact without inventing spacing.
+                    } else if (k > sep + 1) {
+                        try out.writer.writeByte(' ');
+                    }
+                    try out.writer.writeAll(doctor_redacted_marker);
+                    i = doctorSkipSchemeValue(input, k);
+                    continue;
+                }
+                if (doctorSchemeIsAuth(name) and input[sep] != '=') {
+                    try out.writer.writeAll(input[i..k]);
+                    try out.writer.writeAll(doctor_redacted_marker);
+                    i = doctorSkipValue(input, k);
+                    continue;
+                }
+            } else if (k < input.len and input[k] == ' ' and doctorSchemeIsAuth(name)) {
+                var m = k + 1;
+                while (m < input.len and input[m] == ' ') : (m += 1) {}
+                try out.writer.writeAll(input[i..m]);
+                try out.writer.writeAll(doctor_redacted_marker);
+                i = doctorSkipValue(input, m);
+                continue;
+            }
+            try out.writer.writeAll(name);
+            i = j;
+            continue;
+        }
+        if (i + 3 < input.len and input[i] == ':' and input[i + 1] == '/' and input[i + 2] == '/') {
+            var j = i + 3;
+            while (j < input.len and
+                input[j] != '@' and
+                input[j] != '/' and
+                input[j] > ' ') : (j += 1)
+            {}
+            if (j < input.len and input[j] == '@') {
+                try out.writer.writeAll(input[i .. i + 3]);
+                try out.writer.writeAll(doctor_redacted_marker);
+                try out.writer.writeByte('@');
+                i = j + 1;
+                continue;
+            }
+            try out.writer.writeAll(input[i .. i + 3]);
+            i += 3;
+            continue;
+        }
+        try out.writer.writeByte(input[i]);
+        i += 1;
+    }
+    return try out.toOwnedSlice();
+}
+
+fn doctorSkipSchemeValue(input: []const u8, start: usize) usize {
+    // A secret value may carry its own scheme (`authorization: Bearer abc`);
+    // redact the scheme and the credential together.
+    for ([_][]const u8{ "bearer", "basic" }) |scheme| {
+        if (start + scheme.len < input.len and input[start + scheme.len] == ' ') {
+            var match = true;
+            for (scheme, 0..) |c, j| {
+                if (std.ascii.toLower(input[start + j]) != c) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                var k = start + scheme.len + 1;
+                while (k < input.len and input[k] == ' ') : (k += 1) {}
+                return doctorSkipValue(input, k);
+            }
+        }
+    }
+    return doctorSkipValue(input, start);
+}
+
+fn doctorSkipValue(input: []const u8, start: usize) usize {
+    if (start < input.len and (input[start] == '"' or input[start] == '\'')) {
+        const quote = input[start];
+        var j = start + 1;
+        while (j < input.len) {
+            if (input[j] == '\\' and j + 1 < input.len) {
+                j += 2;
+                continue;
+            }
+            if (input[j] == quote) return j + 1;
+            j += 1;
+        }
+        return j;
+    }
+    var j = start;
+    while (j < input.len and !doctorIsValueTerminator(input[j])) : (j += 1) {}
+    return j;
+}
+
+test "doctor redaction masks tokens headers and urls with secrets" {
+    const alloc = std.testing.allocator;
+    const redacted = try redactSecretText(
+        alloc,
+        "auth failed: {\"access_token\": \"hunter2\", \"user\": \"ada\"}",
+    );
+    defer alloc.free(redacted);
+    try std.testing.expect(std.mem.find(u8, redacted, "hunter2") == null);
+    try std.testing.expect(std.mem.find(u8, redacted, "[redacted]") != null);
+    try std.testing.expect(std.mem.find(u8, redacted, "ada") != null);
+}
+
+test "doctor redaction masks bearer schemes and url userinfo" {
+    const alloc = std.testing.allocator;
+    const bearer = try redactSecretText(alloc, "authorization: Bearer abc123, next");
+    defer alloc.free(bearer);
+    try std.testing.expect(std.mem.find(u8, bearer, "abc123") == null);
+    try std.testing.expect(std.mem.find(u8, bearer, "[redacted]") != null);
+
+    const url = try redactSecretText(alloc, "dial https://user:s3cr3t@example.test/mcp failed");
+    defer alloc.free(url);
+    try std.testing.expect(std.mem.find(u8, url, "s3cr3t") == null);
+    try std.testing.expect(std.mem.find(u8, url, "user") == null);
+    try std.testing.expect(std.mem.find(u8, url, "https://[redacted]@example.test/mcp") != null);
+}
+
+test "doctor redaction leaves ordinary failure text untouched" {
+    const alloc = std.testing.allocator;
+    const plain = "Connection or discovery failed; check the trusted profile configuration and trace logs.";
+    const redacted = try redactSecretText(alloc, plain);
+    defer alloc.free(redacted);
+    try std.testing.expectEqualStrings(plain, redacted);
+}
+
+pub const McpDoctorServer = struct {
+    name: []const u8,
+    source: mcp_contract.ConfigSource,
+    scope: mcp_contract.ConfigScope,
+    required: bool,
+    transport: mcp_contract.McpTransport,
+    connection: mcp_health.ConnectionState,
+    authentication: mcp_health.AuthenticationState,
+    admission: ?mcp_contract.WorkspaceAdmission,
+    tools: ?usize,
+    failure: ?[]const u8,
+};
+
+/// One snapshot for `fiber mcp doctor`: every configured server transport is
+/// opened before this is built, so `connection` and `authentication` are
+/// observed values rather than configuration echoes. Server commands,
+/// arguments, environment, URLs, and headers never enter the snapshot; the
+/// only free text is the secret-redacted failure detail.
+pub const McpDoctorSnapshot = struct {
+    servers: []McpDoctorServer,
+    configuration_issues: [][]u8,
+    overall: mcp_health.StartupDecision,
+    probe_timeout_ms: u32,
+
+    pub fn fromHealthSnapshot(
+        alloc: Allocator,
+        snapshot: *const mcp_health.Snapshot,
+        probe_timeout_ms: u32,
+    ) !McpDoctorSnapshot {
+        const servers = try alloc.alloc(McpDoctorServer, snapshot.servers.len);
+        errdefer alloc.free(servers);
+        var initialized: usize = 0;
+        errdefer {
+            for (servers[0..initialized]) |*server| {
+                alloc.free(server.name);
+                if (server.failure) |failure| alloc.free(failure);
+            }
+        }
+        for (snapshot.servers, 0..) |*server, index| {
+            servers[index] = .{
+                .name = try alloc.dupe(u8, server.configured_name),
+                .source = server.source,
+                .scope = server.scope,
+                .required = server.required,
+                .transport = server.transport,
+                .connection = server.connection,
+                .authentication = server.authentication,
+                .admission = server.workspace_admission,
+                .tools = server.counts.tools,
+                .failure = if (server.failure) |failure|
+                    try redactSecretText(alloc, failure)
+                else
+                    null,
+            };
+            initialized += 1;
+        }
+        const issues = try alloc.alloc([]u8, snapshot.configuration_issues.len);
+        errdefer alloc.free(issues);
+        var issues_initialized: usize = 0;
+        errdefer {
+            for (issues[0..issues_initialized]) |issue| alloc.free(issue);
+        }
+        for (snapshot.configuration_issues, 0..) |*issue, index| {
+            issues[index] = try redactSecretText(alloc, issue.message);
+            issues_initialized += 1;
+        }
+        return .{
+            .servers = servers,
+            .configuration_issues = issues,
+            .overall = mcp_health.startupDecision(snapshot.servers),
+            .probe_timeout_ms = probe_timeout_ms,
+        };
+    }
+
+    pub fn deinit(self: *McpDoctorSnapshot, alloc: Allocator) void {
+        for (self.servers) |*server| {
+            alloc.free(server.name);
+            if (server.failure) |failure| alloc.free(failure);
+        }
+        alloc.free(self.servers);
+        for (self.configuration_issues) |issue| alloc.free(issue);
+        alloc.free(self.configuration_issues);
+        self.* = undefined;
+    }
+
+    pub fn healthy(self: *const McpDoctorSnapshot) bool {
+        return self.overall == .ready and self.configuration_issues.len == 0;
+    }
+
+    pub fn render(self: McpDoctorSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpDoctorSnapshot, alloc: Allocator) ![]u8 {
+        if (self.servers.len == 0 and self.configuration_issues.len == 0) {
+            return alloc.dupe(u8, "No MCP servers configured.\n");
+        }
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        if (self.servers.len > 0) {
+            try out.writer.print("MCP doctor ({d} {s}, probe_timeout_ms={d}): {s}\n", .{
+                self.servers.len,
+                if (self.servers.len == 1) "server" else "servers",
+                self.probe_timeout_ms,
+                @tagName(self.overall),
+            });
+        }
+        for (self.servers) |server| {
+            try out.writer.print(
+                "  {s} source={s} scope={s} policy={s} transport={s} state={s} auth={s}",
+                .{
+                    server.name,
+                    @tagName(server.source),
+                    @tagName(server.scope),
+                    if (server.required) "required" else "optional",
+                    @tagName(server.transport),
+                    @tagName(server.connection),
+                    @tagName(server.authentication),
+                },
+            );
+            if (server.tools) |tools| try out.writer.print(" tools={d}", .{tools});
+            if (server.admission) |admission|
+                try out.writer.print(" admission={s}", .{@tagName(admission)});
+            try out.writer.writeByte('\n');
+            if (server.failure) |failure|
+                try out.writer.print("    failure={s}\n", .{failure});
+        }
+        for (self.configuration_issues) |issue| {
+            try out.writer.print("  configuration issue: {s}\n", .{issue});
+        }
+        return try out.toOwnedSlice();
+    }
+
+    pub fn renderJson(self: McpDoctorSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"overall\":",
+            .{Kind.mcp_doctor.jsonName()},
+        );
+        try std.json.Stringify.value(@tagName(self.overall), .{}, &out.writer);
+        try out.writer.writeAll(",\"healthy\":");
+        try std.json.Stringify.value(self.healthy(), .{}, &out.writer);
+        try out.writer.print(",\"probe_timeout_ms\":{d},\"servers\":[", .{self.probe_timeout_ms});
+        for (self.servers, 0..) |server, index| {
+            if (index > 0) try out.writer.writeByte(',');
+            try out.writer.writeAll("{\"name\":");
+            try std.json.Stringify.value(server.name, .{}, &out.writer);
+            try out.writer.writeAll(",\"source\":");
+            try std.json.Stringify.value(@tagName(server.source), .{}, &out.writer);
+            try out.writer.writeAll(",\"scope\":");
+            try std.json.Stringify.value(@tagName(server.scope), .{}, &out.writer);
+            try out.writer.writeAll(",\"required\":");
+            try std.json.Stringify.value(server.required, .{}, &out.writer);
+            try out.writer.writeAll(",\"transport\":");
+            try std.json.Stringify.value(@tagName(server.transport), .{}, &out.writer);
+            try out.writer.writeAll(",\"connection\":");
+            try std.json.Stringify.value(@tagName(server.connection), .{}, &out.writer);
+            try out.writer.writeAll(",\"authentication\":");
+            try std.json.Stringify.value(@tagName(server.authentication), .{}, &out.writer);
+            try out.writer.writeAll(",\"admission\":");
+            if (server.admission) |admission|
+                try std.json.Stringify.value(@tagName(admission), .{}, &out.writer)
+            else
+                try out.writer.writeAll("null");
+            try out.writer.writeAll(",\"tools\":");
+            try std.json.Stringify.value(server.tools, .{}, &out.writer);
+            try out.writer.writeAll(",\"failure\":");
+            if (server.failure) |failure|
+                try std.json.Stringify.value(failure, .{}, &out.writer)
+            else
+                try out.writer.writeAll("null");
+            try out.writer.writeByte('}');
+        }
+        try out.writer.writeAll("],\"configuration_issues\":[");
+        for (self.configuration_issues, 0..) |issue, index| {
+            if (index > 0) try out.writer.writeByte(',');
+            try std.json.Stringify.value(issue, .{}, &out.writer);
+        }
+        try out.writer.writeAll("]}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+test "doctor snapshot classifies overall health and redacts failures" {
+    const alloc = std.testing.allocator;
+    const names = [_][]const u8{ "ready-server", "broken-server" };
+    var servers: [2]mcp_health.ServerSnapshot = undefined;
+    servers[0] = .{
+        .configured_name = try alloc.dupe(u8, names[0]),
+        .negotiated_name = null,
+        .negotiated_version = null,
+        .source = .profile,
+        .scope = .profile,
+        .workspace_admission = null,
+        .required = false,
+        .transport = .stdio,
+        .protocol_version = null,
+        .connection = .ready,
+        .authentication = .none,
+        .counts = .{ .tools = 1 },
+        .cache_freshness = .unavailable,
+        .subscription = .unavailable,
+        .runtime_generation = 1,
+        .catalog_generation = 1,
+        .retry_attempt = 0,
+        .retry_in_ms = null,
+        .last_successful_discovery_ms = 1,
+        .failure = null,
+    };
+    servers[1] = .{
+        .configured_name = try alloc.dupe(u8, names[1]),
+        .negotiated_name = null,
+        .negotiated_version = null,
+        .source = .profile,
+        .scope = .profile,
+        .workspace_admission = null,
+        .required = false,
+        .transport = .stdio,
+        .protocol_version = null,
+        .connection = .failed,
+        .authentication = .required,
+        .counts = .{},
+        .cache_freshness = .unavailable,
+        .subscription = .unavailable,
+        .runtime_generation = 1,
+        .catalog_generation = 0,
+        .retry_attempt = 0,
+        .retry_in_ms = null,
+        .last_successful_discovery_ms = null,
+        .failure = try alloc.dupe(u8, "credential refresh failed (token=abc123)"),
+    };
+    defer {
+        servers[0].deinit(alloc);
+        servers[1].deinit(alloc);
+    }
+    var health_snapshot = mcp_health.Snapshot{
+        .captured_at_ms = 1,
+        .servers = &servers,
+        .configuration_issues = &.{},
+    };
+    var snapshot = try McpDoctorSnapshot.fromHealthSnapshot(alloc, &health_snapshot, 10_000);
+    defer snapshot.deinit(alloc);
+    try std.testing.expect(!snapshot.healthy());
+    try std.testing.expectEqual(mcp_health.StartupDecision.degraded, snapshot.overall);
+    const text = try snapshot.render(alloc, .text);
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "MCP doctor (2 servers, probe_timeout_ms=10000): degraded") != null);
+    try std.testing.expect(std.mem.find(u8, text, "state=failed auth=required") != null);
+    try std.testing.expect(std.mem.find(u8, text, "abc123") == null);
+    const json = try snapshot.render(alloc, .json);
+    defer alloc.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"kind\":\"mcp.doctor\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "abc123") == null);
+    try std.testing.expect(std.mem.find(u8, json, "\"healthy\":false") != null);
+}
 
 pub const AuthLogoutSnapshot = struct {
     provider: model_provider.ProviderId,

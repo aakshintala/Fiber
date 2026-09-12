@@ -5235,6 +5235,42 @@ pub const McpRuntime = struct {
         self.discovery_state.store(.complete, .seq_cst);
     }
 
+    /// Named per-server bound for `fiber mcp doctor` probes. Interactive
+    /// discovery uses each server's configured startup timeout, which can
+    /// keep one hanging server open for tens of seconds; doctor caps every
+    /// probe at this bound so a single unreachable server cannot stall the
+    /// whole report.
+    pub const doctor_probe_timeout: std.Io.Duration = .fromSeconds(10);
+
+    /// Opens every configured server transport for `fiber mcp doctor` through
+    /// the same discovery path as interactive startup (phase `.all`, so
+    /// enablement and workspace admission apply). Synchronous; each probe is
+    /// bounded by `doctor_probe_timeout` and failures land on the per-server
+    /// health snapshot instead of escaping as errors.
+    pub fn connectAllForDoctor(
+        self: *McpRuntime,
+        tool_registry: tool_dispatch.Registry,
+    ) void {
+        self.connectAllForDoctorWithTimeout(tool_registry, doctor_probe_timeout);
+    }
+
+    fn connectAllForDoctorWithTimeout(
+        self: *McpRuntime,
+        tool_registry: tool_dispatch.Registry,
+        server_timeout: std.Io.Duration,
+    ) void {
+        if (self.discovery_state.cmpxchgStrong(.idle, .loading, .seq_cst, .seq_cst) != null) return;
+        self.discovery_cancel_requested.store(false, .seq_cst);
+        self.connectAllControlled(
+            tool_registry,
+            &self.discovery_cancel_requested,
+            server_timeout,
+            .all,
+        );
+        self.finishDeferredDiscovery();
+        self.discovery_state.store(.complete, .seq_cst);
+    }
+
     /// Connects only required profile servers before a one-shot Ask reaches the
     /// Gateway. Optional servers remain dormant until Ask uses MCP directly or
     /// captures MCP authority for a child.
@@ -10102,6 +10138,65 @@ test "discovery timeout override stays private and deadline addition saturates" 
         std.math.maxInt(i96),
         startupDeadline(near_max, 1, null).raw.nanoseconds,
     );
+}
+
+test "doctor probe marks a reachable stdio server ready" {
+    const alloc = std.testing.allocator;
+    const shell_server =
+        \\while IFS= read -r line; do
+        \\  case "$line" in
+        \\    *'"method":"server/discover"'*) 
+        \\      printf '%s\n' '{"jsonrpc":"2.0","id":0,"error":{"code":-32601,"message":"Method not found"}}'
+        \\      ;;
+        \\    *'"method":"initialize"'*) 
+        \\      printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"shell","version":"0"}}}'
+        \\      ;;
+        \\    *'"method":"notifications/initialized"'*) 
+        \\      ;;
+        \\    *'"method":"tools/list"'*) 
+        \\      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}'
+        \\      ;;
+        \\    *) 
+        \\      exit 3
+        \\      ;;
+        \\  esac
+        \\done
+    ;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    try runtime.addServer(try shellMcpConfigForTest(alloc, "doctor-ready", shell_server));
+    runtime.connectAllForDoctor(.{});
+    try std.testing.expectEqual(ServerState.ready, runtime.servers.items[0].state);
+    var snapshot = try runtime.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.servers.len);
+    try std.testing.expectEqual(health.ConnectionState.ready, snapshot.servers[0].connection);
+}
+
+test "doctor probe records an unreachable stdio server without crashing" {
+    const alloc = std.testing.allocator;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    try runtime.addServer(try shellMcpConfigForTest(alloc, "doctor-dead", "exit 1"));
+    runtime.connectAllForDoctor(.{});
+    try std.testing.expectEqual(ServerState.failed, runtime.servers.items[0].state);
+    var snapshot = try runtime.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.servers.len);
+    try std.testing.expectEqual(health.ConnectionState.failed, snapshot.servers[0].connection);
+}
+
+test "doctor probe timeout bounds a hanging stdio server" {
+    try std.testing.expectEqual(@as(i64, 10_000), McpRuntime.doctor_probe_timeout.toMilliseconds());
+    const alloc = std.testing.allocator;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    try runtime.addServer(try shellMcpConfigForTest(alloc, "doctor-hang", "sleep 30"));
+    const start_ms = io_mod.milliTimestamp();
+    runtime.connectAllForDoctorWithTimeout(.{}, .fromMilliseconds(300));
+    const elapsed_ms = io_mod.milliTimestamp() - start_ms;
+    try std.testing.expectEqual(ServerState.failed, runtime.servers.items[0].state);
+    try std.testing.expect(elapsed_ms < 10_000);
 }
 
 fn connectServerForDiscovery(

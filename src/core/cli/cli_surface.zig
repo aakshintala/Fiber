@@ -2383,6 +2383,55 @@ fn runTopLevelMcp(
         }
         return .handled_success;
     }
+    if (std.mem.eql(u8, operation, "doctor")) {
+        const format = parseMcpOptionalJsonArgs(rest[1..]) catch {
+            try writeMcpUsageOrJsonError(alloc, cfg.command_catalog, deps, "doctor", rest[1..]);
+            return .handled_usage_error;
+        };
+        var loaded = loadMcpCommandRuntime(alloc, cfg, deps) catch |err| {
+            try writeMcpOperationFailure(alloc, deps, "doctor", format, err);
+            return .handled_failure;
+        };
+        defer loaded.deinit(alloc);
+        try writeConfigDiagnostics(alloc, deps, loaded.startup.config_diagnostics);
+        const probe_timeout_ms: u32 = @intCast(mcp_runtime.McpRuntime.doctor_probe_timeout.toMilliseconds());
+        if (loaded.runtime) |runtime| {
+            runtime.connectAllForDoctor(.{});
+            var health_snapshot = try runtime.snapshotHealth(
+                alloc,
+                @max(io_mod.milliTimestamp(), 0),
+            );
+            defer health_snapshot.deinit(alloc);
+            var snapshot = try output_contracts.McpDoctorSnapshot.fromHealthSnapshot(
+                alloc,
+                &health_snapshot,
+                probe_timeout_ms,
+            );
+            defer snapshot.deinit(alloc);
+            if (format == .json) {
+                try writeMcpJsonOutput(alloc, deps, snapshot);
+            } else {
+                const text = try snapshot.render(alloc, .text);
+                defer alloc.free(text);
+                try writeStdout(deps, text);
+            }
+            return if (snapshot.healthy()) .handled_success else .handled_failure;
+        }
+        const empty = output_contracts.McpDoctorSnapshot{
+            .servers = &.{},
+            .configuration_issues = &.{},
+            .overall = .ready,
+            .probe_timeout_ms = probe_timeout_ms,
+        };
+        if (format == .json) {
+            try writeMcpJsonOutput(alloc, deps, empty);
+        } else {
+            const text = try empty.render(alloc, .text);
+            defer alloc.free(text);
+            try writeStdout(deps, text);
+        }
+        return .handled_success;
+    }
     if (std.mem.eql(u8, operation, "login")) {
         if (argsContainJson(rest[1..])) {
             try writeTopLevelUsage(cfg.command_catalog, deps, .mcp);
@@ -2619,6 +2668,7 @@ fn mcpOutputKind(operation: []const u8) []const u8 {
     if (std.mem.eql(u8, operation, "path")) return output_contracts.Kind.mcp_path.jsonName();
     if (std.mem.eql(u8, operation, "logout")) return output_contracts.Kind.mcp_logout.jsonName();
     if (std.mem.eql(u8, operation, "trust")) return output_contracts.Kind.mcp_trust.jsonName();
+    if (std.mem.eql(u8, operation, "doctor")) return output_contracts.Kind.mcp_doctor.jsonName();
     return "mcp";
 }
 
@@ -4534,6 +4584,139 @@ test "top-level MCP list loads configuration without discovery and remove uses i
             capture.stdout.written(),
         );
         try std.testing.expectEqualStrings("", capture.stderr.written());
+    }
+}
+
+fn emptyMcpRuntimeForTest(
+    alloc: Allocator,
+    workspace_root: []const u8,
+    _: @import("../mcp/elicitation.zig").Capabilities,
+) !?*mcp_runtime.McpRuntime {
+    try std.testing.expectEqualStrings("/tmp/fiber", workspace_root);
+    const runtime = try alloc.create(mcp_runtime.McpRuntime);
+    errdefer alloc.destroy(runtime);
+    runtime.* = mcp_runtime.McpRuntime.init(alloc);
+    return runtime;
+}
+
+fn failingMcpRuntimeForTest(
+    alloc: Allocator,
+    workspace_root: []const u8,
+    _: @import("../mcp/elicitation.zig").Capabilities,
+) !?*mcp_runtime.McpRuntime {
+    try std.testing.expectEqualStrings("/tmp/fiber", workspace_root);
+    const runtime = try alloc.create(mcp_runtime.McpRuntime);
+    errdefer alloc.destroy(runtime);
+    runtime.* = mcp_runtime.McpRuntime.init(alloc);
+    errdefer runtime.deinit();
+    const name = try alloc.dupe(u8, "broken");
+    errdefer alloc.free(name);
+    const command = try alloc.dupe(u8, "sh");
+    errdefer alloc.free(command);
+    const args = try alloc.alloc([]const u8, 2);
+    errdefer alloc.free(args);
+    args[0] = try alloc.dupe(u8, "-c");
+    errdefer alloc.free(args[0]);
+    args[1] = try alloc.dupe(u8, "exit 1");
+    errdefer alloc.free(args[1]);
+    try runtime.addServer(.{
+        .name = name,
+        .command = command,
+        .args = args,
+    });
+    return runtime;
+}
+
+test "top-level MCP doctor reports empty configuration and failing servers" {
+    const alloc = std.testing.allocator;
+    {
+        var capture = CaptureOutput.init(alloc);
+        defer capture.deinit();
+        var cfg = testConfig();
+        cfg.load_mcp_runtime = emptyMcpRuntimeForTest;
+        var deps = capture.deps();
+        deps.load_startup_state_without_credentials = stubLoadStartupStateWithoutCredentials;
+
+        const result = try runIfRequestedWithDeps(
+            alloc,
+            &.{ @constCast("mcp"), @constCast("doctor") },
+            cfg,
+            deps,
+        );
+        try std.testing.expectEqual(RunResult.handled_success, result);
+        try std.testing.expectEqualStrings(
+            "No MCP servers configured.\n",
+            capture.stdout.written(),
+        );
+        try std.testing.expectEqualStrings("", capture.stderr.written());
+    }
+    {
+        var capture = CaptureOutput.init(alloc);
+        defer capture.deinit();
+        var cfg = testConfig();
+        cfg.load_mcp_runtime = emptyMcpRuntimeForTest;
+        var deps = capture.deps();
+        deps.load_startup_state_without_credentials = stubLoadStartupStateWithoutCredentials;
+
+        const result = try runIfRequestedWithDeps(
+            alloc,
+            &.{ @constCast("mcp"), @constCast("doctor"), @constCast("--json") },
+            cfg,
+            deps,
+        );
+        try std.testing.expectEqual(RunResult.handled_success, result);
+        try std.testing.expect(std.mem.find(
+            u8,
+            capture.stdout.written(),
+            "\"kind\":\"mcp.doctor\"",
+        ) != null);
+        try std.testing.expect(std.mem.find(
+            u8,
+            capture.stdout.written(),
+            "\"healthy\":true",
+        ) != null);
+    }
+    {
+        var capture = CaptureOutput.init(alloc);
+        defer capture.deinit();
+        var cfg = testConfig();
+        cfg.load_mcp_runtime = failingMcpRuntimeForTest;
+        var deps = capture.deps();
+        deps.load_startup_state_without_credentials = stubLoadStartupStateWithoutCredentials;
+
+        const result = try runIfRequestedWithDeps(
+            alloc,
+            &.{ @constCast("mcp"), @constCast("doctor") },
+            cfg,
+            deps,
+        );
+        try std.testing.expectEqual(RunResult.handled_failure, result);
+        try std.testing.expect(std.mem.find(
+            u8,
+            capture.stdout.written(),
+            "broken",
+        ) != null);
+        try std.testing.expect(std.mem.find(
+            u8,
+            capture.stdout.written(),
+            "state=failed",
+        ) != null);
+    }
+    {
+        var capture = CaptureOutput.init(alloc);
+        defer capture.deinit();
+        var cfg = testConfig();
+        cfg.load_mcp_runtime = emptyMcpRuntimeForTest;
+        var deps = capture.deps();
+        deps.load_startup_state_without_credentials = stubLoadStartupStateWithoutCredentials;
+
+        const result = try runIfRequestedWithDeps(
+            alloc,
+            &.{ @constCast("mcp"), @constCast("doctor"), @constCast("--bogus") },
+            cfg,
+            deps,
+        );
+        try std.testing.expectEqual(RunResult.handled_usage_error, result);
     }
 }
 
