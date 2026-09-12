@@ -70,6 +70,8 @@ cd your_project
 
 The current directory becomes the workspace. Type a prompt to begin.
 
+Ctrl+L clears the inline display while keeping the conversation available in Ctrl+O. It preserves your draft and conversation context; `/clear` starts a fresh conversation instead.
+
 For a single request without the interactive shell:
 
 ```bash

@@ -6994,6 +6994,40 @@ test "visual epoch reset reanchors at row one and preserves viewport reservation
     try expectGridNotContains(&h, "old visual epoch");
 }
 
+test "ctrl+l visual epoch keeps history available to the full transcript" {
+    const alloc = std.testing.allocator;
+    var h = try Harness.init(alloc, 80, 24, 4);
+    defer h.deinit();
+    var input = InputRuntime{};
+    defer input.deinit(alloc);
+    var approval = approval_prompt.ApprovalPrompt{};
+    defer approval.deinit(alloc);
+
+    try h.shell.initViewportWithReservedRows(&h.metrics, 6, 7);
+    try h.shell.writeTranscript(alloc, &h.metrics, "old visual epoch\n", true);
+    h.frame_redraw = true;
+    try renderTestFooter(&h, &input, &approval, &h.frame_redraw);
+    try h.flush();
+
+    try h.shell.resetVisualEpoch(alloc, "welcome after clear\n");
+    try h.shell.requestTerminalReset(&h.metrics);
+    h.frame_redraw = true;
+    try renderTestFooter(&h, &input, &approval, &h.frame_redraw);
+    try h.flush();
+
+    try expectGridContains(&h, "welcome after clear");
+    try expectGridNotContains(&h, "old visual epoch");
+    try std.testing.expectEqual(@as(usize, 2), h.shell.entries.items.len);
+
+    var compact = try h.shell.prepareTranscriptSource(alloc, null);
+    defer compact.deinit(alloc);
+    try std.testing.expect(std.mem.find(u8, compact.bytes, "old visual epoch") == null);
+
+    var full = try h.prepareFullTranscriptSource();
+    defer full.deinit(alloc);
+    try std.testing.expect(std.mem.find(u8, full.bytes, "old visual epoch") != null);
+}
+
 test "multi-row replaceable line clears every old visual row on replace" {
     const alloc = std.testing.allocator;
     var h = try Harness.init(alloc, 40, 12, 4);
