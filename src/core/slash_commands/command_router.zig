@@ -25,6 +25,7 @@ pub const ParsedCommand = union(enum) {
     compact,
     settings: []const u8,
     workspace: []const u8,
+    background: []const u8,
     unknown,
 };
 
@@ -50,6 +51,7 @@ pub const CommandHandlers = struct {
     handle_settings: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     rename_session: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     handle_workspace: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
+    handle_background: *const fn (ctx: *anyopaque, rest: []const u8) anyerror!void,
     unknown: *const fn (ctx: *anyopaque, cmd: []const u8) anyerror!void,
 };
 
@@ -79,6 +81,7 @@ fn parsedCommand(kind: SlashKind, payload: []const u8) ParsedCommand {
         .compact => .compact,
         .settings => .{ .settings = payload },
         .workspace => .{ .workspace = payload },
+        .background => .{ .background = payload },
     };
 }
 
@@ -117,6 +120,7 @@ pub fn route(registry: SlashRegistry, handlers: *const CommandHandlers, cmd: []c
         .compact => try handlers.compact_history(handlers.ctx),
         .settings => |rest| try handlers.handle_settings(handlers.ctx, rest),
         .workspace => |rest| try handlers.handle_workspace(handlers.ctx, rest),
+        .background => |rest| try handlers.handle_background(handlers.ctx, rest),
         .unknown => try handlers.unknown(handlers.ctx, cmd),
     }
 }
@@ -130,6 +134,17 @@ test "parse extracts model command payload" {
     const parsed = parse(testSlashRegistry(), "/model claude-opus");
     switch (parsed) {
         .model => |query| try std.testing.expectEqualStrings("claude-opus", query),
+        else => return error.TestExpectedEqual,
+    }
+}
+
+test "parse routes background list and stop payloads" {
+    switch (parse(testSlashRegistry(), "/background")) {
+        .background => |rest| try std.testing.expectEqualStrings("", rest),
+        else => return error.TestExpectedEqual,
+    }
+    switch (parse(testSlashRegistry(), "/background stop shell-1")) {
+        .background => |rest| try std.testing.expectEqualStrings("stop shell-1", rest),
         else => return error.TestExpectedEqual,
     }
 }
@@ -180,7 +195,6 @@ test "parse rejects removed slash commands" {
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/review"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/history"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/rules"));
-    try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/background"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/reset"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/stats"));
     try std.testing.expectEqual(ParsedCommand.unknown, parse(testSlashRegistry(), "/alias build zig build"));
@@ -394,6 +408,7 @@ fn testHandlers(ctx: *TestContext) CommandHandlers {
         .handle_settings = unexpectedPayload,
         .rename_session = unexpectedPayload,
         .handle_workspace = unexpectedPayload,
+        .handle_background = unexpectedPayload,
         .unknown = unexpectedPayload,
     };
 }

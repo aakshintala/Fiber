@@ -32,6 +32,7 @@ pub const Action = enum {
     run,
     interact,
     stop,
+    list,
 };
 
 const ShellKind = enum { executable };
@@ -83,6 +84,10 @@ pub fn actionFieldContract(action: Action) ActionFieldContract {
         .stop => .{
             .allowed = &.{ "action", "session_id", "force" },
             .required = &.{ "action", "session_id" },
+        },
+        .list => .{
+            .allowed = &.{"action"},
+            .required = &.{"action"},
         },
     };
 }
@@ -156,6 +161,7 @@ fn defaultYieldTime(action: Action) u32 {
         .run => managed_contract.default_yield_time_ms,
         .interact => managed_contract.default_wait_ceiling_ms,
         .stop => 0,
+        .list => 0,
     };
 }
 
@@ -279,6 +285,7 @@ pub fn validate(
         .run => validateRun(ctx, arena, input),
         .interact => validateInteract(ctx, input),
         .stop => null,
+        .list => null,
     };
 }
 
@@ -347,7 +354,55 @@ pub fn call(
         .run => callRun(ctx, input),
         .interact => callInteract(ctx, input),
         .stop => callStop(ctx, input),
+        .list => callList(ctx),
     };
+}
+
+/// Human entry point for `/background stop`. Reuses the exact agent stop
+/// path, including TTY signal and close handling, but mints the claim for
+/// the given actor so the terminal layer can scope controls truthfully.
+pub fn stopSession(
+    ctx: tool_dispatch.DispatchContext,
+    session_id: []const u8,
+    force: bool,
+    actor: terminal_contracts.ActorRole,
+) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
+    return callStopAs(ctx, .{ .action = .stop, .session_id = session_id, .force = force }, actor);
+}
+
+fn callList(
+    ctx: tool_dispatch.DispatchContext,
+) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
+    const runtime = ctx.managed_executions orelse return unavailable(ctx);
+    const items = runtime.list(ctx.allocator) catch |err|
+        return runtimeFailure(ctx, err);
+    defer {
+        for (items) |*item| item.deinit(ctx.allocator);
+        ctx.allocator.free(items);
+    }
+    const body = formatListJson(ctx.allocator, items) catch |err|
+        return runtimeFailure(ctx, err);
+    return .{ .success = body };
+}
+
+fn formatListJson(alloc: Allocator, items: []managed_execution.ListItem) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    errdefer out.deinit();
+    try out.writer.writeAll("{\"sessions\":[");
+    for (items, 0..) |item, index| {
+        if (index > 0) try out.writer.writeByte(',');
+        try out.writer.writeAll("{\"session_id\":");
+        try std.json.Stringify.value(item.execution_id, .{}, &out.writer);
+        try out.writer.writeAll(",\"command\":");
+        try std.json.Stringify.value(item.command, .{}, &out.writer);
+        try out.writer.writeAll(",\"state\":");
+        try std.json.Stringify.value(snapshotStateName(item.state), .{}, &out.writer);
+        try out.writer.writeAll(",\"backend\":");
+        try std.json.Stringify.value(@tagName(item.backend), .{}, &out.writer);
+        try out.writer.writeByte('}');
+    }
+    try out.writer.writeAll("]}");
+    return try out.toOwnedSlice();
 }
 
 fn callRun(
@@ -456,6 +511,14 @@ fn callStop(
     ctx: tool_dispatch.DispatchContext,
     input: Input,
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
+    return callStopAs(ctx, input, .agent);
+}
+
+fn callStopAs(
+    ctx: tool_dispatch.DispatchContext,
+    input: Input,
+    actor: terminal_contracts.ActorRole,
+) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const runtime = ctx.managed_executions orelse return unavailable(ctx);
     const session_id = input.session_id orelse return unavailable(ctx);
     ensureOwnedTtyIndexed(ctx, runtime, session_id) catch |err|
@@ -472,17 +535,17 @@ fn callStop(
     if (runtime.backendFor(session_id) == .tty) {
         if (runtime.stateFor(session_id)) |state| {
             if (state != .running) {
-                return finishTerminalTtyStop(ctx, runtime, session_id, state);
+                return finishTerminalTtyStop(ctx, runtime, session_id, state, actor);
             }
         }
         refreshTtyExecution(ctx, runtime, session_id, "") catch |err|
             return runtimeFailure(ctx, err);
         if (runtime.stateFor(session_id)) |state| {
             if (state != .running) {
-                return finishTerminalTtyStop(ctx, runtime, session_id, state);
+                return finishTerminalTtyStop(ctx, runtime, session_id, state, actor);
             }
         }
-        return callTtyStop(ctx, input);
+        return callTtyStop(ctx, input, actor);
     }
     var prepared = runtime.stop(
         ctx.allocator,
@@ -745,15 +808,16 @@ fn callTtyInteract(
 fn callTtyStop(
     ctx: tool_dispatch.DispatchContext,
     input: Input,
+    actor: terminal_contracts.ActorRole,
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const runtime = ctx.managed_executions orelse return unavailable(ctx);
     const session_id = input.session_id orelse return unavailable(ctx);
     runtime.preemptWait(session_id);
-    var signaled = executeAuthorizedTerminal(ctx, session_id, .{ .signal = .{
+    var signaled = executeAuthorizedTerminalAs(ctx, session_id, .{ .signal = .{
         .session_id = session_id,
         .signal = if (input.force) .kill else .terminate,
         .authority = null,
-    } }) catch |err| return runtimeFailure(ctx, err);
+    } }, actor) catch |err| return runtimeFailure(ctx, err);
     defer signaled.deinit(ctx.allocator);
     switch (signaled.result.view()) {
         .failure => return cloneTerminalFailure(ctx, signaled.result.view()),
@@ -764,12 +828,12 @@ fn callTtyStop(
     }
 
     var stopped_status: ?command_contract.CommandStatus = null;
-    var waited = executeAuthorizedTerminal(ctx, session_id, .{ .wait = .{
+    var waited = executeAuthorizedTerminalAs(ctx, session_id, .{ .wait = .{
         .session_id = session_id,
         .return_when = .exit,
         .safety_ceiling_ms = 2_000,
         .authority = null,
-    } }) catch |err| return runtimeFailure(ctx, err);
+    } }, actor) catch |err| return runtimeFailure(ctx, err);
     defer waited.deinit(ctx.allocator);
     const wait_result = switch (waited.result.view()) {
         .failure => return cloneTerminalFailure(ctx, waited.result.view()),
@@ -787,11 +851,11 @@ fn callTtyStop(
     ) catch |err| return runtimeFailure(ctx, err);
     defer observed.deinit(ctx.allocator);
 
-    var closed = executeAuthorizedTerminal(ctx, session_id, .{ .close = .{
+    var closed = executeAuthorizedTerminalAs(ctx, session_id, .{ .close = .{
         .session_id = session_id,
         .policy = if (input.force) .force else .graceful,
         .authority = null,
-    } }) catch |err| return runtimeFailure(ctx, err);
+    } }, actor) catch |err| return runtimeFailure(ctx, err);
     defer closed.deinit(ctx.allocator);
     switch (closed.result.view()) {
         .failure => return cloneTerminalFailure(ctx, closed.result.view()),
@@ -868,7 +932,16 @@ fn executeAuthorizedTerminal(
     session_id: []const u8,
     request: terminal_contracts.ActionRequest,
 ) !ParsedTerminalExecution {
-    var authority = try reloadTerminalAuthority(ctx, session_id);
+    return executeAuthorizedTerminalAs(ctx, session_id, request, .agent);
+}
+
+fn executeAuthorizedTerminalAs(
+    ctx: tool_dispatch.DispatchContext,
+    session_id: []const u8,
+    request: terminal_contracts.ActionRequest,
+    actor: terminal_contracts.ActorRole,
+) !ParsedTerminalExecution {
+    var authority = try reloadTerminalAuthorityAs(ctx, session_id, actor);
     defer authority.deinit();
     const authorized: terminal_contracts.ActionRequest = switch (request) {
         .read => |value| .{ .read = blk: {
@@ -910,6 +983,14 @@ fn reloadTerminalAuthority(
     ctx: tool_dispatch.DispatchContext,
     session_id: []const u8,
 ) !terminal_operation.OwnedAuthorityClaim {
+    return reloadTerminalAuthorityAs(ctx, session_id, .agent);
+}
+
+fn reloadTerminalAuthorityAs(
+    ctx: tool_dispatch.DispatchContext,
+    session_id: []const u8,
+    actor: terminal_contracts.ActorRole,
+) !terminal_operation.OwnedAuthorityClaim {
     const owner = ctx.session_child_capability orelse return error.TerminalAuthorityUnavailable;
     const durable_session_id = ctx.terminal_owner_session_id orelse
         return error.TerminalAuthorityUnavailable;
@@ -922,7 +1003,7 @@ fn reloadTerminalAuthority(
         .durable_session_id = durable_session_id,
         .workspace_root = ctx.workspace_root,
         .transport_role = ctx.terminal_transport_role,
-        .actor = .agent,
+        .actor = actor,
     });
 }
 
@@ -994,15 +1075,24 @@ fn finalizeCompletedTty(
     session_id: []const u8,
     state: managed_execution.SnapshotState,
 ) !void {
+    return finalizeCompletedTtyAs(ctx, session_id, state, .agent);
+}
+
+fn finalizeCompletedTtyAs(
+    ctx: tool_dispatch.DispatchContext,
+    session_id: []const u8,
+    state: managed_execution.SnapshotState,
+    actor: terminal_contracts.ActorRole,
+) !void {
     switch (state) {
         .completed => {},
         .running, .stopped, .lost => return,
     }
-    var closed = try executeAuthorizedTerminal(ctx, session_id, .{ .close = .{
+    var closed = try executeAuthorizedTerminalAs(ctx, session_id, .{ .close = .{
         .session_id = session_id,
         .policy = .graceful,
         .authority = null,
-    } });
+    } }, actor);
     defer closed.deinit(ctx.allocator);
     switch (closed.result.view()) {
         .failure => return error.TerminalCloseFailed,
@@ -1112,8 +1202,9 @@ fn finishTerminalTtyStop(
     runtime: *managed_execution.Runtime,
     session_id: []const u8,
     state: managed_execution.SnapshotState,
+    actor: terminal_contracts.ActorRole,
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
-    finalizeCompletedTty(ctx, session_id, state) catch |err|
+    finalizeCompletedTtyAs(ctx, session_id, state, actor) catch |err|
         return runtimeFailure(ctx, err);
     var prepared = runtime.updateTty(ctx.allocator, .{
         .execution_id = session_id,
@@ -1437,7 +1528,7 @@ fn formatSnapshotRaw(
     return try out.toOwnedSlice();
 }
 
-fn snapshotStateName(state: managed_execution.SnapshotState) []const u8 {
+pub fn snapshotStateName(state: managed_execution.SnapshotState) []const u8 {
     return switch (state) {
         .running => "running",
         .completed => "completed",
@@ -1517,6 +1608,7 @@ pub fn isProcessLocal(erased: tool_dispatch.ToolInput) bool {
         .run => !input.tty,
         .interact => input.chars == null or input.chars.?.len == 0,
         .stop => true,
+        .list => true,
     };
 }
 
@@ -1524,6 +1616,7 @@ pub fn readsOnly(erased: tool_dispatch.ToolInput) bool {
     const input = erased.as(OwnedInput).value;
     return switch (input.action) {
         .interact => input.chars == null or input.chars.?.len == 0,
+        .list => true,
         .run, .stop => false,
     };
 }
@@ -1549,6 +1642,13 @@ pub fn presentation(args: std.json.ObjectMap) ?tool_dispatch.CallPresentation {
         else
             sessionPresentation("Waiting for", "Observed"),
         .stop => sessionPresentation("Stopping", "Stopped"),
+        .list => .{
+            .activity_kind = .list,
+            .action_label = "Listing",
+            .completed_action_label = "Listed",
+            .label_arg_kind = .action,
+            .label_arg_default = "shell sessions",
+        },
     };
 }
 
@@ -1580,6 +1680,96 @@ test "shell action fields are closed and command authority covers every run" {
         &.{ "action", "session_id", "chars", "yield_time_ms" },
         actionFieldContract(.interact).allowed,
     );
+    try std.testing.expectEqualSlices(
+        []const u8,
+        &.{ "action", "session_id", "force" },
+        actionFieldContract(.stop).allowed,
+    );
+    try std.testing.expectEqualSlices(
+        []const u8,
+        &.{"action"},
+        actionFieldContract(.list).allowed,
+    );
+}
+
+test "shell list is read-only and process-local" {
+    const alloc = std.testing.allocator;
+    const ctx = tool_dispatch.DispatchContext{ .allocator = alloc };
+    const decoded = try decode(ctx, "{\"action\":\"list\"}");
+    switch (decoded) {
+        .failure => |failure| {
+            defer alloc.free(failure);
+            return error.TestUnexpectedResult;
+        },
+        .input => |input| {
+            defer input.deinit(alloc);
+            try std.testing.expect(readsOnly(input));
+            try std.testing.expect(isProcessLocal(input));
+            const validation = try validate(ctx, input);
+            try std.testing.expect(validation == null);
+        },
+    }
+    const rejected = try decode(ctx, "{\"action\":\"list\",\"session_id\":\"shell-1\"}");
+    switch (rejected) {
+        .failure => |failure| {
+            defer alloc.free(failure);
+        },
+        .input => |input| {
+            defer input.deinit(alloc);
+            return error.TestUnexpectedResult;
+        },
+    }
+}
+
+test "shell list enumerates live executions and stopSession needs a runtime" {
+    const alloc = std.testing.allocator;
+    var runtime = managed_execution.Runtime.init(alloc);
+    defer runtime.deinit();
+    const command_ctx = command_admission.CommandContext{
+        .command = "sleep 30",
+        .resolved_cwd = "/tmp",
+        .target_os = @import("builtin").os.tag,
+        .environment = .legacy,
+    };
+    var prepared = try runtime.startCaptured(alloc, .{
+        .execution_id = "background-list-1",
+        .command = command_ctx.command,
+        .cwd = command_ctx.resolved_cwd,
+        .environment = command_ctx.environment,
+        .authority = .{ .shell_allowed = .{
+            .fingerprint = .init(command_ctx),
+            .source = .yolo,
+        } },
+        .max_output_bytes = 4096,
+        .timeout_ms = 30_000,
+        .command_artifact_dir = null,
+        .yield_time_ms = 0,
+    });
+    defer prepared.deinit(alloc);
+    try runtime.commitDelivery(prepared.snapshot.execution_id, prepared.reservation_id);
+    var listed = try callList(.{ .allocator = alloc, .managed_executions = &runtime });
+    defer listed.deinit(alloc);
+    try std.testing.expect(listed == .success);
+    try std.testing.expect(std.mem.find(u8, listed.success, "background-list-1") != null);
+    try std.testing.expect(std.mem.find(u8, listed.success, "\"state\":\"running\"") != null);
+
+    var stopped = try stopSession(
+        .{ .allocator = alloc, .managed_executions = &runtime },
+        "background-list-1",
+        false,
+        .agent,
+    );
+    defer stopped.deinit(alloc);
+    try std.testing.expect(stopped == .success);
+
+    var relisted = try callList(.{ .allocator = alloc, .managed_executions = &runtime });
+    defer relisted.deinit(alloc);
+    try std.testing.expect(relisted == .success);
+    try std.testing.expect(std.mem.find(u8, relisted.success, "background-list-1") == null);
+
+    var missing = try callList(.{ .allocator = alloc });
+    defer missing.deinit(alloc);
+    try std.testing.expect(missing == .failure);
 }
 
 test "shell interact classification follows optional input" {
