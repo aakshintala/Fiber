@@ -1415,226 +1415,6 @@ pub const McpTrustSnapshot = struct {
     }
 };
 
-const doctor_redacted_marker = "[redacted]";
-
-const doctor_secret_key_fragments = [_][]const u8{
-    "token",
-    "bearer",
-    "secret",
-    "passwd",
-    "password",
-    "apikey",
-    "api_key",
-    "authorization",
-    "cookie",
-    "credential",
-};
-
-fn doctorNameLooksSecret(name: []const u8) bool {
-    for (doctor_secret_key_fragments) |fragment| {
-        if (name.len < fragment.len) continue;
-        var i: usize = 0;
-        while (i + fragment.len <= name.len) : (i += 1) {
-            var match = true;
-            for (fragment, 0..) |c, j| {
-                if (std.ascii.toLower(name[i + j]) != c) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) return true;
-        }
-    }
-    return false;
-}
-
-fn doctorIsKeyChar(c: u8) bool {
-    return std.ascii.isAlphanumeric(c) or c == '_' or c == '.' or c == '-';
-}
-
-fn doctorIsValueTerminator(c: u8) bool {
-    return c <= ' ' or c == ',' or c == ';' or c == '}' or c == ']' or c == '&';
-}
-
-fn doctorSchemeIsAuth(scheme: []const u8) bool {
-    if (scheme.len != 6 and scheme.len != 5) return false;
-    var lower: [6]u8 = undefined;
-    for (scheme, 0..) |c, i| lower[i] = std.ascii.toLower(c);
-    return std.mem.eql(u8, lower[0..scheme.len], "bearer") or
-        std.mem.eql(u8, lower[0..scheme.len], "basic");
-}
-
-/// Redacts credential-looking material from doctor detail strings. Failure
-/// text is static today, but this keeps a future secret-bearing message
-/// (tokens, headers, URLs with credentials) from reaching terminal or JSON
-/// output. The caller owns the returned slice.
-pub fn redactSecretText(alloc: Allocator, input: []const u8) ![]u8 {
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    errdefer out.deinit();
-    var i: usize = 0;
-    while (i < input.len) {
-        if (input[i] == '"' or input[i] == '\'') {
-            const quote = input[i];
-            var j = i + 1;
-            while (j < input.len and input[j] != quote) : (j += 1) {}
-            if (j < input.len) {
-                const name = input[i + 1 .. j];
-                var k = j + 1;
-                while (k < input.len and input[k] == ' ') : (k += 1) {}
-                if (k < input.len and (input[k] == ':' or input[k] == '=')) {
-                    k += 1;
-                    while (k < input.len and input[k] == ' ') : (k += 1) {}
-                    if (doctorNameLooksSecret(name)) {
-                        try out.writer.writeAll(input[i..k]);
-                        try out.writer.writeAll(doctor_redacted_marker);
-                        i = doctorSkipSchemeValue(input, k);
-                        continue;
-                    }
-                }
-            }
-            try out.writer.writeByte(input[i]);
-            i += 1;
-            continue;
-        }
-        if (doctorIsKeyChar(input[i]) and (i == 0 or !doctorIsKeyChar(input[i - 1]))) {
-            var j = i;
-            while (j < input.len and doctorIsKeyChar(input[j])) : (j += 1) {}
-            const name = input[i..j];
-            var k = j;
-            while (k < input.len and input[k] == ' ') : (k += 1) {}
-            if (k < input.len and (input[k] == ':' or input[k] == '=')) {
-                const sep = k;
-                k += 1;
-                while (k < input.len and input[k] == ' ') : (k += 1) {}
-                if (doctorNameLooksSecret(name)) {
-                    try out.writer.writeAll(input[i..sep]);
-                    try out.writer.writeByte(input[sep]);
-                    if (input[sep] == ':' and k < input.len and input[k] != ' ') {
-                        // Keep `key:value` compact without inventing spacing.
-                    } else if (k > sep + 1) {
-                        try out.writer.writeByte(' ');
-                    }
-                    try out.writer.writeAll(doctor_redacted_marker);
-                    i = doctorSkipSchemeValue(input, k);
-                    continue;
-                }
-                if (doctorSchemeIsAuth(name) and input[sep] != '=') {
-                    try out.writer.writeAll(input[i..k]);
-                    try out.writer.writeAll(doctor_redacted_marker);
-                    i = doctorSkipValue(input, k);
-                    continue;
-                }
-            } else if (k < input.len and input[k] == ' ' and doctorSchemeIsAuth(name)) {
-                var m = k + 1;
-                while (m < input.len and input[m] == ' ') : (m += 1) {}
-                try out.writer.writeAll(input[i..m]);
-                try out.writer.writeAll(doctor_redacted_marker);
-                i = doctorSkipValue(input, m);
-                continue;
-            }
-            try out.writer.writeAll(name);
-            i = j;
-            continue;
-        }
-        if (i + 3 < input.len and input[i] == ':' and input[i + 1] == '/' and input[i + 2] == '/') {
-            var j = i + 3;
-            while (j < input.len and
-                input[j] != '@' and
-                input[j] != '/' and
-                input[j] > ' ') : (j += 1)
-            {}
-            if (j < input.len and input[j] == '@') {
-                try out.writer.writeAll(input[i .. i + 3]);
-                try out.writer.writeAll(doctor_redacted_marker);
-                try out.writer.writeByte('@');
-                i = j + 1;
-                continue;
-            }
-            try out.writer.writeAll(input[i .. i + 3]);
-            i += 3;
-            continue;
-        }
-        try out.writer.writeByte(input[i]);
-        i += 1;
-    }
-    return try out.toOwnedSlice();
-}
-
-fn doctorSkipSchemeValue(input: []const u8, start: usize) usize {
-    // A secret value may carry its own scheme (`authorization: Bearer abc`);
-    // redact the scheme and the credential together.
-    for ([_][]const u8{ "bearer", "basic" }) |scheme| {
-        if (start + scheme.len < input.len and input[start + scheme.len] == ' ') {
-            var match = true;
-            for (scheme, 0..) |c, j| {
-                if (std.ascii.toLower(input[start + j]) != c) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) {
-                var k = start + scheme.len + 1;
-                while (k < input.len and input[k] == ' ') : (k += 1) {}
-                return doctorSkipValue(input, k);
-            }
-        }
-    }
-    return doctorSkipValue(input, start);
-}
-
-fn doctorSkipValue(input: []const u8, start: usize) usize {
-    if (start < input.len and (input[start] == '"' or input[start] == '\'')) {
-        const quote = input[start];
-        var j = start + 1;
-        while (j < input.len) {
-            if (input[j] == '\\' and j + 1 < input.len) {
-                j += 2;
-                continue;
-            }
-            if (input[j] == quote) return j + 1;
-            j += 1;
-        }
-        return j;
-    }
-    var j = start;
-    while (j < input.len and !doctorIsValueTerminator(input[j])) : (j += 1) {}
-    return j;
-}
-
-test "doctor redaction masks tokens headers and urls with secrets" {
-    const alloc = std.testing.allocator;
-    const redacted = try redactSecretText(
-        alloc,
-        "auth failed: {\"access_token\": \"hunter2\", \"user\": \"ada\"}",
-    );
-    defer alloc.free(redacted);
-    try std.testing.expect(std.mem.find(u8, redacted, "hunter2") == null);
-    try std.testing.expect(std.mem.find(u8, redacted, "[redacted]") != null);
-    try std.testing.expect(std.mem.find(u8, redacted, "ada") != null);
-}
-
-test "doctor redaction masks bearer schemes and url userinfo" {
-    const alloc = std.testing.allocator;
-    const bearer = try redactSecretText(alloc, "authorization: Bearer abc123, next");
-    defer alloc.free(bearer);
-    try std.testing.expect(std.mem.find(u8, bearer, "abc123") == null);
-    try std.testing.expect(std.mem.find(u8, bearer, "[redacted]") != null);
-
-    const url = try redactSecretText(alloc, "dial https://user:s3cr3t@example.test/mcp failed");
-    defer alloc.free(url);
-    try std.testing.expect(std.mem.find(u8, url, "s3cr3t") == null);
-    try std.testing.expect(std.mem.find(u8, url, "user") == null);
-    try std.testing.expect(std.mem.find(u8, url, "https://[redacted]@example.test/mcp") != null);
-}
-
-test "doctor redaction leaves ordinary failure text untouched" {
-    const alloc = std.testing.allocator;
-    const plain = "Connection or discovery failed; check the trusted profile configuration and trace logs.";
-    const redacted = try redactSecretText(alloc, plain);
-    defer alloc.free(redacted);
-    try std.testing.expectEqualStrings(plain, redacted);
-}
-
 pub const McpDoctorServer = struct {
     name: []const u8,
     source: mcp_contract.ConfigSource,
@@ -1644,15 +1424,30 @@ pub const McpDoctorServer = struct {
     connection: mcp_health.ConnectionState,
     authentication: mcp_health.AuthenticationState,
     admission: ?mcp_contract.WorkspaceAdmission,
-    tools: ?usize,
+    failure_kind: mcp_health.DoctorFailure,
+    /// Fixed message for failure_kind; a non-owned literal, null when healthy.
     failure: ?[]const u8,
 };
+
+/// Fixed failure message per doctor failure kind. Only these strings ever
+/// reach doctor output, so no probe detail can leak secrets. Server name
+/// and probe bound travel in the surrounding snapshot fields.
+pub fn doctorFailureMessage(kind: mcp_health.DoctorFailure) ?[]const u8 {
+    return switch (kind) {
+        .none => null,
+        .@"unreachable" => "Server is unreachable; check the server command, URL, and trace logs.",
+        .timed_out => "Probe timed out; the server did not answer within the probe bound.",
+        .auth_required => "Authentication is required; run fiber mcp login <name> and check server permissions.",
+        .not_admitted => "Required server is disabled or not admitted; enable it or approve it for this workspace.",
+        .unsupported_protocol => "Server does not speak a supported MCP protocol version.",
+    };
+}
 
 /// One snapshot for `fiber mcp doctor`: every configured server transport is
 /// opened before this is built, so `connection` and `authentication` are
 /// observed values rather than configuration echoes. Server commands,
-/// arguments, environment, URLs, and headers never enter the snapshot; the
-/// only free text is the secret-redacted failure detail.
+/// arguments, environment, URLs, headers, and tool counts never enter the
+/// snapshot; failures render as fixed messages per failure kind.
 pub const McpDoctorSnapshot = struct {
     servers: []McpDoctorServer,
     configuration_issues: [][]u8,
@@ -1668,10 +1463,7 @@ pub const McpDoctorSnapshot = struct {
         errdefer alloc.free(servers);
         var initialized: usize = 0;
         errdefer {
-            for (servers[0..initialized]) |*server| {
-                alloc.free(server.name);
-                if (server.failure) |failure| alloc.free(failure);
-            }
+            for (servers[0..initialized]) |*server| alloc.free(server.name);
         }
         for (snapshot.servers, 0..) |*server, index| {
             servers[index] = .{
@@ -1683,11 +1475,8 @@ pub const McpDoctorSnapshot = struct {
                 .connection = server.connection,
                 .authentication = server.authentication,
                 .admission = server.workspace_admission,
-                .tools = server.counts.tools,
-                .failure = if (server.failure) |failure|
-                    try redactSecretText(alloc, failure)
-                else
-                    null,
+                .failure_kind = server.doctor_failure,
+                .failure = doctorFailureMessage(server.doctor_failure),
             };
             initialized += 1;
         }
@@ -1698,7 +1487,7 @@ pub const McpDoctorSnapshot = struct {
             for (issues[0..issues_initialized]) |issue| alloc.free(issue);
         }
         for (snapshot.configuration_issues, 0..) |*issue, index| {
-            issues[index] = try redactSecretText(alloc, issue.message);
+            issues[index] = try alloc.dupe(u8, issue.message);
             issues_initialized += 1;
         }
         return .{
@@ -1710,10 +1499,7 @@ pub const McpDoctorSnapshot = struct {
     }
 
     pub fn deinit(self: *McpDoctorSnapshot, alloc: Allocator) void {
-        for (self.servers) |*server| {
-            alloc.free(server.name);
-            if (server.failure) |failure| alloc.free(failure);
-        }
+        for (self.servers) |*server| alloc.free(server.name);
         alloc.free(self.servers);
         for (self.configuration_issues) |issue| alloc.free(issue);
         alloc.free(self.configuration_issues);
@@ -1758,12 +1544,14 @@ pub const McpDoctorSnapshot = struct {
                     @tagName(server.authentication),
                 },
             );
-            if (server.tools) |tools| try out.writer.print(" tools={d}", .{tools});
             if (server.admission) |admission|
                 try out.writer.print(" admission={s}", .{@tagName(admission)});
             try out.writer.writeByte('\n');
-            if (server.failure) |failure|
-                try out.writer.print("    failure={s}\n", .{failure});
+            if (server.failure_kind != .none)
+                try out.writer.print("    failure={s}: {s}\n", .{
+                    @tagName(server.failure_kind),
+                    server.failure.?,
+                });
         }
         for (self.configuration_issues) |issue| {
             try out.writer.print("  configuration issue: {s}\n", .{issue});
@@ -1803,8 +1591,8 @@ pub const McpDoctorSnapshot = struct {
                 try std.json.Stringify.value(@tagName(admission), .{}, &out.writer)
             else
                 try out.writer.writeAll("null");
-            try out.writer.writeAll(",\"tools\":");
-            try std.json.Stringify.value(server.tools, .{}, &out.writer);
+            try out.writer.writeAll(",\"failure_kind\":");
+            try std.json.Stringify.value(@tagName(server.failure_kind), .{}, &out.writer);
             try out.writer.writeAll(",\"failure\":");
             if (server.failure) |failure|
                 try std.json.Stringify.value(failure, .{}, &out.writer)
@@ -1822,44 +1610,51 @@ pub const McpDoctorSnapshot = struct {
     }
 };
 
-test "doctor snapshot classifies overall health and redacts failures" {
-    const alloc = std.testing.allocator;
-    const names = [_][]const u8{ "ready-server", "broken-server" };
-    var servers: [2]mcp_health.ServerSnapshot = undefined;
-    servers[0] = .{
-        .configured_name = try alloc.dupe(u8, names[0]),
+test "doctor failure messages are exact fixed strings" {
+    try std.testing.expectEqual(@as(?[]const u8, null), doctorFailureMessage(.none));
+    try std.testing.expectEqualStrings(
+        "Server is unreachable; check the server command, URL, and trace logs.",
+        doctorFailureMessage(.@"unreachable").?,
+    );
+    try std.testing.expectEqualStrings(
+        "Probe timed out; the server did not answer within the probe bound.",
+        doctorFailureMessage(.timed_out).?,
+    );
+    try std.testing.expectEqualStrings(
+        "Authentication is required; run fiber mcp login <name> and check server permissions.",
+        doctorFailureMessage(.auth_required).?,
+    );
+    try std.testing.expectEqualStrings(
+        "Required server is disabled or not admitted; enable it or approve it for this workspace.",
+        doctorFailureMessage(.not_admitted).?,
+    );
+    try std.testing.expectEqualStrings(
+        "Server does not speak a supported MCP protocol version.",
+        doctorFailureMessage(.unsupported_protocol).?,
+    );
+}
+
+fn makeDoctorTestServer(
+    alloc: Allocator,
+    name: []const u8,
+    connection: mcp_health.ConnectionState,
+    authentication: mcp_health.AuthenticationState,
+    required: bool,
+    failure_kind: mcp_health.DoctorFailure,
+    failure_text: ?[]const u8,
+) !mcp_health.ServerSnapshot {
+    return .{
+        .configured_name = try alloc.dupe(u8, name),
         .negotiated_name = null,
         .negotiated_version = null,
         .source = .profile,
         .scope = .profile,
         .workspace_admission = null,
-        .required = false,
+        .required = required,
         .transport = .stdio,
         .protocol_version = null,
-        .connection = .ready,
-        .authentication = .none,
-        .counts = .{ .tools = 1 },
-        .cache_freshness = .unavailable,
-        .subscription = .unavailable,
-        .runtime_generation = 1,
-        .catalog_generation = 1,
-        .retry_attempt = 0,
-        .retry_in_ms = null,
-        .last_successful_discovery_ms = 1,
-        .failure = null,
-    };
-    servers[1] = .{
-        .configured_name = try alloc.dupe(u8, names[1]),
-        .negotiated_name = null,
-        .negotiated_version = null,
-        .source = .profile,
-        .scope = .profile,
-        .workspace_admission = null,
-        .required = false,
-        .transport = .stdio,
-        .protocol_version = null,
-        .connection = .failed,
-        .authentication = .required,
+        .connection = connection,
+        .authentication = authentication,
         .counts = .{},
         .cache_freshness = .unavailable,
         .subscription = .unavailable,
@@ -1868,11 +1663,28 @@ test "doctor snapshot classifies overall health and redacts failures" {
         .retry_attempt = 0,
         .retry_in_ms = null,
         .last_successful_discovery_ms = null,
-        .failure = try alloc.dupe(u8, "credential refresh failed (token=abc123)"),
+        .failure = if (failure_text) |text| try alloc.dupe(u8, text) else null,
+        .doctor_failure = failure_kind,
+    };
+}
+
+test "doctor snapshot reports failure kinds and drops probe free text" {
+    const alloc = std.testing.allocator;
+    var servers = [_]mcp_health.ServerSnapshot{
+        try makeDoctorTestServer(alloc, "ready-server", .ready, .none, false, .none, null),
+        try makeDoctorTestServer(
+            alloc,
+            "broken-server",
+            .failed,
+            .none,
+            false,
+            .timed_out,
+            "dial https://user:s3cr3t@example.test/mcp token=abc123",
+        ),
+        try makeDoctorTestServer(alloc, "gated-server", .disabled, .none, true, .not_admitted, null),
     };
     defer {
-        servers[0].deinit(alloc);
-        servers[1].deinit(alloc);
+        for (&servers) |*server| server.deinit(alloc);
     }
     var health_snapshot = mcp_health.Snapshot{
         .captured_at_ms = 1,
@@ -1882,16 +1694,83 @@ test "doctor snapshot classifies overall health and redacts failures" {
     var snapshot = try McpDoctorSnapshot.fromHealthSnapshot(alloc, &health_snapshot, 10_000);
     defer snapshot.deinit(alloc);
     try std.testing.expect(!snapshot.healthy());
-    try std.testing.expectEqual(mcp_health.StartupDecision.degraded, snapshot.overall);
+    try std.testing.expectEqual(mcp_health.StartupDecision.blocked, snapshot.overall);
+    try std.testing.expectEqual(mcp_health.DoctorFailure.timed_out, snapshot.servers[1].failure_kind);
+    try std.testing.expectEqualStrings(
+        "Probe timed out; the server did not answer within the probe bound.",
+        snapshot.servers[1].failure.?,
+    );
     const text = try snapshot.render(alloc, .text);
     defer alloc.free(text);
-    try std.testing.expect(std.mem.find(u8, text, "MCP doctor (2 servers, probe_timeout_ms=10000): degraded") != null);
-    try std.testing.expect(std.mem.find(u8, text, "state=failed auth=required") != null);
+    try std.testing.expect(std.mem.find(u8, text, "s3cr3t") == null);
     try std.testing.expect(std.mem.find(u8, text, "abc123") == null);
+    try std.testing.expect(std.mem.find(
+        u8,
+        text,
+        "failure=timed_out: Probe timed out; the server did not answer within the probe bound.",
+    ) != null);
+    try std.testing.expect(std.mem.find(
+        u8,
+        text,
+        "failure=not_admitted: Required server is disabled or not admitted;",
+    ) != null);
+    try std.testing.expect(std.mem.find(u8, text, "tools=") == null);
+    const json = try snapshot.render(alloc, .json);
+    defer alloc.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"failure_kind\":\"timed_out\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"tools\"") == null);
+    try std.testing.expect(std.mem.find(u8, json, "s3cr3t") == null);
+}
+
+test "doctor text rendering pins the healthy server line" {
+    const alloc = std.testing.allocator;
+    var servers = [_]mcp_health.ServerSnapshot{
+        try makeDoctorTestServer(alloc, "ready-server", .ready, .none, false, .none, null),
+    };
+    defer {
+        for (&servers) |*server| server.deinit(alloc);
+    }
+    var health_snapshot = mcp_health.Snapshot{
+        .captured_at_ms = 1,
+        .servers = &servers,
+        .configuration_issues = &.{},
+    };
+    var snapshot = try McpDoctorSnapshot.fromHealthSnapshot(alloc, &health_snapshot, 10_000);
+    defer snapshot.deinit(alloc);
+    try std.testing.expect(snapshot.healthy());
+    const text = try snapshot.render(alloc, .text);
+    defer alloc.free(text);
+    try std.testing.expectEqualStrings(
+        "MCP doctor (1 server, probe_timeout_ms=10000): ready\n" ++
+            "  ready-server source=profile scope=profile policy=optional transport=stdio state=ready auth=none\n",
+        text,
+    );
+}
+
+test "doctor json carries the failure enum and message" {
+    const alloc = std.testing.allocator;
+    var servers = [_]mcp_health.ServerSnapshot{
+        try makeDoctorTestServer(alloc, "old-server", .failed, .none, false, .unsupported_protocol, null),
+    };
+    defer {
+        for (&servers) |*server| server.deinit(alloc);
+    }
+    var health_snapshot = mcp_health.Snapshot{
+        .captured_at_ms = 1,
+        .servers = &servers,
+        .configuration_issues = &.{},
+    };
+    var snapshot = try McpDoctorSnapshot.fromHealthSnapshot(alloc, &health_snapshot, 10_000);
+    defer snapshot.deinit(alloc);
     const json = try snapshot.render(alloc, .json);
     defer alloc.free(json);
     try std.testing.expect(std.mem.find(u8, json, "\"kind\":\"mcp.doctor\"") != null);
-    try std.testing.expect(std.mem.find(u8, json, "abc123") == null);
+    try std.testing.expect(std.mem.find(u8, json, "\"failure_kind\":\"unsupported_protocol\"") != null);
+    try std.testing.expect(std.mem.find(
+        u8,
+        json,
+        "\"failure\":\"Server does not speak a supported MCP protocol version.\"",
+    ) != null);
     try std.testing.expect(std.mem.find(u8, json, "\"healthy\":false") != null);
 }
 

@@ -3306,6 +3306,7 @@ fn snapshotServerHealth(
         ),
         .last_successful_discovery_ms = server.last_successful_discovery_ms,
         .failure = failure,
+        .doctor_failure = doctorFailureKind(server, connection, authentication),
     };
 }
 
@@ -3376,6 +3377,31 @@ fn snapshotServerModelSummary(
 fn terminalSafeOwned(alloc: Allocator, value: []const u8, limit: usize) ![]u8 {
     const encoded = try text_utils.encodeTerminalSafe(alloc, value, limit);
     return encoded.bytes;
+}
+
+/// Classifies a probed server into the closed doctor failure set. Only our
+/// own error names and static message prefixes are matched; anything else
+/// (including a missing detail) fails closed as unreachable. Free text is
+/// never copied: callers render fixed messages per kind.
+fn doctorFailureKind(
+    server: *const McpServer,
+    connection: health.ConnectionState,
+    authentication: health.AuthenticationState,
+) health.DoctorFailure {
+    if (connection == .ready) return .none;
+    if (authentication == .required) return .auth_required;
+    if (connection == .disabled) return if (server.config.required) .not_admitted else .none;
+    if (connection != .failed) return .@"unreachable";
+    const last_error = server.last_error orelse return .@"unreachable";
+    if (std.mem.eql(u8, last_error, @errorName(error.McpConnectionTimedOut)) or
+        std.mem.eql(u8, last_error, @errorName(error.McpRequestTimedOut))) return .timed_out;
+    if (std.mem.eql(u8, last_error, @errorName(error.McpAuthenticationRequired)) or
+        std.mem.startsWith(u8, last_error, "Authentication required") or
+        std.mem.startsWith(u8, last_error, "MCP credential")) return .auth_required;
+    if (std.mem.eql(u8, last_error, @errorName(error.McpUnsupportedProtocolVersion)) or
+        std.mem.startsWith(u8, last_error, "MCP server does not support protocol version"))
+        return .unsupported_protocol;
+    return .@"unreachable";
 }
 
 fn healthFailureForState(
@@ -10018,6 +10044,36 @@ fn connectServerCancellable(
         )
     else
         null;
+    if (override_deadline) |deadline| {
+        // Bounded probes (doctor) also enforce the deadline on waits that
+        // only observe a cancellation flag, such as the credential-store
+        // lock and keychain calls, so no probe path waits indefinitely.
+        var watch: DoctorProbeWatch = .{ .deadline = deadline, .parent = cancel_requested };
+        watch.start();
+        defer watch.stop();
+        const probe_flag = if (watch.thread != null) &watch.flag else cancel_requested;
+        return connectServerForDiscovery(
+            runtime,
+            server,
+            used_tool_names,
+            .{
+                .deadline = deadline,
+                .cancel_flag = probe_flag,
+                .lifecycle_cancel_flag = &runtime.retiring,
+                .use_startup_timeout = false,
+            },
+        ) catch |err| switch (err) {
+            error.McpRequestTimedOut => error.McpConnectionTimedOut,
+            // The probe flag also fires at the deadline, so a Cancelled that
+            // no caller requested is the timeout wearing another name.
+            error.Cancelled => if (cancel_requested.load(.acquire) or
+                runtime.retiring.load(.acquire))
+                error.Cancelled
+            else
+                error.McpConnectionTimedOut,
+            else => err,
+        };
+    }
     return connectServerForDiscovery(
         runtime,
         server,
@@ -10032,6 +10088,66 @@ fn connectServerCancellable(
         error.McpRequestTimedOut => error.McpConnectionTimedOut,
         else => err,
     };
+}
+
+/// Sets a flag at a probe deadline so waits that only observe a
+/// cancellation flag (credential-store lock, keychain) stay bounded.
+/// One short-lived joined thread per bounded probe; spawn failure falls
+/// back to the caller's flag with no behavior change.
+const DoctorProbeWatch = struct {
+    flag: std.atomic.Value(bool) = .init(false),
+    done: std.atomic.Value(bool) = .init(false),
+    deadline: std.Io.Clock.Timestamp,
+    parent: ?*std.atomic.Value(bool) = null,
+    thread: ?std.Thread = null,
+
+    fn start(self: *DoctorProbeWatch) void {
+        self.thread = std.Thread.spawn(.{}, run, .{self}) catch null;
+    }
+
+    fn run(self: *DoctorProbeWatch) void {
+        while (!self.done.load(.acquire)) {
+            if (self.parent) |parent| {
+                if (parent.load(.acquire)) {
+                    self.flag.store(true, .release);
+                    return;
+                }
+            }
+            if (std.Io.Clock.Timestamp.compare(
+                std.Io.Clock.Timestamp.now(io_mod.getIo(), .awake),
+                .gte,
+                self.deadline,
+            )) {
+                self.flag.store(true, .release);
+                return;
+            }
+            io_mod.sleep(5 * std.time.ns_per_ms);
+        }
+    }
+
+    fn stop(self: *DoctorProbeWatch) void {
+        self.done.store(true, .release);
+        if (self.thread) |thread| {
+            self.thread = null;
+            thread.join();
+        }
+    }
+};
+
+test "doctor probe watch fires at its deadline" {
+    const past = std.Io.Clock.Timestamp{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = 1 },
+    };
+    var watch: DoctorProbeWatch = .{ .deadline = past };
+    watch.start();
+    defer watch.stop();
+    try std.testing.expect(watch.thread != null);
+    const fired_deadline_ms = io_mod.milliTimestamp() + 5_000;
+    while (!watch.flag.load(.acquire) and io_mod.milliTimestamp() < fired_deadline_ms) {
+        io_mod.sleep(5 * std.time.ns_per_ms);
+    }
+    try std.testing.expect(watch.flag.load(.acquire));
 }
 
 fn startupTimeout(
@@ -10145,18 +10261,18 @@ test "doctor probe marks a reachable stdio server ready" {
     const shell_server =
         \\while IFS= read -r line; do
         \\  case "$line" in
-        \\    *'"method":"server/discover"'*) 
+        \\    *'"method":"server/discover"'*)
         \\      printf '%s\n' '{"jsonrpc":"2.0","id":0,"error":{"code":-32601,"message":"Method not found"}}'
         \\      ;;
-        \\    *'"method":"initialize"'*) 
+        \\    *'"method":"initialize"'*)
         \\      printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"shell","version":"0"}}}'
         \\      ;;
-        \\    *'"method":"notifications/initialized"'*) 
+        \\    *'"method":"notifications/initialized"'*)
         \\      ;;
-        \\    *'"method":"tools/list"'*) 
+        \\    *'"method":"tools/list"'*)
         \\      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}'
         \\      ;;
-        \\    *) 
+        \\    *)
         \\      exit 3
         \\      ;;
         \\  esac
@@ -10171,6 +10287,7 @@ test "doctor probe marks a reachable stdio server ready" {
     defer snapshot.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 1), snapshot.servers.len);
     try std.testing.expectEqual(health.ConnectionState.ready, snapshot.servers[0].connection);
+    try std.testing.expectEqual(health.DoctorFailure.none, snapshot.servers[0].doctor_failure);
 }
 
 test "doctor probe records an unreachable stdio server without crashing" {
@@ -10184,6 +10301,7 @@ test "doctor probe records an unreachable stdio server without crashing" {
     defer snapshot.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 1), snapshot.servers.len);
     try std.testing.expectEqual(health.ConnectionState.failed, snapshot.servers[0].connection);
+    try std.testing.expectEqual(health.DoctorFailure.@"unreachable", snapshot.servers[0].doctor_failure);
 }
 
 test "doctor probe timeout bounds a hanging stdio server" {
@@ -10197,6 +10315,35 @@ test "doctor probe timeout bounds a hanging stdio server" {
     const elapsed_ms = io_mod.milliTimestamp() - start_ms;
     try std.testing.expectEqual(ServerState.failed, runtime.servers.items[0].state);
     try std.testing.expect(elapsed_ms < 10_000);
+    var snapshot = try runtime.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(health.DoctorFailure.timed_out, snapshot.servers[0].doctor_failure);
+}
+
+test "doctor failure classification covers auth admission and protocol causes" {
+    const alloc = std.testing.allocator;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    try runtime.addServer(.{ .name = try alloc.dupe(u8, "auth") });
+    try runtime.addServer(.{ .name = try alloc.dupe(u8, "blocked"), .required = true });
+    try runtime.addServer(.{ .name = try alloc.dupe(u8, "skipped") });
+    try runtime.addServer(.{ .name = try alloc.dupe(u8, "legacy") });
+    runtime.servers.items[0].state = .failed;
+    runtime.servers.items[0].auth_challenge_present.store(true, .release);
+    runtime.servers.items[1].state = .disabled;
+    runtime.servers.items[2].state = .disabled;
+    runtime.servers.items[3].state = .failed;
+    runtime.servers.items[3].last_error = try alloc.dupe(u8, "McpUnsupportedProtocolVersion");
+    runtime.discovery_state.store(.complete, .seq_cst);
+    var snapshot = try runtime.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(health.DoctorFailure.auth_required, snapshot.servers[0].doctor_failure);
+    try std.testing.expectEqual(health.DoctorFailure.not_admitted, snapshot.servers[1].doctor_failure);
+    try std.testing.expectEqual(health.DoctorFailure.none, snapshot.servers[2].doctor_failure);
+    try std.testing.expectEqual(
+        health.DoctorFailure.unsupported_protocol,
+        snapshot.servers[3].doctor_failure,
+    );
 }
 
 fn connectServerForDiscovery(

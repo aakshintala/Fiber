@@ -98,6 +98,7 @@ pub const ServerSnapshot = struct {
     retry_in_ms: ?u64,
     last_successful_discovery_ms: ?u64,
     failure: ?[]u8,
+    doctor_failure: DoctorFailure = .none,
 
     pub fn deinit(self: *ServerSnapshot, alloc: Allocator) void {
         alloc.free(self.configured_name);
@@ -107,6 +108,15 @@ pub const ServerSnapshot = struct {
         if (self.failure) |value| alloc.free(value);
         self.* = undefined;
     }
+};
+
+pub const DoctorFailure = enum {
+    none,
+    @"unreachable",
+    timed_out,
+    auth_required,
+    not_admitted,
+    unsupported_protocol,
 };
 
 pub const ConfigurationIssue = struct {
