@@ -49,6 +49,11 @@ const command_artifact_stdout_suffix = ".stdout.log";
 const command_artifact_stderr_suffix = ".stderr.log";
 const pending_output_flush_bytes: usize = 4096;
 const command_output_poll_ms: i64 = 100;
+// Upper bound for settling pipes and the waiter after a force-kill. When the
+// bound passes the result reports indeterminate status instead of success.
+// Reimplemented from upstream fx "Bound captured shell termination"
+// (vercel-labs/fx@3008af0) under Fiber's current contracts.
+pub const termination_settle_timeout_ms: i64 = 5_000;
 const supports_foreground_session = builtin.link_libc and
     std.process.can_spawn and
     std.process.can_replace;
@@ -341,13 +346,20 @@ const ChildWaiter = struct {
         future.await(self.io);
     }
 
+    fn cancel(self: *ChildWaiter) !std.process.Child.Term {
+        if (self.isReady()) return self.awaitReady();
+        var future = &self.future.?;
+        future.cancel(self.io);
+        return try self.result;
+    }
+
     fn abort(self: *ChildWaiter, pid: std.posix.pid_t) void {
         if (self.isReady()) {
             self.awaitDiscard();
             return;
         }
         signalProcess(pid, std.posix.SIG.KILL) catch {};
-        self.awaitDiscard();
+        _ = self.cancel() catch {};
     }
 };
 
@@ -1707,7 +1719,9 @@ fn commandStatusFromTerm(term: std.process.Child.Term) command_contract.CommandS
     return switch (term) {
         .exited => |code| .{ .exit_code = @intCast(code) },
         .signal => |sig| .{ .signal = @intFromEnum(sig) },
-        else => .finished,
+        // A stopped or unknown term never observed an exit, so it must not
+        // project as success. Report it indeterminate instead.
+        .stopped, .unknown => .indeterminate,
     };
 }
 
@@ -2167,9 +2181,63 @@ const ProcessObserver = struct {
                 .{@errorName(err)},
             );
         };
-        self.waiter.awaitDiscard();
+        _ = self.waiter.cancel() catch |err| {
+            debug_trace.logf(
+                "core",
+                "command observer cleanup wait cancelled err={s}",
+                .{@errorName(err)},
+            );
+        };
+    }
+
+    fn settle_after_deadline(
+        self: *ProcessObserver,
+        process_group_id: ?std.posix.pid_t,
+    ) command_contract.CommandStatus {
+        const pid = process_group_id orelse self.process_id;
+        signalProcessGroup(pid, std.posix.SIG.KILL) catch |err| {
+            debug_trace.logf(
+                "core",
+                "command termination deadline cleanup failed err={s}",
+                .{@errorName(err)},
+            );
+        };
+        const term = self.waiter.cancel() catch |err| {
+            debug_trace.logf(
+                "core",
+                "command termination became indeterminate boundary=post_force_wait err={s}",
+                .{@errorName(err)},
+            );
+            return .indeterminate;
+        };
+        return ProcessObserver.statusFromTerm(term);
     }
 };
+
+fn termination_settle_expired_with_ceiling(
+    signal_started_ms: ?i64,
+    force_kill_sent: bool,
+    now_ms: i64,
+    ceiling_ms: i64,
+) bool {
+    const started_ms = signal_started_ms orelse return false;
+    return force_kill_sent and
+        now_ms >= started_ms and
+        now_ms - started_ms >= ceiling_ms;
+}
+
+fn termination_settle_expired(
+    signal_started_ms: ?i64,
+    force_kill_sent: bool,
+    now_ms: i64,
+) bool {
+    return termination_settle_expired_with_ceiling(
+        signal_started_ms,
+        force_kill_sent,
+        now_ms,
+        termination_settle_timeout_ms,
+    );
+}
 
 fn collectOutput(
     arena: Allocator,
@@ -2230,6 +2298,24 @@ fn collectOutput(
                     }
                 }
             }
+        }
+
+        if (termination_settle_expired(
+            signal_started_ms,
+            force_kill_sent,
+            io_mod.milliTimestamp(),
+        )) {
+            debug_trace.logf(
+                "core",
+                "command termination settlement expired boundary=post_force source={s} wait_ready={s}",
+                .{
+                    @tagName(source.*),
+                    if (observer.waiter.isReady()) "true" else "false",
+                },
+            );
+            const settled_status = observer.settle_after_deadline(process_group_id);
+            if (leader_status.* == null) leader_status.* = settled_status;
+            break;
         }
 
         if (streams_finished) {
@@ -2566,7 +2652,12 @@ test "format output covers stdout stderr empty signal and unknown statuses" {
 
     const none = try formatOutput(std.testing.allocator, "cmd", "/tmp", .{ .unknown = 9 }, "", "", null);
     defer std.testing.allocator.free(none.output);
-    try std.testing.expectEqualStrings("process finished\n(no output)\n", none.output);
+    try std.testing.expect(std.mem.find(
+        u8,
+        none.output,
+        "termination_indeterminate=true\n",
+    ) != null);
+    try std.testing.expect(none.command_result.?.termination_indeterminate);
 
     const signaled = try formatOutput(std.testing.allocator, "cmd", "/tmp", .{ .signal = .TERM }, "", "", null);
     defer std.testing.allocator.free(signaled.output);
@@ -3960,6 +4051,31 @@ test "termination result follows the delivered signal source" {
     try std.testing.expectEqual(
         TerminationSource.cancelled,
         reconcileForegroundTerminationSource(.cancelled, 1700, 2000),
+    );
+}
+
+test "forced termination settlement expires only after its deadline" {
+    try std.testing.expect(!termination_settle_expired_with_ceiling(null, true, 10_000, 100));
+    try std.testing.expect(!termination_settle_expired_with_ceiling(5_000, false, 10_000, 100));
+    try std.testing.expect(!termination_settle_expired_with_ceiling(5_000, true, 5_099, 100));
+    try std.testing.expect(termination_settle_expired_with_ceiling(5_000, true, 5_100, 100));
+    try std.testing.expect(!termination_settle_expired(null, true, 10_000));
+    try std.testing.expect(!termination_settle_expired(5_000, false, 10_000));
+    try std.testing.expect(termination_settle_expired(5_000, true, 5_000 + termination_settle_timeout_ms));
+}
+
+test "nonterminal child terms remain indeterminate" {
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        commandStatusFromTerm(.{ .unknown = 0 }),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        commandStatusFromTerm(.{ .stopped = std.posix.SIG.STOP }),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus{ .exit_code = 3 },
+        commandStatusFromTerm(.{ .exited = 3 }),
     );
 }
 
