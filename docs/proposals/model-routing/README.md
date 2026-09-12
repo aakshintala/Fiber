@@ -70,15 +70,18 @@ branches.
 ## What is code, what is data, what is Lua
 
 The core ships only generic mechanisms. Zig under `src/core/` never names a
-vendor; the check is a grep for `codex`, `chatgpt` or `openai` identifiers
-there.
+vendor. Presets carry vendor constants, so they live as JSON outside
+`src/core/`, and CI checks the rule with a grep for `codex`, `chatgpt` or
+`openai` in `src/core/**/*.zig`.
 
 **Code (Zig):**
 
 * protocol adapters: Responses, Chat Completions, Anthropic Messages. Each
   implements a public wire format and owns a typed compat struct
-* auth schemes: none, API key, environment reference, OAuth PKCE and device flow
-* catalog sources: a static list, and an OpenAI-style `/models` fetch
+* auth schemes: none, API key, environment reference, OAuth PKCE. Device flow
+  is added when a connection needs it
+* catalog sources: a static list. Live discovery arrives with Lua catalog
+  adapters (decision 18)
 * the routing seam, credential store, history transform, usage accounting
 
 **Data (JSON):**
@@ -117,7 +120,10 @@ Numbers are stable; #37 carries the rationale for each.
    implementation fact, not user intent, and must not end up stored in sessions
    and settings.
 2. **No bare-name resolution.** There is no default connection and no catalog
-   search. Both make a stored name route somewhere else later.
+   search. Both make a stored name route somewhere else later. This binds any
+   future model argument on the subagent tool, which today has none: the child
+   inherits the parent's model. Adding that argument belongs to the subagent
+   workstream.
 3. **Aliases.** `"aliases": { "sonnet": "openrouter/anthropic/claude-sonnet-5" }`
    in settings. The `/model` picker also does prefix matching, because it shows
    the match before you confirm.
@@ -151,10 +157,12 @@ Numbers are stable; #37 carries the rationale for each.
 
 11. **One file-backed credential store on every platform**, reusing the private
     directory, lock and durable replace that the ChatGPT store has today.
-    ChatGPT tokens become its first entry. The macOS keychain is not used: Fiber
-    reaches it through `/usr/bin/osascript`, so the item trusts `osascript`
-    rather than Fiber, and any process running as the user can read it. Fiber
-    also has no OS sandbox (removed upstream in `98be58b6`).
+    ChatGPT tokens become its first entry. One code path on every platform is
+    the reason. The macOS keychain is not used. Fiber reaches it through
+    `/usr/bin/osascript`, so the item likely trusts `osascript` rather than
+    Fiber; that was read from code, not tested by reading the item from
+    another process. Fiber also has no OS sandbox (removed upstream in
+    `98be58b6`).
 12. **Three credential kinds:** OAuth owned by a scheme, a stored API key, and
     an environment reference that stores the variable name and never the secret.
 13. **Login is per connection.** `fiber auth login opencode-go`. Logout is
@@ -166,9 +174,13 @@ Numbers are stable; #37 carries the rationale for each.
 ### Capabilities and catalogs
 
 15. **Three layers, later overriding earlier:** preset metadata, live catalog,
-    user `model_metadata`. A model none of them describes still runs, with no
-    vision and an unknown context window, which disables automatic compaction
-    and says so once.
+    user `model_metadata`. Protocol, base URL and compat flags merge like any
+    other field, because a catalog can state them: Databricks picks the
+    protocol per model from `supported_api_types`. So user `model_metadata`
+    can override a catalog's protocol choice. A model none of the layers
+    describes still runs, with no vision and a conservative context window
+    (128k, to be confirmed against pi's fallback). Automatic compaction runs
+    against that window, and Fiber says once that it is assumed.
 16. **No runtime third-party registry.** Fiber does not fetch models.dev or
     similar at startup. **Divergence:** pi refreshes from its own service
     (`https://pi.dev/api/models/providers/<id>`, etag, at most every four
@@ -184,12 +196,16 @@ Numbers are stable; #37 carries the rationale for each.
     picker groups by connection and marks stale or failed ones while still
     listing their last-good models.
     [#66](https://github.com/aakshintala/Fiber/issues/66) is rescoped to this.
+    It ships with the first Lua catalog adapter, Databricks, which is the
+    source it was designed for. An OpenAI-style `/models` fetch returns only
+    IDs, so it adds names without capabilities and is not built before then.
 
 ### History across routes
 
-19. **Tag provider state with its origin** (connection, protocol, model) and
-    replay it only to an exact match. Encrypted reasoning is opaque to everyone
-    but the issuing vendor.
+19. **Tag provider state with its origin** (connection, endpoint fingerprint,
+    protocol, model) and replay it only to an exact match. Encrypted reasoning
+    is opaque to everyone but the issuing vendor. The fingerprint (decision 21)
+    makes a repointed connection count as a mismatch.
 20. **Apply pi's transform on a mismatch** (`api/transform-messages.js`): drop
     redacted or encrypted reasoning, convert plaintext reasoning to a text
     block, normalize tool call IDs (Responses IDs reach 450+ characters with
@@ -198,17 +214,26 @@ Numbers are stable; #37 carries the rationale for each.
     synthesize results for orphaned tool calls, and skip errored or aborted
     assistant turns. One transcript note per switch.
 
+    Sessions store original tool call IDs. The transform runs at send time
+    and its output is never persisted, so IDs stay consistent across turns
+    because normalization is deterministic, as in pi. **Divergence:** pi
+    truncates with `slice(0, 64)`, which collides when two IDs share a
+    64-character prefix; Fiber hashes instead.
+
 ### Sessions
 
-21. **Sessions store the full reference plus a non-secret fingerprint** of
-    endpoint and auth kind (including an environment variable's name, never the
-    secret). Rotating a key does not trip it; repointing a base URL does.
-22. **A changed or missing connection stops the resume before any network I/O.**
-    Non-interactive runs exit 1 with `error_code` `ConnectionChanged` or
-    `ConnectionMissing`, matching the existing `NonInteractivePermissionRequired`
-    pattern. Passing `--model` explicitly is consent and re-pins the
-    fingerprint; no dedicated flag. Subagent children check their own route and
-    surface a tool error rather than a prompt.
+21. **Sessions store the full reference; provider state carries a non-secret
+    fingerprint** of endpoint and auth kind (including an environment
+    variable's name, never the secret) as part of its origin (decision 19).
+    Rotating a key does not change it; repointing a base URL does.
+22. **A changed connection does not stop a resume.** Connections are
+    profile-only, so only the user can repoint one, and decision 19 already
+    keeps old provider state away from the new endpoint. The transform applies
+    and the transcript notes the switch. A missing connection stops the resume
+    before any network I/O; non-interactive runs exit 1 with `error_code`
+    `ConnectionMissing`, matching the existing
+    `NonInteractivePermissionRequired` pattern. Subagent children surface a
+    missing connection as a tool error rather than a prompt.
 
 ### Permissions
 
@@ -229,13 +254,19 @@ Numbers are stable; #37 carries the rationale for each.
 26. **Mixed sessions show both figures**, for example `$0.42 · $3.10 (sub)`.
     **Divergence:** pi shows one total marked by the current provider, which
     misreads once routing by model name makes mixed sessions routine.
-    `fiber usage --json` reports each model with its billing kind.
+    `fiber usage --json` reports each model with its billing kind. Ships with
+    the first quota adapter, alongside decision 27: until overage is measured,
+    a split would put overage spend under "(sub)". Slice 1 shows subscription
+    usage as `$3.10 (sub)`.
 27. **Overage is tagged only on positive evidence.** Each generation records
     `included`, `overage` with measured cost, `metered`, or `unknown`. Signals
     come from Lua quota adapters (Codex exposes `x-codex-credits-balance` and
     used-percent windows; OpenCode Go exposes dollar windows at
     `/zen/go/v1/usage`). Ships after slice 1; the interface is not designed
-    until there is an adapter to design it against.
+    until there is an adapter to design it against. Both subscriptions bill
+    real overage: OpenCode Go keeps serving and bills past its 5-hour window
+    when the account's overage setting is on, with no signal in the response.
+    Quota-exhausted errors from a subscription connection render plainly.
 
 ### Features that assumed Codex
 
@@ -243,11 +274,15 @@ Numbers are stable; #37 carries the rationale for each.
     the Responses adapter sends `service_tier` from a compat field set by the
     Codex preset. The `-fast` suffix check in `model_capabilities.zig` is
     removed: it infers capability from a model name.
-29. **Vision fallback becomes a `vision_model` setting**, a full reference,
-    unset by default. When unset the `vision` tool is not advertised and images
-    become pi's placeholder text. The hardcoded `google/gemini-2.5-flash` in
-    `image_provider.zig` (a Vercel AI Gateway ID that the ChatGPT endpoint
-    cannot serve) and the `vision_fallback` bundle flag are both removed.
+29. **Vision fallback becomes a `vision_model` setting**, a full reference.
+    Its default comes from the connection preset, naming a vision model on the
+    same connection, as `reviewer_model` does; otherwise it is unset. The
+    `vision` tool is advertised only when the session's model lacks vision and
+    `vision_model` resolves; otherwise images become pi's placeholder text.
+    The existing executor and tool wiring are kept and take a `Route`. The
+    hardcoded `google/gemini-2.5-flash` in `image_provider.zig` (a Vercel AI
+    Gateway ID that the ChatGPT endpoint cannot serve) and the
+    `vision_fallback` bundle flag are removed.
 
 ## Debt paid in slice 1
 
@@ -268,7 +303,7 @@ Numbers are stable; #37 carries the rationale for each.
 | 1 | Routing seam, presets, credential store, Responses (Codex folded in), Chat Completions, history transform, `reviewer_model` | OpenCode Go: glm-5.3-flash, deepseek-v4.1-flash, muse-spark-1.3-contributor. #39 becomes a preset over the Responses adapter |
 | 2 | Anthropic Messages adapter | #38, and `opencode-go/qwen3.8-flash` and `minimax-m3` |
 | 3 | Remaining providers as presets | #41, #42, #44, #45 |
-| Later | Extension system, then Lua catalog and quota adapters | #43 Databricks discovery, overage attribution, the Codex catalog |
+| Later | Extension system, then Lua catalog and quota adapters | #43 Databricks discovery with per-connection catalog state (18), overage attribution with the split usage display (26, 27), the Codex catalog |
 
 Codex folds onto the generic Responses adapter in slice 1 rather than keeping a
 second Responses path. **Divergence:** pi keeps `openai-codex-responses.js`
