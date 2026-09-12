@@ -1175,7 +1175,7 @@ fn publishSnapshotMetadata(
         ctx.tool_result_memory_sink == null) return;
     const status: ?command_contract.CommandStatus = switch (snapshot.state) {
         .completed => |value| value,
-        .stopped => |value| value,
+        .stopped => |value| stopProjectedStatus(value),
         .lost => .indeterminate,
         .running => return,
     };
@@ -1510,6 +1510,35 @@ test "shell stop fails closed without an observed exit" {
         command_contract.CommandStatus{ .signal = 9 },
         stopProjectedStatus(.{ .signal = 9 }),
     );
+}
+
+test "stopped shell metadata projects missing exits as indeterminate" {
+    const alloc = std.testing.allocator;
+    const states = [_]managed_execution.SnapshotState{
+        .{ .stopped = null },
+        .{ .stopped = .finished },
+    };
+    for (states) |state| {
+        var command_result_json: ?[]const u8 = null;
+        defer if (command_result_json) |json| alloc.free(@constCast(json));
+        try publishSnapshotMetadata(.{
+            .allocator = alloc,
+            .command_result_json_sink = &command_result_json,
+        }, .{
+            .execution_id = @constCast("shell-stopped-meta"),
+            .command = @constCast("sleep 60"),
+            .cwd = @constCast("/tmp"),
+            .retained = true,
+            .state = state,
+            .output_delta = @constCast(""),
+            .output_truncated = false,
+        });
+        try std.testing.expect(std.mem.find(
+            u8,
+            command_result_json orelse return error.TestExpectedEqual,
+            "\"termination_indeterminate\":true",
+        ) != null);
+    }
 }
 
 fn runtimeFailure(
