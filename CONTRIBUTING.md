@@ -61,12 +61,20 @@ pull request runs no continuous integration.
 `ci.yml` is the only entrypoint, and what it runs depends on the state of the
 pull request:
 
-- a draft runs Linux x86_64 formatting, the public-surface audit, PGSO corpus
-  validation, release-decision tests, build, unit tests, smoke, and the four
-  Linux x86_64 end-to-end shards
-- a ready pull request adds the remaining native platforms, the same four
-  end-to-end shards on Linux aarch64 and macOS arm64, benchmarks, binary-size
-  comparison, and the isolated MCP conformance package
+- a draft runs the static gates (formatting, public-surface audit, PGSO
+  corpus validation, release-decision tests), the Linux x86_64 build, unit
+  tests, smoke, and the four Linux x86_64 end-to-end shards
+- a ready pull request adds only what draft did not run: the remaining
+  native platforms, the same four end-to-end shards on Linux aarch64 and
+  macOS arm64, benchmarks, binary-size comparison, and the isolated MCP
+  conformance package
+- a docs-only change (markdown files) skips the heavy legs in both scopes;
+  the static gates still run on every push
+
+A failing end-to-end shard file retries once, immediately. A retry that
+passes is annotated on the run and reported by the non-blocking Flake watch
+check: file or update a flake issue for the test (deflake by rewriting the
+test) rather than rerunning. Unit-test, build, and lint jobs never retry.
 
 One check, `CI`, aggregates the result. It is the only check `main` requires.
 
