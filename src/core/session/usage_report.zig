@@ -31,7 +31,7 @@ pub const Scope = enum {
         };
     }
 
-    fn durationMs(self: Scope) ?i64 {
+    pub fn durationMs(self: Scope) ?i64 {
         return switch (self) {
             .session => null,
             .hours_24 => std.time.ms_per_hour * 24,

@@ -1486,12 +1486,34 @@ pub const Usage = struct {
         var source_snapshot = try self.snapshot(alloc);
         defer source_snapshot.deinit(alloc);
 
+        const snapshot_time_ms = @max(io_mod.milliTimestamp(), 0);
+        const wall_duration_ms = std.math.cast(i64, source_snapshot.wall_duration_ms) orelse
+            snapshot_time_ms;
+        return reportSnapshotFromParts(
+            alloc,
+            source_snapshot,
+            @max(snapshot_time_ms -| wall_duration_ms, 0),
+            snapshot_time_ms,
+        );
+    }
+
+    /// Projects a session ledger snapshot through the shared usage-report
+    /// contract. `source` is borrowed; the caller retains ownership. This is the
+    /// same projection `Usage.reportSnapshot` uses for the live session, reused
+    /// by read-only queries (such as `fiber usage --session`) over durable
+    /// checkpoints.
+    pub fn reportSnapshotFromParts(
+        alloc: Allocator,
+        source: Snapshot,
+        session_started_at_ms: i64,
+        snapshot_time_ms: i64,
+    ) !usage_report.Snapshot {
         const models = try alloc.alloc(
             usage_report.SessionModelSource,
-            source_snapshot.models.len,
+            source.models.len,
         );
         defer alloc.free(models);
-        for (source_snapshot.models, 0..) |model, index| {
+        for (source.models, 0..) |model, index| {
             models[index] = .{
                 .model = model.model,
                 .total_cost = model.total_cost,
@@ -1504,34 +1526,31 @@ pub const Usage = struct {
             };
         }
 
-        const snapshot_time_ms = @max(io_mod.milliTimestamp(), 0);
-        const wall_duration_ms = std.math.cast(i64, source_snapshot.wall_duration_ms) orelse
-            snapshot_time_ms;
         return usage_report.buildSessionSnapshot(alloc, .{
             .snapshot_time_ms = snapshot_time_ms,
-            .session_started_at_ms = @max(snapshot_time_ms -| wall_duration_ms, 0),
-            .completeness = switch (source_snapshot.billing) {
+            .session_started_at_ms = session_started_at_ms,
+            .completeness = switch (source.billing) {
                 .complete => .complete,
                 .pending => .pending,
                 .incomplete => .incomplete,
                 .legacy => .legacy,
             },
-            .total_cost = source_snapshot.total_cost,
-            .input_tokens = source_snapshot.input_tokens,
-            .output_tokens = source_snapshot.output_tokens,
-            .cache_read_tokens = source_snapshot.cache_read_tokens,
-            .cache_write_tokens = source_snapshot.cache_write_tokens,
-            .reasoning_tokens = source_snapshot.reasoning_tokens,
-            .request_count = source_snapshot.request_count,
+            .total_cost = source.total_cost,
+            .input_tokens = source.input_tokens,
+            .output_tokens = source.output_tokens,
+            .cache_read_tokens = source.cache_read_tokens,
+            .cache_write_tokens = source.cache_write_tokens,
+            .reasoning_tokens = source.reasoning_tokens,
+            .request_count = source.request_count,
             .models = models,
             .activity = .{
-                .api_duration_complete = source_snapshot.api_duration_complete,
-                .wall_duration_complete = source_snapshot.wall_duration_complete,
-                .code_complete = source_snapshot.code_complete,
-                .api_duration_ms = source_snapshot.api_duration_ms,
-                .wall_duration_ms = source_snapshot.wall_duration_ms,
-                .lines_added = source_snapshot.lines_added,
-                .lines_removed = source_snapshot.lines_removed,
+                .api_duration_complete = source.api_duration_complete,
+                .wall_duration_complete = source.wall_duration_complete,
+                .code_complete = source.code_complete,
+                .api_duration_ms = source.api_duration_ms,
+                .wall_duration_ms = source.wall_duration_ms,
+                .lines_added = source.lines_added,
+                .lines_removed = source.lines_removed,
             },
         });
     }
