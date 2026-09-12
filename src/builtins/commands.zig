@@ -99,6 +99,7 @@ pub const top_level_specs = [_]TopLevelSpec{
             "  fiber mcp add NAME COMMAND [ARGS...]",
             "  fiber mcp add --transport http NAME URL",
             "  fiber mcp auth NAME",
+            "  fiber mcp doctor [--json]",
             "  fiber mcp list",
             "  fiber mcp logout NAME",
             "  fiber mcp path",
@@ -107,6 +108,8 @@ pub const top_level_specs = [_]TopLevelSpec{
             "  fiber mcp trust approve-all|reset",
             "",
             "By default, list reads configuration without opening MCP transports.",
+            "doctor opens each configured transport with a bounded probe and",
+            "reports per-server connection and authentication.",
         },
     },
     .{

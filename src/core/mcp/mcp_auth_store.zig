@@ -8,6 +8,14 @@ const profile_paths = @import("../shared/profile_paths.zig");
 const secret = @import("../auth/secret.zig");
 
 const Allocator = std.mem.Allocator;
+
+/// Test-only counters for credential-store entries. The doctor-probe
+/// zero-store test asserts these do not move during a probe; production
+/// code ignores them.
+pub const TestStoreCounters = struct {
+    pub var loads: std.atomic.Value(u64) = .init(0);
+    pub var saves: std.atomic.Value(u64) = .init(0);
+};
 const schema_version: i64 = 1;
 const max_store_bytes: usize = 1024 * 1024;
 const lock_file_name = "credentials.lock";
@@ -222,6 +230,7 @@ fn loadControlled(
     configured_issuer: ?[]const u8,
     cancel_flag: ?*const std.atomic.Value(bool),
 ) !?mcp_auth.Credentials {
+    _ = TestStoreCounters.loads.fetchAdd(1, .monotonic);
     const backend = try storageBackend(alloc, cancel_flag);
     var locked = (try openLockedDirForReadControlled(
         backend,
@@ -287,6 +296,7 @@ pub fn save(
     server_identity: []const u8,
     credentials: mcp_auth.Credentials,
 ) !SaveResult {
+    _ = TestStoreCounters.saves.fetchAdd(1, .monotonic);
     const backend = try storageBackend(alloc, null);
     var locked = try openOrCreateLockedDir();
     defer locked.deinit();

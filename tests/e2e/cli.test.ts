@@ -4057,6 +4057,7 @@ describe("cli: MCP profile add", () => {
       for (const command of [
         "fiber mcp add NAME COMMAND [ARGS...]",
         "fiber mcp auth NAME",
+        "fiber mcp doctor [--json]",
         "fiber mcp list",
         "fiber mcp logout NAME",
         "fiber mcp path",

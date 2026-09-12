@@ -43,6 +43,7 @@ pub const Kind = enum {
     mcp_path,
     mcp_logout,
     mcp_trust,
+    mcp_doctor,
     models,
     models_use,
     doctor,
@@ -75,6 +76,7 @@ pub const Kind = enum {
             .mcp_path => "mcp.path",
             .mcp_logout => "mcp.logout",
             .mcp_trust => "mcp.trust",
+            .mcp_doctor => "mcp.doctor",
             .models => "models",
             .models_use => "models.use",
             .doctor => "doctor",
@@ -1537,6 +1539,488 @@ pub const McpTrustSnapshot = struct {
         return try out.toOwnedSlice();
     }
 };
+
+pub const McpDoctorServer = struct {
+    name: []const u8,
+    source: mcp_contract.ConfigSource,
+    scope: mcp_contract.ConfigScope,
+    required: bool,
+    transport: mcp_contract.McpTransport,
+    connection: mcp_health.ConnectionState,
+    authentication: mcp_health.AuthenticationState,
+    admission: ?mcp_contract.WorkspaceAdmission,
+    failure_kind: mcp_health.DoctorFailure,
+    /// Fixed message for failure_kind; a non-owned literal, null when healthy.
+    failure: ?[]const u8,
+};
+
+pub const McpDoctorConfigIssue = struct {
+    server: []const u8,
+    kind: mcp_health.DoctorConfigIssue,
+    /// Fixed message for kind; a non-owned literal.
+    message: []const u8,
+};
+
+/// Fixed config-issue message per kind. Only these strings ever reach
+/// doctor output; server identity travels in the surrounding field.
+pub fn doctorConfigIssueMessage(kind: mcp_health.DoctorConfigIssue) []const u8 {
+    return switch (kind) {
+        .invalid_json => "Project MCP file is not valid JSON.",
+        .root_must_be_object => "Project MCP file root must be an object.",
+        .servers_must_be_object => "Project MCP file servers entry must be an object.",
+        .invalid_entry => "Project MCP server entry is invalid and was ignored.",
+        .missing_environment_variable => "Project MCP server entry requires an unset environment variable; set it or use a ${VAR:-default} fallback.",
+        .environment_expansion_limit_exceeded => "Project MCP server entry exceeds the environment expansion limit.",
+        .approved_rejected_overlap => "Project MCP server is both approved and rejected; fix the trust lists.",
+        .unclassified => "Project MCP configuration has a problem that could not be classified.",
+    };
+}
+
+/// Fixed failure message per doctor failure kind. Only these strings ever
+/// reach doctor output, so no probe detail can leak secrets. Server name
+/// and probe bound travel in the surrounding snapshot fields.
+pub fn doctorFailureMessage(kind: mcp_health.DoctorFailure) ?[]const u8 {
+    return switch (kind) {
+        .none => null,
+        .@"unreachable" => "Server is unreachable; check the server command, URL, and trace logs.",
+        .timed_out => "Probe timed out; the server did not answer within the probe bound.",
+        .auth_required => "Authentication is required; run fiber mcp login <name> and check server permissions.",
+        .not_admitted => "Required server is disabled or not admitted; enable it or approve it for this workspace.",
+        .unsupported_protocol => "Server does not speak a supported MCP protocol version.",
+    };
+}
+
+/// One snapshot for `fiber mcp doctor`: every configured server transport is
+/// opened before this is built, so `connection` and `authentication` are
+/// observed values rather than configuration echoes. Server commands,
+/// arguments, environment, URLs, headers, and tool counts never enter the
+/// snapshot; failures render as fixed messages per failure kind.
+pub const McpDoctorSnapshot = struct {
+    servers: []McpDoctorServer,
+    configuration_issues: []McpDoctorConfigIssue,
+    overall: mcp_health.StartupDecision,
+    probe_timeout_ms: u32,
+
+    pub fn fromHealthSnapshot(
+        alloc: Allocator,
+        snapshot: *const mcp_health.Snapshot,
+        probe_timeout_ms: u32,
+    ) !McpDoctorSnapshot {
+        const servers = try alloc.alloc(McpDoctorServer, snapshot.servers.len);
+        errdefer alloc.free(servers);
+        var initialized: usize = 0;
+        errdefer {
+            for (servers[0..initialized]) |*server| alloc.free(server.name);
+        }
+        for (snapshot.servers, 0..) |*server, index| {
+            servers[index] = .{
+                .name = try alloc.dupe(u8, server.configured_name),
+                .source = server.source,
+                .scope = server.scope,
+                .required = server.required,
+                .transport = server.transport,
+                .connection = server.connection,
+                .authentication = server.authentication,
+                .admission = server.workspace_admission,
+                .failure_kind = server.doctor_failure,
+                .failure = doctorFailureMessage(server.doctor_failure),
+            };
+            initialized += 1;
+        }
+        const issues = try alloc.alloc(McpDoctorConfigIssue, snapshot.configuration_issues.len);
+        errdefer alloc.free(issues);
+        var issues_initialized: usize = 0;
+        errdefer {
+            for (issues[0..issues_initialized]) |issue| alloc.free(issue.server);
+        }
+        for (snapshot.configuration_issues, 0..) |*issue, index| {
+            const kind = issue.doctor_issue orelse .unclassified;
+            issues[index] = .{
+                .server = try alloc.dupe(u8, issue.server_name orelse "unknown"),
+                .kind = kind,
+                .message = doctorConfigIssueMessage(kind),
+            };
+            issues_initialized += 1;
+        }
+        return .{
+            .servers = servers,
+            .configuration_issues = issues,
+            .overall = mcp_health.startupDecision(snapshot.servers),
+            .probe_timeout_ms = probe_timeout_ms,
+        };
+    }
+
+    pub fn deinit(self: *McpDoctorSnapshot, alloc: Allocator) void {
+        for (self.servers) |*server| alloc.free(server.name);
+        alloc.free(self.servers);
+        for (self.configuration_issues) |*issue| alloc.free(issue.server);
+        alloc.free(self.configuration_issues);
+        self.* = undefined;
+    }
+
+    pub fn healthy(self: *const McpDoctorSnapshot) bool {
+        return self.overall == .ready and self.configuration_issues.len == 0;
+    }
+
+    pub fn render(self: McpDoctorSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: McpDoctorSnapshot, alloc: Allocator) ![]u8 {
+        if (self.servers.len == 0 and self.configuration_issues.len == 0) {
+            return alloc.dupe(u8, "No MCP servers configured.\n");
+        }
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        if (self.servers.len > 0) {
+            try out.writer.print("MCP doctor ({d} {s}, probe_timeout_ms={d}): {s}\n", .{
+                self.servers.len,
+                if (self.servers.len == 1) "server" else "servers",
+                self.probe_timeout_ms,
+                @tagName(self.overall),
+            });
+        }
+        for (self.servers) |server| {
+            try out.writer.print(
+                "  {s} source={s} scope={s} policy={s} transport={s} state={s} auth={s}",
+                .{
+                    server.name,
+                    @tagName(server.source),
+                    @tagName(server.scope),
+                    if (server.required) "required" else "optional",
+                    @tagName(server.transport),
+                    @tagName(server.connection),
+                    @tagName(server.authentication),
+                },
+            );
+            if (server.admission) |admission|
+                try out.writer.print(" admission={s}", .{@tagName(admission)});
+            try out.writer.writeByte('\n');
+            if (server.failure_kind != .none)
+                try out.writer.print("    failure={s}: {s}\n", .{
+                    @tagName(server.failure_kind),
+                    server.failure.?,
+                });
+        }
+        for (self.configuration_issues) |issue| {
+            try out.writer.print("  configuration issue {s} ({s}): {s}\n", .{
+                issue.server,
+                @tagName(issue.kind),
+                issue.message,
+            });
+        }
+        return try out.toOwnedSlice();
+    }
+
+    pub fn renderJson(self: McpDoctorSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"overall\":",
+            .{Kind.mcp_doctor.jsonName()},
+        );
+        try std.json.Stringify.value(@tagName(self.overall), .{}, &out.writer);
+        try out.writer.writeAll(",\"healthy\":");
+        try std.json.Stringify.value(self.healthy(), .{}, &out.writer);
+        try out.writer.print(",\"probe_timeout_ms\":{d},\"servers\":[", .{self.probe_timeout_ms});
+        for (self.servers, 0..) |server, index| {
+            if (index > 0) try out.writer.writeByte(',');
+            try out.writer.writeAll("{\"name\":");
+            try std.json.Stringify.value(server.name, .{}, &out.writer);
+            try out.writer.writeAll(",\"source\":");
+            try std.json.Stringify.value(@tagName(server.source), .{}, &out.writer);
+            try out.writer.writeAll(",\"scope\":");
+            try std.json.Stringify.value(@tagName(server.scope), .{}, &out.writer);
+            try out.writer.writeAll(",\"required\":");
+            try std.json.Stringify.value(server.required, .{}, &out.writer);
+            try out.writer.writeAll(",\"transport\":");
+            try std.json.Stringify.value(@tagName(server.transport), .{}, &out.writer);
+            try out.writer.writeAll(",\"connection\":");
+            try std.json.Stringify.value(@tagName(server.connection), .{}, &out.writer);
+            try out.writer.writeAll(",\"authentication\":");
+            try std.json.Stringify.value(@tagName(server.authentication), .{}, &out.writer);
+            try out.writer.writeAll(",\"admission\":");
+            if (server.admission) |admission|
+                try std.json.Stringify.value(@tagName(admission), .{}, &out.writer)
+            else
+                try out.writer.writeAll("null");
+            try out.writer.writeAll(",\"failure_kind\":");
+            try std.json.Stringify.value(@tagName(server.failure_kind), .{}, &out.writer);
+            try out.writer.writeAll(",\"failure\":");
+            if (server.failure) |failure|
+                try std.json.Stringify.value(failure, .{}, &out.writer)
+            else
+                try out.writer.writeAll("null");
+            try out.writer.writeByte('}');
+        }
+        try out.writer.writeAll("],\"configuration_issues\":[");
+        for (self.configuration_issues, 0..) |issue, index| {
+            if (index > 0) try out.writer.writeByte(',');
+            try out.writer.writeAll("{\"server\":");
+            try std.json.Stringify.value(issue.server, .{}, &out.writer);
+            try out.writer.writeAll(",\"kind\":");
+            try std.json.Stringify.value(@tagName(issue.kind), .{}, &out.writer);
+            try out.writer.writeAll(",\"message\":");
+            try std.json.Stringify.value(issue.message, .{}, &out.writer);
+            try out.writer.writeByte('}');
+        }
+        try out.writer.writeAll("]}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+test "doctor failure messages are exact fixed strings" {
+    try std.testing.expectEqual(@as(?[]const u8, null), doctorFailureMessage(.none));
+    try std.testing.expectEqualStrings(
+        "Server is unreachable; check the server command, URL, and trace logs.",
+        doctorFailureMessage(.@"unreachable").?,
+    );
+    try std.testing.expectEqualStrings(
+        "Probe timed out; the server did not answer within the probe bound.",
+        doctorFailureMessage(.timed_out).?,
+    );
+    try std.testing.expectEqualStrings(
+        "Authentication is required; run fiber mcp login <name> and check server permissions.",
+        doctorFailureMessage(.auth_required).?,
+    );
+    try std.testing.expectEqualStrings(
+        "Required server is disabled or not admitted; enable it or approve it for this workspace.",
+        doctorFailureMessage(.not_admitted).?,
+    );
+    try std.testing.expectEqualStrings(
+        "Server does not speak a supported MCP protocol version.",
+        doctorFailureMessage(.unsupported_protocol).?,
+    );
+}
+
+fn makeDoctorTestServer(
+    alloc: Allocator,
+    name: []const u8,
+    connection: mcp_health.ConnectionState,
+    authentication: mcp_health.AuthenticationState,
+    required: bool,
+    failure_kind: mcp_health.DoctorFailure,
+    failure_text: ?[]const u8,
+) !mcp_health.ServerSnapshot {
+    return .{
+        .configured_name = try alloc.dupe(u8, name),
+        .negotiated_name = null,
+        .negotiated_version = null,
+        .source = .profile,
+        .scope = .profile,
+        .workspace_admission = null,
+        .required = required,
+        .transport = .stdio,
+        .protocol_version = null,
+        .connection = connection,
+        .authentication = authentication,
+        .counts = .{},
+        .cache_freshness = .unavailable,
+        .subscription = .unavailable,
+        .runtime_generation = 1,
+        .catalog_generation = 0,
+        .retry_attempt = 0,
+        .retry_in_ms = null,
+        .last_successful_discovery_ms = null,
+        .failure = if (failure_text) |text| try alloc.dupe(u8, text) else null,
+        .doctor_failure = failure_kind,
+    };
+}
+
+test "doctor snapshot reports failure kinds and drops probe free text" {
+    const alloc = std.testing.allocator;
+    var servers = [_]mcp_health.ServerSnapshot{
+        try makeDoctorTestServer(alloc, "ready-server", .ready, .none, false, .none, null),
+        try makeDoctorTestServer(
+            alloc,
+            "broken-server",
+            .failed,
+            .none,
+            false,
+            .timed_out,
+            "dial https://user:s3cr3t@example.test/mcp token=abc123",
+        ),
+        try makeDoctorTestServer(alloc, "gated-server", .disabled, .none, true, .not_admitted, null),
+    };
+    defer {
+        for (&servers) |*server| server.deinit(alloc);
+    }
+    var health_snapshot = mcp_health.Snapshot{
+        .captured_at_ms = 1,
+        .servers = &servers,
+        .configuration_issues = &.{},
+    };
+    var snapshot = try McpDoctorSnapshot.fromHealthSnapshot(alloc, &health_snapshot, 10_000);
+    defer snapshot.deinit(alloc);
+    try std.testing.expect(!snapshot.healthy());
+    try std.testing.expectEqual(mcp_health.StartupDecision.blocked, snapshot.overall);
+    try std.testing.expectEqual(mcp_health.DoctorFailure.timed_out, snapshot.servers[1].failure_kind);
+    try std.testing.expectEqualStrings(
+        "Probe timed out; the server did not answer within the probe bound.",
+        snapshot.servers[1].failure.?,
+    );
+    const text = try snapshot.render(alloc, .text);
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "s3cr3t") == null);
+    try std.testing.expect(std.mem.find(u8, text, "abc123") == null);
+    try std.testing.expect(std.mem.find(
+        u8,
+        text,
+        "failure=timed_out: Probe timed out; the server did not answer within the probe bound.",
+    ) != null);
+    try std.testing.expect(std.mem.find(
+        u8,
+        text,
+        "failure=not_admitted: Required server is disabled or not admitted;",
+    ) != null);
+    try std.testing.expect(std.mem.find(u8, text, "tools=") == null);
+    const json = try snapshot.render(alloc, .json);
+    defer alloc.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"failure_kind\":\"timed_out\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"tools\"") == null);
+    try std.testing.expect(std.mem.find(u8, json, "s3cr3t") == null);
+}
+
+test "doctor text rendering pins the healthy server line" {
+    const alloc = std.testing.allocator;
+    var servers = [_]mcp_health.ServerSnapshot{
+        try makeDoctorTestServer(alloc, "ready-server", .ready, .none, false, .none, null),
+    };
+    defer {
+        for (&servers) |*server| server.deinit(alloc);
+    }
+    var health_snapshot = mcp_health.Snapshot{
+        .captured_at_ms = 1,
+        .servers = &servers,
+        .configuration_issues = &.{},
+    };
+    var snapshot = try McpDoctorSnapshot.fromHealthSnapshot(alloc, &health_snapshot, 10_000);
+    defer snapshot.deinit(alloc);
+    try std.testing.expect(snapshot.healthy());
+    const text = try snapshot.render(alloc, .text);
+    defer alloc.free(text);
+    try std.testing.expectEqualStrings(
+        "MCP doctor (1 server, probe_timeout_ms=10000): ready\n" ++
+            "  ready-server source=profile scope=profile policy=optional transport=stdio state=ready auth=none\n",
+        text,
+    );
+}
+
+test "doctor json carries the failure enum and message" {
+    const alloc = std.testing.allocator;
+    var servers = [_]mcp_health.ServerSnapshot{
+        try makeDoctorTestServer(alloc, "old-server", .failed, .none, false, .unsupported_protocol, null),
+    };
+    defer {
+        for (&servers) |*server| server.deinit(alloc);
+    }
+    var health_snapshot = mcp_health.Snapshot{
+        .captured_at_ms = 1,
+        .servers = &servers,
+        .configuration_issues = &.{},
+    };
+    var snapshot = try McpDoctorSnapshot.fromHealthSnapshot(alloc, &health_snapshot, 10_000);
+    defer snapshot.deinit(alloc);
+    const json = try snapshot.render(alloc, .json);
+    defer alloc.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"kind\":\"mcp.doctor\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"failure_kind\":\"unsupported_protocol\"") != null);
+    try std.testing.expect(std.mem.find(
+        u8,
+        json,
+        "\"failure\":\"Server does not speak a supported MCP protocol version.\"",
+    ) != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"healthy\":false") != null);
+}
+
+test "doctor config issue messages are exact fixed strings" {
+    try std.testing.expectEqualStrings(
+        "Project MCP file is not valid JSON.",
+        doctorConfigIssueMessage(.invalid_json),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP file root must be an object.",
+        doctorConfigIssueMessage(.root_must_be_object),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP file servers entry must be an object.",
+        doctorConfigIssueMessage(.servers_must_be_object),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP server entry is invalid and was ignored.",
+        doctorConfigIssueMessage(.invalid_entry),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP server entry requires an unset environment variable; set it or use a ${VAR:-default} fallback.",
+        doctorConfigIssueMessage(.missing_environment_variable),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP server entry exceeds the environment expansion limit.",
+        doctorConfigIssueMessage(.environment_expansion_limit_exceeded),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP server is both approved and rejected; fix the trust lists.",
+        doctorConfigIssueMessage(.approved_rejected_overlap),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP configuration has a problem that could not be classified.",
+        doctorConfigIssueMessage(.unclassified),
+    );
+}
+
+test "doctor snapshot maps config issues to fixed messages" {
+    const alloc = std.testing.allocator;
+    var servers = [_]mcp_health.ServerSnapshot{
+        try makeDoctorTestServer(alloc, "ready-server", .ready, .none, false, .none, null),
+    };
+    defer {
+        for (&servers) |*server| server.deinit(alloc);
+    }
+    var issues = [_]mcp_health.ConfigurationIssue{.{
+        .message = try alloc.dupe(
+            u8,
+            ".mcp.json server 'web' field environment requires environment variable 'SECRET_TOKEN'; set it.",
+        ),
+        .server_name = try alloc.dupe(u8, "web"),
+        .doctor_issue = .missing_environment_variable,
+    }};
+    defer {
+        for (&issues) |*issue| issue.deinit(alloc);
+    }
+    var health_snapshot = mcp_health.Snapshot{
+        .captured_at_ms = 1,
+        .servers = &servers,
+        .configuration_issues = &issues,
+    };
+    var snapshot = try McpDoctorSnapshot.fromHealthSnapshot(alloc, &health_snapshot, 10_000);
+    defer snapshot.deinit(alloc);
+    try std.testing.expect(!snapshot.healthy());
+    try std.testing.expectEqual(@as(usize, 1), snapshot.configuration_issues.len);
+    try std.testing.expectEqualStrings("web", snapshot.configuration_issues[0].server);
+    try std.testing.expectEqual(
+        mcp_health.DoctorConfigIssue.missing_environment_variable,
+        snapshot.configuration_issues[0].kind,
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP server entry requires an unset environment variable; set it or use a ${VAR:-default} fallback.",
+        snapshot.configuration_issues[0].message,
+    );
+    const text = try snapshot.render(alloc, .text);
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "SECRET_TOKEN") == null);
+    try std.testing.expect(std.mem.find(
+        u8,
+        text,
+        "configuration issue web (missing_environment_variable): Project MCP server entry requires an unset environment variable;",
+    ) != null);
+    const json = try snapshot.render(alloc, .json);
+    defer alloc.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"kind\":\"missing_environment_variable\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "SECRET_TOKEN") == null);
+}
 
 pub const AuthLogoutSnapshot = struct {
     provider: model_provider.ProviderId,

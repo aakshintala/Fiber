@@ -98,6 +98,7 @@ pub const ServerSnapshot = struct {
     retry_in_ms: ?u64,
     last_successful_discovery_ms: ?u64,
     failure: ?[]u8,
+    doctor_failure: DoctorFailure = .none,
 
     pub fn deinit(self: *ServerSnapshot, alloc: Allocator) void {
         alloc.free(self.configured_name);
@@ -109,11 +110,36 @@ pub const ServerSnapshot = struct {
     }
 };
 
+pub const DoctorFailure = enum {
+    none,
+    @"unreachable",
+    timed_out,
+    auth_required,
+    not_admitted,
+    unsupported_protocol,
+};
+
+/// Closed config-issue set for doctor output. Mirrors the workspace
+/// diagnostic causes; rendering uses fixed messages per kind.
+pub const DoctorConfigIssue = enum {
+    invalid_json,
+    root_must_be_object,
+    servers_must_be_object,
+    invalid_entry,
+    missing_environment_variable,
+    environment_expansion_limit_exceeded,
+    approved_rejected_overlap,
+    unclassified,
+};
+
 pub const ConfigurationIssue = struct {
     message: []u8,
+    server_name: ?[]u8 = null,
+    doctor_issue: ?DoctorConfigIssue = null,
 
     pub fn deinit(self: *ConfigurationIssue, alloc: Allocator) void {
         alloc.free(self.message);
+        if (self.server_name) |name| alloc.free(name);
         self.* = undefined;
     }
 };

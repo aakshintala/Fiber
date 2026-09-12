@@ -3306,6 +3306,7 @@ fn snapshotServerHealth(
         ),
         .last_successful_discovery_ms = server.last_successful_discovery_ms,
         .failure = failure,
+        .doctor_failure = doctorFailureKind(server, connection, authentication),
     };
 }
 
@@ -3376,6 +3377,45 @@ fn snapshotServerModelSummary(
 fn terminalSafeOwned(alloc: Allocator, value: []const u8, limit: usize) ![]u8 {
     const encoded = try text_utils.encodeTerminalSafe(alloc, value, limit);
     return encoded.bytes;
+}
+
+/// Classifies a probed server into the closed doctor failure set. Only our
+/// own error names and static message prefixes are matched; anything else
+/// (including a missing detail) fails closed as unreachable. Free text is
+/// never copied: callers render fixed messages per kind.
+fn doctorFailureKind(
+    server: *const McpServer,
+    connection: health.ConnectionState,
+    authentication: health.AuthenticationState,
+) health.DoctorFailure {
+    if (connection == .ready) return .none;
+    if (authentication == .required) return .auth_required;
+    if (connection == .disabled) return if (server.config.required) .not_admitted else .none;
+    if (connection != .failed) return .@"unreachable";
+    const last_error = server.last_error orelse return .@"unreachable";
+    if (std.mem.eql(u8, last_error, @errorName(error.McpConnectionTimedOut)) or
+        std.mem.eql(u8, last_error, @errorName(error.McpRequestTimedOut))) return .timed_out;
+    if (std.mem.eql(u8, last_error, @errorName(error.McpAuthenticationRequired)) or
+        std.mem.startsWith(u8, last_error, "Authentication required") or
+        std.mem.startsWith(u8, last_error, "MCP credential")) return .auth_required;
+    if (std.mem.eql(u8, last_error, @errorName(error.McpUnsupportedProtocolVersion)) or
+        std.mem.startsWith(u8, last_error, "MCP server does not support protocol version"))
+        return .unsupported_protocol;
+    return .@"unreachable";
+}
+
+/// Maps a workspace diagnostic cause into the closed doctor config-issue
+/// set. Every cause has an arm, so no free text is needed downstream.
+fn doctorConfigIssueKind(cause: project_config.WorkspaceDiagnosticCause) health.DoctorConfigIssue {
+    return switch (cause) {
+        .invalid_json => .invalid_json,
+        .root_must_be_object => .root_must_be_object,
+        .servers_must_be_object => .servers_must_be_object,
+        .invalid_entry => .invalid_entry,
+        .missing_environment_variable => .missing_environment_variable,
+        .environment_expansion_limit_exceeded => .environment_expansion_limit_exceeded,
+        .approved_rejected_overlap => .approved_rejected_overlap,
+    };
 }
 
 fn healthFailureForState(
@@ -3889,6 +3929,10 @@ pub const McpRuntime = struct {
     next_legacy_url_completion_window_generation: u64 = 1,
     discovery_state: std.atomic.Value(DiscoveryState) = .init(.idle),
     discovery_cancel_requested: std.atomic.Value(bool) = .init(false),
+    /// When true, probes observe but never mutate stored credentials:
+    /// refresh is skipped and expiring credentials report auth_required.
+    /// Set only by the doctor probe on its single-use runtime.
+    doctor_read_only: bool = false,
     discovery_thread: ?std.Thread = null,
     deferred_discovery_state: std.atomic.Value(DiscoveryState) = .init(.idle),
     deferred_discovery_complete: std.Io.Event = .unset,
@@ -5047,6 +5091,8 @@ pub const McpRuntime = struct {
                     alloc,
                     diagnostic,
                 ),
+                .server_name = try alloc.dupe(u8, diagnostic.server_name orelse "unknown"),
+                .doctor_issue = doctorConfigIssueKind(diagnostic.cause),
             };
             issues_initialized += 1;
         }
@@ -5231,6 +5277,43 @@ pub const McpRuntime = struct {
     ) void {
         if (self.discovery_state.cmpxchgStrong(.idle, .loading, .seq_cst, .seq_cst) != null) return;
         self.connectAllControlled(tool_registry, cancel_requested, null, .all);
+        self.finishDeferredDiscovery();
+        self.discovery_state.store(.complete, .seq_cst);
+    }
+
+    /// Named per-server bound for `fiber mcp doctor` probes. Interactive
+    /// discovery uses each server's configured startup timeout, which can
+    /// keep one hanging server open for tens of seconds; doctor caps every
+    /// probe at this bound so a single unreachable server cannot stall the
+    /// whole report.
+    pub const doctor_probe_timeout: std.Io.Duration = .fromSeconds(10);
+
+    /// Opens every configured server transport for `fiber mcp doctor` through
+    /// the same discovery path as interactive startup (phase `.all`, so
+    /// enablement and workspace admission apply). Synchronous; each probe is
+    /// bounded by `doctor_probe_timeout` and failures land on the per-server
+    /// health snapshot instead of escaping as errors.
+    pub fn connectAllForDoctor(
+        self: *McpRuntime,
+        tool_registry: tool_dispatch.Registry,
+    ) void {
+        self.connectAllForDoctorWithTimeout(tool_registry, doctor_probe_timeout);
+    }
+
+    fn connectAllForDoctorWithTimeout(
+        self: *McpRuntime,
+        tool_registry: tool_dispatch.Registry,
+        server_timeout: std.Io.Duration,
+    ) void {
+        if (self.discovery_state.cmpxchgStrong(.idle, .loading, .seq_cst, .seq_cst) != null) return;
+        self.discovery_cancel_requested.store(false, .seq_cst);
+        self.doctor_read_only = true;
+        self.connectAllControlled(
+            tool_registry,
+            &self.discovery_cancel_requested,
+            server_timeout,
+            .all,
+        );
         self.finishDeferredDiscovery();
         self.discovery_state.store(.complete, .seq_cst);
     }
@@ -9982,6 +10065,36 @@ fn connectServerCancellable(
         )
     else
         null;
+    if (override_deadline) |deadline| {
+        // Bounded probes (doctor) also enforce the deadline on waits that
+        // only observe a cancellation flag, such as the credential-store
+        // lock and keychain calls, so no probe path waits indefinitely.
+        var watch: DoctorProbeWatch = .{ .deadline = deadline, .parent = cancel_requested };
+        watch.start();
+        defer watch.stop();
+        const probe_flag = if (watch.thread != null) &watch.flag else cancel_requested;
+        return connectServerForDiscovery(
+            runtime,
+            server,
+            used_tool_names,
+            .{
+                .deadline = deadline,
+                .cancel_flag = probe_flag,
+                .lifecycle_cancel_flag = &runtime.retiring,
+                .use_startup_timeout = false,
+            },
+        ) catch |err| switch (err) {
+            error.McpRequestTimedOut => error.McpConnectionTimedOut,
+            // The probe flag also fires at the deadline, so a Cancelled that
+            // no caller requested is the timeout wearing another name.
+            error.Cancelled => if (cancel_requested.load(.acquire) or
+                runtime.retiring.load(.acquire))
+                error.Cancelled
+            else
+                error.McpConnectionTimedOut,
+            else => err,
+        };
+    }
     return connectServerForDiscovery(
         runtime,
         server,
@@ -9996,6 +10109,230 @@ fn connectServerCancellable(
         error.McpRequestTimedOut => error.McpConnectionTimedOut,
         else => err,
     };
+}
+
+/// Sets a flag at a probe deadline so waits that only observe a
+/// cancellation flag (credential-store lock, keychain) stay bounded.
+/// One short-lived joined thread per bounded probe; spawn failure falls
+/// back to the caller's flag with no behavior change.
+const DoctorProbeWatch = struct {
+    flag: std.atomic.Value(bool) = .init(false),
+    done: std.atomic.Value(bool) = .init(false),
+    deadline: std.Io.Clock.Timestamp,
+    parent: ?*std.atomic.Value(bool) = null,
+    thread: ?std.Thread = null,
+
+    fn start(self: *DoctorProbeWatch) void {
+        self.thread = std.Thread.spawn(.{}, run, .{self}) catch null;
+    }
+
+    fn run(self: *DoctorProbeWatch) void {
+        while (!self.done.load(.acquire)) {
+            if (self.parent) |parent| {
+                if (parent.load(.acquire)) {
+                    self.flag.store(true, .release);
+                    return;
+                }
+            }
+            if (std.Io.Clock.Timestamp.compare(
+                std.Io.Clock.Timestamp.now(io_mod.getIo(), .awake),
+                .gte,
+                self.deadline,
+            )) {
+                self.flag.store(true, .release);
+                return;
+            }
+            io_mod.sleep(5 * std.time.ns_per_ms);
+        }
+    }
+
+    fn stop(self: *DoctorProbeWatch) void {
+        self.done.store(true, .release);
+        if (self.thread) |thread| {
+            self.thread = null;
+            thread.join();
+        }
+    }
+};
+
+test "doctor probe watch fires at its deadline" {
+    const past = std.Io.Clock.Timestamp{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = 1 },
+    };
+    var watch: DoctorProbeWatch = .{ .deadline = past };
+    watch.start();
+    defer watch.stop();
+    try std.testing.expect(watch.thread != null);
+    const fired_deadline_ms = io_mod.milliTimestamp() + 5_000;
+    while (!watch.flag.load(.acquire) and io_mod.milliTimestamp() < fired_deadline_ms) {
+        io_mod.sleep(5 * std.time.ns_per_ms);
+    }
+    try std.testing.expect(watch.flag.load(.acquire));
+}
+
+test "doctor probes never refresh stored credentials" {
+    const alloc = std.testing.allocator;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    runtime.doctor_read_only = true;
+    var server = McpServer{ .config = .{ .name = "fixture" }, .runtime = &runtime };
+    defer {
+        if (server.auth_credentials) |*credentials| credentials.deinit(alloc);
+        if (server.last_error) |value| alloc.free(value);
+    }
+    server.auth_credentials = mcp_auth.Credentials{
+        .endpoint = try alloc.dupe(u8, "https://example.test/mcp"),
+        .resource = try alloc.dupe(u8, "https://example.test"),
+        .issuer = try alloc.dupe(u8, "https://example.test"),
+        .client_id = try alloc.dupe(u8, "client"),
+        .access_token = try alloc.dupe(u8, "original-token"),
+        .refresh_token = try alloc.dupe(u8, "refresh-me"),
+        .scope = try alloc.dupe(u8, "tools"),
+        .token_type = try alloc.dupe(u8, "Bearer"),
+        .token_endpoint_auth_method = try alloc.dupe(u8, "none"),
+        .expires_at_ms = 0,
+        .authorization_endpoint = try alloc.dupe(u8, "https://example.test/auth"),
+        .token_endpoint = try alloc.dupe(u8, "https://example.test/token"),
+    };
+    const deadline = std.Io.Clock.Timestamp.fromNow(std.testing.io, .{
+        .clock = .awake,
+        .raw = .fromSeconds(5),
+    });
+    try std.testing.expectError(
+        error.McpAuthenticationRequired,
+        refreshSharedCredentials(alloc, &server, .{ .deadline = deadline }),
+    );
+    try std.testing.expectEqualStrings(
+        "MCP credentials expired. Run /mcp auth for this server.",
+        server.last_error.?,
+    );
+    try std.testing.expectEqualStrings("original-token", server.auth_credentials.?.access_token);
+}
+
+const doctor_probe_challenge_port: u16 = 18471;
+
+fn doctorProbeContentLength(headers: []const u8) usize {
+    var lines = std.mem.splitSequence(u8, headers, "\r\n");
+    while (lines.next()) |line| {
+        if (line.len < 15) continue;
+        if (std.ascii.eqlIgnoreCase(line[0..15], "content-length:")) {
+            return std.fmt.parseInt(usize, std.mem.trim(u8, line[15..], " \t"), 10) catch 0;
+        }
+    }
+    return 0;
+}
+
+/// Loopback stub answering one discovery POST with 401 so a real doctor
+/// probe can hit the auth-challenge path. Poll-bounded throughout: the
+/// test can never hang on join.
+fn doctorProbeChallengeStub(listener: *std.Io.net.Server) void {
+    const io = std.testing.io;
+    var poll_fds = [_]std.posix.pollfd{.{
+        .fd = listener.socket.handle,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    const ready = std.posix.poll(&poll_fds, 5_000) catch return;
+    if (ready <= 0 or poll_fds[0].revents == 0) return;
+    var stream = listener.accept(io) catch return;
+    defer stream.close(io);
+    var socket_buffer: [4096]u8 = undefined;
+    var reader = stream.reader(io, &socket_buffer);
+    var header: [8192]u8 = undefined;
+    var header_len: usize = 0;
+    var content_length: usize = 0;
+    while (header_len < header.len) {
+        const byte = reader.interface.takeByte() catch return;
+        header[header_len] = byte;
+        header_len += 1;
+        if (std.mem.endsWith(u8, header[0..header_len], "\r\n\r\n")) {
+            content_length = doctorProbeContentLength(header[0..header_len]);
+            break;
+        }
+    } else return;
+    var remaining = content_length;
+    while (remaining > 0) {
+        _ = reader.interface.takeByte() catch return;
+        remaining -= 1;
+    }
+    var write_buffer: [512]u8 = undefined;
+    var writer = stream.writer(io, &write_buffer);
+    writer.interface.writeAll("HTTP/1.1 401 Unauthorized\r\n" ++
+        "WWW-Authenticate: Bearer scope=\"doctor-test\"\r\n" ++
+        "Content-Length: 0\r\nConnection: close\r\n\r\n") catch return;
+    writer.interface.flush() catch return;
+}
+
+test "doctor probe performs zero credential store operations" {
+    const alloc = std.testing.allocator;
+    const loads_before = mcp_auth_store.TestStoreCounters.loads.load(.seq_cst);
+    const saves_before = mcp_auth_store.TestStoreCounters.saves.load(.seq_cst);
+    var address = try std.Io.net.IpAddress.parse("127.0.0.1", doctor_probe_challenge_port);
+    var listener = try address.listen(std.testing.io, .{ .reuse_address = true });
+    defer listener.deinit(std.testing.io);
+    const stub = try std.Thread.spawn(.{}, doctorProbeChallengeStub, .{&listener});
+    defer stub.join();
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    const url = try std.fmt.allocPrint(alloc, "http://127.0.0.1:{d}/mcp", .{doctor_probe_challenge_port});
+    defer alloc.free(url);
+    try runtime.addServer(.{
+        .name = try alloc.dupe(u8, "challenged"),
+        .transport = .http,
+        .url = try alloc.dupe(u8, url),
+        .allow_stored_credentials = true,
+    });
+    runtime.connectAllForDoctor(.{});
+    try std.testing.expectEqual(loads_before, mcp_auth_store.TestStoreCounters.loads.load(.seq_cst));
+    try std.testing.expectEqual(saves_before, mcp_auth_store.TestStoreCounters.saves.load(.seq_cst));
+    const probed = &runtime.servers.items[0];
+    try std.testing.expectEqual(ServerState.failed, probed.state);
+    try std.testing.expect(probed.auth_challenge_present.load(.acquire));
+    try std.testing.expect(probed.auth_credentials == null);
+    try std.testing.expect(probed.pending_auth_challenge == null);
+    var snapshot = try runtime.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(health.ConnectionState.failed, snapshot.servers[0].connection);
+    try std.testing.expectEqual(health.AuthenticationState.required, snapshot.servers[0].authentication);
+    try std.testing.expectEqual(health.DoctorFailure.auth_required, snapshot.servers[0].doctor_failure);
+}
+
+test "doctor probe challenge fails fast without touching the store" {
+    const alloc = std.testing.allocator;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    runtime.doctor_read_only = true;
+    var server = McpServer{
+        .config = .{
+            .name = "fixture",
+            .transport = .http,
+            .url = "https://example.test/mcp",
+        },
+        .runtime = &runtime,
+    };
+    defer {
+        if (server.auth_credentials) |*credentials| credentials.deinit(alloc);
+        if (server.pending_auth_challenge) |*challenge| challenge.deinit(alloc);
+        if (server.last_error) |value| alloc.free(value);
+    }
+    const deadline = std.Io.Clock.Timestamp.fromNow(std.testing.io, .{
+        .clock = .awake,
+        .raw = .fromSeconds(5),
+    });
+    const control: streamable_http.Control = .{ .deadline = deadline };
+    // No network, no keychain, no save: the firewall answers first.
+    try std.testing.expectError(
+        error.McpAuthenticationRequired,
+        authorizeForChallenge(alloc, &server, .{}, control),
+    );
+    try std.testing.expectEqualStrings(
+        "Authentication required. Run /mcp auth fixture, or configure bearer_token_env.",
+        server.last_error.?,
+    );
+    try std.testing.expect(server.auth_credentials == null);
+    try std.testing.expect(server.pending_auth_challenge == null);
+    try std.testing.expect(!server.auth_challenge_present.load(.acquire));
 }
 
 fn startupTimeout(
@@ -10104,25 +10441,120 @@ test "discovery timeout override stays private and deadline addition saturates" 
     );
 }
 
+test "doctor probe marks a reachable stdio server ready" {
+    const alloc = std.testing.allocator;
+    const shell_server =
+        \\while IFS= read -r line; do
+        \\  case "$line" in
+        \\    *'"method":"server/discover"'*)
+        \\      printf '%s\n' '{"jsonrpc":"2.0","id":0,"error":{"code":-32601,"message":"Method not found"}}'
+        \\      ;;
+        \\    *'"method":"initialize"'*)
+        \\      printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"shell","version":"0"}}}'
+        \\      ;;
+        \\    *'"method":"notifications/initialized"'*)
+        \\      ;;
+        \\    *'"method":"tools/list"'*)
+        \\      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}'
+        \\      ;;
+        \\    *)
+        \\      exit 3
+        \\      ;;
+        \\  esac
+        \\done
+    ;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    try runtime.addServer(try shellMcpConfigForTest(alloc, "doctor-ready", shell_server));
+    runtime.connectAllForDoctor(.{});
+    try std.testing.expectEqual(ServerState.ready, runtime.servers.items[0].state);
+    var snapshot = try runtime.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.servers.len);
+    try std.testing.expectEqual(health.ConnectionState.ready, snapshot.servers[0].connection);
+    try std.testing.expectEqual(health.DoctorFailure.none, snapshot.servers[0].doctor_failure);
+}
+
+test "doctor probe records an unreachable stdio server without crashing" {
+    const alloc = std.testing.allocator;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    try runtime.addServer(try shellMcpConfigForTest(alloc, "doctor-dead", "exit 1"));
+    runtime.connectAllForDoctor(.{});
+    try std.testing.expectEqual(ServerState.failed, runtime.servers.items[0].state);
+    var snapshot = try runtime.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.servers.len);
+    try std.testing.expectEqual(health.ConnectionState.failed, snapshot.servers[0].connection);
+    try std.testing.expectEqual(health.DoctorFailure.@"unreachable", snapshot.servers[0].doctor_failure);
+}
+
+test "doctor probe timeout bounds a hanging stdio server" {
+    try std.testing.expectEqual(@as(i64, 10_000), McpRuntime.doctor_probe_timeout.toMilliseconds());
+    const alloc = std.testing.allocator;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    try runtime.addServer(try shellMcpConfigForTest(alloc, "doctor-hang", "sleep 30"));
+    const start_ms = io_mod.milliTimestamp();
+    runtime.connectAllForDoctorWithTimeout(.{}, .fromMilliseconds(300));
+    const elapsed_ms = io_mod.milliTimestamp() - start_ms;
+    try std.testing.expectEqual(ServerState.failed, runtime.servers.items[0].state);
+    try std.testing.expect(elapsed_ms < 10_000);
+    var snapshot = try runtime.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(health.DoctorFailure.timed_out, snapshot.servers[0].doctor_failure);
+}
+
+test "doctor failure classification covers auth admission and protocol causes" {
+    const alloc = std.testing.allocator;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    try runtime.addServer(.{ .name = try alloc.dupe(u8, "auth") });
+    try runtime.addServer(.{ .name = try alloc.dupe(u8, "blocked"), .required = true });
+    try runtime.addServer(.{ .name = try alloc.dupe(u8, "skipped") });
+    try runtime.addServer(.{ .name = try alloc.dupe(u8, "legacy") });
+    runtime.servers.items[0].state = .failed;
+    runtime.servers.items[0].auth_challenge_present.store(true, .release);
+    runtime.servers.items[1].state = .disabled;
+    runtime.servers.items[2].state = .disabled;
+    runtime.servers.items[3].state = .failed;
+    runtime.servers.items[3].last_error = try alloc.dupe(u8, "McpUnsupportedProtocolVersion");
+    runtime.discovery_state.store(.complete, .seq_cst);
+    var snapshot = try runtime.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(health.DoctorFailure.auth_required, snapshot.servers[0].doctor_failure);
+    try std.testing.expectEqual(health.DoctorFailure.not_admitted, snapshot.servers[1].doctor_failure);
+    try std.testing.expectEqual(health.DoctorFailure.none, snapshot.servers[2].doctor_failure);
+    try std.testing.expectEqual(
+        health.DoctorFailure.unsupported_protocol,
+        snapshot.servers[3].doctor_failure,
+    );
+}
+
 fn connectServerForDiscovery(
     runtime: *McpRuntime,
     server: *McpServer,
     used_tool_names: *std.StringHashMap(void),
     control: ConnectionControl,
 ) !void {
-    loadStoredCredentials(runtime.alloc, server, control) catch |err| {
-        if (err == error.Cancelled) return err;
-        debug_trace.logf(
-            "mcp",
-            "credential load failed server={s} err={s}",
-            .{ server.config.name, @errorName(err) },
-        );
-        server.setFailed(
-            runtime.alloc,
-            "Stored MCP credentials could not be read securely.",
-        );
-        return err;
-    };
+    // Doctor probes never touch the credential store: no locks, keychain,
+    // or migration. Servers needing stored credentials proceed without
+    // them and report auth_required on challenge.
+    if (!runtime.doctor_read_only) {
+        loadStoredCredentials(runtime.alloc, server, control) catch |err| {
+            if (err == error.Cancelled) return err;
+            debug_trace.logf(
+                "mcp",
+                "credential load failed server={s} err={s}",
+                .{ server.config.name, @errorName(err) },
+            );
+            server.setFailed(
+                runtime.alloc,
+                "Stored MCP credentials could not be read securely.",
+            );
+            return err;
+        };
+    }
     return if (server.config.transport == .stdio)
         runtime.connectServerBounded(server, used_tool_names, control)
     else
@@ -12189,6 +12621,15 @@ fn authenticatedPost(
             try auth_access.authorize();
             return error.McpAuthenticationRequired;
         }
+        // Doctor probes stop at the challenge: no pending-challenge store,
+        // no automated authorize, no credential save. The in-memory flag
+        // records that auth was required for honest health reporting.
+        if (doctorReadOnlyProbe(server)) {
+            response.deinit(request_alloc);
+            server.auth_challenge_present.store(true, .release);
+            markAuthenticationRequired(owner_alloc, server);
+            return error.McpAuthenticationRequired;
+        }
         try storePendingChallenge(
             owner_alloc,
             server,
@@ -12279,19 +12720,34 @@ fn refreshSharedCredentials(
     server: *McpServer,
     control: streamable_http.Control,
 ) !bool {
-    var source = source: {
+    // Computed above lock acquisition: doctor probes observe in-memory
+    // credential state but never touch the credential store.
+    const read_only = doctorReadOnlyProbe(server);
+    const Source = struct {
+        generation: u64,
+        credentials: ?mcp_auth.Credentials,
+    };
+    var source: Source = source: {
         try lockMutexWithControl(&server.auth_lock, control);
         defer server.auth_lock.unlock(io_mod.getIo());
         if (server.auth_logout_in_progress.load(.acquire)) return false;
         const credentials = server.auth_credentials orelse return false;
         if (!credentials.needsRefresh(io_mod.milliTimestamp())) return false;
+        // Denied before cloning: no clone, no refresh, no save, no store
+        // contact of any kind. The error below maps to auth_required.
+        if (read_only) break :source .{
+            .generation = server.auth_generation.load(.acquire),
+            .credentials = null,
+        };
         break :source .{
             .generation = server.auth_generation.load(.acquire),
             .credentials = try credentials.clone(alloc),
         };
     };
-    defer source.credentials.deinit(alloc);
-    if (source.credentials.refresh_token == null) {
+    defer if (source.credentials) |*cached| cached.deinit(alloc);
+    // read_only short-circuits: credentials is null only on the denied path,
+    // so the unwrap below never fires on it.
+    if (read_only or source.credentials.?.refresh_token == null) {
         setFailedSynchronized(
             server,
             alloc,
@@ -12299,8 +12755,9 @@ fn refreshSharedCredentials(
         );
         return error.McpAuthenticationRequired;
     }
+    const cached = source.credentials.?;
 
-    var refreshed = mcp_auth.refreshCredentials(alloc, source.credentials, .{
+    var refreshed = mcp_auth.refreshCredentials(alloc, cached, .{
         .deadline = control.deadline,
         .cancel_flag = control.cancel_flag,
         .lifecycle_cancel_flag = control.lifecycle_cancel_flag,
@@ -12336,6 +12793,14 @@ fn refreshSharedCredentials(
     installAuthCredentials(alloc, server, &refreshed);
     transferred = true;
     return true;
+}
+
+/// True when the server belongs to a read-only doctor probe runtime: the
+/// probe may observe in-memory credential state but must never touch the
+/// credential store (no locks, keychain, migration, or save).
+fn doctorReadOnlyProbe(server: *const McpServer) bool {
+    const runtime = server.runtime orelse return false;
+    return runtime.doctor_read_only;
 }
 
 fn markAuthenticationRequired(alloc: Allocator, server: *McpServer) void {
@@ -12391,6 +12856,12 @@ fn authorizeForChallenge(
     challenge: mcp_auth.Challenge,
     control: streamable_http.Control,
 ) !void {
+    // Structural backstop: challenge-driven authorize/save is unreachable
+    // from read-only doctor probes even if a new caller appears.
+    if (doctorReadOnlyProbe(server)) {
+        markAuthenticationRequired(alloc, server);
+        return error.McpAuthenticationRequired;
+    }
     const auth_config = server.config.auth orelse mcp_contract.McpAuthConfig{};
     const client_secret = if (auth_config.client_secret_env) |env_name|
         io_mod.getenv(env_name) orelse return error.McpClientSecretEnvironmentMissing
@@ -14024,7 +14495,10 @@ fn captureAuthHeader(
     else
         mcp_auth.Challenge{};
     defer challenge.deinit(alloc);
-    try storePendingChallenge(alloc, server, challenge, control);
+    // Doctor probes observe the challenge without storing it.
+    if (!doctorReadOnlyProbe(server)) {
+        try storePendingChallenge(alloc, server, challenge, control);
+    }
     markAuthenticationRequired(alloc, server);
 }
 
