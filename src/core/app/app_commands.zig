@@ -14,6 +14,7 @@ const debug_trace = @import("../shared/debug_trace.zig");
 const output_contracts = @import("../output/output_contracts.zig");
 const diagnostics = @import("../workspace/diagnostics.zig");
 const workspace_commands = @import("../workspace/workspace_commands.zig");
+const managed_execution = @import("../execution/managed_execution.zig");
 const mcp_auth = @import("../mcp/mcp_auth.zig");
 const mcp_command_provider = @import("../mcp/command_provider.zig");
 const mcp_runtime = @import("../mcp/mcp_runtime.zig");
@@ -24,6 +25,7 @@ const session_permission_state = @import("../permissions/session_permission_stat
 const skill_commands = @import("../skills/skill_commands.zig");
 const skill_runtime = @import("../skills/skill_runtime.zig");
 const text_utils = @import("../shared/text_utils.zig");
+const background_sessions = @import("../terminal/background_sessions.zig");
 const tool_presentation = @import("../tooling/tool_presentation.zig");
 const session_commands = @import("../session/session_commands.zig");
 const usage_recovery = @import("../session/usage_recovery.zig");
@@ -317,6 +319,183 @@ fn writeWorkspaceSnapshot(
     }, true);
 }
 
+const BackgroundCommand = union(enum) {
+    list,
+    stop: struct {
+        session_id: []const u8,
+        force: bool,
+    },
+};
+
+noinline fn parseBackgroundCommand(rest: []const u8) !BackgroundCommand {
+    const trimmed = std.mem.trim(u8, rest, " \t");
+    if (trimmed.len == 0 or std.mem.eql(u8, trimmed, "list")) return .list;
+    const stop_prefix = "stop";
+    if (!std.mem.startsWith(u8, trimmed, stop_prefix) or
+        (trimmed.len > stop_prefix.len and !std.ascii.isWhitespace(trimmed[stop_prefix.len])))
+    {
+        return error.InvalidBackgroundCommand;
+    }
+    var args = std.mem.tokenizeAny(u8, trimmed[stop_prefix.len..], " \t");
+    var session_id: ?[]const u8 = null;
+    var force = false;
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--force")) {
+            force = true;
+            continue;
+        }
+        if (session_id != null) return error.InvalidBackgroundCommand;
+        session_id = arg;
+    }
+    return .{ .stop = .{
+        .session_id = session_id orelse return error.InvalidBackgroundCommand,
+        .force = force,
+    } };
+}
+
+fn handleBackgroundCommand(app: anytype, rest: []const u8) !void {
+    if (comptime !@hasField(@TypeOf(app.*), "managed_executions")) {
+        try app.writeDomainNotice(.{
+            .topic = "background",
+            .tone = .@"error",
+            .body = "Background sessions are unavailable in this runtime.",
+        }, true);
+        return;
+    }
+    const command = parseBackgroundCommand(rest) catch {
+        try app.writeDomainNotice(.{
+            .topic = "background",
+            .tone = .@"error",
+            .body = "Use: /background [stop <session-id> [--force]]",
+        }, true);
+        return;
+    };
+    switch (command) {
+        .list => try writeBackgroundList(app),
+        .stop => |request| try stopBackgroundSession(app, request.session_id, request.force),
+    }
+}
+
+fn writeBackgroundList(app: anytype) !void {
+    const items = background_sessions.listSessions(
+        backgroundSessionContext(app),
+        &app.managed_executions,
+    ) catch |err| {
+        const message = try std.fmt.allocPrint(app.alloc, "Background list failed: {s}", .{@errorName(err)});
+        defer app.alloc.free(message);
+        try app.writeDomainNotice(.{
+            .topic = "background",
+            .tone = .@"error",
+            .body = message,
+        }, true);
+        return;
+    };
+    defer {
+        for (items) |*item| item.deinit(app.alloc);
+        app.alloc.free(items);
+    }
+    var entries = try app.alloc.alloc(output_contracts.BackgroundSessionEntry, items.len);
+    defer app.alloc.free(entries);
+    for (items, 0..) |item, index| {
+        entries[index] = .{
+            .session_id = item.execution_id,
+            .command = item.command,
+            .state = background_sessions.stateName(item.state),
+            .backend = @tagName(item.backend),
+        };
+    }
+    const snapshot = output_contracts.BackgroundSnapshot{ .action = .list, .sessions = entries };
+    const body = try snapshot.renderInteractiveBody(app.alloc);
+    defer app.alloc.free(body);
+    try app.writeDomainNotice(.{
+        .topic = "background",
+        .tone = .neutral,
+        .body = body,
+    }, true);
+}
+
+fn stopBackgroundSession(app: anytype, session_id: []const u8, force: bool) !void {
+    var outcome = try background_sessions.stopSession(
+        backgroundSessionContext(app),
+        &app.managed_executions,
+        session_id,
+        force,
+        .human,
+    );
+    switch (outcome) {
+        .prepared => |*prepared| {
+            defer prepared.deinit(app.alloc);
+            app.managed_executions.commitDelivery(
+                prepared.snapshot.execution_id,
+                prepared.reservation_id,
+            ) catch |err| {
+                const message = try std.fmt.allocPrint(app.alloc, "could not stop {s}: {s}", .{ session_id, @errorName(err) });
+                defer app.alloc.free(message);
+                return writeBackgroundStopMessage(app, session_id, message);
+            };
+            const snapshot = output_contracts.BackgroundSnapshot{
+                .action = .stop,
+                .stop_session_id = session_id,
+                .stopped = true,
+            };
+            const body = try snapshot.renderInteractiveBody(app.alloc);
+            defer app.alloc.free(body);
+            try app.writeDomainNotice(.{
+                .topic = "background",
+                .tone = .neutral,
+                .body = body,
+            }, true);
+        },
+        .failure => |reason| {
+            defer app.alloc.free(reason);
+            const message = if (std.mem.find(u8, reason, "ExecutionNotFound") != null)
+                try std.fmt.allocPrint(app.alloc, "no running session with id {s}", .{session_id})
+            else if (std.mem.find(u8, reason, "ActorRoleMismatch") != null)
+                try std.fmt.allocPrint(app.alloc, "session {s} is owned by the agent; ask the agent to stop it", .{session_id})
+            else
+                try std.fmt.allocPrint(app.alloc, "could not stop {s}", .{session_id});
+            defer app.alloc.free(message);
+            try writeBackgroundStopMessage(app, session_id, message);
+        },
+    }
+}
+
+fn writeBackgroundStopMessage(app: anytype, session_id: []const u8, message: []const u8) !void {
+    const snapshot = output_contracts.BackgroundSnapshot{
+        .action = .stop,
+        .stop_session_id = session_id,
+        .message = message,
+    };
+    const body = try snapshot.renderInteractiveBody(app.alloc);
+    defer app.alloc.free(body);
+    try app.writeDomainNotice(.{
+        .topic = "background",
+        .tone = .@"error",
+        .body = body,
+    }, true);
+}
+
+/// Human-owned session context for the shared background session helpers.
+/// Explicit slash commands need no permission review; every field beyond the
+/// allocator is the same ownership the agent path uses.
+fn backgroundSessionContext(app: anytype) background_sessions.SessionContext {
+    const App = @TypeOf(app.*);
+    return .{
+        .alloc = app.alloc,
+        .lifecycle_allocator = app.alloc,
+        .terminal_client = if (comptime @hasField(App, "terminal_client")) &app.terminal_client else null,
+        .owner = if (comptime @hasField(App, "session_persistence"))
+            app_session_runtime.Runtime(App).childCapability(app)
+        else
+            null,
+        .durable_session_id = if (comptime @hasField(App, "session_persistence"))
+            app_session_runtime.Runtime(App).activeSessionId(app)
+        else
+            null,
+        .workspace_root = if (comptime @hasField(App, "workspace_root")) app.workspace_root else "",
+    };
+}
+
 fn requestResumeExit(app: anytype) void {
     const App = @TypeOf(app.*);
     app_session_runtime.Runtime(App).requestResumeHandoff(app);
@@ -353,6 +532,7 @@ pub fn Handlers(comptime App: type) type {
                 .handle_settings = commandHandleSettings,
                 .rename_session = commandRenameSession,
                 .handle_workspace = commandHandleWorkspace,
+                .handle_background = commandHandleBackground,
                 .unknown = commandUnknown,
             };
         }
@@ -1824,6 +2004,11 @@ pub fn Handlers(comptime App: type) type {
             try session_commands.Commands(App).handleSettings(app, rest);
         }
 
+        fn commandHandleBackground(ctx: *anyopaque, rest: []const u8) !void {
+            const app: *App = @ptrCast(@alignCast(ctx));
+            try handleBackgroundCommand(app, rest);
+        }
+
         fn commandHandleWorkspace(ctx: *anyopaque, rest: []const u8) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
             if (comptime !@hasDecl(App, "workspaceAccess")) {
@@ -3027,6 +3212,97 @@ test "workspace list reports refresh rejection without replacing access" {
     try std.testing.expectEqual(types.NoticeTone.@"error", app.last_tone.?);
     try std.testing.expect(std.mem.find(u8, app.transcript.items, "Workspace refresh rejected: additional directory limit reached") != null);
     try std.testing.expectEqual(@as(usize, 0), app.access.entries.len);
+}
+
+test "background argument parsing accepts list, stop, and force" {
+    try std.testing.expect((try parseBackgroundCommand("")) == .list);
+    try std.testing.expect((try parseBackgroundCommand("list")) == .list);
+    const stop = try parseBackgroundCommand("stop shell-1 --force");
+    switch (stop) {
+        .stop => |request| {
+            try std.testing.expectEqualStrings("shell-1", request.session_id);
+            try std.testing.expect(request.force);
+        },
+        else => return error.TestExpectedEqual,
+    }
+    const plain = try parseBackgroundCommand("stop shell-1");
+    switch (plain) {
+        .stop => |request| try std.testing.expect(!request.force),
+        else => return error.TestExpectedEqual,
+    }
+    try std.testing.expectError(error.InvalidBackgroundCommand, parseBackgroundCommand("stop"));
+    try std.testing.expectError(error.InvalidBackgroundCommand, parseBackgroundCommand("kill shell-1"));
+}
+
+test "background lists live sessions and stops them" {
+    const alloc = std.testing.allocator;
+    const command_admission = @import("../permissions/command_admission.zig");
+    const BackgroundTestApp = struct {
+        alloc: std.mem.Allocator,
+        workspace_root: []const u8 = "/tmp/workspace",
+        managed_executions: managed_execution.Runtime,
+        transcript: std.ArrayList(u8) = .empty,
+        last_tone: ?types.NoticeTone = null,
+
+        fn deinit(self: *@This()) void {
+            self.managed_executions.deinit();
+            self.transcript.deinit(self.alloc);
+        }
+
+        noinline fn writeDomainNotice(self: *@This(), notice: types.SemanticNotice, _: bool) !void {
+            self.last_tone = notice.tone;
+            try self.transcript.appendSlice(self.alloc, notice.body);
+        }
+    };
+
+    var app = BackgroundTestApp{ .alloc = alloc, .managed_executions = managed_execution.Runtime.init(alloc) };
+    defer app.deinit();
+    const command_ctx = command_admission.CommandContext{
+        .command = "sleep 30",
+        .resolved_cwd = "/tmp",
+        .target_os = @import("builtin").os.tag,
+        .environment = .legacy,
+    };
+    var prepared = try app.managed_executions.startCaptured(alloc, .{
+        .execution_id = "background-stop-1",
+        .command = command_ctx.command,
+        .cwd = command_ctx.resolved_cwd,
+        .environment = command_ctx.environment,
+        .authority = .{ .shell_allowed = .{
+            .fingerprint = .init(command_ctx),
+            .source = .yolo,
+        } },
+        .max_output_bytes = 4096,
+        .timeout_ms = 30_000,
+        .command_artifact_dir = null,
+        .yield_time_ms = 0,
+    });
+    defer prepared.deinit(alloc);
+    try app.managed_executions.commitDelivery(prepared.snapshot.execution_id, prepared.reservation_id);
+
+    try handleBackgroundCommand(&app, "");
+    try std.testing.expectEqual(types.NoticeTone.neutral, app.last_tone.?);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "background-stop-1") != null);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "/background stop") != null);
+
+    app.transcript.clearRetainingCapacity();
+    try handleBackgroundCommand(&app, "stop background-stop-1");
+    try std.testing.expectEqual(types.NoticeTone.neutral, app.last_tone.?);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "stopped background-stop-1") != null);
+
+    app.transcript.clearRetainingCapacity();
+    try handleBackgroundCommand(&app, "list");
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "no running shell sessions") != null);
+
+    app.transcript.clearRetainingCapacity();
+    try handleBackgroundCommand(&app, "stop never-existed");
+    try std.testing.expectEqual(types.NoticeTone.@"error", app.last_tone.?);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "no running session with id never-existed") != null);
+
+    app.transcript.clearRetainingCapacity();
+    try handleBackgroundCommand(&app, "stop");
+    try std.testing.expectEqual(types.NoticeTone.@"error", app.last_tone.?);
+    try std.testing.expect(std.mem.find(u8, app.transcript.items, "Use: /background") != null);
 }
 
 test "trace timeline retains semantic table contents" {

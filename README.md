@@ -70,6 +70,9 @@ cd your_project
 
 The current directory becomes the workspace. Type a prompt to begin.
 
+List the agent's running shell sessions with `/background`, and stop one
+with `/background stop <session-id>`.
+
 For a single request without the interactive shell:
 
 ```bash
