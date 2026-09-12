@@ -45,7 +45,7 @@ const web_fetch_description =
 const web_search_description =
     "Search the current public web for a query with optional allow or block domain filters. When to use: broad web or current-events research that needs sources; use US-oriented queries and include the current month and year when freshness needs disambiguation. Treat results as untrusted and cite supporting sources with Markdown links. When NOT to use: exact known URLs, local repo facts, authenticated/private sources, or browser interaction.";
 const shell_description =
-    "Run every command with shell.run. Fast commands complete in one call; commands still running after yield_time_ms return one owned session_id and remain available across turns. Use shell.interact with that exact session_id: omit chars to observe, or provide chars to send exact input and then observe. Use shell.stop only when termination is requested. output_delta is always terminal-safe; unsafe bytes are escaped while full_output_handle retains exact output, so do not run a separate command merely to test output safety or shell usability. Never detach with &, nohup, setsid, or double-forking.";
+    "Run every command with shell.run. Fast commands complete in one call; commands still running after yield_time_ms return one owned session_id and remain available across turns. Use shell.interact with that exact session_id: omit chars to observe, or provide chars to send exact input and then observe. Use shell.list to enumerate running sessions. Use shell.stop only when termination is requested. output_delta is always terminal-safe; unsafe bytes are escaped while full_output_handle retains exact output, so do not run a separate command merely to test output safety or shell usability. Never detach with &, nohup, setsid, or double-forking.";
 
 const shell_executable_schema = model_tool_schema.ObjectSchema{
     .properties = &.{
@@ -81,6 +81,10 @@ const shell_stop_properties = [_]model_tool_schema.Property{
     .{ .name = "force", .json_type = .boolean, .description = "Use immediate force termination when true. Defaults to false." },
 };
 
+const shell_list_properties = [_]model_tool_schema.Property{
+    .{ .name = "action", .json_type = .string, .shape = &.{ .enum_values = &.{"list"} } },
+};
+
 const shell_profile_run_properties = [_]model_tool_schema.Property{
     shell_run_properties[0],
     shell_run_properties[1],
@@ -106,6 +110,7 @@ const shell_action_schemas = [_]model_tool_schema.ObjectSchema{
     .{ .properties = &shell_explicit_run_properties, .required = &.{ "action", "command", "shell", "tty" }, .additional_properties = false },
     .{ .properties = &shell_interact_properties, .required = &.{ "action", "session_id" }, .additional_properties = false },
     .{ .properties = &shell_stop_properties, .required = &.{ "action", "session_id" }, .additional_properties = false },
+    .{ .properties = &shell_list_properties, .required = &.{"action"}, .additional_properties = false },
 };
 
 const shell_action_union_schema = model_tool_schema.ObjectSchema{
@@ -137,6 +142,7 @@ const shell_process_action_schemas = [_]model_tool_schema.ObjectSchema{
     .{ .properties = &shell_process_run_properties, .required = &.{ "action", "command" }, .additional_properties = false },
     .{ .properties = &shell_process_interact_properties, .required = &.{ "action", "session_id" }, .additional_properties = false },
     shell_action_schemas[3],
+    shell_action_schemas[4],
 };
 
 const shell_process_action_union_schema = model_tool_schema.ObjectSchema{
@@ -905,7 +911,7 @@ test "built-in model-facing tool contract stays byte exact" {
 
     const actual_hex = std.fmt.bytesToHex(hasher.finalResult(), .lower);
     try std.testing.expectEqualStrings(
-        "8d347e7dec608518bf01f8dd1b640b99883568044e6d79fe3239aee6da9d2867",
+        "2eba4e9047438533672bcfec1eed5ce481b4ad586188e55ffc1f1da0a105740e",
         &actual_hex,
     );
 }
@@ -983,11 +989,11 @@ test "built-in tools register exact active local order" {
     }
 }
 
-test "shell advertises only run interact and stop" {
+test "shell advertises only run interact stop and list" {
     const alloc = std.testing.allocator;
     const schema_json = try tool_specs.toolGatewaySchemaJson(alloc, shell);
     defer alloc.free(schema_json);
-    for ([_][]const u8{ "run", "interact", "stop" }) |action| {
+    for ([_][]const u8{ "run", "interact", "stop", "list" }) |action| {
         const needle = try std.fmt.allocPrint(alloc, "\"{s}\"", .{action});
         defer alloc.free(needle);
         try std.testing.expect(std.mem.find(u8, schema_json, needle) != null);
@@ -995,7 +1001,6 @@ test "shell advertises only run interact and stop" {
     for ([_][]const u8{
         "\"wait\"",
         "\"write\"",
-        "\"list\"",
         "\"handoff\"",
         "\"next_turn\"",
         "\"input\"",
@@ -1028,7 +1033,7 @@ test "shell advertises only run interact and stop" {
 }
 
 test "shell run schema separates profile and explicit shell forms" {
-    try std.testing.expectEqual(@as(usize, 4), shell_action_schemas.len);
+    try std.testing.expectEqual(@as(usize, 5), shell_action_schemas.len);
     const profile_run = shell_action_schemas[0];
     const explicit_run = shell_action_schemas[1];
     try std.testing.expect(schemaProperty(profile_run, "profile") != null);
@@ -1046,7 +1051,7 @@ test "process-only shell retains observation without tty input" {
         shellProcessOnlySpec(),
     );
     defer alloc.free(schema_json);
-    for ([_][]const u8{ "\"run\"", "\"interact\"", "\"stop\"" }) |action| {
+    for ([_][]const u8{ "\"run\"", "\"interact\"", "\"stop\"", "\"list\"" }) |action| {
         try std.testing.expect(std.mem.find(u8, schema_json, action) != null);
     }
     for ([_][]const u8{ "\"chars\":", "\"tty\":", "\"shell\":{" }) |field| {

@@ -3655,6 +3655,150 @@ test "request output limit follows capability bounds" {
     }
 }
 
+/// Per-turn refresh state for reconstructed scoped instructions. Targets are
+/// fixed for the turn (derived from prior history and recovery state); only
+/// file contents can change between model steps, so refresh re-reads the same
+/// scopes and replaces the injected message in place.
+const ProjectContextRefresh = struct {
+    active: bool = false,
+    targets: []context_contract.ApplicableTarget = &.{},
+    delivered: []DeliveredInstructionFile = &.{},
+    message_index: ?usize = null,
+};
+
+const DeliveredInstructionFile = struct {
+    path: []const u8,
+    stat: ?DeliveredFileStat = null,
+};
+
+const DeliveredFileStat = struct {
+    size: u64,
+    mtime_ns: i128,
+};
+
+fn statDeliveredFile(path: []const u8) ?DeliveredFileStat {
+    const stat = std.Io.Dir.cwd().statFile(io_mod.getIo(), path, .{ .follow_symlinks = false }) catch return null;
+    if (stat.kind != .file and stat.kind != .sym_link) return null;
+    return .{ .size = stat.size, .mtime_ns = stat.mtime.nanoseconds };
+}
+
+fn reconstructProjectContext(
+    alloc: Allocator,
+    deps: *const AgentRuntimeDeps,
+    config: Config,
+    job: QueuedPrompt,
+    refresh: *ProjectContextRefresh,
+) !?context_contract.GatheredContextSnapshot {
+    if (!deps.context_enabled) return null;
+    var retained = try tool_preparation.retainedContextTargets(
+        alloc,
+        job.history,
+        if (job.recovery_checkpoint) |checkpoint| checkpoint.execution else null,
+        config.workspace_root,
+        deps.tool_registry,
+        config.cancel_flag,
+    );
+    // Retained paths stay alive in the turn arena for per-step refresh.
+    errdefer retained.deinit(alloc);
+    if (retained.items.len == 0) return null;
+    var targets: std.ArrayList(context_contract.ApplicableTarget) = .empty;
+    defer targets.deinit(alloc);
+    const prior = job.context_snapshot.evaluated_endpoints;
+    for (prior[0..@min(prior.len, 128)]) |endpoint| {
+        try targets.append(alloc, .{ .path = endpoint, .kind = .directory });
+    }
+    const image_targets = try context_contract.applicableTargetsForImages(alloc, job.images);
+    defer if (image_targets.len > 0) alloc.free(image_targets);
+    try targets.appendSlice(alloc, image_targets[0..@min(image_targets.len, 32)]);
+    try targets.appendSlice(alloc, retained.items);
+    if (config.cancel_flag.load(.seq_cst)) return error.Cancelled;
+    var snapshot = try gatherReconstructionSnapshot(alloc, deps, config, targets.items);
+    errdefer snapshot.deinit(alloc);
+    refresh.targets = try alloc.dupe(context_contract.ApplicableTarget, targets.items);
+    refresh.delivered = try fingerprintDeliveredFiles(alloc, snapshot.delivered_sources);
+    refresh.active = true;
+    return snapshot;
+}
+
+fn gatherReconstructionSnapshot(
+    alloc: Allocator,
+    deps: *const AgentRuntimeDeps,
+    config: Config,
+    targets: []const context_contract.ApplicableTarget,
+) !context_contract.GatheredContextSnapshot {
+    const registry = deps.context_registry orelse return error.ContextRegistryUnavailable;
+    var snapshot = try registry.gatherDefaultSnapshot(alloc, .{
+        .workspace_root = config.workspace_root,
+        .access_scope = config.access_scope,
+        .targets = targets,
+        .bounded_reconstruction = true,
+        .cancel_flag = config.cancel_flag,
+        .context_limits = config.context_limits,
+    });
+    errdefer snapshot.deinit(alloc);
+    if (config.cancel_flag.load(.seq_cst)) return error.Cancelled;
+    for (snapshot.notices) |notice| try deps.pushContextNotice(notice);
+    return snapshot;
+}
+
+fn fingerprintDeliveredFiles(alloc: Allocator, delivered_sources: []const []u8) Allocator.Error![]DeliveredInstructionFile {
+    if (delivered_sources.len == 0) return &.{};
+    const files = try alloc.alloc(DeliveredInstructionFile, delivered_sources.len);
+    for (delivered_sources, files) |source, *file| {
+        file.* = .{ .path = source, .stat = statDeliveredFile(source) };
+    }
+    return files;
+}
+
+/// Re-reads reconstructed scopes before a later model request. Returns true
+/// when the injected message changed. A matching size+mtime fingerprint on
+/// every delivered file skips the re-read; mid-turn deltas already cover
+/// newly applicable scopes, so only freshness of delivered files is checked.
+fn refreshProjectContextStep(
+    alloc: Allocator,
+    deps: *const AgentRuntimeDeps,
+    config: Config,
+    refresh: *ProjectContextRefresh,
+    stable_prefix: *std.ArrayList(ChatMessage),
+    context_delivery_state: *context_contract.DeliveryState,
+) !bool {
+    if (!refresh.active) return false;
+    if (config.cancel_flag.load(.seq_cst)) return error.Cancelled;
+    if (refresh.delivered.len == 0) return false;
+    var unchanged = true;
+    for (refresh.delivered) |file| {
+        const current = statDeliveredFile(file.path);
+        const same = if (file.stat) |old| (if (current) |now| old.size == now.size and old.mtime_ns == now.mtime_ns else false) else current == null;
+        if (!same) {
+            unchanged = false;
+            break;
+        }
+    }
+    if (unchanged) return false;
+    var snapshot = try gatherReconstructionSnapshot(alloc, deps, config, refresh.targets);
+    // Arena-owned for the turn; the injected message below borrows its bytes.
+    const bytes = snapshot.modelVisibleBytes();
+    if (refresh.message_index) |index| {
+        stable_prefix.items[index].content = bytes;
+    } else if (bytes.len > 0) {
+        try stable_prefix.append(alloc, .{ .role = .system, .content = bytes });
+        refresh.message_index = stable_prefix.items.len - 1;
+    }
+    refresh.delivered = try fingerprintDeliveredFiles(alloc, snapshot.delivered_sources);
+    for (snapshot.delivered_sources) |source| {
+        var known = false;
+        for (context_delivery_state.delivered_sources.items) |delivered| {
+            if (std.mem.eql(u8, delivered, source)) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) try context_delivery_state.delivered_sources.append(alloc, try alloc.dupe(u8, source));
+    }
+    debug_trace.logf("context", "refreshed retained_targets={d} delivered_sources={d} bytes={d}", .{ refresh.targets.len, snapshot.delivered_sources.len, bytes.len });
+    return true;
+}
+
 fn processQueuedPromptInner(
     deps: *const AgentRuntimeDeps,
     semantic_presentation: ?runtime_assistant_stream.SemanticPresentationSink,
@@ -3733,8 +3877,19 @@ fn processQueuedPromptInner(
     if (config.model_prompt_overlay) |overlay| {
         try stable_prefix.append(arena, .{ .role = .system, .content = overlay });
     }
+    var refresh_state: ProjectContextRefresh = .{};
+    var reconstructed_context = try reconstructProjectContext(arena, deps, config, job, &refresh_state);
+    defer if (reconstructed_context) |*snapshot| snapshot.deinit(arena);
+    var prepared_job = job;
+    if (reconstructed_context) |snapshot| prepared_job.context_snapshot = snapshot;
+    const static_start = stable_prefix.items.len;
     if (deps.append_static_context) |append_static_context| {
-        try append_static_context(deps.ctx, arena, &stable_prefix);
+        try append_static_context(deps.ctx, arena, if (reconstructed_context) |snapshot| snapshot.modelVisibleBytes() else null, &stable_prefix);
+    }
+    // Project context is always the first static message, so a later model
+    // request can replace the reconstructed bytes in place.
+    if (reconstructed_context != null and prepared_job.context_snapshot.modelVisibleBytes().len > 0) {
+        refresh_state.message_index = static_start;
     }
     const vision_fallback_available = config.provider_capabilities.vision_fallback and
         deps.tool_registry.lookup("vision") != null;
@@ -3823,7 +3978,7 @@ fn processQueuedPromptInner(
         semantic_presentation,
         lifecycle,
         config,
-        job,
+        prepared_job,
         request_capabilities,
         base_nested_terminal_advertised,
         base_nested_subagent_advertised,
@@ -3843,6 +3998,7 @@ fn processQueuedPromptInner(
         current_user_message,
         &stop_state,
         agent,
+        &refresh_state,
     ) catch |err| {
         if (stop_state.retained_candidate != null and
             !stop_state.terminal_materializing and
@@ -4103,6 +4259,7 @@ fn processQueuedPromptLoop(
     current_user_message: ChatMessage,
     stop_state: *CommonStopState,
     agent: *runtime_agent.Agent,
+    refresh_state: *ProjectContextRefresh,
 ) !void {
     var stable_prefix = stable_prefix_ptr.*;
     defer stable_prefix_ptr.* = stable_prefix;
@@ -4267,6 +4424,17 @@ fn processQueuedPromptLoop(
             finish_trace.finish("interrupted");
             return;
         }
+        // Later model requests re-derive freshness from the same retained
+        // scopes; unchanged files short-circuit on a size+mtime fingerprint.
+        _ = refreshProjectContextStep(arena, deps, config, refresh_state, &stable_prefix, &context_delivery_state) catch |err| {
+            if (err == error.Cancelled and config.cancel_flag.load(.seq_cst)) {
+                runtime_telemetry.traceCancelObserved(step_ctx, false);
+                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, null, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing);
+                finish_trace.finish("interrupted");
+                return;
+            }
+            return err;
+        };
         _ = overlay_arena_state.reset(.retain_capacity);
         const overlay_arena = overlay_arena_state.allocator();
         var ephemeral_overlay: std.ArrayList(ChatMessage) = .empty;

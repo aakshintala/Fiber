@@ -68,7 +68,8 @@ pull request:
   native platforms, the same four end-to-end shards on Linux aarch64 and
   macOS arm64, benchmarks, binary-size comparison, and the isolated MCP
   conformance package
-- a docs-only change (markdown files) skips the heavy legs in both scopes;
+- a docs-only change (markdown files outside `src/`, which the binary embeds)
+  skips the heavy legs in both scopes;
   the static gates still run on every push
 
 A failing end-to-end shard file retries once, immediately. A retry that

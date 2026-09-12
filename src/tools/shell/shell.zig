@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const command_admission = @import("../../core/permissions/command_admission.zig");
 const command_contract = @import("../../core/execution/command_contract.zig");
 const command_environment = @import("../../core/execution/command_environment.zig");
+const background_sessions = @import("../../core/terminal/background_sessions.zig");
 const debug_trace = @import("../../core/shared/debug_trace.zig");
 const managed_execution = @import("../../core/execution/managed_execution.zig");
 const managed_contract = @import("../../core/execution/managed_execution_contract.zig");
@@ -12,7 +13,6 @@ const terminal_identity = @import("../../core/terminal/identity.zig");
 const terminal_action_executor = @import("../../core/terminal/action_executor.zig");
 const terminal_managed_observer = @import("../../core/terminal/managed_observer.zig");
 const terminal_operation = @import("../../core/terminal/operation.zig");
-const terminal_store = @import("../../core/terminal/store.zig");
 const shell_resolver = @import("../../core/terminal/shell_resolver.zig");
 const sort_utils = @import("../../core/shared/sort_utils.zig");
 const terminal_contracts = @import("../../core/terminal/contracts.zig");
@@ -32,6 +32,7 @@ pub const Action = enum {
     run,
     interact,
     stop,
+    list,
 };
 
 const ShellKind = enum { executable };
@@ -83,6 +84,10 @@ pub fn actionFieldContract(action: Action) ActionFieldContract {
         .stop => .{
             .allowed = &.{ "action", "session_id", "force" },
             .required = &.{ "action", "session_id" },
+        },
+        .list => .{
+            .allowed = &.{"action"},
+            .required = &.{"action"},
         },
     };
 }
@@ -156,6 +161,7 @@ fn defaultYieldTime(action: Action) u32 {
         .run => managed_contract.default_yield_time_ms,
         .interact => managed_contract.default_wait_ceiling_ms,
         .stop => 0,
+        .list => 0,
     };
 }
 
@@ -279,6 +285,7 @@ pub fn validate(
         .run => validateRun(ctx, arena, input),
         .interact => validateInteract(ctx, input),
         .stop => null,
+        .list => null,
     };
 }
 
@@ -347,7 +354,57 @@ pub fn call(
         .run => callRun(ctx, input),
         .interact => callInteract(ctx, input),
         .stop => callStop(ctx, input),
+        .list => callList(ctx),
     };
+}
+
+fn sessionContext(ctx: tool_dispatch.DispatchContext) background_sessions.SessionContext {
+    return .{
+        .alloc = ctx.allocator,
+        .lifecycle_allocator = ctx.lifecycle_allocator,
+        .terminal_client = ctx.terminal_client,
+        .owner = ctx.session_child_capability,
+        .durable_session_id = ctx.terminal_owner_session_id,
+        .workspace_root = ctx.workspace_root,
+        .transport_role = ctx.terminal_transport_role,
+        .max_output_bytes = ctx.max_command_output_bytes,
+        .cancel_flag = ctx.cancel_flag,
+    };
+}
+
+fn callList(
+    ctx: tool_dispatch.DispatchContext,
+) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
+    const runtime = ctx.managed_executions orelse return unavailable(ctx);
+    const items = background_sessions.listSessions(sessionContext(ctx), runtime) catch |err|
+        return runtimeFailure(ctx, err);
+    defer {
+        for (items) |*item| item.deinit(ctx.allocator);
+        ctx.allocator.free(items);
+    }
+    const body = formatListJson(ctx.allocator, items) catch |err|
+        return runtimeFailure(ctx, err);
+    return .{ .success = body };
+}
+
+fn formatListJson(alloc: Allocator, items: []managed_execution.ListItem) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    errdefer out.deinit();
+    try out.writer.writeAll("{\"sessions\":[");
+    for (items, 0..) |item, index| {
+        if (index > 0) try out.writer.writeByte(',');
+        try out.writer.writeAll("{\"session_id\":");
+        try std.json.Stringify.value(item.execution_id, .{}, &out.writer);
+        try out.writer.writeAll(",\"command\":");
+        try std.json.Stringify.value(item.command, .{}, &out.writer);
+        try out.writer.writeAll(",\"state\":");
+        try std.json.Stringify.value(background_sessions.stateName(item.state), .{}, &out.writer);
+        try out.writer.writeAll(",\"backend\":");
+        try std.json.Stringify.value(@tagName(item.backend), .{}, &out.writer);
+        try out.writer.writeByte('}');
+    }
+    try out.writer.writeAll("]}");
+    return try out.toOwnedSlice();
 }
 
 fn callRun(
@@ -425,7 +482,7 @@ fn callInteract(
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const runtime = ctx.managed_executions orelse return unavailable(ctx);
     const session_id = input.session_id orelse return unavailable(ctx);
-    ensureOwnedTtyIndexed(ctx, runtime, session_id) catch |err|
+    background_sessions.ensureOwnedTtyIndexed(sessionContext(ctx), runtime, session_id) catch |err|
         return runtimeFailure(ctx, err);
     const chars = input.chars orelse "";
     if (runtime.isTombstone(session_id)) {
@@ -458,39 +515,20 @@ fn callStop(
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const runtime = ctx.managed_executions orelse return unavailable(ctx);
     const session_id = input.session_id orelse return unavailable(ctx);
-    ensureOwnedTtyIndexed(ctx, runtime, session_id) catch |err|
-        return runtimeFailure(ctx, err);
-    if (runtime.isTombstone(session_id)) {
-        if (runtime.retainedTerminalSnapshot(ctx.allocator, session_id) catch |err|
-            return runtimeFailure(ctx, err)) |retained|
-        {
-            var prepared = retained;
-            defer prepared.deinit(ctx.allocator);
-            return finishPrepared(ctx, runtime, &prepared, .stop);
-        }
-    }
-    if (runtime.backendFor(session_id) == .tty) {
-        if (runtime.stateFor(session_id)) |state| {
-            if (state != .running) {
-                return finishTerminalTtyStop(ctx, runtime, session_id, state);
-            }
-        }
-        refreshTtyExecution(ctx, runtime, session_id, "") catch |err|
-            return runtimeFailure(ctx, err);
-        if (runtime.stateFor(session_id)) |state| {
-            if (state != .running) {
-                return finishTerminalTtyStop(ctx, runtime, session_id, state);
-            }
-        }
-        return callTtyStop(ctx, input);
-    }
-    var prepared = runtime.stop(
-        ctx.allocator,
+    var outcome = try background_sessions.stopSession(
+        sessionContext(ctx),
+        runtime,
         session_id,
         input.force,
-    ) catch |err| return runtimeFailure(ctx, err);
-    defer prepared.deinit(ctx.allocator);
-    return finishPrepared(ctx, runtime, &prepared, .stop);
+        .agent,
+    );
+    switch (outcome) {
+        .prepared => |*prepared| {
+            defer prepared.deinit(ctx.allocator);
+            return finishPrepared(ctx, runtime, prepared, .stop);
+        },
+        .failure => |body| return .{ .failure = body },
+    }
 }
 
 const ParsedTerminalExecution = struct {
@@ -575,13 +613,13 @@ fn callTtyRun(
     defer if (session_owned) closeTtyBestEffort(ctx, started.session.session_id);
     const initial_state = terminal_managed_observer.snapshotState(started.session, started.outcome);
     var observed = terminal_managed_observer.observe(
-        ttyObserverContext(ctx, runtime) orelse return unavailable(ctx),
+        background_sessions.observerContext(sessionContext(ctx), runtime) orelse return unavailable(ctx),
         started.session.session_id,
         initial_state,
         null,
     ) catch |err| return runtimeFailure(ctx, err);
     defer observed.deinit(ctx.allocator);
-    finalizeCompletedTty(ctx, started.session.session_id, observed.state) catch |err|
+    background_sessions.finalizeCompletedTty(sessionContext(ctx), started.session.session_id, observed.state) catch |err|
         return runtimeFailure(ctx, err);
     var prepared = runtime.registerTty(ctx.allocator, .{
         .execution_id = started.session.session_id,
@@ -621,7 +659,7 @@ fn callTtyInteract(
         if (runtime.backendFor(session_id) != .tty) {
             return runtimeFailure(ctx, error.InvalidBackend);
         }
-        var ready = executeAuthorizedTerminal(ctx, session_id, .{ .wait = .{
+        var ready = background_sessions.executeAuthorizedTerminal(sessionContext(ctx), session_id, .{ .wait = .{
             .session_id = session_id,
             .return_when = .started,
             .safety_ceiling_ms = 20_000,
@@ -639,7 +677,7 @@ fn callTtyInteract(
             return runtimeFailure(ctx, error.TerminalNotReady);
         }
 
-        var acquired = executeAuthorizedTerminal(ctx, session_id, .{ .write = .{
+        var acquired = background_sessions.executeAuthorizedTerminal(sessionContext(ctx), session_id, .{ .write = .{
             .session_id = session_id,
             .lease = .acquire,
             .authority = null,
@@ -655,7 +693,7 @@ fn callTtyInteract(
         var release_needed = true;
         defer if (release_needed) releaseTtyLease(ctx, session_id);
 
-        var used = executeAuthorizedTerminal(ctx, session_id, .{ .write = .{
+        var used = background_sessions.executeAuthorizedTerminal(sessionContext(ctx), session_id, .{ .write = .{
             .session_id = session_id,
             .payload = .{ .text = chars },
             .lease = .use,
@@ -670,7 +708,7 @@ fn callTtyInteract(
             },
         };
 
-        var released = executeAuthorizedTerminal(ctx, session_id, .{ .write = .{
+        var released = background_sessions.executeAuthorizedTerminal(sessionContext(ctx), session_id, .{ .write = .{
             .session_id = session_id,
             .lease = .release,
             .authority = null,
@@ -691,7 +729,7 @@ fn callTtyInteract(
     defer runtime.releaseExternalWait(session_id, waiter_id);
     const wait_ceiling_ms = interactWaitCeilingMs(input);
     if (state == .running and wait_ceiling_ms != 0) {
-        var waited = executeAuthorizedTerminal(ctx, session_id, .{ .wait = .{
+        var waited = background_sessions.executeAuthorizedTerminal(sessionContext(ctx), session_id, .{ .wait = .{
             .session_id = session_id,
             .return_when = .exit,
             .safety_ceiling_ms = wait_ceiling_ms,
@@ -711,7 +749,7 @@ fn callTtyInteract(
         io_mod.sleep(100 * std.time.ns_per_ms);
     }
     var observed = terminal_managed_observer.observe(
-        ttyObserverContext(ctx, runtime) orelse return unavailable(ctx),
+        background_sessions.observerContext(sessionContext(ctx), runtime) orelse return unavailable(ctx),
         session_id,
         state,
         runtime.ttyCursorFor(session_id),
@@ -721,7 +759,7 @@ fn callTtyInteract(
     if (runtime.externalWaitPreempted(session_id, waiter_id)) {
         return runtimeFailure(ctx, error.WaitPreempted);
     }
-    finalizeCompletedTty(ctx, session_id, observed.state) catch |err|
+    background_sessions.finalizeCompletedTty(sessionContext(ctx), session_id, observed.state) catch |err|
         return runtimeFailure(ctx, err);
     var prepared = runtime.updateTty(ctx.allocator, .{
         .execution_id = session_id,
@@ -740,80 +778,6 @@ fn callTtyInteract(
         finishPreparedWithAccepted(ctx, runtime, &prepared, count)
     else
         finishPrepared(ctx, runtime, &prepared, .command);
-}
-
-fn callTtyStop(
-    ctx: tool_dispatch.DispatchContext,
-    input: Input,
-) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
-    const runtime = ctx.managed_executions orelse return unavailable(ctx);
-    const session_id = input.session_id orelse return unavailable(ctx);
-    runtime.preemptWait(session_id);
-    var signaled = executeAuthorizedTerminal(ctx, session_id, .{ .signal = .{
-        .session_id = session_id,
-        .signal = if (input.force) .kill else .terminate,
-        .authority = null,
-    } }) catch |err| return runtimeFailure(ctx, err);
-    defer signaled.deinit(ctx.allocator);
-    switch (signaled.result.view()) {
-        .failure => return cloneTerminalFailure(ctx, signaled.result.view()),
-        .success => |success| switch (success) {
-            .signal => {},
-            else => return runtimeFailure(ctx, error.InvalidTerminalResult),
-        },
-    }
-
-    var stopped_status: ?command_contract.CommandStatus = null;
-    var waited = executeAuthorizedTerminal(ctx, session_id, .{ .wait = .{
-        .session_id = session_id,
-        .return_when = .exit,
-        .safety_ceiling_ms = 2_000,
-        .authority = null,
-    } }) catch |err| return runtimeFailure(ctx, err);
-    defer waited.deinit(ctx.allocator);
-    const wait_result = switch (waited.result.view()) {
-        .failure => return cloneTerminalFailure(ctx, waited.result.view()),
-        .success => |success| switch (success) {
-            .wait => |value| value,
-            else => return runtimeFailure(ctx, error.InvalidTerminalResult),
-        },
-    };
-    stopped_status = statusFromOutcome(wait_result.outcome);
-    var observed = terminal_managed_observer.observe(
-        ttyObserverContext(ctx, runtime) orelse return unavailable(ctx),
-        session_id,
-        terminal_managed_observer.snapshotState(wait_result.session, wait_result.outcome),
-        runtime.ttyCursorFor(session_id),
-    ) catch |err| return runtimeFailure(ctx, err);
-    defer observed.deinit(ctx.allocator);
-
-    var closed = executeAuthorizedTerminal(ctx, session_id, .{ .close = .{
-        .session_id = session_id,
-        .policy = if (input.force) .force else .graceful,
-        .authority = null,
-    } }) catch |err| return runtimeFailure(ctx, err);
-    defer closed.deinit(ctx.allocator);
-    switch (closed.result.view()) {
-        .failure => return cloneTerminalFailure(ctx, closed.result.view()),
-        .success => |success| switch (success) {
-            .close => {},
-            else => return runtimeFailure(ctx, error.InvalidTerminalResult),
-        },
-    }
-    var prepared = runtime.updateTty(ctx.allocator, .{
-        .execution_id = session_id,
-        .command = "",
-        .state = .{ .stopped = stopped_status },
-        .output = observed.output,
-        .replay_output = observed.replay_output,
-        .next_cursor = observed.next_cursor,
-        .output_incomplete = observed.output_incomplete,
-        .error_name = if (observed.timed_out) "TimeoutExpired" else null,
-        .max_output_bytes = ctx.max_command_output_bytes,
-        .published_running = true,
-    }) catch |err| return runtimeFailure(ctx, err);
-    defer prepared.deinit(ctx.allocator);
-    return finishPrepared(ctx, runtime, &prepared, .stop);
 }
 
 fn ttyShell(
@@ -863,96 +827,18 @@ fn executeTerminal(
     }, request) };
 }
 
-fn executeAuthorizedTerminal(
-    ctx: tool_dispatch.DispatchContext,
-    session_id: []const u8,
-    request: terminal_contracts.ActionRequest,
-) !ParsedTerminalExecution {
-    var authority = try reloadTerminalAuthority(ctx, session_id);
-    defer authority.deinit();
-    const authorized: terminal_contracts.ActionRequest = switch (request) {
-        .read => |value| .{ .read = blk: {
-            var owned = value;
-            owned.authority = authority.view();
-            break :blk owned;
-        } },
-        .write => |value| .{ .write = blk: {
-            var owned = value;
-            owned.authority = authority.view();
-            break :blk owned;
-        } },
-        .wait => |value| .{ .wait = blk: {
-            var owned = value;
-            owned.authority = authority.view();
-            break :blk owned;
-        } },
-        .signal => |value| .{ .signal = blk: {
-            var owned = value;
-            owned.authority = authority.view();
-            break :blk owned;
-        } },
-        .close => |value| .{ .close = blk: {
-            var owned = value;
-            owned.authority = authority.view();
-            break :blk owned;
-        } },
-        .screen => |value| .{ .screen = blk: {
-            var owned = value;
-            owned.authority = authority.view();
-            break :blk owned;
-        } },
-        .start, .inspect, .list, .resize => return error.InvalidTerminalRequest,
-    };
-    return executeTerminal(ctx, authorized);
-}
-
-fn reloadTerminalAuthority(
-    ctx: tool_dispatch.DispatchContext,
-    session_id: []const u8,
-) !terminal_operation.OwnedAuthorityClaim {
-    const owner = ctx.session_child_capability orelse return error.TerminalAuthorityUnavailable;
-    const durable_session_id = ctx.terminal_owner_session_id orelse
-        return error.TerminalAuthorityUnavailable;
-    var profile_user_buffer: [64]u8 = undefined;
-    const profile_user = terminal_identity.profileUser(&profile_user_buffer) orelse
-        return error.TerminalAuthorityUnavailable;
-    return terminal_store.reloadOwnerAuthorityClaim(ctx.allocator, owner, .{
-        .terminal_session_id = session_id,
-        .profile_user = profile_user,
-        .durable_session_id = durable_session_id,
-        .workspace_root = ctx.workspace_root,
-        .transport_role = ctx.terminal_transport_role,
-        .actor = .agent,
-    });
-}
-
 fn cloneTerminalFailure(
     ctx: tool_dispatch.DispatchContext,
     result: terminal_contracts.Result,
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
-    if (result == .success) return runtimeFailure(ctx, error.InvalidTerminalResult);
-    var out: std.Io.Writer.Allocating = .init(ctx.allocator);
-    errdefer out.deinit();
-    std.json.Stringify.value(result, .{}, &out.writer) catch
-        return error.OutOfMemory;
-    return .{ .failure = try out.toOwnedSlice() };
-}
-
-fn statusFromOutcome(
-    outcome: terminal_contracts.ReturnOutcome,
-) ?command_contract.CommandStatus {
-    return switch (outcome) {
-        .exited => |code| .{ .exit_code = code },
-        .signal => |signal| .{ .signal = signal },
-        .started, .condition_met, .safety_ceiling, .cancelled => null,
-    };
+    return .{ .failure = try background_sessions.cloneTerminalFailureBody(ctx.allocator, result) };
 }
 
 fn releaseTtyLease(
     ctx: tool_dispatch.DispatchContext,
     session_id: []const u8,
 ) void {
-    var released = executeAuthorizedTerminal(ctx, session_id, .{ .write = .{
+    var released = background_sessions.executeAuthorizedTerminal(sessionContext(ctx), session_id, .{ .write = .{
         .session_id = session_id,
         .lease = .release,
         .authority = null,
@@ -971,7 +857,7 @@ pub fn releaseAgentWriteLease(
     ctx: tool_dispatch.DispatchContext,
     session_id: []const u8,
 ) !void {
-    var released = try executeAuthorizedTerminal(ctx, session_id, .{ .write = .{
+    var released = try background_sessions.executeAuthorizedTerminal(sessionContext(ctx), session_id, .{ .write = .{
         .session_id = session_id,
         .lease = .release,
         .authority = null,
@@ -989,35 +875,11 @@ pub fn releaseAgentWriteLease(
     }
 }
 
-fn finalizeCompletedTty(
-    ctx: tool_dispatch.DispatchContext,
-    session_id: []const u8,
-    state: managed_execution.SnapshotState,
-) !void {
-    switch (state) {
-        .completed => {},
-        .running, .stopped, .lost => return,
-    }
-    var closed = try executeAuthorizedTerminal(ctx, session_id, .{ .close = .{
-        .session_id = session_id,
-        .policy = .graceful,
-        .authority = null,
-    } });
-    defer closed.deinit(ctx.allocator);
-    switch (closed.result.view()) {
-        .failure => return error.TerminalCloseFailed,
-        .success => |success| switch (success) {
-            .close => {},
-            else => return error.InvalidTerminalResult,
-        },
-    }
-}
-
 fn closeTtyBestEffort(
     ctx: tool_dispatch.DispatchContext,
     session_id: []const u8,
 ) void {
-    var closed = executeAuthorizedTerminal(ctx, session_id, .{ .close = .{
+    var closed = background_sessions.executeAuthorizedTerminal(sessionContext(ctx), session_id, .{ .close = .{
         .session_id = session_id,
         .policy = .force,
         .authority = null,
@@ -1065,67 +927,6 @@ fn finishPreparedWithAccepted(
     return .{ .success = body };
 }
 
-fn ensureOwnedTtyIndexed(
-    ctx: tool_dispatch.DispatchContext,
-    runtime: *managed_execution.Runtime,
-    session_id: []const u8,
-) !void {
-    if (runtime.stateFor(session_id) != null) return;
-    const observer = ttyObserverContext(ctx, runtime) orelse return;
-    try terminal_managed_observer.syncOwned(observer);
-}
-
-fn refreshTtyExecution(
-    ctx: tool_dispatch.DispatchContext,
-    runtime: *managed_execution.Runtime,
-    session_id: []const u8,
-    command: []const u8,
-) !void {
-    return terminal_managed_observer.refresh(
-        ttyObserverContext(ctx, runtime) orelse
-            return error.TerminalAuthorityUnavailable,
-        session_id,
-        command,
-    );
-}
-
-fn ttyObserverContext(
-    ctx: tool_dispatch.DispatchContext,
-    runtime: *managed_execution.Runtime,
-) ?terminal_managed_observer.Context {
-    return .{
-        .alloc = ctx.allocator,
-        .lifecycle_allocator = ctx.lifecycle_allocator,
-        .terminal_client = ctx.terminal_client orelse return null,
-        .managed_runtime = runtime,
-        .owner = ctx.session_child_capability orelse return null,
-        .durable_session_id = ctx.terminal_owner_session_id orelse return null,
-        .workspace_root = ctx.workspace_root,
-        .transport_role = ctx.terminal_transport_role,
-        .max_output_bytes = ctx.max_command_output_bytes,
-        .cancel_flag = ctx.cancel_flag,
-    };
-}
-
-fn finishTerminalTtyStop(
-    ctx: tool_dispatch.DispatchContext,
-    runtime: *managed_execution.Runtime,
-    session_id: []const u8,
-    state: managed_execution.SnapshotState,
-) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
-    finalizeCompletedTty(ctx, session_id, state) catch |err|
-        return runtimeFailure(ctx, err);
-    var prepared = runtime.updateTty(ctx.allocator, .{
-        .execution_id = session_id,
-        .command = "",
-        .state = state,
-        .max_output_bytes = ctx.max_command_output_bytes,
-        .published_running = true,
-    }) catch |err| return runtimeFailure(ctx, err);
-    defer prepared.deinit(ctx.allocator);
-    return finishPrepared(ctx, runtime, &prepared, .stop);
-}
-
 fn finishPrepared(
     ctx: tool_dispatch.DispatchContext,
     runtime: *managed_execution.Runtime,
@@ -1157,7 +958,11 @@ fn finishPrepared(
     handoffPreparedDelivery(ctx, runtime, prepared.reservation_id) catch {
         return .{ .failure = try ctx.allocator.dupe(u8, "shell result commit failed") };
     };
-    return if (action == .command and snapshotFailed(prepared.snapshot.state))
+    const failed = switch (action) {
+        .command => snapshotFailed(prepared.snapshot.state),
+        .stop => stop_result_failed(prepared.snapshot.state),
+    };
+    return if (failed)
         .{ .failure = body }
     else
         .{ .success = body };
@@ -1171,7 +976,7 @@ fn publishSnapshotMetadata(
         ctx.tool_result_memory_sink == null) return;
     const status: ?command_contract.CommandStatus = switch (snapshot.state) {
         .completed => |value| value,
-        .stopped => |value| value,
+        .stopped => |value| stopProjectedStatus(value),
         .lost => .indeterminate,
         .running => return,
     };
@@ -1400,7 +1205,7 @@ fn formatSnapshotRaw(
 ) ![]u8 {
     const status = switch (snapshot.state) {
         .completed => |value| value,
-        .stopped => |value| value,
+        .stopped => |value| stopProjectedStatus(value),
         .lost => .indeterminate,
         .running => null,
     };
@@ -1416,7 +1221,7 @@ fn formatSnapshotRaw(
     errdefer out.deinit();
     try std.json.Stringify.value(.{
         .session_id = if (snapshot.retained) snapshot.execution_id else null,
-        .state = snapshotStateName(snapshot.state),
+        .state = background_sessions.stateName(snapshot.state),
         .backend = @tagName(snapshot.backend),
         .persistence = @tagName(snapshot.persistence),
         .output_truncated = output_truncated,
@@ -1437,15 +1242,6 @@ fn formatSnapshotRaw(
     return try out.toOwnedSlice();
 }
 
-fn snapshotStateName(state: managed_execution.SnapshotState) []const u8 {
-    return switch (state) {
-        .running => "running",
-        .completed => "completed",
-        .stopped => "stopped",
-        .lost => "lost",
-    };
-}
-
 fn snapshotFailed(state: managed_execution.SnapshotState) bool {
     return switch (state) {
         .running => false,
@@ -1458,16 +1254,90 @@ fn snapshotFailed(state: managed_execution.SnapshotState) bool {
     };
 }
 
+// A stop reports success only when an exit was observed. Lost workers,
+// missing stops, and stops without an exit status fail closed so callers
+// never read them as clean stops.
+fn stop_result_failed(state: managed_execution.SnapshotState) bool {
+    return switch (state) {
+        .lost => true,
+        .stopped => |status| if (status) |value| switch (value) {
+            .exit_code, .signal => false,
+            .indeterminate, .finished => true,
+        } else true,
+        .running, .completed => false,
+    };
+}
+
+// Missing and finished stop outcomes project as indeterminate so metadata
+// never reads a stop without an observed exit as a clean stop.
+fn stopProjectedStatus(status: ?command_contract.CommandStatus) command_contract.CommandStatus {
+    const observed = status orelse return .indeterminate;
+    return switch (observed) {
+        .finished => .indeterminate,
+        .exit_code, .signal, .indeterminate => observed,
+    };
+}
+
+test "shell stop fails closed without an observed exit" {
+    try std.testing.expect(stop_result_failed(.lost));
+    try std.testing.expect(stop_result_failed(.{ .stopped = .indeterminate }));
+    try std.testing.expect(stop_result_failed(.{ .stopped = .finished }));
+    try std.testing.expect(stop_result_failed(.{ .stopped = null }));
+    try std.testing.expect(!stop_result_failed(.{ .stopped = .{ .exit_code = 0 } }));
+    try std.testing.expect(!stop_result_failed(.{ .stopped = .{ .signal = 9 } }));
+    try std.testing.expect(!stop_result_failed(.{ .completed = .{ .exit_code = 0 } }));
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        stopProjectedStatus(null),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        stopProjectedStatus(.finished),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus{ .exit_code = 0 },
+        stopProjectedStatus(.{ .exit_code = 0 }),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus{ .signal = 9 },
+        stopProjectedStatus(.{ .signal = 9 }),
+    );
+}
+
+test "stopped shell metadata projects missing exits as indeterminate" {
+    const alloc = std.testing.allocator;
+    const states = [_]managed_execution.SnapshotState{
+        .{ .stopped = null },
+        .{ .stopped = .finished },
+    };
+    for (states) |state| {
+        var command_result_json: ?[]const u8 = null;
+        defer if (command_result_json) |json| alloc.free(@constCast(json));
+        try publishSnapshotMetadata(.{
+            .allocator = alloc,
+            .command_result_json_sink = &command_result_json,
+        }, .{
+            .execution_id = @constCast("shell-stopped-meta"),
+            .command = @constCast("sleep 60"),
+            .cwd = @constCast("/tmp"),
+            .retained = true,
+            .state = state,
+            .output_delta = @constCast(""),
+            .output_truncated = false,
+        });
+        try std.testing.expect(std.mem.find(
+            u8,
+            command_result_json orelse return error.TestExpectedEqual,
+            "\"termination_indeterminate\":true",
+        ) != null);
+    }
+}
+
 fn runtimeFailure(
     ctx: tool_dispatch.DispatchContext,
     err: anyerror,
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
-    if (err == error.OutOfMemory) return error.OutOfMemory;
-    return .{ .failure = try std.fmt.allocPrint(
-        ctx.allocator,
-        "{{\"error\":{{\"tool\":\"shell\",\"code\":\"{s}\",\"retryable\":false}}}}",
-        .{@errorName(err)},
-    ) };
+    return .{ .failure = try background_sessions.failureBody(ctx.allocator, err) };
 }
 
 fn unavailable(
@@ -1517,6 +1387,7 @@ pub fn isProcessLocal(erased: tool_dispatch.ToolInput) bool {
         .run => !input.tty,
         .interact => input.chars == null or input.chars.?.len == 0,
         .stop => true,
+        .list => true,
     };
 }
 
@@ -1524,6 +1395,7 @@ pub fn readsOnly(erased: tool_dispatch.ToolInput) bool {
     const input = erased.as(OwnedInput).value;
     return switch (input.action) {
         .interact => input.chars == null or input.chars.?.len == 0,
+        .list => true,
         .run, .stop => false,
     };
 }
@@ -1549,6 +1421,13 @@ pub fn presentation(args: std.json.ObjectMap) ?tool_dispatch.CallPresentation {
         else
             sessionPresentation("Waiting for", "Observed"),
         .stop => sessionPresentation("Stopping", "Stopped"),
+        .list => .{
+            .activity_kind = .list,
+            .action_label = "Listing",
+            .completed_action_label = "Listed",
+            .label_arg_kind = .action,
+            .label_arg_default = "shell sessions",
+        },
     };
 }
 
@@ -1580,6 +1459,106 @@ test "shell action fields are closed and command authority covers every run" {
         &.{ "action", "session_id", "chars", "yield_time_ms" },
         actionFieldContract(.interact).allowed,
     );
+    try std.testing.expectEqualSlices(
+        []const u8,
+        &.{ "action", "session_id", "force" },
+        actionFieldContract(.stop).allowed,
+    );
+    try std.testing.expectEqualSlices(
+        []const u8,
+        &.{"action"},
+        actionFieldContract(.list).allowed,
+    );
+}
+
+test "shell list is read-only and process-local" {
+    const alloc = std.testing.allocator;
+    const ctx = tool_dispatch.DispatchContext{ .allocator = alloc };
+    const decoded = try decode(ctx, "{\"action\":\"list\"}");
+    switch (decoded) {
+        .failure => |failure| {
+            defer alloc.free(failure);
+            return error.TestUnexpectedResult;
+        },
+        .input => |input| {
+            defer input.deinit(alloc);
+            try std.testing.expect(readsOnly(input));
+            try std.testing.expect(isProcessLocal(input));
+            const validation = try validate(ctx, input);
+            try std.testing.expect(validation == null);
+        },
+    }
+    const rejected = try decode(ctx, "{\"action\":\"list\",\"session_id\":\"shell-1\"}");
+    switch (rejected) {
+        .failure => |failure| {
+            defer alloc.free(failure);
+        },
+        .input => |input| {
+            defer input.deinit(alloc);
+            return error.TestUnexpectedResult;
+        },
+    }
+}
+
+test "shell list enumerates live executions and stops them" {
+    const alloc = std.testing.allocator;
+    var runtime = managed_execution.Runtime.init(alloc);
+    defer runtime.deinit();
+    const command_ctx = command_admission.CommandContext{
+        .command = "sleep 30",
+        .resolved_cwd = "/tmp",
+        .target_os = @import("builtin").os.tag,
+        .environment = .legacy,
+    };
+    var prepared = try runtime.startCaptured(alloc, .{
+        .execution_id = "background-list-1",
+        .command = command_ctx.command,
+        .cwd = command_ctx.resolved_cwd,
+        .environment = command_ctx.environment,
+        .authority = .{ .shell_allowed = .{
+            .fingerprint = .init(command_ctx),
+            .source = .yolo,
+        } },
+        .max_output_bytes = 4096,
+        .timeout_ms = 30_000,
+        .command_artifact_dir = null,
+        .yield_time_ms = 0,
+    });
+    defer prepared.deinit(alloc);
+    try runtime.commitDelivery(prepared.snapshot.execution_id, prepared.reservation_id);
+    var listed = try callList(.{ .allocator = alloc, .managed_executions = &runtime });
+    defer listed.deinit(alloc);
+    try std.testing.expect(listed == .success);
+    try std.testing.expect(std.mem.find(u8, listed.success, "background-list-1") != null);
+    try std.testing.expect(std.mem.find(u8, listed.success, "\"state\":\"running\"") != null);
+
+    const session_ctx = background_sessions.SessionContext{ .alloc = alloc, .lifecycle_allocator = alloc };
+    var stopped = try background_sessions.stopSession(
+        session_ctx,
+        &runtime,
+        "background-list-1",
+        false,
+        .agent,
+    );
+    switch (stopped) {
+        .prepared => |*stopped_prepared| {
+            defer stopped_prepared.deinit(alloc);
+            try runtime.commitDelivery(stopped_prepared.snapshot.execution_id, stopped_prepared.reservation_id);
+        },
+        .failure => |body| {
+            defer alloc.free(body);
+            return error.TestUnexpectedResult;
+        },
+    }
+
+    var relisted = try callList(.{ .allocator = alloc, .managed_executions = &runtime });
+    defer relisted.deinit(alloc);
+    try std.testing.expect(relisted == .success);
+    try std.testing.expect(std.mem.find(u8, relisted.success, "background-list-1") == null);
+
+    var missing = try callList(.{ .allocator = alloc });
+    defer missing.deinit(alloc);
+    try std.testing.expect(missing == .failure);
 }
 
 test "shell interact classification follows optional input" {

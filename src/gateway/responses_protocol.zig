@@ -33,6 +33,9 @@ pub fn writeInput(
                     try writer.writeByte('}');
                     first_part = false;
                 };
+                // Only the final message's attachments may be replaced by
+                // verified current-turn images; every other message always
+                // rehydrates its own history attachments (or their notices).
                 if (verified_images) |images| {
                     if (message_index == messages.len - 1) {
                         for (images) |image| {
@@ -40,7 +43,11 @@ pub fn writeInput(
                             try writeInputImage(writer, alloc, image);
                             first_part = false;
                         }
+                    } else {
+                        try writeResumedHistoryImages(writer, alloc, message.images, &first_part);
                     }
+                } else {
+                    try writeResumedHistoryImages(writer, alloc, message.images, &first_part);
                 }
                 try writer.writeAll("]}");
             },
@@ -101,6 +108,39 @@ fn validateReplayMessage(message: types.ChatMessage, limits: ReplayLimits) !void
             return error.ToolArgumentsTooLarge;
         }
     }
+}
+
+/// Serializes already-prepared history attachments: verified bytes become
+/// native image parts, unloadable snapshots become typed in-place notices.
+fn writeResumedHistoryImages(
+    writer: *std.Io.Writer,
+    alloc: std.mem.Allocator,
+    attachments: []const types.ImageAttachment,
+    first_part: *bool,
+) !void {
+    for (attachments) |attachment| {
+        var part = try image_attachments.prepareResumedImagePart(alloc, attachment);
+        defer part.deinit(alloc);
+        if (!first_part.*) try writer.writeByte(',');
+        switch (part) {
+            .image => |snapshot| try writeInputImage(writer, alloc, snapshot),
+            .unavailable => |notice| try writeImageUnavailablePart(writer, alloc, notice),
+        }
+        first_part.* = false;
+    }
+}
+
+fn writeImageUnavailablePart(
+    writer: *std.Io.Writer,
+    alloc: std.mem.Allocator,
+    notice: image_attachments.ImageUnavailableNotice,
+) !void {
+    var inner: std.Io.Writer.Allocating = .init(alloc);
+    defer inner.deinit();
+    try image_attachments.writeImageUnavailableNoticeJson(&inner.writer, notice);
+    try writer.writeAll("{\"type\":\"input_text\",\"text\":");
+    try std.json.Stringify.value(inner.written(), .{}, writer);
+    try writer.writeByte('}');
 }
 
 fn writeInputImage(

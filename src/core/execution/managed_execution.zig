@@ -6,6 +6,7 @@ const command_environment = @import("command_environment.zig");
 const command_runner = @import("command_runner.zig");
 const contract = @import("managed_execution_contract.zig");
 const execution_router = @import("router.zig");
+const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 const types = @import("../shared/types.zig");
 const command_replay_store = @import("../session/command_replay_store.zig");
@@ -13,6 +14,12 @@ const session_child_store = @import("../session/session_child_store.zig");
 
 const Allocator = std.mem.Allocator;
 const max_entries = contract.max_live_entries + contract.max_tombstones;
+// Upper bound for a captured stop to observe a terminal worker state. When
+// the bound passes the snapshot reports lost instead of hanging the caller.
+const captured_stop_settle_timeout_ms: i64 = if (builtin.is_test)
+    100
+else
+    command_runner.termination_settle_timeout_ms + 1_000;
 
 pub const StartCapturedInput = struct {
     execution_id: []const u8,
@@ -876,6 +883,21 @@ pub const Runtime = struct {
         execution_id: []const u8,
         force: bool,
     ) !PreparedSnapshot {
+        return self.stop_with_ceiling(
+            alloc,
+            execution_id,
+            force,
+            captured_stop_settle_timeout_ms,
+        );
+    }
+
+    fn stop_with_ceiling(
+        self: *Runtime,
+        alloc: Allocator,
+        execution_id: []const u8,
+        force: bool,
+        settle_timeout_ms: i64,
+    ) !PreparedSnapshot {
         const entry = self.acquireEntry(execution_id) orelse return error.ExecutionNotFound;
         defer self.releaseEntry(entry);
         const zio = io_mod.getIo();
@@ -895,11 +917,29 @@ pub const Runtime = struct {
             }
         }
         entry.mutex.unlock(zio);
+        const started_ms = io_mod.milliTimestamp();
         while (true) {
             entry.mutex.lockUncancelable(zio);
             const terminal = entry.isTerminal();
             entry.mutex.unlock(zio);
             if (terminal) break;
+            if (stop_wait_expired(started_ms, io_mod.milliTimestamp(), settle_timeout_ms)) {
+                debug_trace.logf(
+                    "core",
+                    "managed execution stop became lost boundary=settle_deadline execution_id={s} force={s}",
+                    .{ execution_id, if (force) "true" else "false" },
+                );
+                var prepared = try self.prepareSnapshotForEntry(alloc, entry);
+                if (prepared.snapshot.state == .running) {
+                    prepared.snapshot.state = .lost;
+                    if (prepared.snapshot.error_name) |name| alloc.free(name);
+                    prepared.snapshot.error_name = try alloc.dupe(
+                        u8,
+                        "StopSettlementTimedOut",
+                    );
+                }
+                return prepared;
+            }
             io_mod.sleep(10 * std.time.ns_per_ms);
         }
         return self.prepareSnapshotForEntry(alloc, entry);
@@ -1440,11 +1480,23 @@ fn rebindAuthority(
 }
 
 fn statusFromResult(result: command_contract.RunCommandResult) command_contract.CommandStatus {
-    const command = result.command_result orelse return .finished;
+    // Without a command result no exit was observed, so never project success.
+    const command = result.command_result orelse return .indeterminate;
     if (command.termination_indeterminate) return .indeterminate;
     if (command.exit_code) |code| return .{ .exit_code = code };
     if (command.signal) |signal| return .{ .signal = signal };
     return .finished;
+}
+
+fn stop_wait_expired(started_ms: i64, now_ms: i64, settle_timeout_ms: i64) bool {
+    return now_ms >= started_ms and
+        now_ms - started_ms >= settle_timeout_ms;
+}
+
+test "stop wait expires only at its deterministic bound" {
+    try std.testing.expect(!stop_wait_expired(1_000, 999, 100));
+    try std.testing.expect(!stop_wait_expired(1_000, 1_099, 100));
+    try std.testing.expect(stop_wait_expired(1_000, 1_100, 100));
 }
 
 fn contractStateFromSnapshot(state: SnapshotState) contract.State {
@@ -1505,6 +1557,99 @@ test "captured managed execution yields one handle and delivers ordered output o
     defer repeated.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 0), repeated.snapshot.output_delta.len);
     try runtime.commitDelivery(repeated.snapshot.execution_id, repeated.reservation_id);
+}
+
+test "captured stop returns lost when its worker cannot settle" {
+    if (comptime builtin.os.tag == .wasi) return;
+    const alloc = std.testing.allocator;
+    var runtime = Runtime.init(alloc);
+    defer runtime.deinit();
+
+    const BlockingOutput = struct {
+        fn append(
+            raw: *anyopaque,
+            _: ?types.ToolLifecycleId,
+            _: command_contract.CommandOutputStream,
+            _: []const u8,
+        ) !void {
+            const flags: *[2]std.atomic.Value(bool) = @ptrCast(@alignCast(raw));
+            flags[0].store(true, .seq_cst);
+            while (!flags[1].load(.seq_cst)) io_mod.sleep(std.time.ns_per_ms);
+        }
+    };
+    var callback_flags = [_]std.atomic.Value(bool){
+        .init(false),
+        .init(false),
+    };
+    var input = StartCapturedInput{
+        .execution_id = "managed-stop-stalled",
+        .command = "printf 'ready\\n'; sleep 30",
+        .cwd = "/tmp",
+        .environment = .legacy,
+        .authority = undefined,
+        .max_output_bytes = 4096,
+        .timeout_ms = null,
+        .command_artifact_dir = null,
+        .yield_time_ms = 0,
+        .output_chunk_ctx = &callback_flags,
+        .on_output_chunk = BlockingOutput.append,
+    };
+    input.authority = testAuthority(input);
+    var started = try runtime.startCaptured(alloc, input);
+    defer started.deinit(alloc);
+    try runtime.commitDelivery(started.snapshot.execution_id, started.reservation_id);
+
+    const callback_deadline_ms = io_mod.milliTimestamp() + 2_000;
+    while (!callback_flags[0].load(.seq_cst) and
+        io_mod.milliTimestamp() < callback_deadline_ms)
+    {
+        io_mod.sleep(std.time.ns_per_ms);
+    }
+    try std.testing.expect(callback_flags[0].load(.seq_cst));
+
+    var stop_finished = std.atomic.Value(bool).init(false);
+    var stop_lost = std.atomic.Value(bool).init(false);
+    var stop_failed = std.atomic.Value(bool).init(false);
+    const StopTask = struct {
+        fn run(
+            rt: *Runtime,
+            finished: *std.atomic.Value(bool),
+            lost: *std.atomic.Value(bool),
+            failed: *std.atomic.Value(bool),
+        ) void {
+            var stopped = rt.stop(std.testing.allocator, "managed-stop-stalled", true) catch {
+                failed.store(true, .seq_cst);
+                finished.store(true, .seq_cst);
+                return;
+            };
+            lost.store(
+                stopped.snapshot.state == .lost and
+                    if (stopped.snapshot.error_name) |name|
+                        std.mem.eql(u8, name, "StopSettlementTimedOut")
+                    else
+                        false,
+                .seq_cst,
+            );
+            rt.commitDelivery(stopped.snapshot.execution_id, stopped.reservation_id) catch {
+                failed.store(true, .seq_cst);
+            };
+            stopped.deinit(std.testing.allocator);
+            finished.store(true, .seq_cst);
+        }
+    };
+    const stop_thread = try std.Thread.spawn(
+        .{},
+        StopTask.run,
+        .{ &runtime, &stop_finished, &stop_lost, &stop_failed },
+    );
+    io_mod.sleep(250 * std.time.ns_per_ms);
+    const settled_before_release = stop_finished.load(.seq_cst);
+    callback_flags[1].store(true, .seq_cst);
+    stop_thread.join();
+
+    try std.testing.expect(settled_before_release);
+    try std.testing.expect(stop_lost.load(.seq_cst));
+    try std.testing.expect(!stop_failed.load(.seq_cst));
 }
 
 test "generated captured execution identities do not depend on provider call ids" {

@@ -90,6 +90,42 @@ const RuleLoad = union(enum) {
     omitted: context_contract.OmissionReason,
 };
 
+const ReconstructionBudget = struct {
+    const candidate_limit = 128;
+    const read_limit = 64 * 1024 * 1024;
+    const path_bytes_limit = 64 * 1024;
+    const Admission = enum { admitted, duplicate, exhausted };
+
+    // Source paths borrow selection-arena storage, including missing candidates.
+    sources: [candidate_limit][]const u8 = undefined,
+    candidate_count: usize = 0,
+    admitted_read_bytes: usize = 0,
+    admitted_path_bytes: usize = 0,
+
+    fn admit_candidate(self: *ReconstructionBudget, source: []const u8) Admission {
+        if (containsString(self.sources[0..self.candidate_count], source)) return .duplicate;
+        if (self.candidate_count == candidate_limit or self.admitted_path_bytes + source.len > path_bytes_limit) {
+            debug_trace.logf("context", "reconstruction_work_omitted reason=selection_cap candidates={d} path_bytes={d}", .{ self.candidate_count, self.admitted_path_bytes });
+            return .exhausted;
+        }
+        self.sources[self.candidate_count] = source;
+        self.candidate_count += 1;
+        self.admitted_path_bytes += source.len;
+        return .admitted;
+    }
+
+    fn admit_reads(self: *ReconstructionBudget, validation_bytes: usize, prefix_bytes: usize) bool {
+        const remaining = read_limit - self.admitted_read_bytes;
+        if (validation_bytes > remaining or prefix_bytes > remaining - validation_bytes) {
+            debug_trace.logf("context", "reconstruction_work_omitted reason=oversized admitted_read_bytes={d} validation_bytes={d} prefix_bytes={d}", .{ self.admitted_read_bytes, validation_bytes, prefix_bytes });
+            return false;
+        }
+        // Reserve both reads before validation. Failed or blank files do not refund work.
+        self.admitted_read_bytes += validation_bytes + prefix_bytes;
+        return true;
+    }
+};
+
 const SelectionOptions = struct {
     workspace_root: []const u8,
     targets: []const context_contract.ApplicableTarget,
@@ -99,11 +135,15 @@ const SelectionOptions = struct {
     initial_omission_summary: ?context_contract.ContextOmissionSummary = null,
     home: ?[]const u8 = null,
     initial: bool,
+    bounded_reconstruction: bool = false,
+    cancel_flag: ?*std.atomic.Value(bool) = null,
     context_limits: context_limits.Values = .{},
 };
 
 const SelectionScratch = struct {
     arena: Allocator,
+    work_budget: ?ReconstructionBudget = null,
+    cancel_flag: ?*std.atomic.Value(bool) = null,
     candidates: std.ArrayList(RuleCandidate) = .empty,
     ranking_endpoints: std.ArrayList([]const u8) = .empty,
     delivered_sources: std.ArrayList([]const u8) = .empty,
@@ -177,6 +217,8 @@ fn gatherProjectContextWithHome(
         .initial_omission_summary = input.omission_summary,
         .home = home,
         .initial = true,
+        .bounded_reconstruction = input.bounded_reconstruction,
+        .cancel_flag = input.cancel_flag,
         .context_limits = input.context_limits,
     });
 }
@@ -188,6 +230,7 @@ fn selectApplicableProjectContext(alloc: Allocator, input: LaterContextInput) co
         .delivered_sources = input.delivered_sources,
         .evaluated_endpoints = input.evaluated_endpoints,
         .initial = false,
+        .cancel_flag = input.cancel_flag,
         .context_limits = input.context_limits,
     });
 }
@@ -196,7 +239,11 @@ fn selectProjectContext(alloc: Allocator, options: SelectionOptions) context_con
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var scratch: SelectionScratch = .{ .arena = arena };
+    var scratch: SelectionScratch = .{
+        .arena = arena,
+        .work_budget = if (options.bounded_reconstruction) .{} else null,
+        .cancel_flag = options.cancel_flag,
+    };
 
     for (options.initial_omissions) |omission| {
         try scratch.addOmission(omission.source, omission.reason);
@@ -212,6 +259,7 @@ fn selectProjectContext(alloc: Allocator, options: SelectionOptions) context_con
         try scratch.addRankingEndpoint(options.workspace_root);
     }
 
+    var launch_home: ?[]const u8 = null;
     if (options.initial) {
         if (options.home) |home| {
             const canonical_home: ?[]u8 = io_mod.realpathAlloc(arena, home) catch |err| blk: {
@@ -223,7 +271,11 @@ fn selectProjectContext(alloc: Allocator, options: SelectionOptions) context_con
                 global_source_path = try std.fs.path.join(arena, &.{ home_root, ".fiber", "AGENTS.md" });
                 global_rule = try loadRuleForSelection(arena, &scratch, global_source_path.?, options.context_limits.project_instruction_file_bytes);
                 if (pathing.pathInside(home_root, options.workspace_root)) {
-                    try collectLaunchAncestorCandidates(arena, &scratch, home_root, options.workspace_root, options.delivered_sources);
+                    if (options.bounded_reconstruction) {
+                        launch_home = home_root;
+                    } else {
+                        try collectLaunchAncestorCandidates(arena, &scratch, home_root, options.workspace_root, options.delivered_sources);
+                    }
                 } else {
                     try scratch.addOmission(options.workspace_root, .home_outside_workspace);
                 }
@@ -247,10 +299,16 @@ fn selectProjectContext(alloc: Allocator, options: SelectionOptions) context_con
     for (options.targets) |target| {
         try collectTargetCandidates(arena, &scratch, options, target);
     }
+    // Bounded overflow must drop the broadest scopes first: target scopes
+    // are admitted before launch ancestors so the narrowest applicable
+    // rule always survives the candidate budget.
+    if (launch_home) |home_root| {
+        try collectLaunchAncestorCandidates(arena, &scratch, home_root, options.workspace_root, options.delivered_sources);
+    }
 
     var usable: std.ArrayList(*RuleCandidate) = .empty;
     for (scratch.candidates.items) |*candidate| {
-        switch (try loadRule(arena, candidate.source, options.context_limits.project_instruction_file_bytes)) {
+        switch (try loadRuleWithBudget(arena, candidate.source, options.context_limits.project_instruction_file_bytes, if (scratch.work_budget) |*budget| budget else null, scratch.cancel_flag)) {
             .body => |body| {
                 candidate.body = body.text;
                 candidate.observed_bytes = body.observed_bytes;
@@ -339,7 +397,11 @@ fn selectProjectContext(alloc: Allocator, options: SelectionOptions) context_con
         }
     }
     result.delivered_sources = try dupeOwnedStringSlice(alloc, scratch.delivered_sources.items);
-    result.evaluated_endpoints = try dupeOwnedStringSlice(alloc, scratch.evaluated_endpoints.items);
+    // A bounded reconstruction may leave ancestors unread. Only delivered rules
+    // may suppress live discovery, not completion of these directory scans.
+    if (!options.bounded_reconstruction) {
+        result.evaluated_endpoints = try dupeOwnedStringSlice(alloc, scratch.evaluated_endpoints.items);
+    }
     result.notices = try dupeOwnedStringSlice(alloc, scratch.notices.items);
     return result;
 }
@@ -350,7 +412,17 @@ fn loadRuleForSelection(
     source: []const u8,
     limit: context_limits.Resolved,
 ) !?LoadedRule {
-    switch (try loadRule(arena, source, limit)) {
+    if (scratch.work_budget) |*budget| {
+        switch (budget.admit_candidate(source)) {
+            .admitted => {},
+            .duplicate => return null,
+            .exhausted => {
+                try scratch.addOmission(source, .selection_cap);
+                return null;
+            },
+        }
+    }
+    switch (try loadRuleWithBudget(arena, source, limit, if (scratch.work_budget) |*budget| budget else null, scratch.cancel_flag)) {
         .body => |body| {
             try scratch.addDelivered(source);
             return .{ .source = source, .body = body.text, .observed_bytes = body.observed_bytes };
@@ -361,6 +433,10 @@ fn loadRuleForSelection(
             return null;
         },
     }
+}
+
+fn checkSelectionCancel(flag: ?*std.atomic.Value(bool)) error{Cancelled}!void {
+    if (flag) |cancel| if (cancel.load(.seq_cst)) return error.Cancelled;
 }
 
 fn collectLaunchAncestorCandidates(
@@ -374,7 +450,8 @@ fn collectLaunchAncestorCandidates(
     while (current) |scope| : (current = std.fs.path.dirname(scope)) {
         if (std.mem.eql(u8, scope, home)) break;
         if (!pathing.pathInside(home, scope)) break;
-        try appendRuleCandidate(arena, scratch, scope, .ancestor, prior_delivered);
+        try checkSelectionCancel(scratch.cancel_flag);
+        if (!try appendRuleCandidate(arena, scratch, scope, .ancestor, prior_delivered)) break;
     }
 }
 
@@ -404,7 +481,8 @@ fn collectTargetCandidates(
     while (current) |scope| : (current = std.fs.path.dirname(scope)) {
         if (std.mem.eql(u8, scope, options.workspace_root)) break;
         if (!pathing.pathInside(options.workspace_root, scope)) break;
-        try appendRuleCandidate(arena, scratch, scope, .target, options.delivered_sources);
+        try checkSelectionCancel(options.cancel_flag);
+        if (!try appendRuleCandidate(arena, scratch, scope, .target, options.delivered_sources)) break;
     }
 }
 
@@ -414,20 +492,44 @@ fn appendRuleCandidate(
     scope: []const u8,
     class: CandidateClass,
     prior_delivered: []const []const u8,
-) !void {
+) !bool {
     const source = try std.fs.path.join(arena, &.{ scope, "AGENTS.md" });
-    if (containsString(prior_delivered, source) or containsString(scratch.delivered_sources.items, source)) return;
+    if (containsString(prior_delivered, source) or containsString(scratch.delivered_sources.items, source)) return true;
     for (scratch.candidates.items) |candidate| {
-        if (std.mem.eql(u8, candidate.source, source)) return;
+        // A previous walk already covered these ancestors, or stopped at the work cap.
+        if (std.mem.eql(u8, candidate.source, source)) return scratch.work_budget == null;
+    }
+    if (scratch.work_budget) |*budget| {
+        switch (budget.admit_candidate(source)) {
+            .admitted => {},
+            // Initial global/workspace probes need not have walked this scope's ancestors.
+            .duplicate => return true,
+            .exhausted => {
+                try scratch.addOmission(source, .selection_cap);
+                return false;
+            },
+        }
     }
     try scratch.candidates.append(arena, .{
         .source = source,
         .scope = scope,
         .class = class,
     });
+    return true;
 }
 
-fn loadRule(arena: Allocator, path: []const u8, limit: context_limits.Resolved) Allocator.Error!RuleLoad {
+fn loadRule(arena: Allocator, path: []const u8, limit: context_limits.Resolved) (Allocator.Error || error{Cancelled})!RuleLoad {
+    return loadRuleWithBudget(arena, path, limit, null, null);
+}
+
+fn loadRuleWithBudget(
+    arena: Allocator,
+    path: []const u8,
+    limit: context_limits.Resolved,
+    work_budget: ?*ReconstructionBudget,
+    cancel_flag: ?*std.atomic.Value(bool),
+) (Allocator.Error || error{Cancelled})!RuleLoad {
+    try checkSelectionCancel(cancel_flag);
     const stat = std.Io.Dir.cwd().statFile(io_mod.getIo(), path, .{ .follow_symlinks = false }) catch |err| {
         return switch (err) {
             error.FileNotFound, error.NotDir => .missing,
@@ -481,13 +583,18 @@ fn loadRule(arena: Allocator, path: []const u8, limit: context_limits.Resolved) 
     const observed_bytes = std.math.cast(usize, opened_stat.size) orelse return .{ .omitted = .oversized };
     if (observed_bytes > context_limits.emergency_ceiling_bytes) return .{ .omitted = .oversized };
 
-    const has_content = validateRuleUtf8(&file, observed_bytes) catch
-        return .{ .omitted = .unreadable };
-    if (!has_content) return .blank;
     const read_len = @min(
         observed_bytes,
         @min(limit.effectiveBytes() +| 3, context_limits.emergency_ceiling_bytes),
     );
+    if (work_budget) |budget| {
+        if (!budget.admit_reads(observed_bytes, read_len)) return .{ .omitted = .oversized };
+    }
+    const has_content = validateRuleUtf8(&file, observed_bytes, cancel_flag) catch |err| switch (err) {
+        error.Cancelled => return error.Cancelled,
+        else => return .{ .omitted = .unreadable },
+    };
+    if (!has_content) return .blank;
     const content = try arena.alloc(u8, read_len);
     const bytes_read = file.readPositionalAll(io_mod.getIo(), content, 0) catch
         return .{ .omitted = .unreadable };
@@ -497,13 +604,14 @@ fn loadRule(arena: Allocator, path: []const u8, limit: context_limits.Resolved) 
     return .{ .body = .{ .text = trimmed, .observed_bytes = observed_bytes } };
 }
 
-fn validateRuleUtf8(file: *std.Io.File, byte_count: usize) !bool {
+fn validateRuleUtf8(file: *std.Io.File, byte_count: usize, cancel_flag: ?*std.atomic.Value(bool)) !bool {
     var read_offset: usize = 0;
     var has_content = false;
     var validator: text_utils.IncrementalUtf8Validator = .{};
     var chunk: [16 * 1024]u8 = undefined;
 
     while (read_offset < byte_count) {
+        try checkSelectionCancel(cancel_flag);
         const wanted = @min(chunk.len, byte_count - read_offset);
         const bytes_read = try file.readPositionalAll(io_mod.getIo(), chunk[0..wanted], read_offset);
         if (bytes_read != wanted) return error.UnexpectedEndOfFile;
@@ -898,6 +1006,155 @@ fn createSymlinkOrSkip(dir: std.Io.Dir, target_path: []const u8, link_path: []co
         if (err == error.AccessDenied or err == error.FileSystem) return error.SkipZigTest;
         return err;
     };
+}
+
+test "reconstruction budget bounds distinct candidates and both file reads" {
+    var budget = ReconstructionBudget{};
+    var names: [129][8]u8 = undefined;
+    for (&names, 0..) |*name, index| {
+        const source = try std.fmt.bufPrint(name, "r{d}", .{index});
+        try std.testing.expectEqual(if (index < 128) ReconstructionBudget.Admission.admitted else .exhausted, budget.admit_candidate(source));
+    }
+    try std.testing.expectEqual(ReconstructionBudget.Admission.duplicate, budget.admit_candidate("r0"));
+    try std.testing.expect(budget.admit_reads(ReconstructionBudget.read_limit - 4, 3));
+    try std.testing.expect(!budget.admit_reads(1, 1));
+    try std.testing.expectEqual(ReconstructionBudget.read_limit - 1, budget.admitted_read_bytes);
+    try std.testing.expect(budget.admit_reads(1, 0));
+}
+
+test "reconstruction budget bounds aggregate canonical path bytes" {
+    var budget = ReconstructionBudget{};
+    var backings: [70][1024]u8 = undefined;
+    var admitted: usize = 0;
+    for (&backings, 0..) |*backing, index| {
+        @memset(backing, 'p');
+        _ = std.fmt.bufPrint(backing[0..8], "p{d}", .{index}) catch unreachable;
+        if (budget.admit_candidate(backing) != .admitted) break;
+        admitted += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 64), admitted);
+    try std.testing.expectEqual(@as(usize, 64 * 1024), budget.admitted_path_bytes);
+}
+
+test "reconstruction budget omits file before validation and does not deliver it" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeTestFile(tmp.dir, "AGENTS.md", "RULE");
+    const source = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "AGENTS.md");
+    defer alloc.free(source);
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    var scratch = SelectionScratch{
+        .arena = arena_state.allocator(),
+        .work_budget = .{ .admitted_read_bytes = ReconstructionBudget.read_limit - 7 },
+    };
+    try std.testing.expectEqual(@as(?LoadedRule, null), try loadRuleForSelection(scratch.arena, &scratch, source, (context_limits.Values{}).project_instruction_file_bytes));
+    try std.testing.expectEqual(@as(usize, 0), scratch.delivered_sources.items.len);
+    try std.testing.expectEqual(@as(usize, 1), scratch.omissions.items.len);
+    try std.testing.expectEqual(context_contract.OmissionReason.oversized, scratch.omissions.items[0].reason);
+    try std.testing.expectEqual(ReconstructionBudget.read_limit - 7, scratch.work_budget.?.admitted_read_bytes);
+}
+
+test "reconstruction budget keeps live discovery eligible while retaining delivered rules" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeTestFile(tmp.dir, "workspace/nested/AGENTS.md", "BOUNDED_RULE");
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    const nested = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace/nested");
+    defer alloc.free(nested);
+    var reconstructed = try gatherProjectContextWithHome(alloc, .{
+        .workspace_root = workspace,
+        .targets = &.{.{ .path = nested, .kind = .directory }},
+        .bounded_reconstruction = true,
+    }, null);
+    defer reconstructed.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 0), reconstructed.evaluated_endpoints.len);
+    try std.testing.expectEqual(@as(usize, 1), reconstructed.delivered_sources.len);
+    var later = try selectApplicableProjectContext(alloc, .{
+        .workspace_root = workspace,
+        .targets = &.{.{ .path = nested, .kind = .directory }},
+        .delivered_sources = reconstructed.delivered_sources,
+        .evaluated_endpoints = reconstructed.evaluated_endpoints,
+    });
+    defer later.deinit(alloc);
+    try std.testing.expect(later.content == null);
+    try std.testing.expectEqual(@as(usize, 1), later.evaluated_endpoints.len);
+}
+
+test "bounded overflow drops broadest scopes before the narrowest target" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // 130 launch-ancestor levels between the home root and the workspace, plus
+    // a 10-deep target chain: 142 candidates against the 128-candidate budget.
+    var chain: std.ArrayList(u8) = .empty;
+    defer chain.deinit(alloc);
+    try chain.appendSlice(alloc, "home");
+    var level: usize = 0;
+    while (level < 130) : (level += 1) {
+        const segment = try std.fmt.allocPrint(alloc, "/a{d}", .{level});
+        defer alloc.free(segment);
+        try chain.appendSlice(alloc, segment);
+        const rule_path = try std.fmt.allocPrint(alloc, "{s}/AGENTS.md", .{chain.items});
+        defer alloc.free(rule_path);
+        const rule_body = try std.fmt.allocPrint(alloc, "ANCESTOR_RULE_{d}", .{level});
+        defer alloc.free(rule_body);
+        try writeTestFile(tmp.dir, rule_path, rule_body);
+    }
+    const workspace_rel = try std.fmt.allocPrint(alloc, "{s}/workspace", .{chain.items});
+    defer alloc.free(workspace_rel);
+    const workspace_rule = try std.fmt.allocPrint(alloc, "{s}/AGENTS.md", .{workspace_rel});
+    defer alloc.free(workspace_rule);
+    try writeTestFile(tmp.dir, workspace_rule, "WORKSPACE_RULE");
+    try chain.appendSlice(alloc, "/workspace");
+    var depth: usize = 0;
+    while (depth < 10) : (depth += 1) {
+        const segment = try std.fmt.allocPrint(alloc, "/t{d}", .{depth});
+        defer alloc.free(segment);
+        try chain.appendSlice(alloc, segment);
+        const rule_path = try std.fmt.allocPrint(alloc, "{s}/AGENTS.md", .{chain.items});
+        defer alloc.free(rule_path);
+        const rule_body = try std.fmt.allocPrint(alloc, "TARGET_RULE_{d}", .{depth});
+        defer alloc.free(rule_body);
+        try writeTestFile(tmp.dir, rule_path, rule_body);
+    }
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, workspace_rel);
+    defer alloc.free(workspace);
+    const endpoint = try io_mod.dirRealpathAlloc(alloc, tmp.dir, chain.items);
+    defer alloc.free(endpoint);
+    var reconstructed = try gatherProjectContextWithHome(alloc, .{
+        .workspace_root = workspace,
+        .targets = &.{.{ .path = endpoint, .kind = .directory }},
+        .bounded_reconstruction = true,
+    }, home);
+    defer reconstructed.deinit(alloc);
+    const bytes = reconstructed.modelVisibleBytes();
+    try std.testing.expect(std.mem.find(u8, bytes, "TARGET_RULE_9") != null);
+    try std.testing.expect(std.mem.find(u8, bytes, "WORKSPACE_RULE") != null);
+    try std.testing.expect(std.mem.find(u8, bytes, "selection cap") != null);
+}
+
+test "bounded selection observes cancellation before file reads" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeTestFile(tmp.dir, "workspace/nested/AGENTS.md", "CANCELLED_RULE");
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    const nested = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace/nested");
+    defer alloc.free(nested);
+    var cancelled = std.atomic.Value(bool).init(true);
+    try std.testing.expectError(error.Cancelled, gatherProjectContextWithHome(alloc, .{
+        .workspace_root = workspace,
+        .targets = &.{.{ .path = nested, .kind = .directory }},
+        .bounded_reconstruction = true,
+        .cancel_flag = &cancelled,
+    }, null));
 }
 
 test "context formatting preserves section order and separators" {

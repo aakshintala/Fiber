@@ -302,6 +302,22 @@ Keep it there rather than in a local planning document, backlog file, or ideas
 directory. A file in the repo drifts from the code as soon as it is written, and
 only whoever opens that file ever sees it.
 
+## Design proposals
+
+A workstream too large for an issue body gets a proposal directory,
+`docs/proposals/<workstream>/`: an overview plus one file per slice. Land it on
+`main` as its own small pull request before implementation starts, so agents on
+other branches can read it.
+
+A proposal is scaffolding. When a slice merges, delete its proposal file in the
+same pull request and move whatever must stay true into `docs/<area>.md` as
+product and architecture documentation. The decision record, with rationale and
+rejected alternatives, stays on the issue.
+
+`docs/*.md` is what is true now. `docs/proposals/**` is what is being decided.
+`README.md` stays short and links into `docs/`; reference material and schemas
+never live there.
+
 ## Upstream harvest
 
 `vercel-labs/fx` is the upstream Fiber forked from. Its remote is fetch-only, and
@@ -324,6 +340,7 @@ truth for its area.
 * Bun suites under `tests/e2e/` and `tests/evals/`: [`tests/README.md`](tests/README.md)
 * Startup latency budgets and binary size deltas: [`benchmarks/README.md`](benchmarks/README.md)
 * Cutting a release, writing the changelog: [`docs/releasing.md`](docs/releasing.md)
+* Model routing, connections, providers (accepted, in flight): [`docs/proposals/model-routing/README.md`](docs/proposals/model-routing/README.md)
 * PGSO corpus classification, pinned toolchain, local reproduction: [`scripts/pgso/README.md`](scripts/pgso/README.md)
 
 ## Documentation
