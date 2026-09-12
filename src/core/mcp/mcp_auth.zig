@@ -586,10 +586,13 @@ fn issuerWithoutTrailingSlash(issuer: []const u8) []const u8 {
     return issuer;
 }
 
-/// Accept a trailing-slash discrepancy between protected-resource discovery
-/// and authorization-server metadata. Authorization responses still require
-/// the exact metadata issuer. Reimplemented from upstream vercel-labs/fx.
-fn authorizationMetadataIssuersEqual(a: []const u8, b: []const u8) bool {
+/// Exact-one-trailing-slash issuer comparison shared by metadata
+/// validation and the credential store. `https://host` and `https://host/`
+/// are the same issuer; anything else (double slashes, differing hosts,
+/// paths, or schemes) still compares unequal so mismatches fail closed.
+/// Authorization-response issuers are intentionally not compared this way.
+/// Reimplemented from upstream vercel-labs/fx.
+pub fn issuersEqual(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, issuerWithoutTrailingSlash(a), issuerWithoutTrailingSlash(b));
 }
 
@@ -603,7 +606,7 @@ fn parseAuthorizationMetadataOutcome(
     if (parsed.value != .object) return error.InvalidAuthorizationMetadata;
     const object = parsed.value.object;
     const issuer = try requiredString(object, "issuer");
-    if (!authorizationMetadataIssuersEqual(issuer, expected_issuer)) {
+    if (!issuersEqual(issuer, expected_issuer)) {
         return .{ .issuer_mismatch = try IssuerMismatch.init(
             alloc,
             .authorization_metadata,
@@ -1022,16 +1025,26 @@ fn callbackRedirectUri(alloc: Allocator, configured_port: ?u16, bound_port: u16)
     return std.fmt.allocPrint(alloc, "http://127.0.0.1:{d}/callback", .{bound_port});
 }
 
+/// Binds the interactive OAuth callback on loopback only, never 0.0.0.0.
+/// A configured port keeps a stable redirect URI for providers that
+/// require a pre-registered one; otherwise an ephemeral loopback port is
+/// used. A conflicting fixed port fails closed with
+/// McpOAuthCallbackPortInUse instead of a stack trace.
+/// Reimplemented from upstream vercel-labs/fx.
+fn bindCallbackListener(configured_port: ?u16) !std.Io.net.Server {
+    var address = try std.Io.net.IpAddress.parse("127.0.0.1", configured_port orelse 0);
+    return address.listen(io_mod.getIo(), .{ .reuse_address = configured_port == null }) catch |err| {
+        if (configured_port != null and err == error.AddressInUse) return error.McpOAuthCallbackPortInUse;
+        return err;
+    };
+}
+
 pub fn authorizeInteractive(
     alloc: Allocator,
     options: InteractiveAuthorizationOptions,
 ) !AuthorizationResult {
     const configured_port = options.config.callback_port;
-    var address = try std.Io.net.IpAddress.parse("127.0.0.1", configured_port orelse 0);
-    var listener = address.listen(io_mod.getIo(), .{ .reuse_address = configured_port == null }) catch |err| {
-        if (configured_port != null and err == error.AddressInUse) return error.McpOAuthCallbackPortInUse;
-        return err;
-    };
+    var listener = try bindCallbackListener(configured_port);
     defer listener.deinit(io_mod.getIo());
     const redirect_uri = try callbackRedirectUri(
         alloc,
@@ -2536,6 +2549,21 @@ test "interactive callback redirect stays ephemeral without a pinned port" {
     defer alloc.free(ephemeral);
     try std.testing.expectEqualStrings("http://127.0.0.1:54321/callback", ephemeral);
     try std.testing.expect(isLoopbackEndpoint(ephemeral));
+}
+
+test "interactive callback binds a fixed port on loopback" {
+    var probe_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var probe = try probe_address.listen(io_mod.getIo(), .{ .reuse_address = true });
+    const free_port = probe.socket.address.getPort();
+    probe.deinit(io_mod.getIo());
+
+    var listener = try bindCallbackListener(free_port);
+    defer listener.deinit(io_mod.getIo());
+    try std.testing.expectEqual(free_port, listener.socket.address.getPort());
+
+    var target = try std.Io.net.IpAddress.parse("127.0.0.1", free_port);
+    var stream = try target.connect(io_mod.getIo(), .{ .mode = .stream });
+    stream.close(io_mod.getIo());
 }
 
 test "interactive callback reports a pinned port conflict without binding further" {
