@@ -19,6 +19,7 @@ pub const Limits = struct {
 pub const ProviderError = Allocator.Error || error{
     NoSpaceLeft,
     WriteFailed,
+    Cancelled,
 };
 
 pub const GatheredContribution = struct {
@@ -133,6 +134,7 @@ pub const InitialContextInput = struct {
     omission_summary: ?ContextOmissionSummary = null,
     /// Internal request reconstruction only; ordinary gathers retain their work limits.
     bounded_reconstruction: bool = false,
+    cancel_flag: ?*std.atomic.Value(bool) = null,
     context_limits: context_limits.Values = .{},
 };
 
@@ -142,6 +144,7 @@ pub const LaterContextInput = struct {
     targets: []const ApplicableTarget,
     delivered_sources: []const []const u8,
     evaluated_endpoints: []const []const u8,
+    cancel_flag: ?*std.atomic.Value(bool) = null,
     context_limits: context_limits.Values = .{},
 };
 
@@ -318,6 +321,9 @@ pub const Registry = struct {
         return self.defaultProvider().selectApplicableProjectContext(alloc, input);
     }
 
+    /// Appends the shared project-context system message, if any, as the
+    /// first message. Per-request refresh replaces that message in place,
+    /// so implementations must keep project context first.
     pub fn appendDefaultStatic(self: Registry, input: StaticContextInput, alloc: Allocator, messages: *std.ArrayList(types.ChatMessage)) ProviderError!void {
         return self.defaultProvider().appendStatic(input, alloc, messages);
     }

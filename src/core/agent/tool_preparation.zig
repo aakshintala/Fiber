@@ -526,22 +526,25 @@ pub fn retainedContextTargets(
         try collector.collect(execution);
     }
     if (index > 0 or collector.full()) {
-        debug_trace.logf("context", "retained_targets_bounded targets={d} steps={d} calls={d}", .{ collector.targets.items.len, collector.steps, collector.calls });
+        debug_trace.logf("context", "retained_targets_bounded targets={d} path_bytes={d} steps={d} calls={d}", .{ collector.targets.items.len, collector.path_bytes, collector.steps, collector.calls });
     }
     return .{ .items = try collector.targets.toOwnedSlice(alloc) };
 }
 
 const RetainedTargetCollector = struct {
+    const path_bytes_limit = 64 * 1024;
+
     alloc: Allocator,
     workspace_root: []const u8,
     registry: tool_dispatch.Registry,
     cancel_flag: ?*std.atomic.Value(bool),
     targets: std.ArrayList(context_contract.ApplicableTarget) = .empty,
+    path_bytes: usize = 0,
     steps: usize = 0,
     calls: usize = 0,
 
     fn full(self: *const RetainedTargetCollector) bool {
-        return self.targets.items.len == 32 or self.steps == 128 or self.calls == 128;
+        return self.targets.items.len == 32 or self.path_bytes >= path_bytes_limit or self.steps == 128 or self.calls == 128;
     }
 
     fn collect(self: *RetainedTargetCollector, execution: types.ExecutionMemory) (Allocator.Error || error{Cancelled})!void {
@@ -611,9 +614,14 @@ const RetainedTargetCollector = struct {
         for (self.targets.items) |target| {
             if (std.mem.eql(u8, target.path, directory)) return;
         }
+        if (self.path_bytes + directory.len > path_bytes_limit) {
+            debug_trace.logf("context", "retained_target_skipped reason=path_budget path_bytes={d}", .{self.path_bytes});
+            return;
+        }
         const owned = try self.alloc.dupe(u8, directory);
         errdefer self.alloc.free(owned);
         try self.targets.append(self.alloc, .{ .path = owned, .kind = .directory });
+        self.path_bytes += owned.len;
     }
 };
 
@@ -664,6 +672,70 @@ test "retained context targets use bounded typed history without executing calls
     var duplicates = try retainedContextTargets(alloc, &history, history[0].assistant.execution, workspace, registry, null);
     defer duplicates.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 2), duplicates.items.len);
+}
+
+test "retained context targets survive a renamed file within its scope" {
+    const alloc = std.testing.allocator;
+    const builtin_tools = @import("../../builtins/tools.zig");
+    const builtin_context = @import("../../builtins/context.zig");
+    const test_registry = tool_dispatch.Registry{ .tools = &.{builtin_tools.read_file} };
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "workspace/nested");
+    {
+        var rule = try tmp.dir.createFile(std.testing.io, "workspace/nested/AGENTS.md", .{});
+        defer rule.close(std.testing.io);
+        try rule.writeStreamingAll(std.testing.io, "RENAMED_SCOPE_RULE");
+        var current = try tmp.dir.createFile(std.testing.io, "workspace/nested/new.txt", .{});
+        defer current.close(std.testing.io);
+        try current.writeStreamingAll(std.testing.io, "renamed");
+    }
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    // History still references the pre-rename path; the scope must resolve anyway.
+    const calls = [_]ToolCall{
+        .{ .id = "read", .name = "read_file", .arguments_json = "{\"path\":\"nested/old.txt\"}" },
+    };
+    const steps = [_]types.ToolExecutionStep{.{ .tool_calls = @constCast(&calls) }};
+    const history = [_]types.HistoryTurn{.{ .assistant = .{
+        .user = .{ .text = @constCast("inspect") },
+        .assistant = @constCast(""),
+        .execution = .{ .tool_steps = @constCast(&steps) },
+    } }};
+    var retained = try retainedContextTargets(alloc, &history, null, workspace, test_registry, null);
+    defer retained.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 1), retained.items.len);
+    const context_registry = context_contract.Registry{ .default_provider = builtin_context.provider };
+    var snapshot = try context_registry.gatherDefaultSnapshot(alloc, .{
+        .workspace_root = workspace,
+        .targets = retained.items,
+        .bounded_reconstruction = true,
+    });
+    defer snapshot.deinit(alloc);
+    try std.testing.expect(std.mem.find(u8, snapshot.modelVisibleBytes(), "RENAMED_SCOPE_RULE") != null);
+}
+
+test "retained context targets restore scopes from recovery state alone" {
+    const alloc = std.testing.allocator;
+    const builtin_tools = @import("../../builtins/tools.zig");
+    const test_registry = tool_dispatch.Registry{ .tools = &.{builtin_tools.shell} };
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "workspace/nested");
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    const nested = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace/nested");
+    defer alloc.free(nested);
+    // Resumed turn: no restored history yet, only the recovery checkpoint.
+    var calls = [_]ToolCall{
+        .{ .id = "resumed", .name = "shell", .arguments_json = "{\"request\":{\"action\":\"run\",\"command\":\"pwd\",\"cwd\":\"nested\"}}" },
+    };
+    const steps = [_]types.ToolExecutionStep{.{ .tool_calls = &calls }};
+    var targets = try retainedContextTargets(alloc, &.{}, .{ .tool_steps = @constCast(&steps) }, workspace, test_registry, null);
+    defer targets.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 1), targets.items.len);
+    try std.testing.expectEqual(context_contract.TargetKind.directory, targets.items[0].kind);
+    try std.testing.expectEqualStrings(nested, targets.items[0].path);
 }
 
 test "retained context target call budget prevents old target reads" {

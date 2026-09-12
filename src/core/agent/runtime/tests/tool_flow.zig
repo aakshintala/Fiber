@@ -2872,6 +2872,76 @@ test "retained project context refreshes queued rules before a repeated shell ca
     try expectBodyNotContains(&disabled_gateway, 0, "RETAINED_OLD_RULE");
 }
 
+test "reconstructed project context refreshes within a turn before later requests" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "nested");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "nested/AGENTS.md", .data = "WITHIN_TURN_OLD" });
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(workspace);
+    const nested = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "nested");
+    defer alloc.free(nested);
+    const registry = context_contract.Registry{ .default_provider = builtin_context.provider };
+    // A prior turn reaches the nested scope, producing valid history for the refresh turn.
+    const prior_calls = [_]ToolCall{toolCall("prior_shell", "shell", "{\"action\":\"run\",\"command\":\"pwd\",\"cwd\":\"nested\"}")};
+    const prior_completions = [_]FakeCompletion{ .{ .tool_calls = &prior_calls }, .{ .content = "Prior" } };
+    var prior_gateway = FakeGateway.init(alloc, &prior_completions);
+    defer prior_gateway.deinit();
+    var prior_hooks = FakeAgentRuntimeDeps.init(alloc);
+    defer prior_hooks.deinit();
+    prior_hooks.context_enabled = true;
+    prior_hooks.context_registry = registry;
+    var fixture = PromptFixture{ .workspace_root = workspace };
+    try runFakePrompt(&prior_gateway, &prior_hooks, fixture.config(), fixture.job());
+    var queued_snapshot = try registry.gatherDefaultSnapshot(alloc, .{
+        .workspace_root = workspace,
+        .targets = &.{.{ .path = nested, .kind = .directory }},
+    });
+    defer queued_snapshot.deinit(alloc);
+    // The first executed call rewrites the rule file; the delegate swaps the
+    // contents between the first and second model requests of one turn.
+    const RewriteRule = struct {
+        dir: std.Io.Dir,
+        rewritten: bool = false,
+        fn run(raw: *anyopaque, request: runtime_tool_contracts.ToolExecutionRequest) anyerror!runtime_tool_contracts.ToolExecutionResult {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (std.mem.eql(u8, request.call.name, "shell") and !self.rewritten) {
+                var file = try self.dir.createFile(std.testing.io, "nested/AGENTS.md", .{});
+                defer file.close(std.testing.io);
+                try file.writeStreamingAll(std.testing.io, "WITHIN_TURN_NEW");
+                self.rewritten = true;
+            }
+            return .{ .model_output = "ok" };
+        }
+    };
+    var rewrite = RewriteRule{ .dir = tmp.dir };
+    const first_calls = [_]ToolCall{toolCall("within_one", "shell", "{\"action\":\"run\",\"command\":\"pwd\",\"cwd\":\"nested\"}")};
+    const second_calls = [_]ToolCall{toolCall("within_two", "shell", "{\"action\":\"run\",\"command\":\"pwd\",\"cwd\":\"nested\"}")};
+    const completions = [_]FakeCompletion{
+        .{ .tool_calls = &first_calls },
+        .{ .tool_calls = &second_calls },
+        .{ .content = "Final" },
+    };
+    var gateway = FakeGateway.init(alloc, &completions);
+    defer gateway.deinit();
+    var hooks = FakeAgentRuntimeDeps.init(alloc);
+    defer hooks.deinit();
+    hooks.context_enabled = true;
+    hooks.context_registry = registry;
+    hooks.static_context_text = queued_snapshot.modelVisibleBytes();
+    hooks.execute_delegate = .{ .ctx = &rewrite, .run = RewriteRule.run };
+    var job = fixture.job();
+    job.history = prior_hooks.history_turns.items;
+    job.context_snapshot = queued_snapshot;
+    try runFakePrompt(&gateway, &hooks, fixture.config(), job);
+    try std.testing.expect(rewrite.rewritten);
+    try std.testing.expectEqual(@as(usize, 3), gateway.request_bodies.items.len);
+    try expectBodyContains(&gateway, 0, "WITHIN_TURN_OLD");
+    try expectBodyContains(&gateway, 1, "WITHIN_TURN_NEW");
+    try expectBodyNotContains(&gateway, 1, "WITHIN_TURN_OLD");
+}
+
 test "modern context delta defers effectful call exactly once" {
     const alloc = std.testing.allocator;
     defer ApplicableContextDelta.reset("", null);
