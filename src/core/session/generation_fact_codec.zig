@@ -26,14 +26,20 @@ pub fn write(
         try writer.writeAll("null");
     }
     try writer.print(
-        ",\"billable_web_search_calls\":{d},\"total_cost\":{d}}}",
-        .{ fact.billable_web_search_calls, fact.total_cost },
+        ",\"billable_web_search_calls\":{d},\"total_cost\":",
+        .{fact.billable_web_search_calls},
     );
+    if (fact.total_cost) |cost| {
+        try writer.print("{d}}}", .{cost});
+    } else {
+        try writer.writeAll("null}");
+    }
 }
 
 pub fn parse(
     alloc: Allocator,
     value: std.json.Value,
+    allow_null_cost: bool,
 ) (Allocator.Error || error{InvalidGenerationFact})!usage_report.GenerationFact {
     if (value != .object or
         (value.object.count() != 9 and value.object.count() != 10))
@@ -75,7 +81,7 @@ pub fn parse(
             try parseU64(field)
         else
             0,
-        .total_cost = try parseCost(value.object.get("total_cost")),
+        .total_cost = try parseCost(value.object.get("total_cost"), allow_null_cost),
     };
     try usage_report.validateFact(fact);
     return fact;
@@ -101,8 +107,12 @@ fn parseI64(value: ?std.json.Value) error{InvalidGenerationFact}!i64 {
     return std.math.cast(i64, number) orelse error.InvalidGenerationFact;
 }
 
-fn parseCost(value: ?std.json.Value) error{InvalidGenerationFact}!f64 {
+fn parseCost(value: ?std.json.Value, allow_null_cost: bool) error{InvalidGenerationFact}!?f64 {
     const actual = value orelse return error.InvalidGenerationFact;
+    if (actual == .null) {
+        if (!allow_null_cost) return error.InvalidGenerationFact;
+        return null;
+    }
     const number: f64 = switch (actual) {
         .integer => |integer| @floatFromInt(integer),
         .float => |float| float,
@@ -141,7 +151,7 @@ test "codec round trips the shared generation fact shape" {
         .{},
     );
     defer parsed.deinit();
-    var decoded = try parse(alloc, parsed.value);
+    var decoded = try parse(alloc, parsed.value, false);
     defer decoded.deinit(alloc);
 
     try std.testing.expect(usage_report.GenerationFact.eql(expected, decoded));
@@ -150,4 +160,61 @@ test "codec round trips the shared generation fact shape" {
         encoded.written(),
         "request_count",
     ) == null);
+}
+
+test "codec round trips unknown cost without inventing a price" {
+    const alloc = std.testing.allocator;
+    const expected = usage_report.GenerationFact{
+        .id = @constCast("gen_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        .created_at_ms = 42,
+        .model = @constCast("provider/model"),
+        .input_tokens = 130,
+        .output_tokens = 25,
+        .cache_read_tokens = 20,
+        .cache_write_tokens = 10,
+        .reasoning_tokens = 5,
+        .billable_web_search_calls = 0,
+        .total_cost = null,
+    };
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try write(&encoded.writer, expected);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        encoded.written(),
+        "\"total_cost\":null",
+    ) != null);
+
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        encoded.written(),
+        .{},
+    );
+    defer parsed.deinit();
+    var decoded = try parse(alloc, parsed.value, true);
+    defer decoded.deinit(alloc);
+
+    try std.testing.expect(usage_report.GenerationFact.eql(expected, decoded));
+    try std.testing.expect(decoded.total_cost == null);
+    try std.testing.expectEqual(@as(u64, 155), decoded.input_tokens + decoded.output_tokens);
+}
+
+test "codec strict cost parsing rejects null from older record versions" {
+    const alloc = std.testing.allocator;
+    const payload = "{\"id\":\"gen_01ARZ3NDEKTSV4RRFFQ69G5FAV\",\"created_at_ms\":42,\"model\":\"provider/model\",\"input_tokens\":1,\"output_tokens\":1,\"cache_read_tokens\":0,\"cache_write_tokens\":0,\"reasoning_tokens\":null,\"billable_web_search_calls\":0,\"total_cost\":null}";
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        payload,
+        .{},
+    );
+    defer parsed.deinit();
+    try std.testing.expectError(
+        error.InvalidGenerationFact,
+        parse(alloc, parsed.value, false),
+    );
+    var decoded = try parse(alloc, parsed.value, true);
+    defer decoded.deinit(alloc);
+    try std.testing.expect(decoded.total_cost == null);
 }

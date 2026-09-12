@@ -137,7 +137,9 @@ pub const GenerationFact = struct {
     cache_write_tokens: u64,
     reasoning_tokens: ?u64,
     billable_web_search_calls: u64 = 0,
-    total_cost: f64,
+    /// Null when the cost of this generation is unknown. Unknown poisons
+    /// every aggregate it contributes to instead of reading as free.
+    total_cost: ?f64,
 
     pub fn deinit(self: *GenerationFact, alloc: Allocator) void {
         alloc.free(self.id);
@@ -190,7 +192,8 @@ pub const Totals = struct {
     cache_write_tokens: u64,
     reasoning_tokens: ?u64,
     request_count: ?u64,
-    total_cost: f64,
+    /// Null when any contributing generation has unknown cost.
+    total_cost: ?f64,
 };
 
 pub const ModelUsage = struct {
@@ -215,7 +218,7 @@ pub const SessionActivity = struct {
 
 pub const SessionModelSource = struct {
     model: []const u8,
-    total_cost: f64,
+    total_cost: ?f64,
     input_tokens: u64,
     output_tokens: u64,
     cache_read_tokens: u64,
@@ -228,7 +231,7 @@ pub const SessionSource = struct {
     snapshot_time_ms: i64,
     session_started_at_ms: i64,
     completeness: Completeness,
-    total_cost: f64,
+    total_cost: ?f64,
     input_tokens: u64,
     output_tokens: u64,
     cache_read_tokens: u64,
@@ -296,7 +299,7 @@ const MutableTotals = struct {
     cache_write_tokens: u64 = 0,
     reasoning_tokens: ?u64 = 0,
     request_count: u64 = 0,
-    total_cost: f64 = 0,
+    total_cost: ?f64 = 0,
 
     fn add(self: *MutableTotals, fact: GenerationFact) error{UsageOverflow}!void {
         self.input_tokens = std.math.add(u64, self.input_tokens, fact.input_tokens) catch
@@ -322,9 +325,13 @@ const MutableTotals = struct {
                 null
         else
             null;
-        const next_cost = self.total_cost + fact.total_cost;
-        if (!std.math.isFinite(next_cost)) return error.UsageOverflow;
-        self.total_cost = next_cost;
+        // Unknown costs poison the aggregate: token counts still sum, but
+        // the spend total becomes unknown instead of understating the cost.
+        self.total_cost = if (self.total_cost) |current| if (fact.total_cost) |known| sum: {
+            const next_cost = current + known;
+            if (!std.math.isFinite(next_cost)) return error.UsageOverflow;
+            break :sum next_cost;
+        } else null else null;
     }
 
     fn freeze(self: MutableTotals, request_count_available: bool) error{UsageOverflow}!Totals {
@@ -368,8 +375,7 @@ pub fn buildSessionSnapshot(
     if (source.snapshot_time_ms < 0 or
         source.session_started_at_ms < 0 or
         source.session_started_at_ms > source.snapshot_time_ms or
-        !std.math.isFinite(source.total_cost) or
-        source.total_cost < 0 or
+        !validOptionalCost(source.total_cost) or
         source.cache_read_tokens > source.input_tokens or
         source.cache_write_tokens > source.input_tokens)
     {
@@ -406,8 +412,7 @@ pub fn buildSessionSnapshot(
     for (source.models, 0..) |source_model, index| {
         if (source_model.model.len == 0 or
             source_model.model.len > max_model_bytes or
-            !std.math.isFinite(source_model.total_cost) or
-            source_model.total_cost < 0 or
+            !validOptionalCost(source_model.total_cost) or
             source_model.cache_read_tokens > source_model.input_tokens or
             source_model.cache_write_tokens > source_model.input_tokens)
         {
@@ -466,13 +471,17 @@ pub fn buildSessionSnapshot(
     };
 }
 
+fn validOptionalCost(value: ?f64) bool {
+    const cost = value orelse return true;
+    return std.math.isFinite(cost) and cost >= 0;
+}
+
 pub fn validateFact(fact: GenerationFact) error{InvalidGenerationFact}!void {
     if (!types.validGatewayGenerationId(fact.id) or
         fact.created_at_ms < 0 or
         fact.model.len == 0 or
         fact.model.len > max_model_bytes or
-        !std.math.isFinite(fact.total_cost) or
-        fact.total_cost < 0 or
+        !validOptionalCost(fact.total_cost) or
         fact.cache_read_tokens > fact.input_tokens or
         fact.cache_write_tokens > fact.input_tokens)
     {
@@ -641,12 +650,60 @@ fn emptySnapshot(
     };
 }
 
+test "rolling snapshots poison spend on unknown cost but keep tokens" {
+    const alloc = std.testing.allocator;
+    const now = std.time.ms_per_day * 40;
+    const priced = testFact(
+        @constCast("gen_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        @constCast("provider/priced"),
+        now - 1,
+        10,
+        4,
+        0.25,
+    );
+    const subscription = testFact(
+        @constCast("gen_01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+        @constCast("provider/subscription"),
+        now - 2,
+        130,
+        25,
+        null,
+    );
+    const facts = [_]GenerationFact{ priced, subscription };
+    var snapshot = try buildRollingSnapshot(
+        alloc,
+        .hours_24,
+        now,
+        now - std.time.ms_per_day,
+        &facts,
+        &.{},
+    );
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(Completeness.complete, snapshot.completeness);
+    try std.testing.expectEqual(@as(u64, 169), snapshot.totals.?.total_tokens);
+    try std.testing.expectEqual(@as(u64, 140), snapshot.totals.?.input_tokens);
+    try std.testing.expectEqual(@as(u64, 29), snapshot.totals.?.output_tokens);
+    try std.testing.expect(snapshot.totals.?.total_cost == null);
+    try std.testing.expectEqual(@as(usize, 2), snapshot.models.len);
+    for (snapshot.models) |model| {
+        if (std.mem.eql(u8, model.model, "provider/priced")) {
+            try std.testing.expectEqual(@as(?f64, 0.25), model.totals.total_cost);
+        } else {
+            try std.testing.expect(model.totals.total_cost == null);
+            try std.testing.expectEqual(@as(u64, 155), model.totals.total_tokens);
+        }
+    }
+}
+
 fn modelUsageLessThan(_: void, first: ModelUsage, second: ModelUsage) bool {
     if (first.totals.total_tokens != second.totals.total_tokens) {
         return first.totals.total_tokens > second.totals.total_tokens;
     }
     if (first.totals.total_cost != second.totals.total_cost) {
-        return first.totals.total_cost > second.totals.total_cost;
+        // Known costs sort before unknown ones; unknown rows stay stable.
+        const first_cost = first.totals.total_cost orelse return false;
+        const second_cost = second.totals.total_cost orelse return true;
+        return first_cost > second_cost;
     }
     return std.mem.order(u8, first.model, second.model) == .lt;
 }
@@ -657,7 +714,7 @@ fn testFact(
     created_at_ms: i64,
     input_tokens: u64,
     output_tokens: u64,
-    total_cost: f64,
+    total_cost: ?f64,
 ) GenerationFact {
     return .{
         .id = id,

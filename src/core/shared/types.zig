@@ -972,11 +972,13 @@ pub const Usage = struct {
 };
 
 /// Exact usage metadata returned by a completed provider stream. `model` is
-/// owned by the completion carrying this value.
+/// owned by the completion carrying this value. `total_cost` is null when
+/// the provider reports no per-request price (a subscription request is not
+/// free, its cost is unknown).
 pub const ProviderBilling = struct {
     created_at_ms: i64,
     model: []const u8,
-    total_cost: f64,
+    total_cost: ?f64,
     input_tokens: u64,
     output_tokens: u64,
     cache_read_tokens: u64,

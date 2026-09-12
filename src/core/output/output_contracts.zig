@@ -173,17 +173,28 @@ pub const UsageSnapshot = struct {
         if (totals.request_count) |requests| {
             try out.writer.print("Requests      {d}\n", .{requests});
         }
-        try out.writer.print("Spend         ${d:.4}\n", .{totals.total_cost});
+        if (totals.total_cost) |cost| {
+            try out.writer.print("Spend         ${d:.4}\n", .{cost});
+        } else {
+            try out.writer.writeAll("Spend         unknown\n");
+        }
 
         if (report.models.len > 0) {
             try out.writer.writeAll("\nBy model\n");
             for (report.models) |model| {
                 try out.writer.writeAll("- ");
                 try writeTerminalSafe(&out.writer, alloc, model.model);
-                try out.writer.print(
-                    "  {d} tokens  ${d:.4}\n",
-                    .{ model.totals.total_tokens, model.totals.total_cost },
-                );
+                if (model.totals.total_cost) |cost| {
+                    try out.writer.print(
+                        "  {d} tokens  ${d:.4}\n",
+                        .{ model.totals.total_tokens, cost },
+                    );
+                } else {
+                    try out.writer.print(
+                        "  {d} tokens  unknown\n",
+                        .{model.totals.total_tokens},
+                    );
+                }
             }
         }
         return try out.toOwnedSlice();
@@ -260,7 +271,12 @@ fn writeUsageTotalsJson(
     } else {
         try writer.writeAll("null");
     }
-    try writer.print(",\"spend\":{d}}}", .{totals.total_cost});
+    try writer.writeAll(",\"spend\":");
+    if (totals.total_cost) |cost| {
+        try writer.print("{d}}}", .{cost});
+    } else {
+        try writer.writeAll("null}");
+    }
 }
 
 pub fn workspaceErrorMessage(err: anyerror) ?[]const u8 {
@@ -3484,4 +3500,88 @@ test "usage text and JSON render the same optional and ordered facts" {
         "provider/model",
         data.get("models").?.array.items[0].object.get("model").?.string,
     );
+}
+
+test "usage renders unknown spend instead of zero and keeps tokens" {
+    const alloc = std.testing.allocator;
+    var models = [_]usage_report.ModelUsage{.{
+        .model = @constCast("provider/model"),
+        .totals = .{
+            .total_tokens = 155,
+            .input_tokens = 130,
+            .output_tokens = 25,
+            .cache_read_tokens = 20,
+            .cache_write_tokens = 10,
+            .reasoning_tokens = 5,
+            .request_count = 1,
+            .total_cost = null,
+        },
+    }};
+    const report = usage_report.Snapshot{
+        .scope = .session,
+        .snapshot_time_ms = 200,
+        .window_start_ms = 100,
+        .coverage_started_at_ms = 100,
+        .coverage = .full,
+        .completeness = .complete,
+        .totals = models[0].totals,
+        .models = &models,
+    };
+    const snapshot = UsageSnapshot{ .report = &report };
+
+    const text = try snapshot.render(alloc, .text);
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "Total tokens  155") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Input         130") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Spend         unknown") != null);
+    try std.testing.expect(std.mem.find(u8, text, "155 tokens  unknown") != null);
+    try std.testing.expect(std.mem.find(u8, text, "$0.0000") == null);
+    try std.testing.expect(std.mem.find(u8, text, "$0.00") == null);
+
+    const json = try snapshot.render(alloc, .json);
+    defer alloc.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"spend\":null") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"total_tokens\":155") != null);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, json, .{});
+    defer parsed.deinit();
+    const data = parsed.value.object.get("data").?.object;
+    try std.testing.expect(
+        data.get("totals").?.object.get("spend").? == .null,
+    );
+}
+
+test "usage still renders known spend exactly" {
+    const alloc = std.testing.allocator;
+    var models = [_]usage_report.ModelUsage{.{
+        .model = @constCast("provider/model"),
+        .totals = .{
+            .total_tokens = 12,
+            .input_tokens = 10,
+            .output_tokens = 2,
+            .cache_read_tokens = 3,
+            .cache_write_tokens = 1,
+            .reasoning_tokens = null,
+            .request_count = 1,
+            .total_cost = 0.25,
+        },
+    }};
+    const report = usage_report.Snapshot{
+        .scope = .session,
+        .snapshot_time_ms = 200,
+        .window_start_ms = 100,
+        .coverage_started_at_ms = 100,
+        .coverage = .full,
+        .completeness = .complete,
+        .totals = models[0].totals,
+        .models = &models,
+    };
+    const snapshot = UsageSnapshot{ .report = &report };
+
+    const text = try snapshot.render(alloc, .text);
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "Spend         $0.2500") != null);
+
+    const json = try snapshot.render(alloc, .json);
+    defer alloc.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"spend\":0.25") != null);
 }
