@@ -1,0 +1,48 @@
+name: Main backstop
+
+# Detection (not prevention) for the non-strict merge policy: with stale
+# branches mergeable, a semantically-conflicting combination can land
+# untested. This runs build + unit tests on every push to main so a bad
+# merge pages us within minutes on the merge commit itself. It never gates
+# merging and never touches releases (release.yml owns those).
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: main-backstop
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ZIG_VERSION: "0.16.0"
+
+jobs:
+  backstop:
+    name: Build and unit tests on main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: main-backstop-ReleaseSafe
+
+      - name: Check formatting
+        run: zig fmt --check src/
+
+      - name: Build
+        run: zig build -Doptimize=ReleaseSafe
+
+      - name: Run unit tests
+        env:
+          TEST_TIMEOUT_SECONDS: "900"
+        run: |
+          started_at=$SECONDS
+          trap 'printf "Unit tests elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
+          timeout "${TEST_TIMEOUT_SECONDS}s" zig build test -Doptimize=ReleaseSafe
