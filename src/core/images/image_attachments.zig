@@ -1661,6 +1661,92 @@ pub fn writeReviewImageFilePartJson(
     });
 }
 
+/// Coarse load-failure class for a resumed history snapshot, carried in
+/// the model-visible notice so the model knows why the image is gone.
+/// Both strings are static; `detail` below is always an error name.
+pub const ImageUnavailableReason = enum {
+    missing,
+    corrupt,
+    unreadable,
+
+    pub fn label(self: ImageUnavailableReason) []const u8 {
+        return @tagName(self);
+    }
+};
+
+/// Model-visible record of an image that existed in resumed history but
+/// whose snapshot could not be loaded. `detail` borrows a static error
+/// name, so no cleanup is needed.
+pub const ImageUnavailableNotice = struct {
+    image_id: usize,
+    reason: ImageUnavailableReason,
+    detail: []const u8,
+};
+
+/// One resumed history attachment prepared for request encoding: either
+/// verified bytes or a typed notice. The notice borrows nothing.
+pub const ResumedImagePart = union(enum) {
+    image: VerifiedSnapshot,
+    unavailable: ImageUnavailableNotice,
+
+    pub fn deinit(self: *ResumedImagePart, alloc: std.mem.Allocator) void {
+        switch (self.*) {
+            .image => |*verified| verified.deinit(alloc),
+            .unavailable => {},
+        }
+        self.* = undefined;
+    }
+};
+
+fn classifyImageSnapshotError(err: anyerror) ImageUnavailableReason {
+    return switch (err) {
+        error.MissingImageSnapshot, error.FileNotFound => .missing,
+        error.ImageSnapshotCorrupt,
+        error.InvalidImageSnapshotDigest,
+        error.ImageSnapshotMediaTypeMismatch,
+        error.UnsupportedImageType,
+        error.NotRegularFile,
+        => .corrupt,
+        else => .unreadable,
+    };
+}
+
+/// Loads one resumed history attachment through the verified snapshot
+/// path (bounded reads, no symlinks, digest-checked). Snapshot failures
+/// become a classified notice part; only allocation and cancellation
+/// failures are returned, so resume still succeeds.
+pub fn prepareResumedImagePart(
+    alloc: std.mem.Allocator,
+    attachment: types.ImageAttachment,
+) (std.mem.Allocator.Error || error{Cancelled})!ResumedImagePart {
+    const verified = loadVerifiedSnapshot(alloc, attachment, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Cancelled => return error.Cancelled,
+        else => return .{ .unavailable = .{
+            .image_id = attachment.id,
+            .reason = classifyImageSnapshotError(err),
+            .detail = @errorName(err),
+        } },
+    };
+    return .{ .image = verified };
+}
+
+/// Writes the notice payload for an unloadable resumed image. Reason and
+/// detail are identifier characters, so field escaping via Stringify is
+/// exact with no manual backslash handling.
+pub fn writeImageUnavailableNoticeJson(
+    writer: *std.Io.Writer,
+    notice: ImageUnavailableNotice,
+) !void {
+    try writer.writeAll("{\"type\":");
+    try std.json.Stringify.value("image_unavailable", .{}, writer);
+    try writer.print(",\"image_id\":{d},\"reason\":", .{notice.image_id});
+    try std.json.Stringify.value(notice.reason.label(), .{}, writer);
+    try writer.writeAll(",\"detail\":");
+    try std.json.Stringify.value(notice.detail, .{}, writer);
+    try writer.writeByte('}');
+}
+
 pub fn writeVerifiedImageFilePartJsonWithBudget(
     writer: *std.Io.Writer,
     snapshot: VerifiedSnapshot,
