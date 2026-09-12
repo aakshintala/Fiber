@@ -222,14 +222,17 @@ focused test for the changed path, build, and exercise that path with
 Then commit, push the branch, and open a draft pull request. `ci.yml` is the only
 entrypoint, and scope follows the pull request's state:
 
-* **Draft** runs Linux x86_64 formatting, the public-surface audit, PGSO corpus
-  validation, the release-decision tests, build, unit tests, smoke, and the four
-  duration-balanced Linux x86_64 E2E shards. Fast feedback while the work is
-  still moving; agents should use this instead of running the suite locally.
-* **Ready** adds the remaining native platforms (`ubuntu-24.04-arm`,
-  `macos-15`), the same four E2E shards on those platforms, benchmarks, the
-  three-platform binary size comparison, and the isolated MCP conformance
-  package.
+* **Draft** runs the static gates (formatting, public-surface audit, PGSO
+  corpus validation, release-decision tests), the Linux x86_64 build, unit
+  tests, smoke, and the four duration-balanced Linux x86_64 E2E shards. Fast
+  feedback while the work is still moving; agents should use this instead of
+  running the suite locally.
+* **Ready** adds only what draft did not run: the remaining native platforms
+  (`ubuntu-24.04-arm`, `macos-15`), the same four E2E shards on those
+  platforms, benchmarks, the three-platform binary size comparison, and the
+  isolated MCP conformance package.
+* Docs-only changes skip the heavy legs in both scopes; the static gates
+  still run on every push.
 
 A push does not trigger CI. A branch with no pull request has nothing to gate,
 and `release.yml` owns `main`.
@@ -245,8 +248,17 @@ result supersedes the draft one. Evidence comes only from the current run: a
 result from an ancestor commit does not count.
 
 A failed check is evidence. Repair it in a new commit and let CI run again;
-never rerun a failed test to green. Live model evals stay separate because they
-need credentials and are not deterministic.
+never rerun a failed test to green. The one exception is the workflow's own
+single per-file E2E retry, which is automatic and annotated: a pass-after-retry
+(red Flake watch next to green CI) means filing or updating a flake issue for
+the test and moving on. Deflake by rewriting the test.
+
+Merging does not require the branch to be current with main. Rebase only to
+pick up something the branch needs, never just to re-run green CI. The
+`main-backstop` workflow builds and unit-tests every merge to main; a red
+backstop run means main is broken, so stop the line and fix forward. Live
+model evals stay separate because they need credentials and are not
+deterministic.
 
 A ready pull request stays ready while you repair it. Draft scope skips the
 ready-only jobs, so a fix pushed to a draft pull request is never checked by the
