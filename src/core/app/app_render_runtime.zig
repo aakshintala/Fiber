@@ -1397,8 +1397,18 @@ pub fn Runtime(comptime App: type) type {
                         !presentation_shell.pending_scroll_compact
                     else
                         footer_frame.paint.preserve_scrollback,
+                    // The reset (2J+3J) targets the primary screen: 3J clears
+                    // primary scrollback on most terminals, so it must not fire
+                    // while any alternate screen physically owns the terminal.
+                    // That includes the queued approval inline restore, which
+                    // still owns the screen when its restore frame commits.
+                    // The flag clears on a committed primary-screen frame or
+                    // via the full-transcript restore repaint, so a deferred
+                    // reset either runs after the primary screen is restored
+                    // or is superseded by that repaint.
+                    // Reimplements upstream vercel-labs/fx 388eb2a0.
                     .reset_terminal = shouldResetPhysicalTerminal(
-                        false,
+                        physicalAlternateScreenActive(app),
                         app.shell.terminal_reset_pending,
                     ),
                 });
@@ -2559,6 +2569,12 @@ noinline fn shouldResetPhysicalTerminal(
     main_reset_pending: bool,
 ) bool {
     return !child_view_active and main_reset_pending;
+}
+
+fn physicalAlternateScreenActive(app: anytype) bool {
+    const App = @TypeOf(app.*);
+    if (comptime !@hasField(App, "terminal")) return false;
+    return app.terminal.alternate_screen_owner != .none;
 }
 
 test "core.app_render_runtime child presentation cannot reset primary scrollback" {
@@ -5046,13 +5062,29 @@ test "core.app_render_runtime changed resized full transcript close preserves pr
         .hint_row = 18,
     };
     try app.shell.requestTerminalResetAfterResize(&app.metrics, null);
+    var resize_offset = try file.length(io_mod.getIo());
     try app.shell.writeTranscript(
         alloc,
         &app.metrics,
         "new output while review is open\n",
         true,
     );
+    for (0..100_000) |_| {
+        try app.shell.prewarmFullTranscriptPage(null, null);
+        _ = try app.shell.pollFullTranscriptPageLoad();
+        if (app.shell.fullTranscriptPreparedForOpen()) break;
+        std.Thread.yield() catch std.atomic.spinLoopHint();
+    }
+    try std.testing.expect(app.shell.fullTranscriptPreparedForOpen());
+    app.shell.render_requests.request(.transcript);
     try Runtime(CoordinatorTestApp).flushRequestedFrame(&app);
+    const resize_bytes = try readCoordinatorFrameBytes(alloc, file, &resize_offset);
+    defer alloc.free(resize_bytes);
+    // The pending resize reset must not fire while the full transcript owns
+    // the alternate screen: 3J clears primary scrollback on most terminals.
+    try std.testing.expect(app.terminal.fullTranscriptScreenActive());
+    try std.testing.expect(std.mem.find(u8, resize_bytes, "\x1b[3J") == null);
+    try std.testing.expect(app.shell.terminal_reset_pending);
 
     var read_offset = try file.length(io_mod.getIo());
     try app_lifecycle.closeFullTranscript(app.alloc, &app.terminal, &app.shell, &app.metrics);
@@ -5071,6 +5103,116 @@ test "core.app_render_runtime changed resized full transcript close preserves pr
         transcript_runtime.TranscriptCommitDiagnosticState.stable,
         app.shell.transcriptCommitDiagnostic().state,
     );
+}
+
+test "core.app_render_runtime resized full transcript approval handoff restores primary without scrollback clear" {
+    const approval_input_runtime = @import("input_approval_runtime.zig");
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile(
+        std.testing.io,
+        "full-transcript-resize-approval-handoff.log",
+        .{ .read = true },
+    );
+    defer file.close(io_mod.getIo());
+
+    const preview_lines = [_]diff_mod.PreviewLine{
+        .{ .op = .addition, .new_line = 1, .text = "after" },
+    };
+    const request: permission_request.PermissionRequest = .{
+        .id = 44,
+        .label = "write_file note.txt",
+        .file = .{
+            .kind = .write,
+            .intent = .mutation,
+            .preview = .{
+                .path = "note.txt",
+                .lines = &preview_lines,
+                .additions = 1,
+                .deletions = 0,
+                .truncated = false,
+            },
+            .scope = .workspace_files,
+        },
+    };
+    var review = try diff_mod.FileReview.init(alloc, "", "after\n");
+    defer review.deinit(alloc);
+    var app = CoordinatorTestApp{
+        .alloc = alloc,
+        .shell = .{
+            .stdout_file = file,
+            .layout = .{
+                .rows = 24,
+                .cols = 96,
+                .content_bottom = 20,
+                .divider_top_row = 21,
+                .input_row = 22,
+                .divider_bottom_row = 23,
+                .hint_row = 24,
+            },
+            .owned_top_row = 1,
+            .viewport_top_row = 1,
+        },
+    };
+    defer app.deinit();
+    try app.selected_model.appendSlice(alloc, "test-model");
+    try app.shell.initBacking(alloc);
+    try app.shell.enableShadowVt(alloc);
+
+    try app.shell.writeTranscript(alloc, &app.metrics, "prior transcript\n" ** 64, true);
+    app.shell.render_requests.request(.first_frame);
+    try Runtime(CoordinatorTestApp).flushRequestedFrame(&app);
+
+    try app_lifecycle.openFullTranscript(app.alloc, &app.terminal, &app.shell, &app.metrics);
+    try Runtime(CoordinatorTestApp).flushRequestedFrame(&app);
+    app.shell.layout = .{
+        .rows = 18,
+        .cols = 72,
+        .content_bottom = 14,
+        .divider_top_row = 15,
+        .input_row = 16,
+        .divider_bottom_row = 17,
+        .hint_row = 18,
+    };
+    try app.shell.requestTerminalResetAfterResize(&app.metrics, null);
+
+    try std.testing.expect(try app.approval_prompt.syncRequest(alloc, request));
+    try std.testing.expect(app.approval_prompt.syncReview(&review));
+    app.shell.render_requests.request(.modal);
+    try Runtime(CoordinatorTestApp).flushRequestedFrame(&app);
+    try Runtime(CoordinatorTestApp).flushRequestedFrame(&app);
+    try std.testing.expect(app.terminal.fileApprovalScreenActive());
+    // The resize reset stays deferred while the approval screen owns the
+    // physical terminal.
+    try std.testing.expect(app.shell.terminal_reset_pending);
+
+    // New output lands while the approval screen is up so the restore frame
+    // carries a primary repaint after the screen transition.
+    try app.shell.writeTranscript(alloc, &app.metrics, "restored primary content\n", true);
+
+    var restore_offset = try file.length(io_mod.getIo());
+    try std.testing.expect(try approval_input_runtime.ApprovalRuntime(CoordinatorTestApp).handlePermissionAction(
+        &app,
+        .{ .number = 2 },
+    ));
+    try Runtime(CoordinatorTestApp).flushRequestedFrame(&app);
+    const restore_bytes = try readCoordinatorFrameBytes(alloc, file, &restore_offset);
+    defer alloc.free(restore_bytes);
+
+    try std.testing.expectEqual(types.ToolPermissionDecision.deny, app.worker.submitted_permission.?);
+    try std.testing.expect(!app.terminal.fileApprovalScreenActive());
+    // The queued inline restore still owned the screen when this frame
+    // committed, so no scrollback clear may fire here.
+    try std.testing.expect(std.mem.find(u8, restore_bytes, "\x1b[3J") == null);
+    const restore_pos = std.mem.find(u8, restore_bytes, "\x1b[?1049l");
+    try std.testing.expect(restore_pos != null);
+    // Restoration precedes the primary repaint in the same frame.
+    const repaint_pos = std.mem.find(u8, restore_bytes, "restored primary content");
+    try std.testing.expect(repaint_pos != null);
+    try std.testing.expect(restore_pos.? < repaint_pos.?);
+    // The committed primary frame clears the deferred reset flag.
+    try std.testing.expect(!app.shell.terminal_reset_pending);
 }
 
 test "core.app_render_runtime exits terminal-only full transcript state before normal render" {
