@@ -33,6 +33,9 @@ pub fn writeInput(
                     try writer.writeByte('}');
                     first_part = false;
                 };
+                // Only the final message's attachments may be replaced by
+                // verified current-turn images; every other message always
+                // rehydrates its own history attachments (or their notices).
                 if (verified_images) |images| {
                     if (message_index == messages.len - 1) {
                         for (images) |image| {
@@ -40,17 +43,11 @@ pub fn writeInput(
                             try writeInputImage(writer, alloc, image);
                             first_part = false;
                         }
+                    } else {
+                        try writeResumedHistoryImages(writer, alloc, message.images, &first_part);
                     }
                 } else {
-                    // Resumed history carries attachments, not bytes. Rehydrate
-                    // each snapshot in place so the model sees the image the
-                    // text refers to; an unloadable snapshot becomes a typed
-                    // notice in the same slot instead of a silent omission.
-                    for (message.images) |attachment| {
-                        if (!first_part) try writer.writeByte(',');
-                        try writeResumedHistoryImage(writer, alloc, attachment);
-                        first_part = false;
-                    }
+                    try writeResumedHistoryImages(writer, alloc, message.images, &first_part);
                 }
                 try writer.writeAll("]}");
             },
@@ -113,58 +110,37 @@ fn validateReplayMessage(message: types.ChatMessage, limits: ReplayLimits) !void
     }
 }
 
-/// Rehydrates one resumed history attachment through the same verified
-/// snapshot load (bounded reads, no symlinks, digest-checked) used for
-/// current-turn images. Success encodes the image; a missing or corrupt
-/// snapshot encodes a typed model-visible notice in its slot. Only
-/// allocation and cancellation failures propagate, so resume still succeeds.
-fn writeResumedHistoryImage(
+/// Serializes already-prepared history attachments: verified bytes become
+/// native image parts, unloadable snapshots become typed in-place notices.
+fn writeResumedHistoryImages(
     writer: *std.Io.Writer,
     alloc: std.mem.Allocator,
-    attachment: types.ImageAttachment,
+    attachments: []const types.ImageAttachment,
+    first_part: *bool,
 ) !void {
-    var verified = image_attachments.loadVerifiedSnapshot(
-        alloc,
-        attachment,
-        .{},
-    ) catch |err| switch (err) {
-        error.OutOfMemory, error.Cancelled => return err,
-        else => {
-            try writeImageUnavailableNotice(writer, attachment.id, err);
-            return;
-        },
-    };
-    defer verified.deinit(alloc);
-    try writeInputImage(writer, alloc, verified);
+    for (attachments) |attachment| {
+        var part = try image_attachments.prepareResumedImagePart(alloc, attachment);
+        defer part.deinit(alloc);
+        if (!first_part.*) try writer.writeByte(',');
+        switch (part) {
+            .image => |snapshot| try writeInputImage(writer, alloc, snapshot),
+            .unavailable => |notice| try writeImageUnavailablePart(writer, alloc, notice),
+        }
+        first_part.* = false;
+    }
 }
 
-fn imageUnavailableReason(err: anyerror) []const u8 {
-    return switch (err) {
-        error.MissingImageSnapshot, error.FileNotFound => "missing",
-        error.ImageSnapshotCorrupt,
-        error.InvalidImageSnapshotDigest,
-        error.ImageSnapshotMediaTypeMismatch,
-        error.UnsupportedImageType,
-        error.NotRegularFile,
-        => "corrupt",
-        else => "unreadable",
-    };
-}
-
-/// Typed in-place payload telling the model an image existed here and why
-/// it is gone. Reason and detail are error-identifier characters only, so
-/// the manual JSON escaping below cannot break the envelope.
-fn writeImageUnavailableNotice(
+fn writeImageUnavailablePart(
     writer: *std.Io.Writer,
-    image_id: usize,
-    err: anyerror,
+    alloc: std.mem.Allocator,
+    notice: image_attachments.ImageUnavailableNotice,
 ) !void {
-    try writer.writeAll("{\"type\":\"input_text\",\"text\":\"");
-    try writer.print(
-        "{{\\\"type\\\":\\\"image_unavailable\\\",\\\"image_id\\\":{d},\\\"reason\\\":\\\"{s}\\\",\\\"detail\\\":\\\"{s}\\\"}}",
-        .{ image_id, imageUnavailableReason(err), @errorName(err) },
-    );
-    try writer.writeAll("\"}");
+    var inner: std.Io.Writer.Allocating = .init(alloc);
+    defer inner.deinit();
+    try image_attachments.writeImageUnavailableNoticeJson(&inner.writer, notice);
+    try writer.writeAll("{\"type\":\"input_text\",\"text\":");
+    try std.json.Stringify.value(inner.written(), .{}, writer);
+    try writer.writeByte('}');
 }
 
 fn writeInputImage(

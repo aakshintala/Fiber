@@ -804,6 +804,42 @@ test "OpenAI Codex resumed history keeps notice order behind a valid image" {
     try std.testing.expect(std.mem.find(u8, body, "\\\"image_id\\\":9") != null);
 }
 
+test "OpenAI Codex keeps history notices alongside verified current images" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const tmp_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(tmp_root);
+    const missing_path = try std.fs.path.join(alloc, &.{ tmp_root, "gone.bin" });
+    defer alloc.free(missing_path);
+
+    const attachment = try makeHistoryImageAttachment(alloc, 7, missing_path, "a" ** 64);
+    defer types.freeImageAttachment(alloc, attachment);
+    const images = [_]types.ImageAttachment{attachment};
+    const messages = [_]types.ChatMessage{
+        .{ .role = .user, .content = "Fix it [Image #7]", .images = &images },
+        .{ .role = .user, .content = "And this." },
+    };
+    const current = [_]image_attachments.VerifiedSnapshot{.{
+        .bytes = @constCast(&[_]u8{ 1, 2, 3, 4 }),
+        .media_type = "image/png",
+    }};
+    const body = try buildRequest(alloc, .{
+        .model = "gpt-5.6-sol",
+        .messages = &messages,
+        .tool_choice = .none,
+        .provider_options = .{},
+        .verified_images = &current,
+    });
+    defer alloc.free(body);
+
+    const notice_pos = std.mem.find(u8, body, "image_unavailable") orelse return error.TestExpectedNotice;
+    const image_pos = std.mem.find(u8, body, "data:image/png;base64,AQIDBA==") orelse return error.TestExpectedImage;
+    try std.testing.expect(notice_pos < image_pos);
+    try std.testing.expect(std.mem.find(u8, body, "\\\"reason\\\":\\\"missing\\\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\\\"image_id\\\":7") != null);
+}
+
 test "OpenAI Codex rejects a wrong-origin credential before network I/O" {
     var cancelled = std.atomic.Value(bool).init(false);
     var delivery = stream_provider.DeliveryCertainty.init();
