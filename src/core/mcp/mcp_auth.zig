@@ -581,19 +581,29 @@ const AuthorizationMetadataOutcome = union(enum) {
     issuer_mismatch: IssuerMismatch,
 };
 
-fn issuerWithoutTrailingSlash(issuer: []const u8) []const u8 {
-    if (issuer.len > 1 and issuer[issuer.len - 1] == '/') return issuer[0 .. issuer.len - 1];
-    return issuer;
-}
-
-/// Exact-one-trailing-slash issuer comparison shared by metadata
-/// validation and the credential store. `https://host` and `https://host/`
-/// are the same issuer; anything else (double slashes, differing hosts,
-/// paths, or schemes) still compares unequal so mismatches fail closed.
-/// Authorization-response issuers are intentionally not compared this way.
+/// Root-form issuer comparison shared by metadata validation and the
+/// credential store. `scheme://host` and `scheme://host/` are the same
+/// issuer; any string carrying a path (anything after the host) compares
+/// exactly, so `https://host/path` vs `https://host/path/`, `//` vs `/`,
+/// and all other mismatches fail closed. Authorization-response issuers
+/// are intentionally not compared this way.
 /// Reimplemented from upstream vercel-labs/fx.
 pub fn issuersEqual(a: []const u8, b: []const u8) bool {
-    return std.mem.eql(u8, issuerWithoutTrailingSlash(a), issuerWithoutTrailingSlash(b));
+    if (std.mem.eql(u8, a, b)) return true;
+    const longer = if (a.len > b.len) a else b;
+    const shorter = if (a.len > b.len) b else a;
+    if (longer.len != shorter.len + 1) return false;
+    if (longer[longer.len - 1] != '/') return false;
+    if (!std.mem.eql(u8, longer[0 .. longer.len - 1], shorter)) return false;
+    return isRootIssuer(shorter);
+}
+
+/// Reports whether the issuer is exactly `scheme://host` with no path.
+fn isRootIssuer(issuer: []const u8) bool {
+    const marker = std.mem.find(u8, issuer, "://") orelse return false;
+    const host = issuer[marker + 3 ..];
+    if (host.len == 0) return false;
+    return std.mem.findScalar(u8, host, '/') == null;
 }
 
 fn parseAuthorizationMetadataOutcome(
@@ -2392,6 +2402,26 @@ test "authorization metadata mismatch retains exact issuer values and fails clos
     );
 }
 
+test "issuer comparison tolerates a trailing slash only for root issuers" {
+    try std.testing.expect(issuersEqual("https://login.example.com", "https://login.example.com"));
+    try std.testing.expect(issuersEqual("https://login.example.com", "https://login.example.com/"));
+    try std.testing.expect(issuersEqual("https://login.example.com/", "https://login.example.com"));
+    try std.testing.expect(issuersEqual("", ""));
+
+    try std.testing.expect(!issuersEqual("https://login.example.com/tenant", "https://login.example.com/tenant/"));
+    try std.testing.expect(!issuersEqual("https://login.example.com/tenant/", "https://login.example.com/tenant"));
+    try std.testing.expect(!issuersEqual("//", "/"));
+    try std.testing.expect(!issuersEqual("/", "//"));
+    try std.testing.expect(!issuersEqual("", "/"));
+    try std.testing.expect(!issuersEqual("/", ""));
+    try std.testing.expect(!issuersEqual("", "https://login.example.com"));
+    try std.testing.expect(!issuersEqual("https://login.example.com//", "https://login.example.com"));
+    try std.testing.expect(!issuersEqual("https://login.example.com", "https://login.example.com//"));
+    try std.testing.expect(!issuersEqual("https://a.example", "https://b.example/"));
+    try std.testing.expect(!issuersEqual("http://login.example.com/", "https://login.example.com"));
+    try std.testing.expect(!issuersEqual("login.example.com", "login.example.com/"));
+}
+
 test "authorization metadata accepts an issuer that differs only by a trailing slash" {
     const alloc = std.testing.allocator;
     const bytes =
@@ -2420,6 +2450,8 @@ test "authorization metadata fails closed on anything beyond one trailing slash"
         .{ .returned = "https://login.example.com//", .expected = "https://login.example.com" },
         .{ .returned = "https://login.example.com", .expected = "https://login.example.com//" },
         .{ .returned = "https://login.example.com/tenant", .expected = "https://login.example.com/" },
+        .{ .returned = "https://login.example.com/tenant/", .expected = "https://login.example.com/tenant" },
+        .{ .returned = "https://login.example.com/tenant", .expected = "https://login.example.com/tenant/" },
         .{ .returned = "https://login.example.com", .expected = "https://login.example.com/tenant" },
         .{ .returned = "https://login.example.com", .expected = "https://login.evil.example/" },
         .{ .returned = "http://login.example.com/", .expected = "https://login.example.com" },
