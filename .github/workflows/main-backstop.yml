@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+        uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27
         with:
           version: ${{ env.ZIG_VERSION }}
           cache-key: main-backstop-ReleaseSafe

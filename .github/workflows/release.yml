@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Setup Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27 # fork: node24 runtime
         with:
           version: "0.16.0"
 
