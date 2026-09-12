@@ -270,6 +270,7 @@ describe("fiber ask presentation", () => {
       "run",
       "interact",
       "stop",
+      "list",
     ]);
     const serializedShellTool = JSON.stringify(shellTool);
     expect(serializedShellTool).not.toContain('"tty"');

@@ -243,7 +243,7 @@ test.skipIf(!tmuxAvailable())(
     const actions = request.oneOf.map(
       (branch: any) => branch.properties.action.enum[0],
     );
-    expect(actions).toEqual(["run", "run", "interact", "stop"]);
+    expect(actions).toEqual(["run", "run", "interact", "stop", "list"]);
     expect(codex.requests[0]!.body).not.toContain('"name":"terminal"');
     const runResult = toolResultEnvelope(
       codex.requests[1]!.body,
