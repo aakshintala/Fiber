@@ -46,6 +46,8 @@ jobs:
           docs_only=true
           while IFS= read -r f; do
             case "$f" in
+              # src/ Markdown is embedded in the binary (system_prompt.md).
+              src/*) docs_only=false; break ;;
               *.md|docs/*) ;;
               *) docs_only=false; break ;;
             esac
