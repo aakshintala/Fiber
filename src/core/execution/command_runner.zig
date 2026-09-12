@@ -2239,6 +2239,21 @@ fn termination_settle_expired(
     );
 }
 
+// After a force-kill, closed pipes alone must not end collection while the
+// waiter is still unsettled: keep polling until the waiter reports or the
+// settlement deadline cancels it.
+fn pipeDrainComplete(
+    source: TerminationSource,
+    signal_started: bool,
+    force_kill_sent: bool,
+    waiter_ready: bool,
+    group_alive: bool,
+) bool {
+    if (source == .natural or !signal_started) return true;
+    if (force_kill_sent and waiter_ready) return true;
+    return !group_alive;
+}
+
 fn collectOutput(
     arena: Allocator,
     observer: *ProcessObserver,
@@ -2319,11 +2334,13 @@ fn collectOutput(
         }
 
         if (streams_finished) {
-            if (source.* == .natural or
-                signal_started_ms == null or
-                force_kill_sent or
-                !remainingProcessGroupAlive(process_group_id))
-            {
+            if (pipeDrainComplete(
+                source.*,
+                signal_started_ms != null,
+                force_kill_sent,
+                observer.waiter.isReady(),
+                remainingProcessGroupAlive(process_group_id),
+            )) {
                 break;
             }
             io_mod.sleep(10 * std.time.ns_per_ms);
@@ -2355,11 +2372,13 @@ fn collectOutput(
 
         if (!keep_reading) {
             streams_finished = true;
-            if (source.* == .natural or
-                signal_started_ms == null or
-                force_kill_sent or
-                !remainingProcessGroupAlive(process_group_id))
-            {
+            if (pipeDrainComplete(
+                source.*,
+                signal_started_ms != null,
+                force_kill_sent,
+                observer.waiter.isReady(),
+                remainingProcessGroupAlive(process_group_id),
+            )) {
                 break;
             }
         }
@@ -4077,6 +4096,24 @@ test "nonterminal child terms remain indeterminate" {
         command_contract.CommandStatus{ .exit_code = 3 },
         commandStatusFromTerm(.{ .exited = 3 }),
     );
+}
+
+test "post-force-kill keeps polling when pipes close but the waiter stalls" {
+    // Closed pipes with a stalled waiter must not end collection: the loop
+    // keeps polling until the waiter settles or the deadline cancels it.
+    try std.testing.expect(!pipeDrainComplete(.cancelled, true, true, false, true));
+    try std.testing.expect(!pipeDrainComplete(.timed_out, true, true, false, true));
+    // Kill observed: waiter ready ends collection with the observed status.
+    try std.testing.expect(pipeDrainComplete(.cancelled, true, true, true, true));
+    try std.testing.expect(pipeDrainComplete(.timed_out, true, true, true, true));
+    // Dead group still drains even with a lagging waiter.
+    try std.testing.expect(pipeDrainComplete(.cancelled, true, true, false, false));
+    // Pre-force-kill behavior unchanged: natural and unsignalled drains end,
+    // cooperative kills wait on group death.
+    try std.testing.expect(pipeDrainComplete(.natural, false, false, false, true));
+    try std.testing.expect(pipeDrainComplete(.cancelled, false, false, false, true));
+    try std.testing.expect(!pipeDrainComplete(.cancelled, true, false, false, true));
+    try std.testing.expect(pipeDrainComplete(.cancelled, true, false, false, false));
 }
 
 test "pending termination source makes supervisor fallback timeout dominant" {

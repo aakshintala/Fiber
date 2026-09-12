@@ -1404,7 +1404,7 @@ fn formatSnapshotRaw(
 ) ![]u8 {
     const status = switch (snapshot.state) {
         .completed => |value| value,
-        .stopped => |value| value,
+        .stopped => |value| stopProjectedStatus(value),
         .lost => .indeterminate,
         .running => null,
     };
@@ -1462,25 +1462,54 @@ fn snapshotFailed(state: managed_execution.SnapshotState) bool {
     };
 }
 
-// A stop reports success only when an exit was observed. Lost workers and
-// indeterminate stops fail closed so callers never read them as clean stops.
+// A stop reports success only when an exit was observed. Lost workers,
+// missing stops, and stops without an exit status fail closed so callers
+// never read them as clean stops.
 fn stop_result_failed(state: managed_execution.SnapshotState) bool {
     return switch (state) {
         .lost => true,
         .stopped => |status| if (status) |value| switch (value) {
-            .indeterminate => true,
-            .exit_code, .signal, .finished => false,
-        } else false,
+            .exit_code, .signal => false,
+            .indeterminate, .finished => true,
+        } else true,
         .running, .completed => false,
     };
 }
 
-test "shell stop fails closed only for lost or indeterminate outcomes" {
+// Missing and finished stop outcomes project as indeterminate so metadata
+// never reads a stop without an observed exit as a clean stop.
+fn stopProjectedStatus(status: ?command_contract.CommandStatus) command_contract.CommandStatus {
+    const observed = status orelse return .indeterminate;
+    return switch (observed) {
+        .finished => .indeterminate,
+        .exit_code, .signal, .indeterminate => observed,
+    };
+}
+
+test "shell stop fails closed without an observed exit" {
     try std.testing.expect(stop_result_failed(.lost));
     try std.testing.expect(stop_result_failed(.{ .stopped = .indeterminate }));
+    try std.testing.expect(stop_result_failed(.{ .stopped = .finished }));
+    try std.testing.expect(stop_result_failed(.{ .stopped = null }));
+    try std.testing.expect(!stop_result_failed(.{ .stopped = .{ .exit_code = 0 } }));
     try std.testing.expect(!stop_result_failed(.{ .stopped = .{ .signal = 9 } }));
-    try std.testing.expect(!stop_result_failed(.{ .stopped = null }));
     try std.testing.expect(!stop_result_failed(.{ .completed = .{ .exit_code = 0 } }));
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        stopProjectedStatus(null),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        stopProjectedStatus(.finished),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus{ .exit_code = 0 },
+        stopProjectedStatus(.{ .exit_code = 0 }),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus{ .signal = 9 },
+        stopProjectedStatus(.{ .signal = 9 }),
+    );
 }
 
 fn runtimeFailure(
