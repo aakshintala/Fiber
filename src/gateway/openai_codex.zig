@@ -692,6 +692,47 @@ fn buildHistoryReplayBody(alloc: Allocator, messages: []const types.ChatMessage)
     });
 }
 
+/// Extracts the in-place image_unavailable notice from a request body and
+/// asserts its exact payload. A malformed notice (e.g. a stray quote)
+/// fails here: the inner text will not parse or fields will mismatch.
+fn expectImageUnavailableNotice(
+    body: []const u8,
+    image_id: usize,
+    reason: []const u8,
+    detail: []const u8,
+) !void {
+    const alloc = std.testing.allocator;
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, body, .{});
+    defer parsed.deinit();
+    const input = parsed.value.object.get("input") orelse return error.TestExpectedInput;
+    var found = false;
+    for (input.array.items) |item| {
+        if (item != .object) continue;
+        const content = item.object.get("content") orelse continue;
+        if (content != .array) continue;
+        for (content.array.items) |part| {
+            if (part != .object) continue;
+            const part_type = part.object.get("type") orelse continue;
+            if (part_type != .string or !std.mem.eql(u8, part_type.string, "input_text")) continue;
+            const text = part.object.get("text") orelse continue;
+            if (text != .string or std.mem.find(u8, text.string, "image_unavailable") == null) continue;
+            var notice = try std.json.parseFromSlice(std.json.Value, alloc, text.string, .{});
+            defer notice.deinit();
+            try std.testing.expectEqual(@as(usize, 4), notice.value.object.count());
+            const notice_type = notice.value.object.get("type") orelse return error.TestExpectedNoticeType;
+            try std.testing.expectEqualStrings("image_unavailable", notice_type.string);
+            const notice_id = notice.value.object.get("image_id") orelse return error.TestExpectedNoticeId;
+            try std.testing.expectEqual(image_id, @as(usize, @intCast(notice_id.integer)));
+            const notice_reason = notice.value.object.get("reason") orelse return error.TestExpectedNoticeReason;
+            try std.testing.expectEqualStrings(reason, notice_reason.string);
+            const notice_detail = notice.value.object.get("detail") orelse return error.TestExpectedNoticeDetail;
+            try std.testing.expectEqualStrings(detail, notice_detail.string);
+            found = true;
+        }
+    }
+    try std.testing.expect(found);
+}
+
 test "OpenAI Codex resumed history notices a missing snapshot without failing" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -716,9 +757,7 @@ test "OpenAI Codex resumed history notices a missing snapshot without failing" {
     const body = try buildHistoryReplayBody(alloc, &messages);
     defer alloc.free(body);
 
-    try std.testing.expect(std.mem.find(u8, body, "image_unavailable") != null);
-    try std.testing.expect(std.mem.find(u8, body, "\\\"reason\\\":\\\"missing\\\"") != null);
-    try std.testing.expect(std.mem.find(u8, body, "\\\"image_id\\\":7") != null);
+    try expectImageUnavailableNotice(body, 7, "missing", "FileNotFound");
     try std.testing.expect(std.mem.find(u8, body, "input_image") == null);
 }
 
@@ -742,9 +781,7 @@ test "OpenAI Codex resumed history notices a corrupt snapshot without failing" {
     const body = try buildHistoryReplayBody(alloc, &messages);
     defer alloc.free(body);
 
-    try std.testing.expect(std.mem.find(u8, body, "image_unavailable") != null);
-    try std.testing.expect(std.mem.find(u8, body, "\\\"reason\\\":\\\"corrupt\\\"") != null);
-    try std.testing.expect(std.mem.find(u8, body, "ImageSnapshotCorrupt") != null);
+    try expectImageUnavailableNotice(body, 7, "corrupt", "ImageSnapshotCorrupt");
     try std.testing.expect(std.mem.find(u8, body, "input_image") == null);
 }
 

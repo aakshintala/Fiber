@@ -1740,7 +1740,7 @@ pub fn writeImageUnavailableNoticeJson(
 ) !void {
     try writer.writeAll("{\"type\":");
     try std.json.Stringify.value("image_unavailable", .{}, writer);
-    try writer.print("\",\"image_id\":{d},\"reason\":", .{notice.image_id});
+    try writer.print(",\"image_id\":{d},\"reason\":", .{notice.image_id});
     try std.json.Stringify.value(notice.reason.label(), .{}, writer);
     try writer.writeAll(",\"detail\":");
     try std.json.Stringify.value(notice.detail, .{}, writer);
