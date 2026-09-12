@@ -485,7 +485,9 @@ pub noinline fn project_text_only_messages(
 
 /// Produces arena-scoped native-route messages with raw images. Retains only
 /// root-turn Vision calls followed by contiguous structured route rejections.
-/// Canonical history is unchanged.
+/// A paired rejection means Vision was refused for this request, so user image
+/// attachments are dropped with it: re-sending refused bytes would repeat the
+/// failure. Canonical history is unchanged.
 pub noinline fn project_native_messages(
     alloc: Allocator,
     messages: []const types.ChatMessage,
@@ -510,6 +512,14 @@ pub noinline fn project_native_messages(
     }
     if (!contains_vision) return messages;
 
+    var vision_rejected = false;
+    for (messages, 0..) |_, message_index| {
+        if (is_paired_native_route_rejection_result(messages, message_index)) {
+            vision_rejected = true;
+            break;
+        }
+    }
+
     var projected: std.ArrayList(types.ChatMessage) = .empty;
     errdefer projected.deinit(alloc);
     var filtered_call_slices: std.ArrayList([]types.ToolCall) = .empty;
@@ -526,6 +536,7 @@ pub noinline fn project_native_messages(
         }
 
         var projected_message = chat_message;
+        if (vision_rejected and projected_message.role == .user) projected_message.images = &.{};
         var vision_call_count: usize = 0;
         for (chat_message.tool_calls, 0..) |call, call_index| {
             if (std.mem.eql(u8, call.name, "vision") and
@@ -1517,7 +1528,9 @@ test "native message projection retains only the current turn structured rejecti
 
     const immediate = try project_native_messages(arena, messages[0..8], 4);
     try std.testing.expectEqual(@as(usize, 7), immediate.len);
-    try std.testing.expectEqual(@as(usize, 1), immediate[0].images.len);
+    // The retained rejection refused Vision, so the refused bytes stay dropped.
+    try std.testing.expectEqual(@as(usize, 0), immediate[0].images.len);
+    try std.testing.expectEqual(@as(usize, 1), messages[0].images.len);
     try std.testing.expectEqual(@as(usize, 1), immediate[1].tool_calls.len);
     try std.testing.expectEqualStrings("read_file", immediate[1].tool_calls[0].name);
     try std.testing.expectEqualStrings("read_file", immediate[2].tool_name.?);
@@ -1529,7 +1542,8 @@ test "native message projection retains only the current turn structured rejecti
 
     const later = try project_native_messages(arena, &messages, 8);
     try std.testing.expectEqual(@as(usize, 7), later.len);
-    try std.testing.expectEqual(@as(usize, 1), later[0].images.len);
+    // A historical rejection still suppresses the refused-byte resend.
+    try std.testing.expectEqual(@as(usize, 0), later[0].images.len);
     try std.testing.expectEqualStrings("read_file", later[1].tool_calls[0].name);
     try std.testing.expectEqualStrings("recover now", later[3].content.?);
     try std.testing.expectEqualStrings("recovered", later[4].content.?);
