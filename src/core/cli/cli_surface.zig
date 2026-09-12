@@ -4356,6 +4356,99 @@ test "usage session lookup failures exit without crashing" {
     );
 }
 
+test "usage session window failures exit without crashing" {
+    const session_usage = @import("../session/session_usage.zig");
+    const session_codec = @import("../session/session_codec.zig");
+    const session = @import("../session/session.zig");
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace);
+
+    var store = try session_store.Store.initFromHome(alloc, home, workspace);
+    defer store.deinit(alloc);
+    var ledger_usage = session_usage.Usage.initFresh();
+    defer ledger_usage.deinit(alloc);
+    var ledger = try ledger_usage.snapshot(alloc);
+    defer ledger.deinit(alloc);
+    var state: session_codec.DurableSessionState = .{
+        .id = try alloc.dupe(u8, "usage-old"),
+        .origin_workspace_root = try alloc.dupe(u8, workspace),
+        .workspace_root = try alloc.dupe(u8, workspace),
+        .created_at_ms = 10,
+        .updated_at_ms = 10,
+        .conversation_language = session.ConversationLanguage.literal("en"),
+        .preferences = .{
+            .model = try alloc.dupe(u8, "test/model"),
+            .effort = types.ReasoningEffort.literal("high"),
+            .fast_mode = false,
+        },
+        .history = &.{},
+        .total_input_tokens = 0,
+        .total_output_tokens = 0,
+    };
+    defer state.deinit(alloc);
+    var writable = try store.startWritableSession(alloc, state);
+    defer writable.deinit(alloc);
+    _ = try writable.appendEvent(
+        alloc,
+        .{ .usage_checkpointed = .{ .usage = ledger } },
+        10,
+        .retry_expected_tail,
+        .{},
+    );
+
+    var failed_text = CaptureOutput.init(alloc);
+    defer failed_text.deinit();
+    try std.testing.expectEqual(
+        RunResult.handled_failure,
+        try run_usage_session(
+            alloc,
+            failed_text.deps(),
+            home,
+            "usage-old",
+            .hours_24,
+            .text,
+        ),
+    );
+    try std.testing.expectEqualStrings(
+        "fiber usage: session 'usage-old' started before the 24h window; re-run without --period for lifetime session totals\n",
+        failed_text.stderr.written(),
+    );
+
+    var failed_json = CaptureOutput.init(alloc);
+    defer failed_json.deinit();
+    try std.testing.expectEqual(
+        RunResult.handled_failure,
+        try run_usage_session(
+            alloc,
+            failed_json.deps(),
+            home,
+            "usage-old",
+            .hours_24,
+            .json,
+        ),
+    );
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            failed_json.stdout.written(),
+            "\"code\":\"SessionPredatesUsageWindow\"",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            failed_json.stdout.written(),
+            "started before the 24h window",
+        ) != null,
+    );
+}
+
 test "global launch modifiers preserve repeatable context limits before the command" {
     var parsed = try parseGlobalLaunchArgs(std.testing.allocator, &.{
         @constCast("--context-limit"),
