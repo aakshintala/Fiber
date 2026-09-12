@@ -516,11 +516,14 @@ pub const BackgroundSnapshot = struct {
                 if (self.stopped) {
                     try writer.writeAll("stopped ");
                     try writeTerminalSafe(writer, alloc, session_id);
-                } else if (self.message) |message| {
-                    try writeTerminalSafe(writer, alloc, message);
                 } else {
-                    try writer.writeAll("could not stop ");
-                    try writeTerminalSafe(writer, alloc, session_id);
+                    try writer.writeAll("ok=false ");
+                    if (self.message) |message| {
+                        try writeTerminalSafe(writer, alloc, message);
+                    } else {
+                        try writer.writeAll("could not stop ");
+                        try writeTerminalSafe(writer, alloc, session_id);
+                    }
                 }
                 if (trailing_newline) try writer.writeByte('\n');
             },
@@ -531,9 +534,10 @@ pub const BackgroundSnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
+        const ok = self.action != .stop or self.stopped;
         try out.writer.print(
-            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"action\":",
-            .{Kind.background.jsonName()},
+            "{{\"ok\":{},\"kind\":\"{s}\",\"data\":{{\"action\":",
+            .{ ok, Kind.background.jsonName() },
         );
         try std.json.Stringify.value(@tagName(self.action), .{}, &out.writer);
         if (self.action == .stop) {
@@ -3585,12 +3589,20 @@ test "background snapshot renders list and stop from one snapshot" {
     try std.testing.expect(std.mem.find(u8, stopped_text, "stopped shell-1") != null);
     const stopped_json = try stopped.renderJson(alloc);
     defer alloc.free(stopped_json);
+    try std.testing.expect(std.mem.find(u8, stopped_json, "\"ok\":true") != null);
     try std.testing.expect(std.mem.find(u8, stopped_json, "\"stopped\":true") != null);
 
     const missed = BackgroundSnapshot{ .action = .stop, .stop_session_id = "shell-9", .message = "no running session with id shell-9" };
     const missed_text = try missed.renderText(alloc);
     defer alloc.free(missed_text);
-    try std.testing.expect(std.mem.find(u8, missed_text, "no running session with id shell-9") != null);
+    try std.testing.expect(std.mem.find(u8, missed_text, "[background] ok=false no running session with id shell-9") != null);
+    const missed_body = try missed.renderInteractiveBody(alloc);
+    defer alloc.free(missed_body);
+    try std.testing.expect(std.mem.find(u8, missed_body, "ok=false no running session with id shell-9") != null);
+    const missed_json = try missed.renderJson(alloc);
+    defer alloc.free(missed_json);
+    try std.testing.expect(std.mem.find(u8, missed_json, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, missed_json, "\"stopped\":false") != null);
 }
 
 test "workspace text snapshot terminal-encodes paths" {

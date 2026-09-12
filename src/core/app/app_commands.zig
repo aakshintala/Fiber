@@ -25,9 +25,8 @@ const session_permission_state = @import("../permissions/session_permission_stat
 const skill_commands = @import("../skills/skill_commands.zig");
 const skill_runtime = @import("../skills/skill_runtime.zig");
 const text_utils = @import("../shared/text_utils.zig");
-const tool_dispatch = @import("../tooling/tool_dispatch.zig");
+const background_sessions = @import("../terminal/background_sessions.zig");
 const tool_presentation = @import("../tooling/tool_presentation.zig");
-const shell_impl = @import("../../tools/shell/shell.zig");
 const session_commands = @import("../session/session_commands.zig");
 const usage_recovery = @import("../session/usage_recovery.zig");
 const usage_dashboard_runtime = @import("usage_dashboard_runtime.zig");
@@ -378,7 +377,10 @@ fn handleBackgroundCommand(app: anytype, rest: []const u8) !void {
 }
 
 fn writeBackgroundList(app: anytype) !void {
-    const items = app.managed_executions.list(app.alloc) catch |err| {
+    const items = background_sessions.listSessions(
+        backgroundSessionContext(app),
+        &app.managed_executions,
+    ) catch |err| {
         const message = try std.fmt.allocPrint(app.alloc, "Background list failed: {s}", .{@errorName(err)});
         defer app.alloc.free(message);
         try app.writeDomainNotice(.{
@@ -398,7 +400,7 @@ fn writeBackgroundList(app: anytype) !void {
         entries[index] = .{
             .session_id = item.execution_id,
             .command = item.command,
-            .state = shell_impl.snapshotStateName(item.state),
+            .state = background_sessions.stateName(item.state),
             .backend = @tagName(item.backend),
         };
     }
@@ -413,10 +415,24 @@ fn writeBackgroundList(app: anytype) !void {
 }
 
 fn stopBackgroundSession(app: anytype, session_id: []const u8, force: bool) !void {
-    var result = try shell_impl.stopSession(backgroundToolContext(app), session_id, force, .human);
-    defer result.deinit(app.alloc);
-    switch (result) {
-        .success => {
+    var outcome = try background_sessions.stopSession(
+        backgroundSessionContext(app),
+        &app.managed_executions,
+        session_id,
+        force,
+        .human,
+    );
+    switch (outcome) {
+        .prepared => |*prepared| {
+            defer prepared.deinit(app.alloc);
+            app.managed_executions.commitDelivery(
+                prepared.snapshot.execution_id,
+                prepared.reservation_id,
+            ) catch |err| {
+                const message = try std.fmt.allocPrint(app.alloc, "could not stop {s}: {s}", .{ session_id, @errorName(err) });
+                defer app.alloc.free(message);
+                return writeBackgroundStopMessage(app, session_id, message);
+            };
             const snapshot = output_contracts.BackgroundSnapshot{
                 .action = .stop,
                 .stop_session_id = session_id,
@@ -431,6 +447,7 @@ fn stopBackgroundSession(app: anytype, session_id: []const u8, force: bool) !voi
             }, true);
         },
         .failure => |reason| {
+            defer app.alloc.free(reason);
             const message = if (std.mem.find(u8, reason, "ExecutionNotFound") != null)
                 try std.fmt.allocPrint(app.alloc, "no running session with id {s}", .{session_id})
             else if (std.mem.find(u8, reason, "ActorRoleMismatch") != null)
@@ -438,42 +455,44 @@ fn stopBackgroundSession(app: anytype, session_id: []const u8, force: bool) !voi
             else
                 try std.fmt.allocPrint(app.alloc, "could not stop {s}", .{session_id});
             defer app.alloc.free(message);
-            const snapshot = output_contracts.BackgroundSnapshot{
-                .action = .stop,
-                .stop_session_id = session_id,
-                .message = message,
-            };
-            const body = try snapshot.renderInteractiveBody(app.alloc);
-            defer app.alloc.free(body);
-            try app.writeDomainNotice(.{
-                .topic = "background",
-                .tone = .@"error",
-                .body = body,
-            }, true);
+            try writeBackgroundStopMessage(app, session_id, message);
         },
     }
 }
 
-/// Human-owned stop context for the shared shell stop path. Explicit slash
-/// commands need no permission review; every field beyond the allocator is
-/// the same ownership the agent path uses.
-fn backgroundToolContext(app: anytype) tool_dispatch.DispatchContext {
+fn writeBackgroundStopMessage(app: anytype, session_id: []const u8, message: []const u8) !void {
+    const snapshot = output_contracts.BackgroundSnapshot{
+        .action = .stop,
+        .stop_session_id = session_id,
+        .message = message,
+    };
+    const body = try snapshot.renderInteractiveBody(app.alloc);
+    defer app.alloc.free(body);
+    try app.writeDomainNotice(.{
+        .topic = "background",
+        .tone = .@"error",
+        .body = body,
+    }, true);
+}
+
+/// Human-owned session context for the shared background session helpers.
+/// Explicit slash commands need no permission review; every field beyond the
+/// allocator is the same ownership the agent path uses.
+fn backgroundSessionContext(app: anytype) background_sessions.SessionContext {
     const App = @TypeOf(app.*);
     return .{
-        .allocator = app.alloc,
-        .workspace_root = if (comptime @hasField(App, "workspace_root")) app.workspace_root else "",
-        .managed_executions = &app.managed_executions,
+        .alloc = app.alloc,
+        .lifecycle_allocator = app.alloc,
         .terminal_client = if (comptime @hasField(App, "terminal_client")) &app.terminal_client else null,
-        .session_child_capability = if (comptime @hasField(App, "session_persistence"))
+        .owner = if (comptime @hasField(App, "session_persistence"))
             app_session_runtime.Runtime(App).childCapability(app)
         else
             null,
-        .terminal_owner_session_id = if (comptime @hasField(App, "session_persistence"))
+        .durable_session_id = if (comptime @hasField(App, "session_persistence"))
             app_session_runtime.Runtime(App).activeSessionId(app)
         else
             null,
-        .terminal_transport_role = .interactive,
-        .lifecycle_allocator = app.alloc,
+        .workspace_root = if (comptime @hasField(App, "workspace_root")) app.workspace_root else "",
     };
 }
 
