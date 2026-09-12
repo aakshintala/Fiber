@@ -10210,6 +10210,43 @@ test "doctor probes never refresh stored credentials" {
     try std.testing.expectEqualStrings("original-token", server.auth_credentials.?.access_token);
 }
 
+test "doctor probe challenge fails fast without touching the store" {
+    const alloc = std.testing.allocator;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    runtime.doctor_read_only = true;
+    var server = McpServer{
+        .config = .{
+            .name = "fixture",
+            .transport = .http,
+            .url = "https://example.test/mcp",
+        },
+        .runtime = &runtime,
+    };
+    defer {
+        if (server.auth_credentials) |*credentials| credentials.deinit(alloc);
+        if (server.pending_auth_challenge) |*challenge| challenge.deinit(alloc);
+        if (server.last_error) |value| alloc.free(value);
+    }
+    const deadline = std.Io.Clock.Timestamp.fromNow(std.testing.io, .{
+        .clock = .awake,
+        .raw = .fromSeconds(5),
+    });
+    const control: streamable_http.Control = .{ .deadline = deadline };
+    // No network, no keychain, no save: the firewall answers first.
+    try std.testing.expectError(
+        error.McpAuthenticationRequired,
+        authorizeForChallenge(alloc, &server, .{}, control),
+    );
+    try std.testing.expectEqualStrings(
+        "Authentication required. Run /mcp auth fixture, or configure bearer_token_env.",
+        server.last_error.?,
+    );
+    try std.testing.expect(server.auth_credentials == null);
+    try std.testing.expect(server.pending_auth_challenge == null);
+    try std.testing.expect(!server.auth_challenge_present.load(.acquire));
+}
+
 fn startupTimeout(
     configured_timeout_ms: u32,
     test_override: ?std.Io.Duration,
@@ -10412,19 +10449,24 @@ fn connectServerForDiscovery(
     used_tool_names: *std.StringHashMap(void),
     control: ConnectionControl,
 ) !void {
-    loadStoredCredentials(runtime.alloc, server, control) catch |err| {
-        if (err == error.Cancelled) return err;
-        debug_trace.logf(
-            "mcp",
-            "credential load failed server={s} err={s}",
-            .{ server.config.name, @errorName(err) },
-        );
-        server.setFailed(
-            runtime.alloc,
-            "Stored MCP credentials could not be read securely.",
-        );
-        return err;
-    };
+    // Doctor probes never touch the credential store: no locks, keychain,
+    // or migration. Servers needing stored credentials proceed without
+    // them and report auth_required on challenge.
+    if (!runtime.doctor_read_only) {
+        loadStoredCredentials(runtime.alloc, server, control) catch |err| {
+            if (err == error.Cancelled) return err;
+            debug_trace.logf(
+                "mcp",
+                "credential load failed server={s} err={s}",
+                .{ server.config.name, @errorName(err) },
+            );
+            server.setFailed(
+                runtime.alloc,
+                "Stored MCP credentials could not be read securely.",
+            );
+            return err;
+        };
+    }
     return if (server.config.transport == .stdio)
         runtime.connectServerBounded(server, used_tool_names, control)
     else
@@ -12491,6 +12533,13 @@ fn authenticatedPost(
             try auth_access.authorize();
             return error.McpAuthenticationRequired;
         }
+        // Doctor probes stop at the challenge: no pending-challenge store,
+        // no automated authorize, no credential save.
+        if (doctorReadOnlyProbe(server)) {
+            response.deinit(request_alloc);
+            markAuthenticationRequired(owner_alloc, server);
+            return error.McpAuthenticationRequired;
+        }
         try storePendingChallenge(
             owner_alloc,
             server,
@@ -12581,20 +12630,34 @@ fn refreshSharedCredentials(
     server: *McpServer,
     control: streamable_http.Control,
 ) !bool {
-    var source = source: {
+    // Computed above lock acquisition: doctor probes observe in-memory
+    // credential state but never touch the credential store.
+    const read_only = doctorReadOnlyProbe(server);
+    const Source = struct {
+        generation: u64,
+        credentials: ?mcp_auth.Credentials,
+    };
+    var source: Source = source: {
         try lockMutexWithControl(&server.auth_lock, control);
         defer server.auth_lock.unlock(io_mod.getIo());
         if (server.auth_logout_in_progress.load(.acquire)) return false;
         const credentials = server.auth_credentials orelse return false;
         if (!credentials.needsRefresh(io_mod.milliTimestamp())) return false;
+        // Denied before cloning: no clone, no refresh, no save, no store
+        // contact of any kind. The error below maps to auth_required.
+        if (read_only) break :source .{
+            .generation = server.auth_generation.load(.acquire),
+            .credentials = null,
+        };
         break :source .{
             .generation = server.auth_generation.load(.acquire),
             .credentials = try credentials.clone(alloc),
         };
     };
-    defer source.credentials.deinit(alloc);
-    const read_only = if (server.runtime) |runtime| runtime.doctor_read_only else false;
-    if (read_only or source.credentials.refresh_token == null) {
+    defer if (source.credentials) |*cached| cached.deinit(alloc);
+    // read_only short-circuits: credentials is null only on the denied path,
+    // so the unwrap below never fires on it.
+    if (read_only or source.credentials.?.refresh_token == null) {
         setFailedSynchronized(
             server,
             alloc,
@@ -12602,8 +12665,9 @@ fn refreshSharedCredentials(
         );
         return error.McpAuthenticationRequired;
     }
+    const cached = source.credentials.?;
 
-    var refreshed = mcp_auth.refreshCredentials(alloc, source.credentials, .{
+    var refreshed = mcp_auth.refreshCredentials(alloc, cached, .{
         .deadline = control.deadline,
         .cancel_flag = control.cancel_flag,
         .lifecycle_cancel_flag = control.lifecycle_cancel_flag,
@@ -12639,6 +12703,14 @@ fn refreshSharedCredentials(
     installAuthCredentials(alloc, server, &refreshed);
     transferred = true;
     return true;
+}
+
+/// True when the server belongs to a read-only doctor probe runtime: the
+/// probe may observe in-memory credential state but must never touch the
+/// credential store (no locks, keychain, migration, or save).
+fn doctorReadOnlyProbe(server: *const McpServer) bool {
+    const runtime = server.runtime orelse return false;
+    return runtime.doctor_read_only;
 }
 
 fn markAuthenticationRequired(alloc: Allocator, server: *McpServer) void {
@@ -12694,6 +12766,12 @@ fn authorizeForChallenge(
     challenge: mcp_auth.Challenge,
     control: streamable_http.Control,
 ) !void {
+    // Structural backstop: challenge-driven authorize/save is unreachable
+    // from read-only doctor probes even if a new caller appears.
+    if (doctorReadOnlyProbe(server)) {
+        markAuthenticationRequired(alloc, server);
+        return error.McpAuthenticationRequired;
+    }
     const auth_config = server.config.auth orelse mcp_contract.McpAuthConfig{};
     const client_secret = if (auth_config.client_secret_env) |env_name|
         io_mod.getenv(env_name) orelse return error.McpClientSecretEnvironmentMissing
@@ -14327,7 +14405,10 @@ fn captureAuthHeader(
     else
         mcp_auth.Challenge{};
     defer challenge.deinit(alloc);
-    try storePendingChallenge(alloc, server, challenge, control);
+    // Doctor probes observe the challenge without storing it.
+    if (!doctorReadOnlyProbe(server)) {
+        try storePendingChallenge(alloc, server, challenge, control);
+    }
     markAuthenticationRequired(alloc, server);
 }
 
