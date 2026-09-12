@@ -80,6 +80,14 @@ pub fn collect_session(
     );
     defer detail.deinit(alloc);
 
+    // usage --session scopes exact ids to the current workspace; foreign
+    // ids read as not found even though session show --id stays global.
+    const session_root = detail.summary.workspace_root orelse
+        return error.SessionNotFound;
+    if (!std.mem.eql(u8, session_root, workspace_root)) {
+        return error.SessionNotFound;
+    }
+
     if (period) |scope| {
         const duration_ms = scope.durationMs() orelse return error.InvalidUsageScope;
         const window_start_ms = std.math.sub(

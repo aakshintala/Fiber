@@ -130,14 +130,8 @@ pub fn loadVisibleReadOnlyDetail(
     var detail = try store.loadReadOnlyDetail(alloc, session_id, options);
     errdefer detail.deinit(alloc);
     if (detail.state.subagent_child) return error.SessionNotFound;
-    // Exact ids bypass listing scope, so the loader enforces the same
-    // current-workspace visibility the session lists apply. Sessions that
-    // live in another workspace read as not found.
-    const visible_root = detail.summary.workspace_root orelse
-        return error.SessionNotFound;
-    if (!std.mem.eql(u8, visible_root, store.workspace_root)) {
-        return error.SessionNotFound;
-    }
+    // Exact ids are global; workspace scoping lives in the list/last
+    // paths and in callers (like usage --session) that need it.
     return detail;
 }
 
@@ -493,4 +487,47 @@ test "subagent work identity hides a partial child without owner sidecar" {
             .{},
         ),
     );
+}
+
+test "exact id detail lookup stays global across workspaces" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "home/.fiber");
+    try tmp.dir.createDirPath(std.testing.io, "workspace");
+    try tmp.dir.createDirPath(std.testing.io, "elsewhere");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    const elsewhere = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "elsewhere");
+    defer alloc.free(elsewhere);
+
+    var store = try session_store.Store.initFromHome(alloc, home, workspace);
+    defer store.deinit(alloc);
+    var durable = session_codec.DurableSessionState{
+        .id = try alloc.dupe(u8, "foreign-visible"),
+        .origin_workspace_root = try alloc.dupe(u8, workspace),
+        .workspace_root = try alloc.dupe(u8, workspace),
+        .created_at_ms = 1,
+        .updated_at_ms = 1,
+        .conversation_language = session.ConversationLanguage.literal("en"),
+        .history = try alloc.alloc(session.HistoryTurn, 0),
+        .total_input_tokens = 0,
+        .total_output_tokens = 0,
+        .preferences = .{
+            .model = try alloc.dupe(u8, "test"),
+            .effort = .auto,
+            .fast_mode = false,
+        },
+    };
+    defer durable.deinit(alloc);
+    var writable = try store.startWritableSession(alloc, durable);
+    writable.deinit(alloc);
+
+    var foreign = try session_store.Store.initFromHome(alloc, home, elsewhere);
+    defer foreign.deinit(alloc);
+    var detail = try loadVisibleReadOnlyDetail(foreign, alloc, "foreign-visible", .{});
+    defer detail.deinit(alloc);
+    try std.testing.expectEqualStrings("foreign-visible", detail.summary.id);
 }
