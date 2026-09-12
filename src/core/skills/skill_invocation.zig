@@ -4,6 +4,7 @@ const model_context_encoding = @import("../shared/model_context_encoding.zig");
 const skill_contract = @import("skill_contract.zig");
 const skill_runtime = @import("skill_runtime.zig");
 const text_utils = @import("../shared/text_utils.zig");
+const types = @import("../shared/types.zig");
 const tool_result_limits = @import("../tooling/tool_result_limits.zig");
 const context_limits = @import("../config/context_limits.zig");
 const test_debug_trace = if (@import("builtin").is_test)
@@ -87,16 +88,25 @@ pub const ExplicitBinding = struct {
     path: []const u8,
 };
 
-/// Owns `text` and both optional notices.
+/// Owns `text` and all optional notices. `load_notice` is the transcript row
+/// summarizing explicitly requested loads; it is never part of model input,
+/// so automatic loads are not counted as model tool calls. `load_details`
+/// carries the full failure text for the full-only transcript view.
+/// (Load rows harvested from upstream fx `requested-skill-status` and
+/// `align-skill-status`; reimplemented under Fiber's current contracts.)
 pub const ExplicitPromptSection = struct {
     text: []u8,
     notice: ?[]u8 = null,
     diagnostic_notice: ?[]u8 = null,
+    load_notice: ?types.SemanticNotice = null,
+    load_details: ?[]u8 = null,
 
     pub fn deinit(self: *ExplicitPromptSection, alloc: Allocator) void {
         alloc.free(self.text);
         if (self.notice) |notice| alloc.free(notice);
         if (self.diagnostic_notice) |notice| alloc.free(notice);
+        if (self.load_notice) |notice| types.freeSemanticNotice(alloc, notice);
+        if (self.load_details) |details| alloc.free(details);
         self.* = .{ .text = &.{} };
     }
 };
@@ -122,27 +132,72 @@ pub fn buildExplicitPromptSection(
     defer notices.deinit();
     var diagnostic_notices: std.Io.Writer.Allocating = .init(alloc);
     defer diagnostic_notices.deinit();
+    var load_rows: std.Io.Writer.Allocating = .init(alloc);
+    defer load_rows.deinit();
+    var load_details: std.Io.Writer.Allocating = .init(alloc);
+    defer load_details.deinit();
+    var loaded: usize = 0;
 
     try out.writer.writeAll("Explicitly invoked skill content for this query:\n");
-    for (binding_plan) |binding| {
-        try appendExplicitSkill(
+    for (binding_plan, 0..) |binding, index| {
+        try load_rows.writer.writeAll(if (index + 1 == binding_plan.len) "\n\xe2\x94\x94 " else "\n\xe2\x94\x9c ");
+        if (try appendExplicitSkill(
             alloc,
             &out.writer,
             &notices.writer,
             &diagnostic_notices,
+            &load_rows.writer,
+            &load_details.writer,
             catalog,
             binding.name,
             binding.path,
             limits,
-        );
+        )) {
+            loaded += 1;
+        }
     }
+
+    const failed = binding_plan.len - loaded;
+    const summary = if (failed == 0)
+        try std.fmt.allocPrint(alloc, "{d} requested skill{s} loaded{s}", .{ loaded, if (loaded == 1) "" else "s", load_rows.written() })
+    else
+        try std.fmt.allocPrint(alloc, "Requested skills \xc2\xb7 {d} loaded \xc2\xb7 {d} failed (ctrl o for details){s}", .{ loaded, failed, load_rows.written() });
+    errdefer alloc.free(summary);
+    const details = if (load_details.written().len > 0) try load_details.toOwnedSlice() else null;
+    errdefer if (details) |value| alloc.free(value);
 
     const text = try out.toOwnedSlice();
     errdefer alloc.free(text);
     const notice = if (notices.written().len > 0) try notices.toOwnedSlice() else null;
     errdefer if (notice) |value| alloc.free(value);
     const diagnostic_notice = if (diagnostic_notices.written().len > 0) try diagnostic_notices.toOwnedSlice() else null;
-    return .{ .text = text, .notice = notice, .diagnostic_notice = diagnostic_notice };
+    errdefer if (diagnostic_notice) |value| alloc.free(value);
+    return .{
+        .text = text,
+        .notice = notice,
+        .diagnostic_notice = diagnostic_notice,
+        .load_notice = .{ .topic = "", .tone = if (failed == 0) .neutral else .warning, .body = summary },
+        .load_details = details,
+    };
+}
+
+/// Appends one terminal-safe transcript row naming the requested skill.
+/// Failure rows stay short in the compact view; the full failure text goes
+/// to the details writer for the full-only transcript view.
+fn appendExplicitLoadRow(alloc: Allocator, out: *std.Io.Writer, name: []const u8, failure: ?[]const u8) !void {
+    const row = if (failure) |detail|
+        if (detail.len > 0)
+            try std.fmt.allocPrint(alloc, "Could not load {s}: {s}", .{ name, detail })
+        else
+            try std.fmt.allocPrint(alloc, "Could not load {s}", .{name})
+    else
+        try std.fmt.allocPrint(alloc, "Loaded skill {s}", .{name});
+    defer alloc.free(row);
+    const masked = try text_utils.maskSecrets(alloc, row);
+    defer if (masked.ptr != row.ptr) alloc.free(masked);
+    var encoded = try text_utils.encodeTerminalSafe(alloc, masked, context_limits.emergency_ceiling_bytes);
+    defer encoded.deinit(alloc);
+    try out.writeAll(encoded.bytes);
 }
 
 fn buildExplicitBindingPlan(
@@ -178,11 +233,13 @@ fn appendExplicitSkill(
     out: *std.Io.Writer,
     notices: *std.Io.Writer,
     diagnostic_notices: *std.Io.Writer.Allocating,
+    load_rows: *std.Io.Writer,
+    load_details: *std.Io.Writer,
     catalog: Catalog,
     name: []const u8,
     location: []const u8,
     limits: context_limits.Values,
-) !void {
+) !bool {
     const result = try loadByIdentity(alloc, catalog, name, location, null, 0, limits, null);
     defer freeExecuteResult(alloc, result);
     try out.writeAll(result.modelOutput());
@@ -197,6 +254,16 @@ fn appendExplicitSkill(
             if (!std.mem.endsWith(u8, notice, "\n")) try diagnostic_notices.writer.writeByte('\n');
         }
     }
+    const failure: ?[]const u8 = switch (result) {
+        .loaded => null,
+        .failure => |output| output.model_output,
+    };
+    if (failure) |detail| {
+        try appendExplicitLoadRow(alloc, load_details, name, detail);
+        try load_details.writeByte('\n');
+    }
+    try appendExplicitLoadRow(alloc, load_rows, name, if (failure != null) "" else null);
+    return failure == null;
 }
 
 /// Resolves and reads one skill from an already discovered catalog.
@@ -235,6 +302,7 @@ fn loadByIdentityWithOptions(
     max_tool_result_bytes: ?usize,
     options: LoadOptions,
 ) !ExecuteResult {
+    const resource_path = skill_contract.resource_path_or_main(resource);
     const resolution = skill_runtime.resolveSkill(catalog.skills, name, location);
     var opened_candidate: ?skill_runtime.OpenedSkillCandidate = null;
     defer if (opened_candidate) |*candidate| candidate.deinit();
@@ -309,7 +377,6 @@ fn loadByIdentityWithOptions(
         if (options.test_after_candidate_validation) |hook| try hook.check(hook.ctx);
     }
 
-    const resource_path = resource orelse "SKILL.md";
     const candidate = if (opened_candidate) |*current| current else unreachable;
     const resource_read = try readSkillResource(alloc, candidate, resource_path, limits.skill_file_bytes);
     defer alloc.free(resource_read.bytes);
@@ -1182,6 +1249,155 @@ test "skill invocation loads installed skill content" {
     try expectContains(output, "<skill_content name=\"workflow\" resource=\"SKILL.md\" offset=\"0\"");
     try expectContains(output, "use the workflow skill");
     try expectNotContains(output, "assets/data.txt");
+}
+
+test "omitted and empty skill resources read the main document" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/workflow/assets");
+    {
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/SKILL.md", .{});
+        defer file.close(io_mod.getIo());
+        try file.writeStreamingAll(io_mod.getIo(), "---\nname: workflow\ndescription: workflow helper\n---\n\nMAIN DOCUMENT\n");
+    }
+    {
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/assets/data.txt", .{});
+        defer file.close(io_mod.getIo());
+        try file.writeStreamingAll(io_mod.getIo(), "hello\n");
+    }
+
+    const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
+    defer alloc.free(workspace_root);
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
+    defer alloc.free(skills_dir);
+    try setTestHome(null);
+    defer setTestHome(null) catch {};
+
+    var discovery = try loadVisibleSkillsForContext(alloc, workspace_root, skills_dir);
+    defer discovery.deinit(alloc);
+    const catalog = Catalog{ .skills = discovery.skills, .diagnostics = discovery.diagnostics };
+
+    const baseline = try loadByIdentity(
+        alloc,
+        catalog,
+        "workflow",
+        null,
+        "SKILL.md",
+        0,
+        .{},
+        tool_result_limits.default_max_tool_result_bytes,
+    );
+    defer freeExecuteResult(alloc, baseline);
+    try expectContains(baseline.modelOutput(), "MAIN DOCUMENT");
+
+    for ([_]?[]const u8{ null, "" }) |resource| {
+        const result = try loadByIdentity(
+            alloc,
+            catalog,
+            "workflow",
+            null,
+            resource,
+            0,
+            .{},
+            tool_result_limits.default_max_tool_result_bytes,
+        );
+        defer freeExecuteResult(alloc, result);
+        try std.testing.expectEqualStrings(baseline.modelOutput(), result.modelOutput());
+    }
+
+    const explicit = try loadByIdentity(
+        alloc,
+        catalog,
+        "workflow",
+        null,
+        "assets/data.txt",
+        0,
+        .{},
+        tool_result_limits.default_max_tool_result_bytes,
+    );
+    defer freeExecuteResult(alloc, explicit);
+    try expectContains(explicit.modelOutput(), "hello");
+    try expectNotContains(explicit.modelOutput(), "MAIN DOCUMENT");
+}
+
+test "explicit loads report one terminal-safe row per requested skill" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/workspace");
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber/skills/workflow");
+    {
+        var file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/skills/workflow/SKILL.md", .{});
+        defer file.close(io_mod.getIo());
+        try file.writeStreamingAll(io_mod.getIo(), "---\nname: workflow\ndescription: helper\n---\n\nREQUESTED INSTRUCTIONS\n");
+    }
+
+    const workspace_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/workspace");
+    defer alloc.free(workspace_root);
+    const skills_dir = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home/.fiber/skills");
+    defer alloc.free(skills_dir);
+    try setTestHome(null);
+    defer setTestHome(null) catch {};
+
+    var discovery = try loadVisibleSkillsForContext(alloc, workspace_root, skills_dir);
+    defer discovery.deinit(alloc);
+    var section = try buildExplicitPromptSection(
+        alloc,
+        .{ .skills = discovery.skills, .diagnostics = discovery.diagnostics },
+        "$workflow apply these instructions",
+        &.{},
+        .{},
+    );
+    defer section.deinit(alloc);
+
+    try expectContains(section.text, "REQUESTED INSTRUCTIONS");
+    const notice = section.load_notice orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualStrings("1 requested skill loaded\n\xe2\x94\x94 Loaded skill workflow", notice.body);
+    try std.testing.expect(section.load_details == null);
+    try expectTerminalSafeLines(notice.body);
+    // The summary row is transcript-only: it must not leak into model input,
+    // so automatic loads never count as model tool calls.
+    try expectNotContains(section.text, "requested skill loaded");
+    try expectNotContains(section.text, "Loaded skill workflow");
+}
+
+test "explicit load failures name the skill and keep locations in details" {
+    const alloc = std.testing.allocator;
+    const bindings = [_]ExplicitBinding{.{ .name = "missing-workflow", .path = "/unavailable/workflow" }};
+    var section = try buildExplicitPromptSection(alloc, .{ .skills = &.{} }, "Use the selected workflow", &bindings, .{});
+    defer section.deinit(alloc);
+
+    const notice = section.load_notice orelse return error.TestExpectedEqual;
+    try expectContains(notice.body, "Requested skills \xc2\xb7 0 loaded \xc2\xb7 1 failed");
+    try expectContains(notice.body, "Could not load missing-workflow");
+    try expectNotContains(notice.body, "/unavailable/workflow");
+    try expectNotContains(notice.body, "Loaded skill missing-workflow");
+    try expectTerminalSafeLines(notice.body);
+    const details = section.load_details orelse return error.TestExpectedEqual;
+    try expectContains(details, "not found at advertised location");
+    try expectNotContains(section.text, "<skill_content");
+}
+
+test "explicit load rows keep hostile names and secrets terminal-safe" {
+    const alloc = std.testing.allocator;
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try appendExplicitLoadRow(alloc, &out.writer, "workflow\n\x1b[2J", "Failed\r\nkey=sk-abcdefghijklmnop");
+    try expectContains(out.written(), "Could not load workflow");
+    try std.testing.expect(text_utils.isTerminalSafe(out.written()));
+    try expectNotContains(out.written(), "\n");
+    try expectNotContains(out.written(), "\x1b");
+    try expectNotContains(out.written(), "sk-abcdefghijklmnop");
+}
+
+fn expectTerminalSafeLines(body: []const u8) !void {
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (lines.next()) |line| {
+        try std.testing.expect(text_utils.isTerminalSafe(line));
+    }
 }
 
 test "stale skill catalogs reject mutated candidates before loading" {

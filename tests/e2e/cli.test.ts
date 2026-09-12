@@ -3025,7 +3025,7 @@ describe("cli: ask success", () => {
         );
 
         expect(result.code).toBe(0);
-        expect(result.stderr).toBe("");
+        expect(result.stderr).toBe("[notice] 1 requested skill loaded\n└ Loaded skill cli-explicit\n");
         expect(JSON.parse(result.stdout).data.output.trim()).toBe(
           "FAKE_CODEX_RESPONSE",
         );

@@ -1404,6 +1404,11 @@ fn noticeLabelStyle(styles: Styles, tone: types.NoticeTone) []const u8 {
 
 fn noticeContinuationIndent(text: []const u8, cursor: usize, cols: u16) usize {
     if (cols <= 2 or cursor >= text.len) return 0;
+    // Tree rows already carry their own branch gutter; indenting them again
+    // would detach the branch from the header. (Harvested from upstream fx
+    // `align-skill-status`; reimplemented under Fiber's notice renderer.)
+    const line_start = cursor > 0 and (text[cursor - 1] == '\n' or text[cursor - 1] == '\r');
+    if (line_start and (std.mem.startsWith(u8, text[cursor..], "\xe2\x94\x9c ") or std.mem.startsWith(u8, text[cursor..], "\xe2\x94\x94 "))) return 0;
     if (text[cursor] == '\n' or text[cursor] == '\r') return 2;
     const unit = display_width.displayUnitAt(text, cursor);
     return if (unit.cell_width <= cols - 2) 2 else 0;
@@ -2812,6 +2817,20 @@ test "background semantic notices render one topic for launch and failure" {
         try std.testing.expect(std.mem.find(u8, rendered, "System: Background") == null);
         try std.testing.expect(std.mem.find(u8, rendered, "Background: Background") == null);
     }
+}
+
+test "semantic notice tree branches align with the header" {
+    const alloc = std.testing.allocator;
+    const rendered = try renderSemanticNotice(alloc, .{
+        .topic = "",
+        .tone = .neutral,
+        .body = "2 requested skills loaded\n\xe2\x94\x9c Loaded alpha\n\xe2\x94\x94 Loaded beta",
+    }, .{}, 40);
+    defer alloc.free(rendered);
+    try std.testing.expectEqualStrings(
+        "\xe2\x97\x8f 2 requested skills loaded\n\xe2\x94\x9c Loaded alpha\n\xe2\x94\x94 Loaded beta",
+        rendered,
+    );
 }
 
 test "semantic notice wraps words paths UTF-8 and explicit newlines without truncation" {

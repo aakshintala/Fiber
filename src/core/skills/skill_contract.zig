@@ -5,6 +5,34 @@ pub const max_frontmatter_bytes: usize = 64 * 1024;
 pub const max_name_bytes: usize = 256;
 pub const max_description_bytes: usize = 4 * 1024;
 
+/// Returns the nonempty input unchanged, or the static main-document path.
+/// Callers share this so an omitted or empty resource always reads SKILL.md.
+/// (Harvested from upstream fx `default-skill-resources`; reimplemented
+/// under Fiber's current skill contracts.)
+pub fn resource_path_or_main(resource: ?[]const u8) []const u8 {
+    const path = resource orelse return "SKILL.md";
+    return if (path.len == 0) "SKILL.md" else path;
+}
+
+test "skill resource defaulting preserves explicit paths" {
+    const cases = [_]struct { input: ?[]const u8, expected: []const u8 }{
+        .{ .input = null, .expected = "SKILL.md" },
+        .{ .input = "", .expected = "SKILL.md" },
+        .{ .input = "SKILL.md", .expected = "SKILL.md" },
+        .{ .input = "references/rules.md", .expected = "references/rules.md" },
+        .{ .input = " ", .expected = " " },
+        .{ .input = "../outside", .expected = "../outside" },
+    };
+    for (cases) |case| {
+        const path = resource_path_or_main(case.input);
+        try std.testing.expectEqualStrings(case.expected, path);
+        try std.testing.expectEqualStrings(path, resource_path_or_main(path));
+        if (case.input) |input| if (input.len > 0) {
+            try std.testing.expectEqual(input.ptr, path.ptr);
+        };
+    }
+}
+
 pub const SkillSource = enum {
     workspace_fiber,
     workspace_shared,
