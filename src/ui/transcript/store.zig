@@ -1003,6 +1003,17 @@ pub fn resetVisualEpoch(self: anytype, alloc: Allocator, welcome: []const u8) !v
         } });
     }
 
+    var staged_retained: usize = 0;
+    for (replacement_entries.items) |entry| staged_retained += entryRetainedBytes(entry);
+    for (self.folded_command_blocks.items) |block| staged_retained += command_output_runtime.foldedBlockRetainedBytes(block);
+    for (self.command_output_blocks.items) |block| staged_retained += command_output_runtime.commandOutputBlockRetainedBytes(block);
+    if (staged_retained > self.max_retained_transcript_bytes) {
+        replacement_entries.deinit(alloc);
+        alloc.free(welcome_copy);
+        try resetVisualEpochEnforcing(self, alloc, welcome);
+        return;
+    }
+
     const cols: u16 = if (self.layout.cols > 0) self.layout.cols else 80;
     const rendered = try transcript_blocks.renderEntriesToBytes(
         alloc,
@@ -1038,6 +1049,133 @@ pub fn resetVisualEpoch(self: anytype, alloc: Allocator, welcome: []const u8) !v
 
     if (!replaced_welcome) self.next_entry_id +%= 1;
     self.last_rendered_cols = cols;
+    if (comptime @hasDecl(@TypeOf(self.*), "closeFullTranscriptState")) {
+        self.closeFullTranscriptState();
+    }
+    self.command_output_display = .{};
+    self.replaceable_last_line = false;
+    self.replaceable_start = 0;
+    self.pending_scroll_compact = false;
+    self.has_painted_transcript = false;
+    self.last_visible_transcript_top_row = self.owned_top_row;
+    self.last_visible_transcript_start_line = 0;
+    self.last_visible_transcript_partial_skip_rows = 0;
+    self.last_visible_transcript_split_active = false;
+    self.last_visible_transcript_split_prefix_lines = 0;
+    self.last_visible_transcript_split_suffix_start_line = 0;
+    self.last_viewport_selection = null;
+    self.recomputeCursorFromTranscript();
+    if (comptime @hasDecl(@TypeOf(self.*), "invalidateTranscriptAnchor")) {
+        self.invalidateTranscriptAnchor("visual_epoch_reset");
+    }
+    requestTranscriptPaint(self);
+}
+
+/// Over-cap Ctrl+L path: rebuilds the visual-epoch staging as owned clones
+/// so `enforceStructuredRetention` can prune the oldest unprotected history
+/// before publication. Any allocation failure leaves the live transcript
+/// untouched; only `/clear` drops retained history unconditionally.
+fn resetVisualEpochEnforcing(self: anytype, alloc: Allocator, welcome: []const u8) !void {
+    var shadow = try cloneMutationState(self, alloc);
+    defer shadow.deinit(alloc);
+
+    const welcome_copy = try alloc.dupe(u8, welcome);
+    var handed_off = false;
+    errdefer if (!handed_off) alloc.free(welcome_copy);
+
+    var replaced_welcome = false;
+    var welcome_id: u32 = shadow.next_entry_id;
+    var hidden_count: usize = 0;
+    var pinned_count: usize = 0;
+    var index: usize = 0;
+    while (index < shadow.entries.items.len) {
+        const entry = &shadow.entries.items[index];
+        if (entry.* == .raw_bytes and entry.raw_bytes.class == .welcome) {
+            if (!replaced_welcome) {
+                const old_id = entry.raw_bytes.id;
+                const old_created_at_ms = entry.raw_bytes.created_at_ms;
+                entry.deinit(alloc);
+                entry.* = .{ .raw_bytes = .{
+                    .id = old_id,
+                    .created_at_ms = old_created_at_ms,
+                    .bytes = welcome_copy,
+                    .class = .welcome,
+                } };
+                handed_off = true;
+                welcome_id = old_id;
+                replaced_welcome = true;
+                index += 1;
+            } else {
+                var removed = shadow.entries.orderedRemove(index);
+                removed.deinit(alloc);
+            }
+            continue;
+        }
+        const pinned = switch (entry.*) {
+            .raw_bytes => |raw| raw.lifecycle_pinned,
+            .semantic_notice => |notice| notice.pending_replacement,
+            else => false,
+        };
+        if (pinned) {
+            pinned_count += 1;
+        } else {
+            entry.hideInline();
+            hidden_count += 1;
+        }
+        index += 1;
+    }
+    if (!replaced_welcome) {
+        try shadow.entries.append(alloc, .{ .raw_bytes = .{
+            .id = shadow.next_entry_id,
+            .created_at_ms = io_mod.milliTimestamp(),
+            .bytes = welcome_copy,
+            .class = .welcome,
+        } });
+        handed_off = true;
+        shadow.next_entry_id +%= 1;
+    }
+
+    try enforceStructuredRetention(&shadow, alloc, welcome_id);
+
+    const cols: u16 = if (self.layout.cols > 0) self.layout.cols else 80;
+    const rendered = try transcript_blocks.renderEntriesToBytes(
+        alloc,
+        shadow.entries.items,
+        cols,
+        self.command_output_render.styles,
+    );
+    defer alloc.free(rendered);
+    const rendered_start = cappedTailStart(rendered, self.max_transcript_bytes);
+
+    var replacement_transcript: std.ArrayList(u8) = .empty;
+    errdefer replacement_transcript.deinit(alloc);
+    try replacement_transcript.appendSlice(alloc, rendered[rendered_start..]);
+
+    std.mem.swap(@TypeOf(self.entries), &self.entries, &shadow.entries);
+    std.mem.swap(@TypeOf(self.tool_details), &self.tool_details, &shadow.tool_details);
+    std.mem.swap(
+        @TypeOf(self.folded_command_blocks),
+        &self.folded_command_blocks,
+        &shadow.folded_command_blocks,
+    );
+    std.mem.swap(
+        @TypeOf(self.command_output_blocks),
+        &self.command_output_blocks,
+        &shadow.command_output_blocks,
+    );
+    var old_transcript = self.transcript;
+    self.transcript = replacement_transcript;
+    replacement_transcript = .empty;
+    old_transcript.deinit(alloc);
+    self.transcript_cache_origin_untrimmed = rendered_start == 0;
+    self.next_entry_id = shadow.next_entry_id;
+    self.last_rendered_cols = cols;
+    debug_trace.logf(
+        "transcript.visual_epoch_reset",
+        "clear display retained={d} hidden={d} pinned={d} enforced_cap={d}",
+        .{ self.entries.items.len - 1, hidden_count, pinned_count, self.max_retained_transcript_bytes },
+    );
+
     if (comptime @hasDecl(@TypeOf(self.*), "closeFullTranscriptState")) {
         self.closeFullTranscriptState();
     }

@@ -14265,6 +14265,46 @@ test "visual epoch retains full history across repeated clears and compact rebui
     try std.testing.expectEqual(@as(usize, 0), runtime.transcript.items.len);
 }
 
+test "visual epoch at retained cap prunes oldest history instead of exceeding cap" {
+    const alloc = std.testing.allocator;
+    var runtime = lifecycleTestRuntime(null);
+    defer runtime.deinit(alloc);
+
+    _ = try runtime.appendRawTranscriptEntryClassified(alloc, "welcome\n", .welcome);
+    for (0..8) |_| {
+        _ = try runtime.appendRawTranscriptEntryClassified(alloc, "retained answer number\n", .subagent_status);
+    }
+    runtime.max_retained_transcript_bytes = transcript_store.retainedStructuredBytes(&runtime);
+    const cap = runtime.max_retained_transcript_bytes;
+    try std.testing.expectEqual(@as(usize, 9), runtime.entries.items.len);
+
+    // A longer replacement welcome pushes staged bytes over the cap.
+    const replacement = "a much longer replacement welcome message\n";
+    try runtime.resetVisualEpoch(alloc, replacement);
+    try std.testing.expect(transcript_store.retainedStructuredBytes(&runtime) <= cap);
+    try std.testing.expectEqualStrings(replacement, runtime.transcript.items);
+    try std.testing.expect(runtime.entries.items.len < 9);
+
+    var compact = try runtime.prepareTranscriptSource(alloc, null);
+    defer compact.deinit(alloc);
+    try std.testing.expect(std.mem.find(u8, compact.bytes, "retained") == null);
+
+    var projection = try runtime.buildFullTranscriptProjection(alloc, null);
+    defer projection.deinit(alloc);
+    const full = try full_transcript_screen.renderProjectionViewportSourceInterruptible(
+        alloc,
+        &projection,
+        null,
+        runtime.layout.cols,
+        64,
+        0,
+        null,
+    );
+    defer alloc.free(full);
+    try std.testing.expect(std.mem.find(u8, full, replacement) != null);
+    try std.testing.expect(std.mem.find(u8, full, "retained answer number") != null);
+}
+
 test "visual epoch preserves monotonic entry IDs across repeated clears" {
     const alloc = std.testing.allocator;
     for ([_]bool{ true, false }) |has_original_welcome| {
