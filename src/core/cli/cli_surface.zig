@@ -1113,7 +1113,7 @@ fn runNonInteractiveWithDeps(
                 return .handled_failure;
             };
             if (opts.session_id) |session_id| {
-                return runUsageSession(
+                return run_usage_session(
                     alloc,
                     deps,
                     home,
@@ -2800,7 +2800,7 @@ fn usageFailureMessage(err: anyerror) []const u8 {
     };
 }
 
-fn runUsageSession(
+fn run_usage_session(
     alloc: Allocator,
     deps: RunDeps,
     home: []const u8,
@@ -2810,7 +2810,7 @@ fn runUsageSession(
 ) !RunResult {
     const workspace_root = try io_mod.realpathAlloc(alloc, ".");
     defer alloc.free(workspace_root);
-    var report = usage_cli_runtime.collectSession(
+    var report = usage_cli_runtime.collect_session(
         alloc,
         home,
         workspace_root,
@@ -2818,7 +2818,7 @@ fn runUsageSession(
         period,
         @max(io_mod.milliTimestamp(), 0),
     ) catch |err| {
-        try writeUsageSessionFailure(
+        try write_usage_session_failure(
             alloc,
             deps,
             session_id,
@@ -2837,7 +2837,7 @@ fn runUsageSession(
     return .handled_success;
 }
 
-fn writeUsageSessionFailure(
+fn write_usage_session_failure(
     alloc: Allocator,
     deps: RunDeps,
     session_id: []const u8,
@@ -4219,6 +4219,141 @@ test "usage arguments accept only rolling periods and one JSON flag" {
     }) |invalid| {
         try std.testing.expectError(error.InvalidUsageArgs, parseUsageArgs(alloc, invalid));
     }
+}
+
+test "usage session failures render unknown ids and window guidance" {
+    const alloc = std.testing.allocator;
+    var unknown_text = CaptureOutput.init(alloc);
+    defer unknown_text.deinit();
+    try write_usage_session_failure(
+        alloc,
+        unknown_text.deps(),
+        "nope-1",
+        null,
+        error.SessionNotFound,
+        .text,
+    );
+    try std.testing.expectEqualStrings("", unknown_text.stdout.written());
+    try std.testing.expectEqualStrings(
+        "fiber usage: unknown session 'nope-1'\n",
+        unknown_text.stderr.written(),
+    );
+
+    var unknown_json = CaptureOutput.init(alloc);
+    defer unknown_json.deinit();
+    try write_usage_session_failure(
+        alloc,
+        unknown_json.deps(),
+        "nope-1",
+        null,
+        error.SessionNotFound,
+        .json,
+    );
+    try std.testing.expectEqualStrings("", unknown_json.stderr.written());
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            unknown_json.stdout.written(),
+            "\"error\":\"unknown session 'nope-1'\"",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            unknown_json.stdout.written(),
+            "\"code\":\"SessionNotFound\"",
+        ) != null,
+    );
+
+    var predates_text = CaptureOutput.init(alloc);
+    defer predates_text.deinit();
+    try write_usage_session_failure(
+        alloc,
+        predates_text.deps(),
+        "old-1",
+        .hours_24,
+        error.SessionPredatesUsageWindow,
+        .text,
+    );
+    try std.testing.expectEqualStrings("", predates_text.stdout.written());
+    try std.testing.expectEqualStrings(
+        "fiber usage: session 'old-1' started before the 24h window; re-run without --period for lifetime session totals\n",
+        predates_text.stderr.written(),
+    );
+
+    var predates_json = CaptureOutput.init(alloc);
+    defer predates_json.deinit();
+    try write_usage_session_failure(
+        alloc,
+        predates_json.deps(),
+        "old-1",
+        .hours_24,
+        error.SessionPredatesUsageWindow,
+        .json,
+    );
+    try std.testing.expectEqualStrings("", predates_json.stderr.written());
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            predates_json.stdout.written(),
+            "\"code\":\"SessionPredatesUsageWindow\"",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            predates_json.stdout.written(),
+            "started before the 24h window",
+        ) != null,
+    );
+}
+
+test "usage session lookup failures exit without crashing" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+
+    var failed_text = CaptureOutput.init(alloc);
+    defer failed_text.deinit();
+    try std.testing.expectEqual(
+        RunResult.handled_failure,
+        try run_usage_session(
+            alloc,
+            failed_text.deps(),
+            home,
+            "usage-missing",
+            null,
+            .text,
+        ),
+    );
+    try std.testing.expectEqualStrings(
+        "fiber usage: unknown session 'usage-missing'\n",
+        failed_text.stderr.written(),
+    );
+
+    var failed_json = CaptureOutput.init(alloc);
+    defer failed_json.deinit();
+    try std.testing.expectEqual(
+        RunResult.handled_failure,
+        try run_usage_session(
+            alloc,
+            failed_json.deps(),
+            home,
+            "usage-missing",
+            .hours_24,
+            .json,
+        ),
+    );
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            failed_json.stdout.written(),
+            "\"code\":\"SessionNotFound\"",
+        ) != null,
+    );
 }
 
 test "global launch modifiers preserve repeatable context limits before the command" {

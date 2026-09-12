@@ -76,6 +76,12 @@ For a single request without the interactive shell:
 fiber ask "explain the changes in this repository"
 ```
 
+Token usage and spend for one saved session in this workspace:
+
+```bash
+fiber usage --session <id>
+```
+
 These examples write `fiber` for brevity. Until installation exists, use the
 path to the binary you built.
 

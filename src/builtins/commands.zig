@@ -190,7 +190,7 @@ pub const top_level_specs = [_]TopLevelSpec{
         .details = &.{
             "Reports only usage recorded by fiber on this machine.",
             "This command reads local state and does not query account-wide Gateway reports.",
-            "--session reports the session's last durable checkpoint; unknown spend shows as unknown, never $0.00.",
+            "--session reports the session's last durable checkpoint; unknown spend shows as unknown, never $0.00. Sessions that predate durable usage accounting report as legacy with unknown totals.",
             "--session with --period reports the session only when it started inside the window; an older session needs a bare --session for lifetime totals.",
         },
     },

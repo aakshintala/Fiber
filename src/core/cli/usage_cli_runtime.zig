@@ -43,16 +43,22 @@ pub fn collect(
 
 /// Reads one saved session's durable usage checkpoint and projects it through
 /// the same session snapshot contract the live session uses. It never
-/// initializes credentials or contacts the Gateway.
+/// initializes credentials or contacts the Gateway. Only sessions in
+/// `workspace_root` are visible; exact ids from other workspaces read as
+/// `SessionNotFound`.
 ///
 /// A null `period` reports lifetime session totals. A non-null `period`
 /// intersects the session lifetime with the rolling window: session ledgers
 /// are cumulative and carry no per-generation timestamps, so exact
 /// within-window totals exist only when the session started inside the
 /// window. An older session returns `error.SessionPredatesUsageWindow`
-/// instead of mislabeled totals. Unknown session ids surface the store's
-/// `SessionNotFound`/`InvalidSessionId` errors unchanged.
-pub fn collectSession(
+/// instead of mislabeled totals. The returned snapshot preserves the
+/// explicit period and the session identity. Unknown session ids surface the
+/// store's `SessionNotFound`/`InvalidSessionId` errors unchanged.
+///
+/// Sessions written before durable usage accounting carry no checkpoint. They
+/// report legacy completeness with unknown totals, never zero spend.
+pub fn collect_session(
     alloc: Allocator,
     home_path: []const u8,
     workspace_root: []const u8,
@@ -86,30 +92,49 @@ pub fn collectSession(
         }
     }
 
-    if (detail.state.usage) |usage| {
-        return session_usage.Usage.reportSnapshotFromParts(
+    var report = if (detail.state.usage) |usage|
+        try session_usage.Usage.reportSnapshotFromParts(
             alloc,
             usage,
             detail.state.created_at_ms,
             snapshot_time_ms,
+        )
+    else
+        try legacy_session_snapshot(
+            alloc,
+            detail.state.created_at_ms,
+            snapshot_time_ms,
         );
-    }
+    errdefer report.deinit(alloc);
+    report.session_id = try alloc.dupe(u8, session_id);
+    report.period = period;
+    return report;
+}
+
+/// Projects a session that predates durable usage accounting. There is no
+/// ledger to aggregate, so the snapshot reports legacy completeness with
+/// unknown totals instead of zero spend.
+fn legacy_session_snapshot(
+    alloc: Allocator,
+    session_started_at_ms: i64,
+    snapshot_time_ms: i64,
+) !usage_report.Snapshot {
     return usage_report.buildSessionSnapshot(alloc, .{
         .snapshot_time_ms = snapshot_time_ms,
-        .session_started_at_ms = detail.state.created_at_ms,
-        .completeness = .complete,
+        .session_started_at_ms = session_started_at_ms,
+        .completeness = .legacy,
         .total_cost = 0,
         .input_tokens = 0,
         .output_tokens = 0,
         .cache_read_tokens = 0,
         .cache_write_tokens = 0,
-        .reasoning_tokens = 0,
-        .request_count = 0,
+        .reasoning_tokens = null,
+        .request_count = null,
         .models = &.{},
         .activity = .{
-            .api_duration_complete = true,
-            .wall_duration_complete = true,
-            .code_complete = true,
+            .api_duration_complete = false,
+            .wall_duration_complete = false,
+            .code_complete = false,
             .api_duration_ms = 0,
             .wall_duration_ms = 0,
             .lines_added = 0,
@@ -143,7 +168,7 @@ const SessionProbe = struct {
     fn publish(_: *anyopaque, _: usage_report.ProfileEvent) !void {}
 };
 
-fn settleTestLedger(alloc: Allocator, total_cost: ?f64) !session_usage.Snapshot {
+fn settle_test_ledger(alloc: Allocator, total_cost: ?f64) !session_usage.Snapshot {
     var probe = SessionProbe{};
     var usage = session_usage.Usage.initFresh();
     defer usage.deinit(alloc);
@@ -177,7 +202,7 @@ fn settleTestLedger(alloc: Allocator, total_cost: ?f64) !session_usage.Snapshot 
     return usage.snapshot(alloc);
 }
 
-fn seedUsageSession(
+fn seed_usage_session(
     alloc: Allocator,
     store: session_store.Store,
     id: []const u8,
@@ -212,7 +237,7 @@ fn seedUsageSession(
     );
 }
 
-fn collectTestHome(alloc: Allocator, tmp: *std.testing.TmpDir) !struct {
+fn collect_test_home(alloc: Allocator, tmp: *std.testing.TmpDir) !struct {
     home: []u8,
     workspace: []u8,
 } {
@@ -228,7 +253,7 @@ test "usage session collection reports known spend from the durable checkpoint" 
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const paths = try collectTestHome(alloc, &tmp);
+    const paths = try collect_test_home(alloc, &tmp);
     defer alloc.free(paths.home);
     defer alloc.free(paths.workspace);
 
@@ -238,12 +263,12 @@ test "usage session collection reports known spend from the durable checkpoint" 
         paths.workspace,
     );
     defer store.deinit(alloc);
-    var ledger = try settleTestLedger(alloc, 0.25);
+    var ledger = try settle_test_ledger(alloc, 0.25);
     defer ledger.deinit(alloc);
     const now_ms = std.time.ms_per_day * 40;
-    try seedUsageSession(alloc, store, "usage-known", now_ms - 1000, ledger);
+    try seed_usage_session(alloc, store, "usage-known", now_ms - 1000, ledger);
 
-    var report = try collectSession(
+    var report = try collect_session(
         alloc,
         paths.home,
         paths.workspace,
@@ -253,6 +278,8 @@ test "usage session collection reports known spend from the durable checkpoint" 
     );
     defer report.deinit(alloc);
     try std.testing.expectEqual(usage_report.Scope.session, report.scope);
+    try std.testing.expectEqualStrings("usage-known", report.session_id.?);
+    try std.testing.expect(report.period == null);
     try std.testing.expectEqual(@as(u64, 12), report.totals.?.total_tokens);
     try std.testing.expectEqual(@as(f64, 0.25), report.totals.?.total_cost.?);
     try std.testing.expectEqual(@as(usize, 1), report.models.len);
@@ -262,7 +289,7 @@ test "usage session collection reports known spend from the durable checkpoint" 
         .text,
     );
     defer alloc.free(text);
-    try std.testing.expect(std.mem.find(u8, text, "Usage (Session)") != null);
+    try std.testing.expect(std.mem.find(u8, text, "Usage (Session usage-known)") != null);
     try std.testing.expect(std.mem.find(u8, text, "Spend         $0.2500") != null);
     const json = try (output_contracts.UsageSnapshot{ .report = &report }).render(
         alloc,
@@ -270,6 +297,7 @@ test "usage session collection reports known spend from the durable checkpoint" 
     );
     defer alloc.free(json);
     try std.testing.expect(std.mem.find(u8, json, "\"period\":\"session\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"session_id\":\"usage-known\"") != null);
     try std.testing.expect(std.mem.find(u8, json, "\"spend\":0.25") != null);
 }
 
@@ -277,7 +305,7 @@ test "usage session collection keeps unknown spend honest in text and JSON" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const paths = try collectTestHome(alloc, &tmp);
+    const paths = try collect_test_home(alloc, &tmp);
     defer alloc.free(paths.home);
     defer alloc.free(paths.workspace);
 
@@ -287,12 +315,12 @@ test "usage session collection keeps unknown spend honest in text and JSON" {
         paths.workspace,
     );
     defer store.deinit(alloc);
-    var ledger = try settleTestLedger(alloc, null);
+    var ledger = try settle_test_ledger(alloc, null);
     defer ledger.deinit(alloc);
     const now_ms = std.time.ms_per_day * 40;
-    try seedUsageSession(alloc, store, "usage-unknown", now_ms - 1000, ledger);
+    try seed_usage_session(alloc, store, "usage-unknown", now_ms - 1000, ledger);
 
-    var report = try collectSession(
+    var report = try collect_session(
         alloc,
         paths.home,
         paths.workspace,
@@ -301,6 +329,7 @@ test "usage session collection keeps unknown spend honest in text and JSON" {
         now_ms,
     );
     defer report.deinit(alloc);
+    try std.testing.expectEqualStrings("usage-unknown", report.session_id.?);
     try std.testing.expectEqual(@as(u64, 12), report.totals.?.total_tokens);
     try std.testing.expect(report.totals.?.total_cost == null);
 
@@ -323,14 +352,14 @@ test "usage session collection rejects unknown session ids without crashing" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const paths = try collectTestHome(alloc, &tmp);
+    const paths = try collect_test_home(alloc, &tmp);
     defer alloc.free(paths.home);
     defer alloc.free(paths.workspace);
 
     const now_ms = std.time.ms_per_day * 40;
     try std.testing.expectError(
         error.SessionNotFound,
-        collectSession(alloc, paths.home, paths.workspace, "usage-missing", null, now_ms),
+        collect_session(alloc, paths.home, paths.workspace, "usage-missing", null, now_ms),
     );
 }
 
@@ -338,7 +367,7 @@ test "usage session collection composes with an explicit period window" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const paths = try collectTestHome(alloc, &tmp);
+    const paths = try collect_test_home(alloc, &tmp);
     defer alloc.free(paths.home);
     defer alloc.free(paths.workspace);
 
@@ -348,13 +377,13 @@ test "usage session collection composes with an explicit period window" {
         paths.workspace,
     );
     defer store.deinit(alloc);
-    var ledger = try settleTestLedger(alloc, 0.25);
+    var ledger = try settle_test_ledger(alloc, 0.25);
     defer ledger.deinit(alloc);
     const now_ms = std.time.ms_per_day * 40;
-    try seedUsageSession(alloc, store, "usage-recent", now_ms - std.time.ms_per_hour, ledger);
-    try seedUsageSession(alloc, store, "usage-old", 10, ledger);
+    try seed_usage_session(alloc, store, "usage-recent", now_ms - std.time.ms_per_hour, ledger);
+    try seed_usage_session(alloc, store, "usage-old", 10, ledger);
 
-    var recent = try collectSession(
+    var recent = try collect_session(
         alloc,
         paths.home,
         paths.workspace,
@@ -363,12 +392,14 @@ test "usage session collection composes with an explicit period window" {
         now_ms,
     );
     defer recent.deinit(alloc);
+    try std.testing.expectEqualStrings("usage-recent", recent.session_id.?);
+    try std.testing.expectEqual(usage_report.Scope.hours_24, recent.period.?);
     try std.testing.expectEqual(@as(u64, 12), recent.totals.?.total_tokens);
     try std.testing.expectEqual(@as(f64, 0.25), recent.totals.?.total_cost.?);
 
     try std.testing.expectError(
         error.SessionPredatesUsageWindow,
-        collectSession(
+        collect_session(
             alloc,
             paths.home,
             paths.workspace,
@@ -376,5 +407,116 @@ test "usage session collection composes with an explicit period window" {
             .hours_24,
             now_ms,
         ),
+    );
+}
+
+test "usage session collection keeps the explicit period and session identity" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const paths = try collect_test_home(alloc, &tmp);
+    defer alloc.free(paths.home);
+    defer alloc.free(paths.workspace);
+
+    var store = try session_store.Store.initFromHome(
+        alloc,
+        paths.home,
+        paths.workspace,
+    );
+    defer store.deinit(alloc);
+    var ledger = try settle_test_ledger(alloc, 0.25);
+    defer ledger.deinit(alloc);
+    const now_ms = std.time.ms_per_day * 40;
+    try seed_usage_session(alloc, store, "usage-windowed", now_ms - std.time.ms_per_hour, ledger);
+
+    var report = try collect_session(
+        alloc,
+        paths.home,
+        paths.workspace,
+        "usage-windowed",
+        .days_7,
+        now_ms,
+    );
+    defer report.deinit(alloc);
+
+    const text = try (output_contracts.UsageSnapshot{ .report = &report }).render(
+        alloc,
+        .text,
+    );
+    defer alloc.free(text);
+    try std.testing.expect(
+        std.mem.find(u8, text, "Usage (Session usage-windowed, 7 days)") != null,
+    );
+    const json = try (output_contracts.UsageSnapshot{ .report = &report }).render(
+        alloc,
+        .json,
+    );
+    defer alloc.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"period\":\"7d\"") != null);
+    try std.testing.expect(
+        std.mem.find(u8, json, "\"session_id\":\"usage-windowed\"") != null,
+    );
+}
+
+test "usage session collection hides exact ids from other workspaces" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const paths = try collect_test_home(alloc, &tmp);
+    defer alloc.free(paths.home);
+    defer alloc.free(paths.workspace);
+    try tmp.dir.createDirPath(io_mod.getIo(), "elsewhere");
+    const elsewhere = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "elsewhere");
+    defer alloc.free(elsewhere);
+
+    var store = try session_store.Store.initFromHome(
+        alloc,
+        paths.home,
+        paths.workspace,
+    );
+    defer store.deinit(alloc);
+    var ledger = try settle_test_ledger(alloc, 0.25);
+    defer ledger.deinit(alloc);
+    const now_ms = std.time.ms_per_day * 40;
+    try seed_usage_session(alloc, store, "usage-private", now_ms - 1000, ledger);
+
+    try std.testing.expectError(
+        error.SessionNotFound,
+        collect_session(alloc, paths.home, elsewhere, "usage-private", null, now_ms),
+    );
+}
+
+test "usage session collection reports missing checkpoints as legacy unknown" {
+    const alloc = std.testing.allocator;
+    const now_ms = std.time.ms_per_day * 40;
+    var report = try legacy_session_snapshot(alloc, 10, now_ms);
+    defer report.deinit(alloc);
+    report.session_id = try alloc.dupe(u8, "usage-legacy");
+    report.period = null;
+    try std.testing.expectEqual(usage_report.Completeness.legacy, report.completeness);
+    try std.testing.expect(report.totals == null);
+    try std.testing.expectEqual(@as(usize, 0), report.models.len);
+
+    const text = try (output_contracts.UsageSnapshot{ .report = &report }).render(
+        alloc,
+        .text,
+    );
+    defer alloc.free(text);
+    try std.testing.expect(
+        std.mem.find(u8, text, "Usage (Session usage-legacy)") != null,
+    );
+    try std.testing.expect(
+        std.mem.find(u8, text, "predates complete usage tracking") != null,
+    );
+    try std.testing.expect(std.mem.find(u8, text, "$") == null);
+    const json = try (output_contracts.UsageSnapshot{ .report = &report }).render(
+        alloc,
+        .json,
+    );
+    defer alloc.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"totals\":null") != null);
+    try std.testing.expect(std.mem.find(u8, json, "spend") == null);
+    try std.testing.expect(
+        std.mem.find(u8, json, "\"session_id\":\"usage-legacy\"") != null,
     );
 }

@@ -252,10 +252,17 @@ pub const Snapshot = struct {
     totals: ?Totals,
     models: []ModelUsage,
     session_activity: ?SessionActivity = null,
+    /// Set for per-session reports: the queried session id. Owned; the
+    /// caller frees with `deinit`. Null for profile windows.
+    session_id: ?[]u8 = null,
+    /// Explicit `--period` accompanying a per-session report. Null selects
+    /// lifetime session totals. Null for profile windows.
+    period: ?Scope = null,
 
     pub fn deinit(self: *Snapshot, alloc: Allocator) void {
         for (self.models) |*model| model.deinit(alloc);
         alloc.free(self.models);
+        if (self.session_id) |id| alloc.free(id);
         self.* = undefined;
     }
 
@@ -271,6 +278,8 @@ pub const Snapshot = struct {
             };
             copied += 1;
         }
+        const session_id = if (self.session_id) |id| try alloc.dupe(u8, id) else null;
+        errdefer if (session_id) |id| alloc.free(id);
         return .{
             .scope = self.scope,
             .snapshot_time_ms = self.snapshot_time_ms,
@@ -281,6 +290,8 @@ pub const Snapshot = struct {
             .totals = self.totals,
             .models = models,
             .session_activity = self.session_activity,
+            .session_id = session_id,
+            .period = self.period,
         };
     }
 };

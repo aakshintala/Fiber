@@ -130,6 +130,14 @@ pub fn loadVisibleReadOnlyDetail(
     var detail = try store.loadReadOnlyDetail(alloc, session_id, options);
     errdefer detail.deinit(alloc);
     if (detail.state.subagent_child) return error.SessionNotFound;
+    // Exact ids bypass listing scope, so the loader enforces the same
+    // current-workspace visibility the session lists apply. Sessions that
+    // live in another workspace read as not found.
+    const visible_root = detail.summary.workspace_root orelse
+        return error.SessionNotFound;
+    if (!std.mem.eql(u8, visible_root, store.workspace_root)) {
+        return error.SessionNotFound;
+    }
     return detail;
 }
 
