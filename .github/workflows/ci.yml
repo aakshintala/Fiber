@@ -98,11 +98,13 @@ jobs:
         run: ./scripts/check-public-surface.sh
 
   # Heavy native leg: build, unit tests, smoke. Runs once, in draft (and on
-  # manual dispatch); the ready scope adds only net-new platforms. The
-  # static gates above still run on every ready push.
+  # manual dispatch), except docs-only changes which need no binary. The
+  # ready scope adds only net-new platforms. The static gates above still
+  # run on every push in every scope.
   native-linux:
     name: Native checks (linux-x86_64)
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft != false
+    if: (github.event_name == 'workflow_dispatch' || github.event.pull_request.draft != false) && needs.scope.outputs.docs_only != 'true'
+    needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -166,11 +168,13 @@ jobs:
       - name: Smoke test fresh binary
         run: ./scripts/smoke.sh
 
-  # Draft runs Linux x86_64 E2E once. Ready adds only the net-new platforms
-  # (docs-only ready PRs add nothing: their draft scope already covered the
-  # shared legs). Manual dispatch runs everything. A planner job emits that
-  # list so unneeded OS legs are never queued. This assumes the documented
-  # flow: every PR opens as a draft, so draft scope has run before ready.
+  # Draft runs Linux x86_64 E2E once. Ready adds only the net-new platforms.
+  # Docs-only changes run nothing here in either scope (static gates still
+  # verify them); a later push that adds code flips detection back to full
+  # scope automatically. Manual dispatch runs everything. A planner job emits
+  # that list so unneeded OS legs are never queued. This assumes the
+  # documented flow: every PR opens as a draft, so draft scope has run
+  # before ready.
   e2e-platforms:
     name: Select E2E platforms
     runs-on: ubuntu-24.04
@@ -191,7 +195,7 @@ jobs:
           extra='[{"name":"linux-aarch64","runner":"ubuntu-24.04-arm","zig_tarball":"zig-aarch64-linux"},{"name":"macos-aarch64","runner":"macos-15","zig_tarball":"zig-aarch64-macos"}]'
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             platforms="$(jq -c --argjson linux "$linux" --argjson extra "$extra" -n '[$linux] + $extra')"
-          elif [ "$IS_DRAFT" = "false" ] && [ "$DOCS_ONLY" = "true" ]; then
+          elif [ "$DOCS_ONLY" = "true" ]; then
             platforms="[]"
           elif [ "$IS_DRAFT" = "false" ]; then
             platforms="$extra"
