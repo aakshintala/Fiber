@@ -1429,6 +1429,28 @@ pub const McpDoctorServer = struct {
     failure: ?[]const u8,
 };
 
+pub const McpDoctorConfigIssue = struct {
+    server: []const u8,
+    kind: mcp_health.DoctorConfigIssue,
+    /// Fixed message for kind; a non-owned literal.
+    message: []const u8,
+};
+
+/// Fixed config-issue message per kind. Only these strings ever reach
+/// doctor output; server identity travels in the surrounding field.
+pub fn doctorConfigIssueMessage(kind: mcp_health.DoctorConfigIssue) []const u8 {
+    return switch (kind) {
+        .invalid_json => "Project MCP file is not valid JSON.",
+        .root_must_be_object => "Project MCP file root must be an object.",
+        .servers_must_be_object => "Project MCP file servers entry must be an object.",
+        .invalid_entry => "Project MCP server entry is invalid and was ignored.",
+        .missing_environment_variable => "Project MCP server entry requires an unset environment variable; set it or use a ${VAR:-default} fallback.",
+        .environment_expansion_limit_exceeded => "Project MCP server entry exceeds the environment expansion limit.",
+        .approved_rejected_overlap => "Project MCP server is both approved and rejected; fix the trust lists.",
+        .unclassified => "Project MCP configuration has a problem that could not be classified.",
+    };
+}
+
 /// Fixed failure message per doctor failure kind. Only these strings ever
 /// reach doctor output, so no probe detail can leak secrets. Server name
 /// and probe bound travel in the surrounding snapshot fields.
@@ -1450,7 +1472,7 @@ pub fn doctorFailureMessage(kind: mcp_health.DoctorFailure) ?[]const u8 {
 /// snapshot; failures render as fixed messages per failure kind.
 pub const McpDoctorSnapshot = struct {
     servers: []McpDoctorServer,
-    configuration_issues: [][]u8,
+    configuration_issues: []McpDoctorConfigIssue,
     overall: mcp_health.StartupDecision,
     probe_timeout_ms: u32,
 
@@ -1480,14 +1502,19 @@ pub const McpDoctorSnapshot = struct {
             };
             initialized += 1;
         }
-        const issues = try alloc.alloc([]u8, snapshot.configuration_issues.len);
+        const issues = try alloc.alloc(McpDoctorConfigIssue, snapshot.configuration_issues.len);
         errdefer alloc.free(issues);
         var issues_initialized: usize = 0;
         errdefer {
-            for (issues[0..issues_initialized]) |issue| alloc.free(issue);
+            for (issues[0..issues_initialized]) |issue| alloc.free(issue.server);
         }
         for (snapshot.configuration_issues, 0..) |*issue, index| {
-            issues[index] = try alloc.dupe(u8, issue.message);
+            const kind = issue.doctor_issue orelse .unclassified;
+            issues[index] = .{
+                .server = try alloc.dupe(u8, issue.server_name orelse "unknown"),
+                .kind = kind,
+                .message = doctorConfigIssueMessage(kind),
+            };
             issues_initialized += 1;
         }
         return .{
@@ -1501,7 +1528,7 @@ pub const McpDoctorSnapshot = struct {
     pub fn deinit(self: *McpDoctorSnapshot, alloc: Allocator) void {
         for (self.servers) |*server| alloc.free(server.name);
         alloc.free(self.servers);
-        for (self.configuration_issues) |issue| alloc.free(issue);
+        for (self.configuration_issues) |*issue| alloc.free(issue.server);
         alloc.free(self.configuration_issues);
         self.* = undefined;
     }
@@ -1554,7 +1581,11 @@ pub const McpDoctorSnapshot = struct {
                 });
         }
         for (self.configuration_issues) |issue| {
-            try out.writer.print("  configuration issue: {s}\n", .{issue});
+            try out.writer.print("  configuration issue {s} ({s}): {s}\n", .{
+                issue.server,
+                @tagName(issue.kind),
+                issue.message,
+            });
         }
         return try out.toOwnedSlice();
     }
@@ -1603,7 +1634,13 @@ pub const McpDoctorSnapshot = struct {
         try out.writer.writeAll("],\"configuration_issues\":[");
         for (self.configuration_issues, 0..) |issue, index| {
             if (index > 0) try out.writer.writeByte(',');
-            try std.json.Stringify.value(issue, .{}, &out.writer);
+            try out.writer.writeAll("{\"server\":");
+            try std.json.Stringify.value(issue.server, .{}, &out.writer);
+            try out.writer.writeAll(",\"kind\":");
+            try std.json.Stringify.value(@tagName(issue.kind), .{}, &out.writer);
+            try out.writer.writeAll(",\"message\":");
+            try std.json.Stringify.value(issue.message, .{}, &out.writer);
+            try out.writer.writeByte('}');
         }
         try out.writer.writeAll("]}}");
         return try out.toOwnedSlice();
@@ -1772,6 +1809,92 @@ test "doctor json carries the failure enum and message" {
         "\"failure\":\"Server does not speak a supported MCP protocol version.\"",
     ) != null);
     try std.testing.expect(std.mem.find(u8, json, "\"healthy\":false") != null);
+}
+
+test "doctor config issue messages are exact fixed strings" {
+    try std.testing.expectEqualStrings(
+        "Project MCP file is not valid JSON.",
+        doctorConfigIssueMessage(.invalid_json),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP file root must be an object.",
+        doctorConfigIssueMessage(.root_must_be_object),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP file servers entry must be an object.",
+        doctorConfigIssueMessage(.servers_must_be_object),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP server entry is invalid and was ignored.",
+        doctorConfigIssueMessage(.invalid_entry),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP server entry requires an unset environment variable; set it or use a ${VAR:-default} fallback.",
+        doctorConfigIssueMessage(.missing_environment_variable),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP server entry exceeds the environment expansion limit.",
+        doctorConfigIssueMessage(.environment_expansion_limit_exceeded),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP server is both approved and rejected; fix the trust lists.",
+        doctorConfigIssueMessage(.approved_rejected_overlap),
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP configuration has a problem that could not be classified.",
+        doctorConfigIssueMessage(.unclassified),
+    );
+}
+
+test "doctor snapshot maps config issues to fixed messages" {
+    const alloc = std.testing.allocator;
+    var servers = [_]mcp_health.ServerSnapshot{
+        try makeDoctorTestServer(alloc, "ready-server", .ready, .none, false, .none, null),
+    };
+    defer {
+        for (&servers) |*server| server.deinit(alloc);
+    }
+    var issues = [_]mcp_health.ConfigurationIssue{.{
+        .message = try alloc.dupe(
+            u8,
+            ".mcp.json server 'web' field environment requires environment variable 'SECRET_TOKEN'; set it.",
+        ),
+        .server_name = try alloc.dupe(u8, "web"),
+        .doctor_issue = .missing_environment_variable,
+    }};
+    defer {
+        for (&issues) |*issue| issue.deinit(alloc);
+    }
+    var health_snapshot = mcp_health.Snapshot{
+        .captured_at_ms = 1,
+        .servers = &servers,
+        .configuration_issues = &issues,
+    };
+    var snapshot = try McpDoctorSnapshot.fromHealthSnapshot(alloc, &health_snapshot, 10_000);
+    defer snapshot.deinit(alloc);
+    try std.testing.expect(!snapshot.healthy());
+    try std.testing.expectEqual(@as(usize, 1), snapshot.configuration_issues.len);
+    try std.testing.expectEqualStrings("web", snapshot.configuration_issues[0].server);
+    try std.testing.expectEqual(
+        mcp_health.DoctorConfigIssue.missing_environment_variable,
+        snapshot.configuration_issues[0].kind,
+    );
+    try std.testing.expectEqualStrings(
+        "Project MCP server entry requires an unset environment variable; set it or use a ${VAR:-default} fallback.",
+        snapshot.configuration_issues[0].message,
+    );
+    const text = try snapshot.render(alloc, .text);
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "SECRET_TOKEN") == null);
+    try std.testing.expect(std.mem.find(
+        u8,
+        text,
+        "configuration issue web (missing_environment_variable): Project MCP server entry requires an unset environment variable;",
+    ) != null);
+    const json = try snapshot.render(alloc, .json);
+    defer alloc.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "\"kind\":\"missing_environment_variable\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "SECRET_TOKEN") == null);
 }
 
 pub const AuthLogoutSnapshot = struct {

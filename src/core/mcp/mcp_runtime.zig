@@ -3404,6 +3404,20 @@ fn doctorFailureKind(
     return .@"unreachable";
 }
 
+/// Maps a workspace diagnostic cause into the closed doctor config-issue
+/// set. Every cause has an arm, so no free text is needed downstream.
+fn doctorConfigIssueKind(cause: project_config.WorkspaceDiagnosticCause) health.DoctorConfigIssue {
+    return switch (cause) {
+        .invalid_json => .invalid_json,
+        .root_must_be_object => .root_must_be_object,
+        .servers_must_be_object => .servers_must_be_object,
+        .invalid_entry => .invalid_entry,
+        .missing_environment_variable => .missing_environment_variable,
+        .environment_expansion_limit_exceeded => .environment_expansion_limit_exceeded,
+        .approved_rejected_overlap => .approved_rejected_overlap,
+    };
+}
+
 fn healthFailureForState(
     alloc: Allocator,
     required: bool,
@@ -3915,6 +3929,10 @@ pub const McpRuntime = struct {
     next_legacy_url_completion_window_generation: u64 = 1,
     discovery_state: std.atomic.Value(DiscoveryState) = .init(.idle),
     discovery_cancel_requested: std.atomic.Value(bool) = .init(false),
+    /// When true, probes observe but never mutate stored credentials:
+    /// refresh is skipped and expiring credentials report auth_required.
+    /// Set only by the doctor probe on its single-use runtime.
+    doctor_read_only: bool = false,
     discovery_thread: ?std.Thread = null,
     deferred_discovery_state: std.atomic.Value(DiscoveryState) = .init(.idle),
     deferred_discovery_complete: std.Io.Event = .unset,
@@ -5073,6 +5091,8 @@ pub const McpRuntime = struct {
                     alloc,
                     diagnostic,
                 ),
+                .server_name = try alloc.dupe(u8, diagnostic.server_name orelse "unknown"),
+                .doctor_issue = doctorConfigIssueKind(diagnostic.cause),
             };
             issues_initialized += 1;
         }
@@ -5287,6 +5307,7 @@ pub const McpRuntime = struct {
     ) void {
         if (self.discovery_state.cmpxchgStrong(.idle, .loading, .seq_cst, .seq_cst) != null) return;
         self.discovery_cancel_requested.store(false, .seq_cst);
+        self.doctor_read_only = true;
         self.connectAllControlled(
             tool_registry,
             &self.discovery_cancel_requested,
@@ -10150,6 +10171,45 @@ test "doctor probe watch fires at its deadline" {
     try std.testing.expect(watch.flag.load(.acquire));
 }
 
+test "doctor probes never refresh stored credentials" {
+    const alloc = std.testing.allocator;
+    var runtime = McpRuntime.init(alloc);
+    defer runtime.deinit();
+    runtime.doctor_read_only = true;
+    var server = McpServer{ .config = .{ .name = "fixture" }, .runtime = &runtime };
+    defer {
+        if (server.auth_credentials) |*credentials| credentials.deinit(alloc);
+        if (server.last_error) |value| alloc.free(value);
+    }
+    server.auth_credentials = mcp_auth.Credentials{
+        .endpoint = try alloc.dupe(u8, "https://example.test/mcp"),
+        .resource = try alloc.dupe(u8, "https://example.test"),
+        .issuer = try alloc.dupe(u8, "https://example.test"),
+        .client_id = try alloc.dupe(u8, "client"),
+        .access_token = try alloc.dupe(u8, "original-token"),
+        .refresh_token = try alloc.dupe(u8, "refresh-me"),
+        .scope = try alloc.dupe(u8, "tools"),
+        .token_type = try alloc.dupe(u8, "Bearer"),
+        .token_endpoint_auth_method = try alloc.dupe(u8, "none"),
+        .expires_at_ms = 0,
+        .authorization_endpoint = try alloc.dupe(u8, "https://example.test/auth"),
+        .token_endpoint = try alloc.dupe(u8, "https://example.test/token"),
+    };
+    const deadline = std.Io.Clock.Timestamp.fromNow(std.testing.io, .{
+        .clock = .awake,
+        .raw = .fromSeconds(5),
+    });
+    try std.testing.expectError(
+        error.McpAuthenticationRequired,
+        refreshSharedCredentials(alloc, &server, .{ .deadline = deadline }),
+    );
+    try std.testing.expectEqualStrings(
+        "MCP credentials expired. Run /mcp auth for this server.",
+        server.last_error.?,
+    );
+    try std.testing.expectEqualStrings("original-token", server.auth_credentials.?.access_token);
+}
+
 fn startupTimeout(
     configured_timeout_ms: u32,
     test_override: ?std.Io.Duration,
@@ -12533,7 +12593,8 @@ fn refreshSharedCredentials(
         };
     };
     defer source.credentials.deinit(alloc);
-    if (source.credentials.refresh_token == null) {
+    const read_only = if (server.runtime) |runtime| runtime.doctor_read_only else false;
+    if (read_only or source.credentials.refresh_token == null) {
         setFailedSynchronized(
             server,
             alloc,
