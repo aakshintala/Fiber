@@ -522,6 +522,12 @@ pub fn Handlers(comptime App: type) type {
                         "MCP authentication for '{s}' was cancelled.",
                         .{completion.server_name},
                     )
+                else if (err == error.McpOAuthCallbackPortInUse)
+                    try std.fmt.allocPrint(
+                        app.alloc,
+                        "MCP authentication for '{s}' failed: the configured oauth.callback_port is already in use. Stop the process using it or set a different oauth.callback_port for this server in ~/.fiber/mcp.json.",
+                        .{completion.server_name},
+                    )
                 else
                     try std.fmt.allocPrint(
                         app.alloc,
