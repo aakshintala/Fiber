@@ -654,6 +654,156 @@ test "OpenAI Codex serializes each verified image directly once" {
     try std.testing.expect(std.mem.find(u8, body, "data:image/png;base64,AQIDBA==") != null);
 }
 
+fn writeHistorySnapshotFile(tmp: *std.testing.TmpDir, name: []const u8, bytes: []const u8) !void {
+    var file = try tmp.dir.createFile(std.testing.io, name, .{});
+    defer file.close(std.testing.io);
+    try file.writeStreamingAll(std.testing.io, bytes);
+}
+
+fn historySnapshotDigestHex(bytes: []const u8) [64]u8 {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(bytes);
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    return std.fmt.bytesToHex(digest, .lower);
+}
+
+fn makeHistoryImageAttachment(
+    alloc: Allocator,
+    id: usize,
+    snapshot_path: []const u8,
+    digest_hex: []const u8,
+) !types.ImageAttachment {
+    return .{
+        .id = id,
+        .path = try alloc.dupe(u8, "/tmp/source.png"),
+        .media_type = try alloc.dupe(u8, "image/png"),
+        .snapshot_path = try alloc.dupe(u8, snapshot_path),
+        .snapshot_sha256 = try alloc.dupe(u8, digest_hex),
+    };
+}
+
+fn buildHistoryReplayBody(alloc: Allocator, messages: []const types.ChatMessage) ![]u8 {
+    return buildRequest(alloc, .{
+        .model = "gpt-5.6-sol",
+        .messages = messages,
+        .tool_choice = .none,
+        .provider_options = .{},
+    });
+}
+
+test "OpenAI Codex resumed history notices a missing snapshot without failing" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const tmp_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(tmp_root);
+    const missing_path = try std.fs.path.join(alloc, &.{ tmp_root, "gone.bin" });
+    defer alloc.free(missing_path);
+
+    const attachment = try makeHistoryImageAttachment(
+        alloc,
+        7,
+        missing_path,
+        "a" ** 64,
+    );
+    defer types.freeImageAttachment(alloc, attachment);
+    const images = [_]types.ImageAttachment{attachment};
+    const messages = [_]types.ChatMessage{
+        .{ .role = .user, .content = "Fix it [Image #7]", .images = &images },
+        .{ .role = .user, .content = "Continue." },
+    };
+    const body = try buildHistoryReplayBody(alloc, &messages);
+    defer alloc.free(body);
+
+    try std.testing.expect(std.mem.find(u8, body, "image_unavailable") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\\\"reason\\\":\\\"missing\\\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\\\"image_id\\\":7") != null);
+    try std.testing.expect(std.mem.find(u8, body, "input_image") == null);
+}
+
+test "OpenAI Codex resumed history notices a corrupt snapshot without failing" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const png_bytes = "\x89PNG\r\n\x1a\nvalid-image-bytes";
+    try writeHistorySnapshotFile(&tmp, "image-7.bin", "tampered-bytes");
+    const snapshot_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "image-7.bin");
+    defer alloc.free(snapshot_path);
+    const digest_hex = historySnapshotDigestHex(png_bytes);
+
+    const attachment = try makeHistoryImageAttachment(alloc, 7, snapshot_path, &digest_hex);
+    defer types.freeImageAttachment(alloc, attachment);
+    const images = [_]types.ImageAttachment{attachment};
+    const messages = [_]types.ChatMessage{
+        .{ .role = .user, .content = "Fix it [Image #7]", .images = &images },
+        .{ .role = .user, .content = "Continue." },
+    };
+    const body = try buildHistoryReplayBody(alloc, &messages);
+    defer alloc.free(body);
+
+    try std.testing.expect(std.mem.find(u8, body, "image_unavailable") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\\\"reason\\\":\\\"corrupt\\\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "ImageSnapshotCorrupt") != null);
+    try std.testing.expect(std.mem.find(u8, body, "input_image") == null);
+}
+
+test "OpenAI Codex resumed history rehydrates a valid snapshot unchanged" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const png_bytes = "\x89PNG\r\n\x1a\nvalid-image-bytes";
+    try writeHistorySnapshotFile(&tmp, "image-7.bin", png_bytes);
+    const snapshot_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "image-7.bin");
+    defer alloc.free(snapshot_path);
+    const digest_hex = historySnapshotDigestHex(png_bytes);
+
+    const attachment = try makeHistoryImageAttachment(alloc, 7, snapshot_path, &digest_hex);
+    defer types.freeImageAttachment(alloc, attachment);
+    const images = [_]types.ImageAttachment{attachment};
+    const messages = [_]types.ChatMessage{
+        .{ .role = .user, .content = "Fix it [Image #7]", .images = &images },
+        .{ .role = .user, .content = "Continue." },
+    };
+    const body = try buildHistoryReplayBody(alloc, &messages);
+    defer alloc.free(body);
+
+    try std.testing.expect(std.mem.find(u8, body, "data:image/png;base64,") != null);
+    try std.testing.expect(std.mem.find(u8, body, "image_unavailable") == null);
+}
+
+test "OpenAI Codex resumed history keeps notice order behind a valid image" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const png_bytes = "\x89PNG\r\n\x1a\nvalid-image-bytes";
+    try writeHistorySnapshotFile(&tmp, "image-3.bin", png_bytes);
+    const valid_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "image-3.bin");
+    defer alloc.free(valid_path);
+    const tmp_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(tmp_root);
+    const missing_path = try std.fs.path.join(alloc, &.{ tmp_root, "gone.bin" });
+    defer alloc.free(missing_path);
+    const digest_hex = historySnapshotDigestHex(png_bytes);
+
+    var attachments = [_]types.ImageAttachment{
+        try makeHistoryImageAttachment(alloc, 3, valid_path, &digest_hex),
+        try makeHistoryImageAttachment(alloc, 9, missing_path, "b" ** 64),
+    };
+    defer for (&attachments) |*attachment| types.freeImageAttachment(alloc, attachment.*);
+    const messages = [_]types.ChatMessage{
+        .{ .role = .user, .content = "Both [Image #3] [Image #9]", .images = &attachments },
+        .{ .role = .user, .content = "Continue." },
+    };
+    const body = try buildHistoryReplayBody(alloc, &messages);
+    defer alloc.free(body);
+
+    const image_pos = std.mem.find(u8, body, "input_image") orelse return error.TestExpectedImage;
+    const notice_pos = std.mem.find(u8, body, "image_unavailable") orelse return error.TestExpectedNotice;
+    try std.testing.expect(image_pos < notice_pos);
+    try std.testing.expect(std.mem.find(u8, body, "\\\"image_id\\\":9") != null);
+}
+
 test "OpenAI Codex rejects a wrong-origin credential before network I/O" {
     var cancelled = std.atomic.Value(bool).init(false);
     var delivery = stream_provider.DeliveryCertainty.init();

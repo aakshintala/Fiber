@@ -41,6 +41,16 @@ pub fn writeInput(
                             first_part = false;
                         }
                     }
+                } else {
+                    // Resumed history carries attachments, not bytes. Rehydrate
+                    // each snapshot in place so the model sees the image the
+                    // text refers to; an unloadable snapshot becomes a typed
+                    // notice in the same slot instead of a silent omission.
+                    for (message.images) |attachment| {
+                        if (!first_part) try writer.writeByte(',');
+                        try writeResumedHistoryImage(writer, alloc, attachment);
+                        first_part = false;
+                    }
                 }
                 try writer.writeAll("]}");
             },
@@ -101,6 +111,60 @@ fn validateReplayMessage(message: types.ChatMessage, limits: ReplayLimits) !void
             return error.ToolArgumentsTooLarge;
         }
     }
+}
+
+/// Rehydrates one resumed history attachment through the same verified
+/// snapshot load (bounded reads, no symlinks, digest-checked) used for
+/// current-turn images. Success encodes the image; a missing or corrupt
+/// snapshot encodes a typed model-visible notice in its slot. Only
+/// allocation and cancellation failures propagate, so resume still succeeds.
+fn writeResumedHistoryImage(
+    writer: *std.Io.Writer,
+    alloc: std.mem.Allocator,
+    attachment: types.ImageAttachment,
+) !void {
+    var verified = image_attachments.loadVerifiedSnapshot(
+        alloc,
+        attachment,
+        .{},
+    ) catch |err| switch (err) {
+        error.OutOfMemory, error.Cancelled => return err,
+        else => {
+            try writeImageUnavailableNotice(writer, attachment.id, err);
+            return;
+        },
+    };
+    defer verified.deinit(alloc);
+    try writeInputImage(writer, alloc, verified);
+}
+
+fn imageUnavailableReason(err: anyerror) []const u8 {
+    return switch (err) {
+        error.MissingImageSnapshot, error.FileNotFound => "missing",
+        error.ImageSnapshotCorrupt,
+        error.InvalidImageSnapshotDigest,
+        error.ImageSnapshotMediaTypeMismatch,
+        error.UnsupportedImageType,
+        error.NotRegularFile,
+        => "corrupt",
+        else => "unreadable",
+    };
+}
+
+/// Typed in-place payload telling the model an image existed here and why
+/// it is gone. Reason and detail are error-identifier characters only, so
+/// the manual JSON escaping below cannot break the envelope.
+fn writeImageUnavailableNotice(
+    writer: *std.Io.Writer,
+    image_id: usize,
+    err: anyerror,
+) !void {
+    try writer.writeAll("{\"type\":\"input_text\",\"text\":\"");
+    try writer.print(
+        "{{\\\"type\\\":\\\"image_unavailable\\\",\\\"image_id\\\":{d},\\\"reason\\\":\\\"{s}\\\",\\\"detail\\\":\\\"{s}\\\"}}",
+        .{ image_id, imageUnavailableReason(err), @errorName(err) },
+    );
+    try writer.writeAll("\"}");
 }
 
 fn writeInputImage(
