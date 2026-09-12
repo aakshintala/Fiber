@@ -7228,8 +7228,8 @@ test("long profile homes use distinct private transport roots and retain durable
   , 3_000);
   expect(existsSync(firstDurable.lock)).toBe(true);
   expect(existsSync(secondDurable.lock)).toBe(true);
-  expect(readdirSync(firstTransport.dir)).toEqual([]);
-  expect(readdirSync(secondTransport.dir)).toEqual([]);
+  expect(existsSync(firstTransport.dir)).toBe(false);
+  expect(existsSync(secondTransport.dir)).toBe(false);
 }, 15_000);
 
 test("long-home transport roots reject symlink and non-private components without mutation", async () => {
@@ -7371,7 +7371,7 @@ test.skipIf(!tmuxAvailable())(
     expect(await waitForExit(replacement)).toBe(0);
     expect(existsSync(transport.socket)).toBe(false);
     expect(existsSync(durable.identity)).toBe(false);
-    expect(readdirSync(transport.dir)).toEqual([]);
+    expect(existsSync(transport.dir)).toBe(false);
   },
   30_000,
 );
