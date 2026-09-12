@@ -22,6 +22,36 @@ env:
   BUN_VERSION: "1.3.14"
 
 jobs:
+  # Scope planner: docs-only detection shared by the ready-scope jobs.
+  # Runs on every event (~30s); workflow_dispatch is never docs-only.
+  scope:
+    name: Select CI scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Detect docs-only change
+        id: detect
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          docs_only=true
+          while IFS= read -r f; do
+            case "$f" in
+              *.md|docs/*) ;;
+              *) docs_only=false; break ;;
+            esac
+          done < <(git diff --name-only "$base"...HEAD)
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
   shellcheck:
     name: Shellcheck
     runs-on: ubuntu-24.04
@@ -39,10 +69,13 @@ jobs:
 
   # Draft scope. Also the linux-x86_64 leg of the ready matrix, so ready runs do
   # not build and test this platform twice.
-  native-linux:
-    name: Native checks (linux-x86_64)
+  # Cheap deterministic gates that must re-verify every push in every
+  # scope (including ready pushes, where the heavy native job is skipped).
+  # None of these need a built binary.
+  static:
+    name: Static gates
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
 
@@ -50,7 +83,7 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-          cache-key: ci-native-linux-x86_64-ReleaseSafe
+          cache-key: ci-static-ReleaseSafe
 
       - name: Check formatting
         run: zig fmt --check src/
@@ -63,6 +96,23 @@ jobs:
 
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
+
+  # Heavy native leg: build, unit tests, smoke. Runs once, in draft (and on
+  # manual dispatch); the ready scope adds only net-new platforms. The
+  # static gates above still run on every ready push.
+  native-linux:
+    name: Native checks (linux-x86_64)
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft != false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: ci-native-linux-x86_64-ReleaseSafe
 
       - name: Build
         run: zig build -Doptimize=ReleaseSafe
@@ -80,7 +130,8 @@ jobs:
 
   native-extra:
     name: Native checks (${{ matrix.platform.name }})
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    if: (github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false) && needs.scope.outputs.docs_only != 'true'
+    needs: scope
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 60
     strategy:
@@ -115,12 +166,16 @@ jobs:
       - name: Smoke test fresh binary
         run: ./scripts/smoke.sh
 
-  # Draft runs Linux x86_64 E2E. Ready and manual dispatch add the other
-  # platforms. A planner job emits that list so extra OS legs are never queued.
+  # Draft runs Linux x86_64 E2E once. Ready adds only the net-new platforms
+  # (docs-only ready PRs add nothing: their draft scope already covered the
+  # shared legs). Manual dispatch runs everything. A planner job emits that
+  # list so unneeded OS legs are never queued. This assumes the documented
+  # flow: every PR opens as a draft, so draft scope has run before ready.
   e2e-platforms:
     name: Select E2E platforms
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    needs: scope
     outputs:
       platforms: ${{ steps.select.outputs.platforms }}
     steps:
@@ -129,12 +184,17 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           IS_DRAFT: ${{ github.event.pull_request.draft }}
+          DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
         run: |
           set -euo pipefail
           linux='{"name":"linux-x86_64","runner":"ubuntu-24.04","zig_tarball":"zig-x86_64-linux"}'
           extra='[{"name":"linux-aarch64","runner":"ubuntu-24.04-arm","zig_tarball":"zig-aarch64-linux"},{"name":"macos-aarch64","runner":"macos-15","zig_tarball":"zig-aarch64-macos"}]'
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$IS_DRAFT" = "false" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             platforms="$(jq -c --argjson linux "$linux" --argjson extra "$extra" -n '[$linux] + $extra')"
+          elif [ "$IS_DRAFT" = "false" ] && [ "$DOCS_ONLY" = "true" ]; then
+            platforms="[]"
+          elif [ "$IS_DRAFT" = "false" ]; then
+            platforms="$extra"
           else
             platforms="$(jq -c --argjson linux "$linux" -n '[$linux]')"
           fi
@@ -144,7 +204,8 @@ jobs:
   # tests/e2e/conformance, so the root-level shard planner never discovers it.
   conformance:
     name: MCP conformance
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    if: (github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false) && needs.scope.outputs.docs_only != 'true'
+    needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -385,7 +446,8 @@ jobs:
 
   bench:
     name: Performance gates
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    if: (github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false) && needs.scope.outputs.docs_only != 'true'
+    needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -441,7 +503,8 @@ jobs:
   # meaning on a manual dispatch.
   binary-size:
     name: ReleaseSafe size delta (${{ matrix.name }})
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.scope.outputs.docs_only != 'true'
+    needs: scope
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -608,6 +671,8 @@ jobs:
     if: always()
     needs:
       - shellcheck
+      - scope
+      - static
       - native-linux
       - native-extra
       - conformance
