@@ -952,27 +952,66 @@ pub fn resetVisualEpoch(self: anytype, alloc: Allocator, welcome: []const u8) !v
     std.debug.assert(welcome.len > 0);
     try self.assertCanMutateTranscript();
 
-    const pinned_count = lifecyclePinCount(self);
+    // Ctrl+L clears the inline display but retains conversation history for
+    // the Ctrl+O full transcript: entries are borrowed in place and hidden
+    // from compact presentation instead of freed. Approach adapted from
+    // upstream fx d542df75; only `/clear` starts a fresh conversation.
     var replacement_entries: std.ArrayList(TranscriptEntry) = .empty;
-    errdefer {
-        for (replacement_entries.items) |*entry| entry.deinit(alloc);
-        replacement_entries.deinit(alloc);
-    }
-    try replacement_entries.ensureTotalCapacity(alloc, pinned_count + 1);
+    errdefer replacement_entries.deinit(alloc);
+    try replacement_entries.ensureTotalCapacity(alloc, self.entries.items.len + 1);
 
+    // Staging borrows retained payloads until publication; only the new welcome
+    // belongs to this scope on failure.
     const welcome_copy = try alloc.dupe(u8, welcome);
-    replacement_entries.appendAssumeCapacity(.{ .raw_bytes = .{
-        .id = self.next_entry_id,
-        .created_at_ms = io_mod.milliTimestamp(),
-        .bytes = welcome_copy,
-        .class = .welcome,
-    } });
-
+    errdefer alloc.free(welcome_copy);
+    var replaced_welcome = false;
+    var hidden_count: usize = 0;
+    var pinned_count: usize = 0;
     for (self.entries.items) |entry| {
-        if (entry != .raw_bytes or !entry.raw_bytes.lifecycle_pinned) continue;
-        replacement_entries.appendAssumeCapacity(
-            try cloneEntryForSnapshot(alloc, entry),
-        );
+        if (entry == .raw_bytes and entry.raw_bytes.class == .welcome) {
+            if (!replaced_welcome) {
+                replacement_entries.appendAssumeCapacity(.{ .raw_bytes = .{
+                    .id = entry.raw_bytes.id,
+                    .created_at_ms = entry.raw_bytes.created_at_ms,
+                    .bytes = welcome_copy,
+                    .class = .welcome,
+                } });
+                replaced_welcome = true;
+            }
+            continue;
+        }
+        const pinned = switch (entry) {
+            .raw_bytes => |raw| raw.lifecycle_pinned,
+            .semantic_notice => |notice| notice.pending_replacement,
+            else => false,
+        };
+        var retained = entry;
+        if (pinned) {
+            pinned_count += 1;
+        } else {
+            retained.hideInline();
+            hidden_count += 1;
+        }
+        replacement_entries.appendAssumeCapacity(retained);
+    }
+    if (!replaced_welcome) {
+        replacement_entries.appendAssumeCapacity(.{ .raw_bytes = .{
+            .id = self.next_entry_id,
+            .created_at_ms = io_mod.milliTimestamp(),
+            .bytes = welcome_copy,
+            .class = .welcome,
+        } });
+    }
+
+    var staged_retained: usize = 0;
+    for (replacement_entries.items) |entry| staged_retained += entryRetainedBytes(entry);
+    for (self.folded_command_blocks.items) |block| staged_retained += command_output_runtime.foldedBlockRetainedBytes(block);
+    for (self.command_output_blocks.items) |block| staged_retained += command_output_runtime.commandOutputBlockRetainedBytes(block);
+    if (staged_retained > self.max_retained_transcript_bytes) {
+        replacement_entries.deinit(alloc);
+        alloc.free(welcome_copy);
+        try resetVisualEpochEnforcing(self, alloc, welcome);
+        return;
     }
 
     const cols: u16 = if (self.layout.cols > 0) self.layout.cols else 80;
@@ -997,16 +1036,146 @@ pub fn resetVisualEpoch(self: anytype, alloc: Allocator, welcome: []const u8) !v
     replacement_transcript = .empty;
     self.transcript_cache_origin_untrimmed = rendered_start == 0;
 
-    for (old_entries.items) |*entry| entry.deinit(alloc);
+    for (old_entries.items) |*entry| {
+        if (entry.* == .raw_bytes and entry.raw_bytes.class == .welcome) entry.deinit(alloc);
+    }
     old_entries.deinit(alloc);
     old_transcript.deinit(alloc);
-    for (self.folded_command_blocks.items) |*block| block.deinit(alloc);
-    self.folded_command_blocks.clearRetainingCapacity();
-    for (self.command_output_blocks.items) |*block| block.deinit(alloc);
-    self.command_output_blocks.clearRetainingCapacity();
+    debug_trace.logf(
+        "transcript.visual_epoch_reset",
+        "clear display retained={d} hidden={d} pinned={d}",
+        .{ self.entries.items.len - 1, hidden_count, pinned_count },
+    );
 
-    self.next_entry_id +%= 1;
+    if (!replaced_welcome) self.next_entry_id +%= 1;
     self.last_rendered_cols = cols;
+    if (comptime @hasDecl(@TypeOf(self.*), "closeFullTranscriptState")) {
+        self.closeFullTranscriptState();
+    }
+    self.command_output_display = .{};
+    self.replaceable_last_line = false;
+    self.replaceable_start = 0;
+    self.pending_scroll_compact = false;
+    self.has_painted_transcript = false;
+    self.last_visible_transcript_top_row = self.owned_top_row;
+    self.last_visible_transcript_start_line = 0;
+    self.last_visible_transcript_partial_skip_rows = 0;
+    self.last_visible_transcript_split_active = false;
+    self.last_visible_transcript_split_prefix_lines = 0;
+    self.last_visible_transcript_split_suffix_start_line = 0;
+    self.last_viewport_selection = null;
+    self.recomputeCursorFromTranscript();
+    if (comptime @hasDecl(@TypeOf(self.*), "invalidateTranscriptAnchor")) {
+        self.invalidateTranscriptAnchor("visual_epoch_reset");
+    }
+    requestTranscriptPaint(self);
+}
+
+/// Over-cap Ctrl+L path: rebuilds the visual-epoch staging as owned clones
+/// so `enforceStructuredRetention` can prune the oldest unprotected history
+/// before publication. Any allocation failure leaves the live transcript
+/// untouched; only `/clear` drops retained history unconditionally.
+fn resetVisualEpochEnforcing(self: anytype, alloc: Allocator, welcome: []const u8) !void {
+    var shadow = try cloneMutationState(self, alloc);
+    defer shadow.deinit(alloc);
+
+    const welcome_copy = try alloc.dupe(u8, welcome);
+    var handed_off = false;
+    errdefer if (!handed_off) alloc.free(welcome_copy);
+
+    var replaced_welcome = false;
+    var welcome_id: u32 = shadow.next_entry_id;
+    var hidden_count: usize = 0;
+    var pinned_count: usize = 0;
+    var index: usize = 0;
+    while (index < shadow.entries.items.len) {
+        const entry = &shadow.entries.items[index];
+        if (entry.* == .raw_bytes and entry.raw_bytes.class == .welcome) {
+            if (!replaced_welcome) {
+                const old_id = entry.raw_bytes.id;
+                const old_created_at_ms = entry.raw_bytes.created_at_ms;
+                entry.deinit(alloc);
+                entry.* = .{ .raw_bytes = .{
+                    .id = old_id,
+                    .created_at_ms = old_created_at_ms,
+                    .bytes = welcome_copy,
+                    .class = .welcome,
+                } };
+                handed_off = true;
+                welcome_id = old_id;
+                replaced_welcome = true;
+                index += 1;
+            } else {
+                var removed = shadow.entries.orderedRemove(index);
+                removed.deinit(alloc);
+            }
+            continue;
+        }
+        const pinned = switch (entry.*) {
+            .raw_bytes => |raw| raw.lifecycle_pinned,
+            .semantic_notice => |notice| notice.pending_replacement,
+            else => false,
+        };
+        if (pinned) {
+            pinned_count += 1;
+        } else {
+            entry.hideInline();
+            hidden_count += 1;
+        }
+        index += 1;
+    }
+    if (!replaced_welcome) {
+        try shadow.entries.append(alloc, .{ .raw_bytes = .{
+            .id = shadow.next_entry_id,
+            .created_at_ms = io_mod.milliTimestamp(),
+            .bytes = welcome_copy,
+            .class = .welcome,
+        } });
+        handed_off = true;
+        shadow.next_entry_id +%= 1;
+    }
+
+    try enforceStructuredRetention(&shadow, alloc, welcome_id);
+
+    const cols: u16 = if (self.layout.cols > 0) self.layout.cols else 80;
+    const rendered = try transcript_blocks.renderEntriesToBytes(
+        alloc,
+        shadow.entries.items,
+        cols,
+        self.command_output_render.styles,
+    );
+    defer alloc.free(rendered);
+    const rendered_start = cappedTailStart(rendered, self.max_transcript_bytes);
+
+    var replacement_transcript: std.ArrayList(u8) = .empty;
+    errdefer replacement_transcript.deinit(alloc);
+    try replacement_transcript.appendSlice(alloc, rendered[rendered_start..]);
+
+    std.mem.swap(@TypeOf(self.entries), &self.entries, &shadow.entries);
+    std.mem.swap(@TypeOf(self.tool_details), &self.tool_details, &shadow.tool_details);
+    std.mem.swap(
+        @TypeOf(self.folded_command_blocks),
+        &self.folded_command_blocks,
+        &shadow.folded_command_blocks,
+    );
+    std.mem.swap(
+        @TypeOf(self.command_output_blocks),
+        &self.command_output_blocks,
+        &shadow.command_output_blocks,
+    );
+    var old_transcript = self.transcript;
+    self.transcript = replacement_transcript;
+    replacement_transcript = .empty;
+    old_transcript.deinit(alloc);
+    self.transcript_cache_origin_untrimmed = rendered_start == 0;
+    self.next_entry_id = shadow.next_entry_id;
+    self.last_rendered_cols = cols;
+    debug_trace.logf(
+        "transcript.visual_epoch_reset",
+        "clear display retained={d} hidden={d} pinned={d} enforced_cap={d}",
+        .{ self.entries.items.len - 1, hidden_count, pinned_count, self.max_retained_transcript_bytes },
+    );
+
     if (comptime @hasDecl(@TypeOf(self.*), "closeFullTranscriptState")) {
         self.closeFullTranscriptState();
     }
@@ -1194,6 +1363,7 @@ pub fn replaceSemanticNoticeAtomic(
     shadow.entries.items[entry_index] = .{ .semantic_notice = .{
         .id = entry_id,
         .created_at_ms = created_at_ms,
+        .inline_hidden = previous.semantic_notice.inline_hidden,
         .topic = owned.topic,
         .tone = owned.tone,
         .body = owned.body,
@@ -1985,6 +2155,7 @@ pub fn cloneEntryForSnapshot(alloc: Allocator, entry: TranscriptEntry) !Transcri
         .raw_bytes => |raw| .{ .raw_bytes = .{
             .id = raw.id,
             .created_at_ms = raw.created_at_ms,
+            .inline_hidden = raw.inline_hidden,
             .bytes = try alloc.dupe(u8, raw.bytes),
             .class = raw.class,
             .lifecycle_pinned = raw.lifecycle_pinned,
@@ -1999,6 +2170,7 @@ pub fn cloneEntryForSnapshot(alloc: Allocator, entry: TranscriptEntry) !Transcri
             break :blk .{ .semantic_notice = .{
                 .id = notice.id,
                 .created_at_ms = notice.created_at_ms,
+                .inline_hidden = notice.inline_hidden,
                 .topic = owned.topic,
                 .tone = owned.tone,
                 .body = owned.body,
@@ -2013,6 +2185,7 @@ pub fn cloneEntryForSnapshot(alloc: Allocator, entry: TranscriptEntry) !Transcri
             break :blk .{ .user_turn = .{
                 .id = user.id,
                 .created_at_ms = user.created_at_ms,
+                .inline_hidden = user.inline_hidden,
                 .turn = turn,
                 .skill_tokens = skill_tokens,
             } };
@@ -2024,22 +2197,26 @@ pub fn cloneEntryForSnapshot(alloc: Allocator, entry: TranscriptEntry) !Transcri
             break :blk .{ .assistant_turn = .{
                 .id = assistant.id,
                 .created_at_ms = assistant.created_at_ms,
+                .inline_hidden = assistant.inline_hidden,
                 .segments = segments,
             } };
         },
         .assistant_table => |assistant| .{ .assistant_table = .{
             .id = assistant.id,
             .created_at_ms = assistant.created_at_ms,
+            .inline_hidden = assistant.inline_hidden,
             .table = try assistant.table.clone(alloc),
         } },
         .assistant_code_block => |assistant| .{ .assistant_code_block = .{
             .id = assistant.id,
             .created_at_ms = assistant.created_at_ms,
+            .inline_hidden = assistant.inline_hidden,
             .block = try assistant.block.clone(alloc),
         } },
         .assistant_thematic_rule => |assistant| .{ .assistant_thematic_rule = .{
             .id = assistant.id,
             .created_at_ms = assistant.created_at_ms,
+            .inline_hidden = assistant.inline_hidden,
         } },
     };
 }
@@ -2664,7 +2841,7 @@ pub fn tailAssistantSegments(self: anytype) ?*AssistantTurnSegments {
     if (self.entries.items.len == 0) return null;
     const last = &self.entries.items[self.entries.items.len - 1];
     return switch (last.*) {
-        .assistant_turn => |*e| &e.segments,
+        .assistant_turn => |*e| if (e.inline_hidden) null else &e.segments,
         else => null,
     };
 }

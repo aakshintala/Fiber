@@ -70,6 +70,7 @@ cd your_project
 
 The current directory becomes the workspace. Type a prompt to begin.
 
+Ctrl+L clears the inline display while keeping the conversation available in Ctrl+O. It preserves your draft and conversation context; `/clear` starts a fresh conversation instead.
 List the agent's running shell sessions with `/background`, and stop one
 with `/background stop <session-id>`.
 
