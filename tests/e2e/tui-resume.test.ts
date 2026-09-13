@@ -398,17 +398,43 @@ function streamedTextResponse(text: string): Response {
   );
 }
 
+type WaitForConditionEvidence = {
+  session?: TmuxSession;
+  tracePath?: string;
+};
+
+function readTraceTail(tracePath: string, maxBytes = 4_000): string {
+  try {
+    const text = readFileSync(tracePath, "utf8");
+    return text.length > maxBytes ? text.slice(-maxBytes) : text;
+  } catch {
+    return `(no trace at ${tracePath})`;
+  }
+}
+
 async function waitForCondition(
   predicate: () => boolean,
   description: string,
   timeout = TIMEOUT,
+  evidence: WaitForConditionEvidence = {},
 ): Promise<void> {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (predicate()) return;
     await Bun.sleep(50);
   }
-  throw new Error(`Timed out waiting for ${description}.`);
+  const parts = [`Timed out waiting for ${description}.`];
+  if (evidence.session) {
+    try {
+      parts.push(`Last scrollback:\n${await evidence.session.captureFullScrollback()}`);
+    } catch (error) {
+      parts.push(`Scrollback unavailable: ${String(error)}`);
+    }
+  }
+  if (evidence.tracePath) {
+    parts.push(`Trace tail:\n${readTraceTail(evidence.tracePath)}`);
+  }
+  throw new Error(parts.join("\n"));
 }
 
 async function waitForPersistedSessionMarker(

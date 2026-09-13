@@ -785,13 +785,34 @@ function protocolFixtureEnv(
   };
 }
 
+type WaitForEvidence = {
+  description?: string;
+  child?: ChildProcessWithoutNullStreams;
+  stderrTail?: () => string;
+};
+
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs = 2_000,
+  description = "fixture",
+  evidence: WaitForEvidence = {},
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!(await predicate())) {
-    if (Date.now() >= deadline) throw new Error("fixture timed out");
+    if (Date.now() >= deadline) {
+      const child = evidence.child ?? null;
+      let stderrTail = "";
+      try {
+        stderrTail = evidence.stderrTail?.() ?? "";
+      } catch {}
+      throw new Error(
+        `fixture timed out waiting for ${evidence.description ?? description} after ${timeoutMs}ms` +
+          (child
+            ? `; host pid=${child.pid ?? "unknown"} exitCode=${child.exitCode} signal=${child.signalCode}`
+            : "") +
+          (stderrTail ? `\nHost stderr tail:\n${stderrTail.slice(-4_000)}` : ""),
+      );
+    }
     await Bun.sleep(10);
   }
 }

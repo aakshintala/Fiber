@@ -423,16 +423,29 @@ export function startDynamicFakeGateway(
   return serveFakeGateway(response, options);
 }
 
+export type WaitForPaneOptions = {
+  description?: string;
+  stderrTailBytes?: number;
+};
+
 export class TmuxSession {
   readonly name: string;
   private readonly socketName?: string;
   private readonly exitStatusPath: string;
+  private readonly stderrPath?: string;
+  private lastCaptureError: unknown = null;
   private killed = false;
 
-  private constructor(name: string, exitStatusPath: string, socketName?: string) {
+  private constructor(
+    name: string,
+    exitStatusPath: string,
+    socketName?: string,
+    stderrPath?: string,
+  ) {
     this.name = name;
     this.exitStatusPath = exitStatusPath;
     this.socketName = socketName;
+    this.stderrPath = stderrPath;
   }
 
   static async create(opts?: {
@@ -660,7 +673,12 @@ export class TmuxSession {
       rmSync(exitStatusPath, { force: true });
       throw err;
     }
-    const session = new TmuxSession(name, exitStatusPath, resolvedSocketName);
+    const session = new TmuxSession(
+      name,
+      exitStatusPath,
+      resolvedSocketName,
+      stderrPath,
+    );
     try {
       if (remainOnExit) {
         execFileSync(
@@ -817,21 +835,53 @@ export class TmuxSession {
     await sleep(150);
   }
 
+  /**
+   * Last tmux capture failure, if any. Captures still resolve to "" so
+   * polling loops keep running; inspect this when a timeout looks like a
+   * capture problem rather than missing output.
+   */
+  captureError(): unknown {
+    return this.lastCaptureError;
+  }
+
+  /**
+   * Tail of the observed-command stderr log. Empty when the session was
+   * created without a stderrPath or the log is unreadable.
+   */
+  readStderrTail(maxBytes = 4_000): string {
+    if (!this.stderrPath) return "";
+    try {
+      const text = readFileSync(this.stderrPath, "utf8");
+      return text.length > maxBytes ? text.slice(-maxBytes) : text;
+    } catch {
+      return "";
+    }
+  }
+
+  /** One-line pane liveness plus recorded exit-status summary for timeout evidence. */
+  describePaneExit(): string {
+    const pane = this.paneStatus();
+    return `dead=${pane.dead} status=${pane.status === null ? "unknown" : pane.status}`;
+  }
+
   async capturePane(): Promise<string> {
     try {
-      return execSync(`${this.tmuxCommand()} capture-pane -t ${this.name} -p`, {
+      const pane = execSync(`${this.tmuxCommand()} capture-pane -t ${this.name} -p`, {
         stdio: "pipe",
         encoding: "utf-8",
         maxBuffer: TMUX_CAPTURE_MAX_BUFFER,
       });
-    } catch {
+      this.lastCaptureError = null;
+      return pane;
+    } catch (err) {
+      this.lastCaptureError = err;
       return "";
     }
   }
 
   async captureFullScrollback(): Promise<string> {
     try {
-      return execFileSync(
+      const scrollback = execFileSync(
         "tmux",
         this.tmuxArgs(["capture-pane", "-t", this.name, "-p", "-S", "-"]),
         {
@@ -840,7 +890,10 @@ export class TmuxSession {
           maxBuffer: TMUX_CAPTURE_MAX_BUFFER,
         },
       );
-    } catch {
+      this.lastCaptureError = null;
+      return scrollback;
+    } catch (err) {
+      this.lastCaptureError = err;
       return "";
     }
   }
@@ -852,7 +905,7 @@ export class TmuxSession {
    */
   async captureFullScrollbackEscapes(): Promise<string> {
     try {
-      return execFileSync(
+      const scrollback = execFileSync(
         "tmux",
         this.tmuxArgs(["capture-pane", "-t", this.name, "-e", "-p", "-S", "-"]),
         {
@@ -861,7 +914,10 @@ export class TmuxSession {
           maxBuffer: TMUX_CAPTURE_MAX_BUFFER,
         },
       );
-    } catch {
+      this.lastCaptureError = null;
+      return scrollback;
+    } catch (err) {
+      this.lastCaptureError = err;
       return "";
     }
   }
@@ -903,12 +959,15 @@ export class TmuxSession {
    */
   async capturePaneEscapes(): Promise<string> {
     try {
-      return execSync(`${this.tmuxCommand()} capture-pane -t ${this.name} -e -p -J`, {
+      const pane = execSync(`${this.tmuxCommand()} capture-pane -t ${this.name} -e -p -J`, {
         stdio: "pipe",
         encoding: "utf-8",
         maxBuffer: TMUX_CAPTURE_MAX_BUFFER,
       });
-    } catch {
+      this.lastCaptureError = null;
+      return pane;
+    } catch (err) {
+      this.lastCaptureError = err;
       return "";
     }
   }
@@ -1092,6 +1151,7 @@ export class TmuxSession {
   async waitForPane(
     predicate: (pane: string) => boolean,
     timeoutMs = 3_000,
+    options: WaitForPaneOptions = {},
   ): Promise<string> {
     const start = Date.now();
     let lastPane = "";
@@ -1101,8 +1161,13 @@ export class TmuxSession {
       if (predicate(pane)) return pane;
       await sleep(25);
     }
+    const detail = options.description ? ` (${options.description})` : "";
+    const captureError = this.captureError();
     throw new Error(
-      `Timed out waiting for pane predicate in ${this.name}.\nLast pane:\n${lastPane}`,
+      `Timed out waiting for pane predicate in ${this.name}${detail} after ${timeoutMs}ms.\n` +
+        `Pane: ${this.describePaneExit()}.` +
+        (captureError ? `\nCapture error: ${String(captureError)}` : "") +
+        `\nStderr tail:\n${this.readStderrTail(options.stderrTailBytes)}\nLast pane:\n${lastPane}`,
     );
   }
 
@@ -1207,11 +1272,12 @@ export class TmuxSession {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       if (!this.isAlive()) return true;
-      await sleep(500);
+      await sleep(50);
     }
     const pane = await this.capturePane();
     throw new Error(
-      `Timed out waiting for tmux session ${this.name} to exit after ${timeoutMs}ms.\nLast pane:\n${pane}`,
+      `Timed out waiting for tmux session ${this.name} to exit after ${timeoutMs}ms.\n` +
+        `Pane: ${this.describePaneExit()}.\nStderr tail:\n${this.readStderrTail()}\nLast pane:\n${pane}`,
     );
   }
 
