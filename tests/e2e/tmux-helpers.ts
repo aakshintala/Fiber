@@ -866,11 +866,13 @@ export class TmuxSession {
 
   async capturePane(): Promise<string> {
     try {
-      return execSync(`${this.tmuxCommand()} capture-pane -t ${this.name} -p`, {
+      const pane = execSync(`${this.tmuxCommand()} capture-pane -t ${this.name} -p`, {
         stdio: "pipe",
         encoding: "utf-8",
         maxBuffer: TMUX_CAPTURE_MAX_BUFFER,
       });
+      this.lastCaptureError = null;
+      return pane;
     } catch (err) {
       this.lastCaptureError = err;
       return "";
@@ -879,7 +881,7 @@ export class TmuxSession {
 
   async captureFullScrollback(): Promise<string> {
     try {
-      return execFileSync(
+      const scrollback = execFileSync(
         "tmux",
         this.tmuxArgs(["capture-pane", "-t", this.name, "-p", "-S", "-"]),
         {
@@ -888,6 +890,8 @@ export class TmuxSession {
           maxBuffer: TMUX_CAPTURE_MAX_BUFFER,
         },
       );
+      this.lastCaptureError = null;
+      return scrollback;
     } catch (err) {
       this.lastCaptureError = err;
       return "";
@@ -901,7 +905,7 @@ export class TmuxSession {
    */
   async captureFullScrollbackEscapes(): Promise<string> {
     try {
-      return execFileSync(
+      const scrollback = execFileSync(
         "tmux",
         this.tmuxArgs(["capture-pane", "-t", this.name, "-e", "-p", "-S", "-"]),
         {
@@ -910,6 +914,8 @@ export class TmuxSession {
           maxBuffer: TMUX_CAPTURE_MAX_BUFFER,
         },
       );
+      this.lastCaptureError = null;
+      return scrollback;
     } catch (err) {
       this.lastCaptureError = err;
       return "";
@@ -953,11 +959,13 @@ export class TmuxSession {
    */
   async capturePaneEscapes(): Promise<string> {
     try {
-      return execSync(`${this.tmuxCommand()} capture-pane -t ${this.name} -e -p -J`, {
+      const pane = execSync(`${this.tmuxCommand()} capture-pane -t ${this.name} -e -p -J`, {
         stdio: "pipe",
         encoding: "utf-8",
         maxBuffer: TMUX_CAPTURE_MAX_BUFFER,
       });
+      this.lastCaptureError = null;
+      return pane;
     } catch (err) {
       this.lastCaptureError = err;
       return "";
