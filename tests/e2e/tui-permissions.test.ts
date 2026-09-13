@@ -776,7 +776,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         followupItems.findIndex((item) => JSON.stringify(item).includes(feedback)),
       ).toBeGreaterThan(lastToolOutputIndex);
       await session.sendText("/quit");
-      expect(await session.waitForSessionEnd()).toBe(true);
+      expect(await session.waitForSessionEnd(TIMEOUT)).toBe(true);
       await session.kill();
       activeSession = null;
 
