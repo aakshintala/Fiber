@@ -1626,8 +1626,8 @@ describe("lean auto mode reliability", () => {
       await activeSession.kill();
       activeSession = null;
     },
-    // >=2x the waitForComposer + waitForEither + session-end budgets above.
-    TIMEOUT * 2,
+    // 2x the sequential sum: 30 + 30 + 30 = 90s of internal waits.
+    TIMEOUT * 6,
   );
 
   test.skipIf(!tmuxAvailable())(
