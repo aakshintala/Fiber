@@ -152,6 +152,41 @@ jobs:
           pattern: fiber-*
           merge-multiple: true
 
+      - name: Validate release inputs
+        env:
+          RELEASE_TAG: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_TAG:-}" ]; then
+            echo "Error: release version is empty; check-version must output a version (e.g. v0.1.0)"
+            exit 1
+          fi
+          if ! [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Error: RELEASE_TAG '$RELEASE_TAG' is not a stable version (expected vMAJOR.MINOR.PATCH with no prerelease, e.g. v0.1.0)"
+            exit 1
+          fi
+          if ! grep -q '<!-- release:start -->' CHANGELOG.md; then
+            echo "Error: CHANGELOG.md is missing the <!-- release:start --> marker"
+            exit 1
+          fi
+          if ! grep -q '<!-- release:end -->' CHANGELOG.md; then
+            echo "Error: CHANGELOG.md is missing the <!-- release:end --> marker"
+            exit 1
+          fi
+          START_LINE=$(grep -n '<!-- release:start -->' CHANGELOG.md | head -1 | cut -d: -f1)
+          END_LINE=$(grep -n '<!-- release:end -->' CHANGELOG.md | head -1 | cut -d: -f1)
+          if [ "$START_LINE" -ge "$END_LINE" ]; then
+            echo "Error: <!-- release:start --> (line $START_LINE) must come before <!-- release:end --> (line $END_LINE) in CHANGELOG.md"
+            exit 1
+          fi
+          awk '/<!-- release:start -->/{found=1; next} /<!-- release:end -->/{found=0} found{print}' CHANGELOG.md > /tmp/release-notes.md
+          LINES=$(wc -l < /tmp/release-notes.md | tr -d ' ')
+          if [ "$LINES" -lt 2 ]; then
+            echo "Error: No release notes found between <!-- release:start --> and <!-- release:end --> markers in CHANGELOG.md (found $LINES lines, need at least 2). Add the entry before the release runs."
+            exit 1
+          fi
+          echo "Release inputs valid for $RELEASE_TAG ($LINES release-note lines)"
+
       - name: Create git tag
         env:
           RELEASE_TAG: ${{ needs.check-version.outputs.version }}
