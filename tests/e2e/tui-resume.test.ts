@@ -4601,6 +4601,46 @@ test.skipIf(!tmuxAvailable())(
   TIMEOUT * 2,
 );
 
+function exitHandoffEvidence(
+  active: TmuxSession | null,
+  home: string,
+  stderrPaths: readonly string[],
+  tapePath: string,
+): string {
+  const lines: string[] = [];
+  try {
+    const status = active?.paneStatus();
+    lines.push(`paneDead=${status?.dead} exitStatus=${status?.status}`);
+  } catch {
+    lines.push("paneStatus=<unavailable>");
+  }
+  for (const stderrPath of stderrPaths) {
+    let text = "<unreadable>";
+    try {
+      text = existsSync(stderrPath) ? readFileSync(stderrPath, "utf8").slice(-8000) : "<missing>";
+    } catch {
+      text = "<unreadable>";
+    }
+    lines.push(`stderr ${stderrPath}:\n${text}`);
+  }
+  let tape = "<missing>";
+  try {
+    tape = existsSync(tapePath) ? `${statSync(tapePath).size} bytes` : "<missing>";
+  } catch {
+    tape = "<unreadable>";
+  }
+  lines.push(`tape ${tapePath}: ${tape}`);
+  let sessions = "<unreadable>";
+  try {
+    const dir = join(home, ".fiber", "sessions");
+    sessions = existsSync(dir) ? readdirSync(dir).join(", ") : "<no sessions dir>";
+  } catch {
+    sessions = "<unreadable>";
+  }
+  lines.push(`sessions: ${sessions}`);
+  return lines.join("\n");
+}
+
 test.skipIf(!tmuxAvailable())(
   "graceful exit prints an exact resume command",
   async () => {
@@ -4691,6 +4731,10 @@ test.skipIf(!tmuxAvailable())(
       await active.kill();
       active = null;
       passed = true;
+    } catch (error) {
+      throw new Error(
+        `${error}\nexit-handoff evidence:\n${exitHandoffEvidence(active, home, [stderrPath, resumedStderrPath], tapePath)}`,
+      );
     } finally {
       if (active) await active.kill();
       initialGateway.stop();
