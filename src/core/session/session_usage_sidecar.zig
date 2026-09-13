@@ -554,6 +554,42 @@ test "missing and corrupt usage sidecars retain canonical usage with one fixed g
     try std.testing.expectEqual(@as(i64, 31), corrupt.incidents[0].occurred_at_ms);
 }
 
+test "future usage sidecar schema stays invalid without rewriting the file" {
+    const alloc = std.testing.allocator;
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    var verified = try openTestVerifiedDir(temp.dir);
+    defer verified.close();
+    var usage = session_usage.Usage.initFresh();
+    defer usage.deinit(alloc);
+    const sequence = try usage.reserveInvocation();
+    usage.finishInvocation(sequence, 1, .unbilled);
+    var rich = try usage.snapshot(alloc);
+    defer rich.deinit(alloc);
+
+    const future =
+        "{\"schema_version\":2,\"session_id\":\"session-one\",\"snapshot\":{\"schema_version\":1}}";
+    try io_mod.durableReplaceVerified(alloc, &verified, sidecar_file, future);
+    var durable = try legacyCopyForTest(alloc, rich);
+    defer durable.deinit(alloc);
+    try std.testing.expectEqual(
+        RestoreOutcome.invalid,
+        try restoreIfMatching(alloc, &verified, "session-one", 32, &durable),
+    );
+    try std.testing.expectEqual(@as(usize, 1), durable.incidents.len);
+    try std.testing.expectEqual(@as(i64, 32), durable.incidents[0].occurred_at_ms);
+
+    // A newer writer owns the future schema, so recovery leaves its bytes
+    // byte-identical instead of downgrading them in place.
+    var reopened = try verified.dir.openFile(io_mod.getIo(), sidecar_file, .{
+        .mode = .read_only,
+    });
+    defer reopened.close(io_mod.getIo());
+    const bytes = try io_mod.readFileToEnd(alloc, &reopened, max_sidecar_bytes);
+    defer alloc.free(bytes);
+    try std.testing.expectEqualStrings(future, bytes);
+}
+
 test "torn exact settlement republishes stale backlog without reapplying totals" {
     const Checkpoint = struct {
         fn persist(_: *anyopaque, _: session_usage.Snapshot) !void {}
