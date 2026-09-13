@@ -8491,6 +8491,11 @@ test "recovery copies the exact manifest boundary and leaves the source unchange
             "saved prompt",
             recovered.state.history[0].assistant.user.text,
         );
+        // Recovery carries the source conversation language onto the copy.
+        try std.testing.expectEqual(
+            session.ConversationLanguage.literal("en"),
+            recovered.state.conversation_language,
+        );
     }
     var latest = (try readLatestPointer(
         ctx.store,

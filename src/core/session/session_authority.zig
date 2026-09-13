@@ -430,6 +430,22 @@ test "read-only session files accept an atomically unlinked descriptor" {
         error.SessionPathUnsafe,
         verifyOpenedSessionFile(stat, .read_only),
     );
+
+    // Non-regular kinds (FIFO, directory, symlink, socket) never carry
+    // session bytes, so both open modes reject them before any read.
+    for ([_]std.Io.File.Kind{ .directory, .named_pipe, .sym_link, .unix_domain_socket }) |kind| {
+        var shaped = std.mem.zeroes(std.Io.File.Stat);
+        shaped.kind = kind;
+        shaped.nlink = 1;
+        try std.testing.expectError(
+            error.SessionPathUnsafe,
+            verifyOpenedSessionFile(shaped, .read_only),
+        );
+        try std.testing.expectError(
+            error.SessionPathUnsafe,
+            verifyOpenedSessionFile(shaped, .writable),
+        );
+    }
 }
 
 /// Reports whether `name` exists directly under the session dir, mapping
