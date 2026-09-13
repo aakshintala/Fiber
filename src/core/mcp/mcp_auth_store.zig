@@ -265,7 +265,7 @@ fn loadControlled(
             if (!std.mem.eql(u8, entry.credentials.resource, resource)) continue;
         }
         if (configured_issuer) |issuer| {
-            if (!std.mem.eql(u8, entry.credentials.issuer, issuer)) continue;
+            if (!mcp_auth.issuersEqual(entry.credentials.issuer, issuer)) continue;
         }
         if (matched != null) return null;
         matched = entry;
@@ -371,7 +371,7 @@ fn sameIdentity(
     return std.mem.eql(u8, entry.server_identity, server_identity) and
         std.mem.eql(u8, entry.credentials.endpoint, credentials.endpoint) and
         std.mem.eql(u8, entry.credentials.resource, credentials.resource) and
-        std.mem.eql(u8, entry.credentials.issuer, credentials.issuer);
+        mcp_auth.issuersEqual(entry.credentials.issuer, credentials.issuer);
 }
 
 fn openOrCreateLockedDir() !LockedDir {
@@ -1756,6 +1756,56 @@ test "credential load refuses an ambiguous discovered issuer identity" {
     defer selected.deinit(alloc);
     try std.testing.expectEqualStrings("access-one", selected.access_token);
     try std.testing.expectEqualStrings(migrated.issuer, selected.issuer);
+}
+
+test "credential store reloads across a single trailing-slash issuer form" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "home");
+    const home = try tmp.dir.realPathFileAlloc(std.testing.io, "home", alloc);
+    defer alloc.free(home);
+    var test_home = try TestHome.init(home);
+    defer test_home.deinit();
+    test_home.activate();
+
+    var slashed = try testCredentials(
+        alloc,
+        "https://mcp.example/service",
+        "slash-secret",
+    );
+    defer slashed.deinit(alloc);
+    alloc.free(slashed.issuer);
+    slashed.issuer = try alloc.dupe(u8, "https://issuer.example/");
+    _ = try save(alloc, "server-one", slashed);
+
+    var loaded = (try load(
+        alloc,
+        "server-one",
+        "https://mcp.example/service",
+        null,
+        "https://issuer.example",
+    )).?;
+    defer loaded.deinit(alloc);
+    try std.testing.expectEqualStrings("slash-secret", loaded.access_token);
+
+    var unslashed = try testCredentials(
+        alloc,
+        "https://mcp.example/service",
+        "plain-secret",
+    );
+    defer unslashed.deinit(alloc);
+    _ = try save(alloc, "server-one", unslashed);
+
+    var reloaded = (try load(
+        alloc,
+        "server-one",
+        "https://mcp.example/service",
+        null,
+        "https://issuer.example/",
+    )).?;
+    defer reloaded.deinit(alloc);
+    try std.testing.expectEqualStrings("plain-secret", reloaded.access_token);
 }
 
 test "credential store serializes concurrent writers without dropping identities" {

@@ -2377,7 +2377,7 @@ describe("MCP remote authentication lifecycle", () => {
   );
 
   test.skipIf(!tmuxAvailable())(
-    "issuer mismatch stays exact and reports the configuration override",
+    "root-form trailing-slash issuer difference proceeds to authorization",
     async () => {
       upstream = startModernMcpHttpFixture("json");
       auth = startAuthFixture(upstream.url, {
@@ -2395,20 +2395,48 @@ describe("MCP remote authentication lifecycle", () => {
       await tui.waitForComposer(15_000);
 
       await tui.sendText("/mcp auth fixture --open");
+      await tui.waitForText("Authenticated MCP server 'fixture'.", 15_000);
+      expect(auth.authorizationRequests).toBe(1);
+      expect(auth.tokenExchanges).toBe(1);
+      const scrolled = (await tui.captureFullScrollback()).replace(/\s+/g, " ");
+      expect(scrolled).not.toContain('Add "oauth":{"issuer":');
+    },
+    45_000,
+  );
+
+  test.skipIf(!tmuxAvailable())(
+    "double-slash issuer mismatch stays exact and reports the configuration override",
+    async () => {
+      upstream = startModernMcpHttpFixture("json");
+      auth = startAuthFixture(upstream.url);
+      const root = createRoot(auth);
+      const origin = new URL(auth.url).origin;
+      const profilePath = join(root.home, ".fiber", "mcp.json");
+      const profile = JSON.parse(readFileSync(profilePath, "utf8"));
+      profile.mcp.fixture.oauth.issuer = `${origin}//`;
+      writeFileSync(profilePath, JSON.stringify(profile));
+      gateway = startFakeCodex();
+      tui = await TmuxSession.create({
+        isolated: true,
+        cwd: root.workspace,
+        env: seededFakeCodexEnv(root.home, gateway, baseEnv(root)),
+        width: 120,
+        height: 34,
+      });
+      await tui.waitForComposer(15_000);
+
+      await tui.sendText("/mcp auth fixture --open");
       const mismatch = await tui.waitForText(
         "Add \"oauth\":{\"issuer\":",
         15_000,
       );
-      const origin = new URL(auth.url).origin;
       const compactMismatch = mismatch.replace(/\s+/g, " ");
-      expect(compactMismatch).toContain(`expected issuer "${origin}/"`);
+      expect(compactMismatch).toContain(`expected issuer "${origin}//"`);
       expect(compactMismatch).toContain(`metadata returned "${origin}"`);
       expect(compactMismatch).toContain(`\"issuer\":\"${origin}\"`);
       expect(auth.authorizationRequests).toBe(0);
       expect(auth.tokenExchanges).toBe(0);
 
-      const profilePath = join(root.home, ".fiber", "mcp.json");
-      const profile = JSON.parse(readFileSync(profilePath, "utf8"));
       profile.mcp.fixture.oauth.issuer = origin;
       writeFileSync(profilePath, JSON.stringify(profile));
       await tui.sendText("/mcp reload");

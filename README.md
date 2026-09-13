@@ -89,6 +89,22 @@ fiber usage --session <id>
 These examples write `fiber` for brevity. Until installation exists, use the
 path to the binary you built.
 
+## Connect MCP servers
+
+Remote MCP servers are configured in `~/.fiber/mcp.json`:
+
+```json
+{"mcp": {"api": {"type": "http", "url": "https://api.example.com/mcp", "oauth": {"callback_port": 3118}}}}
+```
+
+`oauth` accepts `resource`, `issuer`, `client_id`, `client_secret_env`,
+`client_metadata_url`, `scopes`, and `callback_port`. Set `callback_port`
+(1-65535) when the provider requires a pre-registered redirect URI: fiber
+listens on that loopback port and advertises
+`http://127.0.0.1:<port>/callback`. Without it the callback uses an
+ephemeral loopback port. A port that is already in use fails closed with a
+message naming the conflict instead of starting authorization.
+
 ## Get help
 
 Fiber documents itself. These are the current sources:

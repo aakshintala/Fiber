@@ -60,6 +60,7 @@ pub const ClientConfig = struct {
     client_secret: ?[]const u8 = null,
     client_metadata_url: ?[]const u8 = null,
     scopes: []const []const u8 = &.{},
+    callback_port: ?u16 = null,
 };
 
 pub const Credentials = struct {
@@ -580,6 +581,31 @@ const AuthorizationMetadataOutcome = union(enum) {
     issuer_mismatch: IssuerMismatch,
 };
 
+/// Root-form issuer comparison shared by metadata validation and the
+/// credential store. `scheme://host` and `scheme://host/` are the same
+/// issuer; any string carrying a path (anything after the host) compares
+/// exactly, so `https://host/path` vs `https://host/path/`, `//` vs `/`,
+/// and all other mismatches fail closed. Authorization-response issuers
+/// are intentionally not compared this way.
+/// Reimplemented from upstream vercel-labs/fx.
+pub fn issuersEqual(a: []const u8, b: []const u8) bool {
+    if (std.mem.eql(u8, a, b)) return true;
+    const longer = if (a.len > b.len) a else b;
+    const shorter = if (a.len > b.len) b else a;
+    if (longer.len != shorter.len + 1) return false;
+    if (longer[longer.len - 1] != '/') return false;
+    if (!std.mem.eql(u8, longer[0 .. longer.len - 1], shorter)) return false;
+    return isRootIssuer(shorter);
+}
+
+/// Reports whether the issuer is exactly `scheme://host` with no path.
+fn isRootIssuer(issuer: []const u8) bool {
+    const marker = std.mem.find(u8, issuer, "://") orelse return false;
+    const host = issuer[marker + 3 ..];
+    if (host.len == 0) return false;
+    return std.mem.findScalar(u8, host, '/') == null;
+}
+
 fn parseAuthorizationMetadataOutcome(
     alloc: Allocator,
     bytes: []const u8,
@@ -590,7 +616,7 @@ fn parseAuthorizationMetadataOutcome(
     if (parsed.value != .object) return error.InvalidAuthorizationMetadata;
     const object = parsed.value.object;
     const issuer = try requiredString(object, "issuer");
-    if (!std.mem.eql(u8, issuer, expected_issuer)) {
+    if (!issuersEqual(issuer, expected_issuer)) {
         return .{ .issuer_mismatch = try IssuerMismatch.init(
             alloc,
             .authorization_metadata,
@@ -998,17 +1024,42 @@ pub fn authorizeAutomated(
     );
 }
 
+/// Loopback callback redirect for interactive authorization. A configured
+/// port keeps a stable redirect URI for providers that require a
+/// pre-registered one; otherwise the bound ephemeral port is advertised.
+/// Reimplemented from upstream vercel-labs/fx.
+fn callbackRedirectUri(alloc: Allocator, configured_port: ?u16, bound_port: u16) ![]u8 {
+    if (configured_port) |port| {
+        return std.fmt.allocPrint(alloc, "http://127.0.0.1:{d}/callback", .{port});
+    }
+    return std.fmt.allocPrint(alloc, "http://127.0.0.1:{d}/callback", .{bound_port});
+}
+
+/// Binds the interactive OAuth callback on loopback only, never 0.0.0.0.
+/// A configured port keeps a stable redirect URI for providers that
+/// require a pre-registered one; otherwise an ephemeral loopback port is
+/// used. A conflicting fixed port fails closed with
+/// McpOAuthCallbackPortInUse instead of a stack trace.
+/// Reimplemented from upstream vercel-labs/fx.
+fn bindCallbackListener(configured_port: ?u16) !std.Io.net.Server {
+    var address = try std.Io.net.IpAddress.parse("127.0.0.1", configured_port orelse 0);
+    return address.listen(io_mod.getIo(), .{ .reuse_address = configured_port == null }) catch |err| {
+        if (configured_port != null and err == error.AddressInUse) return error.McpOAuthCallbackPortInUse;
+        return err;
+    };
+}
+
 pub fn authorizeInteractive(
     alloc: Allocator,
     options: InteractiveAuthorizationOptions,
 ) !AuthorizationResult {
-    var address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
-    var listener = try address.listen(io_mod.getIo(), .{ .reuse_address = true });
+    const configured_port = options.config.callback_port;
+    var listener = try bindCallbackListener(configured_port);
     defer listener.deinit(io_mod.getIo());
-    const redirect_uri = try std.fmt.allocPrint(
+    const redirect_uri = try callbackRedirectUri(
         alloc,
-        "http://127.0.0.1:{d}/callback",
-        .{listener.socket.address.getPort()},
+        configured_port,
+        listener.socket.address.getPort(),
     );
     defer alloc.free(redirect_uri);
     var context = InteractiveAuthorizationContext{
@@ -2318,7 +2369,7 @@ test "authorization metadata mismatch retains exact issuer values and fails clos
     var outcome = try parseAuthorizationMetadataOutcome(
         alloc,
         bytes,
-        "https://login.example.com/",
+        "https://login.evil.example/",
     );
     defer switch (outcome) {
         .metadata => |*metadata| metadata.deinit(alloc),
@@ -2332,7 +2383,7 @@ test "authorization metadata mismatch retains exact issuer values and fails clos
                 mismatch.source,
             );
             try std.testing.expectEqualStrings(
-                "https://login.example.com/",
+                "https://login.evil.example/",
                 mismatch.expected,
             );
             try std.testing.expectEqualStrings(
@@ -2346,9 +2397,77 @@ test "authorization metadata mismatch retains exact issuer values and fails clos
         parseAuthorizationMetadata(
             alloc,
             bytes,
-            "https://login.example.com/",
+            "https://login.evil.example/",
         ),
     );
+}
+
+test "issuer comparison tolerates a trailing slash only for root issuers" {
+    try std.testing.expect(issuersEqual("https://login.example.com", "https://login.example.com"));
+    try std.testing.expect(issuersEqual("https://login.example.com", "https://login.example.com/"));
+    try std.testing.expect(issuersEqual("https://login.example.com/", "https://login.example.com"));
+    try std.testing.expect(issuersEqual("", ""));
+
+    try std.testing.expect(!issuersEqual("https://login.example.com/tenant", "https://login.example.com/tenant/"));
+    try std.testing.expect(!issuersEqual("https://login.example.com/tenant/", "https://login.example.com/tenant"));
+    try std.testing.expect(!issuersEqual("//", "/"));
+    try std.testing.expect(!issuersEqual("/", "//"));
+    try std.testing.expect(!issuersEqual("", "/"));
+    try std.testing.expect(!issuersEqual("/", ""));
+    try std.testing.expect(!issuersEqual("", "https://login.example.com"));
+    try std.testing.expect(!issuersEqual("https://login.example.com//", "https://login.example.com"));
+    try std.testing.expect(!issuersEqual("https://login.example.com", "https://login.example.com//"));
+    try std.testing.expect(!issuersEqual("https://a.example", "https://b.example/"));
+    try std.testing.expect(!issuersEqual("http://login.example.com/", "https://login.example.com"));
+    try std.testing.expect(!issuersEqual("login.example.com", "login.example.com/"));
+}
+
+test "authorization metadata accepts an issuer that differs only by a trailing slash" {
+    const alloc = std.testing.allocator;
+    const bytes =
+        "{\"issuer\":\"https://login.example.com\",\"authorization_endpoint\":\"https://login.example.com/authorize\",\"token_endpoint\":\"https://login.example.com/token\"}";
+
+    var metadata = try parseAuthorizationMetadata(
+        alloc,
+        bytes,
+        "https://login.example.com/",
+    );
+    defer metadata.deinit(alloc);
+    try std.testing.expectEqualStrings("https://login.example.com", metadata.issuer);
+
+    var reverse = try parseAuthorizationMetadata(
+        alloc,
+        "{\"issuer\":\"https://login.example.com/\",\"authorization_endpoint\":\"https://login.example.com/authorize\",\"token_endpoint\":\"https://login.example.com/token\"}",
+        "https://login.example.com",
+    );
+    defer reverse.deinit(alloc);
+    try std.testing.expectEqualStrings("https://login.example.com/", reverse.issuer);
+}
+
+test "authorization metadata fails closed on anything beyond one trailing slash" {
+    const alloc = std.testing.allocator;
+    const cases = [_]struct { returned: []const u8, expected: []const u8 }{
+        .{ .returned = "https://login.example.com//", .expected = "https://login.example.com" },
+        .{ .returned = "https://login.example.com", .expected = "https://login.example.com//" },
+        .{ .returned = "https://login.example.com/tenant", .expected = "https://login.example.com/" },
+        .{ .returned = "https://login.example.com/tenant/", .expected = "https://login.example.com/tenant" },
+        .{ .returned = "https://login.example.com/tenant", .expected = "https://login.example.com/tenant/" },
+        .{ .returned = "https://login.example.com", .expected = "https://login.example.com/tenant" },
+        .{ .returned = "https://login.example.com", .expected = "https://login.evil.example/" },
+        .{ .returned = "http://login.example.com/", .expected = "https://login.example.com" },
+    };
+    for (cases) |case| {
+        const bytes = try std.fmt.allocPrint(
+            alloc,
+            "{{\"issuer\":\"{s}\",\"authorization_endpoint\":\"https://login.example.com/authorize\",\"token_endpoint\":\"https://login.example.com/token\"}}",
+            .{case.returned},
+        );
+        defer alloc.free(bytes);
+        try std.testing.expectError(
+            error.AuthorizationMetadataIssuerMismatch,
+            parseAuthorizationMetadata(alloc, bytes, case.expected),
+        );
+    }
 }
 
 test "client registration rejects unsupported-only token endpoint authentication metadata" {
@@ -2442,6 +2561,63 @@ test "authorization redirect target must match the registered callback" {
             "https://attacker.example/callback?code=one&state=two",
             "http://localhost:3000/callback",
         ),
+    );
+}
+
+test "interactive callback redirect honors a pinned port" {
+    const alloc = std.testing.allocator;
+
+    const pinned = try callbackRedirectUri(alloc, 3118, 54321);
+    defer alloc.free(pinned);
+    try std.testing.expectEqualStrings("http://127.0.0.1:3118/callback", pinned);
+    try std.testing.expect(isLoopbackEndpoint(pinned));
+    try validateRedirectTarget("http://127.0.0.1:3118/callback?code=one&state=two", pinned);
+}
+
+test "interactive callback redirect stays ephemeral without a pinned port" {
+    const alloc = std.testing.allocator;
+
+    const ephemeral = try callbackRedirectUri(alloc, null, 54321);
+    defer alloc.free(ephemeral);
+    try std.testing.expectEqualStrings("http://127.0.0.1:54321/callback", ephemeral);
+    try std.testing.expect(isLoopbackEndpoint(ephemeral));
+}
+
+test "interactive callback binds a fixed port on loopback" {
+    var probe_address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var probe = try probe_address.listen(io_mod.getIo(), .{ .reuse_address = true });
+    const free_port = probe.socket.address.getPort();
+    probe.deinit(io_mod.getIo());
+
+    var listener = try bindCallbackListener(free_port);
+    defer listener.deinit(io_mod.getIo());
+    try std.testing.expectEqual(free_port, listener.socket.address.getPort());
+
+    var target = try std.Io.net.IpAddress.parse("127.0.0.1", free_port);
+    var stream = try target.connect(io_mod.getIo(), .{ .mode = .stream });
+    stream.close(io_mod.getIo());
+}
+
+test "interactive callback reports a pinned port conflict without binding further" {
+    var address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var occupant = try address.listen(std.testing.io, .{ .reuse_address = true });
+    defer occupant.deinit(std.testing.io);
+    const occupied_port = occupant.socket.address.getPort();
+    var cancelled = std.atomic.Value(bool).init(true);
+    const OpenUrl = struct {
+        fn run(_: ?*anyopaque, _: Allocator, _: []const u8) anyerror!bool {
+            return true;
+        }
+    };
+    try std.testing.expectError(
+        error.McpOAuthCallbackPortInUse,
+        authorizeInteractive(std.testing.allocator, .{
+            .endpoint = "http://127.0.0.1:8080",
+            .challenge = .{},
+            .config = .{ .callback_port = occupied_port },
+            .open_url = OpenUrl.run,
+            .cancel_flag = &cancelled,
+        }),
     );
 }
 
