@@ -302,19 +302,28 @@ Keep it there rather than in a local planning document, backlog file, or ideas
 directory. A file in the repo drifts from the code as soon as it is written, and
 only whoever opens that file ever sees it.
 
-## Design proposals
+## Design process
 
-A workstream too large for an issue body gets a proposal directory,
-`docs/proposals/<workstream>/`: an overview plus one file per slice. Land it on
-`main` as its own small pull request before implementation starts, so agents on
-other branches can read it.
+Design work runs through the engineering skills and lives on GitHub, never in
+checked-in planning files:
 
-A proposal is scaffolding. When a slice merges, delete its proposal file in the
-same pull request and move whatever must stay true into `docs/<area>.md` as
-product and architecture documentation. The decision record, with rationale and
-rejected alternatives, stays on the issue.
+1. `/wayfinder` charts a large or foggy workstream as a map of decision tickets
+   and resolves them one per session.
+2. `/to-spec` publishes the settled design as a spec issue.
+3. `/to-tickets` breaks the spec into issues with native blocking edges, each
+   sized for one agent session and labelled `agent-ready` when its outcome and
+   tests are clear.
 
-`docs/*.md` is what is true now. `docs/proposals/**` is what is being decided.
+A decision that is hard to reverse, surprising, and a real trade-off becomes an
+ADR in `docs/adr/`, so an agent grepping the repo finds it. Vocabulary lives in
+`CONTEXT.md`. Everything else, including rationale and rejected alternatives,
+stays on the issue.
+
+`docs/*.md` is what is true now, updated in the pull request that changes the
+behavior. There is no `docs/proposals/`; do not add spec, plan, or backlog files.
+A cross-cutting contract that several parallel slices build against lands as
+`docs/<area>.md` with its first slice, and later slices extend it.
+
 `README.md` stays short and links into `docs/`; reference material and schemas
 never live there.
 
@@ -340,7 +349,8 @@ truth for its area.
 * Bun suites under `tests/e2e/` and `tests/evals/`: [`tests/README.md`](tests/README.md)
 * Startup latency budgets and binary size deltas: [`benchmarks/README.md`](benchmarks/README.md)
 * Cutting a release, writing the changelog: [`docs/releasing.md`](docs/releasing.md)
-* Model routing, connections, providers (accepted, in flight): [`docs/proposals/model-routing/README.md`](docs/proposals/model-routing/README.md)
+* Model routing, connections, providers (accepted, in flight): spec issue [#37](https://github.com/aakshintala/Fiber/issues/37)
+* Product direction and workstream order: [#121](https://github.com/aakshintala/Fiber/issues/121)
 * PGSO corpus classification, pinned toolchain, local reproduction: [`scripts/pgso/README.md`](scripts/pgso/README.md)
 
 ## Documentation
@@ -370,3 +380,17 @@ The canonical repository is `aakshintala/Fiber` on GitHub. All URLs, links, and 
 * Do not add dependencies outside the Zig standard library without discussion
 
 * Do not create git tags manually (the release workflow owns tag creation)
+
+## Agent skills
+
+### Issue tracker
+
+Issues, specs, and wayfinder maps live in GitHub Issues on `aakshintala/Fiber`, driven through `gh`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The canonical triage roles map onto this repo's existing labels (`agent-ready`, `needs-owner`, and others). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the root, created lazily. See `docs/agents/domain.md`.
