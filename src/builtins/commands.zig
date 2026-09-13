@@ -183,15 +183,18 @@ pub const top_level_specs = [_]TopLevelSpec{
     .{
         .kind = .usage,
         .token = "usage",
-        .usage = "usage [--period <24h|7d|30d>] [--json]",
+        .usage = "usage [--period <24h|7d|30d>] [--session <id>] [--json]",
         .summary = "Show local fiber token usage and spend",
         .options = &.{
             .{ .flag = "--period <24h|7d|30d>", .description = "Select a rolling window (default: 30d)" },
+            .{ .flag = "--session <id>", .description = "Report lifetime totals for one saved session in this workspace" },
             json_option,
         },
         .details = &.{
             "Reports only usage recorded by fiber on this machine.",
             "This command reads local state and does not query account-wide Gateway reports.",
+            "--session reports the session's last durable checkpoint; unknown spend shows as unknown, never $0.00. Sessions that predate durable usage accounting report as legacy with unknown totals.",
+            "--session with --period reports the session only when it started inside the window; an older session needs a bare --session for lifetime totals.",
         },
     },
     .{
@@ -260,7 +263,7 @@ pub const top_level_help_groups = [_]TopLevelHelpGroup{
         .{ .kind = .models, .usage = "models" },
     } },
     .{ .entries = &.{
-        .{ .kind = .usage, .usage = "usage [--period <24h|7d|30d>]", .summary = "Show locally recorded token usage and spend" },
+        .{ .kind = .usage, .usage = "usage [--period <..>, --session <id>]", .summary = "Show locally recorded token usage and spend" },
     } },
     .{ .entries = &.{
         .{ .kind = .status, .usage = "status" },

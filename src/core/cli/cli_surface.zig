@@ -304,6 +304,13 @@ const SessionListOptions = struct {
 const UsageOptions = struct {
     format: output_contracts.OutputFormat = .text,
     scope: usage_report.Scope = .days_30,
+    period_seen: bool = false,
+    session_id: ?[]u8 = null,
+
+    fn deinit(self: *UsageOptions, alloc: Allocator) void {
+        if (self.session_id) |id| alloc.free(id);
+        self.* = undefined;
+    }
 };
 
 const WorkspaceOptions = struct {
@@ -1091,10 +1098,11 @@ fn runNonInteractiveWithDeps(
             }
         },
         .usage => |rest| {
-            const opts = parseUsageArgs(rest) catch |err| {
+            var opts = parseUsageArgs(alloc, rest) catch |err| {
                 try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .usage, output_contracts.Kind.usage.jsonName(), err, rest);
                 return .handled_usage_error;
             };
+            defer opts.deinit(alloc);
             const home = deps.getenv(deps.env_ctx, "HOME") orelse {
                 try writeUsageCommandFailure(
                     alloc,
@@ -1104,6 +1112,16 @@ fn runNonInteractiveWithDeps(
                 );
                 return .handled_failure;
             };
+            if (opts.session_id) |session_id| {
+                return run_usage_session(
+                    alloc,
+                    deps,
+                    home,
+                    session_id,
+                    if (opts.period_seen) opts.scope else null,
+                    opts.format,
+                );
+            }
             var report = usage_cli_runtime.collect(
                 alloc,
                 home,
@@ -2832,6 +2850,99 @@ fn usageFailureMessage(err: anyerror) []const u8 {
     };
 }
 
+fn run_usage_session(
+    alloc: Allocator,
+    deps: RunDeps,
+    home: []const u8,
+    session_id: []const u8,
+    period: ?usage_report.Scope,
+    format: output_contracts.OutputFormat,
+) !RunResult {
+    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace_root);
+    var report = usage_cli_runtime.collect_session(
+        alloc,
+        home,
+        workspace_root,
+        session_id,
+        period,
+        @max(io_mod.milliTimestamp(), 0),
+    ) catch |err| {
+        try write_usage_session_failure(
+            alloc,
+            deps,
+            session_id,
+            period,
+            err,
+            format,
+        );
+        return .handled_failure;
+    };
+    defer report.deinit(alloc);
+    const text = try (output_contracts.UsageSnapshot{
+        .report = &report,
+    }).render(alloc, format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, format);
+    return .handled_success;
+}
+
+fn write_usage_session_failure(
+    alloc: Allocator,
+    deps: RunDeps,
+    session_id: []const u8,
+    period: ?usage_report.Scope,
+    err: anyerror,
+    format: output_contracts.OutputFormat,
+) !void {
+    switch (err) {
+        error.SessionNotFound, error.InvalidSessionId => {
+            if (format == .json) {
+                const message = try std.fmt.allocPrint(
+                    alloc,
+                    "unknown session '{s}'",
+                    .{session_id},
+                );
+                defer alloc.free(message);
+                return writeJsonCommandFailure(
+                    alloc,
+                    deps,
+                    output_contracts.Kind.usage.jsonName(),
+                    err,
+                    message,
+                );
+            }
+            try writeStderr(deps, "fiber usage: unknown session '");
+            try writeStderr(deps, session_id);
+            try writeStderr(deps, "'\n");
+        },
+        error.SessionPredatesUsageWindow => {
+            const window = period.?;
+            if (format == .json) {
+                const message = try std.fmt.allocPrint(
+                    alloc,
+                    "session '{s}' started before the {s} window; re-run without --period for lifetime session totals",
+                    .{ session_id, window.cliValue().? },
+                );
+                defer alloc.free(message);
+                return writeJsonCommandFailure(
+                    alloc,
+                    deps,
+                    output_contracts.Kind.usage.jsonName(),
+                    err,
+                    message,
+                );
+            }
+            try writeStderr(deps, "fiber usage: session '");
+            try writeStderr(deps, session_id);
+            try writeStderr(deps, "' started before the ");
+            try writeStderr(deps, window.cliValue().?);
+            try writeStderr(deps, " window; re-run without --period for lifetime session totals\n");
+        },
+        else => try writeUsageCommandFailure(alloc, deps, err, format),
+    }
+}
+
 fn writeWorkspaceCommandError(
     alloc: Allocator,
     command_catalog: CommandCatalog,
@@ -3690,10 +3801,12 @@ fn parseSessionListArgs(args: []const [:0]const u8) !SessionListOptions {
     return options;
 }
 
-fn parseUsageArgs(args: []const [:0]const u8) !UsageOptions {
+fn parseUsageArgs(alloc: Allocator, args: []const [:0]const u8) !UsageOptions {
     var options = UsageOptions{};
+    errdefer options.deinit(alloc);
     var period_seen = false;
     var json_seen = false;
+    var session_seen = false;
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
@@ -3706,6 +3819,7 @@ fn parseUsageArgs(args: []const [:0]const u8) !UsageOptions {
         if (std.mem.eql(u8, arg, "--period")) {
             if (period_seen or index + 1 >= args.len) return error.InvalidUsageArgs;
             period_seen = true;
+            options.period_seen = true;
             index += 1;
             options.scope = if (std.mem.eql(u8, args[index], "24h"))
                 .hours_24
@@ -3715,6 +3829,15 @@ fn parseUsageArgs(args: []const [:0]const u8) !UsageOptions {
                 .days_30
             else
                 return error.InvalidUsageArgs;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--session")) {
+            if (session_seen or index + 1 >= args.len) return error.InvalidUsageArgs;
+            session_seen = true;
+            index += 1;
+            const trimmed = std.mem.trim(u8, args[index], " \t\r\n");
+            if (trimmed.len == 0) return error.InvalidUsageArgs;
+            options.session_id = try alloc.dupe(u8, trimmed);
             continue;
         }
         return error.InvalidUsageArgs;
@@ -4096,17 +4219,43 @@ test "help aliases route to help" {
 }
 
 test "usage arguments accept only rolling periods and one JSON flag" {
-    const defaults = try parseUsageArgs(&.{});
+    const alloc = std.testing.allocator;
+    var defaults = try parseUsageArgs(alloc, &.{});
+    defer defaults.deinit(alloc);
     try std.testing.expectEqual(usage_report.Scope.days_30, defaults.scope);
     try std.testing.expectEqual(output_contracts.OutputFormat.text, defaults.format);
+    try std.testing.expect(!defaults.period_seen);
+    try std.testing.expect(defaults.session_id == null);
 
-    const selected = try parseUsageArgs(&.{
+    var selected = try parseUsageArgs(alloc, &.{
         @constCast("--json"),
         @constCast("--period"),
         @constCast("7d"),
     });
+    defer selected.deinit(alloc);
     try std.testing.expectEqual(usage_report.Scope.days_7, selected.scope);
     try std.testing.expectEqual(output_contracts.OutputFormat.json, selected.format);
+    try std.testing.expect(selected.period_seen);
+
+    var session = try parseUsageArgs(alloc, &.{
+        @constCast("--session"),
+        @constCast("abc123"),
+    });
+    defer session.deinit(alloc);
+    try std.testing.expectEqualStrings("abc123", session.session_id.?);
+    try std.testing.expect(!session.period_seen);
+    try std.testing.expectEqual(usage_report.Scope.days_30, session.scope);
+
+    var composed = try parseUsageArgs(alloc, &.{
+        @constCast("--session"),
+        @constCast("abc123"),
+        @constCast("--period"),
+        @constCast("24h"),
+    });
+    defer composed.deinit(alloc);
+    try std.testing.expectEqualStrings("abc123", composed.session_id.?);
+    try std.testing.expect(composed.period_seen);
+    try std.testing.expectEqual(usage_report.Scope.hours_24, composed.scope);
 
     for ([_][]const [:0]const u8{
         &.{@constCast("--period")},
@@ -4114,9 +4263,240 @@ test "usage arguments accept only rolling periods and one JSON flag" {
         &.{ @constCast("--period"), @constCast("24h"), @constCast("--period"), @constCast("7d") },
         &.{ @constCast("--json"), @constCast("--json") },
         &.{@constCast("30d")},
+        &.{@constCast("--session")},
+        &.{ @constCast("--session"), @constCast("") },
+        &.{ @constCast("--session"), @constCast("a"), @constCast("--session"), @constCast("b") },
     }) |invalid| {
-        try std.testing.expectError(error.InvalidUsageArgs, parseUsageArgs(invalid));
+        try std.testing.expectError(error.InvalidUsageArgs, parseUsageArgs(alloc, invalid));
     }
+}
+
+test "usage session failures render unknown ids and window guidance" {
+    const alloc = std.testing.allocator;
+    var unknown_text = CaptureOutput.init(alloc);
+    defer unknown_text.deinit();
+    try write_usage_session_failure(
+        alloc,
+        unknown_text.deps(),
+        "nope-1",
+        null,
+        error.SessionNotFound,
+        .text,
+    );
+    try std.testing.expectEqualStrings("", unknown_text.stdout.written());
+    try std.testing.expectEqualStrings(
+        "fiber usage: unknown session 'nope-1'\n",
+        unknown_text.stderr.written(),
+    );
+
+    var unknown_json = CaptureOutput.init(alloc);
+    defer unknown_json.deinit();
+    try write_usage_session_failure(
+        alloc,
+        unknown_json.deps(),
+        "nope-1",
+        null,
+        error.SessionNotFound,
+        .json,
+    );
+    try std.testing.expectEqualStrings("", unknown_json.stderr.written());
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            unknown_json.stdout.written(),
+            "\"error\":\"unknown session 'nope-1'\"",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            unknown_json.stdout.written(),
+            "\"code\":\"SessionNotFound\"",
+        ) != null,
+    );
+
+    var predates_text = CaptureOutput.init(alloc);
+    defer predates_text.deinit();
+    try write_usage_session_failure(
+        alloc,
+        predates_text.deps(),
+        "old-1",
+        .hours_24,
+        error.SessionPredatesUsageWindow,
+        .text,
+    );
+    try std.testing.expectEqualStrings("", predates_text.stdout.written());
+    try std.testing.expectEqualStrings(
+        "fiber usage: session 'old-1' started before the 24h window; re-run without --period for lifetime session totals\n",
+        predates_text.stderr.written(),
+    );
+
+    var predates_json = CaptureOutput.init(alloc);
+    defer predates_json.deinit();
+    try write_usage_session_failure(
+        alloc,
+        predates_json.deps(),
+        "old-1",
+        .hours_24,
+        error.SessionPredatesUsageWindow,
+        .json,
+    );
+    try std.testing.expectEqualStrings("", predates_json.stderr.written());
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            predates_json.stdout.written(),
+            "\"code\":\"SessionPredatesUsageWindow\"",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            predates_json.stdout.written(),
+            "started before the 24h window",
+        ) != null,
+    );
+}
+
+test "usage session lookup failures exit without crashing" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+
+    var failed_text = CaptureOutput.init(alloc);
+    defer failed_text.deinit();
+    try std.testing.expectEqual(
+        RunResult.handled_failure,
+        try run_usage_session(
+            alloc,
+            failed_text.deps(),
+            home,
+            "usage-missing",
+            null,
+            .text,
+        ),
+    );
+    try std.testing.expectEqualStrings(
+        "fiber usage: unknown session 'usage-missing'\n",
+        failed_text.stderr.written(),
+    );
+
+    var failed_json = CaptureOutput.init(alloc);
+    defer failed_json.deinit();
+    try std.testing.expectEqual(
+        RunResult.handled_failure,
+        try run_usage_session(
+            alloc,
+            failed_json.deps(),
+            home,
+            "usage-missing",
+            .hours_24,
+            .json,
+        ),
+    );
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            failed_json.stdout.written(),
+            "\"code\":\"SessionNotFound\"",
+        ) != null,
+    );
+}
+
+test "usage session window failures exit without crashing" {
+    const session_usage = @import("../session/session_usage.zig");
+    const session_codec = @import("../session/session_codec.zig");
+    const session = @import("../session/session.zig");
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace);
+
+    var store = try session_store.Store.initFromHome(alloc, home, workspace);
+    defer store.deinit(alloc);
+    var ledger_usage = session_usage.Usage.initFresh();
+    defer ledger_usage.deinit(alloc);
+    var ledger = try ledger_usage.snapshot(alloc);
+    defer ledger.deinit(alloc);
+    var state: session_codec.DurableSessionState = .{
+        .id = try alloc.dupe(u8, "usage-old"),
+        .origin_workspace_root = try alloc.dupe(u8, workspace),
+        .workspace_root = try alloc.dupe(u8, workspace),
+        .created_at_ms = 10,
+        .updated_at_ms = 10,
+        .conversation_language = session.ConversationLanguage.literal("en"),
+        .preferences = .{
+            .model = try alloc.dupe(u8, "test/model"),
+            .effort = types.ReasoningEffort.literal("high"),
+            .fast_mode = false,
+        },
+        .history = &.{},
+        .total_input_tokens = 0,
+        .total_output_tokens = 0,
+    };
+    defer state.deinit(alloc);
+    var writable = try store.startWritableSession(alloc, state);
+    defer writable.deinit(alloc);
+    _ = try writable.appendEvent(
+        alloc,
+        .{ .usage_checkpointed = .{ .usage = ledger } },
+        10,
+        .retry_expected_tail,
+        .{},
+    );
+
+    var failed_text = CaptureOutput.init(alloc);
+    defer failed_text.deinit();
+    try std.testing.expectEqual(
+        RunResult.handled_failure,
+        try run_usage_session(
+            alloc,
+            failed_text.deps(),
+            home,
+            "usage-old",
+            .hours_24,
+            .text,
+        ),
+    );
+    try std.testing.expectEqualStrings(
+        "fiber usage: session 'usage-old' started before the 24h window; re-run without --period for lifetime session totals\n",
+        failed_text.stderr.written(),
+    );
+
+    var failed_json = CaptureOutput.init(alloc);
+    defer failed_json.deinit();
+    try std.testing.expectEqual(
+        RunResult.handled_failure,
+        try run_usage_session(
+            alloc,
+            failed_json.deps(),
+            home,
+            "usage-old",
+            .hours_24,
+            .json,
+        ),
+    );
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            failed_json.stdout.written(),
+            "\"code\":\"SessionPredatesUsageWindow\"",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.find(
+            u8,
+            failed_json.stdout.written(),
+            "started before the 24h window",
+        ) != null,
+    );
 }
 
 test "global launch modifiers preserve repeatable context limits before the command" {

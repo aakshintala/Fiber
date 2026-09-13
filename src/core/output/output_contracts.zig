@@ -134,7 +134,18 @@ pub const UsageSnapshot = struct {
         var out: std.Io.Writer.Allocating = .init(alloc);
         defer out.deinit();
 
-        try out.writer.print("Usage ({s})\n", .{report.scope.label()});
+        if (report.session_id) |id| {
+            if (report.period) |period| {
+                try out.writer.print(
+                    "Usage (Session {s}, {s})\n",
+                    .{ id, period.label() },
+                );
+            } else {
+                try out.writer.print("Usage (Session {s})\n", .{id});
+            }
+        } else {
+            try out.writer.print("Usage ({s})\n", .{report.scope.label()});
+        }
         switch (report.coverage) {
             .not_started => try out.writer.writeAll("Tracking has not started.\n"),
             .partial => {
@@ -213,7 +224,17 @@ pub const UsageSnapshot = struct {
             "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"schema_version\":1,\"period\":",
             .{Kind.usage.jsonName()},
         );
-        try std.json.Stringify.value(report.scope.cliValue() orelse "session", .{}, &out.writer);
+        const period_value = if (report.period) |period|
+            period.cliValue() orelse "session"
+        else
+            report.scope.cliValue() orelse "session";
+        try std.json.Stringify.value(period_value, .{}, &out.writer);
+        try out.writer.writeAll(",\"session_id\":");
+        if (report.session_id) |id| {
+            try std.json.Stringify.value(id, .{}, &out.writer);
+        } else {
+            try out.writer.writeAll("null");
+        }
         try out.writer.print(
             ",\"snapshot_time_ms\":{d},\"window_start_ms\":{d},\"coverage\":{{\"status\":",
             .{ report.snapshot_time_ms, report.window_start_ms },
