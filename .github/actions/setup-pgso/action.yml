@@ -35,7 +35,7 @@ runs:
   steps:
     - name: Setup Zig
       if: inputs.zig == 'true' || inputs.llvm == 'true'
-      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+      uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27 # fork: node24 runtime
       with:
         version: "0.16.0"
         cache-key: pgso-macos-arm64
