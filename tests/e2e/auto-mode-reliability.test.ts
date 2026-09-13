@@ -1622,11 +1622,12 @@ describe("lean auto mode reliability", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
       await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
+      expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
       await activeSession.kill();
       activeSession = null;
     },
-    TIMEOUT,
+    // >=2x the waitForComposer + waitForEither + session-end budgets above.
+    TIMEOUT * 2,
   );
 
   test.skipIf(!tmuxAvailable())(

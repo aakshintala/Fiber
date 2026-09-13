@@ -786,7 +786,7 @@ describe("effect-aware command permissions", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
       await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
+      expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
       await activeSession.kill();
       activeSession = null;
 
@@ -851,7 +851,7 @@ describe("effect-aware command permissions", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
       await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
+      expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
       await activeSession.kill();
       activeSession = null;
 
@@ -1477,7 +1477,7 @@ describe("effect-aware command permissions", () => {
       expectNoCommandArtifacts(root);
 
       await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
+      expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
       await activeSession.kill();
       activeSession = null;
     },
@@ -1538,7 +1538,7 @@ describe("effect-aware command permissions", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
       await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
+      expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
       await activeSession.kill();
       activeSession = null;
     },
@@ -1978,7 +1978,7 @@ describe("effect-aware command permissions", () => {
 
       const sessionId = sessionIdFromHome(root);
       await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
+      expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
       await activeSession.kill();
       activeSession = null;
 
@@ -2006,7 +2006,7 @@ describe("effect-aware command permissions", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
       await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
+      expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
       await activeSession.kill();
       activeSession = null;
     },
@@ -2069,7 +2069,7 @@ describe("effect-aware command permissions", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
       await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
+      expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
       await activeSession.kill();
       activeSession = null;
     },
@@ -2184,7 +2184,7 @@ describe("effect-aware command permissions", () => {
       expect(readFileSync(stderrPath, "utf8")).toBe("");
 
       await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
+      expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
       await activeSession.kill();
       activeSession = null;
     },
@@ -2642,7 +2642,7 @@ describe("effect-aware command permissions", () => {
       expect(readFileSync(foregroundStderr, "utf8")).toBe("");
 
       await activeSession.sendText("/quit");
-      expect(await activeSession.waitForSessionEnd()).toBe(true);
+      expect(await activeSession.waitForSessionEnd(TIMEOUT)).toBe(true);
       await activeSession.kill();
       activeSession = null;
       await expectSavedShellRun(

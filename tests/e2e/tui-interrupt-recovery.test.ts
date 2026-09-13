@@ -28,6 +28,9 @@ import {
 
 const SKIP = !tmuxAvailable();
 const TIMEOUT = 30_000;
+// Local in-process flags flip in milliseconds when healthy; 15s keeps 100x+ headroom
+// while keeping the sequential-wait sum small enough to size case budgets at 2x.
+const LOCAL_FLAG_TIMEOUT = 15_000;
 const TRACE_SCOPES = "agent,worker,gateway,history,interrupt,prompt";
 const PARTIAL_CHUNKS = [
   "INTERRUPTED_PARTIAL_ONE\n",
@@ -128,7 +131,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       await session.waitForComposer(TIMEOUT);
 
       await session.sendText("Hold this response until the test releases it.");
-      await waitForCondition(() => held.started, "held response start");
+      await waitForCondition(() => held.started, "held response start", LOCAL_FLAG_TIMEOUT);
       await session.sendText(queuedText);
       await Bun.sleep(250);
 
@@ -142,6 +145,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       await waitForCondition(
         () => countOccurrences(readTrace(tracePath), "finish processing queued=0") >= 1,
         "both queued turns to finish",
+        LOCAL_FLAG_TIMEOUT,
       );
 
       expect(held.released).toBe(true);
@@ -174,7 +178,8 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       expect(events).not.toContain('"kind":"interrupted"');
       expect(events).toContain(queuedText);
     },
-    TIMEOUT * 2,
+    // 2x the sequential sum: 30 + 15 + 30 + 15 = 90s of internal waits.
+    TIMEOUT * 6,
   );
 
   test(
@@ -236,10 +241,10 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       await session.waitForComposer(TIMEOUT);
 
       await session.sendText("Stream a response that I will interrupt.");
-      await waitForCondition(() => held.started, "held response start");
+      await waitForCondition(() => held.started, "held response start", LOCAL_FLAG_TIMEOUT);
       await session.waitForText(VISIBLE_PARTIAL_CHUNKS.at(-1)!.trim(), TIMEOUT);
       await session.sendKeys("Escape");
-      await waitForCondition(() => held.cancelled, "stream cancellation");
+      await waitForCondition(() => held.cancelled, "stream cancellation", LOCAL_FLAG_TIMEOUT);
       await waitForTrace(tracePath, "event=interrupt_persisted", TIMEOUT);
       await session.waitForText("cancelled", TIMEOUT);
       await session.sendText(`/model ${FOLLOW_UP_MODEL}`);
@@ -247,6 +252,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       await waitForCondition(
         () => JSON.parse(readFileSync(settingsPath, "utf8")).models?.codex === FOLLOW_UP_MODEL,
         "follow-up model persistence",
+        LOCAL_FLAG_TIMEOUT,
       );
       await session.sendText("Confirm that the next prompt still works.");
       const interruptedScrollback = await session.captureFullScrollback();
@@ -259,6 +265,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       await waitForCondition(
         () => countOccurrences(readTrace(tracePath), "finish processing queued=0") >= 2,
         "both worker turns to finish",
+        LOCAL_FLAG_TIMEOUT,
       );
 
       const finalScrollback = await session.captureFullScrollback();
@@ -326,7 +333,8 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       }
       expect(events).toContain(FOLLOW_UP_RESPONSE);
     },
-    TIMEOUT * 2,
+    // 2x the sequential sum: 5x30 + 4x15 = 210s of internal waits.
+    TIMEOUT * 14,
   );
 
   test(
@@ -573,9 +581,10 @@ async function waitForTrace(path: string, needle: string, timeoutMs: number): Pr
 async function waitForCondition(
   predicate: () => boolean,
   description: string,
+  timeoutMs: number = TIMEOUT,
 ): Promise<void> {
   const start = Date.now();
-  while (Date.now() - start < TIMEOUT) {
+  while (Date.now() - start < timeoutMs) {
     if (predicate()) return;
     await Bun.sleep(50);
   }
