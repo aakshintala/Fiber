@@ -33,6 +33,8 @@ const LIVE_ENABLED = process.env.FIBER_E2E_REAL_API === "1" &&
   process.env.AI_GATEWAY_API_KEY.length > 0;
 const WARMUPS = 5;
 const SAMPLES = 50;
+// Single-digit-ms budgets stay env-gated (FIBER_TUI_PERFORMANCE=1, never set
+// in CI): do not ungate without 3-5x headroom; shared CI hosts cannot hold them.
 const LOCAL_BUDGETS_MS = { p50: 8, p90: 12, p95: 17 } as const;
 const BACKGROUND_WORK_BUDGETS_MS = { p50: 12, p90: 17, p95: 17 } as const;
 const EXTERNAL_REFRESH_BUDGETS_MS = { p50: 17, p90: 17, p95: 17 } as const;
@@ -136,6 +138,7 @@ function readCompleteTape(path: string): TapeFrame[] {
       return readTapeFrames(path);
     } catch (error) {
       lastError = error;
+      Bun.sleepSync(2);
     }
   }
   throw lastError;
