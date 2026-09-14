@@ -565,12 +565,18 @@ function committedResizeCycles(path: string): ResizeCycle[] {
   return cycles;
 }
 
+async function sessionPaneEvidence(s?: TmuxSession | null): Promise<string> {
+  if (!s) return "";
+  return `\nPane: ${s.describePaneExit()}.\nLast pane:\n${await s.capturePane()}`;
+}
+
 async function waitForResizeCycle(
   tracePath: string,
   afterLine: number,
   predicate: (cycle: ResizeCycle) => boolean,
   timeoutMs = 45_000,
   description = "matching resize cycle",
+  session?: TmuxSession | null,
 ): Promise<ResizeCycle> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -581,7 +587,7 @@ async function waitForResizeCycle(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(
-    `Timed out waiting for resize cycle (${description}) after line ${afterLine}.\nTrace:\n${
+    `Timed out waiting for resize cycle (${description}) after line ${afterLine}.${await sessionPaneEvidence(session)}\nTrace:\n${
       existsSync(tracePath) ? readFileSync(tracePath, "utf8") : ""
     }`,
   );
@@ -591,6 +597,8 @@ async function waitForResizeCycles(
   tracePath: string,
   afterLine: number,
   timeoutMs = 45_000,
+  description = "shrink 120x34 to 70x24 and grow back",
+  session?: TmuxSession | null,
 ): Promise<ResizeCycle[]> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -613,7 +621,7 @@ async function waitForResizeCycles(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(
-    `Timed out waiting for shrink/grow resize cycles after line ${afterLine}.\nTrace:\n${
+    `Timed out waiting for shrink/grow resize cycles (${description}) after line ${afterLine}.${await sessionPaneEvidence(session)}\nTrace:\n${
       existsSync(tracePath) ? readFileSync(tracePath, "utf8") : ""
     }`,
   );
@@ -634,6 +642,7 @@ async function waitForCommittedTraceAttempt(
   predicate: (attempt: TraceAttempt) => boolean,
   timeoutMs = 45_000,
   description = "matching committed trace attempt",
+  session?: TmuxSession | null,
 ): Promise<TraceAttempt> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -644,7 +653,7 @@ async function waitForCommittedTraceAttempt(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(
-    `Timed out waiting for committed trace attempt (${description}) after line ${afterLine}.\nTrace:\n${
+    `Timed out waiting for committed trace attempt (${description}) after line ${afterLine}.${await sessionPaneEvidence(session)}\nTrace:\n${
       existsSync(tracePath) ? readFileSync(tracePath, "utf8") : ""
     }`,
   );
@@ -734,29 +743,23 @@ async function waitForSettledFooter(
   );
 }
 
-async function waitForStablePaneGrid(
-  s: TmuxSession,
+async function waitForHelpCatalog(
+  active: TmuxSession,
+  cols: number,
+  rows: number,
   description: string,
-  predicate: (grid: string[]) => boolean,
-  timeoutMs = 10_000,
+  timeoutMs = TIMEOUT,
 ): Promise<string[]> {
-  const deadline = Date.now() + timeoutMs;
-  let last: string[] = [];
-  let stablePolls = 0;
-  while (Date.now() < deadline) {
-    last = await s.capturePaneGrid();
-    if (predicate(last)) {
-      stablePolls += 1;
-      if (stablePolls >= 2) return last;
-    } else {
-      stablePolls = 0;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(
-    `Timed out waiting for stable pane grid (${description}).\n` +
-      `Pane: ${s.describePaneExit()}.\nLast grid:\n${last.join("\n")}`,
+  const pane = await active.waitForPane(
+    (candidate) =>
+      candidate.includes("Commands 21") &&
+      findInlineHelpPicker(candidate.split("\n")) !== null &&
+      active.paneSize().cols === cols &&
+      active.paneSize().rows === rows,
+    timeoutMs,
+    { description },
   );
+  return pane.split("\n");
 }
 
 async function waitForSkillsMenuGrid(
@@ -912,16 +915,17 @@ async function waitForTraceText(
   tracePath: string,
   text: string,
   timeoutMs = 30_000,
-  pollIntervalMs = 50,
+  description = `trace text ${JSON.stringify(text)}`,
+  session?: TmuxSession | null,
 ): Promise<string> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const trace = existsSync(tracePath) ? readFileSync(tracePath, "utf8") : "";
     if (trace.includes(text)) return trace;
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(
-    `Timed out waiting for ${JSON.stringify(text)}.\nTrace:\n${
+    `Timed out waiting for ${description} (${JSON.stringify(text)}).${await sessionPaneEvidence(session)}\nTrace:\n${
       existsSync(tracePath) ? readFileSync(tracePath, "utf8") : ""
     }`,
   );
@@ -932,6 +936,8 @@ async function waitForTraceCount(
   text: string,
   minimumCount: number,
   timeoutMs = 30_000,
+  description = `trace count for ${JSON.stringify(text)}`,
+  session?: TmuxSession | null,
 ): Promise<string> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -940,7 +946,7 @@ async function waitForTraceCount(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(
-    `Timed out waiting for ${minimumCount} copies of ${JSON.stringify(text)}.\nTrace:\n${
+    `Timed out waiting for ${description} (${minimumCount} copies of ${JSON.stringify(text)}).${await sessionPaneEvidence(session)}\nTrace:\n${
       existsSync(tracePath) ? readFileSync(tracePath, "utf8") : ""
     }`,
   );
@@ -951,6 +957,8 @@ async function waitForTapeOutputCount(
   text: string,
   minimumCount: number,
   timeoutMs = 30_000,
+  description = `tape output ${JSON.stringify(text)}`,
+  session?: TmuxSession | null,
 ): Promise<number> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -962,7 +970,7 @@ async function waitForTapeOutputCount(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(
-    `Timed out waiting for ${minimumCount} copies of ${JSON.stringify(text)} in the tape.`,
+    `Timed out waiting for ${description} (${minimumCount} copies of ${JSON.stringify(text)} in the tape).${await sessionPaneEvidence(session)}`,
   );
 }
 
@@ -1020,6 +1028,8 @@ async function waitForGatewayRequestCount(
   gateway: ReturnType<typeof startCodexQueue>,
   count: number,
   timeoutMs = 10_000,
+  description = "gateway requests",
+  session?: TmuxSession | null,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (gateway.requests.length < count && Date.now() < deadline) {
@@ -1027,7 +1037,7 @@ async function waitForGatewayRequestCount(
   }
   if (gateway.requests.length < count) {
     throw new Error(
-      `Timed out waiting for ${count} gateway requests; received ${gateway.requests.length}.`,
+      `Timed out waiting for ${description} (expected ${count} gateway requests; received ${gateway.requests.length}).${await sessionPaneEvidence(session)}`,
     );
   }
 }
@@ -1043,6 +1053,8 @@ async function waitForCommittedResizeFrame(
   tracePath: string,
   previousCount: number,
   timeoutMs = 10_000,
+  description = "committed resize frame",
+  session?: TmuxSession | null,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -1050,7 +1062,7 @@ async function waitForCommittedResizeFrame(
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(
-    `Timed out waiting for a committed resize frame.\nTrace:\n${
+    `Timed out waiting for ${description}.${await sessionPaneEvidence(session)}\nTrace:\n${
       existsSync(tracePath) ? readFileSync(tracePath, "utf8") : ""
     }`,
   );
@@ -1324,6 +1336,7 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
       (candidate) => attemptHasReason(candidate, "resize"),
       45_000,
       "shrink resize commit",
+      s,
     );
     expect(s.paneSize()).toEqual({ cols: 70, rows: shrinkRows });
     expect(shrinkAttempt.beginLine).toContain("resize");
@@ -1332,7 +1345,7 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
       cycle.oldSize.rows === 34 &&
       cycle.newSize.cols === 70 &&
       cycle.newSize.rows === shrinkRows
-    , 45_000, `shrink 120x34 to 70x${shrinkRows}`);
+    , 45_000, `shrink 120x34 to 70x${shrinkRows}`, s);
     expect(shrinkCycle.historyRowDelta).toBeGreaterThanOrEqual(0);
     expect(attemptLine(shrinkAttempt, "attempt_result ")).toContain(
       "shadow_state=committed",
@@ -1359,6 +1372,7 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
       (candidate) => attemptHasReason(candidate, "resize"),
       45_000,
       "grow resize commit",
+      s,
     );
     expect(s.paneSize()).toEqual({ cols: 120, rows: 34 });
     expect(attemptLine(growAttempt, "attempt_result ")).toContain(
@@ -1380,7 +1394,7 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
         !pane.includes("↑↓ Navigate") &&
         findFooter(grid) !== null
       );
-    }, 5_000);
+    }, 5_000, { description: "skills menu dismissed back to the composer" });
     expect(findFooter(restoredPane.split("\n"))).not.toBeNull();
     await s.sendText("/skills list");
     const finalGrid = await waitForSkillsMenuGrid(s, LARGE_SKILL_COUNT);
@@ -1516,7 +1530,13 @@ async function runRapidSkillResizeAttempt(
       await s.captureFullScrollback(),
     );
     await s.resizeWindow(120, 34, 250);
-    const [shrink, grow] = await waitForResizeCycles(tracePath, beforeShrink);
+    const [shrink, grow] = await waitForResizeCycles(
+      tracePath,
+      beforeShrink,
+      45_000,
+      "rapid shrink 120x34 to 70x24 and grow back",
+      s,
+    );
     expect(s.paneSize()).toEqual({ cols: 120, rows: 34 });
 
     const growCommit = attemptLine(grow.attempt, "transcript_transition_commit ");
@@ -1555,6 +1575,7 @@ async function runRapidSkillResizeAttempt(
           findFooter(grid) !== null;
       },
       5_000,
+      { description: "rapid skills menu dismissed back to the composer" },
     );
     expect(findFooter(dismissed.replace(/\n$/, "").split("\n"))).not.toBeNull();
     await s.sendText("/skills list");
@@ -1741,6 +1762,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         (candidate) => attemptHasReason(candidate, "resize"),
         45_000,
         "settled resize commit",
+        session,
       );
 
       const scrollback = await waitForScrollbackWithoutText(
@@ -1812,9 +1834,19 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await session.waitForText("Running for i in $(seq 1 96)", TIMEOUT);
 
       const resizeCount = committedResizeFrameCount(tracePath);
-      await waitForTapeOutputCount(tapePath, "resize-stream-marker", 1, TIMEOUT);
+      // Output-start gate: folded stream rows are never painted, so the tape
+      // can only ever match the echoed command text ("... %03d"). The elapsed
+      // ticker instead proves wall-clock execution: the 96-row loop emits a
+      // row every 30ms, so "(1s" means output is well underway.
+      await waitForLiveScrollbackText(session, "• Running (1s", TIMEOUT);
       await session.resizeWindow(64, 16, 250);
-      await waitForCommittedResizeFrame(tracePath, resizeCount);
+      await waitForCommittedResizeFrame(
+        tracePath,
+        resizeCount,
+        10_000,
+        "committed shrink frame before the final response",
+        session,
+      );
       await waitForLiveScrollbackText(session, finalResponse, TIMEOUT);
 
       const scrollback = await session.captureFullScrollback();
@@ -1933,10 +1965,17 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await session.waitForComposer(10_000);
       await session.sendText("exercise structured retention scrollback");
       await waitForLiveScrollbackText(session, end, 60_000);
-      await waitForGatewayRequestCount(gateway, 2, 60_000);
+      await waitForGatewayRequestCount(
+        gateway,
+        2,
+        60_000,
+        "structured retention seed plus response requests",
+        session,
+      );
       await session.waitForPane(
         (pane) => pane.includes(end) && hasEmptyComposer(pane),
         60_000,
+        { description: "retention transcript settled with the end marker" },
       );
 
       const assertMarkersExactlyOnce = (phase: string, scrollback: string) => {
@@ -2045,16 +2084,28 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await active.waitForComposer(remainingTimeout());
       await active.sendText("Seed the approval cancellation scrollback.");
       await waitForLiveScrollbackText(active, seedMarker, remainingTimeout());
-      await waitForGatewayRequestCount(gateway, 1, remainingTimeout());
+      await waitForGatewayRequestCount(
+        gateway,
+        1,
+        remainingTimeout(),
+        "approval seed request",
+        active,
+      );
       await active.waitForPane((pane) => {
         const lastLine = pane.trimEnd().split("\n").at(-1)?.trim() ?? "";
         return pane.includes(seedMarker) && hasEmptyComposer(pane) &&
           lastLine.startsWith("ask ·");
-      }, remainingTimeout());
+      }, remainingTimeout(), { description: "seed transcript settled with an empty composer" });
 
       await active.sendText(`Run command: ${command}`);
       await active.waitForText(approvalQuestion, remainingTimeout());
-      await waitForGatewayRequestCount(gateway, 2, remainingTimeout());
+      await waitForGatewayRequestCount(
+        gateway,
+        2,
+        remainingTimeout(),
+        "effectful command permission request",
+        active,
+      );
       const beforeResizeScrollback = await captureScrollback("before-resize");
 
       const beforeResizeLine = readTraceLines(tracePath).length - 1;
@@ -2069,6 +2120,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
             numericTraceField(commit, "history_visual_offset") > 0;
         },
         remainingTimeout(),
+        "resized approval commit with a history offset",
+        active,
       );
       const resizeCommit = attemptLine(resizeAttempt, stableCommitTrace)!;
       expect(numericTraceField(resizeCommit, "history_visual_offset"))
@@ -2085,6 +2138,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
         (candidate) =>
           attemptLine(candidate, stableCommitTrace) !== undefined,
         remainingTimeout(),
+        "cancellation commit",
+        active,
       );
       const cleanupAttempt = await waitForCommittedTraceAttempt(
         tracePath,
@@ -2092,6 +2147,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
         (candidate) =>
           attemptLine(candidate, stableCommitTrace) !== undefined,
         remainingTimeout(),
+        "post-cancellation cleanup commit",
+        active,
       );
       const cleanupTrace = readTraceLines(tracePath)
         .slice(cancellationAttempt.endIndex + 1, cleanupAttempt.beginIndex)
@@ -2102,7 +2159,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await active.waitForPane((pane) => {
         const lastLine = pane.trimEnd().split("\n").at(-1)?.trim() ?? "";
         return pane.includes("■ Cancelled") && lastLine.startsWith("ask ·");
-      }, remainingTimeout());
+      }, remainingTimeout(), { description: "cancelled approval settled with an empty composer" });
       const afterCancelScrollback = await captureScrollback("after-cancel");
 
       const transcriptCopyCounts = (scrollback: string) => ({
@@ -2319,10 +2376,24 @@ describe.skipIf(SKIP)("tui: resize", () => {
 
       await expectNestedQuote(120, 1);
       await session.resizeWindow(48, 40, 500);
-      await waitForTraceCount(tracePath, "settled_reset_committed", 1);
+      await waitForTraceCount(
+        tracePath,
+        "settled_reset_committed",
+        1,
+        30_000,
+        "settled reset after shrink to 48 cols",
+        session,
+      );
       await expectNestedQuote(48, 2);
       await session.resizeWindow(120, 40, 500);
-      await waitForTraceCount(tracePath, "settled_reset_committed", 2);
+      await waitForTraceCount(
+        tracePath,
+        "settled_reset_committed",
+        2,
+        30_000,
+        "settled reset after grow to 120 cols",
+        session,
+      );
       await expectNestedQuote(120, 1);
 
       expect(session.isPaneAlive()).toBe(true);
@@ -2442,7 +2513,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await session.resizeWindow(70, 24, 0);
       gated.releaseSecond();
       await session.waitForText(markers[0], 30_000);
-      await waitForCommittedResizeFrame(tracePath, resizeCount);
+      await waitForCommittedResizeFrame(
+        tracePath,
+        resizeCount,
+        10_000,
+        "shrink committed while the first chunk streams",
+        session,
+      );
       const shrinkStage = await session.captureFullScrollback();
       expectOrderedMarkersWithoutBlankHole(shrinkStage, markers.slice(0, 1));
       expect(shrinkStage).not.toContain(markers[1]);
@@ -2451,7 +2528,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
 
       resizeCount = committedResizeFrameCount(tracePath);
       await session.resizeWindow(120, 34, 0);
-      await waitForCommittedResizeFrame(tracePath, resizeCount);
+      await waitForCommittedResizeFrame(
+        tracePath,
+        resizeCount,
+        10_000,
+        "grow committed while the first chunk streams",
+        session,
+      );
       const growStage = await session.captureFullScrollback();
       expectOrderedMarkersWithoutBlankHole(growStage, markers.slice(0, 1));
       expect(growStage).not.toContain(markers[1]);
@@ -2693,6 +2776,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await session.waitForPane(
         (pane) => !pane.includes("/model"),
         10_000,
+        { description: "slash picker dismissed" },
       );
       await Bun.sleep(250);
 
@@ -2799,6 +2883,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         await session.waitForPane(
           (pane) => !pane.includes(surfaceCase.surfaceMarker),
           TIMEOUT,
+          { description: `${surfaceCase.label} surface released after Escape` },
         );
         await Bun.sleep(250);
         const releasedGrid = await waitForSettledFooter(session);
@@ -2811,6 +2896,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
               isInputRow(line) && line.includes(surfaceCase.editedInput)
             ),
           TIMEOUT,
+          { description: `${surfaceCase.label} edited input echoed` },
         );
         await Bun.sleep(150);
         const editedGrid = await waitForSettledFooter(session);
@@ -2843,21 +2929,29 @@ describe.skipIf(SKIP)("tui: resize", () => {
             isInputRow(line) && line.includes("/workspace add")
           ),
         TIMEOUT,
+        { description: "workspace add handoff shows the input row" },
       );
-      const handoffGrid = await waitForStablePaneGrid(
-        session,
-        "workspace add handoff without a synthetic completion row",
-        (grid) =>
-          grid.some((line) => isInputRow(line) && line.includes("/workspace add")) &&
-          grid.every((line) => line.trim() !== "add"),
+      // Hold the handoff rejection stable longer than the original 150ms delay
+      // so a late synthetic "add" completion row cannot slip through unseen.
+      const heldHandoff = await session.waitForStableScrollback(
+        (scrollback) => {
+          const lines = scrollback.split("\n");
+          return (
+            lines.some((line) => isInputRow(line) && line.includes("/workspace add")) &&
+            lines.every((line) => line.trim() !== "add")
+          );
+        },
+        TIMEOUT,
+        250,
       );
-      expect(handoffGrid.some((line) => line.trim() === "add")).toBe(false);
+      expect(heldHandoff.split("\n").some((line) => line.trim() === "add")).toBe(false);
 
       await session.sendKeys("C-u");
       await session.sendLiteral("/workspace add ");
       await session.waitForPane(
         (pane) => pane.split("\n").some((line) => line.trim() === "add"),
         TIMEOUT,
+        { description: "direct workspace-add completion row visible" },
       );
       const directGrid = await session.capturePaneGrid();
       expect(directGrid.some((line) => line.trim() === "add")).toBe(true);
@@ -2869,6 +2963,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
             isInputRow(line) && line.includes("/workspace add")
           ),
         TIMEOUT,
+        { description: "workspace-add completion dismissed with input retained" },
       );
       expect(session.paneStatus()).toEqual({ dead: false, status: null });
       expect(session.isPaneAlive()).toBe(true);
@@ -3362,13 +3457,25 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await session.sendText("Create the post-approval resize fixture.");
       await session.waitForText(FILE_APPROVAL_QUESTION, TIMEOUT);
       await session.sendKeys("Enter");
-      await waitForGatewayRequestCount(gateway, 2);
+      await waitForGatewayRequestCount(
+        gateway,
+        2,
+        10_000,
+        "approval write plus final response requests",
+        session,
+      );
 
       expect(readFileSync(target, "utf8")).toBe(content);
       const resizeFramesBefore = committedResizeFrameCount(tracePath);
 
       await session.resizeWindow(60, 18, 500);
-      await waitForCommittedResizeFrame(tracePath, resizeFramesBefore);
+      await waitForCommittedResizeFrame(
+        tracePath,
+        resizeFramesBefore,
+        10_000,
+        "post-approval resize commit",
+        session,
+      );
 
       expect(session.paneSize()).toEqual({ cols: 60, rows: 18 });
       expect(session.paneStatus().dead).toBe(false);
@@ -3406,7 +3513,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
       );
       session = launched.active;
       await session.sendText("Reply with exactly resize_activity_done.");
-      await waitForGatewayRequestCount(gateway, 1);
+      await waitForGatewayRequestCount(
+        gateway,
+        1,
+        10_000,
+        "activity stream request",
+        session,
+      );
       await session.waitForText("Generating", TIMEOUT);
       await session.resizeWindow(90, 30, 500);
 
@@ -3490,25 +3603,52 @@ describe.skipIf(SKIP)("tui: resize", () => {
   test(
     "/help remains usable after resize and /quit exits",
     async () => {
-      session = await launchAt(120, 40);
+      const root = realpathSync(
+        mkdtempSync(join(tmpdir(), "fiber-resize-help-usable-")),
+      );
+      const home = join(root, "home");
+      const tracePath = join(root, "trace.log");
+      tempDirs.push(root);
+      mkdirSync(join(home, ".fiber"), { recursive: true });
+      session = await createResizeSession({
+        env: {
+          HOME: home,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "frame_schedule,resize",
+          NO_COLOR: "1",
+        },
+        width: 120,
+        height: 40,
+      });
+      await session.waitForComposer(10_000);
       await session.sendText("/help");
       await session.waitForText("Commands 21", 5_000);
-      await session.resizeWindow(76, 24, 400);
 
-      const grid = (
-        await session.waitForPane(
-          (pane) =>
-            pane.includes("Commands 21") &&
-            findInlineHelpPicker(pane.split("\n")) !== null,
-          TIMEOUT,
-          { description: "help catalog retained after resize to 76x24" },
-        )
-      ).split("\n");
+      const beforeResize = readTraceLines(tracePath).length - 1;
+      await session.resizeWindow(76, 24, 400);
+      // Reconciliation evidence first: a stale pre-resize picker still shows
+      // the catalog, so catalog content alone cannot prove the resize landed.
+      await waitForCommittedTraceAttempt(
+        tracePath,
+        beforeResize,
+        (candidate) => attemptHasReason(candidate, "resize"),
+        TIMEOUT,
+        "help resize commit to 76x24",
+        session,
+      );
+      const grid = await waitForHelpCatalog(
+        session,
+        76,
+        24,
+        "help catalog retained after resize to 76x24",
+      );
       expect(grid.join("\n")).toContain("Commands 21");
       expect(findInlineHelpPicker(grid)).not.toBeNull();
 
       await session.sendKeys("Escape");
-      await session.waitForPane((pane) => !pane.includes("Enter Open"), 5_000);
+      await session.waitForPane((pane) => !pane.includes("Enter Open"), 5_000, {
+        description: "help dismissed after resize",
+      });
       await session.waitForStableComposer(5_000);
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd(5_000)).toBe(true);
@@ -3520,7 +3660,24 @@ describe.skipIf(SKIP)("tui: resize", () => {
   test(
     "resize replay keeps one startup banner in full scrollback",
     async () => {
-      session = await launchAt(120, 40);
+      const root = realpathSync(
+        mkdtempSync(join(tmpdir(), "fiber-resize-help-replay-")),
+      );
+      const home = join(root, "home");
+      const tracePath = join(root, "trace.log");
+      tempDirs.push(root);
+      mkdirSync(join(home, ".fiber"), { recursive: true });
+      session = await createResizeSession({
+        env: {
+          HOME: home,
+          FIBER_TRACE_LOG: tracePath,
+          FIBER_TRACE_SCOPES: "frame_schedule,resize",
+          NO_COLOR: "1",
+        },
+        width: 120,
+        height: 40,
+      });
+      await session.waitForComposer(10_000);
       await session.sendText("/help");
       await session.waitForText("Commands 21", 5_000);
 
@@ -3534,36 +3691,49 @@ describe.skipIf(SKIP)("tui: resize", () => {
         expect(findInlineHelpPicker(grid)).not.toBeNull();
       };
 
+      let beforeResize = readTraceLines(tracePath).length - 1;
       await session.resizeWindow(72, 20, 500);
+      await waitForCommittedTraceAttempt(
+        tracePath,
+        beforeResize,
+        (candidate) => attemptHasReason(candidate, "resize"),
+        TIMEOUT,
+        "help replay shrink commit to 72x20",
+        session,
+      );
       expectHelpCatalog(
-        (
-          await session.waitForPane(
-            (pane) =>
-              pane.includes("Commands 21") &&
-              findInlineHelpPicker(pane.split("\n")) !== null,
-            TIMEOUT,
-            { description: "help catalog retained after shrink to 72x20" },
-          )
-        ).split("\n"),
+        await waitForHelpCatalog(
+          session,
+          72,
+          20,
+          "help catalog retained after shrink to 72x20",
+        ),
       );
 
+      beforeResize = readTraceLines(tracePath).length - 1;
       await session.resizeWindow(140, 45, 500);
+      await waitForCommittedTraceAttempt(
+        tracePath,
+        beforeResize,
+        (candidate) => attemptHasReason(candidate, "resize"),
+        TIMEOUT,
+        "help replay grow commit to 140x45",
+        session,
+      );
       expectHelpCatalog(
-        (
-          await session.waitForPane(
-            (pane) =>
-              pane.includes("Commands 21") &&
-              findInlineHelpPicker(pane.split("\n")) !== null,
-            TIMEOUT,
-            { description: "help catalog retained after grow to 140x45" },
-          )
-        ).split("\n"),
+        await waitForHelpCatalog(
+          session,
+          140,
+          45,
+          "help catalog retained after grow to 140x45",
+        ),
       );
 
       await session.sendKeys("Escape");
       await session.waitForPane(
         (pane) => hasEmptyComposer(pane) && !pane.includes("Enter Open"),
         5_000,
+        { description: "help replay dismissed with an empty composer" },
       );
       const restored = captureScrollback();
       expect(restored.match(/fiber v\d+\.\d+\.\d+\b/g)).toHaveLength(1);
@@ -3630,7 +3800,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
         "second medium width turn with enough words to wrap the user card before resize",
       );
       await session.waitForText(secondMarker, TIMEOUT);
-      await waitForGatewayRequestCount(gateway, 2);
+      await waitForGatewayRequestCount(
+        gateway,
+        2,
+        10_000,
+        "prepaint medium-width turn requests",
+        session,
+      );
 
       const beforeResizeLine = readTraceLines(tracePath).length - 1;
       const beforeResizeFrame = readTapeFrames(tapePath).length;
@@ -3656,6 +3832,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
           cycle.historyRowDelta !== 0,
         60_000,
         "grow to 120x40 with nonzero history delta",
+        session,
       );
       expect(resizeCycle.historyRowDelta).not.toBe(0);
       const requestLine = readTraceLines(tracePath).find(
@@ -3666,7 +3843,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
       expect(requestLine).toBeDefined();
       expect(signedTraceField(requestLine!, "expected_reflow_row"))
         .toBeGreaterThan(3);
-      await waitForTraceText(tracePath, "settled_reset_committed");
+      await waitForTraceText(
+        tracePath,
+        "settled_reset_committed",
+        30_000,
+        "settled reset after prepaint grow",
+        session,
+      );
       const finalGrid = await session.capturePaneGrid();
       const finalFooter = findFooter(finalGrid);
       expect(finalFooter).not.toBeNull();
@@ -3797,6 +3980,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
         tracePath,
         `paste end owner=composer bytes=${payload.length}`,
         60_000,
+        "large paste end across resize",
+        session,
       );
       await session.sendKeys("Enter");
 
@@ -3832,7 +4017,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await session.waitForComposer(10_000);
 
       await session.sendHexBytes(["1b", "5b", "32", "30", "30", "7e"]);
-      await waitForTraceText(tracePath, "paste begin owner=composer");
+      await waitForTraceText(
+        tracePath,
+        "paste begin owner=composer",
+        30_000,
+        "CPR paste begin before resize",
+        session,
+      );
       await session.resizeWindow(90, 28, 0);
       const targetBytes = 5_000_000;
       const cprPattern = "\x1b[1;1R";
@@ -3863,6 +4054,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
         tracePath,
         `paste end owner=composer bytes=${Buffer.byteLength(expectedPrompt)}`,
         60_000,
+        "CPR paste end across resize",
+        session,
       );
       const pasteEndIndex = completedPasteTrace.indexOf(
         "paste end owner=composer",
@@ -3875,6 +4068,9 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await waitForTraceText(
         tracePath,
         "cursor_measure_requested protocol=ansi_tagged",
+        30_000,
+        "cursor probe after CPR paste submit",
+        session,
       );
       expect(await waitForQueuedPromptBytes(tracePath, 60_000)).toBe(
         Buffer.byteLength(expectedPrompt),
@@ -3959,6 +4155,9 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const pausedTrace = await waitForTraceText(
         tracePath,
         "cursor_measure_paused reason=paste_start",
+        30_000,
+        "cursor probe paused by late paste start",
+        session,
       );
       expect(pausedTrace.indexOf("cursor_measure_requested protocol=private"))
         .toBeLessThan(pausedTrace.indexOf("cursor_measure_paused reason=paste_start"));
@@ -3974,6 +4173,9 @@ describe.skipIf(SKIP)("tui: resize", () => {
       const completedPasteTrace = await waitForTraceText(
         tracePath,
         `paste end owner=composer bytes=${Buffer.byteLength(expectedPrompt)}`,
+        30_000,
+        "late CPR paste end",
+        session,
       );
       const pasteEndIndex = completedPasteTrace.indexOf(
         "paste end owner=composer",
@@ -4023,10 +4225,19 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await waitForTraceText(
         tracePath,
         "cursor_measure_requested protocol=private",
+        30_000,
+        "private cursor probe before timeout injection",
+        session,
       );
 
       await session.sendHexBytes(["1b", "5b", "3f", "31", "32"]);
-      await waitForTraceText(tracePath, "cursor_measure_failed err=Timeout");
+      await waitForTraceText(
+        tracePath,
+        "cursor_measure_failed err=Timeout",
+        30_000,
+        "cursor probe timeout",
+        session,
+      );
       await session.sendHexBytes(["1b", "5b", "32", "30", "30", "7e"]);
       await session.sendLiteral("kept");
       await session.sendHexBytes(["1b", "5b", "32", "30", "31", "7e"]);
@@ -4078,6 +4289,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         await session.waitForPane(
           (pane) => hasEmptyComposer(pane) && !pane.includes("Enter Open"),
           5_000,
+          { description: "help dismissed after history reset" },
         );
         const scrollback = await session.captureFullScrollback();
         expect(scrollback).not.toContain(marker);
@@ -4181,11 +4393,17 @@ describe.skipIf(SKIP)("tui: resize", () => {
         tracePath,
         "theme_query_requested kind=response_fence",
         fenceRequests + 1,
+        30_000,
+        "response-fence query after first theme notification",
+        session,
       );
       await waitForTraceCount(
         tracePath,
         "theme_query_requested kind=background",
         backgroundRequests + 1,
+        30_000,
+        "background query after first theme notification",
+        session,
       );
       await session.sendHexBytes([
         ...responseFence,
@@ -4193,8 +4411,21 @@ describe.skipIf(SKIP)("tui: resize", () => {
         ...lightBackground,
         ...responseFence,
       ]);
-      await waitForTraceText(tracePath, "theme_update_settled light=true rgb=terminal");
-      await waitForTapeOutputCount(tapePath, "\x1b[3J", resetCountBefore + 1);
+      await waitForTraceText(
+        tracePath,
+        "theme_update_settled light=true rgb=terminal",
+        30_000,
+        "light theme settled",
+        session,
+      );
+      await waitForTapeOutputCount(
+        tapePath,
+        "\x1b[3J",
+        resetCountBefore + 1,
+        30_000,
+        "light-theme replay reset in the tape",
+        session,
+      );
 
       const replayed = await session.waitForText(inlineTailMarker, TIMEOUT);
       expect(replayed).not.toContain("?997");
@@ -4232,6 +4463,9 @@ describe.skipIf(SKIP)("tui: resize", () => {
         tracePath,
         "theme_query_requested kind=background",
         backgroundRequests + 1,
+        30_000,
+        "background query after second theme notification",
+        session,
       );
       expect(
         countOccurrences(queryTrace, "theme_query_requested kind=response_fence"),
@@ -4242,9 +4476,22 @@ describe.skipIf(SKIP)("tui: resize", () => {
         ...darkBackground,
         ...responseFence,
       ]);
-      await waitForTraceText(tracePath, "theme_update_settled light=false rgb=terminal");
+      await waitForTraceText(
+        tracePath,
+        "theme_update_settled light=false rgb=terminal",
+        30_000,
+        "dark theme settled",
+        session,
+      );
       expect(
-        await waitForTapeOutputCount(tapePath, "\x1b[3J", resetCountBefore + 2),
+        await waitForTapeOutputCount(
+          tapePath,
+          "\x1b[3J",
+          resetCountBefore + 2,
+          30_000,
+          "dark-theme replay reset in the tape",
+          session,
+        ),
       ).toBe(resetCountBefore + 2);
 
       await session.sendText("Confirm input survives the theme reset.");
