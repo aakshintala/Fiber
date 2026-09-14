@@ -418,7 +418,8 @@ async function waitForSelectedSlashLabel(
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(
-    `Timed out waiting for selected slash label ${label}; last=${last}`,
+    `Timed out waiting for selected slash label ${label}; last selected row=${last}.\n` +
+      `Pane: ${active.describePaneExit()}.\nLast pane:\n${await active.capturePane()}`,
   );
 }
 
@@ -569,6 +570,7 @@ async function waitForResizeCycle(
   afterLine: number,
   predicate: (cycle: ResizeCycle) => boolean,
   timeoutMs = 45_000,
+  description = "matching resize cycle",
 ): Promise<ResizeCycle> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -579,7 +581,7 @@ async function waitForResizeCycle(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(
-    `Timed out waiting for resize cycle after line ${afterLine}.\nTrace:\n${
+    `Timed out waiting for resize cycle (${description}) after line ${afterLine}.\nTrace:\n${
       existsSync(tracePath) ? readFileSync(tracePath, "utf8") : ""
     }`,
   );
@@ -631,6 +633,7 @@ async function waitForCommittedTraceAttempt(
   afterLine: number,
   predicate: (attempt: TraceAttempt) => boolean,
   timeoutMs = 45_000,
+  description = "matching committed trace attempt",
 ): Promise<TraceAttempt> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -641,7 +644,7 @@ async function waitForCommittedTraceAttempt(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(
-    `Timed out waiting for committed trace attempt after line ${afterLine}.\nTrace:\n${
+    `Timed out waiting for committed trace attempt (${description}) after line ${afterLine}.\nTrace:\n${
       existsSync(tracePath) ? readFileSync(tracePath, "utf8") : ""
     }`,
   );
@@ -680,7 +683,8 @@ async function waitForLiveScrollbackText(
     const status = s.paneStatus();
     if (status.dead) {
       throw new Error(
-        `fiber exited with status ${status.status} while waiting for ${JSON.stringify(needle)}.\nScrollback:\n${last}`,
+        `fiber exited with status ${status.status} while waiting for scrollback text ${JSON.stringify(needle)}.\n` +
+          `Pane: ${s.describePaneExit()}.\nScrollback:\n${last}`,
       );
     }
     last = await s.captureFullScrollback();
@@ -688,7 +692,8 @@ async function waitForLiveScrollbackText(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(
-    `Timed out waiting for ${JSON.stringify(needle)}.\nScrollback:\n${last}`,
+    `Timed out waiting for scrollback text ${JSON.stringify(needle)}.\n` +
+      `Pane: ${s.describePaneExit()}.\nScrollback:\n${last}`,
   );
 }
 
@@ -705,7 +710,8 @@ async function waitForScrollbackWithoutText(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(
-    `Timed out waiting for scrollback to clear ${JSON.stringify(needle)}.\nScrollback:\n${last}`,
+    `Timed out waiting for scrollback to clear ${JSON.stringify(needle)}.\n` +
+      `Pane: ${s.describePaneExit()}.\nScrollback:\n${last}`,
   );
 }
 
@@ -722,7 +728,35 @@ async function waitForSettledFooter(
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Timed out waiting for settled footer.\n${last.join("\n")}`);
+  throw new Error(
+    `Timed out waiting for settled footer after ${timeoutMs}ms.\n` +
+      `Pane: ${s.describePaneExit()}.\nLast grid:\n${last.join("\n")}`,
+  );
+}
+
+async function waitForStablePaneGrid(
+  s: TmuxSession,
+  description: string,
+  predicate: (grid: string[]) => boolean,
+  timeoutMs = 10_000,
+): Promise<string[]> {
+  const deadline = Date.now() + timeoutMs;
+  let last: string[] = [];
+  let stablePolls = 0;
+  while (Date.now() < deadline) {
+    last = await s.capturePaneGrid();
+    if (predicate(last)) {
+      stablePolls += 1;
+      if (stablePolls >= 2) return last;
+    } else {
+      stablePolls = 0;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `Timed out waiting for stable pane grid (${description}).\n` +
+      `Pane: ${s.describePaneExit()}.\nLast grid:\n${last.join("\n")}`,
+  );
 }
 
 async function waitForSkillsMenuGrid(
@@ -741,7 +775,8 @@ async function waitForSkillsMenuGrid(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(
-    `Timed out waiting for skills menu with ${count} entries.\n${last.join("\n")}`,
+    `Timed out waiting for skills menu with ${count} entries.\n` +
+      `Pane: ${s.describePaneExit()}.\nLast grid:\n${last.join("\n")}`,
   );
 }
 
@@ -990,7 +1025,11 @@ async function waitForGatewayRequestCount(
   while (gateway.requests.length < count && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  expect(gateway.requests.length).toBeGreaterThanOrEqual(count);
+  if (gateway.requests.length < count) {
+    throw new Error(
+      `Timed out waiting for ${count} gateway requests; received ${gateway.requests.length}.`,
+    );
+  }
 }
 
 function committedResizeFrameCount(tracePath: string): number {
@@ -1131,7 +1170,8 @@ async function waitForMarkersOnDistinctRows(
 
   const final = await s.capturePaneGrid();
   throw new Error(
-    `Timed out waiting for distinct marker rows: ${first}, ${second}\n${final.join("\n")}`,
+    `Timed out waiting for distinct marker rows: ${first}, ${second}.\n` +
+      `Pane: ${s.describePaneExit()}.\nLast grid:\n${final.join("\n")}`,
   );
 }
 
@@ -1282,6 +1322,8 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
       tracePath,
       beforeShrink,
       (candidate) => attemptHasReason(candidate, "resize"),
+      45_000,
+      "shrink resize commit",
     );
     expect(s.paneSize()).toEqual({ cols: 70, rows: shrinkRows });
     expect(shrinkAttempt.beginLine).toContain("resize");
@@ -1290,7 +1332,7 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
       cycle.oldSize.rows === 34 &&
       cycle.newSize.cols === 70 &&
       cycle.newSize.rows === shrinkRows
-    );
+    , 45_000, `shrink 120x34 to 70x${shrinkRows}`);
     expect(shrinkCycle.historyRowDelta).toBeGreaterThanOrEqual(0);
     expect(attemptLine(shrinkAttempt, "attempt_result ")).toContain(
       "shadow_state=committed",
@@ -1315,6 +1357,8 @@ async function runLargeSkillResizeAttempt(attempt: number): Promise<string> {
       tracePath,
       beforeGrow,
       (candidate) => attemptHasReason(candidate, "resize"),
+      45_000,
+      "grow resize commit",
     );
     expect(s.paneSize()).toEqual({ cols: 120, rows: 34 });
     expect(attemptLine(growAttempt, "attempt_result ")).toContain(
@@ -1695,6 +1739,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
         tracePath,
         beforeResize,
         (candidate) => attemptHasReason(candidate, "resize"),
+        45_000,
+        "settled resize commit",
       );
 
       const scrollback = await waitForScrollbackWithoutText(
@@ -1766,7 +1812,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await session.waitForText("Running for i in $(seq 1 96)", TIMEOUT);
 
       const resizeCount = committedResizeFrameCount(tracePath);
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await waitForTapeOutputCount(tapePath, "resize-stream-marker", 1, TIMEOUT);
       await session.resizeWindow(64, 16, 250);
       await waitForCommittedResizeFrame(tracePath, resizeCount);
       await waitForLiveScrollbackText(session, finalResponse, TIMEOUT);
@@ -2142,6 +2188,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         const gutter = cols >= 3 ? 2 : cols === 2 ? 1 : 0;
         let grid: string[] = [];
         let terminalRows: string[] = [];
+        let settled = false;
         while (Date.now() < deadline) {
           grid = await session!.capturePaneGrid();
           terminalRows = (await session!.captureFullScrollback()).split("\n");
@@ -2150,8 +2197,17 @@ describe.skipIf(SKIP)("tui: resize", () => {
             return rule.startsWith(" ".repeat(gutter)) &&
               Array.from(rule).filter((glyph) => glyph === "─").length === cols - gutter;
           });
-          if (findFooter(grid) !== null && ruleRows.length === 1) break;
+          if (findFooter(grid) !== null && ruleRows.length === 1) {
+            settled = true;
+            break;
+          }
           await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        if (!settled) {
+          throw new Error(
+            `Timed out waiting for thematic rule reflow at ${cols} cols.\n` +
+              `Pane: ${session!.describePaneExit()}.\nLast grid:\n${grid.join("\n")}`,
+          );
         }
 
         const footer = findFooter(grid);
@@ -2228,6 +2284,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
         const prefix = " ".repeat(gutter) + "│ │ ";
         let grid: string[] = [];
         let terminalRows: string[] = [];
+        let settled = false;
         while (Date.now() < deadline) {
           grid = await session!.capturePaneGrid();
           terminalRows = (await session!.captureFullScrollback()).split("\n");
@@ -2236,8 +2293,17 @@ describe.skipIf(SKIP)("tui: resize", () => {
             findFooter(grid) !== null &&
             quoteRows.length >= minimumRows &&
             terminalRows.some((line) => line.startsWith(prefix) && line.includes(lazySentinel))
-          ) break;
+          ) {
+            settled = true;
+            break;
+          }
           await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        if (!settled) {
+          throw new Error(
+            `Timed out waiting for nested blockquote reflow at ${cols} cols (minimum ${minimumRows} rows).\n` +
+              `Pane: ${session!.describePaneExit()}.\nLast grid:\n${grid.join("\n")}`,
+          );
         }
 
         const quoteRows = terminalRows.filter((line) => line.startsWith(prefix));
@@ -2507,7 +2573,11 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await session.resizeWindow(70, 16, 250);
       await session.waitForText("/help", 10_000);
       await waitForSelectedSlashLabel(session, "/help");
-      const shrinkStage = await session.captureFullScrollback();
+      const shrinkStage = await session.waitForPane(
+        (pane) => pane.includes("Commands 21 · Type to filter") && pane.includes("1–4"),
+        10_000,
+        { description: "open slash picker catalog after shrink to 70x16" },
+      );
       expect(shrinkStage).toContain("Commands 21 · Type to filter");
       expect(shrinkStage).toContain("1–4");
       writeFileSync(join(root, "scrollback-after-shrink.txt"), shrinkStage);
@@ -2774,8 +2844,13 @@ describe.skipIf(SKIP)("tui: resize", () => {
           ),
         TIMEOUT,
       );
-      await Bun.sleep(150);
-      const handoffGrid = await session.capturePaneGrid();
+      const handoffGrid = await waitForStablePaneGrid(
+        session,
+        "workspace add handoff without a synthetic completion row",
+        (grid) =>
+          grid.some((line) => isInputRow(line) && line.includes("/workspace add")) &&
+          grid.every((line) => line.trim() !== "add"),
+      );
       expect(handoffGrid.some((line) => line.trim() === "add")).toBe(false);
 
       await session.sendKeys("C-u");
@@ -2906,7 +2981,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       session = await launchAt(120, 40);
       await session.resizeWindow(60, 20);
 
-      const grid = await session.capturePaneGrid();
+      const grid = await waitForSettledFooter(session);
       expect(grid.length).toBeGreaterThan(0);
       const footer = findFooter(grid);
       expect(footer).not.toBeNull();
@@ -2921,7 +2996,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       session = await launchAt(100, 40);
       await session.resizeWindow(100, 18);
 
-      const grid = await session.capturePaneGrid();
+      const grid = await waitForSettledFooter(session);
       expect(grid.length).toBeGreaterThan(0);
       expect(findFooterBlocks(grid)).toHaveLength(1);
     },
@@ -2933,10 +3008,12 @@ describe.skipIf(SKIP)("tui: resize", () => {
     async () => {
       session = await launchAt(120, 40);
       await session.sendKeys("-l 'resize-marker-alpha'");
-      await new Promise((r) => setTimeout(r, 200));
+      await session.waitForPane((pane) => pane.includes("resize-marker-alpha"), 10_000, {
+        description: "typed input echo before shrink",
+      });
       await session.resizeWindow(80, 30);
 
-      const grid = await session.capturePaneGrid();
+      const grid = await waitForSettledFooter(session);
       const combined = grid.join("\n");
       expect(combined).toContain("resize-marker-alpha");
       expect(findFooter(grid)).not.toBeNull();
@@ -2949,10 +3026,12 @@ describe.skipIf(SKIP)("tui: resize", () => {
     async () => {
       session = await launchAt(120, 40);
       await session.sendKeys("-l 'resize-footer-alpha resize-footer-beta resize-footer-gamma resize-footer-delta resize-footer-epsilon'");
-      await new Promise((r) => setTimeout(r, 200));
+      await session.waitForPane((pane) => pane.includes("resize-footer-alpha"), 10_000, {
+        description: "multiline input echo before shrink",
+      });
       await session.resizeWindow(70, 24);
 
-      const grid = await session.capturePaneGrid();
+      const grid = await waitForSettledFooter(session);
       const combined = grid.join("\n");
       expect(combined).toContain("resize-footer");
       expect(findFooterBlocks(grid)).toHaveLength(1);
@@ -3349,9 +3428,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
     async () => {
       session = await launchAt(120, 40);
       await session.resizeWindow(80, 30);
-      await new Promise((r) => setTimeout(r, 300));
 
-      const grid = await session.capturePaneGrid();
+      const grid = await waitForSettledFooter(session);
       expect(session.paneSize()).toEqual({ cols: 80, rows: 30 });
       const footer = findFooter(grid);
       expect(footer).not.toBeNull();
@@ -3365,9 +3443,8 @@ describe.skipIf(SKIP)("tui: resize", () => {
     async () => {
       session = await launchAt(120, 40);
       await session.resizeWindow(80, 30);
-      await new Promise((r) => setTimeout(r, 300));
 
-      const grid = await session.capturePaneGrid();
+      const grid = await waitForSettledFooter(session);
       const dividerWidths = grid.filter(isDividerRow).map((line) => line.length);
       expect(dividerWidths.length).toBeLessThanOrEqual(3);
       for (const w of dividerWidths) {
@@ -3387,7 +3464,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
       expect(session.isAlive()).toBe(true);
 
       await session.resizeWindow(100, 30, 500);
-      const grid = await session.capturePaneGrid();
+      const grid = await waitForSettledFooter(session);
       expect(grid.join("\n")).toContain("invalid-dim-recovery");
       expect(findFooterBlocks(grid)).toHaveLength(1);
     },
@@ -3418,7 +3495,15 @@ describe.skipIf(SKIP)("tui: resize", () => {
       await session.waitForText("Commands 21", 5_000);
       await session.resizeWindow(76, 24, 400);
 
-      const grid = await session.capturePaneGrid();
+      const grid = (
+        await session.waitForPane(
+          (pane) =>
+            pane.includes("Commands 21") &&
+            findInlineHelpPicker(pane.split("\n")) !== null,
+          TIMEOUT,
+          { description: "help catalog retained after resize to 76x24" },
+        )
+      ).split("\n");
       expect(grid.join("\n")).toContain("Commands 21");
       expect(findInlineHelpPicker(grid)).not.toBeNull();
 
@@ -3450,10 +3535,30 @@ describe.skipIf(SKIP)("tui: resize", () => {
       };
 
       await session.resizeWindow(72, 20, 500);
-      expectHelpCatalog(await session.capturePaneGrid());
+      expectHelpCatalog(
+        (
+          await session.waitForPane(
+            (pane) =>
+              pane.includes("Commands 21") &&
+              findInlineHelpPicker(pane.split("\n")) !== null,
+            TIMEOUT,
+            { description: "help catalog retained after shrink to 72x20" },
+          )
+        ).split("\n"),
+      );
 
       await session.resizeWindow(140, 45, 500);
-      expectHelpCatalog(await session.capturePaneGrid());
+      expectHelpCatalog(
+        (
+          await session.waitForPane(
+            (pane) =>
+              pane.includes("Commands 21") &&
+              findInlineHelpPicker(pane.split("\n")) !== null,
+            TIMEOUT,
+            { description: "help catalog retained after grow to 140x45" },
+          )
+        ).split("\n"),
+      );
 
       await session.sendKeys("Escape");
       await session.waitForPane(
@@ -3550,6 +3655,7 @@ describe.skipIf(SKIP)("tui: resize", () => {
           cycle.newSize.rows === 40 &&
           cycle.historyRowDelta !== 0,
         60_000,
+        "grow to 120x40 with nonzero history delta",
       );
       expect(resizeCycle.historyRowDelta).not.toBe(0);
       const requestLine = readTraceLines(tracePath).find(
