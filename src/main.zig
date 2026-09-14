@@ -381,6 +381,22 @@ const App = struct {
         return builtin_mcp.command_provider;
     }
 
+    pub fn addMcpProfileServer(
+        _: *const Self,
+        alloc: Allocator,
+        intent: mcp_command_provider.AddIntent,
+    ) !mcp_command_provider.ProfileAddResult {
+        return builtin_mcp.addProfileServer(alloc, intent);
+    }
+
+    pub fn removeMcpProfileServer(
+        _: *const Self,
+        alloc: Allocator,
+        name: []const u8,
+    ) !mcp_command_provider.ProfileRemoveResult {
+        return builtin_mcp.removeProfileServer(alloc, name);
+    }
+
     pub fn skillsCommandProvider(_: *const Self) skill_commands.Provider {
         return builtin_skills.command_provider;
     }
@@ -3248,6 +3264,7 @@ fn fullEntryConfig() app_entry_runtime.Config {
         .context_registry = default_context_registry,
         .mode_registry = builtin_modes.registry,
         .tool_set = builtin_tools.advertisement_set,
+        .shell_process_only_tool = builtin_tools.shellProcessOnlySpec(),
         .inspect_mcp_profile_config = builtin_mcp.inspectProfileConfig,
         .inspect_mcp_local_config = builtin_mcp.inspectLocalConfig,
         .load_mcp_runtime = builtin_mcp.loadRuntime,
@@ -3282,6 +3299,7 @@ fn localEntryConfig() app_entry_runtime.Config {
         .context_registry = default_context_registry,
         .mode_registry = builtin_modes.registry,
         .tool_set = builtin_tools.advertisement_set,
+        .shell_process_only_tool = builtin_tools.shellProcessOnlySpec(),
         .inspect_mcp_profile_config = builtin_mcp.inspectProfileConfig,
         .inspect_mcp_local_config = builtin_mcp.inspectLocalConfig,
         .load_mcp_runtime = builtin_mcp.loadRuntime,
@@ -3316,6 +3334,7 @@ fn emptyEntryConfig() app_entry_runtime.Config {
         .context_registry = default_context_registry,
         .mode_registry = builtin_modes.registry,
         .tool_set = builtin_tools.advertisement_set,
+        .shell_process_only_tool = builtin_tools.shellProcessOnlySpec(),
         .inspect_mcp_profile_config = builtin_mcp.inspectProfileConfig,
         .inspect_mcp_local_config = builtin_mcp.inspectLocalConfig,
         .load_mcp_runtime = builtin_mcp.loadRuntime,

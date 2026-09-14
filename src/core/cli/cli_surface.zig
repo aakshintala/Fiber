@@ -43,6 +43,7 @@ const project_config = @import("../mcp/project_config.zig");
 const mcp_runtime = @import("../mcp/mcp_runtime.zig");
 const text_utils = @import("../shared/text_utils.zig");
 const profile_paths = @import("../shared/profile_paths.zig");
+const tool_dispatch = @import("../tooling/tool_dispatch.zig");
 const tool_set_contract = @import("../tooling/tool_set.zig");
 const workspace_commands = @import("../workspace/workspace_commands.zig");
 const usage_cli_runtime = @import("usage_cli_runtime.zig");
@@ -156,6 +157,7 @@ pub const Config = struct {
     context_registry: context_contract.Registry,
     mode_registry: mode_registry.Registry,
     tool_set: tool_set_contract.ToolSet,
+    shell_process_only_tool: tool_dispatch.Tool,
     inspect_mcp_profile_config: mcp_contract.InspectProfileConfigFn,
     inspect_mcp_local_config: mcp_health.InspectLocalConfigFn =
         mcp_health.inspectLocalConfigUnavailable,
@@ -784,7 +786,7 @@ fn runNonInteractiveWithDeps(
         },
         .ask => |rest| {
             try writeMcpProfileWarningIfPresent(alloc, cfg, deps);
-            const exit_code = try cli_ask.run(alloc, rest, workflowConfigWithLaunchModifiers(cfg, global_args.modifiers), cfg.context_registry, cfg.tool_set);
+            const exit_code = try cli_ask.run(alloc, rest, workflowConfigWithLaunchModifiers(cfg, global_args.modifiers), cfg.context_registry, cfg.tool_set, cfg.shell_process_only_tool);
             return .{ .handled_exit = exit_code };
         },
         .auth => |rest| {
@@ -5890,6 +5892,7 @@ fn stableCliTestEnviron() !*const std.process.Environ.Map {
 }
 
 fn testConfig() Config {
+    const builtin_tools = @import("../../builtins/tools.zig");
     return .{
         .version = "0.0.0",
         .command_catalog = testCommandCatalog(),
@@ -5912,6 +5915,7 @@ fn testConfig() Config {
         .max_history_turns = 8,
         .context_registry = test_surface_context_registry,
         .mode_registry = .{ .default_mode_id = "surface" },
+        .shell_process_only_tool = builtin_tools.shellProcessOnlySpec(),
         .inspect_mcp_profile_config = clearMcpConfigInspectionForTest,
         .load_mcp_runtime = noMcpRuntimeForTest,
         .tool_set = .{

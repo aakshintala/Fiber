@@ -60,7 +60,6 @@ const test_builtin_gateway = if (std_builtin.is_test)
     @import("../../builtins/gateway.zig")
 else
     struct {};
-const builtin_tools = @import("../../builtins/tools.zig");
 const model_tool_schema = @import("../tooling/model_tool_schema.zig");
 const tool_projection_mod = @import("../tooling/tool_projection.zig");
 const tool_admission = @import("../tooling/tool_admission.zig");
@@ -388,6 +387,7 @@ const RunDeps = struct {
     load_skills: LoadSkillsFn = app_runtime_setup.loadSkills,
     context_registry: context_contract.Registry,
     tool_set: tool_set_contract.ToolSet,
+    shell_process_only_tool: tool_dispatch.Tool,
     load_mcp_runtime: mcp_runtime.LoadRuntimeFn,
     process_queued_prompt: ProcessQueuedPromptFn = processQueuedPromptDefault,
     persist_yolo_acknowledgment: PersistYoloAcknowledgmentFn = persistYoloAcknowledgmentDefault,
@@ -435,6 +435,7 @@ fn buildAskGatewayToolProjection(
     alloc: Allocator,
     registry: mode_registry.Registry,
     tool_set: tool_set_contract.ToolSet,
+    shell_process_only_tool: tool_dispatch.Tool,
     mode_id: []const u8,
     options: tool_projection_mod.Options,
     has_child_capability: bool,
@@ -468,7 +469,7 @@ fn buildAskGatewayToolProjection(
         tool_set.registry.tools,
     );
     defer alloc.free(projected_tools);
-    projected_tools[shell_index] = builtin_tools.shellProcessOnlySpec();
+    projected_tools[shell_index] = shell_process_only_tool;
     return registry.buildModelToolProjection(
         alloc,
         .{
@@ -1059,11 +1060,12 @@ fn freshAskState(
     };
 }
 
-pub fn run(alloc: Allocator, args: []const [:0]const u8, cfg: Config, context_registry: context_contract.Registry, tool_set: tool_set_contract.ToolSet) !u8 {
+pub fn run(alloc: Allocator, args: []const [:0]const u8, cfg: Config, context_registry: context_contract.Registry, tool_set: tool_set_contract.ToolSet, shell_process_only_tool: tool_dispatch.Tool) !u8 {
     return runWithDeps(alloc, args, cfg, .{
         .load_startup_state = app_lifecycle.loadStartupState,
         .context_registry = context_registry,
         .tool_set = tool_set,
+        .shell_process_only_tool = shell_process_only_tool,
         .load_mcp_runtime = cfg.load_mcp_runtime,
         .install_headless_interrupt = true,
     });
@@ -1599,7 +1601,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
         writable.childCapability() catch null
     else
         null;
-    var tool_projection = try buildAskGatewayToolProjection(alloc, ctx.cfg.mode_registry, options.deps.tool_set, ctx.mode_id, .{
+    var tool_projection = try buildAskGatewayToolProjection(alloc, ctx.cfg.mode_registry, options.deps.tool_set, options.deps.shell_process_only_tool, ctx.mode_id, .{
         .permission_mode = ctx.permission_mode,
         .permission_rules = ctx.permission_rules,
         .mcp_runtime = ctx.mcp,
@@ -4377,6 +4379,7 @@ fn testNoMcpRuntime(_: Allocator, _: []const u8, _: mcp_elicitation.Capabilities
 }
 
 fn testPromptRunDeps(stdout_capture: *TestCapture, stderr_capture: *TestCapture, load_startup_state: LoadStartupStateFn) RunDeps {
+    const builtin_tools = @import("../../builtins/tools.zig");
     return .{
         .stdout_ctx = stdout_capture,
         .stderr_ctx = stderr_capture,
@@ -4387,6 +4390,7 @@ fn testPromptRunDeps(stdout_capture: *TestCapture, stderr_capture: *TestCapture,
         .load_skills = testLoadNoSkills,
         .context_registry = test_no_context_registry,
         .tool_set = builtin_tools.advertisement_set,
+        .shell_process_only_tool = builtin_tools.shellProcessOnlySpec(),
         .load_mcp_runtime = testNoMcpRuntime,
         .process_queued_prompt = testProcessQueuedPrompt,
     };
@@ -4417,6 +4421,7 @@ fn testPermissionRuleSet(alloc: Allocator, permission: []const u8, pattern: []co
 }
 
 test "CLI lifecycle action preserves dynamic MCP availability boundaries" {
+    const builtin_tools = @import("../../builtins/tools.zig");
     const Fixture = struct {
         calls: usize = 0,
         available: bool = false,
@@ -6574,6 +6579,7 @@ test "runWithDeps projects exec-only terminal when saved setup has no capability
 
 test "runWithDeps uses the supplied tool set for advertisement and runtime" {
     const alloc = std.testing.allocator;
+    const builtin_tools = @import("../../builtins/tools.zig");
     const tools = [_]tool_dispatch.Tool{builtin_tools.read_file};
     const names = [_][]const u8{"read_file"};
     const tool_set: tool_set_contract.ToolSet = .{
@@ -6680,6 +6686,7 @@ test "runWithDeps retains full terminal projection with saved capability" {
 }
 
 test "exec-only terminal projection propagates view allocation failure" {
+    const builtin_tools = @import("../../builtins/tools.zig");
     var failing = std.testing.FailingAllocator.init(
         std.testing.allocator,
         .{ .fail_index = 0 },
@@ -6690,6 +6697,7 @@ test "exec-only terminal projection propagates view allocation failure" {
             failing.allocator(),
             test_mode_registry,
             builtin_tools.advertisement_set,
+            builtin_tools.shellProcessOnlySpec(),
             "inspect",
             .{},
             false,
@@ -7947,6 +7955,7 @@ test "fiber ask JSON records permission-denied tool calls as error status" {
 }
 
 test "fiber ask JSON permission-denied capture is best effort under allocation failure" {
+    const builtin_tools = @import("../../builtins/tools.zig");
     var failing = std.testing.FailingAllocator.init(
         std.testing.allocator,
         .{ .fail_index = 0 },
@@ -7957,6 +7966,7 @@ test "fiber ask JSON permission-denied capture is best effort under allocation f
         .{
             .context_registry = test_no_context_registry,
             .tool_set = builtin_tools.advertisement_set,
+            .shell_process_only_tool = builtin_tools.shellProcessOnlySpec(),
             .load_mcp_runtime = testNoMcpRuntime,
         },
         "/tmp/workspace",
@@ -8067,9 +8077,11 @@ test "fiber ask JSON captures parallel tool results without corrupting records" 
 }
 
 fn checkAskJsonCaptureAllocationFailures(alloc: Allocator) !void {
+    const builtin_tools = @import("../../builtins/tools.zig");
     var ctx = AskContext.init(alloc, testConfig(), .{
         .context_registry = test_no_context_registry,
         .tool_set = builtin_tools.advertisement_set,
+        .shell_process_only_tool = builtin_tools.shellProcessOnlySpec(),
         .load_mcp_runtime = testNoMcpRuntime,
     }, "/tmp/workspace");
     defer ctx.deinit();
@@ -8143,6 +8155,7 @@ test "fiber ask JSON records ask_user_question text for matching assertions" {
 
 test "fiber ask JSON clips ask_user_question text at a UTF-8 boundary" {
     const alloc = std.testing.allocator;
+    const builtin_tools = @import("../../builtins/tools.zig");
     var question_bytes: [257]u8 = undefined;
     @memset(question_bytes[0..255], 'a');
     question_bytes[255] = 0xc3;
@@ -8157,6 +8170,7 @@ test "fiber ask JSON clips ask_user_question text at a UTF-8 boundary" {
     var ctx = AskContext.init(alloc, testConfig(), .{
         .context_registry = test_no_context_registry,
         .tool_set = builtin_tools.advertisement_set,
+        .shell_process_only_tool = builtin_tools.shellProcessOnlySpec(),
         .load_mcp_runtime = testNoMcpRuntime,
     }, "/tmp/workspace");
     defer ctx.deinit();

@@ -99,6 +99,9 @@ jobs:
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
 
+      - name: Check core has no production builtins imports
+        run: python3 scripts/check-core-builtins.py
+
   # Heavy native leg: build, unit tests, smoke. Runs once, in draft (and on
   # manual dispatch), except docs-only changes which need no binary. The
   # ready scope adds only net-new platforms. The static gates above still
