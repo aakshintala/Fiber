@@ -162,7 +162,7 @@ class FileScope:
         parts = [self.stripped[idx][:upto_col]]
         start = idx
         j = idx - 1
-        while j >= 0 and len(parts) < 6:
+        while j >= 0:
             prev = self.stripped[j]
             if not prev.strip() or ";" in prev or "{" in prev or "}" in prev:
                 break
@@ -286,19 +286,51 @@ class FileScope:
             self.frames_at(idx, len(self.stripped[idx]) + 1)
         )
 
-    def braceless_if_lines(self) -> Set[int]:
-        """Lines covered by a braceless `if (... is_test ...)` statement."""
-        extra: Set[int] = set()
+    def braceless_spans(self) -> List[Tuple[int, int, int, int]]:
+        """(start line, start col, end line, end col) of each braceless
+        `if (... is_test ...)` statement (terminating `;` inclusive)."""
+        spans: List[Tuple[int, int, int, int]] = []
         for idx, line in enumerate(self.stripped):
-            if not IF_IS_TEST_RE.search(line) or "{" in line:
+            m = IF_IS_TEST_RE.search(line)
+            if not m or "{" in line:
                 continue
             j = idx
             while j < len(self.lines):
-                extra.add(j)
-                if ";" in self.stripped[j]:
+                semi = self.stripped[j].find(";")
+                if semi >= 0:
+                    spans.append((idx, m.start(), j, semi + 1))
                     break
                 j += 1
-        return extra
+            else:
+                spans.append(
+                    (idx, m.start(), len(self.lines) - 1,
+                     len(self.stripped[-1]) + 1)
+                )
+        return spans
+
+    def braceless_if_lines(self) -> Set[int]:
+        """Lines covered by a braceless `if (... is_test ...)` statement."""
+        return {
+            ln
+            for sl, _, el, _ in self.braceless_spans()
+            for ln in range(sl, el + 1)
+        }
+
+    def in_braceless_if(self, idx: int, col: int) -> bool:
+        """Position-exact braceless coverage: (idx, col) must start after
+        the `if` opener on its line (or on a later line of the span)."""
+        return any(
+            (sl, sc) < (idx, col) <= (el, ec)
+            for sl, sc, el, ec in self.braceless_spans()
+        )
+
+    def is_test_scoped_at(self, idx: int, col: int) -> bool:
+        """Position-exact test scope for an import starting at idx/col."""
+        if "tests" in self.path.parts:
+            return True
+        return self.is_test_scope(
+            self.frames_at(idx, col)
+        ) or self.in_braceless_if(idx, col)
 
     def statement_has_is_test(self, start_off: int, end_off: int) -> bool:
         code = self.code
@@ -424,7 +456,7 @@ def main() -> int:
             scanned += 1
             line = bisect.bisect_right(scope.starts, m.start()) - 1
             col = m.start() - (scope.text.rfind("\n", 0, m.start()) + 1)
-            if line in allowed_lines[path]:
+            if scope.is_test_scoped_at(line, col):
                 continue
             start_off = scope.starts[line] + col
             if scope.statement_has_is_test(start_off, m.end()):
