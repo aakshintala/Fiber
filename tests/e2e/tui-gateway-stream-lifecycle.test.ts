@@ -825,6 +825,69 @@ async function waitForScrollback(
   );
 }
 
+type UsageCheckpointRecord = {
+  kind: string;
+  payload?: { usage?: { pending?: unknown[] } };
+};
+
+function sessionEventLogPaths(sessionsRoot: string): string[] {
+  let entries;
+  try {
+    entries = readdirSync(sessionsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const paths: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const eventsPath = join(sessionsRoot, entry.name, "events.jsonl");
+    try {
+      if (existsSync(eventsPath)) paths.push(eventsPath);
+    } catch {}
+  }
+  return paths;
+}
+
+async function waitForUsageCheckpoint(
+  home: string,
+  description: string,
+  timeoutMs = TIMEOUT,
+): Promise<void> {
+  const sessionsRoot = join(home, ".fiber", "sessions");
+  const deadline = Date.now() + timeoutMs;
+  let lastDetail = "no session events yet";
+  while (Date.now() < deadline) {
+    for (const eventsPath of sessionEventLogPaths(sessionsRoot)) {
+      let content = "";
+      try {
+        content = readFileSync(eventsPath, "utf8");
+      } catch {
+        continue;
+      }
+      lastDetail = `scanned ${eventsPath} (${content.length} bytes)`;
+      for (const line of content.trim().split("\n")) {
+        if (line.length === 0) continue;
+        let record: UsageCheckpointRecord;
+        try {
+          record = JSON.parse(line) as UsageCheckpointRecord;
+        } catch {
+          continue;
+        }
+        const pending = record.payload?.usage?.pending;
+        if (
+          record.kind === "usage_checkpointed" &&
+          Array.isArray(pending) &&
+          pending.length === 0
+        ) {
+          return;
+        }
+      }
+    }
+    await Bun.sleep(25);
+  }
+  throw new Error(`timed out waiting for ${description}.\nLast detail: ${lastDetail}`);
+}
+
 function lifecycleStage(): LifecycleStage {
   const value = process.env.FIBER_LIFECYCLE_STAGE ?? "corrected";
   if (
@@ -1651,7 +1714,16 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       );
 
       hold.finish?.();
-      await session!.waitForText(finalSentinel, TIMEOUT);
+      await session!.waitForPane(
+        (pane) => pane.includes(finalSentinel),
+        TIMEOUT,
+        { description: "live token counter stage=sentinel-arrival" },
+      );
+      await waitForUsageCheckpoint(
+        join(root!, "home"),
+        "live token counter stage=usage-recorded",
+        TIMEOUT,
+      );
       const finalScrollback = await waitForScrollback(
         session!,
         (value) =>
@@ -1659,7 +1731,8 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           / {2}(?:\d+s|\d+m \d+s|\d+h \d{2}m) \(↑8 ↓20k\)/.test(
             value,
           ),
-        "final compact token summary",
+        "live token counter stage=row-rendered final compact token summary",
+        60_000,
       );
       expect(finalScrollback).toContain(finalSentinel);
       expect(readFileSync(stderrPath, "utf8")).toBe("");

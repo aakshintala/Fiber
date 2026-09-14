@@ -132,8 +132,13 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
 
       await session.sendText("Hold this response until the test releases it.");
       await waitForCondition(() => held.started, "held response start", LOCAL_FLAG_TIMEOUT);
+      const queuedTraceOffset = readTrace(tracePath).length;
       await session.sendText(queuedText);
-      await Bun.sleep(250);
+      await waitForCondition(
+        () => readTrace(tracePath).slice(queuedTraceOffset).includes("queue_depth=1"),
+        "queued prompt to reach the worker",
+        LOCAL_FLAG_TIMEOUT,
+      );
 
       expect(codex!.requests).toHaveLength(1);
       expect(held.cancelled).toBe(false);

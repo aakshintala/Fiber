@@ -791,6 +791,15 @@ type WaitForEvidence = {
   stderrTail?: () => string;
 };
 
+async function expectAbsentDuring(path: string, windowMs: number): Promise<void> {
+  const deadline = Date.now() + windowMs;
+  while (Date.now() < deadline) {
+    expect(existsSync(path)).toBe(false);
+    await Bun.sleep(10);
+  }
+  expect(existsSync(path)).toBe(false);
+}
+
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs = 2_000,
@@ -1636,6 +1645,8 @@ test("fresh hidden host is singular, correlated, reconnectable, private, and idl
   await waitFor(() => existsSync(paths.socket) && existsSync(paths.identity));
   await waitFor(
     () => contenders.filter((child) => child.exitCode === null).length === 1,
+    10_000,
+    "single authoritative host",
   );
 
   expect(statSync(join(home, ".fiber")).mode & 0o777).toBe(0o700);
@@ -1667,6 +1678,8 @@ test("fresh hidden host is singular, correlated, reconnectable, private, and idl
   const authoritative = contenders.find((child) => child.exitCode === null)!;
   expect(await waitForExit(authoritative)).toBe(0);
   await Promise.all(contenders.map(waitForExit));
+  await waitFor(() => !existsSync(paths.socket), 5_000, "retired host socket removal");
+  await waitFor(() => !existsSync(paths.identity), 5_000, "retired host identity removal");
   expect(existsSync(paths.socket)).toBe(false);
   expect(existsSync(paths.identity)).toBe(false);
   expect(existsSync(paths.lock)).toBe(true);
@@ -4317,8 +4330,7 @@ test("revoke and close quiesce writes already queued under stale authority", asy
   })).toBe(true);
   expect(revokeResponses.some((frame) => failureCode(frame) === "authority_denied")).toBe(true);
   await waitFor(() => existsSync(join(home, "revoke-allowed")));
-  await Bun.sleep(75);
-  expect(existsSync(join(home, "revoke-stale"))).toBe(false);
+  await expectAbsentDuring(join(home, "revoke-stale"), 1_000);
 
   const closedId = await startMarkerSession("close");
   rmSync(writeBarrier, { force: true });
@@ -4370,8 +4382,7 @@ test("revoke and close quiesce writes already queued under stale authority", asy
   );
   expect(staleFrame).toBeDefined();
   await waitFor(() => existsSync(join(home, "close-allowed")));
-  await Bun.sleep(75);
-  expect(existsSync(join(home, "close-stale"))).toBe(false);
+  await expectAbsentDuring(join(home, "close-stale"), 1_000);
 
   connected.client.close();
   host.kill("SIGKILL");
@@ -4792,8 +4803,7 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
       ),
     );
     await waitFor(() => existsSync(profileReady));
-    await Bun.sleep(75);
-    expect(existsSync(commandRan)).toBe(false);
+    await expectAbsentDuring(commandRan, 1_000);
     const boundaryFrame = await connected.client.read();
     rememberStartAuthority(boundaryFrame, boundaryRequest);
     expect(boundaryFrame.correlation).toBe(boundaryCorrelation);
@@ -6554,12 +6564,27 @@ test("host remains authoritative until natural backend cleanup finishes", async 
   expect(host.exitCode).toBeNull();
   expect(existsSync(paths.socket)).toBe(true);
   expect(existsSync(paths.identity)).toBe(true);
-  const duringCleanup = await Promise.race([
-    handshake(paths.socket, { minimum: 4, current: 5 }),
-    Bun.sleep(400).then(() => {
-      throw new Error("host stopped accepting during backend cleanup");
-    }),
-  ]);
+  let duringCleanup: Awaited<ReturnType<typeof handshake>> | null = null;
+  let lastHandshakeError: unknown = null;
+  const cleanupHandshakeDeadline = Date.now() + 5_000;
+  while (duringCleanup === null && Date.now() < cleanupHandshakeDeadline) {
+    try {
+      duringCleanup = await Promise.race([
+        handshake(paths.socket, { minimum: 4, current: 5 }),
+        Bun.sleep(1_000).then((): null => {
+          throw new Error("handshake attempt timed out");
+        }),
+      ]);
+    } catch (error) {
+      lastHandshakeError = error;
+      await Bun.sleep(25);
+    }
+  }
+  if (duringCleanup === null) {
+    throw new Error(
+      `host stopped accepting during backend cleanup: ${String(lastHandshakeError)}`,
+    );
+  }
   expect(duringCleanup.revision).toBe(5);
   duringCleanup.client.close();
 

@@ -984,7 +984,24 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         (pane) => !pane.includes(APPLY_QUESTION),
         TIMEOUT,
       );
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      const tapeQuiescenceDeadline = Date.now() + TIMEOUT;
+      let settledFrameCount = stdoutFrames(tapePath).length;
+      let settledSince = Date.now();
+      let tapeSettled = false;
+      while (Date.now() < tapeQuiescenceDeadline) {
+        const frameCount = stdoutFrames(tapePath).length;
+        if (frameCount !== settledFrameCount) {
+          settledFrameCount = frameCount;
+          settledSince = Date.now();
+        } else if (Date.now() - settledSince >= 350) {
+          tapeSettled = true;
+          break;
+        }
+        await Bun.sleep(25);
+      }
+      if (!tapeSettled) {
+        throw new Error("Timed out waiting for tape to settle after approval cancel.");
+      }
       expectAtomicApprovalExit(tapePath, approvalExitFrameStart);
 
       expect(existsSync(target)).toBe(false);

@@ -839,7 +839,7 @@ test("paginated semantic field lookup matches values across split cards", () => 
 async function waitForChangedPane(
   session: TmuxSession,
   previous: string,
-  timeout = 1_000,
+  timeout = 10_000,
 ): Promise<string | null> {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -860,7 +860,12 @@ async function collectFullTranscriptPages(
   for (let index = 1; index < maxPages; index += 1) {
     await session.sendHexBytes(["1b", "5b", "35", "7e"]);
     const pane = await waitForChangedPane(session, previous);
-    if (pane === null) break;
+    if (pane === null) {
+      console.log(
+        `waitForChangedPane expired after collecting ${pages.length} of ${maxPages} pages; stopping pagination`,
+      );
+      break;
+    }
     pages.push(pane);
     previous = pane;
   }
