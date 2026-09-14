@@ -197,6 +197,11 @@ describe.skipIf(SKIP)("tui: extra slash commands", () => {
         expect(postClearEnd).toContain("history_turns=0");
         expect(postClearEnd).toContain("added_gateway_messages=0");
         expect(postClearEnd).toContain("projected_message_roles=none");
+        // The second projection is traced before its gateway request lands;
+        // poll for the settled condition instead of asserting a fixed point.
+        await session.waitForPane(() => codex.requests.length >= 2, 30_000, {
+          description: "second gateway request after /clear",
+        });
         expect(codex.requests).toHaveLength(2);
       } finally {
         if (session) {
