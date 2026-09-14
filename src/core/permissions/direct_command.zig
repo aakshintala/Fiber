@@ -10,9 +10,10 @@ const types = @import("../shared/types.zig");
 pub const direct_output_limit_bytes: usize = 65_536;
 const direct_output_read_chunk_bytes: usize = 4096;
 
-// Short poll so pipe workers observe termination instead of blocking forever
-// in a read or write held open by a stuck descendant.
-const direct_worker_poll_ms: i32 = 10;
+// One Io-mediated quantum for pipe workers: every worker syscall waits at most
+// this long before re-checking termination, so no worker blocks forever in a
+// read or write held open by a stuck descendant.
+const direct_worker_quantum_ms: i64 = 10;
 // Grace between TERM and KILL on the direct kill path.
 const direct_force_kill_grace_ms: i64 = 800;
 
@@ -181,6 +182,10 @@ fn executeDirectReadOnlyWithLimit(
 const DirectExecutionTestControls = struct {
     context: ?*anyopaque = null,
     after_spawn: ?*const fn (*anyopaque, usize, *const std.process.Child) void = null,
+    worker_exit_context: ?*anyopaque = null,
+    // Fired at the very end of OutputWorker.run, after pipes close: lets a
+    // test observe worker exit deterministically instead of sleeping.
+    on_worker_exit: ?*const fn (*anyopaque) void = null,
 };
 
 fn executeDirectReadOnlyWithLimitAndTestControls(
@@ -205,7 +210,17 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
     }
 
     var scratch_state = std.heap.ArenaAllocator.init(alloc);
-    defer scratch_state.deinit();
+    // Detached workers (join-deadline expiry below) may still reference
+    // worker-touched state after this function returns, so that path sets
+    // scratch_abandoned and leaks the arena instead of freeing it. The
+    // returned result copies out via alloc, so the normal path frees all.
+    // Contract: on detach the abandoned arena stays backed by alloc, so the
+    // caller must keep alloc alive until detached workers finish. Detach
+    // fires only for a worker stuck past the bound in a user callback (all
+    // worker syscalls are quantum-timed), which already wedges the turn
+    // that owns the arena.
+    var scratch_abandoned = false;
+    defer if (!scratch_abandoned) scratch_state.deinit();
     const scratch = scratch_state.allocator();
 
     var children = try scratch.alloc(std.process.Child, plan.stages.len);
@@ -246,12 +261,14 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
         }
     }
 
-    var output = DirectOutput.init(alloc, execution_cfg);
-    defer output.deinit();
-    var shared: SharedExecution = .{
+    const output = try scratch.create(DirectOutput);
+    output.* = DirectOutput.init(scratch, execution_cfg);
+    defer if (!scratch_abandoned) output.deinit();
+    const shared = try scratch.create(SharedExecution);
+    shared.* = .{
         .cfg = execution_cfg,
         .budget = .{ .limit = output_limit },
-        .output = &output,
+        .output = output,
     };
 
     const worker_count = plan.stages.len * 2;
@@ -260,7 +277,7 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
 
     for (0..plan.stages.len - 1) |index| {
         workers[initialized_workers] = .{
-            .shared = &shared,
+            .shared = shared,
             .source = children[index].stdout.?,
             .destination = children[index + 1].stdin.?,
             .kind = .relay,
@@ -271,7 +288,7 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
     }
 
     workers[initialized_workers] = .{
-        .shared = &shared,
+        .shared = shared,
         .source = children[plan.stages.len - 1].stdout.?,
         .kind = .{ .projected = .stdout },
     };
@@ -280,7 +297,7 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
 
     for (children[0..child_count]) |*child| {
         workers[initialized_workers] = .{
-            .shared = &shared,
+            .shared = shared,
             .source = child.stderr.?,
             .kind = .{ .projected = .stderr },
         };
@@ -292,6 +309,10 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
 
     var started_workers: usize = 0;
     while (started_workers < workers.len) : (started_workers += 1) {
+        if (test_controls.on_worker_exit) |hook| {
+            workers[started_workers].exit_hook_context = test_controls.worker_exit_context;
+            workers[started_workers].exit_hook = hook;
+        }
         workers[started_workers].thread = std.Thread.spawn(
             .{},
             OutputWorker.run,
@@ -300,8 +321,21 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
             shared.commit(.output_failure, err);
             signalGroup(group_id, true);
             for (workers[started_workers..]) |*worker| worker.closeUnstarted();
-            for (workers[0..started_workers]) |*worker| worker.thread.?.join();
-            waitChildren(children[0..child_count]);
+            const join_deadline_ms = io_mod.milliTimestamp() + command_runner.termination_settle_timeout_ms;
+            if (joinWorkersBounded(workers[0..started_workers], shared, group_id, join_deadline_ms)) {
+                for (children[0..child_count]) |*child| {
+                    _ = waitChildBounded(
+                        child,
+                        group_id,
+                        shared,
+                        io_mod.milliTimestamp() + command_runner.termination_settle_timeout_ms,
+                        direct_force_kill_grace_ms,
+                    );
+                }
+            } else {
+                scratch_abandoned = true;
+                sweepChildren(children[0..child_count]);
+            }
             const failure = shared.failure() orelse err;
             debug_trace.logf(
                 "core",
@@ -355,23 +389,60 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
         io_mod.sleep(5 * std.time.ns_per_ms);
     }
 
-    for (workers) |*worker| worker.thread.?.join();
+    const workers_joined = joinWorkersBounded(
+        workers,
+        shared,
+        group_id,
+        io_mod.milliTimestamp() + command_runner.termination_settle_timeout_ms,
+    );
+    if (!workers_joined) {
+        // Never hang in a stuck worker: detach it and abandon the scratch
+        // arena it may still reference (leaked by design; see the defer).
+        // Reap only what is already dead without blocking; the rest stays
+        // zombies of a dying group, recorded below.
+        scratch_abandoned = true;
+        sweepChildren(children[0..child_count]);
+    }
 
     var final_term: std.process.Child.Term = .{ .unknown = 0 };
-    for (children[0..child_count], 0..) |*child, index| {
-        const term = child.wait(io_mod.getIo()) catch |err| {
-            shared.commit(.output_failure, err);
-            continue;
-        };
-        if (index + 1 == child_count) final_term = term;
+    var reap_escalated = false;
+    var reap_abandoned = false;
+    if (workers_joined) {
+        for (children[0..child_count], 0..) |*child, index| {
+            const reap = waitChildBounded(
+                child,
+                group_id,
+                shared,
+                io_mod.milliTimestamp() + command_runner.termination_settle_timeout_ms,
+                direct_force_kill_grace_ms,
+            );
+            reap_escalated = reap_escalated or reap.escalated;
+            reap_abandoned = reap_abandoned or reap.abandoned;
+            if (index + 1 == child_count) final_term = reap.term;
+        }
+        if (reap_escalated) {
+            debug_trace.logf(
+                "core",
+                "direct command child wait escalated boundary=post_child_wait abandoned={} children_reaped={d}",
+                .{ reap_abandoned, child_count },
+            );
+        }
     }
 
     if (shared.failure()) |failure| {
-        if (shared.cause == .timed_out) {
+        if (shared.cause == .timed_out and workers_joined) {
             output.flushCallbacks() catch |err| debug_trace.logf(
                 "core",
                 "direct command timeout callback flush failed err={s}",
                 .{@errorName(err)},
+            );
+        } else if (shared.cause == .timed_out) {
+            // Workers are detached; the output lock may be held past the
+            // bound, so skip the flush instead of hanging in it.
+            debug_trace.logf(
+                "core",
+                "direct command timeout callback flush skipped boundary=post_worker_join",
+                .{},
             );
         }
         debug_trace.logf(
@@ -390,6 +461,25 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
             },
         );
         return failure;
+    }
+    if (reap_abandoned or !workers_joined) {
+        // A child survived kill plus the bounded re-wait, so its exit was
+        // never observed: report indeterminate instead of success.
+        debug_trace.logf(
+            "core",
+            "direct command completed indeterminate boundary=post_child_wait reason=child_survived_kill_grace",
+            .{},
+        );
+        return formatDirectResult(
+            alloc,
+            plan,
+            .{ .unknown = 0 },
+            output.stdout.items,
+            output.stderr.items,
+            output.stdout_bytes,
+            output.stderr_bytes,
+            elapsedMs(started_ms, io_mod.milliTimestamp()),
+        );
     }
     try output.flushCallbacks();
 
@@ -507,39 +597,71 @@ const WorkerKind = union(enum) {
     projected: command_contract.CommandOutputStream,
 };
 
-const RelayWriteResult = enum {
-    forwarded,
+const WorkerDirection = enum {
+    in,
+    out,
+};
+
+const WorkerReadiness = union(enum) {
+    // Nothing moved within the quantum; the worker re-checks termination.
+    quiet,
+    // Read end closed (IN only).
+    eof,
+    // Bytes read into the buffer (IN) or forwarded from it (OUT, possibly
+    // partial; the caller re-arms until the chunk drains).
+    bytes: usize,
+    // Write end closed (OUT only).
     downstream_closed,
 };
 
-fn writeRelayChunk(destination: std.Io.File, raw: []const u8) !RelayWriteResult {
-    destination.writeStreamingAll(io_mod.getIo(), raw) catch |err| switch (err) {
-        error.BrokenPipe => return .downstream_closed,
+// A stuck descendant holding a pipe open must not hang the tool call: move
+// at most one quantum of I/O through std.Io (the same Batch + timeout
+// mechanism collectOutput uses) so workers observe termination promptly. A
+// quiet open pipe reports quiet after the quantum instead of blocking.
+fn workerReady(
+    file: std.Io.File,
+    direction: WorkerDirection,
+    buffer: []u8,
+) !WorkerReadiness {
+    const io = io_mod.getIo();
+    var storage: [1]std.Io.Operation.Storage = undefined;
+    var batch = std.Io.Batch.init(&storage);
+    var read_vec: [1][]u8 = .{buffer};
+    var write_vec: [1][]const u8 = .{buffer};
+    switch (direction) {
+        .in => batch.addAt(0, .{ .file_read_streaming = .{ .file = file, .data = &read_vec } }),
+        .out => batch.addAt(0, .{ .file_write_streaming = .{ .file = file, .data = &write_vec } }),
+    }
+    batch.awaitConcurrent(io, .{ .duration = .{
+        .raw = .{ .nanoseconds = direct_worker_quantum_ms * std.time.ns_per_ms },
+        .clock = .awake,
+    } }) catch |err| switch (err) {
+        error.Timeout => {
+            batch.cancel(io);
+            return .quiet;
+        },
         else => return err,
     };
-    return .forwarded;
-}
-
-// A stuck descendant holding a pipe open must not hang the tool call: wait
-// for I/O with a short poll so workers observe termination promptly. Any
-// reported event (data, hangup, error) lets the following syscall resolve
-// without blocking; only a quiet open pipe waits out the poll.
-fn workerSourceReady(source: std.Io.File) !bool {
-    var poll_fds = [_]std.posix.pollfd{.{
-        .fd = source.handle,
-        .events = std.posix.POLL.IN,
-        .revents = 0,
-    }};
-    return (try std.posix.poll(&poll_fds, direct_worker_poll_ms)) != 0;
-}
-
-fn workerDestinationReady(destination: std.Io.File) !bool {
-    var poll_fds = [_]std.posix.pollfd{.{
-        .fd = destination.handle,
-        .events = std.posix.POLL.OUT,
-        .revents = 0,
-    }};
-    return (try std.posix.poll(&poll_fds, direct_worker_poll_ms)) != 0;
+    const completion = batch.next() orelse {
+        batch.cancel(io);
+        return .quiet;
+    };
+    switch (direction) {
+        .in => {
+            const count = completion.result.file_read_streaming catch |err| switch (err) {
+                error.EndOfStream => return .eof,
+                else => return err,
+            };
+            return .{ .bytes = count };
+        },
+        .out => {
+            const count = completion.result.file_write_streaming catch |err| switch (err) {
+                error.BrokenPipe => return .downstream_closed,
+                else => return err,
+            };
+            return .{ .bytes = count };
+        },
+    }
 }
 
 const OutputWorker = struct {
@@ -549,13 +671,15 @@ const OutputWorker = struct {
     kind: WorkerKind,
     done: std.atomic.Value(bool) = .init(false),
     thread: ?std.Thread = null,
+    exit_hook_context: ?*anyopaque = null,
+    exit_hook: ?*const fn (*anyopaque) void = null,
 
     fn run(self: *OutputWorker) void {
-        defer self.done.store(true, .release);
-        defer self.source.close(io_mod.getIo());
-        defer if (self.destination) |destination| destination.close(io_mod.getIo());
-
         self.runFallible() catch |err| self.shared.commit(.output_failure, err);
+        self.source.close(io_mod.getIo());
+        if (self.destination) |destination| destination.close(io_mod.getIo());
+        self.done.store(true, .release);
+        if (self.exit_hook) |hook| hook(self.exit_hook_context.?);
     }
 
     fn runFallible(self: *OutputWorker) !void {
@@ -566,62 +690,14 @@ const OutputWorker = struct {
         var buffer: [direct_output_read_chunk_bytes]u8 = undefined;
 
         while (!self.shared.isStopping()) {
-            if (!(try workerSourceReady(self.source))) continue;
-            const count = self.source.readStreaming(io_mod.getIo(), &.{buffer[0..]}) catch |err| switch (err) {
-                error.EndOfStream => break,
-                else => return err,
-            };
-            if (count == 0) break;
-            const raw = buffer[0..count];
-            const charge = self.shared.budget.charge(raw.len);
-            if (!charge.admit_chunk) {
-                if (charge.trip_owner) {
-                    debug_trace.logf(
-                        "core",
-                        "direct_output_limit_exceeded route=direct_read_only limit={d} admitted_raw_bytes={d} remaining_raw_bytes={d} stream={s}",
-                        .{
-                            self.shared.budget.limit,
-                            self.shared.budget.admitted,
-                            self.shared.budget.remaining(),
-                            @tagName(self.kind),
-                        },
-                    );
-                    self.shared.commit(.output_limit, error.DirectOutputLimitExceeded);
-                }
-                break;
-            }
-
-            switch (self.kind) {
-                .relay => {
-                    // Bound the relay write the same way as reads: never block
-                    // forever on a full pipe held open by a stuck descendant.
-                    // Chunks fit PIPE_BUF, so a write after a writable poll
-                    // completes without blocking.
-                    var writable = false;
-                    while (!self.shared.isStopping()) {
-                        if (try workerDestinationReady(self.destination.?)) {
-                            writable = true;
-                            break;
-                        }
-                    }
-                    if (!writable) break;
-                    switch (try writeRelayChunk(self.destination.?, raw)) {
-                        .forwarded => {},
-                        .downstream_closed => {
-                            const remaining = self.shared.budget.remaining();
-                            debug_trace.logf(
-                                "core",
-                                "direct relay route=direct_read_only downstream_closed=true admitted_raw_bytes={d} remaining_raw_bytes={d}",
-                                .{ self.shared.budget.limit - remaining, remaining },
-                            );
-                            break;
-                        },
-                    }
-                },
-                .projected => |stream| {
-                    try projector.push(self.shared.output.alloc, raw, &projected);
-                    try self.shared.output.append(stream, raw, projected.items);
-                    projected.clearRetainingCapacity();
+            switch (try workerReady(self.source, .in, &buffer)) {
+                .quiet => continue,
+                .eof => break,
+                // The IN direction never reports this; treat it as EOF.
+                .downstream_closed => break,
+                .bytes => |count| {
+                    if (count == 0) break;
+                    if (!(try self.consumeChunk(buffer[0..count], &projector, &projected))) break;
                 },
             }
         }
@@ -637,10 +713,76 @@ const OutputWorker = struct {
         }
     }
 
+    // Returns false when the worker must stop reading: budget tripped (the
+    // failure is already committed), termination observed, or the downstream
+    // pipe closed (normal completion, as before). Never commits a failure
+    // for the clean stops.
+    fn consumeChunk(
+        self: *OutputWorker,
+        raw: []const u8,
+        projector: *DirectOutputProjector,
+        projected: *std.ArrayList(u8),
+    ) !bool {
+        const charge = self.shared.budget.charge(raw.len);
+        if (!charge.admit_chunk) {
+            if (charge.trip_owner) {
+                debug_trace.logf(
+                    "core",
+                    "direct_output_limit_exceeded route=direct_read_only limit={d} admitted_raw_bytes={d} remaining_raw_bytes={d} stream={s}",
+                    .{
+                        self.shared.budget.limit,
+                        self.shared.budget.admitted,
+                        self.shared.budget.remaining(),
+                        @tagName(self.kind),
+                    },
+                );
+                self.shared.commit(.output_limit, error.DirectOutputLimitExceeded);
+            }
+            return false;
+        }
+
+        switch (self.kind) {
+            .relay => return self.relayChunk(raw),
+            .projected => |stream| {
+                try projector.push(self.shared.output.alloc, raw, projected);
+                try self.shared.output.append(stream, raw, projected.items);
+                projected.clearRetainingCapacity();
+                return true;
+            },
+        }
+    }
+
+    // Forward one chunk without ever blocking past a quantum: each write
+    // waits at most one quantum, then re-checks termination. A zero-byte
+    // completion simply re-arms; only a closed downstream ends the worker.
+    fn relayChunk(self: *OutputWorker, raw: []const u8) !bool {
+        var pending: []const u8 = raw;
+        while (pending.len > 0) {
+            if (self.shared.isStopping()) return false;
+            switch (try workerReady(self.destination.?, .out, @constCast(pending))) {
+                .bytes => |written| pending = pending[written..],
+                .quiet => {},
+                .downstream_closed => {
+                    const remaining = self.shared.budget.remaining();
+                    debug_trace.logf(
+                        "core",
+                        "direct relay route=direct_read_only downstream_closed=true admitted_raw_bytes={d} remaining_raw_bytes={d}",
+                        .{ self.shared.budget.limit - remaining, remaining },
+                    );
+                    return false;
+                },
+                // The OUT direction never reports this; treat it as closed.
+                .eof => return false,
+            }
+        }
+        return true;
+    }
+
     fn closeUnstarted(self: *OutputWorker) void {
         self.source.close(io_mod.getIo());
         if (self.destination) |destination| destination.close(io_mod.getIo());
         self.done.store(true, .release);
+        if (self.exit_hook) |hook| hook(self.exit_hook_context.?);
     }
 };
 
@@ -813,6 +955,165 @@ fn signalGroup(group_id: ?std.posix.pid_t, force: bool) void {
         error.ProcessNotFound => {},
         else => debug_trace.logf("core", "direct command signal failed err={s}", .{@errorName(err)}),
     };
+}
+
+// Join-with-deadline for pipe workers. Returns true when every worker was
+// joined. On expiry the still-running workers are detached (never hang) and
+// the caller must abandon the scratch arena they reference; every worker
+// syscall waits at most one quantum, so expiry means a worker stuck outside
+// timed I/O (e.g. a user callback that never returns). Cancellation commits
+// and escalates to KILL but stays within the same bound.
+fn joinWorkersBounded(
+    workers: []OutputWorker,
+    shared: *SharedExecution,
+    group_id: ?std.posix.pid_t,
+    deadline_ms: i64,
+) bool {
+    while (!allWorkersDone(workers)) {
+        if (shared.cfg.cancel_flag) |flag| {
+            if (flag.load(.seq_cst)) {
+                shared.commit(.cancelled, error.Cancelled);
+                signalGroup(group_id, true);
+            }
+        }
+        if (io_mod.milliTimestamp() >= deadline_ms) break;
+        io_mod.sleep(5 * std.time.ns_per_ms);
+    }
+    var all_joined = true;
+    for (workers, 0..) |*worker, index| {
+        if (worker.done.load(.acquire)) {
+            if (worker.thread) |thread| {
+                thread.join();
+                worker.thread = null;
+            }
+        } else {
+            all_joined = false;
+            debug_trace.logf(
+                "core",
+                "direct command worker join expired boundary=post_worker_join worker={d} workers={d}",
+                .{ index, workers.len },
+            );
+            if (worker.thread) |thread| {
+                thread.detach();
+                worker.thread = null;
+            }
+        }
+    }
+    return all_joined;
+}
+
+// WNOHANG from sys/wait.h; 1 on both macOS and Linux. No Zig binding
+// exposes it, so the value is pinned here next to its only use.
+const wait_nohang: c_int = 1;
+
+fn termFromWaitStatus(status: c_int) std.process.Child.Term {
+    const bits: u32 = @bitCast(status);
+    if (bits & 0x7f == 0) return .{ .exited = @intCast((bits >> 8) & 0xff) };
+    if (bits & 0xff == 0x7f) {
+        const sig = (bits >> 8) & 0xff;
+        if (sig >= 1 and sig <= 31) return .{ .stopped = @enumFromInt(sig) };
+        return .{ .unknown = bits };
+    }
+    const sig = bits & 0x7f;
+    // Signal numbers outside the standard range cannot name a SIG enum
+    // member; report them indeterminate instead of panicking on the cast.
+    if (sig >= 1 and sig <= 31) return .{ .signal = @enumFromInt(sig) };
+    return .{ .unknown = bits };
+}
+
+// Non-blocking reap: the term when the child already exited, null while it
+// still runs. Never blocks; marks the child reaped so no later wait can
+// hang on it.
+fn reapChildNow(child: *std.process.Child) ?std.process.Child.Term {
+    const pid = child.id orelse return .{ .unknown = 0 };
+    var status: c_int = 0;
+    while (true) {
+        const rc = std.c.waitpid(pid, &status, wait_nohang);
+        if (rc == 0) return null;
+        if (rc == pid) {
+            child.id = null;
+            return termFromWaitStatus(status);
+        }
+        switch (std.c.errno(rc)) {
+            .INTR => continue,
+            .CHILD => {
+                child.id = null;
+                return .{ .unknown = 0 };
+            },
+            else => |err| {
+                debug_trace.logf(
+                    "core",
+                    "direct command reap failed boundary=post_child_wait err={s}",
+                    .{@tagName(err)},
+                );
+                child.id = null;
+                return .{ .unknown = 0 };
+            },
+        }
+    }
+}
+
+const ChildReap = struct {
+    term: std.process.Child.Term,
+    escalated: bool = false,
+    abandoned: bool = false,
+};
+
+// Bounded child wait with escalation. A child still running past the deadline
+// (e.g. pipes closed early so the kill path never started) is KILLed and
+// re-waited within rewait_grace_ms; a child surviving that reports unknown
+// so the caller projects indeterminate instead of success. Cancellation and
+// the configured timeout commit and escalate immediately but stay bounded.
+fn waitChildBounded(
+    child: *std.process.Child,
+    group_id: ?std.posix.pid_t,
+    shared: *SharedExecution,
+    deadline_ms: i64,
+    rewait_grace_ms: i64,
+) ChildReap {
+    var term = reapChildNow(child);
+    while (term == null) {
+        if (shared.cfg.cancel_flag) |flag| {
+            if (flag.load(.seq_cst)) {
+                shared.commit(.cancelled, error.Cancelled);
+                signalGroup(group_id, true);
+            }
+        }
+        if (deadlineExpired(shared.cfg)) {
+            shared.commit(.timed_out, error.TimeoutExpired);
+            signalGroup(group_id, true);
+        }
+        if (io_mod.milliTimestamp() >= deadline_ms) break;
+        io_mod.sleep(5 * std.time.ns_per_ms);
+        term = reapChildNow(child);
+    }
+    if (term) |observed| return .{ .term = observed };
+
+    debug_trace.logf(
+        "core",
+        "direct command child still running past wait bound boundary=post_child_wait action=kill",
+        .{},
+    );
+    signalGroup(group_id, true);
+    const rewait_deadline_ms = io_mod.milliTimestamp() + rewait_grace_ms;
+    term = reapChildNow(child);
+    while (term == null) {
+        if (io_mod.milliTimestamp() >= rewait_deadline_ms) break;
+        io_mod.sleep(5 * std.time.ns_per_ms);
+        term = reapChildNow(child);
+    }
+    if (term) |observed| return .{ .term = observed, .escalated = true };
+    debug_trace.logf(
+        "core",
+        "direct command child survived kill grace boundary=post_child_wait reason=child_survived_kill_grace",
+        .{},
+    );
+    return .{ .term = .{ .unknown = 0 }, .escalated = true, .abandoned = true };
+}
+
+// Single non-blocking sweep: reap whatever already exited, never wait.
+fn sweepChildren(children: []std.process.Child) void {
+    for (children) |*child| _ = reapChildNow(child);
 }
 
 fn closeChildPipes(child: *std.process.Child) void {
@@ -1741,25 +2042,64 @@ test "direct executor reports final stage status without pipefail" {
     try std.testing.expectEqual(@as(?i64, 1), result.command_result.?.exit_code);
 }
 
-test "direct relay treats a closed downstream pipe as normal completion" {
+test "direct workerReady moves one bounded quantum per direction" {
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+    const io = io_mod.getIo();
 
-    const argv = [_][]const u8{"/usr/bin/false"};
-    var child = try std.process.spawn(io_mod.getIo(), .{
-        .argv = &argv,
-        .stdin = .pipe,
-        .stdout = .ignore,
-        .stderr = .ignore,
-    });
-    const destination = child.stdin.?;
-    child.stdin = null;
-    defer destination.close(io_mod.getIo());
-    _ = try child.wait(io_mod.getIo());
+    var pipe_fds: [2]std.c.fd_t = undefined;
+    if (std.c.pipe(&pipe_fds) != 0) return error.PipeFailed;
+    var source: std.Io.File = .{ .handle = pipe_fds[0], .flags = .{ .nonblocking = false } };
+    var destination: std.Io.File = .{ .handle = pipe_fds[1], .flags = .{ .nonblocking = false } };
+    defer destination.close(io);
 
-    try std.testing.expectEqual(
-        RelayWriteResult.downstream_closed,
-        try writeRelayChunk(destination, "not consumed"),
-    );
+    // Quiet open pipe: reports quiet after the quantum instead of blocking.
+    var probe: [8]u8 = undefined;
+    const quiet_started_ms = io_mod.milliTimestamp();
+    const quiet = try workerReady(source, .in, &probe);
+    try std.testing.expect(quiet == .quiet);
+    try std.testing.expect(io_mod.milliTimestamp() - quiet_started_ms < 5_000);
+
+    // Available bytes arrive through the same helper.
+    try destination.writeStreamingAll(io, "hi");
+    var incoming: [8]u8 = undefined;
+    const readable = try workerReady(source, .in, &incoming);
+    switch (readable) {
+        .bytes => |count| {
+            try std.testing.expectEqual(@as(usize, 2), count);
+            try std.testing.expectEqualStrings("hi", incoming[0..count]);
+        },
+        else => return error.TestExpectedBytes,
+    }
+
+    // Writes forward through the same helper.
+    const writable = try workerReady(destination, .out, @constCast(@as([]const u8, "yo")));
+    switch (writable) {
+        .bytes => |count| try std.testing.expectEqual(@as(usize, 2), count),
+        else => return error.TestExpectedBytes,
+    }
+    var drained: [2]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 2), try source.readStreaming(io, &.{drained[0..]}));
+    source.close(io);
+
+    // Closed read end: the writer observes it instead of blocking forever.
+    const closed = try workerReady(destination, .out, @constCast(@as([]const u8, "not consumed")));
+    try std.testing.expect(closed == .downstream_closed);
+}
+
+test "direct workerReady reports EOF on a closed write end" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+    const io = io_mod.getIo();
+
+    var pipe_fds: [2]std.c.fd_t = undefined;
+    if (std.c.pipe(&pipe_fds) != 0) return error.PipeFailed;
+    var source: std.Io.File = .{ .handle = pipe_fds[0], .flags = .{ .nonblocking = false } };
+    var destination: std.Io.File = .{ .handle = pipe_fds[1], .flags = .{ .nonblocking = false } };
+    destination.close(io);
+    defer source.close(io);
+
+    var probe: [8]u8 = undefined;
+    const readiness = try workerReady(source, .in, &probe);
+    try std.testing.expect(readiness == .eof);
 }
 
 test "direct executor treats downstream pipe closure as normal pipeline completion" {
@@ -1934,4 +2274,142 @@ test "direct executor termination settles while a detached descendant holds the 
     const elapsed_ms = io_mod.milliTimestamp() - started_ms;
     try std.testing.expectError(error.TimeoutExpired, result);
     try std.testing.expect(elapsed_ms < 10_000);
+}
+
+test "direct wait status decoder projects exits signals and unknown" {
+    try std.testing.expectEqual(
+        std.process.Child.Term{ .exited = 3 },
+        termFromWaitStatus(3 << 8),
+    );
+    try std.testing.expectEqual(
+        std.process.Child.Term{ .signal = std.posix.SIG.KILL },
+        termFromWaitStatus(@intFromEnum(std.posix.SIG.KILL)),
+    );
+    const stopped = termFromWaitStatus(
+        (@as(c_int, @intFromEnum(std.posix.SIG.STOP)) << 8) | 0x7f,
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        commandStatusFromTerm(stopped),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        commandStatusFromTerm(termFromWaitStatus(0x7f)),
+    );
+}
+
+const BlockedWorkerControl = struct {
+    release: std.atomic.Value(bool) = .init(false),
+    exits: std.atomic.Value(usize) = .init(0),
+    expected_exits: usize = 0,
+
+    fn onWorkerExit(raw_ctx: *anyopaque) void {
+        const self: *@This() = @ptrCast(@alignCast(raw_ctx));
+        _ = self.exits.fetchAdd(1, .seq_cst);
+    }
+};
+
+test "direct executor detaches a callback-blocked worker at the join bound" {
+    if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
+
+    // A worker stuck in a user callback that never returns (30s) must not
+    // hang the tool call: the join deadline detaches it and the call
+    // settles with the timeout error at ~deadline instead of hanging.
+    // The detach path abandons the worker arena by design, and the
+    // detached worker stays parked in the callback past the end of this
+    // test. Back the call with page memory that is intentionally never
+    // freed so the abandoned arena (and the worker still referencing it)
+    // stays valid for the life of the test process.
+    var backing = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const gpa = backing.allocator();
+
+    const BlockingCallback = struct {
+        fn onChunk(
+            raw_ctx: *anyopaque,
+            _: ?types.ToolLifecycleId,
+            _: command_contract.CommandOutputStream,
+            _: []const u8,
+        ) !void {
+            // Park here until the test releases us (with a cap so a broken
+            // flow fails the test instead of hanging the suite).
+            const control: *BlockedWorkerControl = @ptrCast(@alignCast(raw_ctx));
+            var spins: usize = 0;
+            while (!control.release.load(.acquire) and spins < 60_000) : (spins += 1) {
+                io_mod.sleep(1 * std.time.ns_per_ms);
+            }
+        }
+    };
+    var control = BlockedWorkerControl{};
+    // Single stage: one stdout worker plus one stderr worker.
+    control.expected_exits = 2;
+    // awk flushes the line up front so the worker is deterministically
+    // parked in the callback (a shell builtin printf would sit in stdio
+    // buffers until exit and never block the worker).
+    const argv = [_][]const u8{
+        "/usr/bin/awk",
+        "BEGIN { print \"BLOCKED\"; fflush(); system(\"sleep 30\") }",
+    };
+    const stages = [_]command_effect.DirectStage{.{
+        .executable = "/usr/bin/awk",
+        .argv = &argv,
+        .environment_profile = .basic_read_only,
+    }};
+    const started_ms = io_mod.milliTimestamp();
+    const result = executeDirectReadOnlyWithLimitAndTestControls(.{
+        .max_command_output_bytes = 1,
+        .timeout_ms = 300,
+        .timeout_started_ms = started_ms,
+        .output_chunk_ctx = &control,
+        .on_output_chunk = BlockingCallback.onChunk,
+    }, gpa, injectedPlan("/tmp", &stages), direct_output_limit_bytes, .{
+        .worker_exit_context = &control,
+        .on_worker_exit = BlockedWorkerControl.onWorkerExit,
+    });
+    const elapsed_ms = io_mod.milliTimestamp() - started_ms;
+    try std.testing.expectError(error.TimeoutExpired, result);
+    // Past the monitor settlement (proves the worker was really stuck, not
+    // finished early) but well before a stuck callback could return on its
+    // own (proves the join bound detached it instead of hanging).
+    try std.testing.expect(elapsed_ms > 5_000);
+    try std.testing.expect(elapsed_ms < 25_000);
+    // Release the parked worker and wait for every worker to fully exit
+    // (pipes closed) so no thread outlives this test: the harness tears
+    // down its Io per test.
+    control.release.store(true, .release);
+    const exits_started_ms = io_mod.milliTimestamp();
+    while (control.exits.load(.acquire) < control.expected_exits) {
+        if (io_mod.milliTimestamp() - exits_started_ms > 10_000) return error.TestWorkerExitTimeout;
+        io_mod.sleep(5 * std.time.ns_per_ms);
+    }
+}
+
+test "direct executor kills a running child whose pipes closed early" {
+    if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
+
+    // The child closes its pipes up front and keeps running, so the monitor
+    // loop exits with all workers done and no kill path started. The
+    // bounded reap must escalate (kill) instead of hanging the full sleep.
+    const argv = [_][]const u8{
+        "/bin/sh",
+        "-c",
+        "exec >/dev/null 2>&1; sleep 30",
+    };
+    const stages = [_]command_effect.DirectStage{.{
+        .executable = "/bin/sh",
+        .argv = &argv,
+        .environment_profile = .basic_read_only,
+    }};
+    const started_ms = io_mod.milliTimestamp();
+    const result = try executeDirectReadOnly(.{
+        .max_command_output_bytes = 1,
+    }, std.testing.allocator, injectedPlan("/tmp", &stages));
+    defer std.testing.allocator.free(result.output);
+    const elapsed_ms = io_mod.milliTimestamp() - started_ms;
+    try std.testing.expect(elapsed_ms < 20_000);
+    const foreground = result.command_result.?;
+    try std.testing.expectEqual(@as(?i64, null), foreground.exit_code);
+    try std.testing.expectEqual(
+        @as(?u32, @intFromEnum(std.posix.SIG.KILL)),
+        foreground.signal,
+    );
 }
