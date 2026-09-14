@@ -558,8 +558,6 @@ const SharedExecution = struct {
         const io = io_mod.getIo();
         self.lock.lockUncancelable(io);
         defer self.lock.unlock(io);
-        if (self.cause != null) return;
-
         if (self.cfg.cancel_flag) |flag| {
             if (flag.load(.seq_cst)) {
                 self.cause = .cancelled;
@@ -574,6 +572,7 @@ const SharedExecution = struct {
             self.stopping.store(true, .release);
             return;
         }
+        if (self.cause != null) return;
 
         self.cause = reported;
         self.failure_value = failure_value;
@@ -975,6 +974,10 @@ fn joinWorkersBounded(
                 shared.commit(.cancelled, error.Cancelled);
                 signalGroup(group_id, true);
             }
+        }
+        if (deadlineExpired(shared.cfg)) {
+            shared.commit(.timed_out, error.TimeoutExpired);
+            signalGroup(group_id, true);
         }
         if (io_mod.milliTimestamp() >= deadline_ms) break;
         io_mod.sleep(5 * std.time.ns_per_ms);
