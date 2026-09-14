@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const io_mod = @import("../shared/io.zig");
 const profile_paths = @import("../shared/profile_paths.zig");
 
@@ -232,7 +233,57 @@ fn expand_home_prefix(alloc: std.mem.Allocator, home: []const u8, token: []const
     if (std.mem.startsWith(u8, token, "~/")) {
         return std.fs.path.join(alloc, &.{ strip_trailing_slashes(home), token[1..] });
     }
+    if (token.len > 1 and token[0] == '~') {
+        if (tilde_user_rest(token)) |parts| {
+            if (parts.user.len > 0 and is_current_user(parts.user)) {
+                return std.fs.path.join(alloc, &.{ strip_trailing_slashes(home), parts.rest });
+            }
+        }
+    }
     return alloc.dupe(u8, token);
+}
+
+fn is_current_user(candidate: []const u8) bool {
+    if (candidate.len == 0) return false;
+    if (io_mod.getenv("USER")) |user| {
+        if (std.mem.eql(u8, candidate, user)) return true;
+    }
+    if (io_mod.getenv("LOGNAME")) |name| {
+        if (std.mem.eql(u8, candidate, name)) return true;
+    }
+    if (comptime builtin.link_libc) {
+        var entry: std.c.passwd = undefined;
+        var scratch: [4096]u8 = undefined;
+        var found: ?*std.c.passwd = null;
+        if (std.c.getpwuid_r(std.c.getuid(), &entry, &scratch, scratch.len, &found) == 0) {
+            if (found) |record| {
+                if (record.name) |ptr| {
+                    if (std.mem.eql(u8, candidate, std.mem.span(ptr))) return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/// Splits `~user/rest` into its username and `/rest` tail. Returns null for
+/// `~`, `~/...`, and bare `~user` (no slash): bare names are not paths, so
+/// they stay out of scope and keep their existing verdict.
+fn tilde_user_rest(token: []const u8) ?struct { user: []const u8, rest: []const u8 } {
+    if (token.len < 2 or token[0] != '~') return null;
+    if (token[1] == '/') return null;
+    const slash = std.mem.findScalar(u8, token, '/') orelse return null;
+    return .{ .user = token[1..slash], .rest = token[slash..] };
+}
+
+/// True when a `~user/...` spelling names someone other than the current
+/// user (unresolvable or mismatch) and the remainder is store-shaped. Such
+/// inputs never expand, so they must hold instead of joining to the cwd.
+fn is_foreign_tilde_store(token: []const u8) bool {
+    const parts = tilde_user_rest(token) orelse return false;
+    if (parts.user.len == 0) return false;
+    if (is_current_user(parts.user)) return false;
+    return is_store_shaped(parts.rest);
 }
 
 const StoreIdentities = struct {
@@ -457,6 +508,7 @@ fn check_command_token(alloc: std.mem.Allocator, home: ?[]const u8, stores: ?Sto
     const word = std.mem.trim(u8, stripped, " \t\r\n");
     if (word.len == 0) return .allow;
     if (contains_store_file(word)) return .deny;
+    if (is_foreign_tilde_store(word)) return .hold;
     const known = home orelse {
         if (is_store_shaped(word) or has_unresolved_env(word)) return .hold;
         return .allow;
@@ -503,6 +555,7 @@ pub fn check_file_target(alloc: std.mem.Allocator, workspace_root: []const u8, t
     defer alloc.free(stripped);
     const word = std.mem.trim(u8, stripped, " \t\r\n");
     if (word.len == 0) return .allow;
+    if (is_foreign_tilde_store(word)) return .hold;
     const home = clean_home() orelse {
         if (contains_store_file(word)) return .deny;
         if (is_store_shaped(word) or has_unresolved_env(word)) return .hold;
@@ -904,4 +957,80 @@ test "command target allows a workspace file that shares a generic store name" {
     const target = try std.fmt.allocPrint(alloc, "{s}::cat credentials.json", .{workspace});
     defer alloc.free(target);
     try std.testing.expectEqual(Verdict.allow, try check_command_target(alloc, target));
+}
+
+test "tilde user expansion denies current user and holds foreign store shapes" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+
+    const test_home = try TestHome.install(alloc, home);
+    defer test_home.deinit();
+
+    var pw_scratch: [4096]u8 = undefined;
+    var pw_entry: std.c.passwd = undefined;
+    var pw_found: ?*std.c.passwd = null;
+    var current: ?[]const u8 = io_mod.getenv("USER") orelse io_mod.getenv("LOGNAME");
+    if (current == null and builtin.link_libc) {
+        if (std.c.getpwuid_r(std.c.getuid(), &pw_entry, &pw_scratch, pw_scratch.len, &pw_found) == 0) {
+            if (pw_found) |record| {
+                if (record.name) |ptr| current = std.mem.span(ptr);
+            }
+        }
+    }
+    const me = current orelse return error.SkipZigTest;
+
+    const foreign = "no_such_user_xyz123";
+    try std.testing.expect(!is_current_user(foreign));
+
+    const prefix = try std.fmt.allocPrint(alloc, "{s}::", .{workspace});
+    defer alloc.free(prefix);
+
+    const me_store = try std.fmt.allocPrint(alloc, "~{s}/.fiber/chatgpt-auth.json", .{me});
+    defer alloc.free(me_store);
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, me_store));
+    const me_cmd = try std.mem.concat(alloc, u8, &.{ prefix, "cat ", me_store });
+    defer alloc.free(me_cmd);
+    try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, me_cmd));
+
+    const me_parent = try std.fmt.allocPrint(alloc, "~{s}/.fiber", .{me});
+    defer alloc.free(me_parent);
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, me_parent));
+    const me_parent_cmd = try std.mem.concat(alloc, u8, &.{ prefix, "ls ", me_parent });
+    defer alloc.free(me_parent_cmd);
+    try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, me_parent_cmd));
+
+    const foreign_parent = try std.fmt.allocPrint(alloc, "~{s}/.fiber", .{foreign});
+    defer alloc.free(foreign_parent);
+    try std.testing.expectEqual(Verdict.hold, try check_file_target(alloc, workspace, foreign_parent));
+    const foreign_parent_cmd = try std.mem.concat(alloc, u8, &.{ prefix, "ls ", foreign_parent });
+    defer alloc.free(foreign_parent_cmd);
+    try std.testing.expectEqual(Verdict.hold, try check_command_target(alloc, foreign_parent_cmd));
+
+    const foreign_settings = try std.fmt.allocPrint(alloc, "~{s}/.fiber/settings.json", .{foreign});
+    defer alloc.free(foreign_settings);
+    try std.testing.expectEqual(Verdict.hold, try check_file_target(alloc, workspace, foreign_settings));
+    const foreign_settings_cmd = try std.mem.concat(alloc, u8, &.{ prefix, "cat ", foreign_settings });
+    defer alloc.free(foreign_settings_cmd);
+    try std.testing.expectEqual(Verdict.hold, try check_command_target(alloc, foreign_settings_cmd));
+
+    const foreign_other = try std.fmt.allocPrint(alloc, "~{s}/docs/notes.txt", .{foreign});
+    defer alloc.free(foreign_other);
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, foreign_other));
+    const foreign_other_cmd = try std.mem.concat(alloc, u8, &.{ prefix, "cat ", foreign_other });
+    defer alloc.free(foreign_other_cmd);
+    try std.testing.expectEqual(Verdict.allow, try check_command_target(alloc, foreign_other_cmd));
+
+    const bare = try std.fmt.allocPrint(alloc, "~{s}", .{foreign});
+    defer alloc.free(bare);
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, bare));
+    const bare_cmd = try std.mem.concat(alloc, u8, &.{ prefix, "echo ", bare });
+    defer alloc.free(bare_cmd);
+    try std.testing.expectEqual(Verdict.allow, try check_command_target(alloc, bare_cmd));
 }
