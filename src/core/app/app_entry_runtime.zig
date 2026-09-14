@@ -18,6 +18,7 @@ const mcp_contract = @import("../mcp/mcp_contract.zig");
 const mcp_command_provider = @import("../mcp/command_provider.zig");
 const mcp_health = @import("../mcp/health.zig");
 const mcp_runtime = @import("../mcp/mcp_runtime.zig");
+const tool_dispatch = @import("../tooling/tool_dispatch.zig");
 const tool_set_contract = @import("../tooling/tool_set.zig");
 const test_builtin_gateway = if (builtin.is_test)
     @import("../../builtins/gateway.zig")
@@ -78,6 +79,7 @@ pub const Config = struct {
     context_registry: context_contract.Registry,
     mode_registry: mode_registry.Registry,
     tool_set: tool_set_contract.ToolSet,
+    shell_process_only_tool: tool_dispatch.Tool,
     inspect_mcp_profile_config: mcp_contract.InspectProfileConfigFn,
     inspect_mcp_local_config: mcp_health.InspectLocalConfigFn =
         mcp_health.inspectLocalConfigUnavailable,
@@ -388,6 +390,7 @@ fn cliSurfaceConfig(cfg: Config) cli_surface.Config {
         .context_registry = cfg.context_registry,
         .mode_registry = cfg.mode_registry,
         .tool_set = cfg.tool_set,
+        .shell_process_only_tool = cfg.shell_process_only_tool,
         .inspect_mcp_profile_config = cfg.inspect_mcp_profile_config,
         .inspect_mcp_local_config = cfg.inspect_mcp_local_config,
         .load_mcp_runtime = cfg.load_mcp_runtime,
@@ -478,6 +481,7 @@ fn noMcpConfigInspectionForTest(
 }
 
 fn testConfig() Config {
+    const builtin_tools = @import("../../builtins/tools.zig");
     return .{
         .version = "0.2.10",
         .command_catalog = test_builtin_commands.top_level_registry,
@@ -500,6 +504,7 @@ fn testConfig() Config {
         .max_history_turns = 32,
         .context_registry = test_entry_context_registry,
         .mode_registry = .{ .default_mode_id = "entry" },
+        .shell_process_only_tool = builtin_tools.shellProcessOnlySpec(),
         .inspect_mcp_profile_config = noMcpConfigInspectionForTest,
         .load_mcp_runtime = noMcpRuntimeForTest,
         .tool_set = .{

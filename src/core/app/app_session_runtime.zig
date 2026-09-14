@@ -41,7 +41,6 @@ const subagent_tool_host = @import("../subagent/tool_host.zig");
 const subagent_authority = @import("../subagent/authority.zig");
 const subagent_resume_admission = @import("../subagent/resume_admission.zig");
 const tool_set_contract = @import("../tooling/tool_set.zig");
-const builtin_tools = @import("../../builtins/tools.zig");
 const types = @import("../shared/types.zig");
 const permissions = @import("../permissions/permissions.zig");
 const session_permission_state = @import("../permissions/session_permission_state.zig");
@@ -4569,6 +4568,7 @@ const TestApp = struct {
     }
 
     fn toolAdvertisementSet(_: *const TestApp) tool_set_contract.ToolSet {
+        const builtin_tools = @import("../../builtins/tools.zig");
         return builtin_tools.advertisement_set;
     }
 
