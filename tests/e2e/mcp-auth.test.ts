@@ -650,6 +650,12 @@ function baseEnv(root: ReturnType<typeof createRoot>) {
   };
 }
 
+// Short-rotation timing pair: the seeded expiry trips the 60s refresh skew
+// ~3s after seeding, so a 3s stall crosses it with margin to spare. One
+// shared pair so the rotation sites cannot drift independently.
+const ROTATION_SEED_TTL_MS = 63_000;
+const ROTATION_STALL_MS = 3_000;
+
 function seedExpiredCredentials(
   root: ReturnType<typeof createRoot>,
   activeAuth: AuthFixture,
@@ -1260,14 +1266,14 @@ describe("MCP remote authentication lifecycle", () => {
     upstream = startModernMcpHttpFixture("features");
     auth = startAuthFixture(upstream.url);
     const root = createRoot(auth);
-    seedExpiredCredentials(root, auth, Date.now() + 65_000);
+    seedExpiredCredentials(root, auth, Date.now() + ROTATION_SEED_TTL_MS);
     gateway = startCodexQueue([
       codexToolCall("auth_resource_list_one", "mcp_features", {
         action: "resource_list",
         server: "fixture",
       }),
       async () => {
-        await Bun.sleep(6_000);
+        await Bun.sleep(ROTATION_STALL_MS);
         return codexToolCall("auth_resource_list_two", "mcp_features", {
           action: "resource_list",
           server: "fixture",
@@ -1455,7 +1461,7 @@ describe("MCP remote authentication lifecycle", () => {
       failFeatureRefreshAfterRotation: true,
     });
     const root = createRoot(auth);
-    seedExpiredCredentials(root, auth, Date.now() + 65_000);
+    seedExpiredCredentials(root, auth, Date.now() + ROTATION_SEED_TTL_MS);
     gateway = startCodexQueue([
       codexToolCall("public_resource_a", "mcp_features", {
         action: "resource_list",
@@ -1478,7 +1484,7 @@ describe("MCP remote authentication lifecycle", () => {
         name: TOOL_NAME,
       }),
       async () => {
-        await Bun.sleep(6_000);
+        await Bun.sleep(ROTATION_STALL_MS);
         return codexToolCall("public_rotate", TOOL_NAME, {
           text: "rotate",
         });
@@ -1572,7 +1578,7 @@ describe("MCP remote authentication lifecycle", () => {
       upstream = startModernMcpHttpFixture(readCacheCase.mode);
       auth = startAuthFixture(upstream.url, { rejectRefresh: true });
       const root = createRoot(auth);
-      seedExpiredCredentials(root, auth, Date.now() + 65_000);
+      seedExpiredCredentials(root, auth, Date.now() + ROTATION_SEED_TTL_MS);
       gateway = startCodexQueue([
         codexToolCall("ordered_read_a", "mcp_features", {
           action: "resource_read",
@@ -1580,7 +1586,7 @@ describe("MCP remote authentication lifecycle", () => {
           uri: "custom://alpha",
         }),
         async () => {
-          await Bun.sleep(6_000);
+          await Bun.sleep(ROTATION_STALL_MS);
           return codexToolCall("ordered_read_b", "mcp_features", {
             action: "resource_read",
             server: "fixture",
@@ -1627,13 +1633,13 @@ describe("MCP remote authentication lifecycle", () => {
     upstream = startModernMcpHttpFixture("cache_auth_subscription");
     auth = startAuthFixture(upstream.url);
     const root = createRoot(auth);
-    seedExpiredCredentials(root, auth, Date.now() + 62_000);
+    seedExpiredCredentials(root, auth, Date.now() + ROTATION_SEED_TTL_MS);
     gateway = startCodexQueue([
         codexToolCall("search_initial", "capability_search", {
           query: "echo",
         }),
         async () => {
-          await Bun.sleep(3_000);
+          await Bun.sleep(ROTATION_STALL_MS);
           return codexToolCall("search_refreshed", "capability_search", {
             query: "echo",
           });
@@ -1794,13 +1800,13 @@ describe("MCP remote authentication lifecycle", () => {
       upstream = startModernMcpHttpFixture(cacheCase.mode);
       auth = startAuthFixture(upstream.url);
       const root = createRoot(auth);
-      seedExpiredCredentials(root, auth, Date.now() + 65_000);
+    seedExpiredCredentials(root, auth, Date.now() + ROTATION_SEED_TTL_MS);
       gateway = startCodexQueue([
         codexToolCall("select_before_refresh", "mcp_select_tool", {
           name: TOOL_NAME,
         }),
         async () => {
-          await Bun.sleep(6_000);
+          await Bun.sleep(ROTATION_STALL_MS);
           return codexToolCall("call_after_skew", TOOL_NAME, {
             text: "rotate",
           });
@@ -3000,9 +3006,9 @@ describe("MCP remote authentication lifecycle", () => {
         legacyStreamable = startLegacyStreamableHttpFixture(version);
         auth = startAuthFixture(legacyStreamable.url);
         const root = createRoot(auth);
-        seedExpiredCredentials(root, auth, Date.now() + 65_000);
+        seedExpiredCredentials(root, auth, Date.now() + ROTATION_SEED_TTL_MS);
         gateway = startDelayedToolCodex(
-          6_000,
+          ROTATION_STALL_MS,
           "Legacy HTTP refresh complete.",
         );
 
@@ -3039,9 +3045,9 @@ describe("MCP remote authentication lifecycle", () => {
       legacySse = startLegacyHttpSseFixture();
       auth = startAuthFixture(legacySse.url, { transport: "sse" });
       const root = createRoot(auth, true, "sse");
-      seedExpiredCredentials(root, auth, Date.now() + 65_000);
+      seedExpiredCredentials(root, auth, Date.now() + ROTATION_SEED_TTL_MS);
       gateway = startDelayedToolCodex(
-        8_000,
+        ROTATION_STALL_MS,
         "Legacy SSE refresh complete.",
       );
 

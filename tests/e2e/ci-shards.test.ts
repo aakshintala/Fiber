@@ -136,11 +136,13 @@ describe("CI shard planner", () => {
         cwd: root,
         stdout: "pipe",
         stderr: "pipe",
+        // Bound a hung nested run so it fails this test instead of hanging the shard.
+        timeout: 30_000,
       });
       expect(result.exitCode).toBe(0);
       expect(readFileSync(marker, "utf8")).toBe("exact\n");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 });
