@@ -10,6 +10,12 @@ const types = @import("../shared/types.zig");
 pub const direct_output_limit_bytes: usize = 65_536;
 const direct_output_read_chunk_bytes: usize = 4096;
 
+// Short poll so pipe workers observe termination instead of blocking forever
+// in a read or write held open by a stuck descendant.
+const direct_worker_poll_ms: i32 = 10;
+// Grace between TERM and KILL on the direct kill path.
+const direct_force_kill_grace_ms: i64 = 800;
+
 const DirectOutputProjector = struct {
     utf8_pending: [3]u8 = undefined,
     utf8_pending_len: u2 = 0,
@@ -329,10 +335,22 @@ fn executeDirectReadOnlyWithLimitAndTestControls(
             if (termination_started_ms == null) {
                 signalGroup(group_id, false);
                 termination_started_ms = now;
-            } else if (!force_kill_sent and now - termination_started_ms.? >= 800) {
+            } else if (!force_kill_sent and now - termination_started_ms.? >= direct_force_kill_grace_ms) {
                 signalGroup(group_id, true);
                 force_kill_sent = true;
             }
+        }
+        if (direct_termination_settle_expired(
+            termination_started_ms,
+            force_kill_sent,
+            io_mod.milliTimestamp(),
+        )) {
+            debug_trace.logf(
+                "core",
+                "direct command termination settlement expired boundary=post_force",
+                .{},
+            );
+            break;
         }
         io_mod.sleep(5 * std.time.ns_per_ms);
     }
@@ -502,6 +520,28 @@ fn writeRelayChunk(destination: std.Io.File, raw: []const u8) !RelayWriteResult 
     return .forwarded;
 }
 
+// A stuck descendant holding a pipe open must not hang the tool call: wait
+// for I/O with a short poll so workers observe termination promptly. Any
+// reported event (data, hangup, error) lets the following syscall resolve
+// without blocking; only a quiet open pipe waits out the poll.
+fn workerSourceReady(source: std.Io.File) !bool {
+    var poll_fds = [_]std.posix.pollfd{.{
+        .fd = source.handle,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    return (try std.posix.poll(&poll_fds, direct_worker_poll_ms)) != 0;
+}
+
+fn workerDestinationReady(destination: std.Io.File) !bool {
+    var poll_fds = [_]std.posix.pollfd{.{
+        .fd = destination.handle,
+        .events = std.posix.POLL.OUT,
+        .revents = 0,
+    }};
+    return (try std.posix.poll(&poll_fds, direct_worker_poll_ms)) != 0;
+}
+
 const OutputWorker = struct {
     shared: *SharedExecution,
     source: std.Io.File,
@@ -526,6 +566,7 @@ const OutputWorker = struct {
         var buffer: [direct_output_read_chunk_bytes]u8 = undefined;
 
         while (!self.shared.isStopping()) {
+            if (!(try workerSourceReady(self.source))) continue;
             const count = self.source.readStreaming(io_mod.getIo(), &.{buffer[0..]}) catch |err| switch (err) {
                 error.EndOfStream => break,
                 else => return err,
@@ -551,17 +592,31 @@ const OutputWorker = struct {
             }
 
             switch (self.kind) {
-                .relay => switch (try writeRelayChunk(self.destination.?, raw)) {
-                    .forwarded => {},
-                    .downstream_closed => {
-                        const remaining = self.shared.budget.remaining();
-                        debug_trace.logf(
-                            "core",
-                            "direct relay route=direct_read_only downstream_closed=true admitted_raw_bytes={d} remaining_raw_bytes={d}",
-                            .{ self.shared.budget.limit - remaining, remaining },
-                        );
-                        break;
-                    },
+                .relay => {
+                    // Bound the relay write the same way as reads: never block
+                    // forever on a full pipe held open by a stuck descendant.
+                    // Chunks fit PIPE_BUF, so a write after a writable poll
+                    // completes without blocking.
+                    var writable = false;
+                    while (!self.shared.isStopping()) {
+                        if (try workerDestinationReady(self.destination.?)) {
+                            writable = true;
+                            break;
+                        }
+                    }
+                    if (!writable) break;
+                    switch (try writeRelayChunk(self.destination.?, raw)) {
+                        .forwarded => {},
+                        .downstream_closed => {
+                            const remaining = self.shared.budget.remaining();
+                            debug_trace.logf(
+                                "core",
+                                "direct relay route=direct_read_only downstream_closed=true admitted_raw_bytes={d} remaining_raw_bytes={d}",
+                                .{ self.shared.budget.limit - remaining, remaining },
+                            );
+                            break;
+                        },
+                    }
                 },
                 .projected => |stream| {
                     try projector.push(self.shared.output.alloc, raw, &projected);
@@ -722,6 +777,36 @@ fn deadlineExpired(cfg: command_runner.Config) bool {
     return io_mod.milliTimestamp() - started_ms >= @as(i64, @intCast(timeout_ms));
 }
 
+// After a force-kill, worker joins and pipe drains settle within the same
+// deterministic bound as the collectOutput path, shared via
+// command_runner.termination_settle_timeout_ms so all callers get it. Past
+// the bound the wait loop breaks; any exit that was never observed reports
+// indeterminate instead of success.
+fn direct_termination_settle_expired_with_ceiling(
+    termination_started_ms: ?i64,
+    force_kill_sent: bool,
+    now_ms: i64,
+    ceiling_ms: i64,
+) bool {
+    const started_ms = termination_started_ms orelse return false;
+    return force_kill_sent and
+        now_ms >= started_ms and
+        now_ms - started_ms >= ceiling_ms;
+}
+
+fn direct_termination_settle_expired(
+    termination_started_ms: ?i64,
+    force_kill_sent: bool,
+    now_ms: i64,
+) bool {
+    return direct_termination_settle_expired_with_ceiling(
+        termination_started_ms,
+        force_kill_sent,
+        now_ms,
+        command_runner.termination_settle_timeout_ms,
+    );
+}
+
 fn signalGroup(group_id: ?std.posix.pid_t, force: bool) void {
     const pid = group_id orelse return;
     std.posix.kill(-pid, if (force) std.posix.SIG.KILL else std.posix.SIG.TERM) catch |err| switch (err) {
@@ -784,7 +869,9 @@ fn commandStatusFromTerm(term: std.process.Child.Term) command_contract.CommandS
     return switch (term) {
         .exited => |code| .{ .exit_code = @intCast(code) },
         .signal => |sig| .{ .signal = @intFromEnum(sig) },
-        else => .finished,
+        // A stopped or unknown term never observed an exit, so it must not
+        // project as success. Report it indeterminate instead.
+        .stopped, .unknown => .indeterminate,
     };
 }
 
@@ -1789,4 +1876,62 @@ test "direct executor flushes partial callback output before timeout" {
         }, std.testing.allocator, injectedPlan("/tmp", &stages)),
     );
     try std.testing.expectEqualStrings("PARTIAL", capture.stdout[0..capture.stdout_len]);
+}
+
+test "direct termination settlement expires only after its shared bound" {
+    try std.testing.expect(!direct_termination_settle_expired_with_ceiling(null, true, 10_000, 100));
+    try std.testing.expect(!direct_termination_settle_expired_with_ceiling(5_000, false, 10_000, 100));
+    try std.testing.expect(!direct_termination_settle_expired_with_ceiling(5_000, true, 5_099, 100));
+    try std.testing.expect(direct_termination_settle_expired_with_ceiling(5_000, true, 5_100, 100));
+    try std.testing.expect(!direct_termination_settle_expired(null, true, 10_000));
+    try std.testing.expect(!direct_termination_settle_expired(5_000, false, 10_000));
+    try std.testing.expect(direct_termination_settle_expired(
+        5_000,
+        true,
+        5_000 + command_runner.termination_settle_timeout_ms,
+    ));
+}
+
+test "nonterminal direct terms remain indeterminate" {
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        commandStatusFromTerm(.{ .unknown = 0 }),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus.indeterminate,
+        commandStatusFromTerm(.{ .stopped = std.posix.SIG.STOP }),
+    );
+    try std.testing.expectEqual(
+        command_contract.CommandStatus{ .exit_code = 3 },
+        commandStatusFromTerm(.{ .exited = 3 }),
+    );
+}
+
+test "direct executor termination settles while a detached descendant holds the pipe" {
+    if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
+
+    // A detached grandchild inherits the pipeline stdout and survives the
+    // group kill, holding the pipe open with no EOF. The tool call must still
+    // settle at its bound instead of hanging in the worker joins. The
+    // survivor exits on its own after 15s; a pre-fix run hangs the full 15s
+    // and fails the bound below.
+    const detach_command = if (builtin.os.tag == .linux)
+        "setsid sleep 15 & sleep 15"
+    else
+        "perl -MPOSIX -e 'POSIX::setsid(); exec sleep 15' & sleep 15";
+    const argv = [_][]const u8{ "/bin/sh", "-c", detach_command };
+    const stages = [_]command_effect.DirectStage{.{
+        .executable = "/bin/sh",
+        .argv = &argv,
+        .environment_profile = .basic_read_only,
+    }};
+    const started_ms = io_mod.milliTimestamp();
+    const result = executeDirectReadOnly(.{
+        .max_command_output_bytes = 1,
+        .timeout_ms = 200,
+        .timeout_started_ms = started_ms,
+    }, std.testing.allocator, injectedPlan("/tmp", &stages));
+    const elapsed_ms = io_mod.milliTimestamp() - started_ms;
+    try std.testing.expectError(error.TimeoutExpired, result);
+    try std.testing.expect(elapsed_ms < 10_000);
 }
