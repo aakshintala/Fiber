@@ -1128,10 +1128,10 @@ describe("effect-aware command permissions", () => {
       let resizeTrace = "";
       while (Date.now() < resizeDeadline) {
         resizeTrace = readFileSync(resizeTracePath, "utf8");
-        if (resizeTrace.includes("layout=64x28")) break;
+        if (/request_redraw.*layout=64x28/.test(resizeTrace)) break;
         await Bun.sleep(25);
       }
-      expect(resizeTrace).toContain("layout=64x28");
+      expect(resizeTrace).toMatch(/request_redraw.*layout=64x28/);
       expectNoOutputRows(
         await activeSession.waitForStableScrollback(
           (scrollback) => scrollback.includes("3 tool calls"),
