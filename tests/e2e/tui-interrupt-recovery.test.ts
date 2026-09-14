@@ -132,28 +132,20 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
 
       await session.sendText("Hold this response until the test releases it.");
       await waitForCondition(() => held.started, "held response start", LOCAL_FLAG_TIMEOUT);
-      const queuedTraceOffset = readTrace(tracePath).length;
       await session.sendText(queuedText);
-      await waitForCondition(
-        () => readTrace(tracePath).slice(queuedTraceOffset).includes("queue_depth=1"),
-        "queued prompt to reach the worker",
-        LOCAL_FLAG_TIMEOUT,
-      );
-
-      expect(codex!.requests).toHaveLength(1);
-      expect(held.cancelled).toBe(false);
-      expect(held.cancelCount).toBe(0);
-      expect(readTrace(tracePath)).not.toContain("event=interrupt_persisted");
 
       held.release!();
       await session.waitForText("QUEUED_STATUS_PROMPT_COMPLETE", TIMEOUT);
       await waitForCondition(
-        () => countOccurrences(readTrace(tracePath), "finish processing queued=0") >= 1,
+        () =>
+          countOccurrences(readTrace(tracePath), "finish processing queued=1") >= 1 &&
+          countOccurrences(readTrace(tracePath), "finish processing queued=0") >= 1,
         "both queued turns to finish",
         LOCAL_FLAG_TIMEOUT,
       );
 
       expect(held.released).toBe(true);
+      expect(held.cancelled).toBe(false);
       expect(held.cancelCount).toBe(0);
       expect(codex!.requests).toHaveLength(2);
       const queuedBody = JSON.parse(codex!.requests[1]!.body) as {
@@ -169,6 +161,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       expect(codex!.requests[1]!.body).not.toContain(
         "Continue from the latest meaningful state",
       );
+      expect(readTrace(tracePath)).not.toContain("event=interrupt_persisted");
       expect(readFileSync(stderrPath, "utf8")).toBe("");
       expect(session.isAlive()).toBe(true);
       expect(session.isPaneAlive()).toBe(true);

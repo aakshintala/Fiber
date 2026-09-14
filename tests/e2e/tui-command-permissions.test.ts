@@ -24,6 +24,7 @@ import {
   codexSerializedToolCall,
   codexToolCall,
   FAKE_CODEX_DEFAULT_MODEL,
+  isComposerLine,
   isVolatileTokenStatusRow,
   seededFakeCodexEnv,
   startFakeCodex,
@@ -1080,7 +1081,7 @@ describe("effect-aware command permissions", () => {
         env: codexEnv(root, codex, {
           FIBER_PERMISSION_MODE: "auto",
           FIBER_TRACE_LOG: join(root.root, "minimal-command-output-trace.log"),
-          FIBER_TRACE_SCOPES: "core,agent,tool,session,command_output",
+          FIBER_TRACE_SCOPES: "core,agent,tool,session,command_output,resize",
         }),
         stderrPath,
         width: 120,
@@ -1119,6 +1120,18 @@ describe("effect-aware command permissions", () => {
       await activeSession.waitForText("3 tool calls", TIMEOUT);
       expectNoOutputRows(await activeSession.captureFullScrollback());
       await activeSession.resizeWindow(64, 28);
+      // Fence on fiber's own post-resize re-render marker: a pre-resize
+      // frame cannot satisfy this, so the absence assert below inspects
+      // post-resize output only.
+      const resizeTracePath = join(root.root, "minimal-command-output-trace.log");
+      const resizeDeadline = Date.now() + TIMEOUT;
+      let resizeTrace = "";
+      while (Date.now() < resizeDeadline) {
+        resizeTrace = readFileSync(resizeTracePath, "utf8");
+        if (resizeTrace.includes("layout=64x28")) break;
+        await Bun.sleep(25);
+      }
+      expect(resizeTrace).toContain("layout=64x28");
       expectNoOutputRows(
         await activeSession.waitForStableScrollback(
           (scrollback) => scrollback.includes("3 tool calls"),
@@ -1256,7 +1269,8 @@ describe("effect-aware command permissions", () => {
         (pane) =>
           pane.includes("DIRECT_LOSSLESS_DONE") &&
           !pane.includes("Streaming (") &&
-          !pane.includes("Full detail · ctrl o close"),
+          !pane.includes("Full detail · ctrl o close") &&
+          (pane.includes("Generating") || pane.split("\n").some(isComposerLine)),
         TIMEOUT,
       );
       expect(normalizeVolatileStatusRows(await activeSession.capturePaneGrid())).toEqual(

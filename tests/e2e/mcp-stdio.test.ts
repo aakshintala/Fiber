@@ -967,8 +967,12 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       });
       await tui.waitForComposer(15_000);
       await tui.waitForText("[Esc] Dismiss remaining prompts", 10_000);
+      const beforePaste = await tui.capturePane();
       await tui.pasteText("2");
-      const approveAllPane = await tui.waitForText("[2] Approve all", 10_000);
+      const approveAllPane = await tui.waitForPane(
+        (pane) => pane !== beforePaste && pane.includes("[2] Approve all"),
+        10_000,
+      );
       expect(approveAllPane).toContain("[2] Approve all");
       expect(existsSync(root.launchLogPath)).toBe(false);
       expect(readFileSync(join(root.home, ".fiber", "settings.json"), "utf8"))
