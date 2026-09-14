@@ -3812,10 +3812,20 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
 
       proc.kill("SIGKILL");
       await proc.exited;
-      await Bun.sleep(50);
-      const after = readdirSync("/tmp").filter((name) =>
-        name.startsWith(".fiber-command-replay-") && !before.has(name)
-      );
+      const replayDeadline = Date.now() + 5_000;
+      let after: string[] = [];
+      while (Date.now() < replayDeadline) {
+        after = readdirSync("/tmp").filter((name) =>
+          name.startsWith(".fiber-command-replay-") && !before.has(name)
+        );
+        if (after.length === 0) break;
+        await Bun.sleep(25);
+      }
+      if (after.length !== 0) {
+        throw new Error(
+          `timed out waiting for no-save replay cleanup: ${after.join(", ")}`,
+        );
+      }
       expect(after).toEqual([]);
       expect(existsSync(join(root.home, ".fiber", "sessions"))).toBe(false);
     } finally {
@@ -5355,9 +5365,8 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
       await first.exited;
       const firstStderr = await new Response(first.stderr).text();
       expect(firstStderr).not.toContain("panic: reached unreachable code");
-      await Bun.sleep(3_500);
-      expect(existsSync(finishedPath)).toBe(false);
       for (const pid of ownedPids) await waitForProcessExit(pid, 3_000);
+      expect(existsSync(finishedPath)).toBe(false);
 
       const latest = await runFx(["session", "show", "last", "--json"], {
         cwd: root.workspace,
