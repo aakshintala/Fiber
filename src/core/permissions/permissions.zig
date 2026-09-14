@@ -1102,15 +1102,18 @@ pub fn displayTargetForPolicy(alloc: std.mem.Allocator, workspace_root: []const 
 pub fn ruleDecisionFor(alloc: std.mem.Allocator, rules: types.PermissionRuleSet, workspace_root: []const u8, tool_name: []const u8, target_path: []const u8, target_kind: PermissionTargetKind) !RuleDecision {
     // Built-in credential-store verdict (issue #97, reads only): evaluated
     // before configured rules, so no configured rule or session grant can
-    // allow these reads. Deny stays terminal; hold asks the owner.
+    // allow these reads. Deny stays terminal; hold asks the owner. File
+    // checks cover read kinds (.path_existing, .path_optional_existing)
+    // only: write/edit targets (.path_create_parent, .path_existing_parent)
+    // skip this rule entirely.
     if (target_kind == .command_cwd) {
-        switch (try credential_store.checkCommandTarget(alloc, target_path)) {
+        switch (try credential_store.check_command_target(alloc, target_path)) {
             .deny => return .deny,
             .hold => return .ask,
             .allow => {},
         }
-    } else if (isPathBasedTool(target_kind)) {
-        switch (try credential_store.checkFileTarget(alloc, workspace_root, target_path)) {
+    } else if (target_kind == .path_existing or target_kind == .path_optional_existing) {
+        switch (try credential_store.check_file_target(alloc, workspace_root, target_path)) {
             .deny => return .deny,
             .hold => return .ask,
             .allow => {},
@@ -2700,6 +2703,11 @@ test "credential store deny precedes configured rules for file reads" {
         RuleDecision.allow,
         try ruleDecisionFor(alloc, allow_all, workspace, "read_file", neighbor, .path_existing),
     );
+
+    // Reads only (issue #97): write/edit kinds skip the store rule, so the
+    // same path is never policy-denied on the mutation path.
+    try std.testing.expect((try ruleDecisionFor(alloc, .{}, workspace, "write_file", store, .path_create_parent)) != .deny);
+    try std.testing.expect((try ruleDecisionFor(alloc, .{}, workspace, "edit_file", store, .path_existing_parent)) != .deny);
 }
 
 test "credential store deny covers shell commands naming it" {

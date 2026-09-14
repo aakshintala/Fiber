@@ -314,6 +314,116 @@ fn check_glob_pattern(alloc: std.mem.Allocator, stores: StoreIdentities, pattern
     return .allow;
 }
 
+/// Shell brace groups (`{a,b}`, `{json}`, nested) are expansion metadata
+/// like globs: the shell opens one path per expansion, so a token whose
+/// expansion can name the store must not slip through as a literal.
+fn has_brace_meta(token: []const u8) bool {
+    const open = std.mem.findScalar(u8, token, '{') orelse return false;
+    return std.mem.findScalar(u8, token[open..], '}') != null;
+}
+
+/// Locates the first balanced `{...}` group, respecting nesting.
+/// Unbalanced input returns null and stays on the literal path.
+fn find_brace_group(token: []const u8) ?struct { open: usize, close: usize } {
+    const open = std.mem.findScalar(u8, token, '{') orelse return null;
+    var depth: usize = 0;
+    for (token[open..], 0..) |byte, offset| {
+        if (byte == '{') {
+            depth += 1;
+        } else if (byte == '}') {
+            depth -= 1;
+            if (depth == 0) return .{ .open = open, .close = open + offset };
+        }
+    }
+    return null;
+}
+
+const max_brace_expansions = 32;
+const max_brace_depth = 8;
+
+/// Shell-style brace expansion of one group: `a{b,c}d` yields `abd` and
+/// `acd`; a group without a top-level comma yields its contents once, so a
+/// single `{json}` still reaches `json` (fail-closed where bash would stay
+/// literal). Nested groups expand recursively. Returns false over budget or
+/// over depth so the caller can hold instead of guessing.
+fn append_brace_expansions(alloc: std.mem.Allocator, pattern: []const u8, out: *std.ArrayList([]u8), depth: usize) !bool {
+    if (depth > max_brace_depth) return false;
+    const group = find_brace_group(pattern) orelse {
+        try out.append(alloc, try alloc.dupe(u8, pattern));
+        return out.items.len <= max_brace_expansions;
+    };
+    const prefix = pattern[0..group.open];
+    const inner = pattern[group.open + 1 .. group.close];
+    const suffix = pattern[group.close + 1 ..];
+    var alts: std.ArrayList([]const u8) = .empty;
+    defer alts.deinit(alloc);
+    var level: usize = 0;
+    var start: usize = 0;
+    var has_comma = false;
+    for (inner, 0..) |byte, index| {
+        if (byte == '{') {
+            level += 1;
+        } else if (byte == '}') {
+            if (level > 0) level -= 1;
+        } else if (byte == ',' and level == 0) {
+            has_comma = true;
+            try alts.append(alloc, inner[start..index]);
+            start = index + 1;
+        }
+    }
+    if (has_comma) {
+        try alts.append(alloc, inner[start..]);
+    } else {
+        try alts.append(alloc, inner);
+    }
+    for (alts.items) |alt| {
+        const combined = try std.mem.concat(alloc, u8, &.{ prefix, alt, suffix });
+        defer alloc.free(combined);
+        if (!try append_brace_expansions(alloc, combined, out, depth + 1)) return false;
+        if (out.items.len > max_brace_expansions) return false;
+    }
+    return true;
+}
+
+/// Brace-free tail of token checking shared by plain tokens and individual
+/// brace expansions: glob match, lexical identity, then resolved identity.
+fn check_expanded_token(alloc: std.mem.Allocator, stores: StoreIdentities, absolute: []const u8) !Verdict {
+    if (has_glob_meta(absolute)) return check_glob_pattern(alloc, stores, absolute);
+    const lexical = try std.fs.path.resolve(alloc, &.{absolute});
+    defer alloc.free(lexical);
+    if (is_store_path(lexical, stores.home)) return .deny;
+    const resolved = realpath_opt(alloc, absolute) orelse return .allow;
+    defer alloc.free(resolved);
+    if (is_store_path(resolved, stores.home) or stores.matches_resolved(resolved)) return .deny;
+    return .allow;
+}
+
+/// Brace branch: deny when any expansion can name the store, hold when the
+/// braces defeat exact reasoning on a store-shaped token, allow otherwise.
+fn check_brace_pattern(alloc: std.mem.Allocator, stores: StoreIdentities, pattern: []const u8) !Verdict {
+    var expansions: std.ArrayList([]u8) = .empty;
+    defer {
+        for (expansions.items) |item| alloc.free(item);
+        expansions.deinit(alloc);
+    }
+    if (try append_brace_expansions(alloc, pattern, &expansions, 0)) {
+        var result: Verdict = .allow;
+        for (expansions.items) |expanded| {
+            if (contains_store_file(expanded)) return .deny;
+            switch (try check_expanded_token(alloc, stores, expanded)) {
+                .deny => return .deny,
+                .hold => result = .hold,
+                .allow => {},
+            }
+        }
+        if (result == .hold) return .hold;
+        if (is_store_shaped(pattern) or has_unresolved_env(pattern)) return .hold;
+        return .allow;
+    }
+    if (is_store_shaped(pattern) or has_unresolved_env(pattern)) return .hold;
+    return .allow;
+}
+
 fn join_cwd(alloc: std.mem.Allocator, cwd: []const u8, expanded: []const u8) !?[]u8 {
     if (std.fs.path.isAbsolute(expanded)) return try alloc.dupe(u8, expanded);
     if (cwd.len == 0) return null;
@@ -323,21 +433,16 @@ fn join_cwd(alloc: std.mem.Allocator, cwd: []const u8, expanded: []const u8) !?[
 /// Shared token verdict once HOME is known and the spelling is noise-free.
 /// Denies when the lexical (dot-segment normalized), the resolved, or the
 /// store identity names the store: lexical matching may only widen the
-/// deny, never narrow it. A failed `realpath` on a clean spelling allows
+/// deny, never narrow it. Brace groups expand first (any expansion naming
+/// the store denies); a failed `realpath` on a clean spelling allows
 /// (the path cannot open), while shapes that defeat lexical reasoning hold.
 fn check_clean_token(alloc: std.mem.Allocator, stores: StoreIdentities, absolute: []const u8) !Verdict {
     if (has_unresolved_env(absolute)) {
         if (is_store_shaped(absolute)) return .hold;
         return .allow;
     }
-    if (has_glob_meta(absolute)) return check_glob_pattern(alloc, stores, absolute);
-    const lexical = try std.fs.path.resolve(alloc, &.{absolute});
-    defer alloc.free(lexical);
-    if (is_store_path(lexical, stores.home)) return .deny;
-    const resolved = realpath_opt(alloc, absolute) orelse return .allow;
-    defer alloc.free(resolved);
-    if (is_store_path(resolved, stores.home) or stores.matches_resolved(resolved)) return .deny;
-    return .allow;
+    if (has_brace_meta(absolute)) return check_brace_pattern(alloc, stores, absolute);
+    return check_expanded_token(alloc, stores, absolute);
 }
 
 const token_separators = " \t\r\n;&|()<>`=";
@@ -369,7 +474,7 @@ fn check_command_token(alloc: std.mem.Allocator, home: ?[]const u8, stores: ?Sto
 /// Command verdict for `run_command` targets: deny wins, then hold, else
 /// allow. Every token is checked, so smuggling the store into one argument
 /// of a long command still denies.
-pub fn checkCommandTarget(alloc: std.mem.Allocator, target_path: []const u8) !Verdict {
+pub fn check_command_target(alloc: std.mem.Allocator, target_path: []const u8) !Verdict {
     const home = clean_home();
     var stores: ?StoreIdentities = null;
     defer if (stores) |*owned| owned.deinit();
@@ -392,7 +497,7 @@ pub fn checkCommandTarget(alloc: std.mem.Allocator, target_path: []const u8) !Ve
 /// File verdict for tool paths. Literal matching only: file tools take exact
 /// paths, so a file merely shaped like a glob is a different file and
 /// allowed. Relative inputs resolve against the workspace root.
-pub fn checkFileTarget(alloc: std.mem.Allocator, workspace_root: []const u8, target_path: []const u8) !Verdict {
+pub fn check_file_target(alloc: std.mem.Allocator, workspace_root: []const u8, target_path: []const u8) !Verdict {
     if (std.mem.findScalar(u8, target_path, 0) != null) return .deny;
     const stripped = try strip_shell_noise(alloc, target_path);
     defer alloc.free(stripped);
@@ -426,17 +531,17 @@ pub const TestHome = struct {
     map: std.process.Environ.Map,
 
     pub fn install(alloc: std.mem.Allocator, home: []const u8) !*TestHome {
-        const self = try installInner(alloc);
+        const self = try install_inner(alloc);
         errdefer self.deinit();
         try self.map.put("HOME", home);
         return self;
     }
 
-    pub fn installWithoutHome(alloc: std.mem.Allocator) !*TestHome {
-        return installInner(alloc);
+    pub fn install_without_home(alloc: std.mem.Allocator) !*TestHome {
+        return install_inner(alloc);
     }
 
-    fn installInner(alloc: std.mem.Allocator) !*TestHome {
+    fn install_inner(alloc: std.mem.Allocator) !*TestHome {
         if (test_home_depth == 0) {
             test_home_outer = io_mod.environMap();
             if (test_home_empty == null) {
@@ -534,7 +639,7 @@ test "policy denies the exact path the runtime loader reads" {
     const expect_lexical = try std.fs.path.join(alloc, &.{ home, ".fiber", "chatgpt-auth.json" });
     defer alloc.free(expect_lexical);
     try std.testing.expectEqualStrings(expect_lexical, loader_path);
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, workspace, loader_path));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, loader_path));
 }
 
 test "file target denies every spelling and allows neighbors" {
@@ -556,38 +661,38 @@ test "file target denies every spelling and allows neighbors" {
     var store_file = try tmp.dir.createFile(io_mod.getIo(), "home/.fiber/chatgpt-auth.json", .{ .truncate = true });
     store_file.close(io_mod.getIo());
 
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, workspace, store));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, store));
     const tilde = try alloc.dupe(u8, "~/.fiber/chatgpt-auth.json");
     defer alloc.free(tilde);
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, workspace, tilde));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, tilde));
     const dollar_home = try alloc.dupe(u8, "$HOME/.fiber/chatgpt-auth.json");
     defer alloc.free(dollar_home);
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, workspace, dollar_home));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, dollar_home));
     const braced_home = try alloc.dupe(u8, "${HOME}/.fiber/chatgpt-auth.json");
     defer alloc.free(braced_home);
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, workspace, braced_home));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, braced_home));
     const dotdot = try std.fmt.allocPrint(alloc, "{s}/.fiber/sub/../chatgpt-auth.json", .{home});
     defer alloc.free(dotdot);
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, workspace, dotdot));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, dotdot));
     const parent = try std.fmt.allocPrint(alloc, "{s}/.fiber", .{home});
     defer alloc.free(parent);
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, workspace, parent));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, parent));
     const relative = try alloc.dupe(u8, ".fiber/chatgpt-auth.json");
     defer alloc.free(relative);
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, home, relative));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, home, relative));
 
     const neighbor = try std.fmt.allocPrint(alloc, "{s}/.fiber/settings.json", .{home});
     defer alloc.free(neighbor);
-    try std.testing.expectEqual(Verdict.allow, try checkFileTarget(alloc, workspace, neighbor));
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, neighbor));
     const sibling_store_name = try std.fmt.allocPrint(alloc, "{s}/.fiber/credentials.json", .{home});
     defer alloc.free(sibling_store_name);
-    try std.testing.expectEqual(Verdict.allow, try checkFileTarget(alloc, workspace, sibling_store_name));
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, sibling_store_name));
     const same_name_elsewhere = try alloc.dupe(u8, "/tmp/chatgpt-auth.json");
     defer alloc.free(same_name_elsewhere);
-    try std.testing.expectEqual(Verdict.allow, try checkFileTarget(alloc, workspace, same_name_elsewhere));
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, same_name_elsewhere));
     const unrelated = try std.fmt.allocPrint(alloc, "{s}/notes.txt", .{workspace});
     defer alloc.free(unrelated);
-    try std.testing.expectEqual(Verdict.allow, try checkFileTarget(alloc, workspace, unrelated));
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, unrelated));
 }
 
 test "file target denies reads through a symlinked path" {
@@ -608,14 +713,14 @@ test "file target denies reads through a symlinked path" {
     try tmp.dir.symLink(io_mod.getIo(), store, "home/alias.json", .{ .is_directory = false });
     const alias = try std.fs.path.join(alloc, &.{ home, "alias.json" });
     defer alloc.free(alias);
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, home, alias));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, home, alias));
 
     const fiber_dir = try std.fs.path.join(alloc, &.{ home, ".fiber" });
     defer alloc.free(fiber_dir);
     try tmp.dir.symLink(io_mod.getIo(), fiber_dir, "home/dirlink", .{ .is_directory = true });
     const dirlink = try std.fs.path.join(alloc, &.{ home, "dirlink" });
     defer alloc.free(dirlink);
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, home, dirlink));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, home, dirlink));
 }
 
 test "file target fails closed without a home" {
@@ -626,14 +731,14 @@ test "file target fails closed without a home" {
     const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
     defer alloc.free(workspace);
 
-    const test_home = try TestHome.installWithoutHome(alloc);
+    const test_home = try TestHome.install_without_home(alloc);
     defer test_home.deinit();
 
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, workspace, "~/.fiber/chatgpt-auth.json"));
-    try std.testing.expectEqual(Verdict.deny, try checkFileTarget(alloc, workspace, "/home/fiber/.fiber/chatgpt-auth.json"));
-    try std.testing.expectEqual(Verdict.hold, try checkFileTarget(alloc, workspace, "~/.fiber"));
-    try std.testing.expectEqual(Verdict.hold, try checkFileTarget(alloc, workspace, "$P/.fiber/settings.json"));
-    try std.testing.expectEqual(Verdict.allow, try checkFileTarget(alloc, workspace, "notes.txt"));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, "~/.fiber/chatgpt-auth.json"));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, "/home/fiber/.fiber/chatgpt-auth.json"));
+    try std.testing.expectEqual(Verdict.hold, try check_file_target(alloc, workspace, "~/.fiber"));
+    try std.testing.expectEqual(Verdict.hold, try check_file_target(alloc, workspace, "$P/.fiber/settings.json"));
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, "notes.txt"));
 }
 
 test "command target denies shell spellings of the store" {
@@ -665,11 +770,16 @@ test "command target denies shell spellings of the store" {
         "ls ~/.fiber/ch*",
         "cat \"~/.fiber/chatgpt-auth.json\"",
         "cat ~/.fiber/chatgpt-auth.jso''n",
+        "cat ~/.fiber/chatgpt-auth.{json,bak}",
+        "cat ~/.fiber/chatgpt-auth.{json}",
+        "cat ~/.fiber/chatgpt-{auth,backup}.json",
+        "cat ~/.fiber/{chatgpt-auth,other}.json",
+        "cat ~/.fiber/chatgpt-auth.{jso{n,x},bak}",
         "cat $P/.fiber/chatgpt-auth.json",
     }) |denied_command| {
         const target = try std.mem.concat(alloc, u8, &.{ home_prefix, denied_command });
         defer alloc.free(target);
-        try std.testing.expectEqual(Verdict.deny, try checkCommandTarget(alloc, target));
+        try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, target));
     }
 
     const store_dir = try std.fs.path.join(alloc, &.{ home, ".fiber" });
@@ -678,14 +788,14 @@ test "command target denies shell spellings of the store" {
     defer alloc.free(relative_prefix);
     const relative_target = try std.mem.concat(alloc, u8, &.{ relative_prefix, "cat chatgpt-auth.json" });
     defer alloc.free(relative_target);
-    try std.testing.expectEqual(Verdict.deny, try checkCommandTarget(alloc, relative_target));
+    try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, relative_target));
     const relative_glob = try std.mem.concat(alloc, u8, &.{ relative_prefix, "cat chatgpt-auth.jso[n]" });
     defer alloc.free(relative_glob);
-    try std.testing.expectEqual(Verdict.deny, try checkCommandTarget(alloc, relative_glob));
+    try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, relative_glob));
 
     const absolute = try std.fmt.allocPrint(alloc, "{s}::cat {s}/.fiber/chatgpt-auth.json", .{ home, home });
     defer alloc.free(absolute);
-    try std.testing.expectEqual(Verdict.deny, try checkCommandTarget(alloc, absolute));
+    try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, absolute));
 }
 
 test "command target holds ambiguous spellings instead of allowing" {
@@ -708,15 +818,16 @@ test "command target holds ambiguous spellings instead of allowing" {
         "cat $P/.fiber/settings.json",
         "cat $P/chatgpt-backup",
         "ls $P/.fiber",
+        "cat ~/.fiber/{settings,backup}.json",
     }) |held_command| {
         const target = try std.mem.concat(alloc, u8, &.{ prefix, held_command });
         defer alloc.free(target);
-        try std.testing.expectEqual(Verdict.hold, try checkCommandTarget(alloc, target));
+        try std.testing.expectEqual(Verdict.hold, try check_command_target(alloc, target));
     }
     // One ambiguous token holds the whole command even beside benign words.
     const mixed = try std.mem.concat(alloc, u8, &.{ prefix, "echo ok; cat $P/.fiber/settings.json" });
     defer alloc.free(mixed);
-    try std.testing.expectEqual(Verdict.hold, try checkCommandTarget(alloc, mixed));
+    try std.testing.expectEqual(Verdict.hold, try check_command_target(alloc, mixed));
 }
 
 test "command target fails closed without a home" {
@@ -727,20 +838,20 @@ test "command target fails closed without a home" {
     const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
     defer alloc.free(workspace);
 
-    const test_home = try TestHome.installWithoutHome(alloc);
+    const test_home = try TestHome.install_without_home(alloc);
     defer test_home.deinit();
 
     const prefix = try std.fmt.allocPrint(alloc, "{s}::", .{workspace});
     defer alloc.free(prefix);
     const denied = try std.mem.concat(alloc, u8, &.{ prefix, "cat ~/.fiber/chatgpt-auth.json" });
     defer alloc.free(denied);
-    try std.testing.expectEqual(Verdict.deny, try checkCommandTarget(alloc, denied));
+    try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, denied));
     const held = try std.mem.concat(alloc, u8, &.{ prefix, "ls ~/.fiber" });
     defer alloc.free(held);
-    try std.testing.expectEqual(Verdict.hold, try checkCommandTarget(alloc, held));
+    try std.testing.expectEqual(Verdict.hold, try check_command_target(alloc, held));
     const benign = try std.mem.concat(alloc, u8, &.{ prefix, "echo hello" });
     defer alloc.free(benign);
-    try std.testing.expectEqual(Verdict.allow, try checkCommandTarget(alloc, benign));
+    try std.testing.expectEqual(Verdict.allow, try check_command_target(alloc, benign));
 }
 
 test "command target allows commands that do not touch the store" {
@@ -770,7 +881,7 @@ test "command target allows commands that do not touch the store" {
     }) |allowed_command| {
         const target = try std.mem.concat(alloc, u8, &.{ prefix, allowed_command });
         defer alloc.free(target);
-        try std.testing.expectEqual(Verdict.allow, try checkCommandTarget(alloc, target));
+        try std.testing.expectEqual(Verdict.allow, try check_command_target(alloc, target));
     }
 }
 
@@ -792,5 +903,5 @@ test "command target allows a workspace file that shares a generic store name" {
     local_file.close(io_mod.getIo());
     const target = try std.fmt.allocPrint(alloc, "{s}::cat credentials.json", .{workspace});
     defer alloc.free(target);
-    try std.testing.expectEqual(Verdict.allow, try checkCommandTarget(alloc, target));
+    try std.testing.expectEqual(Verdict.allow, try check_command_target(alloc, target));
 }
