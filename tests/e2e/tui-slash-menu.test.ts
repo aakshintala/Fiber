@@ -156,7 +156,7 @@ async function waitForSettledPane(
     if (pane !== previous) {
       previous = pane;
       stableSince = Date.now();
-    } else if (Date.now() - stableSince >= 200) {
+    } else if (Date.now() - stableSince >= 300) {
       return pane;
     }
   }
@@ -1765,7 +1765,11 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(pane).not.toMatch(/^● Usage/m);
 
       await session.sendKeys("Escape");
-      await waitForEmptyComposer(session, 5_000);
+      await session.waitForPane(
+        (current) => hasEmptyComposer(current) && !current.includes("Esc Close"),
+        5_000,
+        { description: "usage dismissed (empty composer, no Esc Close)" },
+      );
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd(TIMEOUT)).toBe(true);
       session = null;
@@ -1816,7 +1820,11 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(pane).toMatch(/0 tokens/);
 
       await session.sendKeys("Escape");
-      await waitForEmptyComposer(session, 5_000);
+      await session.waitForPane(
+        (current) => hasEmptyComposer(current) && !current.includes("Esc Close"),
+        5_000,
+        { description: "usage dismissed (empty composer, no Esc Close)" },
+      );
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd(TIMEOUT)).toBe(true);
       session = null;
@@ -1848,7 +1856,11 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendText("/usage");
       await waitForPaneText(session, "Tracking has not started", TIMEOUT);
       await session.sendKeys("Escape");
-      await waitForEmptyComposer(session, 5_000);
+      await session.waitForPane(
+        (current) => hasEmptyComposer(current) && !current.includes("Esc Close"),
+        5_000,
+        { description: "usage dismissed (empty composer, no Esc Close)" },
+      );
 
       const fxDir = join(home, ".fiber");
       const now = Date.now();
@@ -1885,7 +1897,11 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(pane).toContain("provider/a");
 
       await session.sendKeys("Escape");
-      await waitForEmptyComposer(session, 5_000);
+      await session.waitForPane(
+        (current) => hasEmptyComposer(current) && !current.includes("Esc Close"),
+        5_000,
+        { description: "usage dismissed (empty composer, no Esc Close)" },
+      );
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd(TIMEOUT)).toBe(true);
       session = null;
@@ -1960,7 +1976,11 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(pane).not.toContain("Usage unavailable");
 
       await session.sendKeys("Escape");
-      await waitForEmptyComposer(session, 5_000);
+      await session.waitForPane(
+        (current) => hasEmptyComposer(current) && !current.includes("Esc Close"),
+        5_000,
+        { description: "usage dismissed (empty composer, no Esc Close)" },
+      );
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd(TIMEOUT)).toBe(true);
       session = null;
@@ -2013,7 +2033,11 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(pane).toContain("Session activity");
 
       await session.sendKeys("Escape");
-      await waitForEmptyComposer(session, 5_000);
+      await session.waitForPane(
+        (current) => hasEmptyComposer(current) && !current.includes("Esc Close"),
+        5_000,
+        { description: "usage dismissed (empty composer, no Esc Close)" },
+      );
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd(TIMEOUT)).toBe(true);
       session = null;
@@ -2166,7 +2190,11 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(pane).toMatch(/137 tokens/);
 
       await session.sendKeys("Escape");
-      await waitForEmptyComposer(session, 5_000);
+      await session.waitForPane(
+        (current) => hasEmptyComposer(current) && !current.includes("Esc Close"),
+        5_000,
+        { description: "usage dismissed (empty composer, no Esc Close)" },
+      );
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd(TIMEOUT)).toBe(true);
       session = null;
@@ -2507,6 +2535,14 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendLiteralText("workspace");
       await waitForSkillsMenu(session, 1);
       await session.sendKeys("Enter");
+      await session.waitForPane(
+        (current) =>
+          composerContains(current, "workspace-menu") &&
+          current.includes("fiber") &&
+          !current.includes("↑↓ Navigate"),
+        5_000,
+        { description: "workspace skill completion without skills navigation" },
+      );
       grid = await session.capturePaneGrid();
       expect(composerContains(grid.join("\n"), "workspace-menu")).toBe(true);
       expect(grid.join("\n")).toContain("fiber");
@@ -2521,6 +2557,14 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendKeys("Tab");
       await session.sendKeys("Tab");
       await session.sendKeys("Tab");
+      await session.waitForPane(
+        (current) =>
+          current.includes("[Codex]") &&
+          current.includes("codex-menu") &&
+          current.includes("Codex · Global"),
+        5_000,
+        { description: "skills scope cycled to Codex showing codex-menu" },
+      );
       grid = await session.capturePaneGrid();
       const codexPane = grid.join("\n");
       expect(codexPane).toContain("[Codex]");
@@ -2618,14 +2662,30 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(selectedSkillName(await session.capturePaneEscapes())).toBe(lastVisible);
 
       await session.resizeWindow(72, 16);
-      grid = await waitForSkillsMenu(session, 220);
+      await waitForPaneEscapes(
+        session,
+        (escapes) =>
+          visibleFxSkillNames(gridFromAnsiCapture(escapes)).length === 4 &&
+          selectedSkillName(escapes) === lastVisible,
+        TIMEOUT,
+        `narrowed skills menu showing 4 rows with selection on ${lastVisible}`,
+      );
+      grid = await session.capturePaneGrid();
       expect(visibleFxSkillNames(grid)).toHaveLength(4);
       expect(selectedSkillName(await session.capturePaneEscapes())).toBe(
         initialNames[initialNames.length - 1],
       );
 
       await session.resizeWindow(120, 28);
-      grid = await waitForSkillsMenu(session, 220);
+      await waitForPaneEscapes(
+        session,
+        (escapes) =>
+          visibleFxSkillNames(gridFromAnsiCapture(escapes)).length === 6 &&
+          selectedSkillName(escapes) === lastVisible,
+        TIMEOUT,
+        `restored skills menu showing 6 rows with selection on ${lastVisible}`,
+      );
+      grid = await session.capturePaneGrid();
       expect(visibleFxSkillNames(grid)).toHaveLength(6);
       expect(selectedSkillName(await session.capturePaneEscapes())).toBe(
         initialNames[initialNames.length - 1],
@@ -3088,6 +3148,13 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
         await session.sendKeys("Enter");
         await waitForComposerText(session, "managed-menu", 5_000);
         await session.sendKeys("-l 'please'");
+        await session.waitForPane(
+          (pane) =>
+            composerContains(pane, "managed-menu please") &&
+            !pane.includes("$managed-menu please"),
+          5_000,
+          { description: "managed-menu token with typed please (no raw dollar text)" },
+        );
 
         let escapes = await session.capturePaneEscapes();
         expect(escapes).toContain("managed-menu");
