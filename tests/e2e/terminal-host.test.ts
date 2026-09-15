@@ -826,6 +826,27 @@ async function waitFor(
   }
 }
 
+async function expectProfileFailedRejection(
+  tracePath: string,
+  sessionId: string | undefined,
+  label: string,
+): Promise<void> {
+  // code=2 is StartupFailure.profile_failed. It also fires for a plain
+  // child exit, so every call site pairs this with the forged payload
+  // surfacing as inert session output: the spoof pin is rejection PLUS
+  // unhonored bytes, which a plain exit cannot satisfy.
+  expect(sessionId).toBeDefined();
+  await waitFor(
+    () =>
+      existsSync(tracePath) &&
+      readFileSync(tracePath, "utf8").includes(
+        `tmux startup failed id=${sessionId} code=2`,
+      ),
+    5_000,
+    label,
+  );
+}
+
 async function waitForExit(child: ChildProcessWithoutNullStreams): Promise<number> {
   if (child.exitCode !== null) return child.exitCode;
   if (child.signalCode !== null) return 128;
@@ -5005,15 +5026,13 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
     // Pin the cause: a genuine load timeout also yields startup_failed (at
     // the 5s ceiling), so require the early profile_failed rejection — a
     // fast failure plus the launcher's profile_failed trace marker for
-    // this session. code=2 is StartupFailure.profile_failed.
+    // this session. The forged shell-ready bytes must also surface as inert
+    // output: a detector that honored them would publish started instead of
+    // failing, and a plain exit 41 carries no such payload.
     expect(spoofElapsed).toBeLessThan(4_900);
-    await waitFor(
-      () =>
-        existsSync(tracePath) &&
-        readFileSync(tracePath, "utf8").includes(
-          `tmux startup failed id=${failedId} code=2`,
-        ),
-      5_000,
+    await expectProfileFailedRejection(
+      tracePath,
+      failedId,
       "spoofed-profile rejection trace",
     );
     const failedRead = await readSession(
@@ -5118,7 +5137,10 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
 
   const loginProfile = loginShellProfile();
   if (loginProfile !== null) {
-    writeFileSync(join(home, loginProfile), "exit 41\n");
+    writeFileSync(
+      join(home, loginProfile),
+      "printf '\\001\\000\\000\\000\\000spoofed-login\\n'; exit 41\n",
+    );
     const tmux = await requestAction(
       connected.client,
       connected.revision!,
@@ -5137,20 +5159,25 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
       action: "start",
       code: "startup_failed",
     });
-    // Same cause-pinning as the spoofed native start above: the exiting
-    // login profile must be rejected as profile_failed (code=2), not merely
-    // time out at the ceiling with the same startup_failed code.
+    // Same spoof pin through the tmux login-shell path: early
+    // profile_failed rejection plus the forged bytes surfacing as inert
+    // output. A plain exiting profile carries no such payload.
     const tmuxFailedId = (failure(tmux) as { session_id?: string }).session_id;
-    expect(tmuxFailedId).toBeDefined();
-    await waitFor(
-      () =>
-        existsSync(tracePath) &&
-        readFileSync(tracePath, "utf8").includes(
-          `tmux startup failed id=${tmuxFailedId} code=2`,
-        ),
-      5_000,
+    await expectProfileFailedRejection(
+      tracePath,
+      tmuxFailedId,
       "login-profile rejection trace",
     );
+    expect(
+      (
+        await readSession(
+          connected.client,
+          connected.revision!,
+          correlation++,
+          tmuxFailedId!,
+        )
+      ).output,
+    ).toContain("spoofed-login");
   }
 
   connected.client.close();

@@ -63,10 +63,18 @@ describe.skipIf(SKIP)("tui: agent prompt", () => {
       expect(scrollback).toContain(RESPONSE_TEXT);
       expect(session.isAlive()).toBe(true);
       expect(session.isPaneAlive()).toBe(true);
-      expect(readFileSync(stderrPath, "utf8")).toBe("");
 
       await session.sendText("/quit");
       expect(await session.waitForSessionEnd(10_000)).toBe(true);
+      // Shutdown must be clean: exit status 0 pins the /quit path, and the
+      // post-quit stderr read fails on teardown-time errors that the
+      // pre-quit read could not see. The status comes from the harness
+      // wrapper file (paneStatus answers ":" for a destroyed session, so
+      // it cannot report a post-exit status here).
+      expect(
+        readFileSync(join(tmpdir(), `${session.name}.exit-status`), "utf8").trim(),
+      ).toBe("0");
+      expect(readFileSync(stderrPath, "utf8")).toBe("");
     },
     // 2x the sequential sum: 10 + 60 + 10 = 80s of internal waits.
     TIMEOUT * 3,

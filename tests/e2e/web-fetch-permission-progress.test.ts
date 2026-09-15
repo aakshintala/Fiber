@@ -46,7 +46,7 @@ describe("web_fetch permission progress", () => {
       const result = await runWithoutCodexAuth([
         "ask",
         "--permission-mode", "auto",
-        "fetch https://example.com/ and summarize it",
+        "fetch http://localhost/ and summarize it",
       ]);
 
       expect(result.code).toBe(1);
@@ -57,14 +57,19 @@ describe("web_fetch permission progress", () => {
   );
 
   test(
-    "admitted fetch emits native progress once authenticated",
+    "admitted fetch is attempted once authenticated",
     async () => {
       // Positive leg for the pre-auth negative above: with credentials
-      // present the same tool call IS attempted (the follow-up model request
-      // carries the tool result) and emits Fetching progress. The negative
-      // therefore proves ordering (no progress before auth), not a broken
-      // progress pipe. Only the progress line is asserted, never the fetch
-      // outcome, so no live-network dependence beyond starting transport.
+      // present the same tool call IS admitted and attempted — the follow-up
+      // model request carries the tool result. The URL is rejected by local
+      // URL policy (localhost is non-public) before progress emission or
+      // transport, so this leg performs zero network I/O by construction:
+      // no live host appears anywhere in the test. The allow rule keeps the
+      // leg order-agnostic (permission-first or validation-first both end
+      // in the same local rejection). Progress rendering itself is pinned
+      // by unit tests (tool_presentation Fetching snapshot); here the
+      // admission trace (a later request carrying function_call_output) is
+      // what proves the negative is about pre-auth ordering, not a dead tool.
       const root = mkdtempSync(join(tmpdir(), "fiber-web-fetch-admitted-"));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
@@ -73,7 +78,7 @@ describe("web_fetch permission progress", () => {
       mkdirSync(join(home, ".fiber"), { recursive: true });
       writeFileSync(
         join(home, ".fiber", "settings.json"),
-        JSON.stringify({ permission: { web_fetch: { "domain:example.com": "allow" } } }),
+        JSON.stringify({ permission: { web_fetch: { "domain:localhost": "allow" } } }),
       );
       writeSeededChatGptLogin(home, chatGptAccessToken());
       const codex = startFakeCodex({
@@ -82,14 +87,14 @@ describe("web_fetch permission progress", () => {
             (item: { type?: string }) => item.type === "function_call_output",
           )
             ? codexFinalText("fetch done")
-            : codexToolCall("fetch_progress_1", "web_fetch", { url: "https://example.com/" }),
+            : codexToolCall("fetch_progress_1", "web_fetch", { url: "http://localhost/" }),
       });
       try {
         const result = await runFx(
           [
             "ask",
             "--permission-mode", "auto",
-            "fetch https://example.com/ and summarize it",
+            "fetch http://localhost/ and summarize it",
           ],
           {
             cwd: workspace,
@@ -99,7 +104,16 @@ describe("web_fetch permission progress", () => {
         );
 
         expect(codex.requests.length).toBeGreaterThanOrEqual(2);
-        expect(result.stderr).toContain("Fetching ");
+        expect(
+          codex.requests.some((request) =>
+            JSON.parse(request.body).input?.some(
+              (item: { type?: string }) => item.type === "function_call_output",
+            ),
+          ),
+        ).toBe(true);
+        // Local policy rejects before progress emission, so no Fetching
+        // progress — and no transport — could have occurred.
+        expectNoFetchProgress(result.stderr);
       } finally {
         codex.stop();
         rmSync(root, { recursive: true, force: true });
