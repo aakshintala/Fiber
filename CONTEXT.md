@@ -11,6 +11,14 @@ One run of the agent loop, from the input that starts it (a user message or a wa
 A unit of work inside a turn that has a lifecycle of started, deltas and completed: an assistant message, a reasoning block, or a tool call.
 _Avoid_: block, entry, step
 
+**Item id**:
+Fiber's own identity for an item, assigned when the item first appears and never taken from a provider. It is opaque and unique within its session, so consumers key an item on its session id and item id together.
+_Avoid_: call id, tool id
+
+**Provider id**:
+The identity a model provider gives an item, such as a tool call's `call_id`. Fiber keeps it only to talk back to that provider; it is never an item id.
+_Avoid_: call id, tool id
+
 ## Events
 
 **Event**:
