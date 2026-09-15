@@ -4,11 +4,15 @@ A terminal coding agent. This glossary covers the vocabulary of its sessions and
 
 ## Sessions
 
+**Run**:
+One Fiber process working on a session, from start to exit, such as one `fiber ask` or one `fiber serve`. A session spans many runs through resume, and a run spans many turns; a session's runs never overlap.
+_Avoid_: invocation, process run
+
 **Turn**:
 One run of the agent loop, from the input that starts it (a user message or a wakeup) until the agent yields control. Steering messages delivered during the run belong to that turn.
 
 **Item**:
-A unit of work inside a turn that has a lifecycle of started, deltas and completed: an assistant message, a reasoning block, or a tool call.
+A unit of work inside a turn that has a lifecycle of started, deltas and completed: an assistant message, a reasoning block, a tool call, or a compaction. A tool call is first requested by the model and only later started by whoever runs it, so a call that was never started provably never ran.
 _Avoid_: block, entry, step
 
 **Item id**:
@@ -26,6 +30,18 @@ _Avoid_: tool status, tool result
 **Job**:
 Long-running work that outlives the tool call that started it, such as a background shell command, a background subagent child or a watcher. The starting call completes with a receipt naming the job; the job then has its own lifecycle, can span turns, and reports later by its own events. `/background` lists and stops jobs.
 _Avoid_: background session, background task, pending tool call
+
+**Child**:
+A session started by another session's tool call, whose events the parent relays on its own stdout. A child runs either inside the call or in the background as a job.
+_Avoid_: subagent session, worker
+
+**Delegate**:
+A child run by another harness, such as Claude Code or Cursor, supervised as a job. It is not a Fiber session: its output is shown but never logged, and its own harness keeps its record.
+_Avoid_: external agent, backend
+
+**Steering message**:
+Input that arrives while a turn is running, from the user or from a parent, and joins that turn at its next safe point. If the turn ends first, it starts the next turn instead.
+_Avoid_: interrupt, follow-up
 
 ## Events
 
