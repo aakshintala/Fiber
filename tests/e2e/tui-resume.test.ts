@@ -310,7 +310,13 @@ async function waitForScrollback(
   let lastPane = "";
   while (Date.now() < deadline) {
     lastPane = await session.capturePane();
-    if (lastPane.includes(marker)) return await session.captureFullScrollback();
+    if (lastPane.includes(marker)) {
+      // A live full-scrollback capture can tear against the viewport, so
+      // only return it when it actually contains the marker; otherwise
+      // keep polling (#127).
+      const scrollback = await session.captureFullScrollback();
+      if (scrollback.includes(marker)) return scrollback;
+    }
     await Bun.sleep(VIEWPORT_POLL_MS);
   }
   // The marker may have scrolled out of the viewport: one full-scrollback
@@ -327,19 +333,27 @@ async function waitForScrollbackMarkers(
   markers: readonly string[],
   timeout = TIMEOUT,
 ): Promise<string> {
+  // Latch per-marker sightings across polls: markers that arrive pages
+  // apart never coexist in one viewport, so a marker seen once counts.
+  const seen = new Set<string>();
   const deadline = Date.now() + timeout;
   let lastPane = "";
   while (Date.now() < deadline) {
     lastPane = await session.capturePane();
-    if (markers.every((marker) => lastPane.includes(marker))) {
-      return await session.captureFullScrollback();
+    for (const marker of markers) if (lastPane.includes(marker)) seen.add(marker);
+    if (markers.every((marker) => seen.has(marker))) {
+      const scrollback = await session.captureFullScrollback();
+      if (markers.every((marker) => scrollback.includes(marker))) return scrollback;
+      // Torn capture: keep polling. Sightings stay latched.
     }
     await Bun.sleep(VIEWPORT_POLL_MS);
   }
   const scrollback = await session.captureFullScrollback();
+  for (const marker of markers) if (scrollback.includes(marker)) seen.add(marker);
   if (markers.every((marker) => scrollback.includes(marker))) return scrollback;
+  const missing = markers.filter((marker) => !seen.has(marker));
   throw new Error(
-    `Timed out waiting for scrollback markers ${markers.join(", ")}.\nLast pane:\n${lastPane}\nScrollback:\n${scrollback}`,
+    `Timed out waiting for scrollback markers ${markers.join(", ")}. Never seen: ${missing.join(", ")}.\nLast pane:\n${lastPane}\nScrollback:\n${scrollback}`,
   );
 }
 
@@ -353,35 +367,52 @@ async function waitForScrollbackOccurrences(
   expectedCount: number,
   timeout = TIMEOUT,
 ): Promise<string> {
+  // Latch the best sighting across polls: panes are transient, so the
+  // highest occurrence count observed in any single poll counts.
+  let bestCount = 0;
+  let everSeen = false;
   const deadline = Date.now() + timeout;
   let lastPane = "";
   while (Date.now() < deadline) {
     lastPane = await session.capturePane();
-    if (countOccurrences(lastPane, marker) >= expectedCount) {
-      return await session.captureFullScrollback();
+    const count = countOccurrences(lastPane, marker);
+    if (count > 0) everSeen = true;
+    if (count > bestCount) bestCount = count;
+    if (bestCount >= expectedCount) {
+      const scrollback = await session.captureFullScrollback();
+      if (countOccurrences(scrollback, marker) >= expectedCount) return scrollback;
+      // Torn capture: keep polling. The sighting stays latched.
     }
     await Bun.sleep(VIEWPORT_POLL_MS);
   }
   const scrollback = await session.captureFullScrollback();
-  if (countOccurrences(scrollback, marker) >= expectedCount) return scrollback;
+  const finalCount = countOccurrences(scrollback, marker);
+  if (finalCount > 0) everSeen = true;
+  if (finalCount > bestCount) bestCount = finalCount;
+  if (finalCount >= expectedCount) return scrollback;
+  const neverSeen = everSeen ? "" : ` Marker ${marker} was never seen in any poll.`;
   throw new Error(
-    `Timed out waiting for ${expectedCount} occurrences of ${marker}.\nLast pane:\n${lastPane}\nScrollback:\n${scrollback}`,
+    `Timed out waiting for ${expectedCount} occurrences of ${marker}. Best sighting: ${bestCount}.${neverSeen}\nLast pane:\n${lastPane}\nScrollback:\n${scrollback}`,
   );
 }
 
 async function waitForQuiescentReplay(
   replayPath: string,
   timeout = TIMEOUT,
+  minBytes = 1024 * 1024,
 ): Promise<Buffer> {
   // #89: a replay .bin can pass the size assert while the tail is still
-  // flushing on a slow runner. Wait for stable size across polls, then read.
+  // flushing on a slow runner. Stability counts only after the artifact
+  // crosses its known minimum size, so an empty (or truncated) file is
+  // never quiescent. The producer exposes no explicit flush fence, so
+  // size-stability above the minimum is the gate.
   const deadline = Date.now() + timeout;
   let previousSize = -1;
   let stablePolls = 0;
   let lastSize = 0;
   while (Date.now() < deadline) {
     lastSize = statSync(replayPath).size;
-    if (lastSize === previousSize) {
+    if (lastSize >= minBytes && lastSize === previousSize) {
       stablePolls += 1;
       if (stablePolls >= 3) return readFileSync(replayPath);
     } else {
@@ -391,7 +422,7 @@ async function waitForQuiescentReplay(
     await Bun.sleep(100);
   }
   throw new Error(
-    `Timed out waiting for replay artifact quiescence at ${replayPath}. Last size: ${lastSize}.`,
+    `Timed out waiting for replay artifact quiescence at ${replayPath}. Last size: ${lastSize} (minimum ${minBytes}).`,
   );
 }
 

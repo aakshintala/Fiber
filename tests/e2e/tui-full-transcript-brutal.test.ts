@@ -2,11 +2,14 @@ import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
+  readSync,
   realpathSync,
   rmSync,
   statSync,
@@ -621,20 +624,57 @@ function traceSize(tracePath: string): number {
   return statSync(tracePath).size;
 }
 
+function readTraceRange(tracePath: string, start: number, end: number): Buffer {
+  if (end <= start) return Buffer.alloc(0);
+  const fd = openSync(tracePath, "r");
+  try {
+    const buffer = Buffer.alloc(end - start);
+    readSync(fd, buffer, 0, buffer.length, start);
+    return buffer;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Offset-incremental trace poll state: each poll reads only bytes appended
+// since the last poll (#127). The overlap re-read guards a line straddling
+// the previous read boundary; the overlapped prefix is skipped on append,
+// so `seen` is exactly the trace from startByte with no duplication.
+type TracePollState = { pos: number; seen: string };
+
+function appendTraceIncremental(
+  tracePath: string,
+  startByte: number,
+  state: TracePollState,
+): void {
+  const size = traceSize(tracePath);
+  if (size < state.pos) {
+    // Truncated (or rotated) trace: restart from the anchor and pick up
+    // the fresh bytes on this same poll.
+    state.pos = startByte;
+    state.seen = "";
+  }
+  if (size === state.pos) return;
+  const readStart = Math.max(startByte, state.pos - OVERLAP_BYTES);
+  const chunk = readTraceRange(tracePath, readStart, size);
+  state.seen += chunk.subarray(state.pos - readStart).toString("utf8");
+  state.pos = size;
+}
+
 async function waitForTraceAfter(
   tracePath: string,
   startByte: number,
   needles: string[],
 ): Promise<string> {
   const deadline = Date.now() + TIMEOUT;
-  let appended = "";
+  const state: TracePollState = { pos: startByte, seen: "" };
   while (Date.now() < deadline) {
-    appended = readFileSync(tracePath).subarray(startByte).toString("utf8");
-    if (needles.every((needle) => appended.includes(needle))) return appended;
-    await sleep(25);
+    appendTraceIncremental(tracePath, startByte, state);
+    if (needles.every((needle) => state.seen.includes(needle))) return state.seen;
+    await sleep(TRACE_POLL_MS);
   }
   throw new Error(
-    `Timed out waiting for trace markers ${JSON.stringify(needles)}.\nTrace:\n${appended}`,
+    `Timed out waiting for trace markers ${JSON.stringify(needles)}.\nTrace:\n${state.seen}`,
   );
 }
 
@@ -645,11 +685,12 @@ async function waitForAnyTraceAfter(
   timeoutMs = TIMEOUT,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
+  const state: TracePollState = { pos: startByte, seen: "" };
   while (Date.now() < deadline) {
-    const appended = readFileSync(tracePath).subarray(startByte).toString("utf8");
-    const matched = needles.find((needle) => appended.includes(needle));
+    appendTraceIncremental(tracePath, startByte, state);
+    const matched = needles.find((needle) => state.seen.includes(needle));
     if (matched) return matched;
-    await sleep(25);
+    await sleep(TRACE_POLL_MS);
   }
   throw new Error(`Timed out waiting for any trace marker ${JSON.stringify(needles)}.`);
 }
@@ -684,7 +725,7 @@ async function waitForScrollableProjection(
   while (Date.now() < deadline) {
     const size = traceSize(tracePath);
     if (size < pos) pos = 0;
-    const appended = readFileSync(tracePath).subarray(pos).toString("utf8");
+    const appended = readTraceRange(tracePath, pos, size).toString("utf8");
     pos = Math.max(0, size - OVERLAP_BYTES);
     for (const window of projectionWindows(appended)) latest = window;
     if (latest.offset > 0) return latest;
@@ -701,12 +742,12 @@ async function waitForScrolledViewport(
   previousOffset: number,
 ): Promise<void> {
   const deadline = Date.now() + TIMEOUT;
-  let appended = "";
+  const state: TracePollState = { pos: startByte, seen: "" };
   while (Date.now() < deadline) {
-    appended = readFileSync(tracePath).subarray(startByte).toString("utf8");
-    const scrollIndex = appended.indexOf("[full_transcript_cache] scroll ");
+    appendTraceIncremental(tracePath, startByte, state);
+    const scrollIndex = state.seen.indexOf("[full_transcript_cache] scroll ");
     if (scrollIndex >= 0) {
-      const afterScroll = appended.slice(scrollIndex);
+      const afterScroll = state.seen.slice(scrollIndex);
       const windows = projectionWindows(afterScroll);
       if (windows.some((window) => window.offset !== previousOffset)) return;
       const after = afterScroll.match(/ after=(\d+)/)?.[1];
@@ -720,7 +761,7 @@ async function waitForScrolledViewport(
   }
   throw new Error(
     `Timed out waiting for a rendered Ctrl-O scroll from offset ${previousOffset}.\n` +
-    `Trace appended after action:\n${appended}`,
+    `Trace appended after action:\n${state.seen}`,
   );
 }
 
@@ -729,18 +770,18 @@ async function waitForRenderedViewportAfter(
   startByte: number,
 ): Promise<void> {
   const deadline = Date.now() + TIMEOUT;
-  let appended = "";
+  const state: TracePollState = { pos: startByte, seen: "" };
   while (Date.now() < deadline) {
-    appended = readFileSync(tracePath).subarray(startByte).toString("utf8");
+    appendTraceIncremental(tracePath, startByte, state);
     if (
-      projectionWindows(appended).length > 0 ||
-      /attempt_end outcome=committed reasons=[^\n]*modal/.test(appended) ||
-      /frame_plan\] build [^\n]*body=transcript transcript_body=paint/.test(appended)
+      projectionWindows(state.seen).length > 0 ||
+      /attempt_end outcome=committed reasons=[^\n]*modal/.test(state.seen) ||
+      /frame_plan\] build [^\n]*body=transcript transcript_body=paint/.test(state.seen)
     ) return;
     await sleep(TRACE_POLL_MS);
   }
   throw new Error(
-    `Timed out waiting for a rendered Ctrl-O frame.\nTrace appended after action:\n${appended}`,
+    `Timed out waiting for a rendered Ctrl-O frame.\nTrace appended after action:\n${state.seen}`,
   );
 }
 
@@ -750,15 +791,15 @@ async function waitForResizedViewport(
   cols: number,
 ): Promise<void> {
   const deadline = Date.now() + TIMEOUT;
-  let appended = "";
+  const state: TracePollState = { pos: startByte, seen: "" };
   while (Date.now() < deadline) {
-    appended = readFileSync(tracePath).subarray(startByte).toString("utf8");
-    if (projectionWindows(appended).some((window) => window.cols === cols)) return;
+    appendTraceIncremental(tracePath, startByte, state);
+    if (projectionWindows(state.seen).some((window) => window.cols === cols)) return;
     await sleep(TRACE_POLL_MS);
   }
   throw new Error(
     `Timed out waiting for a rendered ${cols}-column Ctrl-O viewport.\n` +
-    `Trace appended after action:\n${appended}`,
+    `Trace appended after action:\n${state.seen}`,
   );
 }
 

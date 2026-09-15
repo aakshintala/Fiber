@@ -254,7 +254,11 @@ async function waitForEither(
   while (Date.now() < deadline) {
     lastPane = await session.capturePane();
     if (expected.some((value) => lastPane.includes(value))) {
-      return await session.captureFullScrollback();
+      // A live full-scrollback capture can tear against the viewport, so
+      // only return it when it actually contains a match; otherwise keep
+      // polling (#127).
+      const scrollback = await session.captureFullScrollback();
+      if (expected.some((value) => scrollback.includes(value))) return scrollback;
     }
     await Bun.sleep(250);
   }
