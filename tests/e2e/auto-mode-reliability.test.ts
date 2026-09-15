@@ -247,14 +247,22 @@ async function waitForEither(
   expected: string[],
   timeoutMs: number,
 ): Promise<string> {
+  // Poll the cheap viewport capture; full scrollback only on match (for the
+  // returned assertion text) and on timeout (for the error) (#127).
   const deadline = Date.now() + timeoutMs;
-  let scrollback = "";
+  let lastPane = "";
   while (Date.now() < deadline) {
-    scrollback = await session.captureFullScrollback();
-    if (expected.some((value) => scrollback.includes(value))) return scrollback;
-    await Bun.sleep(25);
+    lastPane = await session.capturePane();
+    if (expected.some((value) => lastPane.includes(value))) {
+      return await session.captureFullScrollback();
+    }
+    await Bun.sleep(250);
   }
-  throw new Error(`Timed out waiting for ${expected.map(JSON.stringify).join(" or ")}`);
+  const scrollback = await session.captureFullScrollback();
+  if (expected.some((value) => scrollback.includes(value))) return scrollback;
+  throw new Error(
+    `Timed out waiting for ${expected.map(JSON.stringify).join(" or ")}.\nLast pane:\n${lastPane}\nScrollback:\n${scrollback}`,
+  );
 }
 
 // fiber ask --json wraps payloads in {ok, kind, data}: unwrap the envelope.

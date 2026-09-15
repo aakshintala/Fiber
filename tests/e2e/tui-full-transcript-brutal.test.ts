@@ -612,6 +612,11 @@ async function waitForMode(
   }, TIMEOUT);
 }
 
+// Trace polls re-read the ever-growing trace file per poll: keep the
+// cadence at 25-50ms and parse only bytes appended since the last poll (#127).
+const TRACE_POLL_MS = 50;
+const OVERLAP_BYTES = 256;
+
 function traceSize(tracePath: string): number {
   return statSync(tracePath).size;
 }
@@ -670,12 +675,20 @@ function latestProjectionWindow(tracePath: string): ProjectionWindowTrace {
 async function waitForScrollableProjection(
   tracePath: string,
 ): Promise<ProjectionWindowTrace> {
+  // Incremental like waitForTraceAfter: track the trace offset across polls
+  // and parse only appended bytes (#127). The overlap guards a window line
+  // straddling the previous read boundary.
   const deadline = Date.now() + TIMEOUT;
   let latest = latestProjectionWindow(tracePath);
+  let pos = Math.max(0, traceSize(tracePath) - OVERLAP_BYTES);
   while (Date.now() < deadline) {
-    latest = latestProjectionWindow(tracePath);
+    const size = traceSize(tracePath);
+    if (size < pos) pos = 0;
+    const appended = readFileSync(tracePath).subarray(pos).toString("utf8");
+    pos = Math.max(0, size - OVERLAP_BYTES);
+    for (const window of projectionWindows(appended)) latest = window;
     if (latest.offset > 0) return latest;
-    await sleep(10);
+    await sleep(TRACE_POLL_MS);
   }
   throw new Error(
     `Timed out waiting for a scrollable Ctrl-O page. Last offset: ${latest.offset}.`,
@@ -703,7 +716,7 @@ async function waitForScrolledViewport(
         /frame_plan\] build [^\n]*body=transcript transcript_body=paint/.test(afterScroll)
       ) return;
     }
-    await sleep(10);
+    await sleep(TRACE_POLL_MS);
   }
   throw new Error(
     `Timed out waiting for a rendered Ctrl-O scroll from offset ${previousOffset}.\n` +
@@ -724,7 +737,7 @@ async function waitForRenderedViewportAfter(
       /attempt_end outcome=committed reasons=[^\n]*modal/.test(appended) ||
       /frame_plan\] build [^\n]*body=transcript transcript_body=paint/.test(appended)
     ) return;
-    await sleep(10);
+    await sleep(TRACE_POLL_MS);
   }
   throw new Error(
     `Timed out waiting for a rendered Ctrl-O frame.\nTrace appended after action:\n${appended}`,
@@ -741,7 +754,7 @@ async function waitForResizedViewport(
   while (Date.now() < deadline) {
     appended = readFileSync(tracePath).subarray(startByte).toString("utf8");
     if (projectionWindows(appended).some((window) => window.cols === cols)) return;
-    await sleep(10);
+    await sleep(TRACE_POLL_MS);
   }
   throw new Error(
     `Timed out waiting for a rendered ${cols}-column Ctrl-O viewport.\n` +

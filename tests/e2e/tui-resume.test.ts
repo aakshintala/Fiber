@@ -296,19 +296,30 @@ function codexSse(events: Record<string, unknown>[]): string {
   return events.flatMap((event) => codexEventLines(event, ctx)).join("");
 }
 
+// Viewport polls are cheap (visible rows only); full-scrollback dumps on a
+// large history buffer cost seconds each, so marker waits poll the viewport
+// and reserve full scrollback for the final assertion (#127).
+const VIEWPORT_POLL_MS = 250;
+
 async function waitForScrollback(
   session: TmuxSession,
   marker: string,
   timeout = TIMEOUT,
 ): Promise<string> {
   const deadline = Date.now() + timeout;
-  let latest = "";
+  let lastPane = "";
   while (Date.now() < deadline) {
-    latest = await session.captureFullScrollback();
-    if (latest.includes(marker)) return latest;
-    await Bun.sleep(100);
+    lastPane = await session.capturePane();
+    if (lastPane.includes(marker)) return await session.captureFullScrollback();
+    await Bun.sleep(VIEWPORT_POLL_MS);
   }
-  throw new Error(`Timed out waiting for ${marker}.\nScrollback:\n${latest}`);
+  // The marker may have scrolled out of the viewport: one full-scrollback
+  // check before failing so a scrolled-past marker still passes.
+  const scrollback = await session.captureFullScrollback();
+  if (scrollback.includes(marker)) return scrollback;
+  throw new Error(
+    `Timed out waiting for scrollback to contain ${marker}.\nLast pane:\n${lastPane}\nScrollback:\n${scrollback}`,
+  );
 }
 
 async function waitForScrollbackMarkers(
@@ -317,14 +328,18 @@ async function waitForScrollbackMarkers(
   timeout = TIMEOUT,
 ): Promise<string> {
   const deadline = Date.now() + timeout;
-  let latest = "";
+  let lastPane = "";
   while (Date.now() < deadline) {
-    latest = await session.captureFullScrollback();
-    if (markers.every((marker) => latest.includes(marker))) return latest;
-    await Bun.sleep(100);
+    lastPane = await session.capturePane();
+    if (markers.every((marker) => lastPane.includes(marker))) {
+      return await session.captureFullScrollback();
+    }
+    await Bun.sleep(VIEWPORT_POLL_MS);
   }
+  const scrollback = await session.captureFullScrollback();
+  if (markers.every((marker) => scrollback.includes(marker))) return scrollback;
   throw new Error(
-    `Timed out waiting for scrollback markers ${markers.join(", ")}.\nScrollback:\n${latest}`,
+    `Timed out waiting for scrollback markers ${markers.join(", ")}.\nLast pane:\n${lastPane}\nScrollback:\n${scrollback}`,
   );
 }
 
@@ -339,14 +354,44 @@ async function waitForScrollbackOccurrences(
   timeout = TIMEOUT,
 ): Promise<string> {
   const deadline = Date.now() + timeout;
-  let latest = "";
+  let lastPane = "";
   while (Date.now() < deadline) {
-    latest = await session.captureFullScrollback();
-    if (countOccurrences(latest, marker) >= expectedCount) return latest;
+    lastPane = await session.capturePane();
+    if (countOccurrences(lastPane, marker) >= expectedCount) {
+      return await session.captureFullScrollback();
+    }
+    await Bun.sleep(VIEWPORT_POLL_MS);
+  }
+  const scrollback = await session.captureFullScrollback();
+  if (countOccurrences(scrollback, marker) >= expectedCount) return scrollback;
+  throw new Error(
+    `Timed out waiting for ${expectedCount} occurrences of ${marker}.\nLast pane:\n${lastPane}\nScrollback:\n${scrollback}`,
+  );
+}
+
+async function waitForQuiescentReplay(
+  replayPath: string,
+  timeout = TIMEOUT,
+): Promise<Buffer> {
+  // #89: a replay .bin can pass the size assert while the tail is still
+  // flushing on a slow runner. Wait for stable size across polls, then read.
+  const deadline = Date.now() + timeout;
+  let previousSize = -1;
+  let stablePolls = 0;
+  let lastSize = 0;
+  while (Date.now() < deadline) {
+    lastSize = statSync(replayPath).size;
+    if (lastSize === previousSize) {
+      stablePolls += 1;
+      if (stablePolls >= 3) return readFileSync(replayPath);
+    } else {
+      previousSize = lastSize;
+      stablePolls = 0;
+    }
     await Bun.sleep(100);
   }
   throw new Error(
-    `Timed out waiting for ${expectedCount} occurrences of ${marker}.\nScrollback:\n${latest}`,
+    `Timed out waiting for replay artifact quiescence at ${replayPath}. Last size: ${lastSize}.`,
   );
 }
 
@@ -1529,7 +1574,7 @@ test.skipIf(!tmuxAvailable())(
       const artifactFiles = readdirSync(commandDir);
       const replayFiles = artifactFiles.filter((name) => name.endsWith(".bin"));
       expect(replayFiles).toHaveLength(1);
-      const replayBytes = readFileSync(join(commandDir, replayFiles[0]!));
+      const replayBytes = await waitForQuiescentReplay(join(commandDir, replayFiles[0]!));
       expect(replayBytes.byteLength).toBeGreaterThan(1024 * 1024);
       expect(replayBytes.includes(Buffer.from(stdoutTail))).toBe(true);
       expect(replayBytes.includes(Buffer.from(stderrTail))).toBe(true);
@@ -1728,7 +1773,7 @@ printf '${tailMarker}\\n'
         name.endsWith(".bin")
       );
       expect(replayFiles).toHaveLength(1);
-      const replayBytes = readFileSync(join(commandDir, replayFiles[0]!));
+      const replayBytes = await waitForQuiescentReplay(join(commandDir, replayFiles[0]!));
       expect(replayBytes.byteLength).toBeGreaterThan(1024 * 1024);
       expect(replayBytes.includes(Buffer.from(stableMarker))).toBe(true);
       expect(replayBytes.includes(Buffer.from("ACTIVE_OPEN_059999"))).toBe(true);
@@ -1881,7 +1926,7 @@ while :; do :; done
       expect(replayNames).toHaveLength(1);
       const replayName = replayNames[0]!;
       const replayPath = join(commandDir, replayName);
-      const replayBytes = readFileSync(replayPath);
+      const replayBytes = await waitForQuiescentReplay(replayPath);
       expect(replayBytes.byteLength).toBeGreaterThan(1024 * 1024);
 
       await active.sendKeys("C-o");
