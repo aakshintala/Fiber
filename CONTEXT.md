@@ -19,6 +19,14 @@ _Avoid_: call id, tool id
 The identity a model provider gives an item, such as a tool call's `call_id`. Fiber keeps it only to talk back to that provider; it is never an item id.
 _Avoid_: call id, tool id
 
+**Tool outcome**:
+How a finished tool call ended: completed, failed, denied or cancelled. A denial says why, and a failure names a stable error code; whether a tool ran a process is read from the facts it reports, never from its name.
+_Avoid_: tool status, tool result
+
+**Job**:
+Long-running work that outlives the tool call that started it, such as a background shell command, a background subagent child or a watcher. The starting call completes with a receipt naming the job; the job then has its own lifecycle, can span turns, and reports later by its own events. `/background` lists and stops jobs.
+_Avoid_: background session, background task, pending tool call
+
 ## Events
 
 **Event**:
