@@ -743,6 +743,43 @@ async function waitForSettledFooter(
   );
 }
 
+// Geometry-aware quiescence gate for resize assertions: a bare footer
+// presence check can return on the stale pre-resize render, and the fixed
+// sleep in resizeWindow is too short under full-run load. Poll until tmux
+// reports the new size, the footer is present, and the grid is stable
+// across consecutive polls, so the following scrollback capture cannot
+// race an in-flight reflow. Pass size=null to gate on quiescence only.
+async function waitForQuiescentFooter(
+  s: TmuxSession,
+  size: { cols: number; rows: number } | null,
+  description: string,
+  timeoutMs = 30_000,
+): Promise<string[]> {
+  const deadline = Date.now() + timeoutMs;
+  let last: string[] = [];
+  let previous = "";
+  let stablePolls = 0;
+  while (Date.now() < deadline) {
+    const grid = await s.capturePaneGrid();
+    last = grid;
+    const text = grid.join("\n");
+    const geometryOk = size == null ||
+      (s.paneSize().cols === size.cols && s.paneSize().rows === size.rows);
+    if (geometryOk && findFooter(grid) !== null && text === previous) {
+      stablePolls += 1;
+      if (stablePolls >= 2) return grid;
+    } else {
+      stablePolls = 0;
+      previous = text;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `Timed out waiting for ${description} after ${timeoutMs}ms.\n` +
+      `Pane: ${s.describePaneExit()}.\nLast grid:\n${last.join("\n")}`,
+  );
+}
+
 async function waitForHelpCatalog(
   active: TmuxSession,
   cols: number,
@@ -1990,15 +2027,16 @@ describe.skipIf(SKIP)("tui: resize", () => {
           }
         }
       };
+      await waitForQuiescentFooter(session, null, "retention transcript settled before resize");
       const beforeResize = await session.captureFullScrollback();
       assertMarkersExactlyOnce("before resize", beforeResize);
 
-      await session.resizeWindow(72, 24, 700);
-      await waitForSettledFooter(session);
+      await session.resizeWindow(72, 24, 0);
+      await waitForQuiescentFooter(session, { cols: 72, rows: 24 }, "retention footer settled at 72x24");
       assertMarkersExactlyOnce("after resize to 72x24", await session.captureFullScrollback());
 
-      await session.resizeWindow(120, 40, 700);
-      const grid = await waitForSettledFooter(session);
+      await session.resizeWindow(120, 40, 0);
+      const grid = await waitForQuiescentFooter(session, { cols: 120, rows: 40 }, "retention footer settled back at 120x40");
       assertMarkersExactlyOnce("after resize back to 120x40", await session.captureFullScrollback());
       expect(findFooterBlocks(grid)).toHaveLength(1);
       expect(gateway.requests).toHaveLength(2);
