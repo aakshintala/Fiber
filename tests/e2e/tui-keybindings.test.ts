@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { HAS_API_KEY } from "../evals/eval-helpers";
 import {
+  hasEmptyComposer,
+  isComposerLine,
   TmuxSession,
   tmuxAvailable,
 } from "./tmux-helpers";
 
 const LIVE_SKIP = !tmuxAvailable() || !HAS_API_KEY;
 const TIMEOUT = 30_000;
+// Live agentic turns run tools and can stream for a minute or more.
+const LIVE_TURN_TIMEOUT = 120_000;
 
 let session: TmuxSession | null = null;
 
@@ -52,14 +56,44 @@ describe.skipIf(LIVE_SKIP)("tui: key bindings", () => {
 
       await session.sendKeys("-l 'test-history-recall'");
       await session.sendKeys("Enter");
-      await new Promise((r) => setTimeout(r, 2_000));
+      // Poll for the live turn itself instead of a fixed sleep: Up must
+      // recall from committed history after the response, and a sleep lets
+      // a broken recall hide behind the still-visible submitted text.
+      // Phase 1 proves the submission was accepted (turn started); phase 2
+      // proves the response completed (turn done).
+      await session.waitForPane(
+        (pane) => /thinking/i.test(pane) || pane.includes("Streaming ("),
+        TIMEOUT,
+        { description: "live turn starts after submit" },
+      );
+      await session.waitForPane(
+        (pane) =>
+          hasEmptyComposer(pane) &&
+          !/thinking/i.test(pane) &&
+          !pane.includes("Streaming ("),
+        LIVE_TURN_TIMEOUT,
+        { description: "live turn completes" },
+      );
 
+      // Assert composer content, not whole-pane containment: the submitted
+      // text stays in the transcript regardless, so a whole-pane assert
+      // passes even when Up-recall is broken. Note a plain composer-line
+      // match also hits the transcript's own user-message row, so require the
+      // post-Up delta: exactly one more hit than before Up was pressed.
+      const recallHits = (pane: string): number =>
+        pane.split("\n").filter((line) =>
+          isComposerLine(line) && line.includes("test-history-recall")
+        ).length;
+      const before = recallHits(await session.capturePane());
       await session.sendKeys("Up");
-      await new Promise((r) => setTimeout(r, 500));
-
-      const pane = await session.capturePane();
-      expect(pane).toContain("test-history-recall");
+      const recalled = await session.waitForPane(
+        (pane) => recallHits(pane) === before + 1,
+        TIMEOUT,
+        { description: "Up recalls previous input into the composer" },
+      );
+      expect(recallHits(recalled)).toBe(before + 1);
     },
-    TIMEOUT,
+    // 2x the sequential sum: 10 + 30 + 120 + 30 = 190s of internal waits.
+    TIMEOUT * 7,
   );
 });

@@ -1513,6 +1513,15 @@ test.skipIf(!tmuxAvailable())(
 
       await active.sendKeys("C-o");
       await active.waitForText("● 1 tool call · 1 command", TIMEOUT);
+      // Settle fence before the absence asserts: the overlay close is
+      // async, so wait for the grid to return to the compact snapshot.
+      // A slow close must time out here, not slip past the negatives on a
+      // torn frame.
+      await active.waitForStableGrid(
+        compactGrid,
+        normalizeVolatileStatusRows,
+        TIMEOUT,
+      );
       const restored = await active.capturePane();
       const restoredScrollback = await active.captureFullScrollback();
       expect(restored).not.toContain("lines more (ctrl o to view)");
@@ -1534,7 +1543,8 @@ test.skipIf(!tmuxAvailable())(
       rmSync(root, { recursive: true, force: true });
     }
   },
-  TIMEOUT,
+  // Covers the added settle fence on top of the existing waits.
+  TIMEOUT * 2,
 );
 
 test.skipIf(!tmuxAvailable())(
@@ -1596,8 +1606,18 @@ test.skipIf(!tmuxAvailable())(
       expect(compact).not.toContain(stderrTail);
 
       await active.sendText("/status");
-      const status = await active.waitForText(/model|permission_mode/i, TIMEOUT);
-      expect(status.toLowerCase()).toMatch(/model|permission_mode/);
+      // Assert full row shapes: /model|permission_mode/ also matches error
+      // text that merely mentions "model" (e.g. the missing-auth help),
+      // so require the Status block's key=value rows.
+      const status = await active.waitForPane(
+        (pane) =>
+          /Status: model=\S+/.test(pane) &&
+          /^\s+permission_mode=\S+/m.test(pane),
+        TIMEOUT,
+        { description: "full /status rows" },
+      );
+      expect(status).toMatch(/Status: model=\S+/);
+      expect(status).toMatch(/^\s+permission_mode=\S+/m);
       expect(active.paneStatus()).toEqual({ dead: false, status: null });
       const sessionId = sessionIdFromHome(home);
 
@@ -6858,7 +6878,11 @@ test.skipIf(!tmuxAvailable())(
       const cancellationNoticeIndex = resumed.indexOf("● System: cancelled");
       expect(cancelledIndex).toBeGreaterThanOrEqual(0);
       expect(cancellationNoticeIndex).toBeGreaterThan(cancelledIndex);
-      expect(countOccurrences(resumed, "● System: cancelled")).toBe(1);
+      // The rendered notice may repeat across resume repaints, so require
+      // at-least-once here and pin exact-once on the trace event: one
+      // Escape produced exactly one persisted interrupt.
+      expect(countOccurrences(resumed, "● System: cancelled")).toBeGreaterThanOrEqual(1);
+      expect(countOccurrences(readFileSync(tracePath, "utf8"), "event=interrupt_persisted")).toBe(1);
       expect(resumed).not.toContain("Interrupted by user after completing");
       expect(resumed).not.toContain("<turn_aborted>");
       const restoredPresentation = resumed.slice(cancelledIndex, cancellationNoticeIndex);
