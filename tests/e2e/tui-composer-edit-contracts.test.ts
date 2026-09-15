@@ -215,12 +215,20 @@ async function waitForTraceOrExit(
 ): Promise<void> {
   const tracePath = join(root!, "trace.log");
   const started = Date.now();
+  let lastPane = "";
   while (Date.now() - started < timeout) {
-    if (!active.isAlive()) return;
+    if (!active.isAlive()) {
+      throw new Error(
+        `Session died while waiting for trace marker ${expected}.\nLast pane:\n${lastPane}`,
+      );
+    }
     if (readFileSync(tracePath, "utf8").includes(expected)) return;
+    lastPane = await active.capturePane();
     await Bun.sleep(25);
   }
-  throw new Error(`Timed out waiting for trace: ${expected}`);
+  throw new Error(
+    `Timed out waiting for trace marker ${expected} after ${timeout}ms.\nLast pane:\n${lastPane}`,
+  );
 }
 
 function userParts(requestIndex = 0): Array<{
@@ -977,6 +985,14 @@ tmuxTest(
     const active = await startFx(true, 4);
 
     await selectReviewSkill(active);
+    // Wait for the skill chip to land in the composer first: asserting
+    // separator absence on a single snapshot passes vacuously when the chip
+    // never renders.
+    await active.waitForPane(
+      (pane) => composerContains(pane, "review"),
+      TIMEOUT,
+      { description: "review skill chip in composer" },
+    );
     expect(await active.capturePane()).not.toContain("review ·");
     await active.sendLiteralText("@ta");
     await active.waitForText("target.txt", TIMEOUT);

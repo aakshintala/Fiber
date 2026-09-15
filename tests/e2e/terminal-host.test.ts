@@ -2128,7 +2128,9 @@ test.skipIf(!tmuxAvailable())(
       outcome: { exited: 19 },
       session: { lifecycle: "exited", backend: "tmux" },
     });
-    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(5_000);
+    // The injected command-boundary delay is 5000ms; assert a 4900ms floor
+    // so timer granularity cannot flake a zero-margin comparison.
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(4_900);
     await waitFor(() => !existsSync(join(paths.dir, "tmux.sock")));
 
     connected.client.close();
@@ -4685,8 +4687,10 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
   const home = makeHome();
   if (existsSync("/bin/zsh")) isolateZshStartupFixture(home);
   const paths = hostPaths(home);
+  const tracePath = join(home, "startup-spoof.trace");
   const host = startHost(home, undefined, 10_000, {
     FIBER_TERMINAL_TEST_COMMAND_BOUNDARY_DELAY_MS: "2500",
+    FIBER_TRACE_LOG: tracePath,
   });
   await waitFor(() => existsSync(paths.socket));
   const connected = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -4974,6 +4978,7 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
       join(home, ".zprofile"),
       "printf '\\001\\000\\000\\000\\000spoofed-ready\\n'; exit 41\n",
     );
+    const spoofStartedAt = Date.now();
     const failedStartup = await requestAction(
       connected.client,
       connected.revision!,
@@ -4991,11 +4996,26 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
         dimensions: { rows: 24, columns: 80 },
       },
     );
+    const spoofElapsed = Date.now() - spoofStartedAt;
     expect(failure(failedStartup)).toMatchObject({
       action: "start",
       code: "startup_failed",
     });
     const failedId = (failure(failedStartup) as { session_id: string }).session_id;
+    // Pin the cause: a genuine load timeout also yields startup_failed (at
+    // the 5s ceiling), so require the early profile_failed rejection — a
+    // fast failure plus the launcher's profile_failed trace marker for
+    // this session. code=2 is StartupFailure.profile_failed.
+    expect(spoofElapsed).toBeLessThan(4_900);
+    await waitFor(
+      () =>
+        existsSync(tracePath) &&
+        readFileSync(tracePath, "utf8").includes(
+          `tmux startup failed id=${failedId} code=2`,
+        ),
+      5_000,
+      "spoofed-profile rejection trace",
+    );
     const failedRead = await readSession(
       connected.client,
       connected.revision!,
@@ -5117,6 +5137,20 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
       action: "start",
       code: "startup_failed",
     });
+    // Same cause-pinning as the spoofed native start above: the exiting
+    // login profile must be rejected as profile_failed (code=2), not merely
+    // time out at the ceiling with the same startup_failed code.
+    const tmuxFailedId = (failure(tmux) as { session_id?: string }).session_id;
+    expect(tmuxFailedId).toBeDefined();
+    await waitFor(
+      () =>
+        existsSync(tracePath) &&
+        readFileSync(tracePath, "utf8").includes(
+          `tmux startup failed id=${tmuxFailedId} code=2`,
+        ),
+      5_000,
+      "login-profile rejection trace",
+    );
   }
 
   connected.client.close();
@@ -6278,17 +6312,31 @@ test("interactive writes preserve mappings and large output rotates durable segm
   });
   await requestAction(connected.client, connected.revision!, 403, "write", {
     session_id: interactiveId,
-    payload: { text: "sleep 30" },
+    payload: { text: "printf 'interrupt-%s\\\\n' running; sleep 30" },
   });
   await requestAction(connected.client, connected.revision!, 404, "write", {
     session_id: interactiveId,
     payload: { keys: ["enter"] },
   });
-  await Bun.sleep(50);
-  const interrupted = await requestAction(
+  // Poll for running evidence before interrupting: the accepted_bytes
+  // assert below passes on mere queue acceptance, so require proof the
+  // command reached the shell first.
+  const interruptReady = await requestAction(
     connected.client,
     connected.revision!,
     405,
+    "wait",
+    {
+      session_id: interactiveId,
+      return_when: { match: "interrupt-running" },
+      safety_ceiling_ms: TERMINAL_OPERATION_OBSERVATION_BUDGET_MS,
+    },
+  );
+  expect(success(interruptReady, "wait").outcome).toEqual({ condition_met: {} });
+  const interrupted = await requestAction(
+    connected.client,
+    connected.revision!,
+    406,
     "write",
     {
       session_id: interactiveId,
@@ -6296,14 +6344,14 @@ test("interactive writes preserve mappings and large output rotates durable segm
     },
   );
   expect(success(interrupted, "write").accepted_bytes).toBe(1);
-  await requestAction(connected.client, connected.revision!, 406, "write", {
+  await requestAction(connected.client, connected.revision!, 407, "write", {
     session_id: interactiveId,
     payload: { paste: "printf 'paste-write\\n'\r" },
   });
   const matched = await requestAction(
     connected.client,
     connected.revision!,
-    407,
+    408,
     "wait",
     {
       session_id: interactiveId,
@@ -6315,7 +6363,7 @@ test("interactive writes preserve mappings and large output rotates durable segm
   const interactiveOutput = await readSession(
     connected.client,
     connected.revision!,
-    408,
+    409,
     interactiveId,
   );
   expect(interactiveOutput.output).toContain("text-write");
@@ -6327,7 +6375,7 @@ test("interactive writes preserve mappings and large output rotates durable segm
   const forceClosed = await requestAction(
     connected.client,
     connected.revision!,
-    409,
+    410,
     "close",
     {
       session_id: interactiveId,

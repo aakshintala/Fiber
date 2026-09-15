@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -32,12 +32,15 @@ describe.skipIf(SKIP)("tui: agent prompt", () => {
       root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-tui-agent-")));
       const home = join(root, "home");
       const workspace = join(root, "workspace");
+      const stderrPath = join(root, "stderr.log");
       mkdirSync(join(home, ".fiber"), { recursive: true });
       mkdirSync(workspace, { recursive: true });
+      writeFileSync(stderrPath, "");
       codex = startFakeCodex({ route: () => codexFinalText(RESPONSE_TEXT) });
 
       session = await TmuxSession.create({
         cwd: workspace,
+        stderrPath,
         env: seededFakeCodexEnv(home, codex, {
           FIBER_PERMISSION_MODE: "auto",
         }),
@@ -48,7 +51,24 @@ describe.skipIf(SKIP)("tui: agent prompt", () => {
 
       const pane = await session.waitForText(RESPONSE_TEXT, 60_000);
       expect(pane).toContain(RESPONSE_TEXT);
+      // Pin the causal path: the answer must arrive via at least one model
+      // turn, not an echo or cached render, and auto mode must not surface
+      // an approval prompt for this tool-free response. The prompt renders
+      // in the footer viewport, so assert on the pane, not the scrollback.
+      expect(codex!.requests.length).toBeGreaterThanOrEqual(1);
+      expect(pane).not.toContain("Choose now");
+      expect(pane).not.toContain("Allow once");
+      expect(pane).not.toContain("allow this action");
+      const scrollback = await session.captureFullScrollback();
+      expect(scrollback).toContain(RESPONSE_TEXT);
+      expect(session.isAlive()).toBe(true);
+      expect(session.isPaneAlive()).toBe(true);
+      expect(readFileSync(stderrPath, "utf8")).toBe("");
+
+      await session.sendText("/quit");
+      expect(await session.waitForSessionEnd(10_000)).toBe(true);
     },
-    TIMEOUT,
+    // 2x the sequential sum: 10 + 60 + 10 = 80s of internal waits.
+    TIMEOUT * 3,
   );
 });
