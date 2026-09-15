@@ -2967,9 +2967,19 @@ fn persistRecoveryCheckpoint(
     tool_evidence: model_response_recovery.ToolEvidence,
     trace_ctx: TraceContext,
 ) !void {
+    // Unused: checkpoints build in per-attempt scratch below, never in the
+    // turn arena (see comment). Kept for call-site stability.
+    _ = arena;
     const effect = deps.recovery_checkpoint orelse return;
+    // Build the checkpoint in per-attempt scratch (#181): the persistence
+    // effect dupes and serializes synchronously, so nothing here outlives
+    // this call. Building on the turn arena deep-copied all current-turn
+    // results on every attempt (quadratic, retained for the whole turn).
+    var checkpoint_scratch_state = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    defer checkpoint_scratch_state.deinit();
+    const checkpoint_scratch = checkpoint_scratch_state.allocator();
     const execution = try runtime_execution_memory.buildExecutionMemory(
-        arena,
+        checkpoint_scratch,
         current_turn_messages,
     );
     try effect.set(deps.ctx, .{

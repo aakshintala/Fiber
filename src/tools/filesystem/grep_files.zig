@@ -219,7 +219,11 @@ const SearchOutcome = union(enum) {
 fn callWithOps(ctx: tool_dispatch.DispatchContext, erased: tool_dispatch.ToolInput, ops: CallOps) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const input = erased.as(Input);
 
-    var arena_state = std.heap.ArenaAllocator.init(ctx.allocator);
+    // Scratch is rooted at the C allocator, not ctx.allocator (#181): git
+    // grep stdout (up to 8 MiB), candidates, and match records are freed
+    // here on every call instead of accumulating in the caller's arena for
+    // the whole turn. Returned bodies are allocated on ctx.allocator below.
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
@@ -1097,6 +1101,42 @@ test "grep_files walks multiple files without sorting" {
     try std.testing.expect(std.mem.find(u8, result.body, "src/a.txt:1: needle a") != null);
     try std.testing.expect(std.mem.find(u8, result.body, "src/nested/b.txt:1: needle b") != null);
     try std.testing.expect(std.mem.find(u8, result.body, "src/c.txt") == null);
+}
+
+test "grep_files scratch is freed per call instead of accumulating" {
+    // #181: candidate discovery, file reads, and match records must die
+    // with the call. The fixed buffer holds every result body but not one
+    // call's collect scratch, so retaining scratch fails fast with
+    // error.OutOfMemory here.
+    var backing: [64 * 1024]u8 = undefined;
+    var fixed = std.heap.FixedBufferAllocator.init(&backing);
+    const alloc = fixed.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const workspace = try workspaceRoot(std.testing.allocator, tmp);
+    defer std.testing.allocator.free(workspace);
+
+    var i: usize = 0;
+    while (i < 12) : (i += 1) {
+        var name_buf: [64]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buf, "bulk/file-{d}.txt", .{i});
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(std.testing.allocator);
+        var line: usize = 0;
+        while (line < 4000) : (line += 1) {
+            try content.print(std.testing.allocator, "needle bulk line {d:0>5} with padding to widen the scan\n", .{line});
+        }
+        const path = try writeTempFile(std.testing.allocator, &tmp, name, content.items);
+        std.testing.allocator.free(path);
+    }
+
+    var results: [12]tool_dispatch.DispatchResult = undefined;
+    for (&results) |*slot| {
+        slot.* = try dispatchGrepFiles(alloc, workspace, "needle", null, null, null, 1, null);
+        try std.testing.expectEqual(.success, slot.status);
+    }
+    // Mirror the turn arena: bodies stay alive for the whole turn.
+    defer for (&results) |*slot| slot.deinit(alloc);
 }
 
 test "grep_files finds match beyond former traversal cap" {
