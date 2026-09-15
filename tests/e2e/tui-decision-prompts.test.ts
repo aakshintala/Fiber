@@ -1282,12 +1282,25 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       expect(initialRows[initialChoiceThreeRow + 1]!.trim()).toBe("");
       expect(initialRows[initialChoiceThreeRow + 2]!.trim()).toMatch(/^─+$/);
       expect(initialControlsRow).toBe(initialChoiceThreeRow + 3);
-      await sleep(250);
-      const initialFrames = Buffer.concat(stdoutFrames(tapePath).map((frame) => frame.payload));
-      expect(initialFrames.includes(Buffer.from("\x1b[?1000h\x1b[?1006h"))).toBe(true);
+      const mouseEnableSequence = Buffer.from("\x1b[?1000h\x1b[?1006h");
+      const mouseEnableDeadline = Date.now() + TIMEOUT;
+      let initialFrames = Buffer.concat([]);
+      while (Date.now() < mouseEnableDeadline) {
+        initialFrames = Buffer.concat(stdoutFrames(tapePath).map((frame) => frame.payload));
+        if (initialFrames.includes(mouseEnableSequence)) break;
+        await sleep(25);
+      }
+      expect(initialFrames.includes(mouseEnableSequence)).toBe(true);
 
       await ctx.session.sendHexBytes(completeWheel);
-      const completePane = await ctx.session.capturePane();
+      const completePane = await waitForPaneState(
+        ctx.session,
+        "complete mouse scroll",
+        (pane) =>
+          pane !== initialPane &&
+          !pane.includes(`${COMMAND_SCROLL_LINE_PREFIX}001`),
+        TIMEOUT,
+      );
       expect(completePane).not.toBe(initialPane);
       expect(completePane).not.toContain(`${COMMAND_SCROLL_LINE_PREFIX}001`);
       expect(completePane).not.toContain("Cancelled");

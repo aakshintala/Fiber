@@ -912,8 +912,14 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       expect(existsSync(root.launchLogPath)).toBe(false);
 
       await tui.sendLiteral("1");
-      await Bun.sleep(250);
-      expect(readFileSync(root.traceLogPath, "utf8")).toContain(
+      const inputLoggedDeadline = Date.now() + 10_000;
+      let traceText = "";
+      while (Date.now() < inputLoggedDeadline) {
+        traceText = readFileSync(root.traceLogPath, "utf8");
+        if (traceText.includes("project prompt input byte=49 owns_input=true")) break;
+        await Bun.sleep(25);
+      }
+      expect(traceText).toContain(
         "project prompt input byte=49 owns_input=true",
       );
       await tui.waitForText("MCP configuration reloaded successfully", 15_000);
@@ -961,9 +967,13 @@ exec "$FIBER_MCP_FIXTURE_RUNTIME" "$FIBER_MCP_FIXTURE_PATH"
       });
       await tui.waitForComposer(15_000);
       await tui.waitForText("[Esc] Dismiss remaining prompts", 10_000);
+      const beforePaste = await tui.capturePane();
       await tui.pasteText("2");
-      await Bun.sleep(250);
-      expect((await tui.capturePane())).toContain("[2] Approve all");
+      const approveAllPane = await tui.waitForPane(
+        (pane) => pane !== beforePaste && pane.includes("[2] Approve all"),
+        10_000,
+      );
+      expect(approveAllPane).toContain("[2] Approve all");
       expect(existsSync(root.launchLogPath)).toBe(false);
       expect(readFileSync(join(root.home, ".fiber", "settings.json"), "utf8"))
         .not.toContain("enableAllProjectMcpServers");

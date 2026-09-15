@@ -22,7 +22,6 @@ describe.skipIf(LIVE_SKIP)("tui: key bindings", () => {
       await session.waitForComposer(10_000);
 
       await session.sendKeys("C-c");
-      await new Promise((r) => setTimeout(r, 500));
       await session.sendKeys("C-c");
 
       const exited = await session.waitForSessionEnd(5_000);
@@ -38,9 +37,8 @@ describe.skipIf(LIVE_SKIP)("tui: key bindings", () => {
       await session.waitForComposer(10_000);
 
       await session.sendKeys("C-c");
-      await new Promise((r) => setTimeout(r, 300));
 
-      const pane = await session.capturePane();
+      const pane = await session.waitForText(/ctrl\+c/i, TIMEOUT);
       expect(pane.toLowerCase()).toContain("ctrl+c");
     },
     TIMEOUT,

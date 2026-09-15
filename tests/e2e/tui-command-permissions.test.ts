@@ -24,6 +24,7 @@ import {
   codexSerializedToolCall,
   codexToolCall,
   FAKE_CODEX_DEFAULT_MODEL,
+  isComposerLine,
   isVolatileTokenStatusRow,
   seededFakeCodexEnv,
   startFakeCodex,
@@ -1080,7 +1081,7 @@ describe("effect-aware command permissions", () => {
         env: codexEnv(root, codex, {
           FIBER_PERMISSION_MODE: "auto",
           FIBER_TRACE_LOG: join(root.root, "minimal-command-output-trace.log"),
-          FIBER_TRACE_SCOPES: "core,agent,tool,session,command_output",
+          FIBER_TRACE_SCOPES: "core,agent,tool,session,command_output,resize",
         }),
         stderrPath,
         width: 120,
@@ -1089,8 +1090,13 @@ describe("effect-aware command permissions", () => {
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the prepared command matrix.");
       await activeSession.waitForText("Running ./fxc110-stream.sh", TIMEOUT);
-      await Bun.sleep(250);
-      const running = await activeSession.captureFullScrollback();
+      const running = await activeSession.waitForStableScrollback(
+        (scrollback) =>
+          scrollback.includes("Running ./fxc110-stream.sh") &&
+          outputRows.every((row) => !scrollback.includes(row)),
+        TIMEOUT,
+        300,
+      );
       expect(running).toContain("Running ./fxc110-stream.sh");
       expectNoOutputRows(running);
 
@@ -1114,7 +1120,24 @@ describe("effect-aware command permissions", () => {
       await activeSession.waitForText("3 tool calls", TIMEOUT);
       expectNoOutputRows(await activeSession.captureFullScrollback());
       await activeSession.resizeWindow(64, 28);
-      expectNoOutputRows(await activeSession.captureFullScrollback());
+      // Fence on fiber's own post-resize re-render marker: a pre-resize
+      // frame cannot satisfy this, so the absence assert below inspects
+      // post-resize output only.
+      const resizeTracePath = join(root.root, "minimal-command-output-trace.log");
+      const resizeDeadline = Date.now() + TIMEOUT;
+      let resizeTrace = "";
+      while (Date.now() < resizeDeadline) {
+        resizeTrace = readFileSync(resizeTracePath, "utf8");
+        if (/request_redraw.*layout=64x28/.test(resizeTrace)) break;
+        await Bun.sleep(25);
+      }
+      expect(resizeTrace).toMatch(/request_redraw.*layout=64x28/);
+      expectNoOutputRows(
+        await activeSession.waitForStableScrollback(
+          (scrollback) => scrollback.includes("3 tool calls"),
+          TIMEOUT,
+        ),
+      );
 
       await activeSession.kill();
       activeSession = null;
@@ -1137,8 +1160,11 @@ describe("effect-aware command permissions", () => {
       await activeSession.waitForText("FXC110_FAILED_STDERR", TIMEOUT);
       let resumedFull = await activeSession.capturePane();
       await activeSession.sendHexBytes(["1b", "5b", "35", "7e"]);
-      await Bun.sleep(100);
-      resumedFull += `\n${await activeSession.capturePane()}`;
+      const resumedAfterPageUp = await activeSession.waitForPane(
+        (pane) => pane !== resumedFull,
+        TIMEOUT,
+      );
+      resumedFull += `\n${resumedAfterPageUp}`;
       expect(resumedFull).toContain("FXC110_FAST_STDOUT");
       expect(resumedFull).toContain("FXC110_STREAM_STDOUT");
       expect(resumedFull).toContain("FXC110_STREAM_STDERR");
@@ -1239,6 +1265,14 @@ describe("effect-aware command permissions", () => {
       expect(losslessFullOutput).not.toContain("lines more (ctrl o");
       await activeSession.sendKeys("C-o");
       await activeSession.waitForText("DIRECT_LOSSLESS_DONE", TIMEOUT);
+      await activeSession.waitForPane(
+        (pane) =>
+          pane.includes("DIRECT_LOSSLESS_DONE") &&
+          !pane.includes("Streaming (") &&
+          !pane.includes("Full detail · ctrl o close") &&
+          (pane.includes("Generating") || pane.split("\n").some(isComposerLine)),
+        TIMEOUT,
+      );
       expect(normalizeVolatileStatusRows(await activeSession.capturePaneGrid())).toEqual(
         normalizeVolatileStatusRows(losslessGrid),
       );
@@ -2945,12 +2979,14 @@ describe("effect-aware command permissions", () => {
         expect(codex.reviewRequests).toHaveLength(1);
 
         expect(child.kill("SIGINT")).toBe(true);
-        const result = await Promise.race([
-          closed,
-          Bun.sleep(2_000).then(() => {
+        const exitDeadline = Date.now() + 2_000;
+        while (child.exitCode === null && child.signalCode === null) {
+          if (Date.now() >= exitDeadline) {
             throw new Error("fiber did not exit on SIGINT while the classifier remained blocked");
-          }),
-        ]);
+          }
+          await Bun.sleep(25);
+        }
+        const result = await closed;
         expect(result).toEqual({ code: null, signal: "SIGINT" });
 
         expect(Buffer.concat(stdoutChunks).toString()).toBe("");
@@ -2970,7 +3006,11 @@ describe("effect-aware command permissions", () => {
       } finally {
         if (child.exitCode === null && child.signalCode === null) {
           child.kill("SIGKILL");
-          await Promise.race([closed, Bun.sleep(1_000)]);
+          const killDeadline = Date.now() + 1_000;
+          while (child.exitCode === null && child.signalCode === null && Date.now() < killDeadline) {
+            await Bun.sleep(25);
+          }
+          await Promise.race([closed, Bun.sleep(250)]);
         }
         releaseClassifier(reviewDecision("clear", "permission_decision_1"));
       }
