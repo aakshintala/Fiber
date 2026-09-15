@@ -1550,6 +1550,8 @@ fn chooseTokenEndpointAuthMethod(
     if (has_secret and metadata.supports(.client_secret_basic)) return "client_secret_basic";
     if (has_secret and metadata.supports(.client_secret_post)) return "client_secret_post";
     if (metadata.supports(.none)) return "none";
+    // Public client with PKCE S256 advertised needs no client authentication.
+    if (!has_secret and metadata.supports(.s256)) return "none";
     if (metadata.supports(.client_secret_basic)) return "client_secret_basic";
     if (metadata.supports(.client_secret_post)) return "client_secret_post";
     return error.UnsupportedTokenEndpointAuthenticationMethod;
@@ -2358,6 +2360,36 @@ test "authorization metadata defaults omitted token endpoint authentication to c
     try std.testing.expectEqualStrings(
         "client_secret_basic",
         try chooseTokenEndpointAuthMethod(metadata, false),
+    );
+}
+
+test "public client with S256 falls back to no token endpoint authentication" {
+    const alloc = std.testing.allocator;
+    var metadata = try parseAuthorizationMetadata(
+        alloc,
+        "{\"issuer\":\"https://login.example.com\",\"authorization_endpoint\":\"https://login.example.com/authorize\",\"token_endpoint\":\"https://login.example.com/token\",\"token_endpoint_auth_methods_supported\":[\"client_secret_basic\"],\"code_challenge_methods_supported\":[\"S256\"]}",
+        "https://login.example.com",
+    );
+    defer metadata.deinit(alloc);
+
+    try std.testing.expectEqualStrings(
+        "none",
+        try chooseTokenEndpointAuthMethod(metadata, false),
+    );
+}
+
+test "confidential client with S256 keeps client_secret_basic" {
+    const alloc = std.testing.allocator;
+    var metadata = try parseAuthorizationMetadata(
+        alloc,
+        "{\"issuer\":\"https://login.example.com\",\"authorization_endpoint\":\"https://login.example.com/authorize\",\"token_endpoint\":\"https://login.example.com/token\",\"token_endpoint_auth_methods_supported\":[\"client_secret_basic\"],\"code_challenge_methods_supported\":[\"S256\"]}",
+        "https://login.example.com",
+    );
+    defer metadata.deinit(alloc);
+
+    try std.testing.expectEqualStrings(
+        "client_secret_basic",
+        try chooseTokenEndpointAuthMethod(metadata, true),
     );
 }
 
