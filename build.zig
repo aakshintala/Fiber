@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
     const test_filter = b.option(
         []const u8,
         "test-filter",
-        "Only run unit tests with names containing this substring (empty runs everything)",
+        "Only run named unit tests with names containing this substring (unnamed test blocks always run; empty runs everything)",
     );
     // addTest dupes filters at graph-construction time, so the stack slice is safe.
     const test_filters: []const []const u8 = if (test_filter) |filter| &.{filter} else &.{};
