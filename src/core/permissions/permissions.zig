@@ -1,5 +1,6 @@
 const std = @import("std");
 const command_environment = @import("../execution/command_environment.zig");
+const credential_store = @import("credential_store.zig");
 
 const io_mod = @import("../shared/io.zig");
 const pathing = @import("../workspace/pathing.zig");
@@ -1099,6 +1100,25 @@ pub fn displayTargetForPolicy(alloc: std.mem.Allocator, workspace_root: []const 
 }
 
 pub fn ruleDecisionFor(alloc: std.mem.Allocator, rules: types.PermissionRuleSet, workspace_root: []const u8, tool_name: []const u8, target_path: []const u8, target_kind: PermissionTargetKind) !RuleDecision {
+    // Built-in credential-store verdict (issue #97, reads only): evaluated
+    // before configured rules, so no configured rule or session grant can
+    // allow these reads. Deny stays terminal; hold asks the owner. File
+    // checks cover read kinds (.path_existing, .path_optional_existing)
+    // only: write/edit targets (.path_create_parent, .path_existing_parent)
+    // skip this rule entirely.
+    if (target_kind == .command_cwd) {
+        switch (try credential_store.check_command_target(alloc, target_path)) {
+            .deny => return .deny,
+            .hold => return .ask,
+            .allow => {},
+        }
+    } else if (target_kind == .path_existing or target_kind == .path_optional_existing) {
+        switch (try credential_store.check_file_target(alloc, workspace_root, target_path)) {
+            .deny => return .deny,
+            .hold => return .ask,
+            .allow => {},
+        }
+    }
     const permission = permissionNameForTool(tool_name);
     const pattern = try patternForRuleMatch(alloc, workspace_root, tool_name, target_path, target_kind);
     defer alloc.free(pattern);
@@ -2639,6 +2659,144 @@ test "directory tree permission patterns match directory and descendants only" {
     try std.testing.expectEqual(RuleDecision.allow, try ruleDecisionFor(std.testing.allocator, rules, "/tmp/workspace", "read_file", "/tmp/external", .path_existing));
     try std.testing.expectEqual(RuleDecision.allow, try ruleDecisionFor(std.testing.allocator, rules, "/tmp/workspace", "read_file", "/tmp/external/file.txt", .path_existing));
     try std.testing.expectEqual(RuleDecision.none, try ruleDecisionFor(std.testing.allocator, rules, "/tmp/workspace", "read_file", "/tmp/external-other/file.txt", .path_existing));
+}
+
+test "credential store deny precedes configured rules for file reads" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    const test_home = try credential_store.TestHome.install(alloc, home);
+    defer test_home.deinit();
+
+    var allow_buf = [_]types.PermissionRule{
+        .{ .permission = @constCast("read"), .pattern = @constCast("*"), .action = .allow },
+    };
+    const allow_all: types.PermissionRuleSet = .{ .rules = &allow_buf };
+
+    const store = try std.fs.path.join(alloc, &.{ home, ".fiber", "chatgpt-auth.json" });
+    defer alloc.free(store);
+    try std.testing.expectEqual(
+        RuleDecision.deny,
+        try ruleDecisionFor(alloc, allow_all, workspace, "read_file", store, .path_existing),
+    );
+    try std.testing.expectEqual(
+        RuleDecision.deny,
+        try ruleDecisionFor(alloc, .{}, workspace, "read_file", store, .path_existing),
+    );
+
+    const generic_sibling = try std.fs.path.join(alloc, &.{ home, ".fiber", "credentials.json" });
+    defer alloc.free(generic_sibling);
+    try std.testing.expectEqual(
+        RuleDecision.allow,
+        try ruleDecisionFor(alloc, allow_all, workspace, "read_file", generic_sibling, .path_existing),
+    );
+
+    const neighbor = try std.fs.path.join(alloc, &.{ home, ".fiber", "settings.json" });
+    defer alloc.free(neighbor);
+    try std.testing.expectEqual(
+        RuleDecision.allow,
+        try ruleDecisionFor(alloc, allow_all, workspace, "read_file", neighbor, .path_existing),
+    );
+
+    // Reads only (issue #97): write/edit kinds skip the store rule, so the
+    // same path is never policy-denied on the mutation path.
+    try std.testing.expect((try ruleDecisionFor(alloc, .{}, workspace, "write_file", store, .path_create_parent)) != .deny);
+    try std.testing.expect((try ruleDecisionFor(alloc, .{}, workspace, "edit_file", store, .path_existing_parent)) != .deny);
+}
+
+test "credential store deny covers shell commands naming it" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    const test_home = try credential_store.TestHome.install(alloc, home);
+    defer test_home.deinit();
+
+    var allow_buf = [_]types.PermissionRule{
+        .{ .permission = @constCast("bash"), .pattern = @constCast("*"), .action = .allow },
+    };
+    const allow_all: types.PermissionRuleSet = .{ .rules = &allow_buf };
+
+    for ([_][]const u8{
+        "cat ~/.fiber/chatgpt-auth.json",
+        "cat $HOME/.fiber/chatgpt-auth.json",
+        "cat ~/.fiber/chatgpt-auth.jso[n]",
+        "ls ~/.fi?er",
+        "ls ~/.fiber",
+        "cat ~/.fiber/*",
+    }) |command| {
+        const target = try std.fmt.allocPrint(alloc, "{s}::{s}", .{ workspace, command });
+        defer alloc.free(target);
+        try std.testing.expectEqual(
+            RuleDecision.deny,
+            try ruleDecisionFor(alloc, allow_all, workspace, "run_command", target, .command_cwd),
+        );
+    }
+
+    for ([_][]const u8{
+        "cat $P/.fiber/settings.json",
+        "ls $P/.fiber",
+    }) |command| {
+        const target = try std.fmt.allocPrint(alloc, "{s}::{s}", .{ workspace, command });
+        defer alloc.free(target);
+        try std.testing.expectEqual(
+            RuleDecision.ask,
+            try ruleDecisionFor(alloc, allow_all, workspace, "run_command", target, .command_cwd),
+        );
+    }
+
+    const benign = try std.fmt.allocPrint(alloc, "{s}::git status", .{workspace});
+    defer alloc.free(benign);
+    try std.testing.expectEqual(
+        RuleDecision.allow,
+        try ruleDecisionFor(alloc, allow_all, workspace, "run_command", benign, .command_cwd),
+    );
+}
+
+test "file mutation evaluator leaves the credential store to the reader deny" {
+    const alloc = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+    const test_home = try credential_store.TestHome.install(alloc, home);
+    defer test_home.deinit();
+
+    // Reads only (issue #97): the write path must not policy-deny the
+    // store target; the reader hook in ruleDecisionFor owns the deny.
+    const store = try std.fs.path.join(arena, &.{ home, ".fiber", "chatgpt-auth.json" });
+    const result = try evaluateFileMutationTargets(
+        arena,
+        workspace,
+        testWriteMutationInput(store),
+        .ask,
+        .{},
+        &.{},
+        &.{},
+    );
+    switch (result) {
+        .evaluated => {},
+        else => return error.TestUnexpectedResult,
+    }
 }
 
 test "suggestedSessionGrants returns exact command suggestions with stripped cwd" {
