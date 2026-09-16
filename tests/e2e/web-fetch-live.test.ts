@@ -18,7 +18,7 @@ const TIMEOUT = 60_000;
 const OUTER_MODEL = "anthropic/claude-sonnet-4.6";
 const LIVE_URL = "https://example.com/";
 const LIVE_ROBOTS_URL = "https://vercel.com/robots.txt";
-const LIVE_MODELS_URL = "https://example.com/robots.txt";
+const LIVE_EXAMPLE_URL = "https://example.com/";
 const LIVE_BINARY_URL =
   "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
 
@@ -148,7 +148,7 @@ describe.skipIf(process.env.FIBER_WEB_FETCH_LIVE !== "1")("live web_fetch public
   // framing proof. The transport/framing contract is covered by Zig fixtures.
   for (const probe of [
     { url: LIVE_ROBOTS_URL, domain: "vercel.com", label: "robots" },
-    { url: LIVE_MODELS_URL, domain: "example.com", label: "example-robots" },
+    { url: LIVE_EXAMPLE_URL, domain: "example.com", label: "example" },
   ] as const) {
     test(
       `${probe.label} endpoint returns non-empty content through the fresh binary`,

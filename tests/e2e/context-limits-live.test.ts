@@ -1,15 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runFx } from "./eval-helpers";
+import { HAS_API_KEY, runFx } from "./eval-helpers";
 
-// Own credential check (verbatim logic from the deleted eval helpers,
-// so this live suite keeps gating exactly as before). Opt in with FIBER_E2E_REAL_API=1.
-const HAS_API_KEY: boolean = !!(
-  process.env.FIBER_E2E_LIVE ||
-  existsSync(join(process.env.HOME ?? "", ".fiber", "chatgpt-auth.json"))
-);
+// Credential gating lives in ./eval-helpers (HAS_API_KEY). Opt in with FIBER_E2E_REAL_API=1.
 
 const LIVE_ENABLED = process.env.FIBER_E2E_REAL_API === "1";
 const TIMEOUT = 180_000;
