@@ -4557,3 +4557,4 @@ describe.skipIf(SKIP)("tui: resize", () => {
     TIMEOUT,
   );
 });
+// canary
