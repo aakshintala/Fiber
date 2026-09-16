@@ -157,6 +157,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Diagnostic for the unexplained 10m to 14m30 spread in this job and the
+      # serial_build timings above. Never fails the job.
+      - name: Report runner hardware
+        if: runner.os == 'macOS'
+        run: sysctl hw.ncpu hw.physicalcpu hw.memsize machdep.cpu.brand_string; uptime; true
+
       - name: Setup Zig
         uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27
         with:
