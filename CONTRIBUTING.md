@@ -63,18 +63,19 @@ pull request:
 
 - every push runs shellcheck on every tracked `*.sh` file and the static
   gates (formatting, public-surface audit, PGSO corpus validation,
-  release-decision tests)
-- every push that is not docs-only runs the PGSO driver unit tests on Linux
-  x86_64 (they need Zig and take minutes)
-- a draft adds the Linux x86_64 build, unit tests, smoke, and the three
+  release-decision tests, and CI-scope tests)
+- a scope job classifies the pull request diff: static-only paths (markdown
+  outside `src/`, anything under `docs/`, and unreferenced scripts) run only
+  those gates; root `tests/e2e/*.test.ts` files add those files; shared E2E
+  inputs run all E2E files and conformance; everything else runs the full
+  pipeline; any E2E or full-pipeline selection also runs the PGSO driver unit
+  tests
+- a draft adds the Linux x86_64 build, unit tests, smoke, and the
   Linux x86_64 end-to-end shards
 - a ready pull request adds only what draft did not run: the remaining
-  native platforms, the same three end-to-end shards on Linux aarch64 and
+  native platforms, the same end-to-end shards on Linux aarch64 and
   macOS arm64, benchmarks, binary-size comparison, and the isolated MCP
   conformance package
-- a docs-only change (markdown files outside `src/`, which the binary embeds)
-  skips the heavy legs and the PGSO driver tests in both scopes;
-  shellcheck and the static gates still run on every push
 
 A failing end-to-end shard file retries once, immediately. A retry that
 passes is annotated on the run and reported by the non-blocking Flake watch
@@ -82,6 +83,7 @@ check: file or update a flake issue for the test (deflake by rewriting the
 test) rather than rerunning. Unit-test, build, and lint jobs never retry.
 
 One check, `CI`, aggregates the result. It is the only check `main` requires.
+A selected job must succeed; an unselected job must be skipped.
 
 Marking a pull request ready re-runs everything on the same commit, so the ready
 result replaces the draft one. Evidence must come from the current commit; a

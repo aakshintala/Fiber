@@ -38,15 +38,10 @@ function parseManifest(value: unknown): WeightEntry[] {
   });
 }
 
-export function buildShardPlan(
+function validateShardRegistry(
   discoveredFiles: string[],
   manifestValue: unknown,
-  shardCount: number,
-): ShardPlan {
-  if (!Number.isSafeInteger(shardCount) || shardCount <= 0) {
-    throw new Error("shard count must be a positive integer");
-  }
-
+): WeightEntry[] {
   const discovered = [...discoveredFiles].sort(compareFilenames);
   if (new Set(discovered).size !== discovered.length) {
     throw new Error("discovered test filenames must be unique");
@@ -67,29 +62,59 @@ export function buildShardPlan(
     .filter((file) => !discoveredSet.has(file))
     .sort(compareFilenames);
   if (stale.length > 0) throw new Error(`stale manifest entry: ${stale[0]}`);
+  return manifest;
+}
 
-  const ordered = [...manifest].sort((left, right) =>
-    right.weight - left.weight || compareFilenames(left.file, right.file)
+function planWeightedFiles(
+  files: string[],
+  weights: Map<string, number>,
+  shardCount: number,
+): ShardPlan {
+  const ordered = [...files].sort((left, right) =>
+    weights.get(right)! - weights.get(left)! || compareFilenames(left, right)
   );
   const shards = Array.from({ length: shardCount }, () => [] as string[]);
   const totals = Array.from({ length: shardCount }, () => 0);
-  for (const entry of ordered) {
+  for (const file of ordered) {
     let target = 0;
     for (let index = 1; index < shardCount; index += 1) {
       if (totals[index]! < totals[target]!) target = index;
     }
-    shards[target]!.push(entry.file);
-    totals[target]! += entry.weight;
+    shards[target]!.push(file);
+    totals[target]! += weights.get(file)!;
   }
 
   const emptyIndex = shards.findIndex((shard) => shard.length === 0);
   if (emptyIndex >= 0) throw new Error(`shard ${emptyIndex} is empty`);
+  const expected = [...files].sort(compareFilenames);
   const assigned = shards.flat().sort(compareFilenames);
-  if (assigned.length !== discovered.length ||
-      assigned.some((file, index) => file !== discovered[index])) {
+  if (assigned.length !== expected.length ||
+      assigned.some((file, index) => file !== expected[index])) {
     throw new Error("shard assignment is not the discovered set exactly once");
   }
   return { shards, totals };
+}
+
+export function buildShardPlan(
+  discoveredFiles: string[],
+  manifestValue: unknown,
+  shardCount: number,
+  selectedFiles: string[] = discoveredFiles,
+): ShardPlan {
+  if (!Number.isSafeInteger(shardCount) || shardCount <= 0) {
+    throw new Error("shard count must be a positive integer");
+  }
+
+  const manifest = validateShardRegistry(discoveredFiles, manifestValue);
+  const discoveredSet = new Set(discoveredFiles);
+  for (const file of selectedFiles) {
+    if (!discoveredSet.has(file)) {
+      throw new Error(`unknown subset file: ${file}`);
+    }
+  }
+
+  const weights = new Map(manifest.map((entry) => [entry.file, entry.weight]));
+  return planWeightedFiles(selectedFiles, weights, shardCount);
 }
 
 export function selectShard(plan: ShardPlan, shardIndex: number): string[] {
@@ -108,6 +133,19 @@ function integerArgument(args: string[], name: string): number {
   return value;
 }
 
+function optionalArgument(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  if (index < 0) return undefined;
+  if (index + 1 >= args.length) throw new Error(`missing ${name}`);
+  return args[index + 1];
+}
+
+function selectedFilesArgument(args: string[], discovered: string[]): string[] {
+  const value = optionalArgument(args, "--files") ?? "all";
+  if (value === "all") return discovered;
+  return value.split(/\s+/).filter((name) => name.length > 0);
+}
+
 function run(args: string[]): void {
   const shardCount = integerArgument(args, "--shard-count");
   const shardIndex = integerArgument(args, "--shard-index");
@@ -117,7 +155,8 @@ function run(args: string[]): void {
   const discovered = readdirSync(import.meta.dir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".test.ts"))
     .map((entry) => entry.name);
-  const plan = buildShardPlan(discovered, manifest, shardCount);
+  const selectedFiles = selectedFilesArgument(args, discovered);
+  const plan = buildShardPlan(discovered, manifest, shardCount, selectedFiles);
   const selected = selectShard(plan, shardIndex);
 
   for (let index = 0; index < plan.shards.length; index += 1) {

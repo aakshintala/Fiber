@@ -166,19 +166,26 @@ entrypoint, and scope follows the pull request's state:
 
 * **Every push** runs shellcheck on every tracked `*.sh` file and the static
   gates (formatting, public-surface audit, PGSO corpus validation,
-  release-decision tests). Every push that is not docs-only also runs the
-  PGSO driver unit tests on Linux x86_64 in their own job; they need Zig and
-  take minutes.
-* **Draft** adds the Linux x86_64 build, unit
-  tests, smoke, and the three duration-balanced Linux x86_64 E2E shards. Fast
+  release-decision tests, and CI-scope tests).
+* Scope classifies the pull request diff. Static-only paths (markdown outside
+  `src/`, anything under `docs/`, and unreferenced scripts) run only those
+  gates. Root `tests/e2e/*.test.ts` files add those files. Shared E2E inputs
+  (helpers, fixtures, shard weights, package or TypeScript configuration, the
+  conformance package) run all E2E files and conformance. Everything else,
+  including any unrecognized path, runs the full pipeline. The selection is
+  the union. Any E2E or full-pipeline selection also runs the PGSO driver unit
+  tests in their own Linux job. A script is unreferenced when nothing under
+  `.github/`, `tests/`, `benchmarks/`, `scripts/` or `build.zig` names it.
+  The scope job's log prints each path's class and why each job ran or
+  skipped.
+* **Draft** adds the Linux x86_64 build, unit tests, smoke, and the
+  duration-balanced Linux x86_64 E2E shards. Fast
   feedback while the work is still moving; agents should use this instead of
   running the suite locally.
 * **Ready** adds only what draft did not run: the remaining native platforms
-  (`ubuntu-24.04-arm`, `macos-15`), the same three E2E shards on those
+  (`ubuntu-24.04-arm`, `macos-15`), the same E2E shards on those
   platforms, benchmarks, the three-platform binary size comparison, and the
   isolated MCP conformance package.
-* Docs-only changes skip the heavy legs and the PGSO driver tests in both
-  scopes; shellcheck and the static gates still run on every push.
 
 The slowest job differs by scope, so name the scope with any timing claim.
 Before calling a job the critical path, run `scripts/ci-timings.sh <pr-number>`,
@@ -190,8 +197,8 @@ and `release.yml` owns `main`.
 One job, `aggregate`, emits the single required check. It is named `CI` on a
 pull request and `Manual CI` on a `workflow_dispatch`, because GitHub matches a
 required check by name on the head commit and ignores which event produced it.
-It fails if any selected job failed or was cancelled, and passes when unselected
-jobs are skipped.
+It fails unless every selected job succeeded and every unselected job was
+skipped.
 
 Marking a pull request ready re-runs CI on the same commit, so the ready-scope
 result supersedes the draft one. Evidence comes only from the current run: a
