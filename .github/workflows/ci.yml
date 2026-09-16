@@ -60,15 +60,34 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Every tracked `*.sh`, so a new script is checked without editing this.
       - name: Shellcheck Fiber scripts
         run: |
-          scripts=(
-            benchmarks/startup.sh
-            scripts/check-public-surface.sh
-            scripts/e2e-run-file.sh
-          )
+          set -euo pipefail
+          mapfile -t scripts < <(git ls-files '*.sh')
           bash -n "${scripts[@]}"
           shellcheck "${scripts[@]}"
+
+  # The PGSO driver's unit suite, not a training or qualification run. Five
+  # tests build Fiber bitcode with Zig, so it takes minutes and stays out of
+  # the static gates, which must stay fast.
+  pgso-driver:
+    name: PGSO driver tests
+    if: needs.scope.outputs.docs_only != 'true'
+    needs: scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Zig
+        uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: ci-pgso-driver
+
+      - name: Test the PGSO driver
+        run: python3 -m unittest discover -s scripts/pgso/tests -v
 
   # Draft scope. Also the linux-x86_64 leg of the ready matrix, so ready runs do
   # not build and test this platform twice.
@@ -750,6 +769,7 @@ jobs:
     if: always()
     needs:
       - shellcheck
+      - pgso-driver
       - scope
       - static
       - native-linux

@@ -164,8 +164,12 @@ focused test for the changed path, build, and exercise that path with
 Then commit, push the branch, and open a draft pull request. `ci.yml` is the only
 entrypoint, and scope follows the pull request's state:
 
-* **Draft** runs the static gates (formatting, public-surface audit, PGSO
-  corpus validation, release-decision tests), the Linux x86_64 build, unit
+* **Every push** runs shellcheck on every tracked `*.sh` file and the static
+  gates (formatting, public-surface audit, PGSO corpus validation,
+  release-decision tests). Every push that is not docs-only also runs the
+  PGSO driver unit tests on Linux x86_64 in their own job; they need Zig and
+  take minutes.
+* **Draft** adds the Linux x86_64 build, unit
   tests, smoke, and the three duration-balanced Linux x86_64 E2E shards. Fast
   feedback while the work is still moving; agents should use this instead of
   running the suite locally.
@@ -173,8 +177,8 @@ entrypoint, and scope follows the pull request's state:
   (`ubuntu-24.04-arm`, `macos-15`), the same three E2E shards on those
   platforms, benchmarks, the three-platform binary size comparison, and the
   isolated MCP conformance package.
-* Docs-only changes skip the heavy legs in both scopes; the static gates
-  still run on every push.
+* Docs-only changes skip the heavy legs and the PGSO driver tests in both
+  scopes; shellcheck and the static gates still run on every push.
 
 The slowest job differs by scope, so name the scope with any timing claim.
 Before calling a job the critical path, run `scripts/ci-timings.sh <pr-number>`,

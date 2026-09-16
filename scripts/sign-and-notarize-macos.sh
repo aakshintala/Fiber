@@ -157,6 +157,8 @@ if ! "${jq_bin}" -e \
     echo "Apple notarization log contains issues" >&2
     exit 1
 fi
+# $cdhash is a jq variable, not a shell expansion.
+# shellcheck disable=SC2016
 if ! "${jq_bin}" -e \
     --arg cdhash "${signed_cdhash}" \
     '.ticketContents // [] | any(.cdhash == $cdhash)' \
