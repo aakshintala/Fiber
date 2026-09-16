@@ -81,7 +81,19 @@ fn completeRunResult(
         return workerErrorToRunError(e);
     }
 
-    const target = worker_result.target_owned orelse return error.FetchFailed;
+    const target = worker_result.target_owned orelse {
+        if (worker_result.no_release) {
+            const current_label = versionLabel(current.version);
+            return .{
+                .snapshot = .{
+                    .current = current_label,
+                    .latest = current_label,
+                    .status = .up_to_date,
+                },
+            };
+        }
+        return error.FetchFailed;
+    };
     const latest = target.version;
 
     if (!target.shouldInstall(current)) {
@@ -117,8 +129,8 @@ fn failureResult(
     } };
 }
 
-/// Fiber publishes no releases yet, so `fiber upgrade` fails with exactly this
-/// message rather than pretending a fetch was attempted.
+/// No release source could be resolved, so `fiber upgrade` fails with exactly
+/// this message rather than pretending a fetch was attempted.
 pub const unavailable_message =
     "no release source is configured; upgrade is unavailable until releases are published";
 
@@ -180,27 +192,35 @@ fn upgradeWorkerInner(
         result.err = .fetch_failed;
         return;
     };
-    result.target_owned = fetched_target;
+    const target_value = fetched_target orelse {
+        result.no_release = true;
+        return;
+    };
+    result.target_owned = target_value;
     const target = result.target_owned.?;
 
     if (!target.shouldInstall(current)) return;
     progress.markUpdateFound();
     if (show_progress) io_mod.sleep(found_hold_ns);
 
-    const tmp_base: []const u8 = io_mod.getenv("TMPDIR") orelse "/tmp";
-    var rand_buf: [8]u8 = undefined;
-    io_mod.getIo().random(&rand_buf);
-    const rand_hex = std.fmt.bytesToHex(rand_buf, .lower);
-    const tmp_dir = try std.fmt.allocPrint(alloc, "{s}/fiber-upgrade-{s}", .{ tmp_base, rand_hex });
-    defer alloc.free(tmp_dir);
-    defer std.Io.Dir.cwd().deleteTree(io_mod.getIo(), tmp_dir) catch {};
-
-    std.Io.Dir.createDirAbsolute(io_mod.getIo(), tmp_dir, .default_dir) catch {
-        result.err = .extraction_failed;
+    // Resolve the running binary before any download: a destination we cannot
+    // stage beside fails here, not halfway through a replace.
+    var self_exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const self_exe = helpers.currentExecutablePath(&self_exe_buf) catch {
+        result.err = .self_exe_not_found;
         return;
     };
 
-    const archive_path = try std.fmt.allocPrint(alloc, "{s}/fiber.tar.gz", .{tmp_dir});
+    // Stage beside the destination binary so the final replace is a
+    // same-filesystem rename. Removed on every path below.
+    const staging_dir = helpers.createSiblingStagingDir(alloc, self_exe) catch |err| {
+        result.err = if (err == error.OutOfMemory) .out_of_memory else .replace_failed;
+        return;
+    };
+    defer alloc.free(staging_dir);
+    defer std.Io.Dir.cwd().deleteTree(io_mod.getIo(), staging_dir) catch {};
+
+    const archive_path = try std.fmt.allocPrint(alloc, "{s}/fiber.tar.gz", .{staging_dir});
     defer alloc.free(archive_path);
 
     const archive_url = try std.fmt.allocPrint(alloc, "{s}/{s}/fiber-{s}.tar.gz", .{ release_base, target.artifactRef(), helpers.platform });
@@ -230,19 +250,13 @@ fn upgradeWorkerInner(
         return;
     };
 
-    helpers.extractTarGz(alloc, archive_path, tmp_dir) catch {
+    helpers.extractTarGz(alloc, archive_path, staging_dir) catch {
         result.err = .extraction_failed;
         return;
     };
 
-    const extracted_bin = try std.fmt.allocPrint(alloc, "{s}/fiber", .{tmp_dir});
+    const extracted_bin = try std.fmt.allocPrint(alloc, "{s}/fiber", .{staging_dir});
     defer alloc.free(extracted_bin);
-
-    var self_exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const self_exe = helpers.currentExecutablePath(&self_exe_buf) catch {
-        result.err = .self_exe_not_found;
-        return;
-    };
 
     helpers.replaceBinary(extracted_bin, self_exe) catch {
         result.err = .replace_failed;
@@ -385,6 +399,7 @@ fn formatProgressLine(buf: []u8, percent: u8) []const u8 {
 
 const WorkerResult = struct {
     target_owned: ?update_target.Target = null,
+    no_release: bool = false,
     err: ?UpgradeError = null,
 };
 
@@ -454,6 +469,20 @@ test "completeRunResult reports no update for an older stable target" {
     try std.testing.expectEqual(output_contracts.UpgradeSnapshot.Status.up_to_date, result.snapshot.status);
     try std.testing.expectEqualStrings("0.0.2", result.snapshot.current);
     try std.testing.expectEqualStrings("0.0.1", result.snapshot.latest);
+}
+
+test "completeRunResult reports up to date when no release is published" {
+    const alloc = std.testing.allocator;
+
+    var result = try completeRunResult(alloc, .{
+        .version = "0.0.1-dev",
+        .revision = "0123456789ab",
+    }, .{ .no_release = true });
+    defer result.deinit(alloc);
+
+    try std.testing.expectEqual(output_contracts.UpgradeSnapshot.Status.up_to_date, result.snapshot.status);
+    try std.testing.expectEqualStrings("0.0.1-dev", result.snapshot.current);
+    try std.testing.expectEqualStrings("0.0.1-dev", result.snapshot.latest);
 }
 
 test "completeRunResult maps worker errors and frees latest version" {

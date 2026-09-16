@@ -8,6 +8,17 @@ const Allocator = std.mem.Allocator;
 const recv_timeout_sec: i64 = 30;
 const latest_version_max_bytes: usize = 128;
 const checksum_max_bytes: usize = 4096;
+const latest_tag_max_bytes: usize = 128;
+
+/// Download base for published releases. Asset URLs are
+/// `{base}/{tag}/fiber-{platform}.tar.gz` plus the matching `.sha256`
+/// sidecar, which is exactly the shape of
+/// `https://github.com/aakshintala/Fiber/releases/download/<tag>/...`.
+pub const github_download_base = "https://github.com/aakshintala/Fiber/releases/download";
+
+/// Resolves to `.../releases/latest`, which redirects to the newest published
+/// release (`.../releases/tag/<tag>`).
+const github_latest_url = "https://github.com/aakshintala/Fiber/releases/latest";
 
 const Target = update_target.Target;
 
@@ -20,14 +31,13 @@ fn setRecvTimeout(conn: *std.http.Client.Connection) void {
 /// Returns the base URL to fetch releases from, or null when this build has no
 /// release source at all.
 ///
-/// The inherited CDN is gone, so today the only source is the loopback address
-/// the deterministic E2E tests serve. That seam is deliberately kept: update
-/// support (#46) will need somewhere to point.
+/// The loopback address the deterministic E2E tests serve wins when set;
+/// otherwise upgrades resolve from GitHub Releases for aakshintala/Fiber.
 pub fn resolveReleaseBase() ?[]const u8 {
     if (io_mod.getenv("FIBER_E2E_UPGRADE_BASE_URL")) |url| {
         if (isLoopbackE2eUpgradeBase(url)) return url;
     }
-    return null;
+    return github_download_base;
 }
 
 fn isLoopbackE2eUpgradeBase(url: []const u8) bool {
@@ -71,10 +81,19 @@ fn platformFromTarget() ?[]const u8 {
     return null;
 }
 
-pub fn fetchTarget(alloc: Allocator, base_url: []const u8) !Target {
-    const latest = try fetchLatestVersion(alloc, base_url);
-    defer alloc.free(latest);
-    return Target.initStable(alloc, latest) catch return error.FetchFailed;
+pub fn fetchTarget(alloc: Allocator, base_url: []const u8) !?Target {
+    if (isLoopbackE2eUpgradeBase(base_url)) {
+        const latest = try fetchLatestVersion(alloc, base_url);
+        defer alloc.free(latest);
+        return Target.initStable(alloc, latest) catch return error.FetchFailed;
+    }
+    const tag = fetchGithubLatestTag(alloc) catch |err| switch (err) {
+        error.NoRelease => return null,
+        else => return err,
+    };
+    defer alloc.free(tag);
+    // A tag that is not stable SemVer means no release, not a failure.
+    return Target.initStable(alloc, tag) catch null;
 }
 
 fn fetchLatestVersion(alloc: Allocator, base_url: []const u8) ![]u8 {
@@ -95,6 +114,58 @@ fn fetchLatestVersion(alloc: Allocator, base_url: []const u8) ![]u8 {
     const duped = try alloc.dupe(u8, trimmed);
     alloc.free(raw);
     return duped;
+}
+
+/// Resolves the newest published tag from `/releases/latest` via its redirect
+/// target (`.../releases/tag/<tag>`). The redirect response itself is bounded
+/// by the head buffer; only the tag segment is copied out.
+/// Returns `error.NoRelease` when no release is published yet or the redirect
+/// carries no usable tag; transport problems are `error.FetchFailed`.
+fn fetchGithubLatestTag(alloc: Allocator) ![]u8 {
+    var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
+    defer client.deinit();
+
+    const uri = std.Uri.parse(github_latest_url) catch return error.FetchFailed;
+    var req = client.request(.GET, uri, .{ .redirect_behavior = .unhandled }) catch return error.FetchFailed;
+    defer req.deinit();
+
+    if (req.connection) |conn| setRecvTimeout(conn);
+    req.sendBodiless() catch return error.FetchFailed;
+
+    var redirect_buf: [8192]u8 = undefined;
+    var response = req.receiveHead(&redirect_buf) catch return error.FetchFailed;
+
+    if (response.head.status == .not_found) return error.NoRelease;
+    if (response.head.status.class() != .redirect) return error.FetchFailed;
+
+    const location = response.head.location orelse return error.NoRelease;
+    const tag = lastPathSegment(location);
+    if (tag.len == 0 or tag.len > latest_tag_max_bytes) return error.NoRelease;
+    return alloc.dupe(u8, tag) catch return error.OutOfMemory;
+}
+
+fn lastPathSegment(location: []const u8) []const u8 {
+    var target = location;
+    if (std.mem.findScalar(u8, target, '?')) |idx| target = target[0..idx];
+    if (std.mem.findScalar(u8, target, '#')) |idx| target = target[0..idx];
+    if (std.mem.findScalarLast(u8, target, '/')) |idx| return target[idx + 1 ..];
+    return target;
+}
+
+/// Creates a uniquely named staging directory beside the destination binary
+/// and returns its owned path. Staging beside the destination keeps the final
+/// replace a same-filesystem rename, and creating it up front fails fast when
+/// the destination directory is not writable, before anything is downloaded.
+/// The caller removes the directory when done.
+pub fn createSiblingStagingDir(alloc: Allocator, dest_path: []const u8) ![]u8 {
+    const parent = std.fs.path.dirname(dest_path) orelse ".";
+    var rand_buf: [8]u8 = undefined;
+    io_mod.getIo().random(&rand_buf);
+    const rand_hex = std.fmt.bytesToHex(rand_buf, .lower);
+    const staging = try std.fmt.allocPrint(alloc, "{s}/fiber-upgrade-{s}", .{ parent, rand_hex });
+    errdefer alloc.free(staging);
+    std.Io.Dir.createDirAbsolute(io_mod.getIo(), staging, .default_dir) catch return error.StagingFailed;
+    return staging;
 }
 
 fn fetchTextBounded(
@@ -236,11 +307,12 @@ pub fn extractTarGz(alloc: Allocator, archive_path: []const u8, dest_dir: []cons
     }
 }
 
+/// Atomically replaces the target with the staged binary via a
+/// same-filesystem rename. The staging directory always sits beside the
+/// target, so there is no cross-filesystem fallback and no half-replaced
+/// binary: the rename either happens or it does not.
 pub fn replaceBinary(new_path: []const u8, target_path: []const u8) !void {
-    std.Io.Dir.renameAbsolute(new_path, target_path, io_mod.getIo()) catch {
-        copyBinary(new_path, target_path) catch return error.ReplaceFailed;
-        return;
-    };
+    std.Io.Dir.renameAbsolute(new_path, target_path, io_mod.getIo()) catch return error.ReplaceFailed;
 }
 
 pub const ExecutablePathError = error{
@@ -259,30 +331,6 @@ pub fn currentExecutablePath(out: []u8) ExecutablePathError![]const u8 {
         return path[0 .. path.len - linux_deleted_suffix.len];
     }
     return path;
-}
-
-fn copyBinary(src_path: []const u8, dest_path: []const u8) !void {
-    const zio = io_mod.getIo();
-    var src = std.Io.Dir.openFileAbsolute(zio, src_path, .{}) catch return error.ReplaceFailed;
-    defer src.close(zio);
-
-    const stat = src.stat(zio) catch return error.ReplaceFailed;
-
-    std.Io.Dir.deleteFileAbsolute(zio, dest_path) catch {};
-
-    var dest = std.Io.Dir.createFileAbsolute(zio, dest_path, .{}) catch return error.ReplaceFailed;
-    defer dest.close(zio);
-
-    var rbuf: [8192]u8 = undefined;
-    var r = src.readerStreaming(zio, &rbuf);
-    var transfer_buf: [64 * 1024]u8 = undefined;
-    while (true) {
-        const n = r.interface.readSliceShort(&transfer_buf) catch return error.ReplaceFailed;
-        if (n == 0) break;
-        dest.writeStreamingAll(zio, transfer_buf[0..n]) catch return error.ReplaceFailed;
-    }
-
-    dest.setPermissions(zio, stat.permissions) catch {};
 }
 
 fn writeTempFile(dir: std.Io.Dir, name: []const u8, content: []const u8) !void {
@@ -310,8 +358,37 @@ test "E2E upgrade base accepts only explicit IPv4 loopback origins" {
     try std.testing.expect(!isLoopbackE2eUpgradeBase("http://localhost:1234"));
 }
 
-test "production upgrade base returns null without E2E override" {
-    try std.testing.expect(resolveReleaseBase() == null);
+test "production upgrade base is GitHub Releases without E2E override" {
+    try std.testing.expectEqualStrings(github_download_base, resolveReleaseBase().?);
+}
+
+test "lastPathSegment takes the tag from a release redirect target" {
+    try std.testing.expectEqualStrings("v0.2.11", lastPathSegment("https://github.com/aakshintala/Fiber/releases/tag/v0.2.11"));
+    try std.testing.expectEqualStrings("v0.2.11", lastPathSegment("/aakshintala/Fiber/releases/tag/v0.2.11"));
+    try std.testing.expectEqualStrings("v0.2.11", lastPathSegment("https://github.com/aakshintala/Fiber/releases/tag/v0.2.11?foo=bar"));
+    try std.testing.expectEqualStrings("", lastPathSegment("https://github.com/aakshintala/Fiber/releases/tag/"));
+    try std.testing.expectEqualStrings("v0.2.11", lastPathSegment("v0.2.11"));
+}
+
+test "createSiblingStagingDir stages beside the destination" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(root);
+    const dest = try std.fs.path.join(alloc, &.{ root, "fiber" });
+    defer alloc.free(dest);
+
+    const staging = try createSiblingStagingDir(alloc, dest);
+    defer alloc.free(staging);
+    defer std.Io.Dir.cwd().deleteTree(io_mod.getIo(), staging) catch {};
+
+    try std.testing.expectEqualStrings(root, std.fs.path.dirname(staging).?);
+    // The directory exists: creating it again must fail.
+    if (std.Io.Dir.createDirAbsolute(io_mod.getIo(), staging, .default_dir)) |_| {
+        return error.TestExpectedDirExists;
+    } else |_| {}
 }
 
 test "extractChecksumHex parses sha256sum format" {
