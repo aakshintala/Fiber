@@ -9,6 +9,14 @@ from scripts.ci_scope import aggregate_errors, select_jobs
 
 
 ALWAYS = ["scope", "shellcheck", "static"]
+FULL_EXTRA = [
+    "bench",
+    "binary-size",
+    "conformance",
+    "e2e",
+    "native",
+    "pgso-driver",
+]
 LINUX_X86 = {
     "name": "linux-x86_64",
     "runner": "ubuntu-24.04",
@@ -24,6 +32,7 @@ MACOS_ARM = {
     "runner": "macos-15",
     "zig_tarball": "zig-aarch64-macos",
 }
+ALL_PLATFORMS = [LINUX_X86, LINUX_ARM, MACOS_ARM]
 
 
 def _shards(count: int) -> list[dict[str, object]]:
@@ -51,14 +60,8 @@ class SelectJobsTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
 
-    def _select(
-        self,
-        paths: list[str],
-        *,
-        event: str = "pull_request",
-        draft: bool = True,
-    ):
-        return select_jobs(paths, event=event, draft=draft, head_root=self.root)
+    def _select(self, paths: list[str], *, event: str = "pull_request"):
+        return select_jobs(paths, event=event, head_root=self.root)
 
     def _assert_jobs(self, selection, extra: list[str]) -> None:
         self.assertEqual(sorted(ALWAYS + extra), selection.jobs)
@@ -75,9 +78,7 @@ class SelectJobsTests(unittest.TestCase):
         self.assertEqual("STATIC", self._class_for(selection, "README.md"))
         self.assertEqual("STATIC", self._class_for(selection, "docs/guide.md"))
         self.assertEqual("always selected", selection.reasons["static"])
-        self.assertEqual(
-            "no changed path selects it", selection.reasons["native-linux"]
-        )
+        self.assertEqual("no changed path selects it", selection.reasons["native"])
         self.assertEqual(
             "no changed path selects it", selection.reasons["pgso-driver"]
         )
@@ -97,7 +98,7 @@ class SelectJobsTests(unittest.TestCase):
         )
         selection = self._select(["scripts/used.sh"])
         self.assertEqual("FULL", self._class_for(selection, "scripts/used.sh"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_script_referenced_by_build_zig_is_full(self) -> None:
         self._write(
@@ -108,7 +109,7 @@ class SelectJobsTests(unittest.TestCase):
         )
         selection = self._select(["scripts/used.sh"])
         self.assertEqual("FULL", self._class_for(selection, "scripts/used.sh"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_script_referenced_by_a_test_is_full(self) -> None:
         self._write(
@@ -119,7 +120,7 @@ class SelectJobsTests(unittest.TestCase):
         )
         selection = self._select(["scripts/used.sh"])
         self.assertEqual("FULL", self._class_for(selection, "scripts/used.sh"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_script_referenced_by_a_benchmark_is_full(self) -> None:
         self._write(
@@ -130,7 +131,7 @@ class SelectJobsTests(unittest.TestCase):
         )
         selection = self._select(["scripts/used.sh"])
         self.assertEqual("FULL", self._class_for(selection, "scripts/used.sh"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_script_referenced_by_python_module_stem_is_full(self) -> None:
         self._write(
@@ -141,37 +142,26 @@ class SelectJobsTests(unittest.TestCase):
         )
         selection = self._select(["scripts/helper_mod.py"])
         self.assertEqual("FULL", self._class_for(selection, "scripts/helper_mod.py"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_markdown_under_src_is_full(self) -> None:
         self._write({"src/system_prompt.md": "# prompt\n"})
         selection = self._select(["src/system_prompt.md"])
         self.assertEqual("FULL", self._class_for(selection, "src/system_prompt.md"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
-    def test_root_e2e_file_only_on_a_draft_pull_request(self) -> None:
-        selection = self._select(["tests/e2e/alpha.test.ts"], draft=True)
+    def test_root_e2e_file_only(self) -> None:
+        selection = self._select(["tests/e2e/alpha.test.ts"])
         self.assertEqual(
             "E2E_FILE(alpha.test.ts)",
             self._class_for(selection, "tests/e2e/alpha.test.ts"),
         )
         self._assert_jobs(selection, ["e2e", "pgso-driver"])
         self.assertEqual("alpha.test.ts", selection.e2e_files)
-        self.assertEqual([LINUX_X86], selection.e2e_platforms)
+        self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
         self.assertEqual(_shards(1), selection.e2e_shards)
-        self.assertEqual(
-            "no changed path selects it", selection.reasons["native-linux"]
-        )
-        self.assertEqual(
-            "no changed path selects it", selection.reasons["bench"]
-        )
-
-    def test_root_e2e_file_only_on_a_ready_pull_request(self) -> None:
-        selection = self._select(["tests/e2e/alpha.test.ts"], draft=False)
-        self._assert_jobs(selection, ["e2e", "pgso-driver"])
-        self.assertEqual("alpha.test.ts", selection.e2e_files)
-        self.assertEqual([LINUX_ARM, MACOS_ARM], selection.e2e_platforms)
-        self.assertEqual(_shards(1), selection.e2e_shards)
+        self.assertEqual("no changed path selects it", selection.reasons["native"])
+        self.assertEqual("no changed path selects it", selection.reasons["bench"])
         self.assertEqual(
             "no changed path selects it", selection.reasons["conformance"]
         )
@@ -179,18 +169,13 @@ class SelectJobsTests(unittest.TestCase):
             "no changed path selects it", selection.reasons["binary-size"]
         )
 
-    def test_tui_performance_selects_bench_when_ready(self) -> None:
+    def test_tui_performance_selects_bench(self) -> None:
         self._write({"tests/e2e/tui-performance.test.ts": "export {}\n"})
-        draft = self._select(["tests/e2e/tui-performance.test.ts"], draft=True)
-        self._assert_jobs(draft, ["e2e", "pgso-driver"])
-        self.assertEqual(
-            "ready-only job; draft pull request", draft.reasons["bench"]
-        )
-
-        ready = self._select(["tests/e2e/tui-performance.test.ts"], draft=False)
-        self._assert_jobs(ready, ["bench", "e2e", "pgso-driver"])
-        self.assertEqual("tui-performance.test.ts", ready.e2e_files)
-        self.assertIn("tui-performance.test.ts", ready.reasons["bench"])
+        selection = self._select(["tests/e2e/tui-performance.test.ts"])
+        self._assert_jobs(selection, ["bench", "e2e", "pgso-driver"])
+        self.assertEqual("tui-performance.test.ts", selection.e2e_files)
+        self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
+        self.assertIn("tui-performance.test.ts", selection.reasons["bench"])
 
     def test_shared_e2e_inputs(self) -> None:
         shared = (
@@ -204,68 +189,42 @@ class SelectJobsTests(unittest.TestCase):
         for path in shared:
             with self.subTest(path=path):
                 self._write({path: "x\n"})
-                draft = self._select([path], draft=True)
-                self.assertEqual("E2E_SHARED", self._class_for(draft, path))
-                self._assert_jobs(draft, ["e2e", "pgso-driver"])
-                self.assertEqual("all", draft.e2e_files)
-                self.assertEqual([LINUX_X86], draft.e2e_platforms)
-                self.assertEqual(_shards(3), draft.e2e_shards)
-                self.assertEqual(
-                    "ready-only job; draft pull request",
-                    draft.reasons["conformance"],
-                )
-                self.assertEqual(
-                    "ready-only job; draft pull request",
-                    draft.reasons["bench"],
-                )
-
-                ready = self._select([path], draft=False)
+                selection = self._select([path])
+                self.assertEqual("E2E_SHARED", self._class_for(selection, path))
                 self._assert_jobs(
-                    ready, ["bench", "conformance", "e2e", "pgso-driver"]
+                    selection, ["bench", "conformance", "e2e", "pgso-driver"]
                 )
-                self.assertEqual("all", ready.e2e_files)
-                self.assertEqual([LINUX_ARM, MACOS_ARM], ready.e2e_platforms)
+                self.assertEqual("all", selection.e2e_files)
+                self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
+                self.assertEqual(_shards(3), selection.e2e_shards)
 
     def test_e2e_file_mixed_with_source_is_full(self) -> None:
         self._write({"src/main.zig": "pub fn main() void {}\n"})
-        selection = self._select(
-            ["tests/e2e/alpha.test.ts", "src/main.zig"], draft=True
-        )
+        selection = self._select(["tests/e2e/alpha.test.ts", "src/main.zig"])
         self.assertEqual("FULL", self._class_for(selection, "src/main.zig"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
         self.assertEqual("all", selection.e2e_files)
+        self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
 
     def test_source_is_full(self) -> None:
         self._write({"src/main.zig": "pub fn main() void {}\n"})
-        selection = self._select(["src/main.zig"], draft=False)
+        selection = self._select(["src/main.zig"])
         self.assertEqual("FULL", self._class_for(selection, "src/main.zig"))
-        self._assert_jobs(
-            selection,
-            [
-                "bench",
-                "binary-size",
-                "conformance",
-                "e2e",
-                "native-extra",
-                "pgso-driver",
-            ],
-        )
-        self.assertEqual(
-            "draft-only job; ready pull request",
-            selection.reasons["native-linux"],
-        )
+        self._assert_jobs(selection, FULL_EXTRA)
+        self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
+        self.assertIn("native", selection.jobs)
 
     def test_build_zig_is_full(self) -> None:
         self._write({"build.zig": "pub fn build() void {}\n"})
         selection = self._select(["build.zig"])
         self.assertEqual("FULL", self._class_for(selection, "build.zig"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_workflow_is_full(self) -> None:
         self._write({".github/workflows/ci.yml": "name: CI\n"})
         selection = self._select([".github/workflows/ci.yml"])
         self.assertEqual("FULL", self._class_for(selection, ".github/workflows/ci.yml"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_composite_action_is_full(self) -> None:
         self._write({".github/actions/setup-pgso/action.yml": "name: setup\n"})
@@ -274,12 +233,12 @@ class SelectJobsTests(unittest.TestCase):
             "FULL",
             self._class_for(selection, ".github/actions/setup-pgso/action.yml"),
         )
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_unknown_path_is_full(self) -> None:
         selection = self._select(["vendor/mystery.bin"])
         self.assertEqual("FULL", self._class_for(selection, "vendor/mystery.bin"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_deleted_unreferenced_script_is_static(self) -> None:
         selection = self._select(["scripts/gone.sh"])
@@ -287,7 +246,7 @@ class SelectJobsTests(unittest.TestCase):
         self._assert_jobs(selection, [])
 
     def test_deleted_root_e2e_file_is_shared(self) -> None:
-        selection = self._select(["tests/e2e/gone.test.ts"], draft=False)
+        selection = self._select(["tests/e2e/gone.test.ts"])
         self.assertEqual("E2E_SHARED", self._class_for(selection, "tests/e2e/gone.test.ts"))
         self._assert_jobs(
             selection, ["bench", "conformance", "e2e", "pgso-driver"]
@@ -299,35 +258,30 @@ class SelectJobsTests(unittest.TestCase):
         selection = self._select(["README.md", "src/moved.md"])
         self.assertEqual("STATIC", self._class_for(selection, "README.md"))
         self.assertEqual("FULL", self._class_for(selection, "src/moved.md"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_rename_full_to_static_selects_full(self) -> None:
         self._write({"docs/old.md": "# old\n"})
         selection = self._select(["src/old.zig", "docs/old.md"])
         self.assertEqual("FULL", self._class_for(selection, "src/old.zig"))
         self.assertEqual("STATIC", self._class_for(selection, "docs/old.md"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
     def test_manual_dispatch_ignores_diff_and_excludes_binary_size(self) -> None:
-        selection = self._select(
-            ["README.md"],
-            event="workflow_dispatch",
-            draft=False,
-        )
+        selection = self._select(["README.md"], event="workflow_dispatch")
         self._assert_jobs(
             selection,
             [
                 "bench",
                 "conformance",
                 "e2e",
-                "native-extra",
-                "native-linux",
+                "native",
                 "pgso-driver",
             ],
         )
         self.assertNotIn("binary-size", selection.jobs)
         self.assertEqual("all", selection.e2e_files)
-        self.assertEqual([LINUX_X86, LINUX_ARM, MACOS_ARM], selection.e2e_platforms)
+        self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
         self.assertEqual(_shards(3), selection.e2e_shards)
         self.assertEqual(
             "manual dispatch excludes binary-size",
@@ -350,7 +304,7 @@ class SelectJobsTests(unittest.TestCase):
         self._write({"scripts/__init__.py": ""})
         selection = self._select(["scripts/__init__.py"])
         self.assertEqual("FULL", self._class_for(selection, "scripts/__init__.py"))
-        self._assert_jobs(selection, ["e2e", "native-linux", "pgso-driver"])
+        self._assert_jobs(selection, FULL_EXTRA)
 
 
 class AggregateTests(unittest.TestCase):

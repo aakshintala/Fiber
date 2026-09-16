@@ -2,13 +2,12 @@ name: CI
 
 # The only top-level PR and manual entrypoint. `push` is deliberately absent:
 # `release.yml` owns `main`, and a branch without a pull request has nothing to
-# gate. `ready_for_review` is not a default activity type; without it, marking a
-# PR ready fires no run and the draft run's light-scope success would remain on
-# the head commit as a satisfied required check.
+# gate. Draft state means nothing to CI; marking a pull request ready starts
+# no run.
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -24,7 +23,6 @@ env:
 jobs:
   # Scope classifier: each changed path is static-only, a root E2E file, a
   # shared E2E input, or full pipeline. The union is the selected job set.
-  # Draft/ready still filters that set (#253 removes that filter).
   # workflow_dispatch ignores the diff and selects everything except
   # binary-size.
   scope:
@@ -47,14 +45,12 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             python3 -m scripts.ci_scope select \
               --event "${{ github.event_name }}" \
-              --draft false \
               --head-root .
           else
             base="${{ github.event.pull_request.base.sha }}"
             git diff --name-only --no-renames "$base"...HEAD |
               python3 -m scripts.ci_scope select \
                 --event "${{ github.event_name }}" \
-                --draft "${{ github.event.pull_request.draft }}" \
                 --head-root .
           fi
 
@@ -93,11 +89,8 @@ jobs:
       - name: Test the PGSO driver
         run: python3 -m unittest discover -s scripts/pgso/tests -v
 
-  # Draft scope. Also the linux-x86_64 leg of the ready matrix, so ready runs do
-  # not build and test this platform twice.
-  # Cheap deterministic gates that must re-verify every push in every
-  # scope (including ready pushes, where the heavy native job is skipped).
-  # None of these need a built binary.
+  # Cheap deterministic gates that must re-verify every push. None of these
+  # need a built binary.
   static:
     name: Static gates
     runs-on: ubuntu-24.04
@@ -129,42 +122,11 @@ jobs:
       - name: Check core has no production builtins imports
         run: python3 scripts/check-core-builtins.py
 
-  # Heavy native leg: build, unit tests, smoke. Scope selects this job;
-  # draft/ready and the diff decide whether it runs. The ready scope adds
-  # only net-new platforms. The static gates above still run on every push.
-  native-linux:
-    name: Native checks (linux-x86_64)
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'native-linux')
-    needs: scope
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup Zig
-        uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27
-        with:
-          version: ${{ env.ZIG_VERSION }}
-          cache-key: ci-native-linux-x86_64-ReleaseSafe
-
-      # `zig build test` depends on the install step, so it builds and installs
-      # the exe as well. The build runner compiles the exe and the test binary
-      # concurrently, and the exe is the shorter of the two, so folding them
-      # into one invocation hides the exe build entirely.
-      - name: Build and run unit tests
-        env:
-          TEST_TIMEOUT_SECONDS: "1200"
-        run: |
-          started_at=$SECONDS
-          trap 'printf "Build and unit tests elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
-          timeout "${TEST_TIMEOUT_SECONDS}s" zig build test -Doptimize=ReleaseSafe
-
-      - name: Smoke test fresh binary
-        run: ./scripts/smoke.sh
-
-  native-extra:
+  # Heavy native leg: build, unit tests, smoke. Scope selects this job; the
+  # static gates above still run on every push.
+  native:
     name: Native checks (${{ matrix.platform.name }})
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'native-extra')
+    if: contains(fromJSON(needs.scope.outputs.jobs), 'native')
     needs: scope
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 60
@@ -172,6 +134,8 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
           - name: linux-aarch64
             runner: ubuntu-24.04-arm
           - name: macos-aarch64
@@ -211,7 +175,16 @@ jobs:
         run: zig build -Doptimize=ReleaseSafe
 
       - name: Build and run unit tests
-        run: zig build test -Doptimize=ReleaseSafe
+        env:
+          TEST_TIMEOUT_SECONDS: "1200"
+        run: |
+          started_at=$SECONDS
+          trap 'printf "Build and unit tests elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
+          if command -v timeout >/dev/null 2>&1; then
+            timeout "${TEST_TIMEOUT_SECONDS}s" zig build test -Doptimize=ReleaseSafe
+          else
+            zig build test -Doptimize=ReleaseSafe
+          fi
 
       - name: Smoke test fresh binary
         run: ./scripts/smoke.sh
@@ -256,9 +229,9 @@ jobs:
         env:
           FIBER_SOUND: "0"
 
-  # E2E platforms and shards come from the scope job. Draft runs Linux
-  # x86_64; ready adds the remaining platforms; dispatch runs all three.
-  # A small file selection emits fewer shards so none are empty.
+  # E2E platforms and shards come from the scope job. When e2e is selected,
+  # all three platforms run. A small file selection emits fewer shards so
+  # none are empty.
   e2e:
     name: E2E (${{ matrix.platform.name }}, shard ${{ matrix.shard.label }})
     if: contains(fromJSON(needs.scope.outputs.jobs), 'e2e')
@@ -570,8 +543,10 @@ jobs:
             section_format: elf
             expected_file: "ELF 64-bit LSB.*ARM aarch64"
           # Cross-compiled from Linux. The job passes an explicit -Dtarget, so
-          # the runner OS does not change what is built, and freeing this macOS
-          # slot keeps ready scope under the five-job concurrency cap.
+          # the runner OS does not change what is built. A full run uses four
+          # macOS jobs — native checks and three E2E shards — so the size
+          # delta stays on Linux and keeps under GitHub's five-concurrent-macOS-job
+          # cap.
           - name: macos-aarch64
             target: aarch64-macos
             runner: ubuntu-24.04
@@ -737,8 +712,7 @@ jobs:
       - shellcheck
       - scope
       - static
-      - native-linux
-      - native-extra
+      - native
       - pgso-driver
       - conformance
       - e2e

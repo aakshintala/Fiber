@@ -1,7 +1,7 @@
 # Benchmarks and binary size
 
 
-Startup latency benchmarks live in `benchmarks/` and run as the `bench` job of `ci.yml` on ready pull requests.
+Startup latency benchmarks live in `benchmarks/` and run as the `bench` job of `ci.yml` on pull requests that select the full CI pipeline.
 
 ```bash
 ./benchmarks/startup.sh            # full run (100 iterations, builds ReleaseSafe, needs hyperfine)
@@ -26,7 +26,8 @@ When adding features, consider their impact on startup latency. The `fiber help`
 
 ## Binary size observability
 
-Every ready pull request runs the `binary-size` job of `ci.yml` across Linux
+Every pull request that selects the full CI pipeline runs the `binary-size`
+job of `ci.yml` across Linux
 x86_64, Linux arm64, and macOS arm64. Each matrix job builds the pull
 request merge commit and its base commit as stripped ReleaseSafe binaries on
 the same native runner, then reports the exact byte and MiB delta plus ELF or
