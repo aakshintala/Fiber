@@ -181,10 +181,11 @@ pub const Event = union(Kind) {
 };
 
 pub const Envelope = struct {
-    log_generation: Identifier,
+    session_id: []u8,
     seq: u64,
-    event_id: Identifier,
-    timestamp_ms: i64,
+    ts: i64,
+    turn_id: ?[]u8 = null,
+    item_id: ?[]u8 = null,
     event: Event,
 
     pub fn kind(self: Envelope) Kind {
@@ -192,44 +193,29 @@ pub const Envelope = struct {
     }
 
     pub fn deinit(self: *Envelope, alloc: Allocator) void {
+        alloc.free(self.session_id);
+        if (self.turn_id) |turn| alloc.free(turn);
+        if (self.item_id) |item| alloc.free(item);
         self.event.deinit(alloc);
         self.* = undefined;
     }
 };
 
 pub const SequenceValidator = struct {
-    generation: ?Identifier = null,
     next_seq: u64 = 1,
 
     pub fn validate(self: *SequenceValidator, envelope: Envelope) !void {
         if (envelope.seq != self.next_seq) return error.NonContiguousSequence;
-        if (self.generation) |generation| {
-            if (!std.mem.eql(u8, &generation, &envelope.log_generation)) {
-                return error.GenerationChanged;
-            }
-        } else {
-            self.generation = envelope.log_generation;
-        }
         self.next_seq = std.math.add(u64, self.next_seq, 1) catch
             return error.NonContiguousSequence;
     }
 };
 
-pub const IdentifierSource = struct {
-    context: *anyopaque,
-    next_fn: *const fn (context: *anyopaque) Identifier,
-
-    pub fn next(self: IdentifierSource) Identifier {
-        return self.next_fn(self.context);
-    }
-};
-
 pub const ReplacementWriteOptions = struct {
-    log_generation: Identifier,
+    session_id: []const u8,
     first_seq: u64,
     replacement_id: Identifier,
-    event_ids: IdentifierSource,
-    timestamp_ms: i64,
+    ts: i64,
     reason: ReplacementReason,
 };
 
@@ -238,18 +224,14 @@ pub const ReplacementWriteSummary = struct {
     sha256: Digest,
     chunk_count: u64,
     last_seq: u64,
-    last_event_id: Identifier,
 };
 
 pub const ReductionStart = struct {
-    generation: ?Identifier = null,
     next_seq: u64 = 1,
 };
 
 pub const ReductionBoundary = struct {
-    log_generation: Identifier,
     seq: u64,
-    event_id: Identifier,
     byte_offset: u64,
 };
 
@@ -270,13 +252,20 @@ pub fn encodeFrame(alloc: Allocator, envelope: Envelope) ![]u8 {
 
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
-    try out.writer.writeAll("{\"schema_version\":1,\"log_generation\":");
-    try writeHexString(&out.writer, &envelope.log_generation);
-    try out.writer.print(",\"seq\":{d},\"event_id\":", .{envelope.seq});
-    try writeHexString(&out.writer, &envelope.event_id);
-    try out.writer.print(",\"timestamp_ms\":{d},\"kind\":", .{envelope.timestamp_ms});
+    try out.writer.writeAll("{\"schema_version\":1,\"kind\":");
     try writeJsonString(&out.writer, @tagName(envelope.kind()));
-    try out.writer.writeAll(",\"payload\":");
+    try out.writer.writeAll(",\"session_id\":");
+    try writeJsonString(&out.writer, envelope.session_id);
+    try out.writer.print(",\"ts\":{d}", .{envelope.ts});
+    if (envelope.turn_id) |turn_id| {
+        try out.writer.writeAll(",\"turn_id\":");
+        try writeJsonString(&out.writer, turn_id);
+    }
+    if (envelope.item_id) |item_id| {
+        try out.writer.writeAll(",\"item_id\":");
+        try writeJsonString(&out.writer, item_id);
+    }
+    try out.writer.print(",\"seq\":{d},\"payload\":", .{envelope.seq});
     try writePayload(&out.writer, envelope.event);
     try out.writer.writeAll("}\n");
     if (out.written().len > event_frame_max_bytes) return error.EventFrameTooLarge;
@@ -314,24 +303,50 @@ pub fn decodeFrame(alloc: Allocator, line: []const u8) !Envelope {
         else => return failEnvelope(error.InvalidEventFrame),
     };
     defer parsed.deinit();
-    const root = try exactObject(parsed.value, &.{
+    const root = try requireObject(parsed.value);
+    if (root.count() < 6 or root.count() > 8) return failEnvelope(error.InvalidEventFrame);
+    try rejectUnknownKeys(root, &.{
         "schema_version",
-        "log_generation",
-        "seq",
-        "event_id",
-        "timestamp_ms",
         "kind",
+        "session_id",
+        "ts",
+        "turn_id",
+        "item_id",
+        "seq",
         "payload",
     });
+    for ([_][]const u8{
+        "schema_version",
+        "kind",
+        "session_id",
+        "ts",
+        "seq",
+        "payload",
+    }) |key| {
+        if (root.get(key) == null) return failEnvelope(error.InvalidEventFrame);
+    }
     if (try requireU64(root, "schema_version") != 1) return failEnvelope(error.UnsupportedEventSchema);
     const kind = std.meta.stringToEnum(Kind, try requireString(root, "kind")) orelse
         return failEnvelope(error.InvalidEventFrame);
-    var envelope = Envelope{
-        .log_generation = try parseIdentifier(try requireString(root, "log_generation")),
-        .seq = try requireU64(root, "seq"),
-        .event_id = try parseIdentifier(try requireString(root, "event_id")),
-        .timestamp_ms = try requireI64(root, "timestamp_ms"),
-        .event = try parsePayload(alloc, kind, root.get("payload") orelse return failEnvelope(error.InvalidEventFrame)),
+    // Ownership of the duped id strings moves into the returned envelope on
+    // success; the block-scoped errdefers below free them only when a later
+    // step in this block fails, so a validation failure cannot free them
+    // twice through both these guards and the envelope deinit.
+    var envelope = blk: {
+        const session_id = try dupeString(alloc, root, "session_id");
+        errdefer alloc.free(session_id);
+        const turn_id = if (root.get("turn_id")) |_| try dupeString(alloc, root, "turn_id") else null;
+        errdefer if (turn_id) |id| alloc.free(id);
+        const item_id = if (root.get("item_id")) |_| try dupeString(alloc, root, "item_id") else null;
+        errdefer if (item_id) |id| alloc.free(id);
+        break :blk Envelope{
+            .session_id = session_id,
+            .seq = try requireU64(root, "seq"),
+            .ts = try requireI64(root, "ts"),
+            .turn_id = turn_id,
+            .item_id = item_id,
+            .event = try parsePayload(alloc, kind, root.get("payload") orelse return failEnvelope(error.InvalidEventFrame)),
+        };
     };
     errdefer envelope.deinit(alloc);
     try validateEnvelope(envelope);
@@ -355,10 +370,9 @@ pub fn writeStateReplacement(
     ) catch return error.InvalidReplacement;
 
     const start = Envelope{
-        .log_generation = options.log_generation,
+        .session_id = @constCast(options.session_id),
         .seq = options.first_seq,
-        .event_id = options.event_ids.next(),
-        .timestamp_ms = options.timestamp_ms,
+        .ts = options.ts,
         .event = .{ .state_replacement_started = .{
             .replacement_id = options.replacement_id,
             .reason = options.reason,
@@ -390,12 +404,10 @@ pub fn writeStateReplacement(
         return error.InvalidReplacement;
     const commit_seq = std.math.add(u64, options.first_seq, transaction_frame_count) catch
         return error.InvalidReplacement;
-    const commit_id = options.event_ids.next();
     const commit = Envelope{
-        .log_generation = options.log_generation,
+        .session_id = @constCast(options.session_id),
         .seq = commit_seq,
-        .event_id = commit_id,
-        .timestamp_ms = options.timestamp_ms,
+        .ts = options.ts,
         .event = .{ .state_replacement_committed = .{
             .replacement_id = options.replacement_id,
             .encoded_bytes = state_summary.encoded_bytes,
@@ -412,7 +424,6 @@ pub fn writeStateReplacement(
         .sha256 = state_summary.sha256,
         .chunk_count = chunk_count,
         .last_seq = commit_seq,
-        .last_event_id = commit_id,
     };
 }
 
@@ -431,9 +442,8 @@ pub fn applyEventFrame(
     state: *session_codec.DurableSessionState,
     frame: []const u8,
     start: ReductionStart,
-    expected_event_id: Identifier,
 ) !ReductionBoundary {
-    if (start.generation == null or start.next_seq == 0) {
+    if (start.next_seq == 0) {
         return error.InvalidReductionStart;
     }
     const frame_bytes = std.math.cast(u64, frame.len) orelse
@@ -441,13 +451,9 @@ pub fn applyEventFrame(
     var envelope = try decodeFrame(alloc, frame);
     defer envelope.deinit(alloc);
     var validator = SequenceValidator{
-        .generation = start.generation,
         .next_seq = start.next_seq,
     };
     try validator.validate(envelope);
-    if (!std.mem.eql(u8, &envelope.event_id, &expected_event_id)) {
-        return error.InvalidEventFrame;
-    }
     if (envelope.kind() == .session_started or
         envelope.kind() == .state_replacement_started or
         envelope.kind() == .state_replacement_chunk or
@@ -488,12 +494,11 @@ pub fn reduceJsonlFrom(
     var state = initial;
     errdefer if (state) |*owned| owned.deinit(alloc);
     if (start.next_seq == 0 or
-        (state == null and (start.generation != null or start.next_seq != 1)))
+        (state == null and start.next_seq != 1))
     {
         return failReduction(error.InvalidReductionStart);
     }
     var validator = SequenceValidator{
-        .generation = start.generation,
         .next_seq = start.next_seq,
     };
     var byte_offset: u64 = 0;
@@ -641,11 +646,10 @@ const ReplacementChunkWriter = struct {
         }
         const chunk = self.raw[0..self.raw_len];
         const envelope = Envelope{
-            .log_generation = self.options.log_generation,
+            .session_id = @constCast(self.options.session_id),
             .seq = std.math.add(u64, self.options.first_seq, self.chunk_index + 1) catch
                 return error.InvalidReplacement,
-            .event_id = self.options.event_ids.next(),
-            .timestamp_ms = self.options.timestamp_ms,
+            .ts = self.options.ts,
             .event = .{ .state_replacement_chunk = .{
                 .replacement_id = self.options.replacement_id,
                 .chunk_index = self.chunk_index,
@@ -682,7 +686,6 @@ fn reduceReplacement(
         source,
         validator,
         byte_offset,
-        start_envelope.log_generation,
         start,
     );
     defer chunk_reader.deinit();
@@ -721,12 +724,12 @@ fn reduceReplacement(
         decoded.created_at_ms != prior.created_at_ms or
         !std.mem.eql(u8, decoded.origin_workspace_root, prior.origin_workspace_root) or
         !std.mem.eql(u8, decoded.workspace_root, prior.workspace_root) or
-        decoded.updated_at_ms != commit_envelope.timestamp_ms)
+        decoded.updated_at_ms != commit_envelope.ts)
     {
         return error.ImmutableSessionIdentity;
     }
     if (start.reason == .log_compaction and
-        commit_envelope.timestamp_ms != prior.updated_at_ms)
+        commit_envelope.ts != prior.updated_at_ms)
     {
         return error.InvalidReplacement;
     }
@@ -738,9 +741,7 @@ fn reduceReplacement(
 
 fn reductionBoundary(envelope: Envelope, byte_offset: u64) ReductionBoundary {
     return .{
-        .log_generation = envelope.log_generation,
         .seq = envelope.seq,
-        .event_id = envelope.event_id,
         .byte_offset = byte_offset,
     };
 }
@@ -750,7 +751,6 @@ const ReplacementStateReader = struct {
     source: *std.Io.Reader,
     validator: *SequenceValidator,
     byte_offset: *u64,
-    generation: Identifier,
     start: StateReplacementStarted,
     chunk_index: u64 = 0,
     raw_total: u64 = 0,
@@ -768,7 +768,6 @@ const ReplacementStateReader = struct {
         source: *std.Io.Reader,
         validator: *SequenceValidator,
         byte_offset: *u64,
-        generation: Identifier,
         start: StateReplacementStarted,
     ) !void {
         if (start.encoded_bytes == 0 or start.chunk_count == 0 or
@@ -785,7 +784,6 @@ const ReplacementStateReader = struct {
             .source = source,
             .validator = validator,
             .byte_offset = byte_offset,
-            .generation = generation,
             .start = start,
         };
         self.interface = .{
@@ -884,9 +882,7 @@ const ReplacementStateReader = struct {
         var envelope = try decodeFrame(self.alloc, line);
         errdefer envelope.deinit(self.alloc);
         try self.validator.validate(envelope);
-        if (!std.mem.eql(u8, &envelope.log_generation, &self.generation) or
-            envelope.kind() != .state_replacement_chunk)
-        {
+        if (envelope.kind() != .state_replacement_chunk) {
             return error.InvalidReplacement;
         }
         const chunk = envelope.event.state_replacement_chunk;
@@ -927,7 +923,7 @@ fn applyDelta(
                 .origin_workspace_root = undefined,
                 .workspace_root = undefined,
                 .created_at_ms = payload.created_at_ms,
-                .updated_at_ms = envelope.timestamp_ms,
+                .updated_at_ms = envelope.ts,
                 .conversation_language = payload.conversation_language,
                 .preferences = undefined,
                 .history = &.{},
@@ -957,7 +953,7 @@ fn applyDelta(
             if (payload.model) |model| proposed.preferences.model = model;
             if (payload.effort) |effort| proposed.preferences.effort = effort;
             if (payload.fast_mode) |fast_mode| proposed.preferences.fast_mode = fast_mode;
-            proposed.updated_at_ms = envelope.timestamp_ms;
+            proposed.updated_at_ms = envelope.ts;
             try session_codec.validateState(proposed);
             const model_copy = if (payload.model) |model|
                 try alloc.dupe(u8, model)
@@ -970,18 +966,18 @@ fn applyDelta(
             if (payload.provider) |provider| current.preferences.provider = provider;
             if (payload.effort) |effort| current.preferences.effort = effort;
             if (payload.fast_mode) |fast_mode| current.preferences.fast_mode = fast_mode;
-            current.updated_at_ms = envelope.timestamp_ms;
+            current.updated_at_ms = envelope.ts;
         },
         .permission_state_changed => |payload| {
             var current = &(state.* orelse return error.MissingSessionStarted);
             var proposed = current.*;
             proposed.permission_state = payload.permission_state;
-            proposed.updated_at_ms = envelope.timestamp_ms;
+            proposed.updated_at_ms = envelope.ts;
             try session_codec.validateState(proposed);
             const next = try session_permission_state.dupe(alloc, payload.permission_state);
             current.permission_state.deinit(alloc);
             current.permission_state = next;
-            current.updated_at_ms = envelope.timestamp_ms;
+            current.updated_at_ms = envelope.ts;
         },
         .workspace_rebound => |payload| {
             var current = &(state.* orelse return error.MissingSessionStarted);
@@ -992,12 +988,12 @@ fn applyDelta(
             }
             var proposed = current.*;
             proposed.workspace_root = payload.workspace_root;
-            proposed.updated_at_ms = envelope.timestamp_ms;
+            proposed.updated_at_ms = envelope.ts;
             try session_codec.validateState(proposed);
             const copy = try alloc.dupe(u8, payload.workspace_root);
             alloc.free(current.workspace_root);
             current.workspace_root = copy;
-            current.updated_at_ms = envelope.timestamp_ms;
+            current.updated_at_ms = envelope.ts;
         },
         .history_turn_committed => |payload| {
             var current = &(state.* orelse return error.MissingSessionStarted);
@@ -1033,27 +1029,27 @@ fn applyDelta(
             // the crash window between durable completion and a later clear.
             if (current.recovery_checkpoint) |*checkpoint| checkpoint.deinit(alloc);
             current.recovery_checkpoint = null;
-            current.updated_at_ms = envelope.timestamp_ms;
+            current.updated_at_ms = envelope.ts;
         },
         .usage_checkpointed => |payload| {
             var current = &(state.* orelse return error.MissingSessionStarted);
             const usage = try session_usage.dupeSnapshotOwned(alloc, payload.usage);
             if (current.usage) |*old| old.deinit(alloc);
             current.usage = usage;
-            current.updated_at_ms = envelope.timestamp_ms;
+            current.updated_at_ms = envelope.ts;
         },
         .recovery_checkpoint_set => |payload| {
             var current = &(state.* orelse return error.MissingSessionStarted);
             const checkpoint = try payload.checkpoint.dupe(alloc);
             if (current.recovery_checkpoint) |*old| old.deinit(alloc);
             current.recovery_checkpoint = checkpoint;
-            current.updated_at_ms = envelope.timestamp_ms;
+            current.updated_at_ms = envelope.ts;
         },
         .recovery_checkpoint_cleared => {
             var current = &(state.* orelse return error.MissingSessionStarted);
             if (current.recovery_checkpoint) |*checkpoint| checkpoint.deinit(alloc);
             current.recovery_checkpoint = null;
-            current.updated_at_ms = envelope.timestamp_ms;
+            current.updated_at_ms = envelope.ts;
         },
         .state_replacement_started, .state_replacement_chunk, .state_replacement_committed => {
             return error.InvalidReplacement;
@@ -1062,15 +1058,25 @@ fn applyDelta(
 }
 
 fn validateEnvelope(envelope: Envelope) !void {
-    if (envelope.seq == 0 or envelope.timestamp_ms < 0) return error.InvalidEventFrame;
+    if (envelope.seq == 0 or envelope.ts < 0) return error.InvalidEventFrame;
+    if (envelope.session_id.len == 0) return error.InvalidEventFrame;
+    if (envelope.turn_id) |turn_id| {
+        if (turn_id.len == 0) return error.InvalidEventFrame;
+    }
+    if (envelope.item_id) |item_id| {
+        if (item_id.len == 0) return error.InvalidEventFrame;
+    }
     switch (envelope.event) {
         .session_started => |payload| {
+            if (!std.mem.eql(u8, envelope.session_id, payload.id)) {
+                return error.InvalidEventFrame;
+            }
             const state = session_codec.DurableSessionState{
                 .id = payload.id,
                 .origin_workspace_root = payload.origin_workspace_root,
                 .workspace_root = payload.workspace_root,
                 .created_at_ms = payload.created_at_ms,
-                .updated_at_ms = envelope.timestamp_ms,
+                .updated_at_ms = envelope.ts,
                 .conversation_language = payload.conversation_language,
                 .preferences = payload.preferences,
                 .history = &.{},
@@ -1683,14 +1689,12 @@ test "session event kind contract contains exactly eleven stable variants" {
     try std.testing.expectEqualStrings("state_replacement_committed", @tagName(Kind.state_replacement_committed));
 }
 
-test "event frame codec is deterministic and validates contiguous sequence and generation" {
+test "event frame codec is deterministic and validates contiguous sequence" {
     const alloc = std.testing.allocator;
-    const generation = identifier(0x10);
     const frame = Envelope{
-        .log_generation = generation,
+        .session_id = @constCast("session-1"),
         .seq = 1,
-        .event_id = identifier(0x20),
-        .timestamp_ms = 50,
+        .ts = 50,
         .event = .{ .session_started = .{
             .id = @constCast("session-1"),
             .created_at_ms = 10,
@@ -1717,8 +1721,9 @@ test "event frame codec is deterministic and validates contiguous sequence and g
     defer decoded.deinit(alloc);
     try std.testing.expectEqual(Kind.session_started, decoded.kind());
     try std.testing.expect(decoded.event.session_started.subagent_child);
-    try std.testing.expectEqualSlices(u8, &generation, &decoded.log_generation);
+    try std.testing.expectEqualStrings("session-1", decoded.session_id);
     try std.testing.expectEqual(@as(u64, 1), decoded.seq);
+    try std.testing.expectEqual(@as(i64, 50), decoded.ts);
 
     var validator: SequenceValidator = .{};
     try validator.validate(decoded);
@@ -1726,11 +1731,6 @@ test "event frame codec is deterministic and validates contiguous sequence and g
     var gap = decoded;
     gap.seq = 3;
     try std.testing.expectError(error.NonContiguousSequence, validator.validate(gap));
-
-    var wrong_generation = decoded;
-    wrong_generation.seq = 2;
-    wrong_generation.log_generation = identifier(0x30);
-    try std.testing.expectError(error.GenerationChanged, validator.validate(wrong_generation));
 }
 
 test "history_turn_committed event decode repairs duplicate-key tool arguments" {
@@ -1756,10 +1756,9 @@ test "history_turn_committed event decode repairs duplicate-key tool arguments" 
         .tool_results = results[0..],
     }};
     const frame = Envelope{
-        .log_generation = identifier(0x10),
+        .session_id = @constCast("session-1"),
         .seq = 1,
-        .event_id = identifier(0x20),
-        .timestamp_ms = 50,
+        .ts = 50,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
             .total_input_tokens = 1,
@@ -1788,10 +1787,9 @@ test "history_turn_committed event decode repairs duplicate-key tool arguments" 
 test "event frame cap is inclusive of the required newline" {
     const alloc = std.testing.allocator;
     const frame = Envelope{
-        .log_generation = identifier(0x10),
+        .session_id = @constCast("session-1"),
         .seq = 1,
-        .event_id = identifier(0x20),
-        .timestamp_ms = 1,
+        .ts = 1,
         .event = .{ .preferences_changed = .{ .fast_mode = true } },
     };
     const encoded = try encodeFrame(alloc, frame);
@@ -1858,20 +1856,17 @@ test "replacement writer uses four MiB chunks and reducer commits only complete 
 
     var complete: std.Io.Writer.Allocating = .init(alloc);
     defer complete.deinit();
-    var event_id_source = TestIdentifierSource.init(0x33);
     const replacement_summary = try writeStateReplacement(alloc, &complete.writer, replacement, .{
-        .log_generation = identifier(0x11),
+        .session_id = "session-1",
         .first_seq = 5,
         .replacement_id = identifier(0x22),
-        .event_ids = event_id_source.source(),
-        .timestamp_ms = 15,
+        .ts = 15,
         .reason = .recovery,
     });
     try std.testing.expect(replacement_summary.chunk_count >= 2);
-    try std.testing.expectEqualSlices(
-        u8,
-        &identifier(0x33 + @as(u8, @intCast(replacement_summary.chunk_count + 1))),
-        &replacement_summary.last_event_id,
+    try std.testing.expectEqual(
+        5 + replacement_summary.chunk_count + 1,
+        replacement_summary.last_seq,
     );
 
     var source = std.Io.Reader.fixed(complete.written());
@@ -1879,7 +1874,7 @@ test "replacement writer uses four MiB chunks and reducer commits only complete 
         alloc,
         &source,
         try initial.dupe(alloc),
-        .{ .generation = identifier(0x11), .next_seq = 5 },
+        .{ .next_seq = 5 },
     );
     defer reduced.deinit(alloc);
     try std.testing.expect(reduced.truncate_from == null);
@@ -1894,7 +1889,7 @@ test "replacement writer uses four MiB chunks and reducer commits only complete 
         alloc,
         &incomplete_source,
         try initial.dupe(alloc),
-        .{ .generation = identifier(0x11), .next_seq = 5 },
+        .{ .next_seq = 5 },
     );
     defer incomplete.deinit(alloc);
     try std.testing.expectEqual(@as(?u64, 0), incomplete.truncate_from);
@@ -1978,20 +1973,18 @@ test "replacement writer uses four MiB chunks and reducer commits only complete 
             alloc,
             &failing_source.interface,
             try initial.dupe(alloc),
-            .{ .generation = identifier(0x11), .next_seq = 5 },
+            .{ .next_seq = 5 },
         ),
     );
 }
 
 test "semantic reducer uses event timestamps and enforces immutable identity" {
     const alloc = std.testing.allocator;
-    const generation = identifier(0x41);
     const frames = [_]Envelope{
         .{
-            .log_generation = generation,
+            .session_id = @constCast("session-1"),
             .seq = 1,
-            .event_id = identifier(0x51),
-            .timestamp_ms = 100,
+            .ts = 100,
             .event = .{ .session_started = .{
                 .id = @constCast("session-1"),
                 .created_at_ms = 10,
@@ -2006,17 +1999,15 @@ test "semantic reducer uses event timestamps and enforces immutable identity" {
             } },
         },
         .{
-            .log_generation = generation,
+            .session_id = @constCast("session-1"),
             .seq = 2,
-            .event_id = identifier(0x52),
-            .timestamp_ms = 90,
+            .ts = 90,
             .event = .{ .preferences_changed = .{ .fast_mode = true } },
         },
         .{
-            .log_generation = generation,
+            .session_id = @constCast("session-1"),
             .seq = 3,
-            .event_id = identifier(0x53),
-            .timestamp_ms = 80,
+            .ts = 80,
             .event = .{ .workspace_rebound = .{
                 .previous_workspace_root = @constCast("/tmp/a"),
                 .workspace_root = @constCast("/tmp/b"),
@@ -2058,7 +2049,6 @@ test "semantic reducer uses event timestamps and enforces immutable identity" {
 
 test "semantic reducer resumes a contiguous suffix from owned state" {
     const alloc = std.testing.allocator;
-    const generation = identifier(0x81);
     const initial = session_codec.DurableSessionState{
         .id = @constCast("session-tail"),
         .origin_workspace_root = @constCast("/tmp/origin"),
@@ -2076,10 +2066,9 @@ test "semantic reducer resumes a contiguous suffix from owned state" {
         .total_output_tokens = 2,
     };
     const envelope = Envelope{
-        .log_generation = generation,
+        .session_id = @constCast("session-tail"),
         .seq = 5,
-        .event_id = identifier(0x82),
-        .timestamp_ms = 30,
+        .ts = 30,
         .event = .{ .preferences_changed = .{ .fast_mode = true } },
     };
     const line = try encodeFrame(alloc, envelope);
@@ -2090,7 +2079,7 @@ test "semantic reducer resumes a contiguous suffix from owned state" {
         alloc,
         &source,
         try initial.dupe(alloc),
-        .{ .generation = generation, .next_seq = 5 },
+        .{ .next_seq = 5 },
     );
     defer reduced.deinit(alloc);
     try std.testing.expect(reduced.truncate_from == null);
@@ -2099,7 +2088,6 @@ test "semantic reducer resumes a contiguous suffix from owned state" {
     try std.testing.expectEqual(@as(u64, line.len), reduced.bytes_consumed);
     const through = reduced.through orelse return error.TestExpectedEqual;
     try std.testing.expectEqual(@as(u64, 5), through.seq);
-    try std.testing.expectEqualSlices(u8, &envelope.event_id, &through.event_id);
     try std.testing.expectEqual(@as(u64, line.len), through.byte_offset);
 
     var wrong_source = std.Io.Reader.fixed(line);
@@ -2109,14 +2097,13 @@ test "semantic reducer resumes a contiguous suffix from owned state" {
             alloc,
             &wrong_source,
             try initial.dupe(alloc),
-            .{ .generation = generation, .next_seq = 4 },
+            .{ .next_seq = 4 },
         ),
     );
 }
 
 test "single event application updates caller-owned state without replaying its prefix" {
     const alloc = std.testing.allocator;
-    const generation = identifier(0x91);
     const initial = singleEventTestState("session-single-event");
     var state = try initial.dupe(alloc);
     defer state.deinit(alloc);
@@ -2142,10 +2129,9 @@ test "single event application updates caller-owned state without replaying its 
         .tool_results = results[0..],
     }};
     const history = Envelope{
-        .log_generation = generation,
+        .session_id = @constCast("session-single-event"),
         .seq = 5,
-        .event_id = identifier(0x92),
-        .timestamp_ms = 30,
+        .ts = 30,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("fr"),
             .total_input_tokens = 100,
@@ -2163,12 +2149,10 @@ test "single event application updates caller-owned state without replaying its 
         alloc,
         &state,
         line,
-        .{ .generation = generation, .next_seq = 5 },
-        history.event_id,
+        .{ .next_seq = 5 },
     );
 
     try std.testing.expectEqual(@as(u64, 5), boundary.seq);
-    try std.testing.expectEqualSlices(u8, &history.event_id, &boundary.event_id);
     try std.testing.expectEqual(@as(u64, line.len), boundary.byte_offset);
     try std.testing.expectEqual(@as(usize, 1), state.history.len);
     try std.testing.expectEqualStrings(
@@ -2183,12 +2167,10 @@ test "single event application updates caller-owned state without replaying its 
 
 test "single event application preserves caller-owned state on allocation failure" {
     const alloc = std.testing.allocator;
-    const generation = identifier(0xa1);
     const event = Envelope{
-        .log_generation = generation,
+        .session_id = @constCast("session-single-event-oom"),
         .seq = 7,
-        .event_id = identifier(0xa2),
-        .timestamp_ms = 30,
+        .ts = 30,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("fr"),
             .total_input_tokens = 10,
@@ -2206,7 +2188,6 @@ test "single event application preserves caller-owned state on allocation failur
         fn run(
             failing_alloc: Allocator,
             frame: []const u8,
-            expected_generation: Identifier,
         ) !void {
             const initial = singleEventTestState("session-single-event-oom");
             var state = try initial.dupe(failing_alloc);
@@ -2216,8 +2197,7 @@ test "single event application preserves caller-owned state on allocation failur
                 failing_alloc,
                 &state,
                 frame,
-                .{ .generation = expected_generation, .next_seq = 7 },
-                identifier(0xa2),
+                .{ .next_seq = 7 },
             ) catch |err| {
                 try std.testing.expectEqualStrings("model-a", state.preferences.model);
                 try std.testing.expectEqualStrings("/tmp/current", state.workspace_root);
@@ -2236,13 +2216,12 @@ test "single event application preserves caller-owned state on allocation failur
     try std.testing.checkAllAllocationFailures(
         alloc,
         AllocationCheck.run,
-        .{ line, generation },
+        .{line},
     );
 }
 
 test "single event application validates boundaries for every semantic event kind" {
     const alloc = std.testing.allocator;
-    const generation = identifier(0xb1);
     const initial = singleEventTestState("session-single-event-kinds");
     var state = try initial.dupe(alloc);
     defer state.deinit(alloc);
@@ -2254,10 +2233,9 @@ test "single event application validates boundaries for every semantic event kin
 
     const events = [_]Envelope{
         .{
-            .log_generation = generation,
+            .session_id = @constCast("session-single-event-kinds"),
             .seq = 5,
-            .event_id = identifier(0xb2),
-            .timestamp_ms = 21,
+            .ts = 21,
             .event = .{ .preferences_changed = .{
                 .model = @constCast("model-b"),
                 .effort = types.ReasoningEffort.literal("high"),
@@ -2265,40 +2243,54 @@ test "single event application validates boundaries for every semantic event kin
             } },
         },
         .{
-            .log_generation = generation,
+            .session_id = @constCast("session-single-event-kinds"),
             .seq = 6,
-            .event_id = identifier(0xb3),
-            .timestamp_ms = 22,
+            .ts = 22,
             .event = .{ .workspace_rebound = .{
                 .previous_workspace_root = @constCast("/tmp/current"),
                 .workspace_root = @constCast("/tmp/next"),
             } },
         },
         .{
-            .log_generation = generation,
+            .session_id = @constCast("session-single-event-kinds"),
             .seq = 7,
-            .event_id = identifier(0xb4),
-            .timestamp_ms = 23,
+            .ts = 23,
             .event = .{ .usage_checkpointed = .{ .usage = snapshot } },
         },
     };
 
+    const started_line = try encodeFrame(alloc, .{
+        .session_id = @constCast("session-single-event-kinds"),
+        .seq = 5,
+        .ts = 20,
+        .event = .{ .session_started = .{
+            .id = @constCast("session-single-event-kinds"),
+            .created_at_ms = 10,
+            .origin_workspace_root = @constCast("/tmp/origin"),
+            .workspace_root = @constCast("/tmp/current"),
+            .conversation_language = session.ConversationLanguage.literal("en"),
+            .preferences = .{
+                .model = @constCast("model-a"),
+                .effort = .auto,
+                .fast_mode = false,
+            },
+        } },
+    });
+    defer alloc.free(started_line);
+    try std.testing.expectError(
+        error.InvalidEventFrame,
+        applyEventFrame(
+            alloc,
+            &state,
+            started_line,
+            .{ .next_seq = 5 },
+        ),
+    );
+    try std.testing.expectEqualStrings("model-a", state.preferences.model);
+
     for (events, 0..) |event, index| {
         const line = try encodeFrame(alloc, event);
         defer alloc.free(line);
-        if (index == 0) {
-            try std.testing.expectError(
-                error.InvalidEventFrame,
-                applyEventFrame(
-                    alloc,
-                    &state,
-                    line,
-                    .{ .generation = generation, .next_seq = event.seq },
-                    identifier(0xff),
-                ),
-            );
-            try std.testing.expectEqualStrings("model-a", state.preferences.model);
-        }
         if (index == 1) {
             try std.testing.expectError(
                 error.NonContiguousSequence,
@@ -2306,8 +2298,7 @@ test "single event application validates boundaries for every semantic event kin
                     alloc,
                     &state,
                     line,
-                    .{ .generation = generation, .next_seq = event.seq - 1 },
-                    event.event_id,
+                    .{ .next_seq = event.seq - 1 },
                 ),
             );
             try std.testing.expectEqualStrings("/tmp/current", state.workspace_root);
@@ -2316,8 +2307,7 @@ test "single event application validates boundaries for every semantic event kin
             alloc,
             &state,
             line,
-            .{ .generation = generation, .next_seq = event.seq },
-            event.event_id,
+            .{ .next_seq = event.seq },
         );
     }
 
@@ -2380,13 +2370,11 @@ test "semantic reducer releases owned state when the reduction start is invalid"
 
 test "history_turn_committed leaves absent session usage unchanged" {
     const alloc = std.testing.allocator;
-    const generation = identifier(0x60);
 
     const started = Envelope{
-        .log_generation = generation,
+        .session_id = @constCast("session-1"),
         .seq = 1,
-        .event_id = identifier(0x61),
-        .timestamp_ms = 100,
+        .ts = 100,
         .event = .{ .session_started = .{
             .id = @constCast("session-1"),
             .created_at_ms = 10,
@@ -2401,10 +2389,9 @@ test "history_turn_committed leaves absent session usage unchanged" {
         } },
     };
     const committed = Envelope{
-        .log_generation = generation,
+        .session_id = @constCast("session-1"),
         .seq = 2,
-        .event_id = identifier(0x62),
-        .timestamp_ms = 110,
+        .ts = 110,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("fr"),
             .total_input_tokens = 128,
@@ -2466,14 +2453,12 @@ test "history_turn_committed leaves absent session usage unchanged" {
 
 test "replay associates each committed work ID with its exact user turn" {
     const alloc = std.testing.allocator;
-    const generation = identifier(0x80);
     var state: ?session_codec.DurableSessionState = null;
     defer if (state) |*current| current.deinit(alloc);
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("provenance-replay"),
         .seq = 1,
-        .event_id = identifier(0x81),
-        .timestamp_ms = 1,
+        .ts = 1,
         .event = .{ .session_started = .{
             .id = @constCast("provenance-replay"),
             .created_at_ms = 1,
@@ -2488,10 +2473,9 @@ test "replay associates each committed work ID with its exact user turn" {
         } },
     });
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("provenance-replay"),
         .seq = 2,
-        .event_id = identifier(0x82),
-        .timestamp_ms = 2,
+        .ts = 2,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
             .total_input_tokens = 1,
@@ -2504,10 +2488,9 @@ test "replay associates each committed work ID with its exact user turn" {
         } },
     });
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("provenance-replay"),
         .seq = 3,
-        .event_id = identifier(0x83),
-        .timestamp_ms = 3,
+        .ts = 3,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
             .total_input_tokens = 2,
@@ -2523,10 +2506,9 @@ test "replay associates each committed work ID with its exact user turn" {
         } },
     });
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("provenance-replay"),
         .seq = 4,
-        .event_id = identifier(0x84),
-        .timestamp_ms = 4,
+        .ts = 4,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
             .total_input_tokens = 3,
@@ -2557,10 +2539,9 @@ test "replay associates each committed work ID with its exact user turn" {
 
 test "history event provenance rejects conflicts and malformed IDs" {
     const base = Envelope{
-        .log_generation = identifier(0x90),
+        .session_id = @constCast("session-1"),
         .seq = 1,
-        .event_id = identifier(0x91),
-        .timestamp_ms = 1,
+        .ts = 1,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
             .total_input_tokens = 1,
@@ -2612,12 +2593,10 @@ test "history event provenance rejects conflicts and malformed IDs" {
 fn checkHistoryProvenanceReplayAllocationFailures(alloc: Allocator) !void {
     var state: ?session_codec.DurableSessionState = null;
     defer if (state) |*current| current.deinit(alloc);
-    const generation = identifier(0xa0);
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("allocation-provenance"),
         .seq = 1,
-        .event_id = identifier(0xa1),
-        .timestamp_ms = 1,
+        .ts = 1,
         .event = .{ .session_started = .{
             .id = @constCast("allocation-provenance"),
             .created_at_ms = 1,
@@ -2632,10 +2611,9 @@ fn checkHistoryProvenanceReplayAllocationFailures(alloc: Allocator) !void {
         } },
     });
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("allocation-provenance"),
         .seq = 2,
-        .event_id = identifier(0xa2),
-        .timestamp_ms = 2,
+        .ts = 2,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
             .total_input_tokens = 1,
@@ -2673,11 +2651,10 @@ test "usage checkpoint event decodes a cumulative snapshot" {
     defer frame.deinit();
     try frame.writer.writeAll(
         "{\"schema_version\":1," ++
-            "\"log_generation\":\"000102030405060708090a0b0c0d0e0f\"," ++
-            "\"seq\":2," ++
-            "\"event_id\":\"101112131415161718191a1b1c1d1e1f\"," ++
-            "\"timestamp_ms\":200," ++
             "\"kind\":\"usage_checkpointed\"," ++
+            "\"session_id\":\"session-checkpoint\"," ++
+            "\"ts\":200," ++
+            "\"seq\":2," ++
             "\"payload\":{\"usage\":",
     );
     try session_usage.writeSnapshot(&frame.writer, snapshot);
@@ -2688,10 +2665,9 @@ test "usage checkpoint event decodes a cumulative snapshot" {
     try std.testing.expectEqualStrings("usage_checkpointed", @tagName(decoded.kind()));
 
     const started = Envelope{
-        .log_generation = identifier(0x00),
+        .session_id = @constCast("session-checkpoint"),
         .seq = 1,
-        .event_id = identifier(0x20),
-        .timestamp_ms = 100,
+        .ts = 100,
         .event = .{ .session_started = .{
             .id = @constCast("session-checkpoint"),
             .created_at_ms = 100,
@@ -2721,14 +2697,12 @@ test "usage checkpoint event decodes a cumulative snapshot" {
 
 test "permission state change event round-trips without history" {
     const alloc = std.testing.allocator;
-    const generation = identifier(0x90);
     var state: ?session_codec.DurableSessionState = null;
     defer if (state) |*current| current.deinit(alloc);
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-permission-event"),
         .seq = 1,
-        .event_id = identifier(0x91),
-        .timestamp_ms = 100,
+        .ts = 100,
         .event = .{ .session_started = .{
             .id = @constCast("session-permission-event"),
             .created_at_ms = 100,
@@ -2761,10 +2735,9 @@ test "permission state change event round-trips without history" {
         });
     }
     const event = Envelope{
-        .log_generation = generation,
+        .session_id = @constCast("session-permission-event"),
         .seq = 2,
-        .event_id = identifier(0x92),
-        .timestamp_ms = 150,
+        .ts = 150,
         .event = .{ .permission_state_changed = .{ .permission_state = changed } },
     };
     const line = try encodeFrame(alloc, event);
@@ -2778,8 +2751,7 @@ test "permission state change event round-trips without history" {
         alloc,
         &state.?,
         line,
-        .{ .generation = generation, .next_seq = 2 },
-        decoded.event_id,
+        .{ .next_seq = 2 },
     );
     try std.testing.expectEqual(@as(u64, 2), boundary.seq);
     try std.testing.expectEqual(@as(u64, 3), state.?.permission_state.next_generation);
@@ -2805,12 +2777,10 @@ test "later usage events replace snapshots while legacy turns preserve them" {
 
     var state: ?session_codec.DurableSessionState = null;
     defer if (state) |*current| current.deinit(alloc);
-    const generation = identifier(0x70);
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-usage-order"),
         .seq = 1,
-        .event_id = identifier(0x71),
-        .timestamp_ms = 100,
+        .ts = 100,
         .event = .{ .session_started = .{
             .id = @constCast("session-usage-order"),
             .created_at_ms = 100,
@@ -2828,19 +2798,17 @@ test "later usage events replace snapshots while legacy turns preserve them" {
     try std.testing.expectEqual(@as(u64, 1), state.?.usage.?.lines_added);
 
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-usage-order"),
         .seq = 2,
-        .event_id = identifier(0x72),
-        .timestamp_ms = 110,
+        .ts = 110,
         .event = .{ .usage_checkpointed = .{ .usage = first_checkpoint } },
     });
     try std.testing.expectEqual(@as(u64, 7), state.?.usage.?.lines_added);
 
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-usage-order"),
         .seq = 3,
-        .event_id = identifier(0x73),
-        .timestamp_ms = 120,
+        .ts = 120,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
             .total_input_tokens = 5,
@@ -2854,10 +2822,9 @@ test "later usage events replace snapshots while legacy turns preserve them" {
     try std.testing.expectEqual(@as(u64, 7), state.?.usage.?.lines_added);
 
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-usage-order"),
         .seq = 4,
-        .event_id = identifier(0x74),
-        .timestamp_ms = 130,
+        .ts = 130,
         .event = .{ .usage_checkpointed = .{ .usage = second_checkpoint } },
     });
     try std.testing.expectEqual(@as(u64, 9), state.?.usage.?.lines_added);
@@ -2867,12 +2834,10 @@ test "recovery checkpoint events replace and clear deterministically" {
     const alloc = std.testing.allocator;
     var state: ?session_codec.DurableSessionState = null;
     defer if (state) |*current| current.deinit(alloc);
-    const generation = identifier(0x80);
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-recovery-events"),
         .seq = 1,
-        .event_id = identifier(0x81),
-        .timestamp_ms = 100,
+        .ts = 100,
         .event = .{ .session_started = .{
             .id = @constCast("session-recovery-events"),
             .created_at_ms = 100,
@@ -2900,10 +2865,9 @@ test "recovery checkpoint events replace and clear deterministically" {
         .consumed_provider_attempts = 2,
     };
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-recovery-events"),
         .seq = 2,
-        .event_id = identifier(0x82),
-        .timestamp_ms = 110,
+        .ts = 110,
         .event = .{ .recovery_checkpoint_set = .{ .checkpoint = first } },
     });
     try std.testing.expectEqualStrings("partial", state.?.recovery_checkpoint.?.assistant_source);
@@ -2912,10 +2876,9 @@ test "recovery checkpoint events replace and clear deterministically" {
     replacement.assistant_source = @constCast("partial plus more");
     replacement.consumed_provider_attempts = 3;
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-recovery-events"),
         .seq = 3,
-        .event_id = identifier(0x83),
-        .timestamp_ms = 120,
+        .ts = 120,
         .event = .{ .recovery_checkpoint_set = .{ .checkpoint = replacement } },
     });
     try std.testing.expectEqualStrings(
@@ -2925,10 +2888,9 @@ test "recovery checkpoint events replace and clear deterministically" {
     try std.testing.expectEqual(@as(usize, 3), state.?.recovery_checkpoint.?.consumed_provider_attempts);
 
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-recovery-events"),
         .seq = 4,
-        .event_id = identifier(0x84),
-        .timestamp_ms = 130,
+        .ts = 130,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
             .total_input_tokens = 4,
@@ -2942,26 +2904,23 @@ test "recovery checkpoint events replace and clear deterministically" {
     try std.testing.expect(state.?.recovery_checkpoint == null);
 
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-recovery-events"),
         .seq = 5,
-        .event_id = identifier(0x85),
-        .timestamp_ms = 140,
+        .ts = 140,
         .event = .{ .recovery_checkpoint_set = .{ .checkpoint = replacement } },
     });
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-recovery-events"),
         .seq = 6,
-        .event_id = identifier(0x86),
-        .timestamp_ms = 150,
+        .ts = 150,
         .event = .{ .recovery_checkpoint_cleared = .{} },
     });
     try std.testing.expect(state.?.recovery_checkpoint == null);
 
     try applyDelta(alloc, &state, .{
-        .log_generation = generation,
+        .session_id = @constCast("session-recovery-events"),
         .seq = 7,
-        .event_id = identifier(0x87),
-        .timestamp_ms = 160,
+        .ts = 160,
         .event = .{ .recovery_checkpoint_cleared = .{} },
     });
     try std.testing.expect(state.?.recovery_checkpoint == null);
@@ -2972,25 +2931,3 @@ fn identifier(seed: u8) Identifier {
     for (&value, 0..) |*byte, i| byte.* = seed +% @as(u8, @intCast(i));
     return value;
 }
-
-const TestIdentifierSource = struct {
-    next_seed: u8,
-
-    fn init(seed: u8) TestIdentifierSource {
-        return .{ .next_seed = seed };
-    }
-
-    fn source(self: *TestIdentifierSource) IdentifierSource {
-        return .{
-            .context = self,
-            .next_fn = next,
-        };
-    }
-
-    fn next(context: *anyopaque) Identifier {
-        const self: *TestIdentifierSource = @ptrCast(@alignCast(context));
-        const value = identifier(self.next_seed);
-        self.next_seed +%= 1;
-        return value;
-    }
-};

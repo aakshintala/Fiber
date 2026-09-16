@@ -287,7 +287,7 @@ fn inspectSchemaV3Session(
         if (session_projection.isManifestStale(value, event_stat)) {
             try appendDoctorDiagnostic(diagnostics, alloc, session_id, .projection_stale, null);
         }
-        try appendCleanupCandidateIfPresent(diagnostics, alloc, session_id, session_dir, value);
+        try appendCleanupCandidateIfPresent(diagnostics, alloc, session_id, session_dir);
     }
 
     try inspectDoctorManagedChildren(ctx, alloc, diagnostics, session_dir, session_id);
@@ -324,19 +324,17 @@ fn inspectSchemaV3Session(
     state.deinit(alloc);
 }
 
-/// Appends a single cleanup-candidate diagnostic if the directory contains an
-/// artifact from a generation other than the manifest's current one.
+/// Appends a single cleanup-candidate diagnostic if the directory contains
+/// generation-era debris new code never creates.
 fn appendCleanupCandidateIfPresent(
     diagnostics: *std.ArrayList(DoctorDiagnostic),
     alloc: Allocator,
     session_id: []const u8,
     session_dir: *io_mod.VerifiedDir,
-    manifest: session_projection.Manifest,
 ) !void {
     var entries = session_dir.dir.iterate();
     while (try entries.next(io_mod.getIo())) |entry| {
-        const generation = session_log.cleanupCandidateGeneration(entry.name) orelse continue;
-        if (std.mem.eql(u8, &generation, &manifest.log_generation)) continue;
+        if (!session_log.isCleanupCandidate(entry.name)) continue;
         try appendDoctorDiagnostic(diagnostics, alloc, session_id, .cleanup_candidate, null);
         break;
     }

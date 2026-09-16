@@ -1,6 +1,5 @@
 const std = @import("std");
 const io_mod = @import("../shared/io.zig");
-const session_event = @import("session_event.zig");
 const session_layout = @import("session_layout.zig");
 
 const Allocator = std.mem.Allocator;
@@ -9,12 +8,11 @@ pub const max_text_bytes: usize = 128 * 1024;
 const sidecar_file = "resume-view.bin";
 
 const magic = "FXRV";
-const schema_version: u8 = 3;
-const fixed_header_bytes = magic.len + 1 + 2 + 2 + 2 + 1 + 16 + 8 + 8 + 4;
+const schema_version: u8 = 4;
+const fixed_header_bytes = magic.len + 1 + 2 + 2 + 2 + 1 + 8 + 8 + 4;
 const max_sidecar_bytes = fixed_header_bytes + 255 + max_text_bytes;
 
 pub const Boundary = struct {
-    log_generation: session_event.Identifier,
     seq: u64,
     event_log_bytes: u64,
 };
@@ -82,7 +80,6 @@ fn encode(
     try writeInt(&out.writer, u16, capture.terminal_rows);
     try writeInt(&out.writer, u16, capture.terminal_cols);
     try out.writer.writeByte(@intFromBool(capture.complete));
-    try out.writer.writeAll(&boundary.log_generation);
     try writeInt(&out.writer, u64, boundary.seq);
     try writeInt(&out.writer, u64, boundary.event_log_bytes);
     try writeInt(&out.writer, u32, @intCast(text.len));
@@ -104,7 +101,6 @@ fn decode(alloc: Allocator, bytes: []const u8) !View {
     const terminal_rows = try cursor.readInt(u16);
     const terminal_cols = try cursor.readInt(u16);
     const complete = (try cursor.take(1))[0];
-    const generation = try cursor.take(16);
     const seq = try cursor.readInt(u64);
     const event_log_bytes = try cursor.readInt(u64);
     const text_len = try cursor.readInt(u32);
@@ -123,7 +119,6 @@ fn decode(alloc: Allocator, bytes: []const u8) !View {
     return .{
         .session_id = owned_id,
         .boundary = .{
-            .log_generation = generation[0..16].*,
             .seq = seq,
             .event_log_bytes = event_log_bytes,
         },
@@ -179,7 +174,6 @@ pub fn loadMatching(
         return .invalid;
     };
     if (!std.mem.eql(u8, view.session_id, session_id) or
-        !std.mem.eql(u8, &view.boundary.log_generation, &boundary.log_generation) or
         view.boundary.seq > boundary.seq or
         view.boundary.event_log_bytes > boundary.event_log_bytes)
     {
@@ -290,7 +284,6 @@ const test_capture = Capture{
 test "resume view codec round trips its durable boundary and visible text" {
     const alloc = std.testing.allocator;
     const boundary = Boundary{
-        .log_generation = [_]u8{0x2a} ** 16,
         .seq = 42,
         .event_log_bytes = 4096,
     };
@@ -301,7 +294,6 @@ test "resume view codec round trips its durable boundary and visible text" {
     defer decoded.deinit(alloc);
 
     try std.testing.expectEqualStrings("session-1", decoded.session_id);
-    try std.testing.expectEqualSlices(u8, &boundary.log_generation, &decoded.boundary.log_generation);
     try std.testing.expectEqual(boundary.seq, decoded.boundary.seq);
     try std.testing.expectEqual(boundary.event_log_bytes, decoded.boundary.event_log_bytes);
     try std.testing.expectEqual(test_capture, decoded.capture);
@@ -322,7 +314,6 @@ test "resume view capture only paints at complete matching geometry" {
 test "resume view codec round trips safe terminal styling" {
     const alloc = std.testing.allocator;
     const boundary = Boundary{
-        .log_generation = [_]u8{0x2a} ** 16,
         .seq = 42,
         .event_log_bytes = 4096,
     };
@@ -339,7 +330,6 @@ test "resume view codec round trips safe terminal styling" {
 test "resume view codec rejects unsafe or oversized visible text" {
     const alloc = std.testing.allocator;
     const boundary = Boundary{
-        .log_generation = [_]u8{0x17} ** 16,
         .seq = 7,
         .event_log_bytes = 512,
     };
@@ -390,7 +380,6 @@ test "resume view sidecar classifies exact and older durable boundaries" {
     defer verified.close();
 
     const boundary = Boundary{
-        .log_generation = [_]u8{0x31} ** 16,
         .seq = 11,
         .event_log_bytes = 2048,
     };
@@ -402,7 +391,6 @@ test "resume view sidecar classifies exact and older durable boundaries" {
     try std.testing.expectEqualStrings("cached session tail\n", restored.exact.text);
 
     const advanced = Boundary{
-        .log_generation = boundary.log_generation,
         .seq = boundary.seq + 1,
         .event_log_bytes = boundary.event_log_bytes + 64,
     };
@@ -412,7 +400,7 @@ test "resume view sidecar classifies exact and older durable boundaries" {
     try std.testing.expectEqualStrings("cached session tail\n", older.older.text);
 }
 
-test "resume view sidecar rejects forward and cross-generation boundaries" {
+test "resume view sidecar rejects forward boundaries" {
     const alloc = std.testing.allocator;
     var temp = std.testing.tmpDir(.{});
     defer temp.cleanup();
@@ -420,14 +408,12 @@ test "resume view sidecar rejects forward and cross-generation boundaries" {
     defer verified.close();
 
     const stored = Boundary{
-        .log_generation = [_]u8{0x31} ** 16,
         .seq = 11,
         .event_log_bytes = 2048,
     };
     try write(alloc, &verified, "session-1", stored, test_capture, "cached session tail\n");
 
     var forward_seq = try loadMatching(alloc, &verified, "session-1", .{
-        .log_generation = stored.log_generation,
         .seq = stored.seq - 1,
         .event_log_bytes = stored.event_log_bytes,
     });
@@ -435,20 +421,11 @@ test "resume view sidecar rejects forward and cross-generation boundaries" {
     try std.testing.expect(forward_seq == .stale);
 
     var forward_bytes = try loadMatching(alloc, &verified, "session-1", .{
-        .log_generation = stored.log_generation,
         .seq = stored.seq,
         .event_log_bytes = stored.event_log_bytes - 1,
     });
     defer forward_bytes.deinit(alloc);
     try std.testing.expect(forward_bytes == .stale);
-
-    var cross_generation = try loadMatching(alloc, &verified, "session-1", .{
-        .log_generation = [_]u8{0x32} ** 16,
-        .seq = stored.seq,
-        .event_log_bytes = stored.event_log_bytes,
-    });
-    defer cross_generation.deinit(alloc);
-    try std.testing.expect(cross_generation == .stale);
 }
 
 test "resume view sidecar treats missing and corrupt cache data as fallback" {
@@ -458,7 +435,6 @@ test "resume view sidecar treats missing and corrupt cache data as fallback" {
     var verified = try openTestVerifiedDir(temp.dir);
     defer verified.close();
     const boundary = Boundary{
-        .log_generation = [_]u8{0x44} ** 16,
         .seq = 3,
         .event_log_bytes = 128,
     };

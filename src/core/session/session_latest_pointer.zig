@@ -447,17 +447,10 @@ pub fn commitPositionCovers(
     current: session_log.CommitPosition,
     target: session_log.CommitPosition,
 ) bool {
-    if (!std.mem.eql(u8, &current.log_generation, &target.log_generation)) {
-        return true;
-    }
     if (current.through_seq != target.through_seq) {
         return current.through_seq > target.through_seq;
     }
-    return std.mem.eql(
-        u8,
-        &current.through_event_id,
-        &target.through_event_id,
-    ) and current.through_event_log_bytes >= target.through_event_log_bytes;
+    return current.through_event_log_bytes >= target.through_event_log_bytes;
 }
 
 fn deferredTokensEqual(

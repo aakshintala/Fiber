@@ -99,12 +99,9 @@ pub const FailedTailDisposition = enum {
     rollback_before_adapter_continue,
 };
 
-pub const FailedTailKind = union(enum) {
-    event: Identifier,
-    state_replacement: struct {
-        replacement_id: Identifier,
-        final_event_id: Identifier,
-    },
+pub const FailedTailKind = enum {
+    event,
+    state_replacement,
 };
 
 pub const FailedTail = struct {
@@ -122,7 +119,6 @@ pub const FailedTail = struct {
 
 pub const PublicationKind = enum {
     watermark_advance,
-    log_generation_replace,
 };
 
 pub const ProjectionStatus = enum {
@@ -389,7 +385,6 @@ pub fn recoverManifestBoundary(
     var replayed = try session_replay.replayExactBoundary(
         alloc,
         event_log,
-        manifest.log_generation,
         manifest.last_event_seq,
         manifest.event_log_bytes,
     );
@@ -890,7 +885,6 @@ pub const LoadedWritableSession = struct {
         var recovered = try session_replay.replayExactPosition(
             alloc,
             event_log,
-            self.position.log_generation,
             self.position.through_seq,
             self.position.through_event_log_bytes,
         );
@@ -907,9 +901,7 @@ pub const LoadedWritableSession = struct {
             self.position,
         );
         defer alloc.free(watermark_bytes);
-        const name = try watermarkName(alloc, self.position.log_generation);
-        defer alloc.free(name);
-        try durableReplace(alloc, &self.log.dir, name, watermark_bytes);
+        try durableReplace(alloc, &self.log.dir, commit_watermark_file, watermark_bytes);
         _ = try validateLivePosition(
             alloc,
             &self.log.dir,
@@ -971,9 +963,7 @@ pub const LoadedWritableSession = struct {
             checkpoint,
             boundary,
             .{
-                .log_generation = checkpoint.log_generation,
                 .seq = checkpoint.through_seq,
-                .event_id = checkpoint.through_event_id,
                 .event_log_bytes = checkpoint.through_event_log_bytes,
                 .semantic = true,
             },
@@ -1282,12 +1272,10 @@ pub const Root = struct {
         try requireIntentAbsent(alloc, &session_dir, publication_intent_file);
         var log_file = try openManagedFile(&session_dir, events_file, .read_only);
         errdefer log_file.close(io_mod.getIo());
-        const generation = try session_replay.readFirstGeneration(alloc, log_file);
         const position = try loadAndValidateWatermark(
             alloc,
             &session_dir,
             session_id,
-            generation,
             log_file,
         );
         const usage_sidecar = try session_usage_sidecar.capture(
@@ -1423,7 +1411,6 @@ pub const Root = struct {
 
 fn resumeViewBoundary(position: CommitPosition) session_resume_view.Boundary {
     return .{
-        .log_generation = position.log_generation,
         .seq = position.through_seq,
         .event_log_bytes = position.through_event_log_bytes,
     };
@@ -1607,11 +1594,6 @@ fn randomIdentifier() Identifier {
     return id;
 }
 
-fn randomSequenceSeed() u128 {
-    const id = randomIdentifier();
-    return std.mem.readInt(u128, &id, .big);
-}
-
 fn identifierHex(id: Identifier) [32]u8 {
     return std.fmt.bytesToHex(id, .lower);
 }
@@ -1685,14 +1667,10 @@ fn decodeAuthority(alloc: Allocator, bytes: []const u8) !AuthorityMarker {
 }
 
 fn encodeCommitPosition(writer: *std.Io.Writer, position: CommitPosition) !void {
-    const generation = identifierHex(position.log_generation);
-    const event_id = identifierHex(position.through_event_id);
     try writer.print(
-        "{{\"log_generation\":\"{s}\",\"through_seq\":{d},\"through_event_id\":\"{s}\",\"through_event_log_bytes\":{d}}}",
+        "{{\"through_seq\":{d},\"through_event_log_bytes\":{d}}}",
         .{
-            generation,
             position.through_seq,
-            event_id,
             position.through_event_log_bytes,
         },
     );
@@ -1700,15 +1678,11 @@ fn encodeCommitPosition(writer: *std.Io.Writer, position: CommitPosition) !void 
 
 fn parseCommitPosition(value: std.json.Value) !CommitPosition {
     const object = try session_codec.exactObject(value, &.{
-        "log_generation",
         "through_seq",
-        "through_event_id",
         "through_event_log_bytes",
     });
     return .{
-        .log_generation = try parseIdentifier(try session_codec.requireString(object, "log_generation")),
         .through_seq = try requireU64(object, "through_seq"),
-        .through_event_id = try parseIdentifier(try session_codec.requireString(object, "through_event_id")),
         .through_event_log_bytes = try requireU64(object, "through_event_log_bytes"),
     };
 }
@@ -1717,14 +1691,10 @@ fn encodeAuthorityPosition(
     writer: *std.Io.Writer,
     position: CommitPosition,
 ) !void {
-    const generation = identifierHex(position.log_generation);
-    const event_id = identifierHex(position.through_event_id);
     try writer.print(
-        "{{\"storage_format\":\"event_log_v1\",\"log_generation\":\"{s}\",\"through_seq\":{d},\"through_event_id\":\"{s}\",\"through_event_log_bytes\":{d}}}",
+        "{{\"storage_format\":\"event_log_v1\",\"through_seq\":{d},\"through_event_log_bytes\":{d}}}",
         .{
-            generation,
             position.through_seq,
-            event_id,
             position.through_event_log_bytes,
         },
     );
@@ -1733,9 +1703,7 @@ fn encodeAuthorityPosition(
 fn parseAuthorityPosition(value: std.json.Value) !CommitPosition {
     const object = try session_codec.exactObject(value, &.{
         "storage_format",
-        "log_generation",
         "through_seq",
-        "through_event_id",
         "through_event_log_bytes",
     });
     if (!std.mem.eql(
@@ -1746,9 +1714,7 @@ fn parseAuthorityPosition(value: std.json.Value) !CommitPosition {
         return error.InvalidSessionFormat;
     }
     return .{
-        .log_generation = try parseIdentifier(try session_codec.requireString(object, "log_generation")),
         .through_seq = try requireU64(object, "through_seq"),
-        .through_event_id = try parseIdentifier(try session_codec.requireString(object, "through_event_id")),
         .through_event_log_bytes = try requireU64(object, "through_event_log_bytes"),
     };
 }
@@ -1856,16 +1822,12 @@ fn encodeWatermark(
 ) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
-    const generation = identifierHex(position.log_generation);
-    const event_id = identifierHex(position.through_event_id);
     try out.writer.writeAll("{\"schema_version\":1,\"session_id\":");
     try std.json.Stringify.value(session_id, .{}, &out.writer);
     try out.writer.print(
-        ",\"log_generation\":\"{s}\",\"through_seq\":{d},\"through_event_id\":\"{s}\",\"through_event_log_bytes\":{d}}}\n",
+        ",\"through_seq\":{d},\"through_event_log_bytes\":{d}}}\n",
         .{
-            generation,
             position.through_seq,
-            event_id,
             position.through_event_log_bytes,
         },
     );
@@ -1877,13 +1839,10 @@ fn decodeWatermark(
     alloc: Allocator,
     bytes: []const u8,
     expected_session_id: []const u8,
-    expected_generation: Identifier,
 ) !CommitPosition {
     var decoded = try parseWatermark(alloc, bytes);
     defer decoded.deinit(alloc);
-    if (!std.mem.eql(u8, decoded.session_id, expected_session_id) or
-        !std.mem.eql(u8, &decoded.position.log_generation, &expected_generation))
-    {
+    if (!std.mem.eql(u8, decoded.session_id, expected_session_id)) {
         return error.InvalidSessionFormat;
     }
     return decoded.position;
@@ -1906,9 +1865,7 @@ fn parseWatermark(
     const object = try session_codec.exactObject(parsed.value, &.{
         "schema_version",
         "session_id",
-        "log_generation",
         "through_seq",
-        "through_event_id",
         "through_event_log_bytes",
     });
     if (try requireU64(object, "schema_version") != 1) {
@@ -1923,13 +1880,7 @@ fn parseWatermark(
     return .{
         .session_id = session_id,
         .position = .{
-            .log_generation = try parseIdentifier(
-                try session_codec.requireString(object, "log_generation"),
-            ),
             .through_seq = try requireU64(object, "through_seq"),
-            .through_event_id = try parseIdentifier(
-                try session_codec.requireString(object, "through_event_id"),
-            ),
             .through_event_log_bytes = try requireU64(
                 object,
                 "through_event_log_bytes",
@@ -1945,14 +1896,11 @@ pub fn inspectCommitWatermark(
 ) !CommitWatermarkInspection {
     var log = try openManagedFile(dir, events_file, .read_only);
     defer log.close(io_mod.getIo());
-    const generation = try session_replay.readFirstGeneration(alloc, log);
-    const name = try watermarkName(alloc, generation);
-    defer alloc.free(name);
-    if (!try entryExists(dir, name)) return .{ .status = .missing };
+    if (!try entryExists(dir, commit_watermark_file)) return .{ .status = .missing };
     const bytes = readManagedFileAlloc(
         alloc,
         dir,
-        name,
+        commit_watermark_file,
         watermark_max_bytes,
     ) catch |err| switch (err) {
         error.OutOfMemory, error.SessionPathUnsafe => return err,
@@ -1964,9 +1912,7 @@ pub fn inspectCommitWatermark(
         else => return .{ .status = .invalid },
     };
     defer decoded.deinit(alloc);
-    if (!std.mem.eql(u8, decoded.session_id, session_id) or
-        !std.mem.eql(u8, &decoded.position.log_generation, &generation))
-    {
+    if (!std.mem.eql(u8, decoded.session_id, session_id)) {
         return .{ .status = .mismatched };
     }
     _ = validateCommitPosition(
@@ -2049,10 +1995,7 @@ fn requireU64(object: std.json.ObjectMap, key: []const u8) !u64 {
         return error.InvalidSessionFormat;
 }
 
-fn watermarkName(alloc: Allocator, generation: Identifier) ![]u8 {
-    const hex = identifierHex(generation);
-    return std.fmt.allocPrint(alloc, "commit.{s}.json", .{hex});
-}
+const commit_watermark_file = "commit.json";
 
 fn loadAuthority(
     alloc: Allocator,
@@ -2179,14 +2122,11 @@ fn createNativeSession(
     }
     defer if (synthesized_usage) |*usage| usage.deinit(alloc);
 
-    const generation = randomIdentifier();
-    const event_id = randomIdentifier();
     const authority_id = randomIdentifier();
     const envelope = session_event.Envelope{
-        .log_generation = generation,
+        .session_id = initial_state.id,
         .seq = 1,
-        .event_id = event_id,
-        .timestamp_ms = initial_state.updated_at_ms,
+        .ts = initial_state.updated_at_ms,
         .event = .{ .session_started = .{
             .id = initial_state.id,
             .created_at_ms = initial_state.created_at_ms,
@@ -2219,19 +2159,15 @@ fn createNativeSession(
         return error.SessionStartFailed;
 
     const position = CommitPosition{
-        .log_generation = generation,
         .through_seq = 1,
-        .through_event_id = event_id,
         .through_event_log_bytes = line.len,
     };
     const watermark_bytes = try encodeWatermark(alloc, initial_state.id, position);
     defer alloc.free(watermark_bytes);
-    const watermark_name = try watermarkName(alloc, generation);
-    defer alloc.free(watermark_name);
     durableReplaceWithBoundary(
         alloc,
         &writable.dir,
-        watermark_name,
+        commit_watermark_file,
         watermark_bytes,
         options.test_controls,
         .after_watermark_rename,
@@ -2638,7 +2574,6 @@ fn loadCurrentManifestForOpen(
     errdefer manifest.deinit(alloc);
     if (!std.mem.eql(u8, manifest.id, session_id) or
         !std.mem.eql(u8, &manifest.authority_id, &authority_id) or
-        !std.mem.eql(u8, &manifest.log_generation, &position.log_generation) or
         manifest.last_event_seq != position.through_seq or
         manifest.event_log_bytes != position.through_event_log_bytes)
     {
@@ -2679,9 +2614,7 @@ fn replayCurrentCheckpoint(
         if (checkpoint_owns_state) checkpoint.state.deinit(alloc);
     }
     const checkpoint_position = CommitPosition{
-        .log_generation = checkpoint.log_generation,
         .through_seq = checkpoint.through_seq,
-        .through_event_id = checkpoint.through_event_id,
         .through_event_log_bytes = checkpoint.through_event_log_bytes,
     };
     try session_projection.validateCheckpointReference(
@@ -2712,9 +2645,7 @@ fn replayCurrentCheckpoint(
 
 fn projectionBoundary(position: CommitPosition) session_projection.EventBoundary {
     return .{
-        .log_generation = position.log_generation,
         .seq = position.through_seq,
-        .event_id = position.through_event_id,
         .event_log_bytes = position.through_event_log_bytes,
         .semantic = true,
     };
@@ -2810,21 +2741,14 @@ fn resolvePublicationIntent(
     if (!std.mem.eql(u8, intent.session_id, writable.session_id)) {
         return error.InvalidSessionFormat;
     }
-    const current_generation = try liveGeneration(alloc, &writable.dir);
     var chosen: CommitPosition = undefined;
     if (intent.kind == .watermark_advance) {
-        if (!std.mem.eql(u8, &current_generation, &intent.prior.log_generation) or
-            !std.mem.eql(u8, &current_generation, &intent.proposed.log_generation))
-        {
-            return error.SessionCommitIndeterminate;
-        }
         var log = try openManagedFile(&writable.dir, events_file, .read_write);
         defer log.close(io_mod.getIo());
         const current = try loadWatermarkPosition(
             alloc,
             &writable.dir,
             writable.session_id,
-            current_generation,
         );
         if (positionsEqual(current, intent.proposed)) {
             try options.test_controls.boundary(.before_recovery_proposed_validation);
@@ -2877,44 +2801,6 @@ fn resolvePublicationIntent(
         } else {
             return error.SessionCommitIndeterminate;
         }
-    } else if (std.mem.eql(u8, &current_generation, &intent.proposed.log_generation)) {
-        chosen = intent.proposed;
-        _ = try validateLivePosition(
-            alloc,
-            &writable.dir,
-            writable.session_id,
-            chosen,
-        );
-    } else if (std.mem.eql(u8, &current_generation, &intent.prior.log_generation)) {
-        chosen = intent.prior;
-        var log = try openManagedFile(&writable.dir, events_file, .read_write);
-        defer log.close(io_mod.getIo());
-        const current_position = loadAndValidateWatermark(
-            alloc,
-            &writable.dir,
-            writable.session_id,
-            current_generation,
-            log,
-        ) catch null;
-        if (current_position == null or
-            !positionsEqual(current_position.?, intent.prior))
-        {
-            return error.SessionCommitIndeterminate;
-        }
-        const length = try log.length(io_mod.getIo());
-        if (length < intent.prior.through_event_log_bytes) {
-            return error.InvalidSessionFormat;
-        }
-        if (length > intent.prior.through_event_log_bytes) {
-            try log.setLength(io_mod.getIo(), intent.prior.through_event_log_bytes);
-            try log.sync(io_mod.getIo());
-        }
-        _ = try validateCommitPosition(
-            alloc,
-            &writable.dir,
-            writable.session_id,
-            chosen,
-        );
     } else {
         return error.SessionCommitIndeterminate;
     }
@@ -2940,19 +2826,8 @@ fn requireValidRecoveryPosition(
 }
 
 fn positionsEqual(lhs: CommitPosition, rhs: CommitPosition) bool {
-    return std.mem.eql(u8, &lhs.log_generation, &rhs.log_generation) and
-        lhs.through_seq == rhs.through_seq and
-        std.mem.eql(u8, &lhs.through_event_id, &rhs.through_event_id) and
+    return lhs.through_seq == rhs.through_seq and
         lhs.through_event_log_bytes == rhs.through_event_log_bytes;
-}
-
-fn liveGeneration(
-    alloc: Allocator,
-    dir: *io_mod.VerifiedDir,
-) !Identifier {
-    var log = try openManagedFile(dir, events_file, .read_only);
-    defer log.close(io_mod.getIo());
-    return session_replay.readFirstGeneration(alloc, log);
 }
 
 fn loadCurrentPosition(
@@ -2962,8 +2837,7 @@ fn loadCurrentPosition(
 ) !CommitPosition {
     var log = try openManagedFile(dir, events_file, .read_only);
     defer log.close(io_mod.getIo());
-    const generation = try session_replay.readFirstGeneration(alloc, log);
-    return loadAndValidateWatermark(alloc, dir, session_id, generation, log);
+    return loadAndValidateWatermark(alloc, dir, session_id, log);
 }
 
 fn loadCurrentPositionReference(
@@ -2971,10 +2845,7 @@ fn loadCurrentPositionReference(
     dir: *io_mod.VerifiedDir,
     session_id: []const u8,
 ) !CommitPosition {
-    var log = try openManagedFile(dir, events_file, .read_only);
-    defer log.close(io_mod.getIo());
-    const generation = try session_replay.readFirstGeneration(alloc, log);
-    return loadWatermarkPosition(alloc, dir, session_id, generation);
+    return loadWatermarkPosition(alloc, dir, session_id);
 }
 
 fn validateLivePosition(
@@ -2985,15 +2856,10 @@ fn validateLivePosition(
 ) !session_projection.EventBoundary {
     var log = try openManagedFile(dir, events_file, .read_only);
     defer log.close(io_mod.getIo());
-    const generation = try session_replay.readFirstGeneration(alloc, log);
-    if (!std.mem.eql(u8, &generation, &expected.log_generation)) {
-        return error.InvalidSessionFormat;
-    }
     const actual = try loadAndValidateWatermark(
         alloc,
         dir,
         session_id,
-        generation,
         log,
     );
     if (!positionsEqual(actual, expected)) return error.InvalidSessionFormat;
@@ -3004,10 +2870,9 @@ fn loadAndValidateWatermark(
     alloc: Allocator,
     dir: *io_mod.VerifiedDir,
     session_id: []const u8,
-    generation: Identifier,
     event_log: std.Io.File,
 ) !CommitPosition {
-    const position = try loadWatermarkPosition(alloc, dir, session_id, generation);
+    const position = try loadWatermarkPosition(alloc, dir, session_id);
     _ = try session_replay.scanCommitPosition(alloc, event_log, position);
     return position;
 }
@@ -3016,13 +2881,10 @@ fn loadWatermarkPosition(
     alloc: Allocator,
     dir: *io_mod.VerifiedDir,
     session_id: []const u8,
-    generation: Identifier,
 ) !CommitPosition {
-    const name = try watermarkName(alloc, generation);
-    defer alloc.free(name);
-    const bytes = try readManagedFileAlloc(alloc, dir, name, watermark_max_bytes);
+    const bytes = try readManagedFileAlloc(alloc, dir, commit_watermark_file, watermark_max_bytes);
     defer alloc.free(bytes);
-    return decodeWatermark(alloc, bytes, session_id, generation);
+    return decodeWatermark(alloc, bytes, session_id);
 }
 
 fn validateCommitPosition(
@@ -3033,15 +2895,10 @@ fn validateCommitPosition(
 ) !session_projection.EventBoundary {
     var log = try openManagedFile(dir, events_file, .read_only);
     defer log.close(io_mod.getIo());
-    const generation = try session_replay.readFirstGeneration(alloc, log);
-    if (!std.mem.eql(u8, &generation, &position.log_generation)) {
-        return error.InvalidSessionFormat;
-    }
     const watermark = try loadAndValidateWatermark(
         alloc,
         dir,
         session_id,
-        generation,
         log,
     );
     if (!positionsEqual(position, watermark)) return error.InvalidSessionFormat;
@@ -3061,11 +2918,10 @@ fn appendEventImpl(
 ) !CommitPosition {
     try prepareCanonicalWrite(loaded, alloc, options);
     const envelope = session_event.Envelope{
-        .log_generation = loaded.position.log_generation,
+        .session_id = loaded.log.session_id,
         .seq = std.math.add(u64, loaded.position.through_seq, 1) catch
             return error.InvalidSessionFormat,
-        .event_id = randomIdentifier(),
-        .timestamp_ms = timestamp_ms,
+        .ts = timestamp_ms,
         .event = event,
     };
     const frame = try session_event.encodeFrame(alloc, envelope);
@@ -3074,8 +2930,7 @@ fn appendEventImpl(
         alloc,
         frame,
         envelope.seq,
-        envelope.event_id,
-        .{ .event = envelope.event_id },
+        .event,
     );
     if (cache_deferred) {
         loaded.writeDeferredCommitLifecycle(
@@ -3097,22 +2952,6 @@ fn appendEventImpl(
     );
 }
 
-const IdSequence = struct {
-    next_value: u128,
-
-    fn next(raw: *anyopaque) Identifier {
-        const self: *IdSequence = @ptrCast(@alignCast(raw));
-        self.next_value +%= 1;
-        var bytes: Identifier = undefined;
-        std.mem.writeInt(u128, &bytes, self.next_value, .big);
-        return bytes;
-    }
-
-    fn source(self: *IdSequence) session_event.IdentifierSource {
-        return .{ .context = self, .next_fn = next };
-    }
-};
-
 fn commitStateReplacementImpl(
     loaded: *LoadedWritableSession,
     alloc: Allocator,
@@ -3128,18 +2967,16 @@ fn commitStateReplacementImpl(
     const timestamp_ms = state.updated_at_ms;
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
-    var ids = IdSequence{ .next_value = randomSequenceSeed() };
     const replacement_id = randomIdentifier();
     const summary = try session_event.writeStateReplacement(
         alloc,
         &out.writer,
         state,
         .{
-            .log_generation = loaded.position.log_generation,
+            .session_id = loaded.log.session_id,
             .first_seq = loaded.position.through_seq + 1,
             .replacement_id = replacement_id,
-            .event_ids = ids.source(),
-            .timestamp_ms = timestamp_ms,
+            .ts = timestamp_ms,
             .reason = reason,
         },
     );
@@ -3149,11 +2986,7 @@ fn commitStateReplacementImpl(
         alloc,
         frames,
         summary.last_seq,
-        summary.last_event_id,
-        .{ .state_replacement = .{
-            .replacement_id = replacement_id,
-            .final_event_id = summary.last_event_id,
-        } },
+        .state_replacement,
     );
     if (cache_deferred) {
         loaded.writeDeferredCommitLifecycle(
@@ -3189,7 +3022,6 @@ fn prepareFailedTail(
     alloc: Allocator,
     frames: []u8,
     last_seq: u64,
-    last_event_id: Identifier,
     kind: FailedTailKind,
 ) !FailedTail {
     errdefer alloc.free(frames);
@@ -3197,9 +3029,7 @@ fn prepareFailedTail(
     return .{
         .prior = prior,
         .proposed = .{
-            .log_generation = prior.log_generation,
             .through_seq = last_seq,
-            .through_event_id = last_event_id,
             .through_event_log_bytes = std.math.add(
                 u64,
                 prior.through_event_log_bytes,
@@ -3353,8 +3183,6 @@ fn publishFrames(
         proposed,
     );
     defer alloc.free(watermark_bytes);
-    const name = try watermarkName(alloc, proposed.log_generation);
-    defer alloc.free(name);
     durableReplace(
         alloc,
         &loaded.log.dir,
@@ -3384,7 +3212,7 @@ fn publishFrames(
     durableReplaceWithBoundary(
         alloc,
         &loaded.log.dir,
-        name,
+        commit_watermark_file,
         watermark_bytes,
         options.test_controls,
         .after_watermark_rename,
@@ -3460,13 +3288,12 @@ fn publishFrames(
 
     var replayed_state: ?session_codec.DurableSessionState = null;
     switch (prepared.kind) {
-        .event => |event_id| {
+        .event => {
             _ = session_event.applyEventFrame(
                 alloc,
                 &loaded.state,
                 frames,
                 .{
-                    .generation = prior.log_generation,
                     .next_seq = std.math.add(u64, prior.through_seq, 1) catch
                         return handlePublishedTailFailure(
                             loaded,
@@ -3478,7 +3305,6 @@ fn publishFrames(
                             options,
                         ),
                 },
-                event_id,
             ) catch |err| return handlePublishedTailFailure(
                 loaded,
                 alloc,
@@ -3687,13 +3513,8 @@ fn expectedTailMatches(
     {
         return false;
     }
-    if (!std.mem.eql(
-        u8,
-        &failed.proposed.log_generation,
-        &failed.prior.log_generation,
-    ) or
-        failed.proposed.through_event_log_bytes !=
-            failed.prior.through_event_log_bytes + failed.bytes.len or
+    if (failed.proposed.through_event_log_bytes !=
+        failed.prior.through_event_log_bytes + failed.bytes.len or
         !std.mem.eql(
             u8,
             &session_projection.sha256(failed.bytes),
@@ -3702,23 +3523,6 @@ fn expectedTailMatches(
     {
         return false;
     }
-    switch (failed.kind) {
-        .event => |event_id| {
-            if (!std.mem.eql(
-                u8,
-                &event_id,
-                &failed.proposed.through_event_id,
-            )) return false;
-        },
-        .state_replacement => |replacement| {
-            if (!std.mem.eql(
-                u8,
-                &replacement.final_event_id,
-                &failed.proposed.through_event_id,
-            )) return false;
-        },
-    }
-
     var log = try openManagedFile(&loaded.log.dir, events_file, .read_only);
     defer log.close(io_mod.getIo());
     const length = try log.length(io_mod.getIo());
@@ -3811,21 +3615,10 @@ fn confirmWritableNamespace(
             error.OutOfMemory => return error.SessionReplayResourceExhausted,
             else => return err,
         };
-        const generation_changed = !std.mem.eql(
-            u8,
-            &position.log_generation,
-            &loaded.position.log_generation,
-        );
         loaded.state.deinit(alloc);
         loaded.state = next_state;
         loaded.position = position;
         loaded.resume_view_stale = true;
-        if (generation_changed) {
-            loaded.generation_base_seq = position.through_seq;
-            loaded.generation_base_bytes = position.through_event_log_bytes;
-            loaded.checkpoint_seq = null;
-            loaded.checkpoint_sha256 = null;
-        }
         loaded.projection_status = .stale;
     }
     try io_mod.syncVerifiedDir(loaded.log.dir.dir);
@@ -3915,10 +3708,8 @@ fn rollbackPublicationToPrior(
 ) !void {
     const bytes = try encodeWatermark(alloc, writable.session_id, prior);
     defer alloc.free(bytes);
-    const name = try watermarkName(alloc, prior.log_generation);
-    defer alloc.free(name);
     try rollbackTail(log, prior);
-    try durableReplace(alloc, &writable.dir, name, bytes);
+    try durableReplace(alloc, &writable.dir, commit_watermark_file, bytes);
     _ = try validateLivePosition(
         alloc,
         &writable.dir,
@@ -3962,9 +3753,7 @@ fn writeCheckpointProjection(
 ) !void {
     const checkpoint = session_projection.Checkpoint{
         .session_id = loaded.log.session_id,
-        .log_generation = loaded.position.log_generation,
         .through_seq = loaded.position.through_seq,
-        .through_event_id = loaded.position.through_event_id,
         .through_event_log_bytes = loaded.position.through_event_log_bytes,
         .state = loaded.state,
     };
@@ -3989,7 +3778,6 @@ fn writeManifestProjection(
     const manifest = session_projection.Manifest{
         .id = loaded.log.session_id,
         .authority_id = loaded.authority_id,
-        .log_generation = loaded.position.log_generation,
         .created_at_ms = loaded.state.created_at_ms,
         .updated_at_ms = loaded.state.updated_at_ms,
         .origin_workspace_root = loaded.state.origin_workspace_root,
@@ -4123,46 +3911,25 @@ fn makeCleanupCandidatesForTest(
     loaded: *LoadedWritableSession,
     alloc: Allocator,
 ) !CleanupCandidates {
-    const generation = randomIdentifier();
-    const first_id = randomIdentifier();
-    const envelope = session_event.Envelope{
-        .log_generation = generation,
-        .seq = 1,
-        .event_id = first_id,
-        .timestamp_ms = loaded.state.created_at_ms,
-        .event = .{ .session_started = .{
-            .id = loaded.state.id,
-            .created_at_ms = loaded.state.created_at_ms,
-            .origin_workspace_root = loaded.state.origin_workspace_root,
-            .workspace_root = loaded.state.workspace_root,
-            .conversation_language = loaded.state.conversation_language,
-            .preferences = loaded.state.preferences,
-            .usage = loaded.state.usage,
-            .subagent_child = loaded.state.subagent_child,
-        } },
-    };
-    const line = try session_event.encodeFrame(alloc, envelope);
-    defer alloc.free(line);
-    const suffix = identifierHex(generation);
+    const temp_suffix = identifierHex(randomIdentifier());
     const temp_name = try std.fmt.allocPrint(
         alloc,
         "events.compact.{s}.tmp",
-        .{suffix},
+        .{temp_suffix},
     );
     errdefer alloc.free(temp_name);
     var file = try createManagedFile(&loaded.log.dir, temp_name);
     defer file.close(io_mod.getIo());
-    try file.writePositionalAll(io_mod.getIo(), line, 0);
+    try file.writePositionalAll(io_mod.getIo(), "orphan\n", 0);
     try file.sync(io_mod.getIo());
-    const position = CommitPosition{
-        .log_generation = generation,
-        .through_seq = 1,
-        .through_event_id = first_id,
-        .through_event_log_bytes = line.len,
-    };
-    const watermark_name = try watermarkName(alloc, generation);
+    const watermark_suffix = identifierHex(randomIdentifier());
+    const watermark_name = try std.fmt.allocPrint(
+        alloc,
+        "commit.{s}.json",
+        .{watermark_suffix},
+    );
     errdefer alloc.free(watermark_name);
-    const bytes = try encodeWatermark(alloc, loaded.log.session_id, position);
+    const bytes = try encodeWatermark(alloc, loaded.log.session_id, loaded.position);
     defer alloc.free(bytes);
     try durableReplace(alloc, &loaded.log.dir, watermark_name, bytes);
     return .{ .temp_name = temp_name, .watermark_name = watermark_name };
@@ -4188,21 +3955,12 @@ fn cleanupOrphansImpl(
     }
     var marker = try loadAuthority(alloc, &loaded.log.dir, loaded.log.session_id);
     defer marker.deinit(alloc);
-    const current = try loadCurrentPosition(
-        alloc,
-        &loaded.log.dir,
-        loaded.log.session_id,
-    );
     try io_mod.syncVerifiedDir(loaded.log.dir.dir);
 
     var report: CleanupReport = .{};
     var iterator = loaded.log.dir.dir.iterate();
     while (try iterator.next(io_mod.getIo())) |entry| {
-        const generation = cleanupCandidateGeneration(entry.name) orelse continue;
-        if (std.mem.eql(u8, &generation, &current.log_generation)) {
-            report.ignored += 1;
-            continue;
-        }
+        if (!isCleanupCandidate(entry.name)) continue;
         const stat = loaded.log.dir.dir.statFile(io_mod.getIo(), entry.name, .{
             .follow_symlinks = false,
         }) catch {
@@ -4215,26 +3973,6 @@ fn cleanupOrphansImpl(
             report.ignored += 1;
             continue;
         }
-        const valid = if (std.mem.startsWith(u8, entry.name, "commit."))
-            validateOrphanWatermark(
-                alloc,
-                &loaded.log.dir,
-                entry.name,
-                loaded.log.session_id,
-                generation,
-            )
-        else
-            validateOrphanTemp(
-                alloc,
-                &loaded.log.dir,
-                entry.name,
-                loaded.log.session_id,
-                generation,
-            );
-        valid catch {
-            report.ignored += 1;
-            continue;
-        };
         if (mode == .report_only) {
             report.report_only += 1;
             continue;
@@ -4246,11 +3984,17 @@ fn cleanupOrphansImpl(
     return report;
 }
 
-pub fn cleanupCandidateGeneration(name: []const u8) ?session_event.Identifier {
+/// Reports whether `name` is generation-era debris new code never creates.
+/// The live watermark is the fixed `commit.json` and the live log is
+/// `events.jsonl`, so any generation-suffixed commit watermark or compact
+/// temp file is an orphan by construction.
+pub fn isCleanupCandidate(name: []const u8) bool {
+    if (std.mem.eql(u8, name, commit_watermark_file)) return false;
     if (std.mem.startsWith(u8, name, "commit.") and
         std.mem.endsWith(u8, name, ".json") and name.len == 44)
     {
-        return parseIdentifier(name[7..39]) catch null;
+        _ = parseIdentifier(name[7..39]) catch return false;
+        return true;
     }
     const prefix = "events.compact.";
     const suffix = ".tmp";
@@ -4258,100 +4002,10 @@ pub fn cleanupCandidateGeneration(name: []const u8) ?session_event.Identifier {
         std.mem.endsWith(u8, name, suffix) and
         name.len == prefix.len + 32 + suffix.len)
     {
-        return parseIdentifier(name[prefix.len .. prefix.len + 32]) catch null;
+        _ = parseIdentifier(name[prefix.len .. prefix.len + 32]) catch return false;
+        return true;
     }
-    return null;
-}
-
-fn validateOrphanWatermark(
-    alloc: Allocator,
-    dir: *io_mod.VerifiedDir,
-    name: []const u8,
-    session_id: []const u8,
-    generation: Identifier,
-) !void {
-    const bytes = try readManagedFileAlloc(alloc, dir, name, watermark_max_bytes);
-    defer alloc.free(bytes);
-    _ = try decodeWatermark(alloc, bytes, session_id, generation);
-}
-
-fn validateOrphanTemp(
-    alloc: Allocator,
-    dir: *io_mod.VerifiedDir,
-    name: []const u8,
-    session_id: []const u8,
-    generation: Identifier,
-) !void {
-    var file = try openManagedFile(dir, name, .read_only);
-    defer file.close(io_mod.getIo());
-    const length = try file.length(io_mod.getIo());
-    var validator: session_event.SequenceValidator = .{};
-    var offset: u64 = 0;
-    var replacement_open = false;
-    var replacement_id: Identifier = undefined;
-    var last: ?CommitPosition = null;
-    while (offset < length) {
-        const line = try session_replay.readLineAt(alloc, file, offset, length) orelse
-            return error.InvalidSessionFormat;
-        defer alloc.free(line.bytes);
-        var envelope = session_event.decodeFrame(alloc, line.bytes) catch
-            return error.InvalidSessionFormat;
-        defer envelope.deinit(alloc);
-        validator.validate(envelope) catch return error.InvalidSessionFormat;
-        if (!std.mem.eql(u8, &envelope.log_generation, &generation)) {
-            return error.InvalidSessionFormat;
-        }
-        if (envelope.seq == 1 and
-            (envelope.kind() != .session_started or
-                !std.mem.eql(u8, envelope.event.session_started.id, session_id)))
-        {
-            return error.InvalidSessionFormat;
-        }
-        switch (envelope.event) {
-            .state_replacement_started => |start| {
-                if (replacement_open) return error.InvalidSessionFormat;
-                replacement_open = true;
-                replacement_id = start.replacement_id;
-            },
-            .state_replacement_chunk => |chunk| {
-                if (!replacement_open or
-                    !std.mem.eql(u8, &replacement_id, &chunk.replacement_id))
-                {
-                    return error.InvalidSessionFormat;
-                }
-            },
-            .state_replacement_committed => |commit| {
-                if (!replacement_open or
-                    !std.mem.eql(u8, &replacement_id, &commit.replacement_id))
-                {
-                    return error.InvalidSessionFormat;
-                }
-                replacement_open = false;
-                last = .{
-                    .log_generation = generation,
-                    .through_seq = envelope.seq,
-                    .through_event_id = envelope.event_id,
-                    .through_event_log_bytes = line.next_offset,
-                };
-            },
-            else => {
-                if (replacement_open) return error.InvalidSessionFormat;
-                last = .{
-                    .log_generation = generation,
-                    .through_seq = envelope.seq,
-                    .through_event_id = envelope.event_id,
-                    .through_event_log_bytes = line.next_offset,
-                };
-            },
-        }
-        offset = line.next_offset;
-    }
-    if (offset != length or replacement_open) return error.InvalidSessionFormat;
-    _ = try session_replay.scanCommitPosition(
-        alloc,
-        file,
-        last orelse return error.InvalidSessionFormat,
-    );
+    return false;
 }
 
 const BoundaryFailure = struct {
@@ -4571,7 +4225,7 @@ fn corruptReplacementCommitTimestampForTest(
         var envelope = try session_event.decodeFrame(alloc, line.bytes);
         defer envelope.deinit(alloc);
         if (envelope.kind() == .state_replacement_committed) {
-            const needle = "\"timestamp_ms\":20";
+            const needle = "\"ts\":20";
             const match = std.mem.find(u8, line.bytes, needle) orelse
                 return error.TestUnexpectedResult;
             line.bytes[match + needle.len - 1] = '1';
@@ -4631,7 +4285,6 @@ fn capturePublicationBytesForTest(
     alloc: Allocator,
     root: *Root,
     session_id: []const u8,
-    generation: Identifier,
 ) !PublicationBytesSnapshot {
     var dir = try openSessionDir(&root.sessions.?, session_id, .read_only);
     defer dir.close();
@@ -4639,9 +4292,7 @@ fn capturePublicationBytesForTest(
     defer log.close(io_mod.getIo());
     const events = try io_mod.readFileToEnd(alloc, &log, 16 * 1024 * 1024);
     errdefer alloc.free(events);
-    const name = try watermarkName(alloc, generation);
-    defer alloc.free(name);
-    const watermark = try readManagedFileAlloc(alloc, &dir, name, watermark_max_bytes);
+    const watermark = try readManagedFileAlloc(alloc, &dir, commit_watermark_file, watermark_max_bytes);
     errdefer alloc.free(watermark);
     const intent = try readManagedFileAlloc(
         alloc,
@@ -4688,7 +4339,7 @@ test "state replacement uses the durable state timestamp for every frame" {
         defer alloc.free(line.bytes);
         var envelope = try session_event.decodeFrame(alloc, line.bytes);
         defer envelope.deinit(alloc);
-        try std.testing.expectEqual(@as(i64, 4242), envelope.timestamp_ms);
+        try std.testing.expectEqual(@as(i64, 4242), envelope.ts);
         offset = line.next_offset;
         frame_count += 1;
     }
@@ -5252,9 +4903,7 @@ test "publication recovery preserves bytes on reader and resource failures" {
         if (row.current_at_prior) {
             const watermark = try encodeWatermark(alloc, initial.id, positions.prior);
             defer alloc.free(watermark);
-            const name = try watermarkName(alloc, positions.prior.log_generation);
-            defer alloc.free(name);
-            try durableReplace(alloc, &loaded.log.dir, name, watermark);
+            try durableReplace(alloc, &loaded.log.dir, commit_watermark_file, watermark);
         } else {
             try corruptReplacementCommitTimestampForTest(alloc, &loaded, positions);
         }
@@ -5264,7 +4913,6 @@ test "publication recovery preserves bytes on reader and resource failures" {
             alloc,
             &temp.root,
             initial.id,
-            positions.proposed.log_generation,
         );
         defer before.deinit(alloc);
         var failure = RecoveryFailure{ .target = row.target, .failure = row.failure };
@@ -5281,7 +4929,6 @@ test "publication recovery preserves bytes on reader and resource failures" {
             alloc,
             &temp.root,
             initial.id,
-            positions.proposed.log_generation,
         );
         defer after.deinit(alloc);
         try before.expectEqual(after);
@@ -5360,7 +5007,6 @@ test "publication recovery preserves unsupported and invalid prior transactions"
             alloc,
             &temp.root,
             initial.id,
-            positions.proposed.log_generation,
         );
         defer before.deinit(alloc);
 
@@ -5378,7 +5024,6 @@ test "publication recovery preserves unsupported and invalid prior transactions"
             alloc,
             &temp.root,
             initial.id,
-            positions.proposed.log_generation,
         );
         defer after.deinit(alloc);
         try before.expectEqual(after);
@@ -5402,19 +5047,16 @@ test "publication recovery preserves a watermark outside the intent pair" {
         .retry_expected_tail,
         .{},
     );
-    const positions = try leavePendingReplacementForTest(alloc, &loaded, 20);
+    _ = try leavePendingReplacementForTest(alloc, &loaded, 20);
     const watermark = try encodeWatermark(alloc, initial.id, initial_position);
     defer alloc.free(watermark);
-    const name = try watermarkName(alloc, initial_position.log_generation);
-    defer alloc.free(name);
-    try durableReplace(alloc, &loaded.log.dir, name, watermark);
+    try durableReplace(alloc, &loaded.log.dir, commit_watermark_file, watermark);
     loaded.deinit(alloc);
     loaded_owned = false;
     var before = try capturePublicationBytesForTest(
         alloc,
         &temp.root,
         initial.id,
-        positions.proposed.log_generation,
     );
     defer before.deinit(alloc);
 
@@ -5426,7 +5068,6 @@ test "publication recovery preserves a watermark outside the intent pair" {
         alloc,
         &temp.root,
         initial.id,
-        positions.proposed.log_generation,
     );
     defer after.deinit(alloc);
     try before.expectEqual(after);
@@ -5942,9 +5583,7 @@ test "writable resume preserves the event log when the watermark is invalid" {
     invalid_position.through_event_log_bytes -= 1;
     const watermark = try encodeWatermark(alloc, initial.id, invalid_position);
     defer alloc.free(watermark);
-    const watermark_name = try watermarkName(alloc, invalid_position.log_generation);
-    defer alloc.free(watermark_name);
-    try durableReplace(alloc, &loaded.log.dir, watermark_name, watermark);
+    try durableReplace(alloc, &loaded.log.dir, commit_watermark_file, watermark);
     const before_events = try readManagedFileAlloc(
         alloc,
         &loaded.log.dir,
@@ -5955,7 +5594,7 @@ test "writable resume preserves the event log when the watermark is invalid" {
     const before_watermark = try readManagedFileAlloc(
         alloc,
         &loaded.log.dir,
-        watermark_name,
+        commit_watermark_file,
         watermark_max_bytes,
     );
     defer alloc.free(before_watermark);
@@ -5978,7 +5617,7 @@ test "writable resume preserves the event log when the watermark is invalid" {
     const after_watermark = try readManagedFileAlloc(
         alloc,
         &dir,
-        watermark_name,
+        commit_watermark_file,
         watermark_max_bytes,
     );
     defer alloc.free(after_watermark);
@@ -6022,11 +5661,7 @@ test "retry eligible failure captures the exact expected event tail" {
         &failed.sha256,
     );
     switch (failed.kind) {
-        .event => |event_id| try std.testing.expectEqualSlices(
-            u8,
-            &failed.proposed.through_event_id,
-            &event_id,
-        ),
+        .event => {},
         .state_replacement => return error.TestExpectedEqual,
     }
 }
@@ -6267,7 +5902,7 @@ test "final replacement policy tracks mutations after the last replacement" {
     );
     try std.testing.expect(!loaded.needsFinalStateReplacement(false));
 
-    const generation_before_rebind = loaded.position.log_generation;
+    const seq_before_rebind = loaded.position.through_seq;
     _ = try loaded.appendEvent(
         alloc,
         .{ .workspace_rebound = .{
@@ -6278,11 +5913,7 @@ test "final replacement policy tracks mutations after the last replacement" {
         .retry_expected_tail,
         .{},
     );
-    try std.testing.expect(std.mem.eql(
-        u8,
-        &generation_before_rebind,
-        &loaded.position.log_generation,
-    ));
+    try std.testing.expectEqual(seq_before_rebind + 1, loaded.position.through_seq);
     try std.testing.expect(!loaded.needsFinalStateReplacement(false));
 
     _ = try loaded.appendEvent(
@@ -6373,7 +6004,6 @@ test "append-only log keeps one generation past the old compaction horizon" {
     var initial = try testState(alloc, "session-append-only", 10);
     defer initial.deinit(alloc);
     var loaded = try temp.root.startWritableSession(alloc, initial, .{});
-    const generation = loaded.position.log_generation;
     const base_seq = loaded.position.through_seq;
     var i: u64 = 0;
     while (i < 4500) : (i += 1) {
@@ -6386,7 +6016,6 @@ test "append-only log keeps one generation past the old compaction horizon" {
         );
     }
     try std.testing.expectEqual(base_seq + 4500, loaded.position.through_seq);
-    try std.testing.expect(std.mem.eql(u8, &generation, &loaded.position.log_generation));
     const expected_fast_mode = (4500 - 1) % 2 == 0;
     try std.testing.expectEqual(expected_fast_mode, loaded.state.preferences.fast_mode);
     const position = loaded.position;
@@ -6394,11 +6023,10 @@ test "append-only log keeps one generation past the old compaction horizon" {
     var resumed = try temp.root.resumeForWrite(alloc, "session-append-only", .{});
     defer resumed.deinit(alloc);
     try std.testing.expect(positionsEqual(position, resumed.position));
-    try std.testing.expect(std.mem.eql(u8, &generation, &resumed.position.log_generation));
     try std.testing.expectEqual(expected_fast_mode, resumed.state.preferences.fast_mode);
 }
 
-test "oversized state commits through chunked replacement frames without changing generation" {
+test "oversized state commits through chunked replacement frames with contiguous sequence" {
     const alloc = std.testing.allocator;
     var temp = try TempRoot.init(alloc);
     defer temp.deinit(alloc);
@@ -6406,7 +6034,6 @@ test "oversized state commits through chunked replacement frames without changin
     defer initial.deinit(alloc);
     var loaded = try temp.root.startWritableSession(alloc, initial, .{});
     defer loaded.deinit(alloc);
-    const generation = loaded.position.log_generation;
 
     // A turn past the 8 MiB frame cap does not fit one frame.
     const big_text = try alloc.alloc(u8, 9 * 1024 * 1024);
@@ -6444,7 +6071,6 @@ test "oversized state commits through chunked replacement frames without changin
         .retry_expected_tail,
         .{},
     );
-    try std.testing.expect(std.mem.eql(u8, &generation, &loaded.position.log_generation));
     try std.testing.expect(loaded.position.through_seq > before.through_seq + 1);
     try std.testing.expectEqual(@as(usize, 1), loaded.state.history.len);
 
@@ -6463,7 +6089,7 @@ test "oversized state commits through chunked replacement frames without changin
         defer envelope.deinit(alloc);
         seq += 1;
         try std.testing.expectEqual(seq, envelope.seq);
-        try std.testing.expect(std.mem.eql(u8, &generation, &envelope.log_generation));
+        try std.testing.expectEqualStrings("session-oversized-chunks", envelope.session_id);
         switch (envelope.event) {
             .state_replacement_started => |payload| {
                 try std.testing.expect(replacement_id == null);
@@ -6702,7 +6328,7 @@ test "manifest fingerprint captures the native event device" {
     try std.testing.expectEqual(native_device, captured.device);
 }
 
-test "orphan cleanup removes only validated noncurrent generated files" {
+test "orphan cleanup removes generation-era debris" {
     const alloc = std.testing.allocator;
     var temp = try TempRoot.init(alloc);
     defer temp.deinit(alloc);
@@ -6723,7 +6349,7 @@ test "orphan cleanup removes only validated noncurrent generated files" {
     try std.testing.expect(try loaded.log.entryExistsForTest("authority.json"));
 }
 
-test "orphan cleanup preserves a generated temp with malformed trailing bytes" {
+test "orphan cleanup removes legacy debris and preserves live session files" {
     const alloc = std.testing.allocator;
     var temp = try TempRoot.init(alloc);
     defer temp.deinit(alloc);
@@ -6748,10 +6374,13 @@ test "orphan cleanup preserves a generated temp with malformed trailing bytes" {
     try malformed.sync(io_mod.getIo());
 
     const report = try loaded.cleanupOrphans(alloc, .delete);
-    try std.testing.expectEqual(@as(usize, 1), report.removed);
-    try std.testing.expectEqual(@as(usize, 2), report.ignored);
-    try std.testing.expect(try loaded.log.entryExistsForTest(candidates.temp_name));
+    try std.testing.expectEqual(@as(usize, 2), report.removed);
+    try std.testing.expectEqual(@as(usize, 0), report.ignored);
+    try std.testing.expect(!(try loaded.log.entryExistsForTest(candidates.temp_name)));
     try std.testing.expect(!(try loaded.log.entryExistsForTest(candidates.watermark_name)));
+    try std.testing.expect(try loaded.log.entryExistsForTest("authority.json"));
+    try std.testing.expect(try loaded.log.entryExistsForTest("commit.json"));
+    try std.testing.expect(try loaded.log.entryExistsForTest("events.jsonl"));
 }
 
 test "lock ordering is session before commit and read boundary uses commit only" {
@@ -6916,9 +6545,9 @@ test "park releases session.lock and unpark reacquires or fails busy" {
 
 test "watermark decoder rejects malformed object keys and required strings" {
     const unknown_key =
-        "{\"schema_version\":1,\"session_id\":\"session\",\"log_generation\":\"00000000000000000000000000000000\",\"through_seq\":0,\"through_event_id\":\"00000000000000000000000000000000\",\"through_event_log_bytes\":0,\"unexpected\":true}";
+        "{\"schema_version\":1,\"session_id\":\"session\",\"through_seq\":0,\"through_event_log_bytes\":0,\"unexpected\":true}";
     const non_string_session_id =
-        "{\"schema_version\":1,\"session_id\":1,\"log_generation\":\"00000000000000000000000000000000\",\"through_seq\":0,\"through_event_id\":\"00000000000000000000000000000000\",\"through_event_log_bytes\":0}";
+        "{\"schema_version\":1,\"session_id\":1,\"through_seq\":0,\"through_event_log_bytes\":0}";
 
     var parsed = try std.json.parseFromSlice(
         std.json.Value,
@@ -6932,9 +6561,7 @@ test "watermark decoder rejects malformed object keys and required strings" {
         session_codec.exactObject(parsed.value, &.{
             "schema_version",
             "session_id",
-            "log_generation",
             "through_seq",
-            "through_event_id",
             "through_event_log_bytes",
         }),
     );

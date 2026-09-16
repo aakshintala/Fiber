@@ -285,9 +285,7 @@ fn parseLegacyFingerprint(value: std.json.Value) error{InvalidSessionFormat}!Leg
 fn parseProposedPosition(value: std.json.Value) error{InvalidSessionFormat}!session_log.CommitPosition {
     const expected_keys = [_][]const u8{
         "storage_format",
-        "log_generation",
         "through_seq",
-        "through_event_id",
         "through_event_log_bytes",
     };
     const object = try exactJsonObject(value, &expected_keys);
@@ -299,13 +297,7 @@ fn parseProposedPosition(value: std.json.Value) error{InvalidSessionFormat}!sess
         return error.InvalidSessionFormat;
     }
     return .{
-        .log_generation = try parseIdentifier(
-            try objectString(object, "log_generation"),
-        ),
         .through_seq = try jsonU64(object, "through_seq"),
-        .through_event_id = try parseIdentifier(
-            try objectString(object, "through_event_id"),
-        ),
         .through_event_log_bytes = try jsonU64(
             object,
             "through_event_log_bytes",
@@ -592,9 +584,7 @@ pub fn positionsEqual(
     left: session_log.CommitPosition,
     right: session_log.CommitPosition,
 ) bool {
-    return std.mem.eql(u8, &left.log_generation, &right.log_generation) and
-        left.through_seq == right.through_seq and
-        std.mem.eql(u8, &left.through_event_id, &right.through_event_id) and
+    return left.through_seq == right.through_seq and
         left.through_event_log_bytes == right.through_event_log_bytes;
 }
 

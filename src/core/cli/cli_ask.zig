@@ -7044,11 +7044,6 @@ test "ask shutdown flush appends one usage event without a state replacement" {
     try std.testing.expect(!ctx.session.usage.isDirty());
     // Exactly one frame: a state replacement would advance seq by three or more.
     try std.testing.expectEqual(before.through_seq + 1, writable.position.through_seq);
-    try std.testing.expect(std.mem.eql(
-        u8,
-        &before.log_generation,
-        &writable.position.log_generation,
-    ));
     try std.testing.expectEqual(@as(u64, 3), writable.state.usage.?.lines_added);
 }
 
