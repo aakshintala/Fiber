@@ -11,13 +11,16 @@ import {
 
 // Deterministic coverage for `fiber ask --system` (no credential, no live
 // model): asserts what --system does to the outgoing provider request rather
-// than what a model replies. Local runner on purpose: this file must not
-// depend on tests/evals (being removed), so FIBER_BIN and the spawn helper
-// live here instead of in eval-helpers.
+// than what a model replies. Local runner on purpose: the generic runFx
+// harness currently lives in tests/evals/eval-helpers (deleted by #245) and
+// its moved home tests/e2e/eval-helpers does not exist yet -- switch to runFx
+// from ./eval-helpers once #245 lands. The only shared import is e2e-local
+// ./tmux-helpers, which #245 repoints itself, so this file holds no direct
+// tests/evals dependency in any merge order.
 const FIBER_BIN = resolve(import.meta.dirname, "../../zig-out/bin/fiber");
 const TIMEOUT_MS = 30_000;
 
-const BASE_PROMPT_MARKER = "You are fiber";
+const BASE_PROMPT_EXCERPT = "You are fiber, a local coding CLI assistant with tool access.";
 const OVERRIDE_SENTINEL = "ASK_SYSTEM_OVERRIDE_SENTINEL_7Q2X";
 const PROJECT_SENTINEL = "ASK_SYSTEM_PROJECT_SENTINEL_7Q2X";
 const SKILL_SENTINEL = "ASK_SYSTEM_SKILL_SENTINEL_7Q2X";
@@ -96,8 +99,10 @@ describe("fiber ask --system", () => {
         expect(json.output).toContain("SYSTEM_OVERRIDE_DONE");
         expect(codex.requests).toHaveLength(1);
         const instructions = requestInstructions(codex.requests[0]!.body);
-        expect(instructions).toContain(OVERRIDE_SENTINEL);
-        expect(instructions).not.toContain(BASE_PROMPT_MARKER);
+        // The gateway joins system messages with "\n\n", so the first segment
+        // is the base-prompt slot: it must equal the override text exactly.
+        expect(instructions.split("\n\n")[0]).toBe(OVERRIDE_SENTINEL);
+        expect(instructions).not.toContain(BASE_PROMPT_EXCERPT);
       } finally {
         codex.stop();
         rmSync(root.root, { recursive: true, force: true });
@@ -123,7 +128,7 @@ describe("fiber ask --system", () => {
         const json = (JSON.parse(result.stdout.trim()) as { data: { output: string } }).data;
         expect(json.output).toContain("BASE_PROMPT_DONE");
         expect(codex.requests).toHaveLength(1);
-        expect(requestInstructions(codex.requests[0]!.body)).toContain(BASE_PROMPT_MARKER);
+        expect(requestInstructions(codex.requests[0]!.body)).toContain(BASE_PROMPT_EXCERPT);
       } finally {
         codex.stop();
         rmSync(root.root, { recursive: true, force: true });
@@ -169,8 +174,8 @@ describe("fiber ask --system", () => {
         const instructions = requestInstructions(body);
 
         // The override still replaces only the built-in base prompt.
-        expect(instructions).toContain(OVERRIDE_SENTINEL);
-        expect(instructions).not.toContain(BASE_PROMPT_MARKER);
+        expect(instructions.split("\n\n")[0]).toBe(OVERRIDE_SENTINEL);
+        expect(instructions).not.toContain(BASE_PROMPT_EXCERPT);
 
         // Project context survives.
         expect(instructions).toContain(PROJECT_SENTINEL);
