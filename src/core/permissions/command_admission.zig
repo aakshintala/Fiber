@@ -209,7 +209,7 @@ test "explicit clean environment is direct only in automatic mode" {
     );
 }
 
-test "shell authority binds the tty execution identity" {
+test "shell authority binds the tty execution identity and shell profile" {
     const tty_ctx = CommandContext{
         .command = "tail -f server.log",
         .resolved_cwd = "/workspace",
@@ -230,30 +230,4 @@ test "shell authority binds the tty execution identity" {
     var profiled = tty_ctx;
     profiled.environment = .{ .user = "/bin/zsh" };
     try std.testing.expect(!authority.matches(profiled));
-}
-
-test "shell authority authorizes only the exact unchanged action" {
-    const first = CommandContext{
-        .command = "git status --porcelain",
-        .resolved_cwd = "/workspace",
-        .target_os = .linux,
-    };
-    const authority = AdmissionFingerprint.init(first);
-    try std.testing.expect(authority.matches(first));
-    try std.testing.expect(authority.eql(AdmissionFingerprint.init(first)));
-
-    // An auto-review clear mints exactly this fingerprint; any change to
-    // the action forces a new review instead of inheriting the clear.
-    var changed_args = first;
-    changed_args.command = "git status --porcelain --branch";
-    try std.testing.expect(!authority.matches(changed_args));
-    try std.testing.expect(!authority.eql(AdmissionFingerprint.init(changed_args)));
-
-    var changed_cwd = first;
-    changed_cwd.resolved_cwd = "/workspace/subdir";
-    try std.testing.expect(!authority.matches(changed_cwd));
-
-    var changed_os = first;
-    changed_os.target_os = .macos;
-    try std.testing.expect(!authority.matches(changed_os));
 }

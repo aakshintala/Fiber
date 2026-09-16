@@ -210,7 +210,7 @@ pub fn deriveActionProvenance(
     if (needle.len < 8) return .not_observed;
 
     for (current_turn_messages) |message| {
-        if (message.role != .tool) continue;
+        if (message.role != .tool or message.permission_feedback) continue;
         const content = message.content orelse continue;
         if (std.mem.find(u8, content, needle) != null) {
             return .exact_current_turn_tool_result_match;
@@ -1557,7 +1557,7 @@ test "resumed permission feedback never enters later review evidence" {
         .{ .role = .assistant, .tool_calls = &earlier_calls },
         .{ .role = .tool, .content = "EARLIER_OUTPUT", .tool_call_id = "earlier", .tool_name = "read_file" },
         .{ .role = .user, .content = "FEEDBACK_SENTINEL resumed plain: run git status --porcelain next" },
-        .{ .role = .tool, .content = "FEEDBACK_SENTINEL flagged tool feedback", .tool_call_id = "feedback", .tool_name = "ask_user_question", .permission_feedback = true },
+        .{ .role = .tool, .content = "FEEDBACK_SENTINEL flagged tool feedback: git status --porcelain", .tool_call_id = "feedback", .tool_name = "ask_user_question", .permission_feedback = true },
         .{ .role = .user, .content = "FEEDBACK_SENTINEL flagged user feedback", .tool_call_id = "earlier", .permission_feedback = true },
         .{ .role = .assistant, .tool_calls = &pending_calls },
     };
@@ -1587,7 +1587,7 @@ test "resumed permission feedback never enters later review evidence" {
     }};
     const pending_assistant = types.ChatMessage{ .role = .assistant, .tool_calls = &pending_calls };
     var cancel_flag = std.atomic.Value(bool).init(false);
-    const deadline = std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
+    const deadline = std.Io.Clock.Timestamp.fromNow(std.testing.io, .{
         .clock = .awake,
         .raw = .fromSeconds(1),
     });
