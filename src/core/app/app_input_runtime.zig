@@ -1103,17 +1103,6 @@ pub fn Runtime(comptime App: type) type {
                 .mouse_wheel,
                 .mouse_pointer,
                 => {},
-                .clear_line => {
-                    dismissActiveMenusThenRedraw(app);
-                    if (comptime @hasField(App, "queued_prompt_review")) {
-                        if (try queue_rt.deleteEmptyVisibleDraft(app)) return .done;
-                        queue_rt.markVisibleSelectionDirty(app);
-                    }
-                    if (draftHasState(app)) {
-                        clearDraftState(app, "clear_line");
-                        app.shell.render_requests.request(.footer);
-                    }
-                },
                 .toggle_permission_mode => {
                     if (cycleHelpMenuCategory(app, -1) or cycleSettingsMenuCategory(app, -1)) {
                         app.shell.render_requests.request(.footer);

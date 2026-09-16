@@ -125,7 +125,6 @@ test "composer shortcut table excludes app and terminal controls" {
         .escape,
         .paste_start,
         .paste_end,
-        .clear_line,
         .toggle_full_transcript,
         .toggle_permission_mode,
         .{ .mouse_wheel = .up },
