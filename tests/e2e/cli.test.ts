@@ -116,19 +116,16 @@ function writeLegacySession(
     }) + "\n",
     { mode: 0o600 },
   );
-  const generation = "1".repeat(32);
-  const eventId = "2".repeat(32);
   const createdAtMs = opts.createdAtMs ?? 1;
   const updatedAtMs = opts.updatedAtMs ?? 2;
   const preferences = { model: "gpt-5.6-luna", effort: "medium", fast_mode: false };
   const events =
     JSON.stringify({
       schema_version: 1,
-      log_generation: generation,
-      seq: 1,
-      event_id: eventId,
-      timestamp_ms: updatedAtMs,
       kind: "session_started",
+      session_id: sessionId,
+      ts: updatedAtMs,
+      seq: 1,
       payload: {
         id: sessionId,
         created_at_ms: createdAtMs,
@@ -142,13 +139,11 @@ function writeLegacySession(
   writeFileSync(join(sessionDir, "commit.lock"), "", { mode: 0o600 });
   const eventBytes = Buffer.byteLength(events);
   writeFileSync(
-    join(sessionDir, `commit.${generation}.json`),
+    join(sessionDir, "commit.json"),
     JSON.stringify({
       schema_version: 1,
       session_id: sessionId,
-      log_generation: generation,
       through_seq: 1,
-      through_event_id: eventId,
       through_event_log_bytes: eventBytes,
     }) + "\n",
     { mode: 0o600 },
@@ -160,7 +155,6 @@ function writeLegacySession(
       storage_format: "event_log_v1",
       id: sessionId,
       authority_id: authorityId,
-      log_generation: generation,
       created_at_ms: createdAtMs,
       updated_at_ms: updatedAtMs,
       origin_workspace_root: workspaceRoot,

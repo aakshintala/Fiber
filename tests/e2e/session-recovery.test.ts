@@ -357,7 +357,12 @@ describe("session-recovery", () => {
         const watermark = JSON.parse(
           readFileSync(join(dir, current), "utf8"),
         ) as Record<string, unknown>;
-        watermark.log_generation = "f".repeat(32);
+        // Generation-suffixed watermarks are debris by construction; forge
+        // one with a well-formed but noncurrent position beside the live one.
+        watermark.through_seq = Math.max(
+          0,
+          (watermark.through_seq as number) - 1,
+        );
         writeFileSync(join(dir, forged), JSON.stringify(watermark), {
           mode: 0o600,
         });
@@ -370,7 +375,7 @@ describe("session-recovery", () => {
         });
         expect(doctor.code).toBe(0);
         expect(doctor.stdout.split("\n")).toContainEqual(
-          `[ok] session: session ${id}: cleanup_candidate cleanup_removed=1 report_only=0 ignored=1`,
+          `[ok] session: session ${id}: cleanup_candidate cleanup_removed=1 report_only=0 ignored=0`,
         );
         expect(existsSync(join(dir, forged))).toBe(false);
         expect(existsSync(join(dir, current))).toBe(true);
