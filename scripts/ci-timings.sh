@@ -44,3 +44,4 @@ for run in $runs; do
 done
 
 [ -n "$seen_draft$seen_ready" ] || { echo "no completed ci.yml runs for #$pr" >&2; exit 1; }
+# canary
