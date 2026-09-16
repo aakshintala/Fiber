@@ -192,8 +192,6 @@ pub const DoctorIssueKind = enum {
     commit_watermark_mismatched,
     canonical_state_invalid,
     canonical_log_large,
-    canonical_log_compaction_overdue,
-    canonical_log_compaction_failed,
     cleanup_candidate,
     unsafe_path,
 };
@@ -232,13 +230,6 @@ pub const DoctorInspectionResult = struct {
         self.diagnostics = .empty;
         return diagnostics;
     }
-};
-
-/// Thresholds that decide when committed-log growth is reported as overdue or
-/// failed compaction. Defaults match the historical behavior.
-pub const DoctorInspectionOptions = struct {
-    compaction_frame_threshold: u64 = 4096,
-    compaction_byte_threshold: u64 = 128 * 1024 * 1024,
 };
 
 /// Copyable store state shared with discovery and migration without introducing

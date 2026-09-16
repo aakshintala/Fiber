@@ -83,7 +83,6 @@ pub const CandidateStorage = store_types.CandidateStorage;
 pub const DiscoveryCause = store_types.DiscoveryCause;
 pub const DoctorDiagnostic = store_types.DoctorDiagnostic;
 pub const DoctorInspectionResult = store_types.DoctorInspectionResult;
-const DoctorInspectionOptions = store_types.DoctorInspectionOptions;
 pub const DoctorIssueKind = store_types.DoctorIssueKind;
 pub const LoadedWritableSession = store_types.LoadedWritableSession;
 pub const ProjectionState = store_types.ProjectionState;
@@ -2921,16 +2920,7 @@ pub const Store = struct {
         self: Store,
         alloc: Allocator,
     ) !std.ArrayList(DoctorDiagnostic) {
-        var result = try self.inspectForDoctorReportWithOptions(alloc, .{}, null);
-        return result.takeDiagnostics();
-    }
-
-    fn inspectForDoctorWithOptions(
-        self: Store,
-        alloc: Allocator,
-        options: DoctorInspectionOptions,
-    ) !std.ArrayList(DoctorDiagnostic) {
-        var result = try self.inspectForDoctorReportWithOptions(alloc, options, null);
+        var result = try self.inspectForDoctorReportWithOptions(alloc, null);
         return result.takeDiagnostics();
     }
 
@@ -2941,13 +2931,12 @@ pub const Store = struct {
         alloc: Allocator,
         max_valid_sessions: usize,
     ) !DoctorInspectionResult {
-        return self.inspectForDoctorReportWithOptions(alloc, .{}, max_valid_sessions);
+        return self.inspectForDoctorReportWithOptions(alloc, max_valid_sessions);
     }
 
     fn inspectForDoctorReportWithOptions(
         self: Store,
         alloc: Allocator,
-        options: DoctorInspectionOptions,
         max_valid_sessions: ?usize,
     ) !DoctorInspectionResult {
         var result: DoctorInspectionResult = .{};
@@ -2984,7 +2973,6 @@ pub const Store = struct {
                 &result.diagnostics,
                 &session_dir,
                 entry.name,
-                options,
             ) catch |err| {
                 session_dir.close();
                 if (err == error.OutOfMemory) return err;
@@ -6755,14 +6743,11 @@ test "workspace rebind invalidates the old latest pointer before publishing the 
         alloc,
         .{ .id = state.id },
         workspace_b,
-        .{ .log = .{
-            .compaction_frame_threshold = 1,
-            .compaction_byte_threshold = 1,
-        } },
+        .{ .log = .{} },
     );
     defer rebound.deinit(alloc);
 
-    try std.testing.expect(!std.mem.eql(
+    try std.testing.expect(std.mem.eql(
         u8,
         &initial_generation,
         &rebound.position.log_generation,
@@ -6781,7 +6766,6 @@ test "workspace rebind invalidates the old latest pointer before publishing the 
 
 fn expectWorkspaceRebindPublicationFailureRepair(
     session_id: []const u8,
-    force_compaction: bool,
 ) !void {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -6810,11 +6794,7 @@ fn expectWorkspaceRebindPublicationFailureRepair(
     };
     var store_b = try Store.initFromHome(alloc, home, workspace_b);
     defer store_b.deinit(alloc);
-    var rebind_options = failure.logOptions();
-    if (force_compaction) {
-        rebind_options.compaction_frame_threshold = 1;
-        rebind_options.compaction_byte_threshold = 1;
-    }
+    const rebind_options = failure.logOptions();
     var rebound = try store_b.resumeTargetForWrite(
         alloc,
         .{ .id = state.id },
@@ -6824,14 +6804,11 @@ fn expectWorkspaceRebindPublicationFailureRepair(
     defer rebound.deinit(alloc);
 
     try std.testing.expectEqualStrings(workspace_b, rebound.state.workspace_root);
-    try std.testing.expectEqual(
-        force_compaction,
-        !std.mem.eql(
-            u8,
-            &initial_generation,
-            &rebound.position.log_generation,
-        ),
-    );
+    try std.testing.expect(std.mem.eql(
+        u8,
+        &initial_generation,
+        &rebound.position.log_generation,
+    ));
     try std.testing.expectError(
         error.InvalidSessionIndex,
         readLatestPointer(store_b, alloc, workspace_b),
@@ -6860,14 +6837,6 @@ fn expectWorkspaceRebindPublicationFailureRepair(
 test "workspace rebind publication failure remains pending for shutdown repair" {
     try expectWorkspaceRebindPublicationFailureRepair(
         "workspace-rebind-publication-failure",
-        false,
-    );
-}
-
-test "workspace rebind publication failure after compaction remains pending for shutdown repair" {
-    try expectWorkspaceRebindPublicationFailureRepair(
-        "workspace-rebind-compaction-publication-failure",
-        true,
     );
 }
 
@@ -9993,7 +9962,7 @@ test "failed recovery does not publish a pristine target as latest" {
     }
 }
 
-test "doctor reports failed automatic compaction with committed growth" {
+test "doctor stays silent past the old compaction horizon on an append-only log" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -10002,100 +9971,32 @@ test "doctor reports failed automatic compaction with committed growth" {
 
     var state = try testDurableState(
         alloc,
-        "doctor-compaction-failed",
+        "doctor-append-only",
         ctx.workspace,
     );
     defer state.deinit(alloc);
     var writable = try ctx.store.startWritableSession(alloc, state);
-    const FailCompaction = struct {
-        fn boundary(_: ?*anyopaque, point: session_log.Boundary) !void {
-            if (point == .after_compaction_watermark_sync) {
-                return error.InjectedCompactionFailure;
-            }
-        }
-    };
-    _ = try writable.appendEvent(
-        alloc,
-        .{ .preferences_changed = .{ .fast_mode = true } },
-        20,
-        .retry_expected_tail,
-        .{
-            .test_controls = .{ .boundary_fn = FailCompaction.boundary },
-            .compaction_frame_threshold = 1,
-            .compaction_byte_threshold = 1,
-        },
-    );
-    const expected_bytes = writable.position.through_event_log_bytes;
-    const expected_growth_bytes =
-        expected_bytes - writable.generation_base_bytes;
-    const expected_growth_frames =
-        writable.position.through_seq - writable.generation_base_seq;
+    const generation = writable.position.log_generation;
+    var i: u64 = 0;
+    while (i < 4500) : (i += 1) {
+        _ = try writable.appendEvent(
+            alloc,
+            .{ .preferences_changed = .{ .fast_mode = i % 2 == 0 } },
+            20 + @as(i64, @intCast(i)),
+            .retry_expected_tail,
+            .{},
+        );
+    }
+    try std.testing.expect(std.mem.eql(
+        u8,
+        &generation,
+        &writable.position.log_generation,
+    ));
     writable.deinit(alloc);
 
-    var diagnostics = try ctx.store.inspectForDoctorWithOptions(alloc, .{
-        .compaction_frame_threshold = 1,
-        .compaction_byte_threshold = 1,
-    });
+    var diagnostics = try ctx.store.inspectForDoctor(alloc);
     defer freeDoctorDiagnostics(alloc, &diagnostics);
-    for (diagnostics.items) |diagnostic| {
-        if (diagnostic.kind != .canonical_log_compaction_failed) continue;
-        try std.testing.expectEqual(expected_bytes, diagnostic.bytes.?);
-        try std.testing.expectEqual(
-            expected_growth_bytes,
-            diagnostic.growth_bytes.?,
-        );
-        try std.testing.expectEqual(
-            expected_growth_frames,
-            diagnostic.growth_frames.?,
-        );
-        return;
-    }
-    return error.TestExpectedEqual;
-}
-
-test "doctor distinguishes overdue growth from a failed compaction artifact" {
-    const alloc = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var ctx = try initTempStore(alloc, &tmp);
-    defer ctx.deinit(alloc);
-
-    var state = try testDurableState(
-        alloc,
-        "doctor-compaction-overdue",
-        ctx.workspace,
-    );
-    defer state.deinit(alloc);
-    var writable = try ctx.store.startWritableSession(alloc, state);
-    _ = try writable.appendEvent(
-        alloc,
-        .{ .preferences_changed = .{ .fast_mode = true } },
-        20,
-        .retry_expected_tail,
-        .{},
-    );
-    writable.deinit(alloc);
-
-    var diagnostics = try ctx.store.inspectForDoctorWithOptions(alloc, .{
-        .compaction_frame_threshold = 1,
-        .compaction_byte_threshold = 1,
-    });
-    defer freeDoctorDiagnostics(alloc, &diagnostics);
-    var found_overdue = false;
-    for (diagnostics.items) |diagnostic| {
-        if (!std.mem.eql(
-            u8,
-            diagnostic.session_id,
-            "doctor-compaction-overdue",
-        )) continue;
-        try std.testing.expect(
-            diagnostic.kind != .canonical_log_compaction_failed,
-        );
-        if (diagnostic.kind == .canonical_log_compaction_overdue) {
-            found_overdue = true;
-        }
-    }
-    try std.testing.expect(found_overdue);
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
 }
 
 test "session store schema v3 facade accepts dotted session IDs" {
@@ -11966,21 +11867,13 @@ test "history pages expose per-turn provenance through replacement checkpoint an
         .{ .preferences_changed = .{ .fast_mode = true } },
         30,
         .retry_expected_tail,
-        .{
-            .checkpoint_interval = 1,
-            .compaction_frame_threshold = 1,
-            .compaction_byte_threshold = 1,
-        },
+        .{ .checkpoint_interval = 1 },
     );
-    try std.testing.expectEqual(
-        writable.position.through_seq,
-        writable.generation_base_seq,
-    );
+    try std.testing.expect(writable.position.through_seq > writable.generation_base_seq);
     try std.testing.expectEqual(
         @as(?u64, writable.position.through_seq),
         writable.checkpoint_seq,
     );
-    try std.testing.expect(!writable.compaction_warning_active);
     writable.deinit(alloc);
 
     var reloaded = try ctx.store.loadReadOnly(alloc, "history-provenance-pages");

@@ -46,13 +46,6 @@ pub const Boundary = enum {
     after_authority_marker_rename,
     after_authority_namespace_sync,
     after_authority_intent_remove,
-    after_compaction_temp_sync,
-    after_compaction_watermark_sync,
-    after_compaction_intent_sync,
-    after_compaction_log_rename,
-    after_compaction_namespace_sync,
-    after_compaction_live_confirmation,
-    after_compaction_intent_remove,
     after_latest_cache_pending,
     before_latest_cache_ready,
     before_recovery_proposed_validation,
@@ -87,8 +80,6 @@ pub const Options = struct {
     session_lock_deadline_ms: u64 = lock_deadline_ms,
     commit_lock_deadline_ms: u64 = lock_deadline_ms,
     checkpoint_interval: u64 = 32,
-    compaction_frame_threshold: u64 = 4096,
-    compaction_byte_threshold: u64 = 128 * 1024 * 1024,
     resolve_authority_intent: bool = true,
 };
 
@@ -543,7 +534,6 @@ pub const LoadedWritableSession = struct {
     projection_status: ProjectionStatus = .current,
     namespace_confirmation_required: bool = false,
     degraded_tail: ?FailedTail = null,
-    compaction_warning_active: bool = false,
     usage_sidecar_reseal_pending: bool = false,
     resume_view_stale: bool = false,
     /// Runtime-only provenance installed by subagent resume admission. These
@@ -667,10 +657,6 @@ pub const LoadedWritableSession = struct {
         };
         if (!preserves_pristine_start) self.freshly_started = false;
         const lifecycle_published = !cache_deferred and self.publishCommitLifecycle(alloc);
-        maintainCanonicalLogAfterCommit(self, alloc, options) catch |err| {
-            self.state_replacement_pending = true;
-            return err;
-        };
         if (!lifecycle_published) {
             self.state_replacement_pending = true;
         } else {
@@ -731,16 +717,35 @@ pub const LoadedWritableSession = struct {
         };
         self.freshly_started = false;
         const lifecycle_published = !cache_deferred and self.publishCommitLifecycle(alloc);
-        maintainCanonicalLogAfterCommit(self, alloc, options) catch |err| {
-            self.state_replacement_pending = true;
-            return err;
-        };
         if (!lifecycle_published) self.state_replacement_pending = true;
         return self.position;
     }
 
     pub fn degradedTail(self: *const LoadedWritableSession) ?*const FailedTail {
         return if (self.degraded_tail) |*tail| tail else null;
+    }
+
+    /// Appends the caller's current usage snapshot as one small
+    /// usage_checkpointed event and marks the runtime ledger clean when
+    /// the commit lands. Every runtime shutdown flush goes through here
+    /// so the interactive and ask paths cannot drift apart.
+    pub fn appendUsageCheckpoint(
+        self: *LoadedWritableSession,
+        alloc: Allocator,
+        usage: *session_usage.Usage,
+        timestamp_ms: i64,
+        options: Options,
+    ) !void {
+        var snapshot = try usage.snapshot(alloc);
+        defer snapshot.deinit(alloc);
+        _ = try self.appendEvent(
+            alloc,
+            .{ .usage_checkpointed = .{ .usage = snapshot } },
+            timestamp_ms,
+            .retry_expected_tail,
+            options,
+        );
+        if (self.state.usage) |persisted| usage.markClean(persisted);
     }
 
     fn prepareCommitLifecycle(
@@ -821,14 +826,6 @@ pub const LoadedWritableSession = struct {
             current_state,
             options,
         );
-    }
-
-    pub fn compactCanonicalLogIfDue(
-        self: *LoadedWritableSession,
-        alloc: Allocator,
-        options: Options,
-    ) !void {
-        return compactCanonicalLogIfDueImpl(self, alloc, options);
     }
 
     pub fn writeCheckpointIfDue(
@@ -3632,7 +3629,6 @@ fn retryDegradedWithStateReplacementImpl(
             return err;
         };
         _ = loaded.publishCommitLifecycle(alloc);
-        try maintainCanonicalLogAfterCommit(loaded, alloc, options);
         if (try durableStatesEqual(loaded.state, current_state)) return;
         _ = try loaded.commitStateReplacement(
             alloc,
@@ -4118,224 +4114,6 @@ fn eventDevice(file: std.Io.File) !u64 {
     };
 }
 
-fn compactCanonicalLogIfDueImpl(
-    loaded: *LoadedWritableSession,
-    alloc: Allocator,
-    options: Options,
-) !void {
-    try confirmWritableNamespace(loaded, alloc, options);
-    const frame_growth = loaded.position.through_seq - loaded.generation_base_seq;
-    const byte_growth =
-        loaded.position.through_event_log_bytes - loaded.generation_base_bytes;
-    if (frame_growth < options.compaction_frame_threshold and
-        byte_growth < options.compaction_byte_threshold)
-    {
-        return;
-    }
-    compactCanonicalLog(loaded, alloc, options) catch |err| switch (err) {
-        error.OutOfMemory,
-        error.SessionLogCompactionIndeterminate,
-        => return err,
-        else => return error.SessionLogCompactionFailed,
-    };
-}
-
-fn maintainCanonicalLogAfterCommit(
-    loaded: *LoadedWritableSession,
-    alloc: Allocator,
-    options: Options,
-) !void {
-    if (loaded.namespace_confirmation_required) return;
-    compactCanonicalLogIfDueImpl(loaded, alloc, options) catch |err| {
-        if (!loaded.compaction_warning_active) {
-            const frame_growth =
-                loaded.position.through_seq - loaded.generation_base_seq;
-            const byte_growth =
-                loaded.position.through_event_log_bytes -
-                loaded.generation_base_bytes;
-            debug_trace.logf(
-                "session",
-                "event=canonical_log_compaction_failed kind={s} current_bytes={d} growth_bytes={d} growth_frames={d}",
-                .{
-                    @errorName(err),
-                    loaded.position.through_event_log_bytes,
-                    byte_growth,
-                    frame_growth,
-                },
-            );
-            loaded.compaction_warning_active = true;
-        }
-        if (err == error.SessionLogCompactionIndeterminate) return err;
-        return;
-    };
-    loaded.compaction_warning_active = false;
-}
-
-fn compactCanonicalLog(
-    loaded: *LoadedWritableSession,
-    alloc: Allocator,
-    options: Options,
-) !void {
-    const new_generation = randomIdentifier();
-    const first_id = randomIdentifier();
-    const session_started = session_event.Envelope{
-        .log_generation = new_generation,
-        .seq = 1,
-        .event_id = first_id,
-        .timestamp_ms = loaded.state.updated_at_ms,
-        .event = .{ .session_started = .{
-            .id = loaded.state.id,
-            .created_at_ms = loaded.state.created_at_ms,
-            .origin_workspace_root = loaded.state.origin_workspace_root,
-            .workspace_root = loaded.state.workspace_root,
-            .conversation_language = loaded.state.conversation_language,
-            .preferences = loaded.state.preferences,
-            .usage = loaded.state.usage,
-            .subagent_child = loaded.state.subagent_child,
-        } },
-    };
-    const first_line = try session_event.encodeFrame(alloc, session_started);
-    defer alloc.free(first_line);
-    var content: std.Io.Writer.Allocating = .init(alloc);
-    defer content.deinit();
-    try content.writer.writeAll(first_line);
-    var ids = IdSequence{ .next_value = randomSequenceSeed() };
-    const replacement = try session_event.writeStateReplacement(
-        alloc,
-        &content.writer,
-        loaded.state,
-        .{
-            .log_generation = new_generation,
-            .first_seq = 2,
-            .replacement_id = randomIdentifier(),
-            .event_ids = ids.source(),
-            .timestamp_ms = loaded.state.updated_at_ms,
-            .reason = .log_compaction,
-        },
-    );
-    const suffix = identifierHex(new_generation);
-    const temp_name = try std.fmt.allocPrint(
-        alloc,
-        "events.compact.{s}.tmp",
-        .{suffix},
-    );
-    defer alloc.free(temp_name);
-    var temp = try createManagedFile(&loaded.log.dir, temp_name);
-    defer temp.close(io_mod.getIo());
-    try temp.writePositionalAll(io_mod.getIo(), content.written(), 0);
-    try temp.sync(io_mod.getIo());
-    try options.test_controls.boundary(.after_compaction_temp_sync);
-    const proposed = CommitPosition{
-        .log_generation = new_generation,
-        .through_seq = replacement.last_seq,
-        .through_event_id = replacement.last_event_id,
-        .through_event_log_bytes = content.written().len,
-    };
-    _ = try session_replay.scanCommitPosition(alloc, temp, proposed);
-    const watermark_bytes = try encodeWatermark(
-        alloc,
-        loaded.log.session_id,
-        proposed,
-    );
-    defer alloc.free(watermark_bytes);
-    const new_watermark = try watermarkName(alloc, new_generation);
-    defer alloc.free(new_watermark);
-    try durableReplace(
-        alloc,
-        &loaded.log.dir,
-        new_watermark,
-        watermark_bytes,
-    );
-    try options.test_controls.boundary(.after_compaction_watermark_sync);
-
-    options.test_controls.lock(.commit);
-    var commit_lock = acquireLockWithDeadline(
-        &loaded.log.dir,
-        commit_lock_file,
-        true,
-        options.commit_lock_deadline_ms,
-    ) catch |err| return mapCommitLockError(err);
-    defer commit_lock.release();
-    const current = try loadCurrentPosition(
-        alloc,
-        &loaded.log.dir,
-        loaded.log.session_id,
-    );
-    if (!positionsEqual(current, loaded.position)) {
-        return error.SessionLogCompactionFailed;
-    }
-    const intent = PublicationIntent{
-        .session_id = loaded.log.session_id,
-        .operation_id = randomIdentifier(),
-        .kind = .log_generation_replace,
-        .prior = loaded.position,
-        .proposed = proposed,
-    };
-    const intent_bytes = try encodePublicationIntent(alloc, intent);
-    defer alloc.free(intent_bytes);
-    if (try entryExists(&loaded.log.dir, publication_intent_file)) {
-        return error.SessionLogCompactionIndeterminate;
-    }
-    try durableReplace(
-        alloc,
-        &loaded.log.dir,
-        publication_intent_file,
-        intent_bytes,
-    );
-    loaded.namespace_confirmation_required = true;
-    options.test_controls.boundary(.after_compaction_intent_sync) catch
-        return error.SessionLogCompactionIndeterminate;
-    loaded.log.dir.dir.rename(
-        temp_name,
-        loaded.log.dir.dir,
-        events_file,
-        io_mod.getIo(),
-    ) catch return error.SessionLogCompactionIndeterminate;
-    loaded.resume_view_stale = true;
-    options.test_controls.boundary(.after_compaction_log_rename) catch
-        return error.SessionLogCompactionIndeterminate;
-    io_mod.syncVerifiedDir(loaded.log.dir.dir) catch
-        return error.SessionLogCompactionIndeterminate;
-    options.test_controls.boundary(.after_compaction_namespace_sync) catch
-        return error.SessionLogCompactionIndeterminate;
-    _ = validateLivePosition(
-        alloc,
-        &loaded.log.dir,
-        loaded.log.session_id,
-        proposed,
-    ) catch return error.SessionLogCompactionIndeterminate;
-    options.test_controls.boundary(.after_compaction_live_confirmation) catch
-        return error.SessionLogCompactionIndeterminate;
-    var cleanup_pending = false;
-    deleteAndSync(
-        &loaded.log.dir,
-        publication_intent_file,
-        options.test_controls,
-        .after_compaction_intent_remove,
-    ) catch {
-        loaded.projection_status = .stale;
-        cleanup_pending = true;
-    };
-    if (!cleanup_pending) {
-        loaded.namespace_confirmation_required = false;
-    }
-    loaded.position = proposed;
-    loaded.generation_base_seq = proposed.through_seq;
-    loaded.generation_base_bytes = proposed.through_event_log_bytes;
-    loaded.checkpoint_seq = null;
-    loaded.checkpoint_sha256 = null;
-    var live = try openManagedFile(&loaded.log.dir, events_file, .read_only);
-    defer live.close(io_mod.getIo());
-    const compacted_state = try session_replay.replayBoundary(alloc, live, proposed);
-    loaded.state.deinit(alloc);
-    loaded.state = compacted_state;
-    writeCheckpointProjection(alloc, loaded) catch {};
-    writeManifestProjection(alloc, loaded) catch {
-        loaded.projection_status = .stale;
-    };
-    loaded.state_replacement_pending = false;
-}
-
 const CleanupCandidates = struct {
     temp_name: []u8,
     watermark_name: []u8,
@@ -4483,31 +4261,6 @@ pub fn cleanupCandidateGeneration(name: []const u8) ?session_event.Identifier {
         return parseIdentifier(name[prefix.len .. prefix.len + 32]) catch null;
     }
     return null;
-}
-
-pub fn hasValidatedCompactionTemp(
-    alloc: Allocator,
-    dir: *io_mod.VerifiedDir,
-    session_id: []const u8,
-) !bool {
-    var entries = dir.dir.iterate();
-    while (try entries.next(io_mod.getIo())) |entry| {
-        if (!std.mem.startsWith(u8, entry.name, "events.compact.")) continue;
-        const generation = cleanupCandidateGeneration(entry.name) orelse
-            continue;
-        validateOrphanTemp(
-            alloc,
-            dir,
-            entry.name,
-            session_id,
-            generation,
-        ) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => continue,
-        };
-        return true;
-    }
-    return false;
 }
 
 fn validateOrphanWatermark(
@@ -6523,12 +6276,9 @@ test "final replacement policy tracks mutations after the last replacement" {
         } },
         20,
         .retry_expected_tail,
-        .{
-            .compaction_frame_threshold = 1,
-            .compaction_byte_threshold = 1,
-        },
+        .{},
     );
-    try std.testing.expect(!std.mem.eql(
+    try std.testing.expect(std.mem.eql(
         u8,
         &generation_before_rebind,
         &loaded.position.log_generation,
@@ -6614,6 +6364,128 @@ test "final replacement policy tracks mutations after the last replacement" {
         ),
     );
     try std.testing.expect(loaded.needsFinalStateReplacement(false));
+}
+
+test "append-only log keeps one generation past the old compaction horizon" {
+    const alloc = std.testing.allocator;
+    var temp = try TempRoot.init(alloc);
+    defer temp.deinit(alloc);
+    var initial = try testState(alloc, "session-append-only", 10);
+    defer initial.deinit(alloc);
+    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
+    const generation = loaded.position.log_generation;
+    const base_seq = loaded.position.through_seq;
+    var i: u64 = 0;
+    while (i < 4500) : (i += 1) {
+        _ = try loaded.appendEvent(
+            alloc,
+            .{ .preferences_changed = .{ .fast_mode = i % 2 == 0 } },
+            20 + @as(i64, @intCast(i)),
+            .retry_expected_tail,
+            .{},
+        );
+    }
+    try std.testing.expectEqual(base_seq + 4500, loaded.position.through_seq);
+    try std.testing.expect(std.mem.eql(u8, &generation, &loaded.position.log_generation));
+    const expected_fast_mode = (4500 - 1) % 2 == 0;
+    try std.testing.expectEqual(expected_fast_mode, loaded.state.preferences.fast_mode);
+    const position = loaded.position;
+    loaded.deinit(alloc);
+    var resumed = try temp.root.resumeForWrite(alloc, "session-append-only", .{});
+    defer resumed.deinit(alloc);
+    try std.testing.expect(positionsEqual(position, resumed.position));
+    try std.testing.expect(std.mem.eql(u8, &generation, &resumed.position.log_generation));
+    try std.testing.expectEqual(expected_fast_mode, resumed.state.preferences.fast_mode);
+}
+
+test "oversized state commits through chunked replacement frames without changing generation" {
+    const alloc = std.testing.allocator;
+    var temp = try TempRoot.init(alloc);
+    defer temp.deinit(alloc);
+    var initial = try testState(alloc, "session-oversized-chunks", 10);
+    defer initial.deinit(alloc);
+    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
+    defer loaded.deinit(alloc);
+    const generation = loaded.position.log_generation;
+
+    // A turn past the 8 MiB frame cap does not fit one frame.
+    const big_text = try alloc.alloc(u8, 9 * 1024 * 1024);
+    defer alloc.free(big_text);
+    @memset(big_text, 'a');
+    const big_turn = try session.makeAssistantTurn(alloc, big_text, "response");
+    defer session.freeHistoryTurn(alloc, big_turn);
+    const oversized = session_event.Event{ .history_turn_committed = .{
+        .conversation_language = loaded.state.conversation_language,
+        .total_input_tokens = 0,
+        .total_output_tokens = 0,
+        .turn = big_turn,
+    } };
+    const before = loaded.position;
+    try std.testing.expectError(
+        error.EventFrameTooLarge,
+        loaded.appendEvent(alloc, oversized, 20, .retry_expected_tail, .{}),
+    );
+    try std.testing.expect(positionsEqual(before, loaded.position));
+
+    // The oversized turn still lands through the chunked replacement framing:
+    // started, one or more chunks, committed — never a lone full-state frame.
+    var current = try loaded.state.dupe(alloc);
+    defer current.deinit(alloc);
+    const owned_history = try alloc.alloc(session.HistoryTurn, 1);
+    errdefer alloc.free(owned_history);
+    owned_history[0] = try session.dupeHistoryTurn(alloc, big_turn);
+    session.freeHistoryTurnSlice(alloc, current.history);
+    current.history = owned_history;
+    current.updated_at_ms = 30;
+    _ = try loaded.commitStateReplacement(
+        alloc,
+        current,
+        .compaction,
+        .retry_expected_tail,
+        .{},
+    );
+    try std.testing.expect(std.mem.eql(u8, &generation, &loaded.position.log_generation));
+    try std.testing.expect(loaded.position.through_seq > before.through_seq + 1);
+    try std.testing.expectEqual(@as(usize, 1), loaded.state.history.len);
+
+    var log = try openManagedFile(&loaded.log.dir, events_file, .read_only);
+    defer log.close(io_mod.getIo());
+    const length = try log.length(io_mod.getIo());
+    var offset: u64 = 0;
+    var seq: u64 = 0;
+    var replacement_id: ?session_event.Identifier = null;
+    var chunk_count: u64 = 0;
+    var frame_count: u64 = 0;
+    while (try session_replay.readLineAt(alloc, log, offset, length)) |line| {
+        defer alloc.free(line.bytes);
+        offset = line.next_offset;
+        var envelope = try session_event.decodeFrame(alloc, line.bytes);
+        defer envelope.deinit(alloc);
+        seq += 1;
+        try std.testing.expectEqual(seq, envelope.seq);
+        try std.testing.expect(std.mem.eql(u8, &generation, &envelope.log_generation));
+        switch (envelope.event) {
+            .state_replacement_started => |payload| {
+                try std.testing.expect(replacement_id == null);
+                replacement_id = payload.replacement_id;
+            },
+            .state_replacement_chunk => |payload| {
+                try std.testing.expect(replacement_id != null);
+                try std.testing.expect(std.mem.eql(u8, &replacement_id.?, &payload.replacement_id));
+                chunk_count += 1;
+            },
+            .state_replacement_committed => |payload| {
+                try std.testing.expect(replacement_id != null);
+                try std.testing.expect(std.mem.eql(u8, &replacement_id.?, &payload.replacement_id));
+                frame_count = envelope.seq - before.through_seq;
+            },
+            else => {},
+        }
+    }
+    try std.testing.expect(replacement_id != null);
+    try std.testing.expect(chunk_count >= 1);
+    try std.testing.expectEqual(chunk_count + 2, frame_count);
+    try std.testing.expectEqual(loaded.position.through_seq, seq);
 }
 
 test "event append rejects a truncated committed prefix without extending it" {
@@ -6828,497 +6700,6 @@ test "manifest fingerprint captures the native event device" {
 
     const captured = try eventStat(file, loaded.position.through_event_log_bytes);
     try std.testing.expectEqual(native_device, captured.device);
-}
-
-test "log compaction replaces the generation without changing durable state" {
-    const alloc = std.testing.allocator;
-    var temp = try TempRoot.init(alloc);
-    defer temp.deinit(alloc);
-    var initial = try testState(alloc, "session-log-compaction", 10);
-    defer initial.deinit(alloc);
-    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
-    defer loaded.deinit(alloc);
-    const old_generation = loaded.position.log_generation;
-    var next = try stateWithTurn(alloc, loaded.state, 20);
-    defer next.deinit(alloc);
-    _ = try loaded.appendEvent(
-        alloc,
-        historyEvent(next),
-        20,
-        .retry_expected_tail,
-        .{},
-    );
-
-    try loaded.compactCanonicalLogIfDue(alloc, .{
-        .compaction_frame_threshold = 1,
-        .compaction_byte_threshold = 1,
-    });
-    try std.testing.expect(!std.mem.eql(
-        u8,
-        &old_generation,
-        &loaded.position.log_generation,
-    ));
-    try std.testing.expectEqual(@as(usize, 1), loaded.state.history.len);
-    var replayed = try temp.root.loadReadOnly(alloc, initial.id, .{});
-    defer replayed.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 1), replayed.history.len);
-    try std.testing.expectEqualStrings("world", replayed.history[0].assistant.assistant);
-}
-
-test "specialized history survives event replacement checkpoint and canonical compaction" {
-    const alloc = std.testing.allocator;
-    var temp = try TempRoot.init(alloc);
-    defer temp.deinit(alloc);
-    var initial = try testState(alloc, "session-specialized-history", 10);
-    defer initial.deinit(alloc);
-    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
-    defer loaded.deinit(alloc);
-
-    var calls = [_]session.ToolCall{.{
-        .id = "call_read",
-        .name = "read_file",
-        .arguments_json = "{\"path\":\"src/main.zig\"}",
-    }};
-    var results = [_]session.PersistedToolResult{.{
-        .tool_call_id = @constCast("call_read"),
-        .tool_name = @constCast("read_file"),
-        .status = .failure,
-        .output = @constCast("typed failure"),
-        .output_bytes = 13,
-        .stored_output_bytes = 13,
-    }};
-    var steps = [_]session.ToolExecutionStep{.{
-        .assistant = @constCast("Inspecting."),
-        .tool_calls = calls[0..],
-        .tool_results = results[0..],
-    }};
-    const historical_template = session.HistoryTurn{ .assistant = .{
-        .user = .{ .text = @constCast("run dev") },
-        .assistant = @constCast("The historical command is inert."),
-        .execution = .{ .tool_steps = steps[0..] },
-    } };
-    const interrupted_template = session.HistoryTurn{ .interrupted = .{
-        .user = .{ .text = @constCast("inspect") },
-        .assistant = @constCast("I inspected the entry point."),
-        .execution = .{ .tool_steps = steps[0..] },
-    } };
-
-    var append_state = try loaded.state.dupe(alloc);
-    defer append_state.deinit(alloc);
-    const append_history = try alloc.alloc(session.HistoryTurn, 1);
-    var owns_append_history = true;
-    errdefer if (owns_append_history) alloc.free(append_history);
-    append_history[0] = try session.dupeHistoryTurn(alloc, historical_template);
-    var append_history_initialized = true;
-    errdefer if (owns_append_history and append_history_initialized) {
-        session.freeHistoryTurn(alloc, append_history[0]);
-    };
-    session.freeHistoryTurnSlice(alloc, append_state.history);
-    append_state.history = append_history;
-    owns_append_history = false;
-    append_history_initialized = false;
-    append_state.updated_at_ms = 20;
-    _ = try loaded.appendEvent(
-        alloc,
-        historyEvent(append_state),
-        20,
-        .retry_expected_tail,
-        .{},
-    );
-    try std.testing.expectEqualStrings(
-        "The historical command is inert.",
-        loaded.state.history[0].assistant.assistant,
-    );
-
-    var replacement = try loaded.state.dupe(alloc);
-    defer replacement.deinit(alloc);
-    const replacement_history = try alloc.alloc(session.HistoryTurn, 2);
-    var owns_replacement_history = true;
-    var copied_replacement_turns: usize = 0;
-    errdefer if (owns_replacement_history) {
-        for (replacement_history[0..copied_replacement_turns]) |turn| {
-            session.freeHistoryTurn(alloc, turn);
-        }
-        alloc.free(replacement_history);
-    };
-    replacement_history[0] = try session.dupeHistoryTurn(alloc, historical_template);
-    copied_replacement_turns += 1;
-    replacement_history[1] = try session.dupeHistoryTurn(alloc, interrupted_template);
-    copied_replacement_turns += 1;
-    session.freeHistoryTurnSlice(alloc, replacement.history);
-    replacement.history = replacement_history;
-    owns_replacement_history = false;
-    replacement.updated_at_ms = 30;
-    _ = try loaded.commitStateReplacement(
-        alloc,
-        replacement,
-        .recovery,
-        .retry_expected_tail,
-        .{},
-    );
-    try loaded.writeCheckpointIfDue(alloc, true, .{});
-    try loaded.compactCanonicalLogIfDue(alloc, .{
-        .compaction_frame_threshold = 1,
-        .compaction_byte_threshold = 1,
-    });
-
-    var replayed = try temp.root.loadReadOnly(alloc, initial.id, .{});
-    defer replayed.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 2), replayed.history.len);
-    const historical = replayed.history[0].assistant;
-    try std.testing.expectEqualStrings("The historical command is inert.", historical.assistant);
-    try std.testing.expectEqual(@as(usize, 1), historical.execution.tool_steps.len);
-    try std.testing.expectEqual(.failure, historical.execution.tool_steps[0].tool_results[0].status);
-    const interrupted = replayed.history[1].interrupted;
-    try std.testing.expectEqualStrings("I inspected the entry point.", interrupted.assistant.?);
-    try std.testing.expectEqual(@as(usize, 1), interrupted.execution.tool_steps.len);
-    try std.testing.expectEqualStrings(
-        "typed failure",
-        interrupted.execution.tool_steps[0].tool_results[0].output,
-    );
-}
-
-test "typed history above the context limit survives checkpoint and canonical compaction" {
-    const alloc = std.testing.allocator;
-    var temp = try TempRoot.init(alloc);
-    defer temp.deinit(alloc);
-    var initial = try testState(alloc, "session-typed-history-growth", 10);
-    defer initial.deinit(alloc);
-
-    {
-        var loaded = try temp.root.startWritableSession(alloc, initial, .{});
-        defer loaded.deinit(alloc);
-
-        var calls = [_]session.ToolCall{.{
-            .id = "call_first",
-            .name = "read_file",
-            .arguments_json = "{\"path\":\"src/main.zig\"}",
-        }};
-        var results = [_]session.PersistedToolResult{.{
-            .tool_call_id = @constCast("call_first"),
-            .tool_name = @constCast("read_file"),
-            .status = .success,
-            .output = @constCast("const main = true;"),
-            .output_bytes = 18,
-            .stored_output_bytes = 18,
-        }};
-        var steps = [_]session.ToolExecutionStep{.{
-            .assistant = @constCast("Inspecting the entry point."),
-            .tool_calls = calls[0..],
-            .tool_results = results[0..],
-        }};
-        var files = [_]session.FileEvidence{.{
-            .path = @constCast("src/main.zig"),
-            .tool_call_id = @constCast("call_first"),
-            .tool_name = @constCast("read_file"),
-            .action = .read,
-            .status = .success,
-            .model_view_covers_full_file = true,
-        }};
-        const typed_turn = session.HistoryTurn{ .assistant = .{
-            .user = .{ .text = @constCast("inspect the entry point") },
-            .assistant = @constCast("The entry point is intact."),
-            .execution = .{
-                .tool_steps = steps[0..],
-                .files = files[0..],
-            },
-        } };
-        _ = try loaded.appendEvent(
-            alloc,
-            .{ .history_turn_committed = .{
-                .conversation_language = loaded.state.conversation_language,
-                .total_input_tokens = 1,
-                .total_output_tokens = 1,
-                .turn = typed_turn,
-            } },
-            20,
-            .retry_expected_tail,
-            .{},
-        );
-
-        var index: usize = 1;
-        while (index < 9) : (index += 1) {
-            const turn = try session.makeAssistantTurn(alloc, "follow-up", "acknowledged");
-            defer session.freeHistoryTurn(alloc, turn);
-            _ = try loaded.appendEvent(
-                alloc,
-                .{ .history_turn_committed = .{
-                    .conversation_language = loaded.state.conversation_language,
-                    .total_input_tokens = index + 1,
-                    .total_output_tokens = index + 1,
-                    .turn = turn,
-                } },
-                @intCast(20 + index),
-                .retry_expected_tail,
-                .{},
-            );
-        }
-
-        try std.testing.expectEqual(@as(usize, 9), loaded.state.history.len);
-        const first = loaded.state.history[0].assistant;
-        try std.testing.expectEqualStrings("call_first", first.execution.tool_steps[0].tool_calls[0].id);
-        try std.testing.expectEqualStrings(
-            "const main = true;",
-            first.execution.tool_steps[0].tool_results[0].output,
-        );
-        try std.testing.expectEqualStrings("src/main.zig", first.execution.files[0].path);
-
-        try loaded.writeCheckpointIfDue(alloc, true, .{});
-        try loaded.compactCanonicalLogIfDue(alloc, .{
-            .compaction_frame_threshold = 1,
-            .compaction_byte_threshold = 1,
-        });
-        try std.testing.expectEqual(@as(usize, 9), loaded.state.history.len);
-    }
-
-    var replayed = try temp.root.loadReadOnly(alloc, initial.id, .{});
-    defer replayed.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 9), replayed.history.len);
-    const first = replayed.history[0].assistant;
-    try std.testing.expectEqualStrings("call_first", first.execution.tool_steps[0].tool_calls[0].id);
-    try std.testing.expectEqual(.success, first.execution.tool_steps[0].tool_results[0].status);
-    try std.testing.expectEqualStrings(
-        "const main = true;",
-        first.execution.tool_steps[0].tool_results[0].output,
-    );
-    try std.testing.expectEqualStrings("src/main.zig", first.execution.files[0].path);
-    try std.testing.expect(first.execution.files[0].model_view_covers_full_file);
-}
-
-test "successful semantic commit automatically compacts when due" {
-    const alloc = std.testing.allocator;
-    var temp = try TempRoot.init(alloc);
-    defer temp.deinit(alloc);
-    var initial = try testState(alloc, "session-log-auto-compaction", 10);
-    defer initial.deinit(alloc);
-    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
-    defer loaded.deinit(alloc);
-    const old_generation = loaded.position.log_generation;
-    var next = try stateWithTurn(alloc, loaded.state, 20);
-    defer next.deinit(alloc);
-
-    _ = try loaded.appendEvent(
-        alloc,
-        historyEvent(next),
-        20,
-        .retry_expected_tail,
-        .{
-            .compaction_frame_threshold = 1,
-            .compaction_byte_threshold = 1,
-        },
-    );
-
-    try std.testing.expect(!std.mem.eql(
-        u8,
-        &old_generation,
-        &loaded.position.log_generation,
-    ));
-    var replayed = try temp.root.loadReadOnly(alloc, initial.id, .{});
-    defer replayed.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 1), replayed.history.len);
-    try std.testing.expectEqualStrings("world", replayed.history[0].assistant.assistant);
-}
-
-test "automatic compaction honors an immediate commit lock deadline" {
-    const alloc = std.testing.allocator;
-    var temp = try TempRoot.init(alloc);
-    defer temp.deinit(alloc);
-    var initial = try testState(alloc, "session-log-compaction-lock-deadline", 10);
-    defer initial.deinit(alloc);
-    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
-    defer loaded.deinit(alloc);
-
-    const Contention = struct {
-        dir: *io_mod.VerifiedDir,
-        commit_attempts: usize = 0,
-        commit_lock: ?io_mod.TimedAdvisoryLock = null,
-
-        fn lock(raw: ?*anyopaque, kind: LockKind) void {
-            if (kind != .commit) return;
-            const self: *@This() = @ptrCast(@alignCast(raw.?));
-            self.commit_attempts += 1;
-            if (self.commit_attempts != 2) return;
-            self.commit_lock = io_mod.acquireTimedAdvisoryLock(
-                self.dir,
-                commit_lock_file,
-                2000,
-            ) catch return;
-        }
-    };
-    var contention = Contention{ .dir = &loaded.log.dir };
-    defer if (contention.commit_lock) |*lock| lock.release();
-
-    const started_at_ms = io_mod.milliTimestamp();
-    _ = try loaded.appendEvent(
-        alloc,
-        .{ .preferences_changed = .{ .fast_mode = true } },
-        20,
-        .retry_expected_tail,
-        .{
-            .test_controls = .{
-                .context = &contention,
-                .lock_fn = Contention.lock,
-            },
-            .commit_lock_deadline_ms = 0,
-            .compaction_frame_threshold = 1,
-            .compaction_byte_threshold = 1,
-        },
-    );
-    try std.testing.expectEqual(@as(usize, 2), contention.commit_attempts);
-    try std.testing.expect(contention.commit_lock != null);
-    try std.testing.expect(loaded.compaction_warning_active);
-    try std.testing.expect(io_mod.milliTimestamp() - started_at_ms < 1000);
-}
-
-test "automatic compaction leaves post-rename uncertainty fenced" {
-    const alloc = std.testing.allocator;
-    var temp = try TempRoot.init(alloc);
-    defer temp.deinit(alloc);
-    var initial = try testState(alloc, "session-log-auto-compaction-fence", 10);
-    defer initial.deinit(alloc);
-    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
-    var next = try stateWithTurn(alloc, loaded.state, 20);
-    defer next.deinit(alloc);
-    var failure = BoundaryFailure{ .target = .after_compaction_log_rename };
-    loaded.resume_view_stale = false;
-
-    try std.testing.expectError(
-        error.SessionLogCompactionIndeterminate,
-        loaded.appendEvent(
-            alloc,
-            historyEvent(next),
-            20,
-            .retry_expected_tail,
-            .{
-                .test_controls = failure.test_controls(),
-                .compaction_frame_threshold = 1,
-                .compaction_byte_threshold = 1,
-            },
-        ),
-    );
-
-    try std.testing.expect(loaded.namespace_confirmation_required);
-    try std.testing.expect(loaded.resume_view_stale);
-    try std.testing.expectError(
-        error.SessionCommitBoundaryUnavailable,
-        temp.root.loadReadOnly(alloc, initial.id, .{}),
-    );
-    loaded.deinit(alloc);
-
-    var resolved = try temp.root.resumeForWrite(alloc, initial.id, .{});
-    defer resolved.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 1), resolved.state.history.len);
-    try std.testing.expectEqualStrings(
-        "world",
-        resolved.state.history[0].assistant.assistant,
-    );
-}
-
-test "automatic compaction recovers every injected transaction boundary" {
-    const boundaries = [_]Boundary{
-        .after_compaction_temp_sync,
-        .after_compaction_watermark_sync,
-        .after_compaction_intent_sync,
-        .after_compaction_log_rename,
-        .after_compaction_namespace_sync,
-        .after_compaction_live_confirmation,
-        .after_compaction_intent_remove,
-    };
-    for (boundaries, 0..) |boundary, index| {
-        const alloc = std.testing.allocator;
-        var temp = try TempRoot.init(alloc);
-        defer temp.deinit(alloc);
-        const session_id = try std.fmt.allocPrint(
-            alloc,
-            "session-log-compaction-boundary-{d}",
-            .{index},
-        );
-        defer alloc.free(session_id);
-        var initial = try testState(alloc, session_id, 10);
-        defer initial.deinit(alloc);
-        var loaded = try temp.root.startWritableSession(alloc, initial, .{});
-        var next = try stateWithTurn(alloc, loaded.state, 20);
-        defer next.deinit(alloc);
-        var failure = BoundaryFailure{ .target = boundary };
-
-        const result = loaded.appendEvent(
-            alloc,
-            historyEvent(next),
-            20,
-            .retry_expected_tail,
-            .{
-                .test_controls = failure.test_controls(),
-                .compaction_frame_threshold = 1,
-                .compaction_byte_threshold = 1,
-            },
-        );
-        switch (boundary) {
-            .after_compaction_temp_sync,
-            .after_compaction_watermark_sync,
-            .after_compaction_intent_remove,
-            => _ = try result,
-            .after_compaction_intent_sync,
-            .after_compaction_log_rename,
-            .after_compaction_namespace_sync,
-            .after_compaction_live_confirmation,
-            => try std.testing.expectError(
-                error.SessionLogCompactionIndeterminate,
-                result,
-            ),
-            else => unreachable,
-        }
-        loaded.deinit(alloc);
-
-        var resumed = try temp.root.resumeForWrite(alloc, session_id, .{});
-        defer resumed.deinit(alloc);
-        try std.testing.expectEqual(@as(usize, 1), resumed.state.history.len);
-        try std.testing.expectEqualStrings(
-            "world",
-            resumed.state.history[0].assistant.assistant,
-        );
-    }
-}
-
-test "log compaction rename remains fenced until writable resolution" {
-    const alloc = std.testing.allocator;
-    var temp = try TempRoot.init(alloc);
-    defer temp.deinit(alloc);
-    var initial = try testState(alloc, "session-log-compaction-fence", 10);
-    defer initial.deinit(alloc);
-    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
-    var next = try stateWithTurn(alloc, loaded.state, 20);
-    defer next.deinit(alloc);
-    _ = try loaded.appendEvent(
-        alloc,
-        historyEvent(next),
-        20,
-        .retry_expected_tail,
-        .{},
-    );
-    var failure = BoundaryFailure{ .target = .after_compaction_log_rename };
-    loaded.resume_view_stale = false;
-
-    try std.testing.expectError(
-        error.SessionLogCompactionIndeterminate,
-        loaded.compactCanonicalLogIfDue(alloc, .{
-            .test_controls = failure.test_controls(),
-            .compaction_frame_threshold = 1,
-            .compaction_byte_threshold = 1,
-        }),
-    );
-    try std.testing.expect(loaded.resume_view_stale);
-    loaded.deinit(alloc);
-    try std.testing.expectError(
-        error.SessionCommitBoundaryUnavailable,
-        temp.root.loadReadOnly(alloc, initial.id, .{}),
-    );
-    var resolved = try temp.root.resumeForWrite(alloc, initial.id, .{});
-    defer resolved.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 1), resolved.state.history.len);
-    try std.testing.expectEqualStrings(
-        "world",
-        resolved.state.history[0].assistant.assistant,
-    );
 }
 
 test "orphan cleanup removes only validated noncurrent generated files" {

@@ -24,7 +24,6 @@ const sessionDirPath = paths.sessionDirPath;
 const CandidateStorage = types.CandidateStorage;
 const DiscoveryCause = types.DiscoveryCause;
 const DoctorDiagnostic = types.DoctorDiagnostic;
-const DoctorInspectionOptions = types.DoctorInspectionOptions;
 const DoctorIssueKind = types.DoctorIssueKind;
 const ProjectionState = types.ProjectionState;
 const SessionSummary = types.SessionSummary;
@@ -102,26 +101,6 @@ pub fn appendDoctorDiagnostic(
     });
 }
 
-fn appendDoctorGrowthDiagnostic(
-    diagnostics: *std.ArrayList(DoctorDiagnostic),
-    alloc: Allocator,
-    session_id: []const u8,
-    kind: DoctorIssueKind,
-    bytes: u64,
-    growth_bytes: u64,
-    growth_frames: u64,
-) !void {
-    const owned_id = try alloc.dupe(u8, session_id);
-    errdefer alloc.free(owned_id);
-    try diagnostics.append(alloc, .{
-        .session_id = owned_id,
-        .kind = kind,
-        .bytes = bytes,
-        .growth_bytes = growth_bytes,
-        .growth_frames = growth_frames,
-    });
-}
-
 /// Inspects one session directory and appends a diagnostic for the first
 /// integrity problem it finds, dispatching to the authority-state it detects.
 /// Owns only sequencing: the actual checks live in the three inspect* helpers
@@ -133,7 +112,6 @@ pub fn inspectDoctorSession(
     diagnostics: *std.ArrayList(DoctorDiagnostic),
     session_dir: *io_mod.VerifiedDir,
     session_id: []const u8,
-    options: DoctorInspectionOptions,
 ) !void {
     const transition = loadAuthorityTransitionOptional(alloc, session_dir) catch |err| {
         try appendDoctorDiagnostic(
@@ -173,7 +151,7 @@ pub fn inspectDoctorSession(
         return;
     }
 
-    return inspectSchemaV3Session(ctx, alloc, diagnostics, session_dir, session_id, options);
+    return inspectSchemaV3Session(ctx, alloc, diagnostics, session_dir, session_id);
 }
 
 /// Diagnoses a session that carries no authority marker: either an in-flight
@@ -231,8 +209,8 @@ fn inspectAuthoritylessSession(
 }
 
 /// Diagnoses a session that owns a valid authority marker: validates the
-/// projection manifest, event log size, commit watermark, compaction growth,
-/// stale/cleanup artifacts, managed children, and finally a canonical replay.
+/// projection manifest, event log size, commit watermark, stale/cleanup
+/// artifacts, managed children, and finally a canonical replay.
 /// Terminal: stops at the first disqualifying problem.
 fn inspectSchemaV3Session(
     ctx: StoreContext,
@@ -240,7 +218,6 @@ fn inspectSchemaV3Session(
     diagnostics: *std.ArrayList(DoctorDiagnostic),
     session_dir: *io_mod.VerifiedDir,
     session_id: []const u8,
-    options: DoctorInspectionOptions,
 ) !void {
     const manifest_bytes = try readOptionalSessionFile(
         alloc,
@@ -306,19 +283,6 @@ fn inspectSchemaV3Session(
         .valid => {},
     }
 
-    const committed_position = watermark.position.?;
-    const has_failed_compaction = try session_log.hasValidatedCompactionTemp(alloc, session_dir, session_id);
-    if (manifest) |value| {
-        try appendCompactionGrowthIfNeeded(
-            diagnostics,
-            alloc,
-            session_id,
-            value,
-            committed_position,
-            has_failed_compaction,
-            options,
-        );
-    }
     if (manifest) |value| {
         if (session_projection.isManifestStale(value, event_stat)) {
             try appendDoctorDiagnostic(diagnostics, alloc, session_id, .projection_stale, null);
@@ -360,44 +324,8 @@ fn inspectSchemaV3Session(
     state.deinit(alloc);
 }
 
-/// Appends a compaction diagnostic when the committed log has grown past the
-/// configured byte/frame thresholds within the manifest's current generation.
-/// No-op when the generation differs or growth is under threshold.
-fn appendCompactionGrowthIfNeeded(
-    diagnostics: *std.ArrayList(DoctorDiagnostic),
-    alloc: Allocator,
-    session_id: []const u8,
-    manifest: session_projection.Manifest,
-    committed_position: session_log.CommitPosition,
-    has_failed_compaction: bool,
-    options: DoctorInspectionOptions,
-) !void {
-    const same_generation = std.mem.eql(u8, &manifest.log_generation, &committed_position.log_generation);
-    if (!same_generation) return;
-    const growth_bytes = committed_position.through_event_log_bytes -
-        @min(committed_position.through_event_log_bytes, manifest.generation_base_bytes);
-    const growth_frames = committed_position.through_seq -
-        @min(committed_position.through_seq, manifest.generation_base_seq);
-    if (growth_bytes >= options.compaction_byte_threshold or
-        growth_frames >= options.compaction_frame_threshold)
-    {
-        try appendDoctorGrowthDiagnostic(
-            diagnostics,
-            alloc,
-            session_id,
-            if (has_failed_compaction)
-                .canonical_log_compaction_failed
-            else
-                .canonical_log_compaction_overdue,
-            committed_position.through_event_log_bytes,
-            growth_bytes,
-            growth_frames,
-        );
-    }
-}
-
-/// Appends a single cleanup-candidate diagnostic if the directory contains a
-/// compaction artifact from a generation other than the manifest's current one.
+/// Appends a single cleanup-candidate diagnostic if the directory contains an
+/// artifact from a generation other than the manifest's current one.
 fn appendCleanupCandidateIfPresent(
     diagnostics: *std.ArrayList(DoctorDiagnostic),
     alloc: Allocator,

@@ -659,7 +659,7 @@ fn writeState(writer: *std.Io.Writer, state: DurableSessionState) !void {
     try writer.writeByte('}');
 }
 
-fn writePermissionState(
+pub fn writePermissionState(
     writer: *std.Io.Writer,
     state: session_permission_state.State,
 ) !void {
@@ -682,7 +682,11 @@ fn writePermissionState(
     try writer.writeAll("]}");
 }
 
-fn parsePermissionState(
+/// Decodes a permission state from its JSON object form. The caller owns
+/// the returned state and must release it with `deinit` using the same
+/// allocator, including on test and error-probe paths that duplicate it
+/// into events. Partial state on decode failure is released internally.
+pub fn parsePermissionState(
     alloc: Allocator,
     value: std.json.Value,
 ) !session_permission_state.State {

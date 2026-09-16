@@ -4048,18 +4048,15 @@ pub fn Runtime(comptime App: type) type {
             log_options: session_log.Options,
         ) !void {
             try convergeDegraded(app, loaded, log_options);
-            const usage_dirty = if (comptime @hasField(@TypeOf(app.session), "usage"))
-                app.session.usage.isDirty()
-            else
-                false;
-            if (loaded.needsFinalStateReplacement(usage_dirty)) {
-                try commitCurrentStateReplacementStrict(
-                    app,
-                    loaded,
-                    .compaction,
-                    log_options,
-                    false,
-                );
+            if (comptime @hasField(@TypeOf(app.session), "usage")) {
+                if (app.session.usage.isDirty()) {
+                    try loaded.appendUsageCheckpoint(
+                        app.alloc,
+                        &app.session.usage,
+                        io_mod.milliTimestamp(),
+                        log_options,
+                    );
+                }
             }
         }
 
@@ -4119,18 +4116,15 @@ pub fn Runtime(comptime App: type) type {
                 value
             else
                 return error.SessionPersistenceUnavailable;
-            const now_ms = io_mod.milliTimestamp();
-            var current = try snapshotCurrentState(app, loaded.state, now_ms);
-            defer current.deinit(app.alloc);
-            current.permission_state.deinit(app.alloc);
-            current.permission_state = try session_permission_state.dupe(
+            var owned = try session_permission_state.dupe(
                 app.alloc,
                 permission_state,
             );
-            _ = try loaded.commitStateReplacement(
+            defer owned.deinit(app.alloc);
+            _ = try loaded.appendEvent(
                 app.alloc,
-                current,
-                .compaction,
+                .{ .permission_state_changed = .{ .permission_state = owned } },
+                io_mod.milliTimestamp(),
                 .retry_expected_tail,
                 session_test_controls.logOptions(),
             );

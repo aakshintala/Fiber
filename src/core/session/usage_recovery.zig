@@ -478,13 +478,9 @@ test "recovery marker distinguishes checkpoints around a crash boundary" {
         .{ .usage_checkpointed = .{ .usage = unresolved } },
         unresolved_checkpoint.timestamp_ms,
         .retry_expected_tail,
-        .{
-            .checkpoint_interval = 0,
-            .compaction_frame_threshold = 0,
-            .compaction_byte_threshold = 0,
-        },
+        .{ .checkpoint_interval = 0 },
     );
-    try std.testing.expect(!std.mem.eql(
+    try std.testing.expect(std.mem.eql(
         u8,
         &generation_before,
         &writable.position.log_generation,
