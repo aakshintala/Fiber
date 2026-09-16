@@ -208,3 +208,26 @@ test "explicit clean environment is direct only in automatic mode" {
         defaultForRunCommand(std.testing.allocator, write_ctx, .auto).approval_required,
     );
 }
+
+test "shell authority binds the tty execution identity and shell profile" {
+    const tty_ctx = CommandContext{
+        .command = "tail -f server.log",
+        .resolved_cwd = "/workspace",
+        .target_os = .linux,
+        .execution_mode = .tty,
+    };
+    const authority = AdmissionFingerprint.init(tty_ctx);
+    try std.testing.expect(authority.matches(tty_ctx));
+
+    // Shell input written to a host-proven tty session must not authorize
+    // captured execution of the same command, and vice versa.
+    var captured = tty_ctx;
+    captured.execution_mode = .captured;
+    try std.testing.expect(!authority.matches(captured));
+    try std.testing.expect(!AdmissionFingerprint.init(captured).matches(tty_ctx));
+
+    // An explicit shell profile is part of the identity as well.
+    var profiled = tty_ctx;
+    profiled.environment = .{ .user = "/bin/zsh" };
+    try std.testing.expect(!authority.matches(profiled));
+}

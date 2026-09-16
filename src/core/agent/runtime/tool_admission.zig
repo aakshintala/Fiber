@@ -529,6 +529,78 @@ test "turn review cache reuses only exact deterministic holds" {
     }) == null);
 }
 
+test "changed action cannot inherit an earlier auto-review clear" {
+    const alloc = std.testing.allocator;
+    var cache: TurnReviewCache = .{};
+    defer cache.deinit(alloc);
+    const action_a = ToolCall{
+        .id = "action-a",
+        .name = "shell",
+        .arguments_json = "{\"action\":\"run\",\"command\":\"git status --porcelain\"}",
+    };
+    const action_b = ToolCall{
+        .id = "action-b",
+        .name = "shell",
+        .arguments_json = "{\"action\":\"run\",\"command\":\"git status --porcelain --branch\"}",
+    };
+
+    // A clear is never remembered: neither the identical action nor one
+    // differing only in arguments inherits it; both require a new review.
+    try cache.remember(alloc, action_a, .{
+        .decision = .once,
+        .auto_review_result = .{
+            .risk = .low,
+            .decision = .clear,
+            .rationale = "Exact action matches the current request.",
+        },
+    });
+    try std.testing.expectEqual(@as(usize, 0), cache.holds.items.len);
+    try std.testing.expect(cache.cached(action_a) == null);
+    try std.testing.expect(cache.cached(action_b) == null);
+
+    // A caution hold binds the exact arguments: the identical action
+    // replays the hold while changed arguments require a new review.
+    try cache.remember(alloc, action_a, .{
+        .decision = .deny,
+        .denial_reason = .review_caution,
+        .auto_review_result = .{
+            .risk = .high,
+            .decision = .caution,
+            .rationale = "Untrusted provenance.",
+        },
+    });
+    const identical_a = ToolCall{
+        .id = "action-a-retry",
+        .name = action_a.name,
+        .arguments_json = action_a.arguments_json,
+    };
+    const hit = cache.cached(identical_a) orelse
+        return error.TestExpectedPermissionDenial;
+    try std.testing.expectEqual(
+        types.ToolPermissionDenialReason.review_caution,
+        hit.denial_reason.?,
+    );
+    try std.testing.expect(cache.cached(action_b) == null);
+
+    // The clear-minted shell authority binds the exact action as well.
+    const first = command_admission.CommandContext{
+        .command = "git status --porcelain",
+        .resolved_cwd = "/workspace",
+        .target_os = .linux,
+    };
+    const authority = command_admission.AdmissionFingerprint.init(first);
+    try std.testing.expect(authority.matches(first));
+    var changed_args = first;
+    changed_args.command = "git status --porcelain --branch";
+    try std.testing.expect(!authority.matches(changed_args));
+    var changed_cwd = first;
+    changed_cwd.resolved_cwd = "/workspace/subdir";
+    try std.testing.expect(!authority.matches(changed_cwd));
+    var changed_os = first;
+    changed_os.target_os = .macos;
+    try std.testing.expect(!authority.matches(changed_os));
+}
+
 /// Human denials retained only for the current agent turn. Entries use the
 /// canonical external file action rather than the provider's tool-call ID.
 pub const TurnFileMutationDenials = struct {
