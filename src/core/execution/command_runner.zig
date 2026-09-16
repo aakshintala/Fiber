@@ -2879,6 +2879,12 @@ test "foreground session bootstrap waits for release before executing target" {
     try std.testing.expectEqualStrings("released", marker);
 }
 
+// Each deadline in the owner-loss test is a ceiling on a poll loop, so raising
+// it costs nothing when the kill lands promptly and only buys tolerance for a
+// loaded runner. Three of them run in series, so their sum stays well under the
+// target's delayed-effect floor. See #90.
+const owner_loss_deadline_ms = 5_000;
+
 test "foreground session owner loss kills the target and descendant before delayed effects" {
     if (comptime !supports_foreground_session) return;
 
@@ -2895,9 +2901,14 @@ test "foreground session owner loss kills the target and descendant before delay
     defer alloc.free(quoted_pids);
     const quoted_effect = try shellQuote(alloc, effect_path);
     defer alloc.free(quoted_effect);
+    // The delayed effect is the thing owner loss must beat, so its delay is a
+    // floor the deadlines below race against, not a duration the test waits
+    // out: the target is killed long before it elapses. It is held well above
+    // the sum of those deadlines so a stalled runner fails the deadline that
+    // actually regressed rather than silently letting FINISHED land.
     const target_script = try std.fmt.allocPrint(
         alloc,
-        "sleep 30 & child=$!; printf '%s %s' \"$$\" \"$child\" > {s}; sleep 3; printf FINISHED > {s}",
+        "sleep 30 & child=$!; printf '%s %s' \"$$\" \"$child\" > {s}; sleep 30; printf FINISHED > {s}",
         .{ quoted_pids, quoted_effect },
     );
     defer alloc.free(target_script);
@@ -2914,7 +2925,7 @@ test "foreground session owner loss kills the target and descendant before delay
         "",
     );
 
-    const marker_deadline_ms = io_mod.milliTimestamp() + 2_000;
+    const marker_deadline_ms = io_mod.milliTimestamp() + owner_loss_deadline_ms;
     while (!absoluteFileExists(pids_path) and
         io_mod.milliTimestamp() < marker_deadline_ms)
     {
@@ -2931,8 +2942,8 @@ test "foreground session owner loss kills the target and descendant before delay
 
     owner_write.close(io_mod.getIo());
     _ = try child.wait(io_mod.getIo());
-    try expectProcessGoneWithinForTest(target_pid, 2_000);
-    try expectProcessGoneWithinForTest(descendant_pid, 2_000);
+    try expectProcessGoneWithinForTest(target_pid, owner_loss_deadline_ms);
+    try expectProcessGoneWithinForTest(descendant_pid, owner_loss_deadline_ms);
     try std.testing.expect(!absoluteFileExists(effect_path));
 }
 
