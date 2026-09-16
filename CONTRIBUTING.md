@@ -61,16 +61,20 @@ pull request runs no continuous integration.
 `ci.yml` is the only entrypoint, and what it runs depends on the state of the
 pull request:
 
-- a draft runs the static gates (formatting, public-surface audit, PGSO
-  corpus validation, release-decision tests), the Linux x86_64 build, unit
-  tests, smoke, and the four Linux x86_64 end-to-end shards
+- every push runs shellcheck on every tracked `*.sh` file and the static
+  gates (formatting, public-surface audit, PGSO corpus validation,
+  release-decision tests)
+- every push that is not docs-only runs the PGSO driver unit tests on Linux
+  x86_64 (they need Zig and take minutes)
+- a draft adds the Linux x86_64 build, unit tests, smoke, and the three
+  Linux x86_64 end-to-end shards
 - a ready pull request adds only what draft did not run: the remaining
-  native platforms, the same four end-to-end shards on Linux aarch64 and
+  native platforms, the same three end-to-end shards on Linux aarch64 and
   macOS arm64, benchmarks, binary-size comparison, and the isolated MCP
   conformance package
 - a docs-only change (markdown files outside `src/`, which the binary embeds)
-  skips the heavy legs in both scopes;
-  the static gates still run on every push
+  skips the heavy legs and the PGSO driver tests in both scopes;
+  shellcheck and the static gates still run on every push
 
 A failing end-to-end shard file retries once, immediately. A retry that
 passes is annotated on the run and reported by the non-blocking Flake watch
