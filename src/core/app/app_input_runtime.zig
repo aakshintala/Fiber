@@ -505,6 +505,7 @@ pub fn Runtime(comptime App: type) type {
                     )) {
                         syncCatalogMenus(app);
                         app.shell.render_requests.request(.footer);
+                        app.shell.footer_viewport.invalidateComposerBandAfterClear(&app.shell);
                     }
                 },
                 .delete_to_line_end => {

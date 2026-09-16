@@ -173,6 +173,18 @@ pub const FooterViewport = struct {
         self.cursor_visible = true;
     }
 
+    /// Marks the whole composer band (footer top through the last layout
+    /// row) for a shadow-independent clear after an in-place composer edit
+    /// painted only its own row. Without this, torn remnants on adjacent
+    /// composer rows never re-converge because footer frames otherwise diff
+    /// against the shadow only. Keeps has_frame set; the next footer paint
+    /// heals the band via writeBandClears.
+    pub fn invalidateComposerBandAfterClear(self: *FooterViewport, shell: anytype) void {
+        if (!self.has_frame) return;
+        self.invalidateAfterExternalClear();
+        recordFooterBandInvalidation(shell, self.geometry.top, shell.layout.rows, .external_clear);
+    }
+
     pub fn eraseCurrentFrame(self: *FooterViewport, shell: anytype, metrics: *Metrics) !void {
         _ = metrics;
         if (!self.has_frame) return;
@@ -181,12 +193,11 @@ pub const FooterViewport = struct {
             "footer_erase_current_frame_deferred top={d} rows={d}",
             .{ self.geometry.top, shell.layout.rows },
         );
-        self.invalidateAfterExternalClear();
         // Keep has_frame set so shutdownCleanupRow still targets the footer
         // top (clearing it here made exit wipe from cursor_row and erase
         // transcript like "cancelled"). requestTerminalReset clears frame
         // state when a full reanchor follows job-control resume.
-        recordFooterBandInvalidation(shell, self.geometry.top, shell.layout.rows, .external_clear);
+        self.invalidateComposerBandAfterClear(shell);
     }
 };
 
