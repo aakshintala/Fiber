@@ -314,6 +314,17 @@ class MachoSectionsTests(unittest.TestCase):
         with self.assertRaisesRegex(macho_sections.MachoError, "invalid size"):
             macho_sections.sections_report(header + struct.pack("<II", 0x19, 0))
 
+    def test_expect_arch_does_not_mask_a_fat_binary(self) -> None:
+        # `architecture` reads offset 4 as a cpu type, which on a fat binary is
+        # really nfat_arch. If the arch check ran first it would report a bogus
+        # unknown cpu type instead of naming the actual problem.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "candidate"
+            path.write_bytes(b"\xca\xfe\xba\xbe" + b"\0" * 60)
+            with self.assertRaises(SystemExit) as raised:
+                macho_sections.main([str(path), "--expect-arch", "arm64"])
+        self.assertIn("universal (fat) binaries", str(raised.exception))
+
     def test_a_macho_without_segments_is_rejected(self) -> None:
         with self.assertRaisesRegex(macho_sections.MachoError, "no LC_SEGMENT_64"):
             macho_sections.sections_report(_macho([]))

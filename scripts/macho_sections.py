@@ -98,13 +98,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit(f"binary does not exist: {args.binary}")
     data = args.binary.read_bytes()
     try:
+        # Parse before reading the cpu type. `architecture` trusts the header
+        # layout, so on a fat binary it would report the nfat_arch field as an
+        # unknown cpu type instead of the clear message below.
+        report = sections_report(data)
         if args.expect_arch:
             found = architecture(data)
             if found != args.expect_arch:
                 raise MachoError(
                     f"expected {args.expect_arch} Mach-O, found {found}"
                 )
-        sys.stdout.write(sections_report(data))
+        sys.stdout.write(report)
     except MachoError as error:
         raise SystemExit(f"{args.binary}: {error}") from error
     return 0
