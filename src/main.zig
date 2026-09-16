@@ -3814,3 +3814,4 @@ test {
     _ = @import("core/agent/worker_runtime.zig");
     _ = @import("gateway/client.zig");
 }
+// canary
