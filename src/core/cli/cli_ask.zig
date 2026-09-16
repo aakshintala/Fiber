@@ -679,10 +679,8 @@ const AskContext = struct {
         self.session.usage.configurePublicationSink(null);
         self.session.usage.configureCheckpointSink(null);
         if (self.writable) |*writable| {
-            if (writable.needsFinalStateReplacement(
-                self.session.usage.isDirty(),
-            )) {
-                commitAskStateReplacement(self, writable, false) catch |err| {
+            if (self.session.usage.isDirty()) {
+                flushAskUsageCheckpoint(self, writable) catch |err| {
                     debug_trace.logf(
                         "session",
                         "failed to flush ask session usage err={s}",
@@ -2622,6 +2620,24 @@ fn currentAskState(
     if (state.usage) |*old| old.deinit(ctx.alloc);
     state.usage = usage;
     return state;
+}
+
+fn flushAskUsageCheckpoint(
+    ctx: *AskContext,
+    writable: *session_store.LoadedWritableSession,
+) !void {
+    var snapshot = try ctx.session.usage.snapshot(ctx.alloc);
+    defer snapshot.deinit(ctx.alloc);
+    _ = try writable.appendEvent(
+        ctx.alloc,
+        .{ .usage_checkpointed = .{ .usage = snapshot } },
+        io_mod.milliTimestamp(),
+        .retry_expected_tail,
+        session_test_controls.logOptions(),
+    );
+    if (writable.state.usage) |persisted| {
+        ctx.session.usage.markClean(persisted);
+    }
 }
 
 fn commitAskStateReplacement(
@@ -6989,6 +7005,57 @@ test "current ask state releases partial snapshots on allocation failure" {
             failing.freed_bytes,
         );
     }
+}
+
+test "ask shutdown flush appends one usage event without a state replacement" {
+    const setup_alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+
+    const home = try io_mod.dirRealpathAlloc(setup_alloc, tmp.dir, "home");
+    defer setup_alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(
+        setup_alloc,
+        tmp.dir,
+        "workspace",
+    );
+    defer setup_alloc.free(workspace);
+    const test_home = try TestAskHome.install(setup_alloc, home);
+    defer test_home.deinit();
+
+    var stdout_capture: TestCapture = .{};
+    defer stdout_capture.deinit(setup_alloc);
+    var stderr_capture: TestCapture = .{};
+    defer stderr_capture.deinit(setup_alloc);
+    var ctx = AskContext.init(
+        setup_alloc,
+        testConfig(),
+        testPromptRunDeps(
+            &stdout_capture,
+            &stderr_capture,
+            testPresentKeyStartup,
+        ),
+        workspace,
+    );
+    defer ctx.deinit();
+    try ctx.initializeSessionStores();
+    const writable = &ctx.writable.?;
+
+    try ctx.session.usage.recordCommittedLines(3, 1);
+    try std.testing.expect(ctx.session.usage.isDirty());
+    const before = writable.position;
+    try flushAskUsageCheckpoint(&ctx, writable);
+    try std.testing.expect(!ctx.session.usage.isDirty());
+    // Exactly one frame: a state replacement would advance seq by three or more.
+    try std.testing.expectEqual(before.through_seq + 1, writable.position.through_seq);
+    try std.testing.expect(std.mem.eql(
+        u8,
+        &before.log_generation,
+        &writable.position.log_generation,
+    ));
+    try std.testing.expectEqual(@as(u64, 3), writable.state.usage.?.lines_added);
 }
 
 test "saved ask classifies unsafe store failure by request mode" {

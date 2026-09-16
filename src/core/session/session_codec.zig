@@ -659,7 +659,7 @@ fn writeState(writer: *std.Io.Writer, state: DurableSessionState) !void {
     try writer.writeByte('}');
 }
 
-fn writePermissionState(
+pub fn writePermissionState(
     writer: *std.Io.Writer,
     state: session_permission_state.State,
 ) !void {
@@ -682,7 +682,7 @@ fn writePermissionState(
     try writer.writeAll("]}");
 }
 
-fn parsePermissionState(
+pub fn parsePermissionState(
     alloc: Allocator,
     value: std.json.Value,
 ) !session_permission_state.State {

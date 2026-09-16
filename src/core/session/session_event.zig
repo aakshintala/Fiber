@@ -1,6 +1,7 @@
 const std = @import("std");
 const session = @import("session.zig");
 const session_codec = @import("session_codec.zig");
+const session_permission_state = @import("../permissions/session_permission_state.zig");
 const session_usage = @import("session_usage.zig");
 const types = @import("../shared/types.zig");
 const model_provider = @import("../config/model_provider.zig");
@@ -16,6 +17,7 @@ pub const Digest = [Sha256.digest_length]u8;
 pub const Kind = enum {
     session_started,
     preferences_changed,
+    permission_state_changed,
     workspace_rebound,
     history_turn_committed,
     usage_checkpointed,
@@ -61,6 +63,15 @@ pub const PreferencesChanged = struct {
 
     fn deinit(self: *PreferencesChanged, alloc: Allocator) void {
         if (self.model) |model| alloc.free(model);
+        self.* = undefined;
+    }
+};
+
+pub const PermissionStateChanged = struct {
+    permission_state: session_permission_state.State,
+
+    fn deinit(self: *PermissionStateChanged, alloc: Allocator) void {
+        self.permission_state.deinit(alloc);
         self.* = undefined;
     }
 };
@@ -142,6 +153,7 @@ pub const StateReplacementCommitted = struct {
 pub const Event = union(Kind) {
     session_started: SessionStarted,
     preferences_changed: PreferencesChanged,
+    permission_state_changed: PermissionStateChanged,
     workspace_rebound: WorkspaceRebound,
     history_turn_committed: HistoryTurnCommitted,
     usage_checkpointed: UsageCheckpointed,
@@ -155,6 +167,7 @@ pub const Event = union(Kind) {
         switch (self.*) {
             .session_started => |*payload| payload.deinit(alloc),
             .preferences_changed => |*payload| payload.deinit(alloc),
+            .permission_state_changed => |*payload| payload.deinit(alloc),
             .workspace_rebound => |*payload| payload.deinit(alloc),
             .history_turn_committed => |*payload| payload.deinit(alloc),
             .usage_checkpointed => |*payload| payload.deinit(alloc),
@@ -959,6 +972,17 @@ fn applyDelta(
             if (payload.fast_mode) |fast_mode| current.preferences.fast_mode = fast_mode;
             current.updated_at_ms = envelope.timestamp_ms;
         },
+        .permission_state_changed => |payload| {
+            var current = &(state.* orelse return error.MissingSessionStarted);
+            var proposed = current.*;
+            proposed.permission_state = payload.permission_state;
+            proposed.updated_at_ms = envelope.timestamp_ms;
+            try session_codec.validateState(proposed);
+            const next = try session_permission_state.dupe(alloc, payload.permission_state);
+            current.permission_state.deinit(alloc);
+            current.permission_state = next;
+            current.updated_at_ms = envelope.timestamp_ms;
+        },
         .workspace_rebound => |payload| {
             var current = &(state.* orelse return error.MissingSessionStarted);
             if (!std.mem.eql(u8, payload.previous_workspace_root, current.workspace_root) or
@@ -1086,6 +1110,9 @@ fn validateEnvelope(envelope: Envelope) !void {
                 return error.InvalidEventFrame;
             }
         },
+        .permission_state_changed => |payload| {
+            try session_permission_state.validate(payload.permission_state);
+        },
         .history_turn_committed => |payload| _ = session.decideWorkIdAssociation(
             payload.turn,
             payload.work_id,
@@ -1186,6 +1213,11 @@ fn writePayload(writer: *std.Io.Writer, event: Event) !void {
             try writeJsonString(writer, payload.previous_workspace_root);
             try writer.writeAll(",\"workspace_root\":");
             try writeJsonString(writer, payload.workspace_root);
+            try writer.writeByte('}');
+        },
+        .permission_state_changed => |payload| {
+            try writer.writeAll("{\"permission_state\":");
+            try session_codec.writePermissionState(writer, payload.permission_state);
             try writer.writeByte('}');
         },
         .history_turn_committed => |payload| {
@@ -1334,6 +1366,22 @@ fn parsePayload(alloc: Allocator, kind: Kind, value: std.json.Value) !Event {
             break :blk .{ .workspace_rebound = .{
                 .previous_workspace_root = previous,
                 .workspace_root = try dupeString(alloc, object, "workspace_root"),
+            } };
+        },
+        .permission_state_changed => blk: {
+            const object = try exactObject(value, &.{"permission_state"});
+            var permission_state = session_codec.parsePermissionState(
+                alloc,
+                object.get("permission_state") orelse return error.InvalidEventFrame,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.InvalidEventFrame,
+            };
+            errdefer permission_state.deinit(alloc);
+            session_permission_state.validate(permission_state) catch
+                return error.InvalidEventFrame;
+            break :blk .{ .permission_state_changed = .{
+                .permission_state = permission_state,
             } };
         },
         .history_turn_committed => blk: {
@@ -1622,10 +1670,11 @@ fn sha256(bytes: []const u8) Digest {
     return hash;
 }
 
-test "session event kind contract contains exactly ten stable variants" {
-    try std.testing.expectEqual(@as(usize, 10), @typeInfo(Kind).@"enum".fields.len);
+test "session event kind contract contains exactly eleven stable variants" {
+    try std.testing.expectEqual(@as(usize, 11), @typeInfo(Kind).@"enum".fields.len);
     try std.testing.expectEqualStrings("session_started", @tagName(Kind.session_started));
     try std.testing.expectEqualStrings("preferences_changed", @tagName(Kind.preferences_changed));
+    try std.testing.expectEqualStrings("permission_state_changed", @tagName(Kind.permission_state_changed));
     try std.testing.expectEqualStrings("workspace_rebound", @tagName(Kind.workspace_rebound));
     try std.testing.expectEqualStrings("history_turn_committed", @tagName(Kind.history_turn_committed));
     try std.testing.expectEqualStrings("usage_checkpointed", @tagName(Kind.usage_checkpointed));
@@ -2668,6 +2717,73 @@ test "usage checkpoint event decodes a cumulative snapshot" {
     try std.testing.expectEqual(@as(u64, 7), reduced.state.usage.?.lines_added);
     try std.testing.expectEqual(@as(u64, 3), reduced.state.usage.?.lines_removed);
     try std.testing.expectEqual(@as(i64, 200), reduced.state.updated_at_ms);
+}
+
+test "permission state change event round-trips without history" {
+    const alloc = std.testing.allocator;
+    const generation = identifier(0x90);
+    var state: ?session_codec.DurableSessionState = null;
+    defer if (state) |*current| current.deinit(alloc);
+    try applyDelta(alloc, &state, .{
+        .log_generation = generation,
+        .seq = 1,
+        .event_id = identifier(0x91),
+        .timestamp_ms = 100,
+        .event = .{ .session_started = .{
+            .id = @constCast("session-permission-event"),
+            .created_at_ms = 100,
+            .origin_workspace_root = @constCast("/tmp/origin"),
+            .workspace_root = @constCast("/tmp/current"),
+            .conversation_language = session.ConversationLanguage.literal("en"),
+            .preferences = .{
+                .model = @constCast("test/model"),
+                .effort = types.ReasoningEffort.literal("medium"),
+                .fast_mode = false,
+            },
+        } },
+    });
+    try std.testing.expectEqual(@as(u64, 1), state.?.permission_state.next_generation);
+
+    var changed = session_permission_state.State{ .next_generation = 3 };
+    defer changed.deinit(alloc);
+    const canonical = try alloc.dupe(u8, "test-canonical");
+    errdefer alloc.free(canonical);
+    const display = try alloc.dupe(u8, "test-display");
+    errdefer alloc.free(display);
+    try changed.rules.append(alloc, .{
+        .id = .{ .value = 1 },
+        .key = try session_permission_state.RuleKey.init(.command, canonical),
+        .display_identity = display,
+        .decision = .allow,
+        .generation = 2,
+    });
+    const event = Envelope{
+        .log_generation = generation,
+        .seq = 2,
+        .event_id = identifier(0x92),
+        .timestamp_ms = 150,
+        .event = .{ .permission_state_changed = .{ .permission_state = changed } },
+    };
+    const line = try encodeFrame(alloc, event);
+    defer alloc.free(line);
+    var decoded = try decodeFrame(alloc, line);
+    defer decoded.deinit(alloc);
+    try std.testing.expectEqualStrings("permission_state_changed", @tagName(decoded.kind()));
+    try std.testing.expectEqual(@as(u64, 3), decoded.event.permission_state_changed.permission_state.next_generation);
+
+    const boundary = try applyEventFrame(
+        alloc,
+        &state.?,
+        line,
+        .{ .generation = generation, .next_seq = 2 },
+        decoded.event_id,
+    );
+    try std.testing.expectEqual(@as(u64, 2), boundary.seq);
+    try std.testing.expectEqual(@as(u64, 3), state.?.permission_state.next_generation);
+    try std.testing.expectEqual(@as(usize, 1), state.?.permission_state.rules.items.len);
+    try std.testing.expectEqualStrings("test-display", state.?.permission_state.rules.items[0].display_identity);
+    try std.testing.expectEqual(@as(usize, 0), state.?.history.len);
+    try std.testing.expectEqual(@as(i64, 150), state.?.updated_at_ms);
 }
 
 test "later usage events replace snapshots while legacy turns preserve them" {
