@@ -84,6 +84,41 @@ describe("CI shard planner", () => {
     expect(() => selectShard(plan, 2)).toThrow("invalid shard index: 2");
   });
 
+  test("plans a selected subset by the same greedy weights", () => {
+    expect(buildShardPlan(files, [
+      { file: "d.test.ts", weight: 3 },
+      { file: "b.test.ts", weight: 7 },
+      { file: "a.test.ts", weight: 9 },
+      { file: "c.test.ts", weight: 5 },
+    ], 2, ["a.test.ts", "c.test.ts"])).toEqual({
+      shards: [
+        ["a.test.ts"],
+        ["c.test.ts"],
+      ],
+      totals: [9, 5],
+    });
+  });
+
+  test("rejects an unknown subset file", () => {
+    const manifest = files.map((file) => ({ file, weight: 1 }));
+    expect(() => buildShardPlan(files, manifest, 1, ["missing.test.ts"])).toThrow(
+      "unknown subset file: missing.test.ts",
+    );
+  });
+
+  test("validates the full registry when planning a subset", () => {
+    expect(() => buildShardPlan(files, [
+      { file: "a.test.ts", weight: 1 },
+      { file: "b.test.ts", weight: 1 },
+      { file: "c.test.ts", weight: 1 },
+    ], 1, ["a.test.ts"])).toThrow("missing manifest entry: d.test.ts");
+
+    expect(() => buildShardPlan(files, [
+      ...files.map((file) => ({ file, weight: 1 })),
+      { file: "removed.test.ts", weight: 1 },
+    ], 1, ["a.test.ts"])).toThrow("stale manifest entry: removed.test.ts");
+  });
+
   test("assigns the discovered set exactly once", () => {
     const plan = buildShardPlan(files, [
       { file: "a.test.ts", weight: 13 },
