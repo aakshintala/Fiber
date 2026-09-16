@@ -376,9 +376,7 @@ fn testDeferredCacheToken(session_id: []const u8) summary_codec.DeferredCacheTok
         .session_id = @constCast(session_id),
         .workspace_root = @constCast("/tmp/workspace"),
         .position = .{
-            .log_generation = [_]u8{0x11} ** 16,
             .through_seq = 2,
-            .through_event_id = [_]u8{0x22} ** 16,
             .through_event_log_bytes = 100,
         },
     };
@@ -5206,14 +5204,8 @@ fn corruptFixtureWatermark(
     session_id: []const u8,
 ) !void {
     var source = try store.resumeForWrite(alloc, session_id);
-    const generation = source.position.log_generation;
     source.deinit(alloc);
-    const generation_hex = std.fmt.bytesToHex(generation, .lower);
-    const watermark_name = try std.fmt.allocPrint(
-        alloc,
-        "commit.{s}.json",
-        .{generation_hex},
-    );
+    const watermark_name = try alloc.dupe(u8, "commit.json");
     defer alloc.free(watermark_name);
     try writeFixtureEntry(
         alloc,
@@ -5394,7 +5386,7 @@ fn corruptPendingReplacementTimestampForTest(
     defer alloc.free(tail);
     const count = try file.readPositionalAll(io_mod.getIo(), tail, prior_bytes);
     if (count != tail.len) return error.TestUnexpectedResult;
-    const needle = "\"timestamp_ms\":20";
+    const needle = "\"ts\":20";
     const match = std.mem.lastIndexOf(u8, tail, needle) orelse
         return error.TestUnexpectedResult;
     tail[match + needle.len - 1] = '1';
@@ -6734,7 +6726,7 @@ test "workspace rebind invalidates the old latest pointer before publishing the 
     var state = try testDurableState(alloc, "workspace-rebound", workspace_a);
     defer state.deinit(alloc);
     var initial = try store_a.startWritableSession(alloc, state);
-    const initial_generation = initial.position.log_generation;
+    const initial_seq = initial.position.through_seq;
     initial.deinit(alloc);
 
     var store_b = try Store.initFromHome(alloc, home, workspace_b);
@@ -6747,11 +6739,7 @@ test "workspace rebind invalidates the old latest pointer before publishing the 
     );
     defer rebound.deinit(alloc);
 
-    try std.testing.expect(std.mem.eql(
-        u8,
-        &initial_generation,
-        &rebound.position.log_generation,
-    ));
+    try std.testing.expectEqual(initial_seq + 1, rebound.position.through_seq);
     try std.testing.expect(!rebound.needsFinalStateReplacement(false));
     try std.testing.expectError(
         error.InvalidSessionIndex,
@@ -6785,7 +6773,7 @@ fn expectWorkspaceRebindPublicationFailureRepair(
     var state = try testDurableState(alloc, session_id, workspace_a);
     defer state.deinit(alloc);
     var initial = try store_a.startWritableSession(alloc, state);
-    const initial_generation = initial.position.log_generation;
+    const initial_seq = initial.position.through_seq;
     initial.deinit(alloc);
 
     var failure = ArmedBoundaryFailure{
@@ -6804,11 +6792,7 @@ fn expectWorkspaceRebindPublicationFailureRepair(
     defer rebound.deinit(alloc);
 
     try std.testing.expectEqualStrings(workspace_b, rebound.state.workspace_root);
-    try std.testing.expect(std.mem.eql(
-        u8,
-        &initial_generation,
-        &rebound.position.log_generation,
-    ));
+    try std.testing.expectEqual(initial_seq + 1, rebound.position.through_seq);
     try std.testing.expectError(
         error.InvalidSessionIndex,
         readLatestPointer(store_b, alloc, workspace_b),
@@ -7644,7 +7628,6 @@ test "deferred token compare-before-clear retains a newer token" {
 
     var newer = observed.items[0].position;
     newer.through_seq += 1;
-    newer.through_event_id = [_]u8{0xcd} ** 16;
     newer.through_event_log_bytes += 1;
     const cache = try LatestCache.init(alloc, &sessions, .{}, .maintain);
     defer cache.deinit(alloc);
@@ -7771,9 +7754,7 @@ test "writable repair removes a stable orphan deferred token" {
         "orphan-deferred-token",
         ctx.workspace,
         .{
-            .log_generation = [_]u8{0x12} ** 16,
             .through_seq = 1,
-            .through_event_id = [_]u8{0xab} ** 16,
             .through_event_log_bytes = 100,
         },
     );
@@ -7887,7 +7868,7 @@ test "workspace latest pointer bypasses unrelated authority repair" {
         store_b,
         "unrelated-fenced",
         "authority.pending.json",
-        "{\"schema_version\":1,\"session_id\":\"unrelated-fenced\",\"operation_id\":\"11111111111111111111111111111111\",\"kind\":\"legacy_to_v3\",\"authority_id\":\"22222222222222222222222222222222\",\"prior\":{\"storage_format\":\"legacy_snapshot_v1\",\"primary_bytes\":1,\"primary_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"},\"proposed\":{\"storage_format\":\"event_log_v1\",\"log_generation\":\"33333333333333333333333333333333\",\"through_seq\":1,\"through_event_id\":\"44444444444444444444444444444444\",\"through_event_log_bytes\":1}}",
+        "{\"schema_version\":1,\"session_id\":\"unrelated-fenced\",\"operation_id\":\"11111111111111111111111111111111\",\"kind\":\"legacy_to_v3\",\"authority_id\":\"22222222222222222222222222222222\",\"prior\":{\"storage_format\":\"legacy_snapshot_v1\",\"primary_bytes\":1,\"primary_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"},\"proposed\":{\"storage_format\":\"event_log_v1\",\"through_seq\":1,\"through_event_log_bytes\":1}}",
     );
 
     var resumed = try store_a.resumeTargetForWrite(
@@ -8299,17 +8280,9 @@ test "doctor distinguishes missing invalid and mismatched commit watermarks" {
         var state = try testDurableState(alloc, session_id, ctx.workspace);
         defer state.deinit(alloc);
         var writable = try ctx.store.startWritableSession(alloc, state);
-        const generation_hex = std.fmt.bytesToHex(
-            writable.position.log_generation,
-            .lower,
-        );
         writable.deinit(alloc);
 
-        const watermark_name = try std.fmt.allocPrint(
-            alloc,
-            "commit.{s}.json",
-            .{generation_hex},
-        );
+        const watermark_name = try alloc.dupe(u8, "commit.json");
         defer alloc.free(watermark_name);
         const watermark_path = try std.fs.path.join(alloc, &.{
             ctx.store.sessions_dir,
@@ -8325,7 +8298,7 @@ test "doctor distinguishes missing invalid and mismatched commit watermarks" {
             .commit_watermark_invalid => try writeRawFile(watermark_path, "{}\n"),
             .commit_watermark_mismatched => try writeRawFile(
                 watermark_path,
-                "{\"schema_version\":1,\"session_id\":\"wrong-session\",\"log_generation\":\"00000000000000000000000000000000\",\"through_seq\":1,\"through_event_id\":\"00000000000000000000000000000000\",\"through_event_log_bytes\":1}\n",
+                "{\"schema_version\":1,\"session_id\":\"wrong-session\",\"through_seq\":1,\"through_event_log_bytes\":1}\n",
             ),
             else => unreachable,
         }
@@ -8371,7 +8344,6 @@ test "recovery copies the exact manifest boundary and leaves the source unchange
     );
     var source = try ctx.store.resumeForWrite(alloc, source_id);
     try source.writeCheckpointIfDue(alloc, true, .{});
-    const generation = source.position.log_generation;
     source.deinit(alloc);
     const checkpoint_path = try std.fs.path.join(
         alloc,
@@ -8397,12 +8369,7 @@ test "recovery copies the exact manifest boundary and leaves the source unchange
     );
     defer alloc.free(manifest_before);
 
-    const generation_hex = std.fmt.bytesToHex(generation, .lower);
-    const watermark_name = try std.fmt.allocPrint(
-        alloc,
-        "commit.{s}.json",
-        .{generation_hex},
-    );
+    const watermark_name = try alloc.dupe(u8, "commit.json");
     defer alloc.free(watermark_name);
     try writeFixtureEntry(
         alloc,
@@ -8510,7 +8477,6 @@ test "recovery copy preserves incomplete compacted authority" {
     );
     var source = try ctx.store.resumeForWrite(alloc, source_id);
     try source.writeCheckpointIfDue(alloc, true, .{});
-    const generation = source.position.log_generation;
     source.deinit(alloc);
 
     const checkpoint_path = try std.fs.path.join(
@@ -8519,12 +8485,7 @@ test "recovery copy preserves incomplete compacted authority" {
     );
     defer alloc.free(checkpoint_path);
     try std.Io.Dir.deleteFileAbsolute(io_mod.getIo(), checkpoint_path);
-    const generation_hex = std.fmt.bytesToHex(generation, .lower);
-    const watermark_name = try std.fmt.allocPrint(
-        alloc,
-        "commit.{s}.json",
-        .{generation_hex},
-    );
+    const watermark_name = try alloc.dupe(u8, "commit.json");
     defer alloc.free(watermark_name);
     try writeFixtureEntry(
         alloc,
@@ -8580,14 +8541,8 @@ test "recovery accepts missing and mismatched commit watermarks" {
             "saved boundary",
         );
         var source = try ctx.store.resumeForWrite(alloc, source_id);
-        const generation = source.position.log_generation;
         source.deinit(alloc);
-        const generation_hex = std.fmt.bytesToHex(generation, .lower);
-        const watermark_name = try std.fmt.allocPrint(
-            alloc,
-            "commit.{s}.json",
-            .{generation_hex},
-        );
+        const watermark_name = try alloc.dupe(u8, "commit.json");
         defer alloc.free(watermark_name);
 
         switch (kind) {
@@ -8613,7 +8568,7 @@ test "recovery accepts missing and mismatched commit watermarks" {
                 ctx.store,
                 source_id,
                 watermark_name,
-                "{\"schema_version\":1,\"session_id\":\"wrong-session\",\"log_generation\":\"00000000000000000000000000000000\",\"through_seq\":1,\"through_event_id\":\"00000000000000000000000000000000\",\"through_event_log_bytes\":1}\n",
+                "{\"schema_version\":1,\"session_id\":\"wrong-session\",\"through_seq\":1,\"through_event_log_bytes\":1}\n",
             ),
             else => unreachable,
         }
@@ -8657,14 +8612,8 @@ test "recovery resolves a target commit reported indeterminate" {
         "saved through uncertain commit",
     );
     var source = try ctx.store.resumeForWrite(alloc, source_id);
-    const generation = source.position.log_generation;
     source.deinit(alloc);
-    const generation_hex = std.fmt.bytesToHex(generation, .lower);
-    const watermark_name = try std.fmt.allocPrint(
-        alloc,
-        "commit.{s}.json",
-        .{generation_hex},
-    );
+    const watermark_name = try alloc.dupe(u8, "commit.json");
     defer alloc.free(watermark_name);
     try writeFixtureEntry(
         alloc,
@@ -8713,14 +8662,8 @@ test "indeterminate recovery resolution leaves no published target" {
         "saved target",
     );
     var source = try ctx.store.resumeForWrite(alloc, source_id);
-    const generation = source.position.log_generation;
     source.deinit(alloc);
-    const generation_hex = std.fmt.bytesToHex(generation, .lower);
-    const watermark_name = try std.fmt.allocPrint(
-        alloc,
-        "commit.{s}.json",
-        .{generation_hex},
-    );
+    const watermark_name = try alloc.dupe(u8, "commit.json");
     defer alloc.free(watermark_name);
     try writeFixtureEntry(
         alloc,
@@ -9454,16 +9397,10 @@ test "recovery verifies and copies persisted image snapshots into the new sessio
         .{},
     );
     try source.writeCheckpointIfDue(alloc, true, .{});
-    const generation = source.position.log_generation;
     source.deinit(alloc);
     source_owned = false;
 
-    const generation_hex = std.fmt.bytesToHex(generation, .lower);
-    const watermark_name = try std.fmt.allocPrint(
-        alloc,
-        "commit.{s}.json",
-        .{generation_hex},
-    );
+    const watermark_name = try alloc.dupe(u8, "commit.json");
     defer alloc.free(watermark_name);
     try writeFixtureEntry(
         alloc,
@@ -9976,7 +9913,7 @@ test "doctor stays silent past the old compaction horizon on an append-only log"
     );
     defer state.deinit(alloc);
     var writable = try ctx.store.startWritableSession(alloc, state);
-    const generation = writable.position.log_generation;
+    const base_seq = writable.position.through_seq;
     var i: u64 = 0;
     while (i < 4500) : (i += 1) {
         _ = try writable.appendEvent(
@@ -9987,11 +9924,7 @@ test "doctor stays silent past the old compaction horizon on an append-only log"
             .{},
         );
     }
-    try std.testing.expect(std.mem.eql(
-        u8,
-        &generation,
-        &writable.position.log_generation,
-    ));
+    try std.testing.expectEqual(base_seq + 4500, writable.position.through_seq);
     writable.deinit(alloc);
 
     var diagnostics = try ctx.store.inspectForDoctor(alloc);
@@ -11504,7 +11437,7 @@ test "legacy authority fence hides candidate" {
         ctx.store,
         "legacy-fenced",
         "authority.pending.json",
-        "{\"schema_version\":1,\"session_id\":\"legacy-fenced\",\"operation_id\":\"11111111111111111111111111111111\",\"kind\":\"legacy_to_v3\",\"authority_id\":\"22222222222222222222222222222222\",\"prior\":{\"storage_format\":\"legacy_snapshot_v1\",\"primary_bytes\":1,\"primary_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"},\"proposed\":{\"storage_format\":\"event_log_v1\",\"log_generation\":\"33333333333333333333333333333333\",\"through_seq\":1,\"through_event_id\":\"44444444444444444444444444444444\",\"through_event_log_bytes\":1}}",
+        "{\"schema_version\":1,\"session_id\":\"legacy-fenced\",\"operation_id\":\"11111111111111111111111111111111\",\"kind\":\"legacy_to_v3\",\"authority_id\":\"22222222222222222222222222222222\",\"prior\":{\"storage_format\":\"legacy_snapshot_v1\",\"primary_bytes\":1,\"primary_sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"},\"proposed\":{\"storage_format\":\"event_log_v1\",\"through_seq\":1,\"through_event_log_bytes\":1}}",
     );
 
     var summaries = try ctx.store.list(alloc);

@@ -38,7 +38,6 @@ def generate(home: Path, workspace: Path, count: int, log_size: int, deny_event_
     for index in range(count):
         session_id = f"benchmark-session-{index:02d}"
         authority_id = f"{index + 1:032x}"
-        generation = f"{index + 101:032x}"
         session_dir = sessions_root / session_id
         session_dir.mkdir(mode=0o700)
 
@@ -62,15 +61,13 @@ def generate(home: Path, workspace: Path, count: int, log_size: int, deny_event_
                 "source": "native_create",
             },
         )
-        watermark = session_dir / f"commit.{generation}.json"
+        watermark = session_dir / "commit.json"
         write_private_json(
             watermark,
             {
                 "schema_version": 1,
                 "session_id": session_id,
-                "log_generation": generation,
                 "through_seq": 1,
-                "through_event_id": f"{index + 201:032x}",
                 "through_event_log_bytes": log_size,
             },
         )
@@ -83,7 +80,6 @@ def generate(home: Path, workspace: Path, count: int, log_size: int, deny_event_
                 "storage_format": "event_log_v1",
                 "id": session_id,
                 "authority_id": authority_id,
-                "log_generation": generation,
                 "created_at_ms": 1000 + index,
                 "updated_at_ms": 2000 + index,
                 "origin_workspace_root": str(workspace),

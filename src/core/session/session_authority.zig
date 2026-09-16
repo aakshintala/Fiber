@@ -285,9 +285,7 @@ fn parseLegacyFingerprint(value: std.json.Value) error{InvalidSessionFormat}!Leg
 fn parseProposedPosition(value: std.json.Value) error{InvalidSessionFormat}!session_log.CommitPosition {
     const expected_keys = [_][]const u8{
         "storage_format",
-        "log_generation",
         "through_seq",
-        "through_event_id",
         "through_event_log_bytes",
     };
     const object = try exactJsonObject(value, &expected_keys);
@@ -299,13 +297,7 @@ fn parseProposedPosition(value: std.json.Value) error{InvalidSessionFormat}!sess
         return error.InvalidSessionFormat;
     }
     return .{
-        .log_generation = try parseIdentifier(
-            try objectString(object, "log_generation"),
-        ),
         .through_seq = try jsonU64(object, "through_seq"),
-        .through_event_id = try parseIdentifier(
-            try objectString(object, "through_event_id"),
-        ),
         .through_event_log_bytes = try jsonU64(
             object,
             "through_event_log_bytes",
@@ -585,17 +577,6 @@ pub fn parseIdentifier(raw: []const u8) error{InvalidSessionFormat}!session_even
     const canonical = std.fmt.bytesToHex(result, .lower);
     if (!std.mem.eql(u8, &canonical, raw)) return error.InvalidSessionFormat;
     return result;
-}
-
-/// Structural equality of two commit positions.
-pub fn positionsEqual(
-    left: session_log.CommitPosition,
-    right: session_log.CommitPosition,
-) bool {
-    return std.mem.eql(u8, &left.log_generation, &right.log_generation) and
-        left.through_seq == right.through_seq and
-        std.mem.eql(u8, &left.through_event_id, &right.through_event_id) and
-        left.through_event_log_bytes == right.through_event_log_bytes;
 }
 
 /// Deletes an in-session file and fsyncs the directory so the removal is durable.

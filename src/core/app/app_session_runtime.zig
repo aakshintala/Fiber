@@ -4930,14 +4930,10 @@ fn activeWatermarkPath(
         alloc,
     )) orelse return error.TestExpectedSessionDirectory;
     defer alloc.free(session_dir);
-    const generation_hex = std.fmt.bytesToHex(
-        app.session_persistence.writable.?.position.log_generation,
-        .lower,
-    );
     const watermark_path = try std.fmt.allocPrint(
         alloc,
-        "{s}/commit.{s}.json",
-        .{ session_dir, generation_hex },
+        "{s}/commit.json",
+        .{session_dir},
     );
     return watermark_path;
 }

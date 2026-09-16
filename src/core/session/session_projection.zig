@@ -15,7 +15,6 @@ pub const Digest = [Sha256.digest_length]u8;
 pub const Manifest = struct {
     id: []u8,
     authority_id: session_event.Identifier,
-    log_generation: session_event.Identifier,
     created_at_ms: i64,
     updated_at_ms: i64,
     origin_workspace_root: []u8,
@@ -62,9 +61,7 @@ pub const EventFileStat = struct {
 
 pub const Checkpoint = struct {
     session_id: []u8,
-    log_generation: session_event.Identifier,
     through_seq: u64,
-    through_event_id: session_event.Identifier,
     through_event_log_bytes: u64,
     state: session_codec.DurableSessionState,
 
@@ -97,9 +94,7 @@ test "checkpoint failures preserve exact error types and identities" {
 }
 
 pub const EventBoundary = struct {
-    log_generation: session_event.Identifier,
     seq: u64,
-    event_id: session_event.Identifier,
     event_log_bytes: u64,
     semantic: bool,
 };
@@ -114,8 +109,6 @@ pub fn encodeManifest(alloc: Allocator, manifest: Manifest) ![]u8 {
     try writeJsonString(&out.writer, manifest.id);
     try out.writer.writeAll(",\"authority_id\":");
     try writeHexString(&out.writer, &manifest.authority_id);
-    try out.writer.writeAll(",\"log_generation\":");
-    try writeHexString(&out.writer, &manifest.log_generation);
     try out.writer.print(",\"created_at_ms\":{d},\"updated_at_ms\":{d}", .{
         manifest.created_at_ms,
         manifest.updated_at_ms,
@@ -175,7 +168,6 @@ pub fn decodeManifest(alloc: Allocator, bytes: []const u8) !Manifest {
         "storage_format",
         "id",
         "authority_id",
-        "log_generation",
         "created_at_ms",
         "updated_at_ms",
         "origin_workspace_root",
@@ -215,7 +207,6 @@ pub fn decodeManifest(alloc: Allocator, bytes: []const u8) !Manifest {
     const manifest = Manifest{
         .id = id,
         .authority_id = try parseIdentifier(try requireString(root, "authority_id")),
-        .log_generation = try parseIdentifier(try requireString(root, "log_generation")),
         .created_at_ms = try requireI64(root, "created_at_ms"),
         .updated_at_ms = try requireI64(root, "updated_at_ms"),
         .origin_workspace_root = origin,
@@ -317,12 +308,9 @@ pub fn encodeCheckpoint(alloc: Allocator, checkpoint: Checkpoint) ![]u8 {
 
     try out.writer.writeAll("{\"schema_version\":1,\"session_id\":");
     try writeJsonString(&out.writer, checkpoint.session_id);
-    try out.writer.writeAll(",\"log_generation\":");
-    try writeHexString(&out.writer, &checkpoint.log_generation);
-    try out.writer.print(",\"through_seq\":{d},\"through_event_id\":", .{
+    try out.writer.print(",\"through_seq\":{d}", .{
         checkpoint.through_seq,
     });
-    try writeHexString(&out.writer, &checkpoint.through_event_id);
     try out.writer.print(",\"through_event_log_bytes\":{d},\"state\":", .{
         checkpoint.through_event_log_bytes,
     });
@@ -353,9 +341,7 @@ fn decodeCheckpointImpl(alloc: Allocator, bytes: []const u8) !Checkpoint {
     const root = try exactObject(parsed.value, &.{
         "schema_version",
         "session_id",
-        "log_generation",
         "through_seq",
-        "through_event_id",
         "through_event_log_bytes",
         "state",
     });
@@ -378,9 +364,7 @@ fn decodeCheckpointImpl(alloc: Allocator, bytes: []const u8) !Checkpoint {
     errdefer alloc.free(session_id);
     const checkpoint = Checkpoint{
         .session_id = session_id,
-        .log_generation = try parseIdentifier(try requireString(root, "log_generation")),
         .through_seq = try requireU64(root, "through_seq"),
-        .through_event_id = try parseIdentifier(try requireString(root, "through_event_id")),
         .through_event_log_bytes = try requireU64(root, "through_event_log_bytes"),
         .state = state,
     };
@@ -401,17 +385,13 @@ pub fn validateCheckpointReference(
     }
     if (manifest.checkpoint_seq == null or
         manifest.checkpoint_seq.? != checkpoint.through_seq or
-        !std.mem.eql(u8, checkpoint.session_id, manifest.id) or
-        !std.mem.eql(u8, &checkpoint.log_generation, &manifest.log_generation) or
-        !std.mem.eql(u8, &watermark.log_generation, &manifest.log_generation) or
-        !std.mem.eql(u8, &checkpoint_boundary.log_generation, &manifest.log_generation))
+        !std.mem.eql(u8, checkpoint.session_id, manifest.id))
     {
         return error.StaleCheckpoint;
     }
     if (!checkpoint_boundary.semantic or
         checkpoint_boundary.seq != checkpoint.through_seq or
-        checkpoint_boundary.event_log_bytes != checkpoint.through_event_log_bytes or
-        !std.mem.eql(u8, &checkpoint_boundary.event_id, &checkpoint.through_event_id))
+        checkpoint_boundary.event_log_bytes != checkpoint.through_event_log_bytes)
     {
         return error.InvalidCheckpointBoundary;
     }
@@ -633,7 +613,6 @@ test "manifest serialization is deterministic and capped" {
     var decoded = try decodeManifest(alloc, first);
     defer decoded.deinit(alloc);
     try std.testing.expectEqualStrings(manifest.id, decoded.id);
-    try std.testing.expectEqualSlices(u8, &manifest.log_generation, &decoded.log_generation);
     try std.testing.expectEqual(manifest.last_event_seq, decoded.last_event_seq);
 
     const oversized_model = try alloc.alloc(u8, manifest_max_bytes);
@@ -680,9 +659,7 @@ test "checkpoint decode semantic validation failure frees owned fields once" {
     };
     const checkpoint = Checkpoint{
         .session_id = state.id,
-        .log_generation = testIdentifier(0x10),
         .through_seq = 32,
-        .through_event_id = testIdentifier(0x20),
         .through_event_log_bytes = 2048,
         .state = state,
     };
@@ -751,9 +728,7 @@ test "checkpoint validation rejects stale corrupt and non-semantic boundaries" {
     };
     const checkpoint = Checkpoint{
         .session_id = state.id,
-        .log_generation = testIdentifier(0x10),
         .through_seq = 32,
-        .through_event_id = testIdentifier(0x20),
         .through_event_log_bytes = 2048,
         .state = state,
     };
@@ -771,23 +746,18 @@ test "checkpoint validation rejects stale corrupt and non-semantic boundaries" {
     );
 
     var manifest = testManifest();
-    manifest.log_generation = checkpoint.log_generation;
     manifest.checkpoint_seq = checkpoint.through_seq;
     manifest.checkpoint_sha256 = checkpoint_hash;
     manifest.last_event_seq = 40;
     manifest.event_log_bytes = 4096;
 
     const watermark = EventBoundary{
-        .log_generation = checkpoint.log_generation,
         .seq = 40,
-        .event_id = testIdentifier(0x30),
         .event_log_bytes = 4096,
         .semantic = true,
     };
     const checkpoint_boundary = EventBoundary{
-        .log_generation = checkpoint.log_generation,
         .seq = checkpoint.through_seq,
-        .event_id = checkpoint.through_event_id,
         .event_log_bytes = checkpoint.through_event_log_bytes,
         .semantic = true,
     };
@@ -801,11 +771,11 @@ test "checkpoint validation rejects stale corrupt and non-semantic boundaries" {
         validateCheckpointReference(manifest, corrupt, checkpoint, watermark, checkpoint_boundary),
     );
 
-    var old_generation = checkpoint_boundary;
-    old_generation.log_generation = testIdentifier(0x40);
+    var stale_seq = checkpoint_boundary;
+    stale_seq.seq = checkpoint.through_seq + 1;
     try std.testing.expectError(
-        error.StaleCheckpoint,
-        validateCheckpointReference(manifest, bytes, checkpoint, watermark, old_generation),
+        error.InvalidCheckpointBoundary,
+        validateCheckpointReference(manifest, bytes, checkpoint, watermark, stale_seq),
     );
 
     var provisional_boundary = checkpoint_boundary;
@@ -841,7 +811,6 @@ fn testManifest() Manifest {
     return .{
         .id = @constCast("session-1"),
         .authority_id = testIdentifier(0x01),
-        .log_generation = testIdentifier(0x11),
         .created_at_ms = 100,
         .updated_at_ms = 200,
         .origin_workspace_root = @constCast("/tmp/origin"),

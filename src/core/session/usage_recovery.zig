@@ -472,7 +472,7 @@ test "recovery marker distinguishes checkpoints around a crash boundary" {
     defer before_unresolved_checkpoint.deinit(alloc);
     try std.testing.expect(before_unresolved_checkpoint.unknown_pending);
 
-    const generation_before = writable.position.log_generation;
+    const seq_before = writable.position.through_seq;
     _ = try writable.appendEvent(
         alloc,
         .{ .usage_checkpointed = .{ .usage = unresolved } },
@@ -480,11 +480,7 @@ test "recovery marker distinguishes checkpoints around a crash boundary" {
         .retry_expected_tail,
         .{ .checkpoint_interval = 0 },
     );
-    try std.testing.expect(std.mem.eql(
-        u8,
-        &generation_before,
-        &writable.position.log_generation,
-    ));
+    try std.testing.expectEqual(seq_before + 1, writable.position.through_seq);
 
     runtime_usage.finishInvocation(sequence, 1, .unbilled);
     var settled = try runtime_usage.snapshot(alloc);

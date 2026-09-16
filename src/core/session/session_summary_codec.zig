@@ -46,9 +46,7 @@ const private_file_permissions = std.Io.File.Permissions.fromMode(0o600);
 const private_dir_permissions = std.Io.File.Permissions.fromMode(0o700);
 
 const DeferredCachePositionJson = struct {
-    log_generation: []const u8,
     through_seq: u64,
-    through_event_id: []const u8,
     through_event_log_bytes: u64,
 };
 
@@ -80,18 +78,14 @@ pub fn encodeDeferredCacheToken(
     try validateSessionId(session_id);
     try paths.validateWorkspaceRoot(workspace_root);
 
-    const generation = std.fmt.bytesToHex(position.log_generation, .lower);
-    const event_id = std.fmt.bytesToHex(position.through_event_id, .lower);
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.print("{{\"schema_version\":{d},\"session_id\":", .{deferred_cache_token_schema_version});
     try std.json.Stringify.value(session_id, .{}, &out.writer);
     try out.writer.writeAll(",\"workspace_root\":");
     try std.json.Stringify.value(workspace_root, .{}, &out.writer);
-    try out.writer.writeAll(",\"position\":{\"log_generation\":");
-    try std.json.Stringify.value(&generation, .{}, &out.writer);
-    try out.writer.print(",\"through_seq\":{d},\"through_event_id\":", .{position.through_seq});
-    try std.json.Stringify.value(&event_id, .{}, &out.writer);
+    try out.writer.writeAll(",\"position\":{");
+    try out.writer.print("\"through_seq\":{d}", .{position.through_seq});
     try out.writer.print(",\"through_event_log_bytes\":{d}}}}}", .{position.through_event_log_bytes});
     const encoded = try out.toOwnedSlice();
     if (encoded.len > max_deferred_cache_token_bytes) {
@@ -135,25 +129,10 @@ pub fn decodeDeferredCacheToken(
         .session_id = session_id,
         .workspace_root = workspace_root,
         .position = .{
-            .log_generation = try parseDeferredTokenIdentifier(
-                parsed.value.position.log_generation,
-            ),
             .through_seq = parsed.value.position.through_seq,
-            .through_event_id = try parseDeferredTokenIdentifier(
-                parsed.value.position.through_event_id,
-            ),
             .through_event_log_bytes = parsed.value.position.through_event_log_bytes,
         },
     };
-}
-
-fn parseDeferredTokenIdentifier(raw: []const u8) ![16]u8 {
-    if (raw.len != 32) return error.InvalidSessionIndex;
-    var result: [16]u8 = undefined;
-    _ = std.fmt.hexToBytes(&result, raw) catch return error.InvalidSessionIndex;
-    const canonical = std.fmt.bytesToHex(result, .lower);
-    if (!std.mem.eql(u8, &canonical, raw)) return error.InvalidSessionIndex;
-    return result;
 }
 
 pub fn deferredCachePresent(
@@ -2015,9 +1994,7 @@ test "state summary fast parser reads generated cache shape" {
 test "deferred cache token round trips an exact commit position" {
     const alloc = std.testing.allocator;
     const position = session_replay.CommitPosition{
-        .log_generation = [_]u8{0x12} ** 16,
         .through_seq = 42,
-        .through_event_id = [_]u8{0xab} ** 16,
         .through_event_log_bytes = 4096,
     };
     const encoded = try encodeDeferredCacheToken(
@@ -2039,10 +2016,10 @@ test "deferred cache token rejects malformed and noncanonical input" {
     const invalid = [_][]const u8{
         "",
         "{}",
-        "{\"schema_version\":2,\"session_id\":\"session\",\"workspace_root\":\"/tmp/workspace\",\"position\":{\"log_generation\":\"12121212121212121212121212121212\",\"through_seq\":1,\"through_event_id\":\"abababababababababababababababab\",\"through_event_log_bytes\":1}}",
-        "{\"schema_version\":1,\"session_id\":\"../session\",\"workspace_root\":\"/tmp/workspace\",\"position\":{\"log_generation\":\"12121212121212121212121212121212\",\"through_seq\":1,\"through_event_id\":\"abababababababababababababababab\",\"through_event_log_bytes\":1}}",
-        "{\"schema_version\":1,\"session_id\":\"session\",\"workspace_root\":\"relative\",\"position\":{\"log_generation\":\"12121212121212121212121212121212\",\"through_seq\":1,\"through_event_id\":\"abababababababababababababababab\",\"through_event_log_bytes\":1}}",
-        "{\"schema_version\":1,\"session_id\":\"session\",\"workspace_root\":\"/tmp/workspace\",\"position\":{\"log_generation\":\"1212121212121212121212121212121A\",\"through_seq\":1,\"through_event_id\":\"abababababababababababababababab\",\"through_event_log_bytes\":1}}",
+        "{\"schema_version\":2,\"session_id\":\"session\",\"workspace_root\":\"/tmp/workspace\",\"position\":{\"through_seq\":1,\"through_event_log_bytes\":1}}",
+        "{\"schema_version\":1,\"session_id\":\"../session\",\"workspace_root\":\"/tmp/workspace\",\"position\":{\"through_seq\":1,\"through_event_log_bytes\":1}}",
+        "{\"schema_version\":1,\"session_id\":\"session\",\"workspace_root\":\"relative\",\"position\":{\"through_seq\":1,\"through_event_log_bytes\":1}}",
+        "{\"schema_version\":1,\"session_id\":\"session\",\"workspace_root\":\"/tmp/workspace\",\"position\":{\"through_seq\":true,\"through_event_log_bytes\":1}}",
     };
     for (invalid) |bytes| {
         try std.testing.expectError(
@@ -2085,9 +2062,7 @@ test "deferred cache token reader rejects non-private files" {
         "non-private-token",
         "/tmp/workspace",
         .{
-            .log_generation = [_]u8{0x12} ** 16,
             .through_seq = 1,
-            .through_event_id = [_]u8{0xab} ** 16,
             .through_event_log_bytes = 100,
         },
     );
