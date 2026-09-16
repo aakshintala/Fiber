@@ -17,6 +17,31 @@ publishes a GitHub Release whose body is the content between the
 Never create a version tag by hand; the workflow owns tag creation. Leave the
 `build.zig.zon` version alone, it is a placeholder.
 
+## macOS signing setup
+
+The macOS arm64 release is signed and notarized by `scripts/sign-and-notarize-macos.sh`,
+which reads five Apple credentials from the `apple-signing` GitHub environment.
+None of it is configured yet, and that job has never run, because `release.yml`
+skips prereleases.
+
+`scripts/setup-apple-signing.sh` walks the parts only the owner can do: reading
+the Team ID, creating or locating a Developer ID Application certificate,
+exporting it as a password-protected `.p12`, generating an App Store Connect
+notarization key, creating the environment, and writing the secrets.
+
+```bash
+./scripts/setup-apple-signing.sh
+```
+
+Run it on a Mac, since it exports from the login keychain. It is safe to re-run:
+public values are remembered in `~/.config/fiber/apple-signing.env` and secret
+material is never written to disk. Re-run it when the Developer ID certificate
+expires, which Apple sets five years out.
+
+Configuring the secrets is not sufficient on its own. The signing script is
+still hardcoded to the upstream project's signing identity and will reject any
+other certificate; the wizard prints the two values that fix needs.
+
 ## Writing the changelog
 
 Whether automated or manual, the changelog is public product copy. Describe observable user behavior, not the engineering process behind it. Use the diff, commits, and merged pull requests as research evidence only.
