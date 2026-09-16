@@ -505,7 +505,7 @@ pub fn Runtime(comptime App: type) type {
                     )) {
                         syncCatalogMenus(app);
                         app.shell.render_requests.request(.footer);
-                        reconvergeComposerBand(app);
+                        app.shell.footer_viewport.invalidateComposerBandAfterClear(&app.shell);
                     }
                 },
                 .delete_to_line_end => {
@@ -1112,7 +1112,6 @@ pub fn Runtime(comptime App: type) type {
                     if (draftHasState(app)) {
                         clearDraftState(app, "clear_line");
                         app.shell.render_requests.request(.footer);
-                        reconvergeComposerBand(app);
                     }
                 },
                 .toggle_permission_mode => {
@@ -1624,15 +1623,6 @@ pub fn Runtime(comptime App: type) type {
             paste_blocks.clearBlocks(app.alloc, &app.input_runtime.entities.pasted_blocks);
             app.clearPendingImages();
             syncCatalogMenus(app);
-        }
-
-        fn reconvergeComposerBand(app: *App) void {
-            app.shell.footer_viewport.invalidateAfterExternalClear();
-            if (!app.shell.footer_viewport.has_frame or app.shell.layout.rows == 0) return;
-            const top = app.shell.footer_viewport.geometry.top;
-            const bottom = app.shell.layout.rows;
-            if (top < 1 or bottom < top) return;
-            app.shell.recordFrameInvalidation(.{ .reason = .external_clear, .top = top, .bottom = bottom }) catch {};
         }
 
         fn handleSemanticCtrlD(app: *App, max_input_len: usize) !void {
