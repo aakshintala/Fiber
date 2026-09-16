@@ -188,8 +188,8 @@ fn upgradeWorkerInner(
         result.err = .fetch_failed;
         return;
     };
-    const fetched_target = helpers.fetchTarget(alloc, release_base) catch {
-        result.err = .fetch_failed;
+    const fetched_target = helpers.fetchTarget(alloc, release_base) catch |err| {
+        result.err = if (err == error.OutOfMemory) .out_of_memory else .fetch_failed;
         return;
     };
     const target_value = fetched_target orelse {
@@ -218,7 +218,7 @@ fn upgradeWorkerInner(
         return;
     };
     defer alloc.free(staging_dir);
-    defer std.Io.Dir.cwd().deleteTree(io_mod.getIo(), staging_dir) catch {};
+    defer helpers.cleanupStagingDir(staging_dir);
 
     const archive_path = try std.fmt.allocPrint(alloc, "{s}/fiber.tar.gz", .{staging_dir});
     defer alloc.free(archive_path);
@@ -257,6 +257,13 @@ fn upgradeWorkerInner(
 
     const extracted_bin = try std.fmt.allocPrint(alloc, "{s}/fiber", .{staging_dir});
     defer alloc.free(extracted_bin);
+
+    // Owner-only before the rename: clears any group/other or setuid bits
+    // the archive carried so the installed binary is private through install.
+    helpers.setOwnerOnlyExecutable(extracted_bin) catch {
+        result.err = .replace_failed;
+        return;
+    };
 
     helpers.replaceBinary(extracted_bin, self_exe) catch {
         result.err = .replace_failed;
@@ -397,6 +404,10 @@ fn formatProgressLine(buf: []u8, percent: u8) []const u8 {
     return out.buffered();
 }
 
+// Plain struct, deliberately not a tagged union: the single worker thread
+// writes these fields once in sequence, and completeRunResult consumes them
+// err-first (err, then target, then no_release). A union would only shuffle
+// the owned Target between variants for no behavioral gain.
 const WorkerResult = struct {
     target_owned: ?update_target.Target = null,
     no_release: bool = false,
