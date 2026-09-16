@@ -580,15 +580,19 @@ jobs:
             runner: ubuntu-24.04-arm
             section_format: elf
             expected_file: "ELF 64-bit LSB.*ARM aarch64"
+          # Cross-compiled from Linux. The job passes an explicit -Dtarget, so
+          # the runner OS does not change what is built, and freeing this macOS
+          # slot keeps ready scope under the five-job concurrency cap.
           - name: macos-aarch64
             target: aarch64-macos
-            runner: macos-15
+            runner: ubuntu-24.04
             section_format: macho
-            expected_file: "Mach-O 64-bit executable arm64"
+            expected_macho_arch: arm64
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       EXPECTED_FILE: ${{ matrix.expected_file }}
+      EXPECTED_MACHO_ARCH: ${{ matrix.expected_macho_arch }}
       SECTION_FORMAT: ${{ matrix.section_format }}
       TARGET: ${{ matrix.target }}
     steps:
@@ -619,12 +623,17 @@ jobs:
             --cache-dir "$RUNNER_TEMP/fiber-head-cache" \
             --global-cache-dir "$RUNNER_TEMP/fiber-global-cache"
           cp zig-out/bin/fiber "$evidence_dir/head-fiber"
-          file "$evidence_dir/head-fiber" > "$evidence_dir/head-file.txt"
-          cat "$evidence_dir/head-file.txt"
-          grep -Eq "$EXPECTED_FILE" "$evidence_dir/head-file.txt"
+          # `size -m` and BSD `file` only exist on macOS. The Mach-O reader
+          # checks the cpu type structurally, which is what the `file` regex
+          # was approximating, and emits the same report `size -m` did.
           if [ "$SECTION_FORMAT" = "macho" ]; then
-            size -m "$evidence_dir/head-fiber" > "$evidence_dir/head-sections.txt"
+            python3 -m scripts.macho_sections \
+              --expect-arch "$EXPECTED_MACHO_ARCH" \
+              "$evidence_dir/head-fiber" > "$evidence_dir/head-sections.txt"
           else
+            file "$evidence_dir/head-fiber" > "$evidence_dir/head-file.txt"
+            cat "$evidence_dir/head-file.txt"
+            grep -Eq "$EXPECTED_FILE" "$evidence_dir/head-file.txt"
             size -A -d "$evidence_dir/head-fiber" > "$evidence_dir/head-sections.txt"
           fi
           cat "$evidence_dir/head-sections.txt"
@@ -657,12 +666,17 @@ jobs:
             exit 1
           fi
           cp "${base_bins[0]}" "$evidence_dir/base-fiber"
-          file "$evidence_dir/base-fiber" > "$evidence_dir/base-file.txt"
-          cat "$evidence_dir/base-file.txt"
-          grep -Eq "$EXPECTED_FILE" "$evidence_dir/base-file.txt"
+          # `size -m` and BSD `file` only exist on macOS. The Mach-O reader
+          # checks the cpu type structurally, which is what the `file` regex
+          # was approximating, and emits the same report `size -m` did.
           if [ "$SECTION_FORMAT" = "macho" ]; then
-            size -m "$evidence_dir/base-fiber" > "$evidence_dir/base-sections.txt"
+            python3 -m scripts.macho_sections \
+              --expect-arch "$EXPECTED_MACHO_ARCH" \
+              "$evidence_dir/base-fiber" > "$evidence_dir/base-sections.txt"
           else
+            file "$evidence_dir/base-fiber" > "$evidence_dir/base-file.txt"
+            cat "$evidence_dir/base-file.txt"
+            grep -Eq "$EXPECTED_FILE" "$evidence_dir/base-file.txt"
             size -A -d "$evidence_dir/base-fiber" > "$evidence_dir/base-sections.txt"
           fi
           cat "$evidence_dir/base-sections.txt"

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 
+from scripts import macho_sections
 from scripts.binary_size import (
     BinarySizeError,
     append_delta_table,
@@ -237,6 +238,98 @@ class BinarySizeCliTests(unittest.TestCase):
                 parse_macho_sections(report)
 
 
+def _macho(segments, *, cputype: int = 0x0100000C) -> bytes:
+    """Build a minimal 64-bit Mach-O with the given segments and sections."""
+    import struct
+
+    commands = b""
+    for seg_name, vmsize, sections in segments:
+        body = struct.pack("<16s", seg_name.encode())
+        body += struct.pack("<QQQQ", 0, vmsize, 0, 0)  # vmaddr vmsize fileoff filesize
+        body += struct.pack("<iiII", 0, 0, len(sections), 0)  # prot, nsects, flags
+        for sect_name, size in sections:
+            body += struct.pack("<16s16s", sect_name.encode(), seg_name.encode())
+            body += struct.pack("<QQ", 0, size)  # addr, size
+            body += struct.pack("<8I", 0, 0, 0, 0, 0, 0, 0, 0)  # offset..reserved3
+        cmdsize = 8 + len(body)
+        commands += struct.pack("<II", 0x19, cmdsize) + body
+    header = struct.pack("<IiiIIII", 0xFEEDFACF, cputype, 0, 2, len(segments), len(commands), 0)
+    header += struct.pack("<I", 0)  # reserved
+    return header + commands
+
+
+class MachoSectionsTests(unittest.TestCase):
+    def test_report_matches_the_size_m_format_binary_size_parses(self) -> None:
+        binary = _macho([
+            ("__PAGEZERO", 4294967296, []),
+            ("__TEXT", 8192, [("__text", 4096), ("__cstring", 512)]),
+            ("__DATA", 1024, [("__data", 256)]),
+        ])
+        report = macho_sections.sections_report(binary)
+        self.assertEqual(
+            report,
+            "Segment __PAGEZERO: 4294967296\n"
+            "Segment __TEXT: 8192\n"
+            "\tSection __text: 4096\n"
+            "\tSection __cstring: 512\n"
+            "Segment __DATA: 1024\n"
+            "\tSection __data: 256\n",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "sections.txt"
+            path.write_text(report, encoding="utf-8")
+            segments, sections = parse_macho_sections(path)
+        # __PAGEZERO is excluded by the parser, as it is with `size -m`.
+        self.assertEqual({"__TEXT": 8192, "__DATA": 1024}, segments)
+        self.assertEqual(
+            {"__TEXT.__text": 4096, "__TEXT.__cstring": 512, "__DATA.__data": 256},
+            sections,
+        )
+
+    def test_architecture_is_read_from_the_cpu_type(self) -> None:
+        self.assertEqual("arm64", macho_sections.architecture(_macho([])))
+        self.assertEqual(
+            "x86_64",
+            macho_sections.architecture(_macho([], cputype=0x01000007)),
+        )
+
+    def test_a_fat_binary_is_rejected_by_name(self) -> None:
+        with self.assertRaisesRegex(macho_sections.MachoError, "fat"):
+            macho_sections.sections_report(b"\xca\xfe\xba\xbe" + b"\0" * 32)
+
+    def test_a_non_macho_file_is_rejected(self) -> None:
+        with self.assertRaisesRegex(macho_sections.MachoError, "not a 64-bit"):
+            macho_sections.sections_report(b"\x7fELF" + b"\0" * 32)
+
+    def test_a_truncated_load_command_is_rejected(self) -> None:
+        binary = _macho([("__TEXT", 8192, [("__text", 4096)])])
+        with self.assertRaisesRegex(macho_sections.MachoError, "truncated"):
+            macho_sections.sections_report(binary[:40])
+
+    def test_a_zero_length_load_command_does_not_loop(self) -> None:
+        import struct
+
+        header = struct.pack("<IiiIIII", 0xFEEDFACF, 0x0100000C, 0, 2, 1, 8, 0)
+        header += struct.pack("<I", 0)
+        with self.assertRaisesRegex(macho_sections.MachoError, "invalid size"):
+            macho_sections.sections_report(header + struct.pack("<II", 0x19, 0))
+
+    def test_expect_arch_does_not_mask_a_fat_binary(self) -> None:
+        # `architecture` reads offset 4 as a cpu type, which on a fat binary is
+        # really nfat_arch. If the arch check ran first it would report a bogus
+        # unknown cpu type instead of naming the actual problem.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "candidate"
+            path.write_bytes(b"\xca\xfe\xba\xbe" + b"\0" * 60)
+            with self.assertRaises(SystemExit) as raised:
+                macho_sections.main([str(path), "--expect-arch", "arm64"])
+        self.assertIn("universal (fat) binaries", str(raised.exception))
+
+    def test_a_macho_without_segments_is_rejected(self) -> None:
+        with self.assertRaisesRegex(macho_sections.MachoError, "no LC_SEGMENT_64"):
+            macho_sections.sections_report(_macho([]))
+
+
 class BinarySizeWorkflowTests(unittest.TestCase):
     def test_pr_workflow_compares_all_supported_release_safe_targets(self) -> None:
         self.assertTrue(WORKFLOW_PATH.is_file(), "binary-size workflow is missing")
@@ -249,7 +342,9 @@ class BinarySizeWorkflowTests(unittest.TestCase):
         for name, target, runner in (
             ("linux-x86_64", "x86_64-linux", "ubuntu-24.04"),
             ("linux-aarch64", "aarch64-linux", "ubuntu-24.04-arm"),
-            ("macos-aarch64", "aarch64-macos", "macos-15"),
+            # Cross-compiled on Linux so ready scope stays under the five-job
+            # macOS concurrency cap.
+            ("macos-aarch64", "aarch64-macos", "ubuntu-24.04"),
         ):
             self.assertIn(f"name: {name}", workflow)
             self.assertIn(f"target: {target}", workflow)
@@ -264,7 +359,12 @@ class BinarySizeWorkflowTests(unittest.TestCase):
         self.assertIn("-Dtarget=${{ matrix.target }}", workflow)
         self.assertIn("-Doptimize=ReleaseSafe", workflow)
         self.assertGreaterEqual(workflow.count("zig build"), 2)
-        self.assertGreaterEqual(workflow.count("size -m"), 2)
+        # `size -m` only exists on macOS; the Mach-O report is produced by
+        # scripts/macho_sections.py so the job can run on a Linux runner.
+        self.assertNotIn("size -m ", workflow)
+        self.assertGreaterEqual(
+            workflow.count("python3 -m scripts.macho_sections"), 2
+        )
         self.assertGreaterEqual(workflow.count("size -A -d"), 2)
         self.assertIn("python3 -m scripts.binary_size", workflow)
         self.assertIn("$GITHUB_STEP_SUMMARY", workflow)
