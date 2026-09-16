@@ -14,8 +14,9 @@ source. Use it at your own risk.
 
 ## Install
 
-No Zig toolchain needed. This fetches the latest GitHub Release for your
-platform (Linux or macOS on x86_64 or arm64), verifies its sha256 checksum,
+No Zig toolchain needed. Once GitHub Releases publish (tracked in #48),
+this fetches the latest release for your platform (Linux on x86_64 or
+arm64, macOS on arm64), verifies its sha256 checksum,
 and installs `fiber` into `~/.local/bin`:
 
 ```bash
