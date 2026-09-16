@@ -42,17 +42,7 @@ The test suites under `tests/` use Bun but are separate from the Zig codebase. S
 
 ## Code Style
 
-* Format all Zig source with `zig fmt` before committing. The canonical check is `zig fmt src/`.
-
-* Do not use emojis in code, output, or documentation. Unicode symbols (e.g. checkmark, arrow) are acceptable.
-
-* In documentation, never use double hyphens (`--`) as a dash. Use an emdash (—) sparingly, or rewrite to avoid dashes.
-
-* CLI flags use kebab-case (e.g. `--no-save`, `--json`). Never use camelCase for flags.
-
-* Prefer `snake_case` for all Zig identifiers. Types use `PascalCase` per Zig convention.
-
-* Keep `pub` surface area minimal. Only mark declarations `pub` when they are used outside the file.
+Run `zig fmt src/` before committing. Review holds every diff to [`CODING_STANDARDS.md`](CODING_STANDARDS.md): naming, `pub` surface, flag and prose style, memory, and error handling.
 
 ## Architecture
 
@@ -113,61 +103,17 @@ Do not scatter help text or argument parsing across multiple files.
 
 Profile configuration and runtime state lives under `~/.fiber/`. Project `.fiber.json` contains committed project defaults only.
 
-Config precedence (highest wins):
-
-1. Environment variables such as `FIBER_MODEL`, `FIBER_PERMISSION_MODE`, and `FIBER_MAX_AGENT_STEPS`
-2. `~/.fiber/settings.json` → `workspaces["<workspace_path>"]` (profile workspace overrides)
-3. `~/.fiber/settings.json` top-level (profile global settings)
-4. `<workspace>/.fiber.json` (committed project defaults)
-5. Built-in defaults
-
-Project `.fiber.json` accepts only repo-safe defaults: `sandbox`, `max_agent_steps`, `max_tool_result_bytes`, and `context`. Profile-owned keys such as `model`, `effort`, `slash_menu_categories`, `startup_scrollback`, `prompt_history`, `statusLine`, `skill_match_fuzzy`, `first_call_tool_choice`, `auto_upgrade`, `permission_mode`, and `permission` are ignored from project config before their values are parsed.
+Project `.fiber.json` accepts only repo-safe defaults (`sandbox`, `max_agent_steps`, `max_tool_result_bytes`, `context`); every profile-owned key is dropped from it before its value is parsed. Environment variables override profile workspace settings, which override profile global settings, then project defaults, then built-in defaults. `src/core/config/config_runtime.zig` implements the layering.
 
 Runtime state lives under `~/.fiber/sessions/<session-id>/` (`session.json`, `background/`, `subagent/`, `logs/`). Sessions are global and portable across workspaces. Each session tracks its `workspace_root`, which updates when resumed in a different workspace. A subagent child is an internal ordinary session with its own history. Its parent owns one bounded `subagent/children.json` registry, and the child carries only an immutable owner marker. Child sessions stay out of ordinary session discovery and cannot be resumed directly. A first `subagent.message` creates a named persistent child in that parent; later messages continue it, and optional instructions replace only its child-specific system overlay.
 
 ## Permissions
 
-Security is permission-first. All sensitive tool behavior must integrate with `src/core/permissions/permissions.zig`.
-
-* `permission_mode` controls baseline (`ask`, `auto`, or `yolo`). Yolo bypasses fiber permission policy and uses an effective sandbox of `none` without rewriting saved sandbox configuration
-
-* Configured denies are evaluated before saved-session rules; an exact saved-session deny can narrow a configured allow, while an exact saved-session allow can satisfy an unresolved configured ask
-
-* Session `always` approvals are non-persistent; command approvals match the exact command while other grant categories may use patterns
-
-* `/permissions remember allow|deny <tool-name> <arguments-json>` confirms and stores an exact rule only for an active saved session; list and revoke those rules by their stable IDs
-
-* Routine parsed development commands and reversible new-file creation can execute without model review after configured and saved-session policy. Every remaining unresolved `auto` action receives one narrow security review using the exact action and targets, origin and call identity, optional host-proven current-branch evidence, exact-copy provenance, and bounded masked terminal-safe excerpts of earlier current-turn tool results. Prepared file mutations and static root tools omit task text. Reviewed commands, dynamic tools, and subagent actions also receive bounded canonical current, first, and recent root requests plus explicit omission counts; the reviewer may use that context only for destructive exceptions and immutable delegation scope, not general task policing. Assistant prose, permission feedback, compacted summaries, the pending tool group, later results, and tool or repository text never become authority
-
-* A `clear` review authorizes only the exact unchanged action. A `caution`, incomplete-evidence result, or unavailable review holds only that action, returns guidance to the agent, and never opens a human permission screen, disables tools, or ends the turn
-
-* Exact cautions and deterministic incomplete-evidence results are reused only for the current turn. Changed actions receive a new review, while transient unavailable reviews are not cached. Legacy `permission_request_id` input is rejected without prompting
-
-Do not bypass the permission system for new tools.
+Security is permission-first: every sensitive tool behavior routes through `src/core/permissions/permissions.zig`. Before adding or changing a tool, a permission rule, or `auto` review, read [`docs/permissions.md`](docs/permissions.md).
 
 ## Zig-Specific Patterns
 
-### Memory
-
-* Allocators are passed explicitly. Never use a global allocator.
-
-* Free what you allocate. Use `defer` for cleanup at the call site.
-
-* Prefer `ArenaAllocator` for request-scoped work that can be freed in bulk.
-
-* When a function returns allocated memory, document who owns it (caller or callee).
-
-### Error Handling
-
-* Return errors rather than panicking. `@panic` is for programmer bugs, not runtime conditions.
-
-* Use `errdefer` to clean up partial state on error paths.
-
-* Prefer specific error sets over `anyerror` when the set is bounded.
-
 ### Strings and JSON
-
-* Zig strings are `[]const u8`. There is no implicit null termination.
 
 * For JSON serialization, use `std.json.Stringify.value` with an allocating writer (`std.Io.Writer.Allocating`).
 
@@ -205,10 +151,6 @@ Do not bypass the permission system for new tools.
 
 * Zig unit tests go inside the source file they test, using `test "description" { ... }` blocks.
 
-* Run the narrowest relevant tests while developing. The complete `zig build test` suite runs in ReleaseSafe on every pull request, and must pass before the pull request is marked ready.
-
-* Use `std.testing.expect`, `std.testing.expectEqual`, `std.testing.expectEqualStrings` for assertions.
-
 * In test blocks, use `std.testing.io` for the `Io` parameter. `io_mod.getIo()` automatically returns `std.testing.io` in test builds.
 
 * Use `io_mod.dirRealpathAlloc(alloc, dir, sub_path)` to resolve paths within `std.testing.tmpDir()`.
@@ -224,15 +166,19 @@ entrypoint, and scope follows the pull request's state:
 
 * **Draft** runs the static gates (formatting, public-surface audit, PGSO
   corpus validation, release-decision tests), the Linux x86_64 build, unit
-  tests, smoke, and the four duration-balanced Linux x86_64 E2E shards. Fast
+  tests, smoke, and the three duration-balanced Linux x86_64 E2E shards. Fast
   feedback while the work is still moving; agents should use this instead of
   running the suite locally.
 * **Ready** adds only what draft did not run: the remaining native platforms
-  (`ubuntu-24.04-arm`, `macos-15`), the same four E2E shards on those
+  (`ubuntu-24.04-arm`, `macos-15`), the same three E2E shards on those
   platforms, benchmarks, the three-platform binary size comparison, and the
   isolated MCP conformance package.
 * Docs-only changes skip the heavy legs in both scopes; the static gates
   still run on every push.
+
+The slowest job differs by scope, so name the scope with any timing claim.
+Before calling a job the critical path, run `scripts/ci-timings.sh <pr-number>`,
+which prints job durations for a pull request's latest draft and ready runs.
 
 A push does not trigger CI. A branch with no pull request has nothing to gate,
 and `release.yml` owns `main`.
@@ -389,7 +335,7 @@ Issues, specs, and wayfinder maps live in GitHub Issues on `aakshintala/Fiber`, 
 
 ### Triage labels
 
-The canonical triage roles map onto this repo's existing labels (`agent-ready`, `needs-owner`, and others). See `docs/agents/triage-labels.md`.
+Before applying or removing `agent-ready`, `needs-owner`, or `needs-design`, read `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
