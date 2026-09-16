@@ -447,8 +447,7 @@ fn recoveryActionForSessionDiagnostic(
         .cleanup_candidate,
         => "rerun fiber doctor after active writers exit; cleanup is guarded",
 
-        .canonical_log_large
-        => "the session log is append-only and stays usable; remove the session if it is no longer needed",
+        .canonical_log_large => "the session log is append-only and stays usable; remove the session if it is no longer needed",
 
         .projection_missing,
         .projection_stale,
