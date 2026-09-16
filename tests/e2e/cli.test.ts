@@ -23,7 +23,7 @@ import {
   FIBER_BIN,
   REPO_ROOT,
   runFx,
-} from "../evals/eval-helpers";
+} from "./eval-helpers";
 import {
   chatGptAccessToken,
   codexFinalText,

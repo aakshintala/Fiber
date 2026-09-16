@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runFx } from "../evals/eval-helpers";
+import { runFx } from "./eval-helpers";
 import {
   codexFinalText,
   codexToolCall,

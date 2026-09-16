@@ -16,7 +16,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { runFx } from "../evals/eval-helpers";
+import { runFx } from "./eval-helpers";
 import {
   startLegacyHttpSseFixture,
   startLegacyStreamableHttpFixture,

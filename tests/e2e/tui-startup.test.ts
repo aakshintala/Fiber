@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FIBER_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "./eval-helpers";
 import {
   chatGptAccessToken,
   FAKE_CODEX_DEFAULT_MODEL,

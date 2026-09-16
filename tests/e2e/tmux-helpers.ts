@@ -10,7 +10,7 @@ import { execFileSync, execSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FIBER_BIN, REPO_ROOT } from "../evals/eval-helpers";
+import { FIBER_BIN, REPO_ROOT } from "./eval-helpers";
 
 let sessionCounter = 0;
 

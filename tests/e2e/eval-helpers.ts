@@ -1,4 +1,5 @@
-// Model-backed eval helpers. Requires a built binary and AI_GATEWAY_API_KEY.
+// Shared helpers for the e2e suites. Requires a built binary; live suites
+// additionally need real Codex credentials (see HAS_API_KEY below).
 import { expect } from "bun:test";
 import { execFileSync, execSync, spawn as nodeSpawn } from "node:child_process";
 import {
@@ -523,8 +524,8 @@ export async function runFx(
 }
 
 // Live, model-backed suites need real Codex credentials. This used to key off
-// AI_GATEWAY_API_KEY / VERCEL_OIDC_TOKEN, which the Codex-only runtime never
-// sets, so every gated suite skipped silently and reported success.
+// a gateway API key, which the Codex-only runtime never sets, so every gated
+// suite skipped silently and reported success.
 export const HAS_API_KEY: boolean = !!(
   process.env.FIBER_E2E_LIVE ||
   existsSync(join(process.env.HOME ?? "", ".fiber", "chatgpt-auth.json"))
