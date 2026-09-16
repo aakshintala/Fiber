@@ -18,7 +18,9 @@ PGSO_WORKFLOW_PATH = (
     REPO_ROOT / ".github" / "workflows" / "pgso-macos-arm64.yml"
 )
 PGSO_SETUP_ACTION_PATH = REPO_ROOT / ".github" / "actions" / "setup-pgso" / "action.yml"
-SIGNING_IDENTITY = "Developer ID Application: Vercel, Inc (JW6Y669B67)"
+SIGNING_IDENTITY = "Developer ID Application: Fiber Test (TESTTEAM01)"
+TEST_TEAM_ID = "TESTTEAM01"
+TEST_BUNDLE_ID = "com.fiber.test"
 TEST_CDHASH = "0123456789abcdef0123456789abcdef01234567"
 SECRET_NAMES = (
     "APPLE_DEVELOPER_ID_P12_BASE64",
@@ -123,8 +125,8 @@ if "--force" in args:
     binary = pathlib.Path(args[-1])
     binary.write_bytes(binary.read_bytes() + b"signed\\n")
 if "--display" in args:
-    identifier = os.environ.get("FIBER_SIGNING_TEST_IDENTIFIER", "com.vercel.fx")
-    team_id = os.environ.get("FIBER_SIGNING_TEST_TEAM_ID", "JW6Y669B67")
+    identifier = os.environ.get("FIBER_SIGNING_TEST_IDENTIFIER", "{TEST_BUNDLE_ID}")
+    team_id = os.environ.get("FIBER_SIGNING_TEST_TEAM_ID", "{TEST_TEAM_ID}")
     print(f"Identifier={{identifier}}", file=sys.stderr)
     print(f"TeamIdentifier={{team_id}}", file=sys.stderr)
     print("CDHash={TEST_CDHASH}", file=sys.stderr)
@@ -201,6 +203,9 @@ else:
             {
                 "RUNNER_TEMP": str(runner_temp),
                 "FIBER_SIGNING_TEST_LOG": str(event_log),
+                "APPLE_SIGNING_IDENTITY": SIGNING_IDENTITY,
+                "APPLE_TEAM_ID": TEST_TEAM_ID,
+                "APPLE_BUNDLE_ID": TEST_BUNDLE_ID,
                 "APPLE_DEVELOPER_ID_P12_BASE64": base64.b64encode(
                     b"p12-private-material"
                 ).decode(),
@@ -248,7 +253,8 @@ else:
             self.assertIn("security import", events)
             self.assertIn("security delete-keychain", events)
             self.assertIn("codesign --force", events)
-            self.assertIn("--identifier com.vercel.fx", events)
+            self.assertIn(f"--identifier {TEST_BUNDLE_ID}", events)
+            self.assertIn(f"--sign {SIGNING_IDENTITY}", events)
             self.assertIn("--options runtime", events)
             self.assertIn("--timestamp", events)
             self.assertIn("xcrun notarytool submit", events)
@@ -467,7 +473,7 @@ class MacosSigningWorkflowTests(unittest.TestCase):
         self.assertNotIn("environment: apple-signing", pgso)
         self.assertIn(
             "scripts/sign-and-notarize-macos.sh "
-            '"$RUNNER_TEMP/fx-pgso-aggregate/candidate/fiber"',
+            '"$RUNNER_TEMP/fiber-pgso-aggregate/candidate/fiber"',
             release,
         )
         arm64_caller = release.split("  build-macos-arm64:\n", 1)[1].split(
@@ -489,7 +495,7 @@ class MacosSigningWorkflowTests(unittest.TestCase):
             "\n  sign-macos-arm64:\n", 1
         )[0]
         self.assertIn(
-            "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+            "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5",
             sign_release,
         )
         self.assertIn(
@@ -512,6 +518,14 @@ class MacosSigningWorkflowTests(unittest.TestCase):
             self.assertNotIn(secret_name, workflow_call)
             self.assertNotIn(secret_name, aggregate)
             self.assertNotIn(secret_name, pgso)
+        for var_name in (
+            "APPLE_SIGNING_IDENTITY",
+            "APPLE_TEAM_ID",
+            "APPLE_BUNDLE_ID",
+        ):
+            var_reference = f"${{{{ vars.{var_name} }}}}"
+            self.assertIn(var_reference, sign_release)
+            self.assertNotIn(f"secrets.{var_name}", sign_release)
         self.assertNotIn("sign-and-notarize-macos", pgso)
 
     def test_pgso_release_chain_pins_every_external_action(self) -> None:
