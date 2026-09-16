@@ -4,10 +4,6 @@ set -euo pipefail
 
 umask 077
 
-signing_identity="Developer ID Application: Vercel, Inc (JW6Y669B67)"
-signing_identifier="com.vercel.fx"
-signing_team_id="JW6Y669B67"
-
 openssl_bin="${FIBER_SIGNING_OPENSSL_BIN:-/usr/bin/openssl}"
 security_bin="${FIBER_SIGNING_SECURITY_BIN:-/usr/bin/security}"
 codesign_bin="${FIBER_SIGNING_CODESIGN_BIN:-/usr/bin/codesign}"
@@ -17,6 +13,9 @@ jq_bin="${FIBER_SIGNING_JQ_BIN:-/usr/bin/jq}"
 
 binary_path="${1:?usage: sign-and-notarize-macos.sh <binary-path>}"
 for required_name in \
+    APPLE_SIGNING_IDENTITY \
+    APPLE_TEAM_ID \
+    APPLE_BUNDLE_ID \
     APPLE_DEVELOPER_ID_P12_BASE64 \
     APPLE_DEVELOPER_ID_P12_PASSWORD \
     APPLE_NOTARY_KEY_P8_BASE64 \
@@ -28,12 +27,16 @@ for required_name in \
     fi
 done
 
+signing_identity="${APPLE_SIGNING_IDENTITY}"
+signing_team_id="${APPLE_TEAM_ID}"
+signing_identifier="${APPLE_BUNDLE_ID}"
+
 runner_temp="${RUNNER_TEMP:-/private/tmp}"
-signing_temp_dir="$(mktemp -d "${runner_temp}/fx-signing.XXXXXX")"
+signing_temp_dir="$(mktemp -d "${runner_temp}/fiber-signing.XXXXXX")"
 signing_keychain="${signing_temp_dir}/signing.keychain-db"
 certificate_path="${signing_temp_dir}/developer-id.p12"
 notary_key_path="${signing_temp_dir}/notary-key.p8"
-notary_archive_path="${signing_temp_dir}/fx-notary.zip"
+notary_archive_path="${signing_temp_dir}/fiber-notary.zip"
 notary_result_path="${signing_temp_dir}/notary-result.json"
 notary_log_path="${signing_temp_dir}/notary-log.json"
 keychain_password="$(${openssl_bin} rand -hex 32)"
