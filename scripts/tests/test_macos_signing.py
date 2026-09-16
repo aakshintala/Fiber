@@ -493,11 +493,11 @@ class MacosSigningWorkflowTests(unittest.TestCase):
             sign_release,
         )
         self.assertIn(
-            "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+            "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131",
             sign_release,
         )
         self.assertIn(
-            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
             sign_release,
         )
         report_position = sign_release.index("python3 -m scripts.pgso report")

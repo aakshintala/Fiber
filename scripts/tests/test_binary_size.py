@@ -269,7 +269,7 @@ class BinarySizeWorkflowTests(unittest.TestCase):
         self.assertIn("python3 -m scripts.binary_size", workflow)
         self.assertIn("$GITHUB_STEP_SUMMARY", workflow)
         self.assertIn("::warning title=Binary size increase::", workflow)
-        self.assertIn("actions/upload-artifact@v4", workflow)
+        self.assertIn("actions/upload-artifact@v6", workflow)
         self.assertIn("binary-size-evidence-${{ matrix.name }}", workflow)
         self.assertIn("binary-size-binaries-${{ matrix.name }}", workflow)
 
