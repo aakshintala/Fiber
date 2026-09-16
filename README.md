@@ -12,6 +12,26 @@ transcript, or pick from a menu.
 Status: experimental. There are no published releases yet, so you build it from
 source. Use it at your own risk.
 
+## Install
+
+No Zig toolchain needed. Once GitHub Releases publish (tracked in #48),
+this fetches the latest release for your platform (Linux on x86_64 or
+arm64, macOS on arm64), verifies its sha256 checksum,
+and installs `fiber` into `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aakshintala/Fiber/main/install.sh | sh
+```
+
+To install somewhere else, set `FIBER_INSTALL_DIR`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aakshintala/Fiber/main/install.sh | FIBER_INSTALL_DIR=~/bin sh
+```
+
+Re-running the installer upgrades to the latest release. If the install
+directory is not on `PATH`, it prints the `export PATH=...` line to add.
+
 ## Build from source
 
 You need [Zig 0.16.0 or later](https://ziglang.org/download/).
@@ -24,8 +44,7 @@ zig build -Doptimize=ReleaseSafe
 
 The binary is written to `zig-out/bin/fiber`.
 
-There is no installer and no upgrade path yet. `fiber upgrade` reports that no
-release source is configured and exits with an error.
+`fiber upgrade` resolves upgrades from GitHub Releases.
 
 ## Sign in
 
@@ -86,8 +105,8 @@ Token usage and spend for one saved session in this workspace:
 fiber usage --session <id>
 ```
 
-These examples write `fiber` for brevity. Until installation exists, use the
-path to the binary you built.
+These examples write `fiber` for brevity. With a source build, use the
+path to the binary you built instead.
 
 ## Connect MCP servers
 

@@ -3,9 +3,16 @@
 
 Fiber publishes no releases yet. The version is `0.0.1-dev`, and
 `release.yml` refuses to publish any SemVer prerelease, so merging to `main`
-cannot cut a release. There is no installation or upgrade path: `fiber upgrade`
-fails with `UpgradeUnavailable` until a release source exists. Building
-distribution is tracked as a GitHub issue, not attempted here.
+cannot cut a release. Installation and upgrades resolve from GitHub
+Releases: `install.sh` at the repo root installs the latest release into
+`${FIBER_INSTALL_DIR:-$HOME/.local/bin}` after verifying its `.sha256`
+sidecar, and `fiber upgrade` upgrades a checkout left at `X.Y.Z-dev` to the
+`X.Y.Z` release. Building distribution is tracked as a GitHub issue, not
+attempted here.
+
+After a stable release publishes, bump the version in `src/main.zig` to the
+next `-dev` (for example `0.1.0` becomes `0.2.0-dev`), so a checkout at the
+released version is not treated as upgradable.
 
 When a stable release does happen, `release.yml` owns it. On a push to `main` it
 reads the version from `src/main.zig` through `scripts/release_decision.py`. A
