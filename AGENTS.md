@@ -216,28 +216,14 @@ change touches `build.zig` or `scripts/pgso/`, dispatch it with
 passes — it uses `cancel-in-progress` on the branch ref, so dispatching earlier
 just gets cancelled by the next push — and do not merge until that run passes.
 
-## Merge authority
+## Landing a pull request
 
 Open a draft pull request as soon as the branch is pushed, and mark it ready once
 the gate passes.
 
-Land a ready pull request without asking when all of these hold:
-
-* It is small, reversible, and test-backed.
-* It implements an approved contract or existing behavior rather than inventing
-  new behavior.
-* It adds no dependency.
-* It touches no security, permission, authentication, persistence, release, CI,
-  ruleset, or public compatibility boundary.
-* Independent standards and spec review left no unresolved blocker or concern.
-
-Everything else waits for the owner: new behavior, ambiguous defects, scope
-changes, and destructive work.
-
-The boundary list is the point. Agents act through the owner's GitHub account, so
-a review approval carries no independent signal and the ruleset requires zero
-approvals. Owner judgement is the only real check on those surfaces, which is why
-they are named explicitly rather than left to taste.
+Land a ready pull request when `CI` is green on its head commit and the
+session's instructions authorize landing. Without that authorization, stop at
+green and report the pull request and its run to the owner.
 
 ## Future work
 
