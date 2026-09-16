@@ -180,6 +180,16 @@ pub const Event = union(Kind) {
     }
 };
 
+/// One session-log event with its v1 envelope.
+///
+/// Memory contract: an Envelope either borrows or owns its slices, never
+/// both. Encode-side envelopes (built by callers, passed to `encodeFrame`,
+/// `applyDelta`, or `validateEnvelope`) borrow: the caller keeps every
+/// allocation and must never call `deinit`. Decode-side envelopes
+/// (returned by `decodeFrame` or `readSessionStarted`) own: the caller
+/// must call `deinit` exactly once. Moving an owned envelope out of a
+/// guarded scope (e.g. `break :blk`) transfers ownership and disarms the
+/// guard; holding two guards over one allocation double-frees.
 pub const Envelope = struct {
     session_id: []u8,
     seq: u64,
@@ -204,10 +214,50 @@ pub const Envelope = struct {
 pub const SequenceValidator = struct {
     next_seq: u64 = 1,
 
-    pub fn validate(self: *SequenceValidator, envelope: Envelope) !void {
-        if (envelope.seq != self.next_seq) return error.NonContiguousSequence;
+    pub fn validate(self: *SequenceValidator, seq: u64) !void {
+        if (seq != self.next_seq) return error.NonContiguousSequence;
         self.next_seq = std.math.add(u64, self.next_seq, 1) catch
             return error.NonContiguousSequence;
+    }
+};
+
+/// Header of a well-formed v1 envelope whose kind this build does not
+/// recognize. Reducers still validate its seq contiguity and session
+/// binding, then skip its payload per spec section 9.
+pub const UnknownHeader = struct {
+    session_id: []u8,
+    seq: u64,
+
+    pub fn deinit(self: *UnknownHeader, alloc: Allocator) void {
+        alloc.free(self.session_id);
+        self.* = undefined;
+    }
+};
+
+pub const Frame = union(enum) {
+    known: Envelope,
+    unknown: UnknownHeader,
+
+    pub fn deinit(self: *Frame, alloc: Allocator) void {
+        switch (self.*) {
+            .known => |*envelope| envelope.deinit(alloc),
+            .unknown => |*header| header.deinit(alloc),
+        }
+        self.* = undefined;
+    }
+
+    pub fn seq(self: Frame) u64 {
+        return switch (self) {
+            .known => |envelope| envelope.seq,
+            .unknown => |header| header.seq,
+        };
+    }
+
+    pub fn session_id(self: Frame) []const u8 {
+        return switch (self) {
+            .known => |envelope| envelope.session_id,
+            .unknown => |header| header.session_id,
+        };
     }
 };
 
@@ -247,6 +297,8 @@ pub const Reduction = struct {
     }
 };
 
+/// Serializes a borrowed envelope; never takes ownership and never calls
+/// `deinit`, so encode-side envelopes must not be deinitialized.
 pub fn encodeFrame(alloc: Allocator, envelope: Envelope) ![]u8 {
     try validateEnvelope(envelope);
 
@@ -287,34 +339,27 @@ test "session envelope failures preserve exact error types and identities" {
     try std.testing.expectError(error.OutOfMemory, failEnvelope(error.OutOfMemory));
 }
 
-pub fn decodeFrame(alloc: Allocator, line: []const u8) !Envelope {
-    if (line.len > event_frame_max_bytes) return failEnvelope(error.EventFrameTooLarge);
+/// Decodes one v1 event line. Unknown envelope fields are ignored and an
+/// unrecognized kind decodes to `.unknown` (reducers skip its payload but
+/// still validate its seq and session); only malformed framing, missing
+/// required keys, or a wrong schema_version fail.
+pub fn decodeFrame(alloc: Allocator, line: []const u8) !Frame {
+    if (line.len > event_frame_max_bytes) return error.EventFrameTooLarge;
     if (line.len == 0 or line[line.len - 1] != '\n') {
-        return failEnvelope(error.InvalidEventFrame);
+        return error.InvalidEventFrame;
     }
     if (std.mem.indexOfScalar(u8, line[0 .. line.len - 1], '\n') != null) {
-        return failEnvelope(error.InvalidEventFrame);
+        return error.InvalidEventFrame;
     }
 
     var parsed = std.json.parseFromSlice(std.json.Value, alloc, line[0 .. line.len - 1], .{
         .parse_numbers = false,
     }) catch |err| switch (err) {
-        error.OutOfMemory => return failEnvelope(error.OutOfMemory),
-        else => return failEnvelope(error.InvalidEventFrame),
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidEventFrame,
     };
     defer parsed.deinit();
     const root = try requireObject(parsed.value);
-    if (root.count() < 6 or root.count() > 8) return failEnvelope(error.InvalidEventFrame);
-    try rejectUnknownKeys(root, &.{
-        "schema_version",
-        "kind",
-        "session_id",
-        "ts",
-        "turn_id",
-        "item_id",
-        "seq",
-        "payload",
-    });
     for ([_][]const u8{
         "schema_version",
         "kind",
@@ -323,34 +368,47 @@ pub fn decodeFrame(alloc: Allocator, line: []const u8) !Envelope {
         "seq",
         "payload",
     }) |key| {
-        if (root.get(key) == null) return failEnvelope(error.InvalidEventFrame);
+        if (root.get(key) == null) return error.InvalidEventFrame;
     }
-    if (try requireU64(root, "schema_version") != 1) return failEnvelope(error.UnsupportedEventSchema);
-    const kind = std.meta.stringToEnum(Kind, try requireString(root, "kind")) orelse
-        return failEnvelope(error.InvalidEventFrame);
-    // Ownership of the duped id strings moves into the returned envelope on
-    // success; the block-scoped errdefers below free them only when a later
-    // step in this block fails, so a validation failure cannot free them
-    // twice through both these guards and the envelope deinit.
-    var envelope = blk: {
+    if (try requireU64(root, "schema_version") != 1) return error.UnsupportedEventSchema;
+    const kind_raw = try requireString(root, "kind");
+    if (std.meta.stringToEnum(Kind, kind_raw)) |kind| {
+        // Ownership of the duped id strings moves into the returned
+        // envelope on success; the block-scoped errdefers below free them
+        // only when a later step in this block fails, so a validation
+        // failure cannot free them twice through both these guards and
+        // the envelope deinit.
+        var envelope = blk: {
+            const session_id = try dupeString(alloc, root, "session_id");
+            errdefer alloc.free(session_id);
+            const turn_id = if (root.get("turn_id")) |_| try dupeString(alloc, root, "turn_id") else null;
+            errdefer if (turn_id) |id| alloc.free(id);
+            const item_id = if (root.get("item_id")) |_| try dupeString(alloc, root, "item_id") else null;
+            errdefer if (item_id) |id| alloc.free(id);
+            break :blk Envelope{
+                .session_id = session_id,
+                .seq = try requireU64(root, "seq"),
+                .ts = try requireI64(root, "ts"),
+                .turn_id = turn_id,
+                .item_id = item_id,
+                .event = try parsePayload(alloc, kind, root.get("payload") orelse return error.InvalidEventFrame),
+            };
+        };
+        errdefer envelope.deinit(alloc);
+        try validateEnvelope(envelope);
+        return .{ .known = envelope };
+    }
+    var header = blk: {
         const session_id = try dupeString(alloc, root, "session_id");
         errdefer alloc.free(session_id);
-        const turn_id = if (root.get("turn_id")) |_| try dupeString(alloc, root, "turn_id") else null;
-        errdefer if (turn_id) |id| alloc.free(id);
-        const item_id = if (root.get("item_id")) |_| try dupeString(alloc, root, "item_id") else null;
-        errdefer if (item_id) |id| alloc.free(id);
-        break :blk Envelope{
+        break :blk UnknownHeader{
             .session_id = session_id,
             .seq = try requireU64(root, "seq"),
-            .ts = try requireI64(root, "ts"),
-            .turn_id = turn_id,
-            .item_id = item_id,
-            .event = try parsePayload(alloc, kind, root.get("payload") orelse return failEnvelope(error.InvalidEventFrame)),
         };
     };
-    errdefer envelope.deinit(alloc);
-    try validateEnvelope(envelope);
-    return envelope;
+    errdefer header.deinit(alloc);
+    if (header.seq == 0 or header.session_id.len == 0) return error.InvalidEventFrame;
+    return .{ .unknown = header };
 }
 
 pub fn writeStateReplacement(
@@ -440,32 +498,39 @@ pub fn reduceJsonl(
 pub fn applyEventFrame(
     alloc: Allocator,
     state: *session_codec.DurableSessionState,
-    frame: []const u8,
+    line: []const u8,
     start: ReductionStart,
 ) !ReductionBoundary {
     if (start.next_seq == 0) {
         return error.InvalidReductionStart;
     }
-    const frame_bytes = std.math.cast(u64, frame.len) orelse
+    const frame_bytes = std.math.cast(u64, line.len) orelse
         return error.InvalidEventFrame;
-    var envelope = try decodeFrame(alloc, frame);
-    defer envelope.deinit(alloc);
+    var frame = try decodeFrame(alloc, line);
+    defer frame.deinit(alloc);
     var validator = SequenceValidator{
         .next_seq = start.next_seq,
     };
-    try validator.validate(envelope);
-    if (envelope.kind() == .session_started or
-        envelope.kind() == .state_replacement_started or
-        envelope.kind() == .state_replacement_chunk or
-        envelope.kind() == .state_replacement_committed)
-    {
-        return error.InvalidEventFrame;
+    try validator.validate(frame.seq());
+    if (!std.mem.eql(u8, frame.session_id(), state.id)) {
+        return error.SessionMismatch;
     }
-
-    var current: ?session_codec.DurableSessionState = state.*;
-    try applyDelta(alloc, &current, envelope);
-    state.* = current.?;
-    return reductionBoundary(envelope, frame_bytes);
+    switch (frame) {
+        .known => |envelope| {
+            if (envelope.kind() == .session_started or
+                envelope.kind() == .state_replacement_started or
+                envelope.kind() == .state_replacement_chunk or
+                envelope.kind() == .state_replacement_committed)
+            {
+                return error.InvalidEventFrame;
+            }
+            var current: ?session_codec.DurableSessionState = state.*;
+            try applyDelta(alloc, &current, envelope);
+            state.* = current.?;
+        },
+        .unknown => {},
+    }
+    return .{ .seq = frame.seq(), .byte_offset = frame_bytes };
 }
 
 inline fn failReduction(err: anytype) @TypeOf(err)!Reduction {
@@ -498,6 +563,11 @@ pub fn reduceJsonlFrom(
     {
         return failReduction(error.InvalidReductionStart);
     }
+    // The session is established by the caller's state when resuming, or
+    // by the first line when starting fresh. Every later line must name
+    // it; a foreign-session line fails loudly instead of mutating state.
+    var established: ?[]u8 = if (state) |*s| try alloc.dupe(u8, s.id) else null;
+    defer if (established) |id| alloc.free(id);
     var validator = SequenceValidator{
         .next_seq = start.next_seq,
     };
@@ -513,9 +583,23 @@ pub fn reduceJsonlFrom(
         const frame_start = byte_offset;
         byte_offset += line.len;
 
-        var envelope = try decodeFrame(alloc, line);
-        defer envelope.deinit(alloc);
-        try validator.validate(envelope);
+        var frame = try decodeFrame(alloc, line);
+        defer frame.deinit(alloc);
+        try validator.validate(frame.seq());
+        if (established) |known| {
+            if (!std.mem.eql(u8, frame.session_id(), known)) {
+                return failReduction(error.SessionMismatch);
+            }
+        } else {
+            established = try alloc.dupe(u8, frame.session_id());
+        }
+        const envelope = switch (frame) {
+            .known => |known| known,
+            .unknown => {
+                through = .{ .seq = frame.seq(), .byte_offset = byte_offset };
+                continue;
+            },
+        };
 
         if (envelope.kind() == .state_replacement_started) {
             if (state == null) return failReduction(error.InvalidReplacement);
@@ -707,9 +791,16 @@ fn reduceReplacement(
     };
     defer alloc.free(commit_line);
     byte_offset.* += commit_line.len;
-    var commit_envelope = try decodeFrame(alloc, commit_line);
-    defer commit_envelope.deinit(alloc);
-    try validator.validate(commit_envelope);
+    var commit_frame = try decodeFrame(alloc, commit_line);
+    defer commit_frame.deinit(alloc);
+    try validator.validate(commit_frame.seq());
+    const commit_envelope = switch (commit_frame) {
+        .known => |*envelope| envelope,
+        // A foreign line inside a replacement transaction is corruption,
+        // not a skippable additive kind: chunks and commit are bound to
+        // the (session-checked) start line by replacement_id.
+        .unknown => return error.InvalidReplacement,
+    };
     if (commit_envelope.kind() != .state_replacement_committed) return error.InvalidReplacement;
     const commit = commit_envelope.event.state_replacement_committed;
     if (!std.mem.eql(u8, &commit.replacement_id, &start.replacement_id) or
@@ -735,7 +826,7 @@ fn reduceReplacement(
     }
     return .{
         .state = decoded,
-        .through = reductionBoundary(commit_envelope, byte_offset.*),
+        .through = reductionBoundary(commit_envelope.*, byte_offset.*),
     };
 }
 
@@ -879,9 +970,13 @@ const ReplacementStateReader = struct {
         };
         defer self.alloc.free(line);
         self.byte_offset.* += line.len;
-        var envelope = try decodeFrame(self.alloc, line);
-        errdefer envelope.deinit(self.alloc);
-        try self.validator.validate(envelope);
+        var frame = try decodeFrame(self.alloc, line);
+        errdefer frame.deinit(self.alloc);
+        try self.validator.validate(frame.seq());
+        const envelope = switch (frame) {
+            .known => |*known| known,
+            .unknown => return error.InvalidReplacement,
+        };
         if (envelope.kind() != .state_replacement_chunk) {
             return error.InvalidReplacement;
         }
@@ -904,7 +999,7 @@ const ReplacementStateReader = struct {
         self.overall_sha256.update(chunk.bytes);
         self.raw_total += chunk.raw_bytes;
         self.chunk_index += 1;
-        self.current = envelope;
+        self.current = envelope.*;
     }
 };
 
@@ -1717,8 +1812,9 @@ test "event frame codec is deterministic and validates contiguous sequence" {
     try std.testing.expectEqualStrings(first, second);
     try std.testing.expect(first[first.len - 1] == '\n');
 
-    var decoded = try decodeFrame(alloc, first);
-    defer decoded.deinit(alloc);
+    var decoded_frame_1 = try decodeFrame(alloc, first);
+    defer decoded_frame_1.deinit(alloc);
+    const decoded = &decoded_frame_1.known;
     try std.testing.expectEqual(Kind.session_started, decoded.kind());
     try std.testing.expect(decoded.event.session_started.subagent_child);
     try std.testing.expectEqualStrings("session-1", decoded.session_id);
@@ -1726,11 +1822,11 @@ test "event frame codec is deterministic and validates contiguous sequence" {
     try std.testing.expectEqual(@as(i64, 50), decoded.ts);
 
     var validator: SequenceValidator = .{};
-    try validator.validate(decoded);
+    try validator.validate(decoded.seq);
 
     var gap = decoded;
     gap.seq = 3;
-    try std.testing.expectError(error.NonContiguousSequence, validator.validate(gap));
+    try std.testing.expectError(error.NonContiguousSequence, validator.validate(gap.seq));
 }
 
 test "history_turn_committed event decode repairs duplicate-key tool arguments" {
@@ -1773,8 +1869,9 @@ test "history_turn_committed event decode repairs duplicate-key tool arguments" 
 
     const encoded = try encodeFrame(std.testing.allocator, frame);
     defer std.testing.allocator.free(encoded);
-    var decoded = try decodeFrame(std.testing.allocator, encoded);
-    defer decoded.deinit(std.testing.allocator);
+    var decoded_frame_6 = try decodeFrame(std.testing.allocator, encoded);
+    defer decoded_frame_6.deinit(std.testing.allocator);
+    const decoded = &decoded_frame_6.known;
 
     const step = decoded.event.history_turn_committed.turn.assistant.execution.tool_steps[0];
     try std.testing.expectEqualStrings("{}", step.tool_calls[0].arguments_json);
@@ -1800,8 +1897,8 @@ test "event frame cap is inclusive of the required newline" {
     @memcpy(exact[0 .. encoded.len - 1], encoded[0 .. encoded.len - 1]);
     @memset(exact[encoded.len - 1 .. exact.len - 1], ' ');
     exact[exact.len - 1] = '\n';
-    var decoded = try decodeFrame(alloc, exact);
-    decoded.deinit(alloc);
+    var decoded_frame_2 = try decodeFrame(alloc, exact);
+    defer decoded_frame_2.deinit(alloc);
 
     const oversized = try alloc.alloc(u8, event_frame_max_bytes + 1);
     defer alloc.free(oversized);
@@ -2407,8 +2504,9 @@ test "history_turn_committed leaves absent session usage unchanged" {
     const committed_line = try encodeFrame(alloc, committed);
     defer alloc.free(committed_line);
 
-    var decoded = try decodeFrame(alloc, committed_line);
-    defer decoded.deinit(alloc);
+    var decoded_frame_3 = try decodeFrame(alloc, committed_line);
+    defer decoded_frame_3.deinit(alloc);
+    const decoded = &decoded_frame_3.known;
     try std.testing.expectEqual(
         @as(u64, 128),
         decoded.event.history_turn_committed.total_input_tokens,
@@ -2660,8 +2758,9 @@ test "usage checkpoint event decodes a cumulative snapshot" {
     try session_usage.writeSnapshot(&frame.writer, snapshot);
     try frame.writer.writeAll("}}\n");
 
-    var decoded = try decodeFrame(alloc, frame.written());
-    defer decoded.deinit(alloc);
+    var decoded_frame_4 = try decodeFrame(alloc, frame.written());
+    defer decoded_frame_4.deinit(alloc);
+    const decoded = &decoded_frame_4.known;
     try std.testing.expectEqualStrings("usage_checkpointed", @tagName(decoded.kind()));
 
     const started = Envelope{
@@ -2742,8 +2841,9 @@ test "permission state change event round-trips without history" {
     };
     const line = try encodeFrame(alloc, event);
     defer alloc.free(line);
-    var decoded = try decodeFrame(alloc, line);
-    defer decoded.deinit(alloc);
+    var decoded_frame_5 = try decodeFrame(alloc, line);
+    defer decoded_frame_5.deinit(alloc);
+    const decoded = &decoded_frame_5.known;
     try std.testing.expectEqualStrings("permission_state_changed", @tagName(decoded.kind()));
     try std.testing.expectEqual(@as(u64, 3), decoded.event.permission_state_changed.permission_state.next_generation);
 
@@ -2930,4 +3030,253 @@ fn identifier(seed: u8) Identifier {
     var value: Identifier = undefined;
     for (&value, 0..) |*byte, i| byte.* = seed +% @as(u8, @intCast(i));
     return value;
+}
+
+fn foreignSessionTestState() session_codec.DurableSessionState {
+    return .{
+        .id = @constCast("session-foreign-home"),
+        .origin_workspace_root = @constCast("/tmp/origin"),
+        .workspace_root = @constCast("/tmp/current"),
+        .created_at_ms = 10,
+        .updated_at_ms = 20,
+        .conversation_language = session.ConversationLanguage.literal("en"),
+        .preferences = .{
+            .model = @constCast("model-a"),
+            .effort = .auto,
+            .fast_mode = false,
+        },
+        .history = @constCast(&.{}),
+        .total_input_tokens = 1,
+        .total_output_tokens = 2,
+    };
+}
+
+test "reducer rejects a foreign-session line without mutating state" {
+    const alloc = std.testing.allocator;
+    const frames = [_]Envelope{
+        .{
+            .session_id = @constCast("session-foreign-home"),
+            .seq = 1,
+            .ts = 100,
+            .event = .{ .session_started = .{
+                .id = @constCast("session-foreign-home"),
+                .created_at_ms = 10,
+                .origin_workspace_root = @constCast("/tmp/origin"),
+                .workspace_root = @constCast("/tmp/current"),
+                .conversation_language = session.ConversationLanguage.literal("en"),
+                .preferences = .{
+                    .model = @constCast("model-a"),
+                    .effort = .auto,
+                    .fast_mode = false,
+                },
+            } },
+        },
+        .{
+            .session_id = @constCast("session-foreign-home"),
+            .seq = 2,
+            .ts = 110,
+            .event = .{ .preferences_changed = .{ .fast_mode = true } },
+        },
+        .{
+            .session_id = @constCast("session-foreign-away"),
+            .seq = 3,
+            .ts = 120,
+            .event = .{ .preferences_changed = .{ .fast_mode = false } },
+        },
+    };
+
+    var jsonl: std.Io.Writer.Allocating = .init(alloc);
+    defer jsonl.deinit();
+    for (frames) |frame| {
+        const line = try encodeFrame(alloc, frame);
+        defer alloc.free(line);
+        try jsonl.writer.writeAll(line);
+    }
+    var source = std.Io.Reader.fixed(jsonl.written());
+    try std.testing.expectError(error.SessionMismatch, reduceJsonl(alloc, &source, null));
+
+    // A single foreign frame applied to owned state fails the same way
+    // and leaves the caller's state untouched.
+    const initial = foreignSessionTestState();
+    var state = try initial.dupe(alloc);
+    defer state.deinit(alloc);
+    const foreign_line = try encodeFrame(alloc, frames[2]);
+    defer alloc.free(foreign_line);
+    try std.testing.expectError(
+        error.SessionMismatch,
+        applyEventFrame(alloc, &state, foreign_line, .{ .next_seq = 3 }),
+    );
+    try std.testing.expectEqualStrings("model-a", state.preferences.model);
+    try std.testing.expect(!state.preferences.fast_mode);
+    try std.testing.expectEqual(@as(i64, 20), state.updated_at_ms);
+}
+
+test "decoder ignores unknown envelope fields on known kinds" {
+    const alloc = std.testing.allocator;
+    const line =
+        "{\"schema_version\":1," ++
+        "\"kind\":\"preferences_changed\"," ++
+        "\"session_id\":\"session-tolerant\"," ++
+        "\"ts\":200," ++
+        "\"future_field\":{\"nested\":[1,2]}," ++
+        "\"seq\":2," ++
+        "\"payload\":{\"fast_mode\":true}}\n";
+    var frame = try decodeFrame(alloc, line);
+    defer frame.deinit(alloc);
+    const decoded = switch (frame) {
+        .known => |*envelope| envelope,
+        .unknown => return error.TestExpectedEqual,
+    };
+    try std.testing.expectEqual(Kind.preferences_changed, decoded.kind());
+    try std.testing.expectEqualStrings("session-tolerant", decoded.session_id);
+    try std.testing.expectEqual(@as(u64, 2), decoded.seq);
+    try std.testing.expect(decoded.event.preferences_changed.fast_mode.?);
+}
+
+test "reducer skips unknown kinds while surrounding lines reduce" {
+    const alloc = std.testing.allocator;
+    const started = Envelope{
+        .session_id = @constCast("session-skip"),
+        .seq = 1,
+        .ts = 100,
+        .event = .{ .session_started = .{
+            .id = @constCast("session-skip"),
+            .created_at_ms = 10,
+            .origin_workspace_root = @constCast("/tmp/origin"),
+            .workspace_root = @constCast("/tmp/current"),
+            .conversation_language = session.ConversationLanguage.literal("en"),
+            .preferences = .{
+                .model = @constCast("model-a"),
+                .effort = .auto,
+                .fast_mode = false,
+            },
+        } },
+    };
+    const finished = Envelope{
+        .session_id = @constCast("session-skip"),
+        .seq = 3,
+        .ts = 120,
+        .event = .{ .preferences_changed = .{ .fast_mode = true } },
+    };
+    const started_line = try encodeFrame(alloc, started);
+    defer alloc.free(started_line);
+    const finished_line = try encodeFrame(alloc, finished);
+    defer alloc.free(finished_line);
+    const future_line =
+        "{\"schema_version\":1," ++
+        "\"kind\":\"future_kind\"," ++
+        "\"session_id\":\"session-skip\"," ++
+        "\"ts\":110," ++
+        "\"seq\":2," ++
+        "\"payload\":{\"anything\":true}}\n";
+
+    var jsonl: std.Io.Writer.Allocating = .init(alloc);
+    defer jsonl.deinit();
+    try jsonl.writer.writeAll(started_line);
+    try jsonl.writer.writeAll(future_line);
+    try jsonl.writer.writeAll(finished_line);
+    var source = std.Io.Reader.fixed(jsonl.written());
+    var reduced = try reduceJsonl(alloc, &source, null);
+    defer reduced.deinit(alloc);
+    try std.testing.expect(reduced.state.preferences.fast_mode);
+    try std.testing.expectEqual(@as(i64, 120), reduced.state.updated_at_ms);
+    const through = reduced.through orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(u64, 3), through.seq);
+    try std.testing.expectEqual(@as(u64, jsonl.written().len), reduced.bytes_consumed);
+    try std.testing.expectEqual(@as(u64, jsonl.written().len), through.byte_offset);
+}
+
+test "emitted envelope carries exactly the v1 key set" {
+    const alloc = std.testing.allocator;
+    const bare = Envelope{
+        .session_id = @constCast("session-keys"),
+        .seq = 2,
+        .ts = 200,
+        .event = .{ .preferences_changed = .{ .fast_mode = true } },
+    };
+    const bare_line = try encodeFrame(alloc, bare);
+    defer alloc.free(bare_line);
+    try expectEnvelopeKeys(bare_line, &.{
+        "schema_version", "kind", "session_id", "ts", "seq", "payload",
+    });
+
+    var correlated = bare;
+    correlated.seq = 3;
+    correlated.turn_id = @constCast("turn-1");
+    correlated.item_id = @constCast("item-1");
+    const correlated_line = try encodeFrame(alloc, correlated);
+    defer alloc.free(correlated_line);
+    try expectEnvelopeKeys(correlated_line, &.{
+        "schema_version", "kind", "session_id", "ts", "turn_id", "item_id", "seq", "payload",
+    });
+    var frame = try decodeFrame(alloc, correlated_line);
+    defer frame.deinit(alloc);
+    const decoded = switch (frame) {
+        .known => |*envelope| envelope,
+        .unknown => return error.TestExpectedEqual,
+    };
+    try std.testing.expectEqualStrings("turn-1", decoded.turn_id.?);
+    try std.testing.expectEqualStrings("item-1", decoded.item_id.?);
+}
+
+fn expectEnvelopeKeys(line: []const u8, expected: []const []const u8) !void {
+    const alloc = std.testing.allocator;
+    try std.testing.expect(line.len > 0 and line[line.len - 1] == '\n');
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, line[0 .. line.len - 1], .{});
+    defer parsed.deinit();
+    const root = try requireObject(parsed.value);
+    try std.testing.expectEqual(expected.len, root.count());
+    for (expected) |key| {
+        try std.testing.expect(root.get(key) != null);
+    }
+    for ([_][]const u8{ "event_id", "log_generation", "timestamp_ms" }) |retired| {
+        try std.testing.expect(std.mem.find(u8, line, retired) == null);
+    }
+}
+
+test "decoder rejects the pre-v1 envelope and missing required keys" {
+    const alloc = std.testing.allocator;
+    const old_envelope =
+        "{\"schema_version\":1," ++
+        "\"log_generation\":\"000102030405060708090a0b0c0d0e0f\"," ++
+        "\"seq\":2," ++
+        "\"event_id\":\"101112131415161718191a1b1c1d1e1f\"," ++
+        "\"timestamp_ms\":200," ++
+        "\"kind\":\"preferences_changed\"," ++
+        "\"payload\":{\"fast_mode\":true}}\n";
+    try std.testing.expectError(error.InvalidEventFrame, decodeFrame(alloc, old_envelope));
+
+    const bare = Envelope{
+        .session_id = @constCast("session-keys"),
+        .seq = 2,
+        .ts = 200,
+        .event = .{ .preferences_changed = .{ .fast_mode = true } },
+    };
+    const bare_line = try encodeFrame(alloc, bare);
+    defer alloc.free(bare_line);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, bare_line[0 .. bare_line.len - 1], .{});
+    defer parsed.deinit();
+    for ([_][]const u8{ "seq", "payload", "session_id" }) |missing| {
+        var robbed = try duplicateJsonObject(alloc, parsed.value.object);
+        defer robbed.deinit();
+        try std.testing.expect(robbed.value.object.orderedRemove(missing));
+        const robbed_line = try stringifyJsonLine(alloc, robbed.value);
+        defer alloc.free(robbed_line);
+        try std.testing.expectError(error.InvalidEventFrame, decodeFrame(alloc, robbed_line));
+    }
+}
+
+fn duplicateJsonObject(alloc: std.mem.Allocator, object: std.json.ObjectMap) !std.json.Parsed(std.json.Value) {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try std.json.Stringify.value(std.json.Value{ .object = object }, .{}, &out.writer);
+    return try std.json.parseFromSlice(std.json.Value, alloc, out.written(), .{ .allocate = .alloc_always });
+}
+
+fn stringifyJsonLine(alloc: std.mem.Allocator, value: std.json.Value) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try std.json.Stringify.value(value, .{}, &out.writer);
+    try out.writer.writeByte('\n');
+    return try out.toOwnedSlice();
 }

@@ -579,15 +579,6 @@ pub fn parseIdentifier(raw: []const u8) error{InvalidSessionFormat}!session_even
     return result;
 }
 
-/// Structural equality of two commit positions.
-pub fn positionsEqual(
-    left: session_log.CommitPosition,
-    right: session_log.CommitPosition,
-) bool {
-    return left.through_seq == right.through_seq and
-        left.through_event_log_bytes == right.through_event_log_bytes;
-}
-
 /// Deletes an in-session file and fsyncs the directory so the removal is durable.
 pub fn deleteSessionEntry(
     session_dir: *io_mod.VerifiedDir,

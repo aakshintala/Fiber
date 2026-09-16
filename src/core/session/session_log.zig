@@ -4222,8 +4222,12 @@ fn corruptReplacementCommitTimestampForTest(
             positions.proposed.through_event_log_bytes,
         ) orelse return error.TestUnexpectedResult;
         defer alloc.free(line.bytes);
-        var envelope = try session_event.decodeFrame(alloc, line.bytes);
-        defer envelope.deinit(alloc);
+        var frame = try session_event.decodeFrame(alloc, line.bytes);
+        defer frame.deinit(alloc);
+        const envelope = switch (frame) {
+            .known => |*known| known,
+            .unknown => return error.TestExpectedEqual,
+        };
         if (envelope.kind() == .state_replacement_committed) {
             const needle = "\"ts\":20";
             const match = std.mem.find(u8, line.bytes, needle) orelse
@@ -4337,8 +4341,12 @@ test "state replacement uses the durable state timestamp for every frame" {
             committed.through_event_log_bytes,
         ) orelse return error.TestUnexpectedResult;
         defer alloc.free(line.bytes);
-        var envelope = try session_event.decodeFrame(alloc, line.bytes);
-        defer envelope.deinit(alloc);
+        var frame = try session_event.decodeFrame(alloc, line.bytes);
+        defer frame.deinit(alloc);
+        const envelope = switch (frame) {
+            .known => |*known| known,
+            .unknown => return error.TestExpectedEqual,
+        };
         try std.testing.expectEqual(@as(i64, 4242), envelope.ts);
         offset = line.next_offset;
         frame_count += 1;
@@ -6026,6 +6034,53 @@ test "append-only log keeps one generation past the old compaction horizon" {
     try std.testing.expectEqual(expected_fast_mode, resumed.state.preferences.fast_mode);
 }
 
+test "append after resume continues one contiguous seq run" {
+    const alloc = std.testing.allocator;
+    var temp = try TempRoot.init(alloc);
+    defer temp.deinit(alloc);
+    var initial = try testState(alloc, "session-resume-contiguity", 10);
+    defer initial.deinit(alloc);
+    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
+    _ = try loaded.appendEvent(
+        alloc,
+        .{ .preferences_changed = .{ .fast_mode = true } },
+        20,
+        .retry_expected_tail,
+        .{},
+    );
+    try std.testing.expectEqual(@as(u64, 2), loaded.position.through_seq);
+    loaded.deinit(alloc);
+
+    var resumed = try temp.root.resumeForWrite(alloc, "session-resume-contiguity", .{});
+    defer resumed.deinit(alloc);
+    try std.testing.expectEqual(@as(u64, 2), resumed.position.through_seq);
+    _ = try resumed.appendEvent(
+        alloc,
+        .{ .preferences_changed = .{ .fast_mode = false } },
+        30,
+        .retry_expected_tail,
+        .{},
+    );
+    try std.testing.expectEqual(@as(u64, 3), resumed.position.through_seq);
+
+    var log = try openManagedFile(&resumed.log.dir, events_file, .read_only);
+    defer log.close(io_mod.getIo());
+    const length = try log.length(io_mod.getIo());
+    try std.testing.expectEqual(resumed.position.through_event_log_bytes, length);
+    var offset: u64 = 0;
+    var seq: u64 = 0;
+    while (try session_replay.readLineAt(alloc, log, offset, length)) |line| {
+        defer alloc.free(line.bytes);
+        offset = line.next_offset;
+        var frame = try session_event.decodeFrame(alloc, line.bytes);
+        defer frame.deinit(alloc);
+        seq += 1;
+        try std.testing.expectEqual(seq, frame.seq());
+        try std.testing.expectEqualStrings("session-resume-contiguity", frame.session_id());
+    }
+    try std.testing.expectEqual(@as(u64, 3), seq);
+}
+
 test "oversized state commits through chunked replacement frames with contiguous sequence" {
     const alloc = std.testing.allocator;
     var temp = try TempRoot.init(alloc);
@@ -6085,8 +6140,12 @@ test "oversized state commits through chunked replacement frames with contiguous
     while (try session_replay.readLineAt(alloc, log, offset, length)) |line| {
         defer alloc.free(line.bytes);
         offset = line.next_offset;
-        var envelope = try session_event.decodeFrame(alloc, line.bytes);
-        defer envelope.deinit(alloc);
+        var frame = try session_event.decodeFrame(alloc, line.bytes);
+        defer frame.deinit(alloc);
+        const envelope = switch (frame) {
+            .known => |*known| known,
+            .unknown => return error.TestExpectedEqual,
+        };
         seq += 1;
         try std.testing.expectEqual(seq, envelope.seq);
         try std.testing.expectEqualStrings("session-oversized-chunks", envelope.session_id);

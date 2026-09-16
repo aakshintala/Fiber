@@ -74,16 +74,21 @@ fn readSessionStarted(alloc: Allocator, file: std.Io.File) !session_event.Envelo
     const first = try readLineAt(alloc, file, 0, length) orelse
         return error.InvalidSessionFormat;
     defer alloc.free(first.bytes);
-    var envelope = session_event.decodeFrame(alloc, first.bytes) catch |err| switch (err) {
+    var frame = session_event.decodeFrame(alloc, first.bytes) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.UnsupportedEventSchema => return error.UnsupportedSessionSchema,
         else => return error.InvalidSessionFormat,
     };
-    errdefer envelope.deinit(alloc);
+    errdefer frame.deinit(alloc);
+    const envelope = switch (frame) {
+        .known => |*known| known,
+        .unknown => return error.InvalidSessionFormat,
+    };
     if (envelope.seq != 1 or envelope.kind() != .session_started) {
         return error.InvalidSessionFormat;
     }
-    return envelope;
+    const owned = envelope.*;
+    return owned;
 }
 
 pub fn scanCommitPosition(
