@@ -231,7 +231,7 @@ jobs:
         run: zig build -Doptimize=ReleaseSafe
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22"
 
@@ -292,7 +292,7 @@ jobs:
           use-cache: false
 
       - name: Restore native Zig cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .zig-cache
           key: ci-e2e-read-only-${{ matrix.platform.name }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -454,7 +454,7 @@ jobs:
 
       - name: Upload retry report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: flake-retries-${{ matrix.platform.name }}-shard-${{ matrix.shard.index }}
           path: ${{ runner.temp }}/fiber-flake-retries.txt
@@ -472,7 +472,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Download retry reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: flake-retries-*
           merge-multiple: true
@@ -541,7 +541,7 @@ jobs:
 
       - name: Upload interactive terminal performance evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: tui-performance
           path: ${{ runner.temp }}/tui-performance.json
@@ -686,7 +686,7 @@ jobs:
 
       - name: Upload size evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: binary-size-evidence-${{ matrix.name }}-${{ github.event.pull_request.number }}
           path: |
@@ -701,7 +701,7 @@ jobs:
 
       - name: Upload binaries for investigation
         if: steps.size.outputs.warning == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: binary-size-binaries-${{ matrix.name }}-${{ github.event.pull_request.number }}
           path: |
