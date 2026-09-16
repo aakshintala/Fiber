@@ -712,7 +712,19 @@ export class TmuxSession {
           stdio: "pipe",
         });
       }
-      await sleep(startupWaitMs);
+      // Poll for the first painted frame rather than spending the whole
+      // budget: startupWaitMs is a ceiling, not a fixed cost. Exhausting it
+      // without paint is not an error here, exactly as the flat sleep was
+      // not: the test's own assertion reports the real failure.
+      if (startupWaitMs > 0) {
+        try {
+          await session.waitForPane(
+            (pane) => pane.trim().length > 0,
+            startupWaitMs,
+            { description: "first painted frame" },
+          );
+        } catch {}
+      }
       return session;
     } catch (err) {
       await session.kill();
