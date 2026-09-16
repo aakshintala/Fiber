@@ -211,5 +211,5 @@ identity, release machinery, and distribution Fiber removed.
 ## Agents
 
 If you are an agent working in this repository, read [AGENTS.md](AGENTS.md). It
-covers the same process plus the code style, architecture, and verification
-rules you are held to.
+covers the same process plus the architecture and verification rules you are
+held to. Review applies [CODING_STANDARDS.md](CODING_STANDARDS.md).
