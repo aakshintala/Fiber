@@ -1538,6 +1538,75 @@ test "prior tool results exclude the pending group and retain newest completed e
     try std.testing.expect(!selected.older_entries_omitted);
 }
 
+test "resumed permission feedback never enters later review evidence" {
+    const alloc = std.testing.allocator;
+    // Resume re-inflates persisted feedback as plain user messages without
+    // the live flag; the live turn may also carry flagged feedback in
+    // either role. None of it may reach a later auto-mode security review.
+    const earlier_calls = [_]types.ToolCall{.{
+        .id = "earlier",
+        .name = "read_file",
+        .arguments_json = "{\"path\":\"notes.txt\"}",
+    }};
+    const pending_calls = [_]types.ToolCall{.{
+        .id = "pending",
+        .name = "run_command",
+        .arguments_json = "{\"command\":\"git status\"}",
+    }};
+    const messages = [_]types.ChatMessage{
+        .{ .role = .assistant, .tool_calls = &earlier_calls },
+        .{ .role = .tool, .content = "EARLIER_OUTPUT", .tool_call_id = "earlier", .tool_name = "read_file" },
+        .{ .role = .user, .content = "FEEDBACK_SENTINEL resumed plain: run git status --porcelain next" },
+        .{ .role = .tool, .content = "FEEDBACK_SENTINEL flagged tool feedback", .tool_call_id = "feedback", .tool_name = "ask_user_question", .permission_feedback = true },
+        .{ .role = .user, .content = "FEEDBACK_SENTINEL flagged user feedback", .tool_call_id = "earlier", .permission_feedback = true },
+        .{ .role = .assistant, .tool_calls = &pending_calls },
+    };
+
+    const selected = try selectPriorToolResults(alloc, &messages, "pending");
+    defer alloc.free(selected.entries);
+    try std.testing.expectEqual(@as(usize, 1), selected.entries.len);
+    try std.testing.expectEqualStrings("EARLIER_OUTPUT", selected.entries[0].content);
+    try std.testing.expect(!selected.older_entries_omitted);
+
+    // Feedback text naming the exact action must not establish provenance.
+    const action = Action{ .command = .{
+        .command = "git status --porcelain",
+        .resolved_cwd = "/workspace",
+        .background = false,
+        .target_os = .linux,
+    } };
+    try std.testing.expectEqual(
+        ActionProvenance.not_observed,
+        deriveActionProvenance(action, pending_calls[0].arguments_json, &messages),
+    );
+
+    // The serialized review packet carries the real result but no feedback.
+    const targets = [_]permissions.PermissionCallTarget{.{
+        .role = "target",
+        .path = @constCast("/workspace::git status"),
+    }};
+    const pending_assistant = types.ChatMessage{ .role = .assistant, .tool_calls = &pending_calls };
+    var cancel_flag = std.atomic.Value(bool).init(false);
+    const deadline = std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
+        .clock = .awake,
+        .raw = .fromSeconds(1),
+    });
+    var evidence = try serializeEvidence(alloc, .{
+        .review_turn = .{
+            .model = "openai/gpt-test",
+            .pending_assistant = pending_assistant,
+            .target_call_id = "pending",
+            .origin = .root,
+        },
+        .prior_tool_results = selected,
+        .targets = &targets,
+        .action = action,
+    }, deadline, &cancel_flag);
+    defer evidence.deinit(alloc);
+    try std.testing.expect(std.mem.find(u8, evidence.text, "FEEDBACK_SENTINEL") == null);
+    try std.testing.expect(std.mem.find(u8, evidence.text, "EARLIER_OUTPUT") != null);
+}
+
 test "prior tool result selection is entry bounded and keeps the newest window" {
     var call_ids: [20][16]u8 = undefined;
     var contents: [20][16]u8 = undefined;

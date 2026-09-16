@@ -208,3 +208,52 @@ test "explicit clean environment is direct only in automatic mode" {
         defaultForRunCommand(std.testing.allocator, write_ctx, .auto).approval_required,
     );
 }
+
+test "shell authority binds the tty execution identity" {
+    const tty_ctx = CommandContext{
+        .command = "tail -f server.log",
+        .resolved_cwd = "/workspace",
+        .target_os = .linux,
+        .execution_mode = .tty,
+    };
+    const authority = AdmissionFingerprint.init(tty_ctx);
+    try std.testing.expect(authority.matches(tty_ctx));
+
+    // Shell input written to a host-proven tty session must not authorize
+    // captured execution of the same command, and vice versa.
+    var captured = tty_ctx;
+    captured.execution_mode = .captured;
+    try std.testing.expect(!authority.matches(captured));
+    try std.testing.expect(!AdmissionFingerprint.init(captured).matches(tty_ctx));
+
+    // An explicit shell profile is part of the identity as well.
+    var profiled = tty_ctx;
+    profiled.environment = .{ .user = "/bin/zsh" };
+    try std.testing.expect(!authority.matches(profiled));
+}
+
+test "shell authority authorizes only the exact unchanged action" {
+    const first = CommandContext{
+        .command = "git status --porcelain",
+        .resolved_cwd = "/workspace",
+        .target_os = .linux,
+    };
+    const authority = AdmissionFingerprint.init(first);
+    try std.testing.expect(authority.matches(first));
+    try std.testing.expect(authority.eql(AdmissionFingerprint.init(first)));
+
+    // An auto-review clear mints exactly this fingerprint; any change to
+    // the action forces a new review instead of inheriting the clear.
+    var changed_args = first;
+    changed_args.command = "git status --porcelain --branch";
+    try std.testing.expect(!authority.matches(changed_args));
+    try std.testing.expect(!authority.eql(AdmissionFingerprint.init(changed_args)));
+
+    var changed_cwd = first;
+    changed_cwd.resolved_cwd = "/workspace/subdir";
+    try std.testing.expect(!authority.matches(changed_cwd));
+
+    var changed_os = first;
+    changed_os.target_os = .macos;
+    try std.testing.expect(!authority.matches(changed_os));
+}
