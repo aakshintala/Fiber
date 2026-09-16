@@ -151,6 +151,9 @@ jobs:
             runner: ubuntu-24.04-arm
           - name: macos-aarch64
             runner: macos-15
+            # See the Build step below: this runner is slower when the two
+            # compiles overlap, so it builds the exe first.
+            serial_build: true
     steps:
       - uses: actions/checkout@v5
 
@@ -166,7 +169,16 @@ jobs:
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
 
-      # One invocation: see the comment on the linux-x86_64 job above.
+      # `zig build test` builds and installs the exe too, and the build runner
+      # compiles the exe and the test binary concurrently. On the 4-core Linux
+      # runners that hides the exe build entirely, measured at -3m38. On
+      # macos-15-arm64 the overlap is slower than building serially, measured
+      # at +2m13 against seven serial samples, so that platform builds first
+      # and the test step reuses the cache.
+      - name: Build
+        if: matrix.platform.serial_build
+        run: zig build -Doptimize=ReleaseSafe
+
       - name: Build and run unit tests
         run: zig build test -Doptimize=ReleaseSafe
 
