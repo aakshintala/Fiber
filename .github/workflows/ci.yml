@@ -65,6 +65,7 @@ jobs:
           scripts=(
             benchmarks/startup.sh
             scripts/check-public-surface.sh
+            scripts/e2e-run-file.sh
           )
           bash -n "${scripts[@]}"
           shellcheck "${scripts[@]}"
@@ -263,21 +264,22 @@ jobs:
         platform: ${{ fromJSON(needs.e2e-platforms.outputs.platforms) }}
         shard:
           - index: 0
-            shard_count: 4
-            label: "1/4"
+            shard_count: 3
+            label: "1/3"
           - index: 1
-            shard_count: 4
-            label: "2/4"
+            shard_count: 3
+            label: "2/3"
           - index: 2
-            shard_count: 4
-            label: "3/4"
-          - index: 3
-            shard_count: 4
-            label: "4/4"
+            shard_count: 3
+            label: "3/3"
     env:
       FIBER_REQUIRE_TMUX: "1"
       SHARD_INDEX: ${{ matrix.shard.index }}
       SHARD_COUNT: ${{ matrix.shard.shard_count }}
+      # Files within a shard run concurrently, each in its own tmux server.
+      # Three lanes on a 4-vCPU runner leaves headroom; these tests are
+      # latency-bound, so lanes overlap waiting rather than contend for CPU.
+      E2E_LANES: "3"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -374,57 +376,60 @@ jobs:
         shell: bash
         working-directory: tests/e2e
         run: |
-          selected=()
+          set -euo pipefail
           selection_file="$RUNNER_TEMP/fiber-e2e-shard-${SHARD_INDEX}.txt"
           bun ci-shards.ts \
             --shard-count "$SHARD_COUNT" \
             --shard-index "$SHARD_INDEX" > "$selection_file"
+
+          selected=()
           while IFS= read -r test_file; do
             selected+=("$test_file")
           done < "$selection_file"
-
           test "${#selected[@]}" -gt 0
-          printf 'Running E2E shard %s/%s (%s files):\n' "$((SHARD_INDEX + 1))" "$SHARD_COUNT" "${#selected[@]}"
+
+          printf 'Running E2E shard %s/%s (%s files, %s lanes):\n' \
+            "$((SHARD_INDEX + 1))" "$SHARD_COUNT" "${#selected[@]}" "$E2E_LANES"
           printf '  %s\n' "${selected[@]}"
 
+          # Files fan out across lanes, each in its own tmux server. The
+          # runner script always exits 0 and records its outcome under
+          # RESULTS_DIR, because `xargs -P` aborts the fan-out on a non-zero
+          # child. Aggregation below owns this step's exit code.
+          results_dir="$RUNNER_TEMP/fiber-e2e-results-${SHARD_INDEX}"
+          rm -rf "$results_dir"
+          mkdir -p "$results_dir"
+          RESULTS_DIR="$results_dir" SHARD_INDEX="$SHARD_INDEX" \
+            xargs -P "$E2E_LANES" -I{} \
+            "$GITHUB_WORKSPACE/scripts/e2e-run-file.sh" {} < "$selection_file"
+
+          # A missing status file means its lane died without recording an
+          # outcome; that is a failure, never a silent pass.
           shard_status=0
           retried_files=()
           flake_entries=()
-          test_number=0
           for test_file in "${selected[@]}"; do
-            tmux_tmp_dir="$RUNNER_TEMP/fiber-e2e-tmux-${SHARD_INDEX}-${test_number}"
-            mkdir -p "$tmux_tmp_dir"
-            # Structured JUnit report alongside the normal console output
-            # (console and exit code are unchanged). On first-attempt
-            # failure the failing TEST names are parsed out of this report,
-            # never out of the log.
-            junit_report="$RUNNER_TEMP/fiber-e2e-junit-${SHARD_INDEX}-${test_number}.xml"
-            if TMUX_TMPDIR="$tmux_tmp_dir" bun test --max-concurrency 1 --reporter=junit --reporter-outfile="$junit_report" "./$test_file"; then
-              :
-            else
-              printf 'E2E shard %s: %s failed first attempt; retrying once\n' "$SHARD_INDEX" "$test_file" >&2
-              # Failing TEST names come from the JUnit XML (structured
-              # reporter output), never from grepping the log. Single-line
-              # python so the YAML literal block needs no heredoc.
-              # Unparseable/missing report yields nothing (2>/dev/null) and
-              # the entry degrades to the bare file line, exactly as before.
-              failing_tests=$(python3 -c 'import sys,xml.etree.ElementTree as ET;print("\n".join(lbl for tc in ET.parse(sys.argv[1]).getroot().iter("testcase") for name in [(tc.get("name") or "").strip()] for cn in [(tc.get("classname") or "").strip()] for lbl in [(cn+" > "+name) if cn and cn!=name else name] if (tc.find("failure") is not None or tc.find("error") is not None) and lbl))' "$junit_report" 2>/dev/null || true)
-              retry_tmp_dir="${tmux_tmp_dir}-retry"
-              mkdir -p "$retry_tmp_dir"
-              if TMUX_TMPDIR="$retry_tmp_dir" bun test --max-concurrency 1 "./$test_file"; then
-                printf '::warning::E2E flake (passed on retry, needs flake issue): %s\n' "$test_file"
-                retried_files+=("$test_file")
-                while IFS= read -r failing_test; do
-                  [ -n "$failing_test" ] || continue
-                  flake_entries+=("$test_file: $failing_test")
-                done <<< "$failing_tests"
-              else
-                shard_status=1
-              fi
+            slug="$(printf '%s' "$test_file" | tr -c '[:alnum:]' '-')"
+            lane_dir="${results_dir}/${slug}"
+            if [ ! -f "${lane_dir}/status" ]; then
+              printf 'E2E shard %s: %s recorded no outcome\n' "$SHARD_INDEX" "$test_file" >&2
+              shard_status=1
+              continue
             fi
-            TMUX_TMPDIR="$tmux_tmp_dir" tmux kill-server 2>/dev/null || true
-            test_number=$((test_number + 1))
+            if [ "$(cat "${lane_dir}/status")" != "0" ]; then
+              shard_status=1
+            fi
+            if [ -f "${lane_dir}/retried" ]; then
+              retried_files+=("$test_file")
+            fi
+            if [ -f "${lane_dir}/flakes" ]; then
+              while IFS= read -r flake_entry; do
+                [ -n "$flake_entry" ] || continue
+                flake_entries+=("$flake_entry")
+              done < "${lane_dir}/flakes"
+            fi
           done
+
           if [ "${#retried_files[@]}" -gt 0 ]; then
             {
               printf 'E2E shard %s passed after retry (flaky; file a flake issue):\n' "$SHARD_INDEX"
@@ -435,15 +440,13 @@ jobs:
               fi
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-          # Always written (possibly blank): flake-watch collects these.
-          # Format extends the original file-level contract: one bare
-          # "<file>" line per passed-after-retry file (unchanged, so
-          # existing file-level consumers keep working), followed by
-          # "<file>: <test name>" lines for the failing tests parsed
-          # from the first attempt's JUnit report. When parsing yields
-          # nothing, the report degrades to the bare file line, exactly
-          # as before. Green runs write exactly what they wrote before.
-          printf '%s\n' "${retried_files[@]}" > "$RUNNER_TEMP/fiber-flake-retries.txt"
+          # Always written (possibly blank): flake-watch collects these. The
+          # file-level contract is unchanged: one bare "<file>" line per
+          # passed-after-retry file, then "<file>: <test name>" lines.
+          : > "$RUNNER_TEMP/fiber-flake-retries.txt"
+          if [ "${#retried_files[@]}" -gt 0 ]; then
+            printf '%s\n' "${retried_files[@]}" >> "$RUNNER_TEMP/fiber-flake-retries.txt"
+          fi
           if [ "${#flake_entries[@]}" -gt 0 ]; then
             printf '%s\n' "${flake_entries[@]}" >> "$RUNNER_TEMP/fiber-flake-retries.txt"
           fi
