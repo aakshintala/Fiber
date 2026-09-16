@@ -377,8 +377,6 @@ fn appendSessionDiagnosticChecks(
             .projection_missing,
             .projection_stale,
             .canonical_log_large,
-            .canonical_log_compaction_overdue,
-            .canonical_log_compaction_failed,
             .cleanup_candidate,
             => .warn,
             .invalid_authority_transition,
@@ -449,12 +447,8 @@ fn recoveryActionForSessionDiagnostic(
         .cleanup_candidate,
         => "rerun fiber doctor after active writers exit; cleanup is guarded",
 
-        .canonical_log_large,
-        .canonical_log_compaction_overdue,
-        => "resume or update the session to trigger compaction",
-
-        .canonical_log_compaction_failed,
-        => "inspect the failed compaction artifact; keep it until no writer is active",
+        .canonical_log_large
+        => "the session log is append-only and stays usable; remove the session if it is no longer needed",
 
         .projection_missing,
         .projection_stale,
@@ -848,7 +842,7 @@ test "bounded doctor warnings use existing check stream" {
     ) != null);
 }
 
-test "session doctor renders precise watermark and compaction diagnostics" {
+test "session doctor renders precise watermark and large-log diagnostics" {
     const alloc = std.testing.allocator;
     var checks: std.ArrayList(Check) = .empty;
     defer {
@@ -862,11 +856,9 @@ test "session doctor renders precise watermark and compaction diagnostics" {
             .kind = .commit_watermark_missing,
         },
         .{
-            .session_id = @constCast("failed-compaction"),
-            .kind = .canonical_log_compaction_failed,
+            .session_id = @constCast("large-log"),
+            .kind = .canonical_log_large,
             .bytes = 1024,
-            .growth_bytes = 512,
-            .growth_frames = 9,
         },
     };
 
@@ -893,7 +885,7 @@ test "session doctor renders precise watermark and compaction diagnostics" {
     try std.testing.expect(std.mem.find(
         u8,
         checks.items[1].detail,
-        "growth_bytes=512 growth_frames=9",
+        "append-only and stays usable",
     ) != null);
 }
 

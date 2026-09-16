@@ -192,8 +192,6 @@ pub const DoctorIssueKind = enum {
     commit_watermark_mismatched,
     canonical_state_invalid,
     canonical_log_large,
-    canonical_log_compaction_overdue,
-    canonical_log_compaction_failed,
     cleanup_candidate,
     unsafe_path,
 };

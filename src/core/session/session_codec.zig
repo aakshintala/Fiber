@@ -682,6 +682,10 @@ pub fn writePermissionState(
     try writer.writeAll("]}");
 }
 
+/// Decodes a permission state from its JSON object form. The caller owns
+/// the returned state and must release it with `deinit` using the same
+/// allocator, including on test and error-probe paths that duplicate it
+/// into events. Partial state on decode failure is released internally.
 pub fn parsePermissionState(
     alloc: Allocator,
     value: std.json.Value,

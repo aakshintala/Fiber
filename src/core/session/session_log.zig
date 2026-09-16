@@ -725,6 +725,29 @@ pub const LoadedWritableSession = struct {
         return if (self.degraded_tail) |*tail| tail else null;
     }
 
+    /// Appends the caller's current usage snapshot as one small
+    /// usage_checkpointed event and marks the runtime ledger clean when
+    /// the commit lands. Every runtime shutdown flush goes through here
+    /// so the interactive and ask paths cannot drift apart.
+    pub fn appendUsageCheckpoint(
+        self: *LoadedWritableSession,
+        alloc: Allocator,
+        usage: *session_usage.Usage,
+        timestamp_ms: i64,
+        options: Options,
+    ) !void {
+        var snapshot = try usage.snapshot(alloc);
+        defer snapshot.deinit(alloc);
+        _ = try self.appendEvent(
+            alloc,
+            .{ .usage_checkpointed = .{ .usage = snapshot } },
+            timestamp_ms,
+            .retry_expected_tail,
+            options,
+        );
+        if (self.state.usage) |persisted| usage.markClean(persisted);
+    }
+
     fn prepareCommitLifecycle(
         self: *LoadedWritableSession,
         alloc: Allocator,
@@ -6373,6 +6396,96 @@ test "append-only log keeps one generation past the old compaction horizon" {
     try std.testing.expect(positionsEqual(position, resumed.position));
     try std.testing.expect(std.mem.eql(u8, &generation, &resumed.position.log_generation));
     try std.testing.expectEqual(expected_fast_mode, resumed.state.preferences.fast_mode);
+}
+
+test "oversized state commits through chunked replacement frames without changing generation" {
+    const alloc = std.testing.allocator;
+    var temp = try TempRoot.init(alloc);
+    defer temp.deinit(alloc);
+    var initial = try testState(alloc, "session-oversized-chunks", 10);
+    defer initial.deinit(alloc);
+    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
+    defer loaded.deinit(alloc);
+    const generation = loaded.position.log_generation;
+
+    // A turn past the 8 MiB frame cap does not fit one frame.
+    const big_text = try alloc.alloc(u8, 9 * 1024 * 1024);
+    defer alloc.free(big_text);
+    @memset(big_text, 'a');
+    const big_turn = try session.makeAssistantTurn(alloc, big_text, "response");
+    defer session.freeHistoryTurn(alloc, big_turn);
+    const oversized = session_event.Event{ .history_turn_committed = .{
+        .conversation_language = loaded.state.conversation_language,
+        .total_input_tokens = 0,
+        .total_output_tokens = 0,
+        .turn = big_turn,
+    } };
+    const before = loaded.position;
+    try std.testing.expectError(
+        error.EventFrameTooLarge,
+        loaded.appendEvent(alloc, oversized, 20, .retry_expected_tail, .{}),
+    );
+    try std.testing.expect(positionsEqual(before, loaded.position));
+
+    // The oversized turn still lands through the chunked replacement framing:
+    // started, one or more chunks, committed — never a lone full-state frame.
+    var current = try loaded.state.dupe(alloc);
+    defer current.deinit(alloc);
+    const owned_history = try alloc.alloc(session.HistoryTurn, 1);
+    errdefer alloc.free(owned_history);
+    owned_history[0] = try session.dupeHistoryTurn(alloc, big_turn);
+    session.freeHistoryTurnSlice(alloc, current.history);
+    current.history = owned_history;
+    current.updated_at_ms = 30;
+    _ = try loaded.commitStateReplacement(
+        alloc,
+        current,
+        .compaction,
+        .retry_expected_tail,
+        .{},
+    );
+    try std.testing.expect(std.mem.eql(u8, &generation, &loaded.position.log_generation));
+    try std.testing.expect(loaded.position.through_seq > before.through_seq + 1);
+    try std.testing.expectEqual(@as(usize, 1), loaded.state.history.len);
+
+    var log = try openManagedFile(&loaded.log.dir, events_file, .read_only);
+    defer log.close(io_mod.getIo());
+    const length = try log.length(io_mod.getIo());
+    var offset: u64 = 0;
+    var seq: u64 = 0;
+    var replacement_id: ?session_event.Identifier = null;
+    var chunk_count: u64 = 0;
+    var frame_count: u64 = 0;
+    while (try session_replay.readLineAt(alloc, log, offset, length)) |line| {
+        defer alloc.free(line.bytes);
+        offset = line.next_offset;
+        var envelope = try session_event.decodeFrame(alloc, line.bytes);
+        defer envelope.deinit(alloc);
+        seq += 1;
+        try std.testing.expectEqual(seq, envelope.seq);
+        try std.testing.expect(std.mem.eql(u8, &generation, &envelope.log_generation));
+        switch (envelope.event) {
+            .state_replacement_started => |payload| {
+                try std.testing.expect(replacement_id == null);
+                replacement_id = payload.replacement_id;
+            },
+            .state_replacement_chunk => |payload| {
+                try std.testing.expect(replacement_id != null);
+                try std.testing.expect(std.mem.eql(u8, &replacement_id.?, &payload.replacement_id));
+                chunk_count += 1;
+            },
+            .state_replacement_committed => |payload| {
+                try std.testing.expect(replacement_id != null);
+                try std.testing.expect(std.mem.eql(u8, &replacement_id.?, &payload.replacement_id));
+                frame_count = envelope.seq - before.through_seq;
+            },
+            else => {},
+        }
+    }
+    try std.testing.expect(replacement_id != null);
+    try std.testing.expect(chunk_count >= 1);
+    try std.testing.expectEqual(chunk_count + 2, frame_count);
+    try std.testing.expectEqual(loaded.position.through_seq, seq);
 }
 
 test "event append rejects a truncated committed prefix without extending it" {

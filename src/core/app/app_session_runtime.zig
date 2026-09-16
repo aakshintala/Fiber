@@ -4048,24 +4048,14 @@ pub fn Runtime(comptime App: type) type {
             log_options: session_log.Options,
         ) !void {
             try convergeDegraded(app, loaded, log_options);
-            const usage_dirty = if (comptime @hasField(@TypeOf(app.session), "usage"))
-                app.session.usage.isDirty()
-            else
-                false;
-            if (!usage_dirty) return;
-            const now_ms = io_mod.milliTimestamp();
-            var snapshot = try app.session.usage.snapshot(app.alloc);
-            defer snapshot.deinit(app.alloc);
-            _ = try loaded.appendEvent(
-                app.alloc,
-                .{ .usage_checkpointed = .{ .usage = snapshot } },
-                now_ms,
-                .retry_expected_tail,
-                log_options,
-            );
             if (comptime @hasField(@TypeOf(app.session), "usage")) {
-                if (loaded.state.usage) |persisted| {
-                    app.session.usage.markClean(persisted);
+                if (app.session.usage.isDirty()) {
+                    try loaded.appendUsageCheckpoint(
+                        app.alloc,
+                        &app.session.usage,
+                        io_mod.milliTimestamp(),
+                        log_options,
+                    );
                 }
             }
         }

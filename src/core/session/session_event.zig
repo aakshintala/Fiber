@@ -2746,17 +2746,20 @@ test "permission state change event round-trips without history" {
 
     var changed = session_permission_state.State{ .next_generation = 3 };
     defer changed.deinit(alloc);
-    const canonical = try alloc.dupe(u8, "test-canonical");
-    errdefer alloc.free(canonical);
-    const display = try alloc.dupe(u8, "test-display");
-    errdefer alloc.free(display);
-    try changed.rules.append(alloc, .{
-        .id = .{ .value = 1 },
-        .key = try session_permission_state.RuleKey.init(.command, canonical),
-        .display_identity = display,
-        .decision = .allow,
-        .generation = 2,
-    });
+    {
+        // Scoped so the errdefers lapse once the rules own the copies.
+        const canonical = try alloc.dupe(u8, "test-canonical");
+        errdefer alloc.free(canonical);
+        const display = try alloc.dupe(u8, "test-display");
+        errdefer alloc.free(display);
+        try changed.rules.append(alloc, .{
+            .id = .{ .value = 1 },
+            .key = try session_permission_state.RuleKey.init(.command, canonical),
+            .display_identity = display,
+            .decision = .allow,
+            .generation = 2,
+        });
+    }
     const event = Envelope{
         .log_generation = generation,
         .seq = 2,

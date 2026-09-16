@@ -9962,7 +9962,7 @@ test "failed recovery does not publish a pristine target as latest" {
     }
 }
 
-test "doctor never reports compaction growth on an append-only log" {
+test "doctor stays silent past the old compaction horizon on an append-only log" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -9978,7 +9978,7 @@ test "doctor never reports compaction growth on an append-only log" {
     var writable = try ctx.store.startWritableSession(alloc, state);
     const generation = writable.position.log_generation;
     var i: u64 = 0;
-    while (i < 100) : (i += 1) {
+    while (i < 4500) : (i += 1) {
         _ = try writable.appendEvent(
             alloc,
             .{ .preferences_changed = .{ .fast_mode = i % 2 == 0 } },
@@ -9996,10 +9996,7 @@ test "doctor never reports compaction growth on an append-only log" {
 
     var diagnostics = try ctx.store.inspectForDoctor(alloc);
     defer freeDoctorDiagnostics(alloc, &diagnostics);
-    for (diagnostics.items) |diagnostic| {
-        try std.testing.expect(diagnostic.kind != .canonical_log_compaction_failed);
-        try std.testing.expect(diagnostic.kind != .canonical_log_compaction_overdue);
-    }
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
 }
 
 test "session store schema v3 facade accepts dotted session IDs" {

@@ -2626,18 +2626,12 @@ fn flushAskUsageCheckpoint(
     ctx: *AskContext,
     writable: *session_store.LoadedWritableSession,
 ) !void {
-    var snapshot = try ctx.session.usage.snapshot(ctx.alloc);
-    defer snapshot.deinit(ctx.alloc);
-    _ = try writable.appendEvent(
+    try writable.appendUsageCheckpoint(
         ctx.alloc,
-        .{ .usage_checkpointed = .{ .usage = snapshot } },
+        &ctx.session.usage,
         io_mod.milliTimestamp(),
-        .retry_expected_tail,
         session_test_controls.logOptions(),
     );
-    if (writable.state.usage) |persisted| {
-        ctx.session.usage.markClean(persisted);
-    }
 }
 
 fn commitAskStateReplacement(

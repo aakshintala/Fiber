@@ -324,8 +324,8 @@ fn inspectSchemaV3Session(
     state.deinit(alloc);
 }
 
-/// Appends a single cleanup-candidate diagnostic if the directory contains a
-/// compaction artifact from a generation other than the manifest's current one.
+/// Appends a single cleanup-candidate diagnostic if the directory contains an
+/// artifact from a generation other than the manifest's current one.
 fn appendCleanupCandidateIfPresent(
     diagnostics: *std.ArrayList(DoctorDiagnostic),
     alloc: Allocator,
