@@ -1,16 +1,6 @@
 # TypeScript test suites
 
-
-Two test suites live under `tests/`, both using Bun:
-
-## `tests/evals/` — LLM Evals
-
-Eval scenarios that exercise the agent through `fiber ask --json`. Require `AI_GATEWAY_API_KEY`.
-
-```bash
-cd tests/evals && bun install && bun test           # run all evals
-cd tests/evals && bun run eval:matrix               # cross-model matrix run
-```
+One test suite lives under `tests/`, using Bun:
 
 ## `tests/e2e/` — End-to-End Tests
 
@@ -24,3 +14,9 @@ cd tests/e2e && bun test tui-*.test.ts               # just TUI tests (requires 
 
 TUI tests use tmux to drive the interactive terminal. They require `tmux` to be installed.
 
+A few `*-live.test.ts` files exercise real network or model credentials. They
+skip unless explicitly opted in (`FIBER_E2E_REAL_API=1` for source context
+limits, `FIBER_WEB_FETCH_LIVE=1` for public-URL fetching).
+
+The former LLM eval suite was deleted (see #51); its salvaged
+failure-mode ledger lives at `docs/agent-failure-modes.md`.

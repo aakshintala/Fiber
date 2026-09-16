@@ -32,7 +32,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realpathSync } from "node:fs";
-import { FIBER_BIN, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, runFx } from "./eval-helpers";
 import {
   chatGptAccessToken,
   codexFinalText,

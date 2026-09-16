@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { HAS_API_KEY } from "../evals/eval-helpers";
+import { HAS_API_KEY } from "./eval-helpers";
 import {
   hasEmptyComposer,
   isComposerLine,

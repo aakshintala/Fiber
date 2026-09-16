@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { FIBER_BIN, REPO_ROOT } from "../../evals/eval-helpers";
+import { FIBER_BIN, REPO_ROOT } from "../eval-helpers";
 import { analyzeRun } from "./analyzer";
 import {
   attachFrameEvidence,

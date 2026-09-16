@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HAS_API_KEY, runFx } from "../evals/eval-helpers";
+import { HAS_API_KEY, runFx } from "./eval-helpers";
+
+// Credential gating lives in ./eval-helpers (HAS_API_KEY). Opt in with FIBER_E2E_REAL_API=1.
 
 const LIVE_ENABLED = process.env.FIBER_E2E_REAL_API === "1";
 const TIMEOUT = 180_000;

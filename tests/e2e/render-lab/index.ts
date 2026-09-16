@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { FIBER_BIN, REPO_ROOT } from "../../evals/eval-helpers";
+import { FIBER_BIN, REPO_ROOT } from "../eval-helpers";
 import {
   chatGptAccessToken,
   FAKE_CODEX_DEFAULT_MODEL,

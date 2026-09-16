@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FIBER_BIN, HAS_API_KEY, runFx } from "../evals/eval-helpers";
+import { FIBER_BIN, HAS_API_KEY, runFx } from "./eval-helpers";
 import {
   chatGptAccessToken,
   codexFinalText,

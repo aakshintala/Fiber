@@ -23,7 +23,7 @@ import {
 import { createConnection, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { FIBER_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "./eval-helpers";
 import {
   terminalFixtureShell,
   TmuxSession,

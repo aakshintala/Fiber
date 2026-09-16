@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { FIBER_BIN } from "../evals/eval-helpers";
+import { FIBER_BIN } from "./eval-helpers";
 import {
   codexFinalText,
   codexToolCall,
