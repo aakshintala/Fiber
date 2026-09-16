@@ -122,15 +122,16 @@ jobs:
           version: ${{ env.ZIG_VERSION }}
           cache-key: ci-native-linux-x86_64-ReleaseSafe
 
-      - name: Build
-        run: zig build -Doptimize=ReleaseSafe
-
-      - name: Run unit tests
+      # `zig build test` depends on the install step, so it builds and installs
+      # the exe as well. The build runner compiles the exe and the test binary
+      # concurrently, and the exe is the shorter of the two, so folding them
+      # into one invocation hides the exe build entirely.
+      - name: Build and run unit tests
         env:
-          TEST_TIMEOUT_SECONDS: "900"
+          TEST_TIMEOUT_SECONDS: "1200"
         run: |
           started_at=$SECONDS
-          trap 'printf "Unit tests elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
+          trap 'printf "Build and unit tests elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
           timeout "${TEST_TIMEOUT_SECONDS}s" zig build test -Doptimize=ReleaseSafe
 
       - name: Smoke test fresh binary
@@ -165,10 +166,8 @@ jobs:
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
 
-      - name: Build
-        run: zig build -Doptimize=ReleaseSafe
-
-      - name: Run unit tests
+      # One invocation: see the comment on the linux-x86_64 job above.
+      - name: Build and run unit tests
         run: zig build test -Doptimize=ReleaseSafe
 
       - name: Smoke test fresh binary
