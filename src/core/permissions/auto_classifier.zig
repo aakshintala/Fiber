@@ -176,6 +176,18 @@ pub fn selectPriorToolResults(
     var selected: std.ArrayList(PriorToolResultEntry) = .empty;
     defer selected.deinit(arena);
     var older_entries_omitted = false;
+    // Review evidence is provider-facing: the reviewer model correlates
+    // results by provider call id, so resolve each item id through the
+    // walked assistant messages (provider_id orelse id). Boundary and
+    // target matching above stay on item ids.
+    var wire_ids = std.StringHashMap([]const u8).init(arena);
+    defer wire_ids.deinit();
+    for (current_turn_messages) |message| {
+        if (message.role != .assistant) continue;
+        for (message.tool_calls) |tool_call| {
+            try wire_ids.put(tool_call.id, tool_call.provider_id orelse tool_call.id);
+        }
+    }
     var index = boundary;
     while (index > 0) {
         index -= 1;
@@ -188,7 +200,7 @@ pub fn selectPriorToolResults(
             break;
         }
         try selected.append(arena, .{
-            .tool_call_id = tool_call_id,
+            .tool_call_id = wire_ids.get(tool_call_id) orelse tool_call_id,
             .tool_name = message.tool_name orelse "unknown",
             .content = content,
         });
@@ -1552,6 +1564,70 @@ test "prior tool results exclude the pending group and retain newest completed e
     try std.testing.expectEqualStrings("FIRST_RESULT", selected.entries[0].content);
     try std.testing.expectEqualStrings("NEWEST_RESULT", selected.entries[1].content);
     try std.testing.expect(!selected.older_entries_omitted);
+}
+
+test "prior tool results emit provider ids while linking by item id" {
+    const prior_calls = [_]types.ToolCall{.{
+        .id = "item_abc",
+        .name = "read_file",
+        .arguments_json = "{\"path\":\"a.txt\"}",
+        .provider_id = "call_provider",
+    }};
+    const local_calls = [_]types.ToolCall{.{
+        .id = "item_local",
+        .name = "run_command",
+        .arguments_json = "{}",
+    }};
+    const pending_calls = [_]types.ToolCall{.{
+        .id = "item_pending",
+        .name = "terminal",
+        .arguments_json = "{}",
+        .provider_id = "call_pending",
+    }};
+    const messages = [_]types.ChatMessage{
+        .{ .role = .assistant, .tool_calls = &prior_calls },
+        .{ .role = .tool, .content = "PROVIDER_RESULT", .tool_call_id = "item_abc", .tool_name = "read_file" },
+        .{ .role = .assistant, .tool_calls = &local_calls },
+        .{ .role = .tool, .content = "LOCAL_RESULT", .tool_call_id = "item_local", .tool_name = "run_command" },
+        .{ .role = .assistant, .tool_calls = &pending_calls },
+    };
+
+    // Boundary matching stays on the item id; the provider id finds nothing.
+    const missing = try selectPriorToolResults(std.testing.allocator, &messages, "call_pending");
+    defer std.testing.allocator.free(missing.entries);
+    try std.testing.expectEqual(@as(usize, 0), missing.entries.len);
+
+    const selected = try selectPriorToolResults(std.testing.allocator, &messages, "item_pending");
+    defer std.testing.allocator.free(selected.entries);
+    try std.testing.expectEqual(@as(usize, 2), selected.entries.len);
+    try std.testing.expectEqualStrings("call_provider", selected.entries[0].tool_call_id);
+    try std.testing.expectEqualStrings("PROVIDER_RESULT", selected.entries[0].content);
+    try std.testing.expectEqualStrings("item_local", selected.entries[1].tool_call_id);
+    try std.testing.expect(!selected.older_entries_omitted);
+
+    // The serialized evidence wire carries the provider id, not the item id.
+    var cancel_flag = std.atomic.Value(bool).init(false);
+    const deadline = std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
+        .clock = .awake,
+        .raw = .fromSeconds(1),
+    });
+    var evidence = try serializeEvidence(std.testing.allocator, .{
+        .review_turn = .{
+            .model = "openai/gpt-test",
+            .pending_assistant = .{ .role = .assistant, .tool_calls = &pending_calls },
+            .target_call_id = "item_pending",
+            .origin = .root,
+        },
+        .prior_tool_results = selected,
+        .targets = &.{},
+        .action = .{ .tool = .{
+            .tool_name = "terminal",
+            .arguments_json = "{}",
+        } },
+    }, deadline, &cancel_flag);
+    defer evidence.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.find(u8, evidence.text, "prior_tool_result[0].tool_call_id: call_provider") != null);
+    try std.testing.expect(std.mem.find(u8, evidence.text, "item_abc") == null);
 }
 
 test "resumed permission feedback never enters later review evidence" {
