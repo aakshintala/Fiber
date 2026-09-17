@@ -472,8 +472,8 @@ pub const BackgroundAction = enum {
     stop,
 };
 
-pub const BackgroundSessionEntry = struct {
-    session_id: []const u8,
+pub const BackgroundJobEntry = struct {
+    job_id: []const u8,
     command: []const u8,
     state: []const u8,
     backend: []const u8,
@@ -481,8 +481,8 @@ pub const BackgroundSessionEntry = struct {
 
 pub const BackgroundSnapshot = struct {
     action: BackgroundAction = .list,
-    sessions: []const BackgroundSessionEntry = &.{},
-    stop_session_id: ?[]const u8 = null,
+    jobs: []const BackgroundJobEntry = &.{},
+    stop_job_id: ?[]const u8 = null,
     stopped: bool = false,
     message: ?[]const u8 = null,
 
@@ -510,42 +510,42 @@ pub const BackgroundSnapshot = struct {
     fn writeBody(self: BackgroundSnapshot, writer: *std.Io.Writer, alloc: Allocator, prefix: []const u8, trailing_newline: bool) !void {
         switch (self.action) {
             .list => {
-                if (self.sessions.len == 0) {
+                if (self.jobs.len == 0) {
                     try writer.writeAll(prefix);
-                    try writer.writeAll("no running shell sessions");
+                    try writer.writeAll("no running background jobs");
                     if (trailing_newline) try writer.writeByte('\n');
                     return;
                 }
-                try writer.print("{s}sessions: {d}\n", .{ prefix, self.sessions.len });
-                for (self.sessions) |session| {
+                try writer.print("{s}jobs: {d}\n", .{ prefix, self.jobs.len });
+                for (self.jobs) |job| {
                     try writer.writeAll(prefix);
                     try writer.writeAll("- ");
-                    try writeTerminalSafe(writer, alloc, session.session_id);
+                    try writeTerminalSafe(writer, alloc, job.job_id);
                     try writer.writeAll(" [");
-                    try writer.writeAll(session.state);
+                    try writer.writeAll(job.state);
                     try writer.writeAll("] [");
-                    try writer.writeAll(session.backend);
+                    try writer.writeAll(job.backend);
                     try writer.writeAll("] ");
-                    try writeTerminalSafe(writer, alloc, session.command);
+                    try writeTerminalSafe(writer, alloc, job.command);
                     try writer.writeByte('\n');
                 }
                 try writer.writeAll(prefix);
-                try writer.writeAll("stop with: /background stop <session-id>");
+                try writer.writeAll("stop with: /background stop <job-id>");
                 if (trailing_newline) try writer.writeByte('\n');
             },
             .stop => {
-                const session_id = self.stop_session_id orelse "unknown";
+                const job_id = self.stop_job_id orelse "unknown";
                 try writer.writeAll(prefix);
                 if (self.stopped) {
                     try writer.writeAll("stopped ");
-                    try writeTerminalSafe(writer, alloc, session_id);
+                    try writeTerminalSafe(writer, alloc, job_id);
                 } else {
                     try writer.writeAll("ok=false ");
                     if (self.message) |message| {
                         try writeTerminalSafe(writer, alloc, message);
                     } else {
                         try writer.writeAll("could not stop ");
-                        try writeTerminalSafe(writer, alloc, session_id);
+                        try writeTerminalSafe(writer, alloc, job_id);
                     }
                 }
                 if (trailing_newline) try writer.writeByte('\n');
@@ -564,25 +564,25 @@ pub const BackgroundSnapshot = struct {
         );
         try std.json.Stringify.value(@tagName(self.action), .{}, &out.writer);
         if (self.action == .stop) {
-            try out.writer.writeAll(",\"session_id\":");
-            try std.json.Stringify.value(self.stop_session_id orelse "", .{}, &out.writer);
+            try out.writer.writeAll(",\"job_id\":");
+            try std.json.Stringify.value(self.stop_job_id orelse "", .{}, &out.writer);
             try out.writer.print(",\"stopped\":{}", .{self.stopped});
         }
         if (self.message) |message| {
             try out.writer.writeAll(",\"message\":");
             try std.json.Stringify.value(message, .{}, &out.writer);
         }
-        try out.writer.writeAll(",\"sessions\":[");
-        for (self.sessions, 0..) |session, index| {
+        try out.writer.writeAll(",\"jobs\":[");
+        for (self.jobs, 0..) |job, index| {
             if (index > 0) try out.writer.writeByte(',');
-            try out.writer.writeAll("{\"session_id\":");
-            try std.json.Stringify.value(session.session_id, .{}, &out.writer);
+            try out.writer.writeAll("{\"job_id\":");
+            try std.json.Stringify.value(job.job_id, .{}, &out.writer);
             try out.writer.writeAll(",\"command\":");
-            try std.json.Stringify.value(session.command, .{}, &out.writer);
+            try std.json.Stringify.value(job.command, .{}, &out.writer);
             try out.writer.writeAll(",\"state\":");
-            try std.json.Stringify.value(session.state, .{}, &out.writer);
+            try std.json.Stringify.value(job.state, .{}, &out.writer);
             try out.writer.writeAll(",\"backend\":");
-            try std.json.Stringify.value(session.backend, .{}, &out.writer);
+            try std.json.Stringify.value(job.backend, .{}, &out.writer);
             try out.writer.writeByte('}');
         }
         try out.writer.writeAll("]}}");
@@ -4062,33 +4062,34 @@ test "workspace errors expose shared user-facing copy" {
 
 test "background snapshot renders list and stop from one snapshot" {
     const alloc = std.testing.allocator;
-    const entries = [_]BackgroundSessionEntry{
-        .{ .session_id = "shell-1", .command = "sleep 60", .state = "running", .backend = "captured" },
-        .{ .session_id = "shell-2", .command = "vim", .state = "running", .backend = "tty" },
+    const entries = [_]BackgroundJobEntry{
+        .{ .job_id = "shell-1", .command = "sleep 60", .state = "running", .backend = "captured" },
+        .{ .job_id = "shell-2", .command = "vim", .state = "running", .backend = "tty" },
     };
-    const listed = BackgroundSnapshot{ .action = .list, .sessions = &entries };
+    const listed = BackgroundSnapshot{ .action = .list, .jobs = &entries };
     const text = try listed.renderText(alloc);
     defer alloc.free(text);
-    try std.testing.expect(std.mem.find(u8, text, "[background] sessions: 2") != null);
+    try std.testing.expect(std.mem.find(u8, text, "[background] jobs: 2") != null);
     try std.testing.expect(std.mem.find(u8, text, "shell-1 [running] [captured] sleep 60") != null);
-    try std.testing.expect(std.mem.find(u8, text, "/background stop <session-id>") != null);
+    try std.testing.expect(std.mem.find(u8, text, "/background stop <job-id>") != null);
 
     const body = try listed.renderInteractiveBody(alloc);
     defer alloc.free(body);
     try std.testing.expect(std.mem.find(u8, body, "[background]") == null);
-    try std.testing.expect(std.mem.find(u8, body, "sessions: 2") != null);
+    try std.testing.expect(std.mem.find(u8, body, "jobs: 2") != null);
 
     const json = try listed.renderJson(alloc);
     defer alloc.free(json);
     try std.testing.expect(std.mem.find(u8, json, "\"kind\":\"background\"") != null);
     try std.testing.expect(std.mem.find(u8, json, "\"action\":\"list\"") != null);
-    try std.testing.expect(std.mem.find(u8, json, "\"session_id\":\"shell-2\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "\"job_id\":\"shell-2\"") != null);
+    try std.testing.expect(std.mem.find(u8, json, "session_id") == null);
 
     const empty_text = try (BackgroundSnapshot{ .action = .list }).renderText(alloc);
     defer alloc.free(empty_text);
-    try std.testing.expect(std.mem.find(u8, empty_text, "no running shell sessions") != null);
+    try std.testing.expect(std.mem.find(u8, empty_text, "no running background jobs") != null);
 
-    const stopped = BackgroundSnapshot{ .action = .stop, .stop_session_id = "shell-1", .stopped = true };
+    const stopped = BackgroundSnapshot{ .action = .stop, .stop_job_id = "shell-1", .stopped = true };
     const stopped_text = try stopped.renderText(alloc);
     defer alloc.free(stopped_text);
     try std.testing.expect(std.mem.find(u8, stopped_text, "stopped shell-1") != null);
@@ -4096,18 +4097,20 @@ test "background snapshot renders list and stop from one snapshot" {
     defer alloc.free(stopped_json);
     try std.testing.expect(std.mem.find(u8, stopped_json, "\"ok\":true") != null);
     try std.testing.expect(std.mem.find(u8, stopped_json, "\"stopped\":true") != null);
+    try std.testing.expect(std.mem.find(u8, stopped_json, "session_id") == null);
 
-    const missed = BackgroundSnapshot{ .action = .stop, .stop_session_id = "shell-9", .message = "no running session with id shell-9" };
+    const missed = BackgroundSnapshot{ .action = .stop, .stop_job_id = "shell-9", .message = "no running job with id shell-9" };
     const missed_text = try missed.renderText(alloc);
     defer alloc.free(missed_text);
-    try std.testing.expect(std.mem.find(u8, missed_text, "[background] ok=false no running session with id shell-9") != null);
+    try std.testing.expect(std.mem.find(u8, missed_text, "[background] ok=false no running job with id shell-9") != null);
     const missed_body = try missed.renderInteractiveBody(alloc);
     defer alloc.free(missed_body);
-    try std.testing.expect(std.mem.find(u8, missed_body, "ok=false no running session with id shell-9") != null);
+    try std.testing.expect(std.mem.find(u8, missed_body, "ok=false no running job with id shell-9") != null);
     const missed_json = try missed.renderJson(alloc);
     defer alloc.free(missed_json);
     try std.testing.expect(std.mem.find(u8, missed_json, "\"ok\":false") != null);
     try std.testing.expect(std.mem.find(u8, missed_json, "\"stopped\":false") != null);
+    try std.testing.expect(std.mem.find(u8, missed_json, "session_id") == null);
 }
 
 test "workspace text snapshot terminal-encodes paths" {
