@@ -66,6 +66,7 @@ import {
   protocolFixtureDefinitions,
   protocolFixtureEnv,
   readSession,
+  readSessionUntilContains,
   rememberStartAuthority,
   requestAction,
   requestScreen,
@@ -1464,13 +1465,14 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
       failedId,
       "spoofed-profile rejection trace",
     );
-    const failedRead = await readSession(
+    await readSessionUntilContains(
       connected.client,
       connected.revision!,
-      correlation++,
+      () => correlation++,
       failedId,
+      "spoofed-ready",
+      "spoofed-profile output",
     );
-    expect(failedRead.output).toContain("spoofed-ready");
 
     const signaled = await startCommand(
       connected.client,
@@ -1597,16 +1599,14 @@ test("Bash and zsh preserve trusted normal startup and controlled clean startup"
       tmuxFailedId,
       "login-profile rejection trace",
     );
-    expect(
-      (
-        await readSession(
-          connected.client,
-          connected.revision!,
-          correlation++,
-          tmuxFailedId!,
-        )
-      ).output,
-    ).toContain("spoofed-login");
+    await readSessionUntilContains(
+      connected.client,
+      connected.revision!,
+      () => correlation++,
+      tmuxFailedId!,
+      "spoofed-login",
+      "login-profile output",
+    );
   }
 
   connected.client.close();

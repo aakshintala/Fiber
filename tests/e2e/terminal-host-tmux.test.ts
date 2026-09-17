@@ -1349,9 +1349,11 @@ test.skipIf(!tmuxAvailable())(
     for (let pass = 1; pass <= 2; pass++) {
       const home = makeHome();
       const paths = hostPaths(home);
+      const tracePath = join(home, "release-recovery.trace");
       const firstHost = startHost(home, undefined, 30_000, {
         FIBER_TERMINAL_TEST_TMUX_PREPARED_RELEASE_DELAY_MS:
           String(preparedReleaseDelayMs),
+        FIBER_TRACE_LOG: tracePath,
       });
       await waitFor(() => existsSync(paths.socket));
       const first = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -1388,8 +1390,23 @@ test.skipIf(!tmuxAvailable())(
 
       const failed = startHost(home, undefined, 30_000, {
         FIBER_TERMINAL_TEST_TMUX_RECOVERY_FAILURE: "release",
+        FIBER_TRACE_LOG: tracePath,
       });
-      expect(await waitForExit(failed), `release:${pass}`).not.toBe(0);
+      let failedStderr = "";
+      failed.stderr.on("data", (chunk) => {
+        failedStderr += chunk;
+      });
+      const failedExit = await waitForExit(failed);
+      // #250: on CI this host once exited 0, so recovery skipped the
+      // injected release failure. Keep the recovery path when it recurs.
+      if (failedExit === 0) {
+        const trace = existsSync(tracePath) ? readFileSync(tracePath, "utf8") : "";
+        throw new Error(
+          `release:${pass}: recovery host exited 0 without the injected release failure\n` +
+            `trace tail:\n${trace.slice(-6_000)}\nstderr tail:\n${failedStderr.slice(-4_000)}`,
+        );
+      }
+      expect(failedExit, `release:${pass}`).not.toBe(0);
       expect(processExists(panePid), `release:${pass}`).toBe(true);
       execFileSync("tmux", ["-S", tmuxSocket, "has-session", "-t", sessionName]);
       expect(existsSync(`/tmp/fiber-tmux-capture-${record.backend_identity}.sock`))
