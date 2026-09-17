@@ -237,45 +237,7 @@ fn writeToolOutcomeJson(writer: *std.Io.Writer, outcome: ?types.PersistedToolOut
         try writer.writeAll("null");
         return;
     };
-    try writer.writeAll("{\"status\":");
-    try std.json.Stringify.value(@tagName(resolved.status), .{}, writer);
-    try writer.writeAll(",\"reason\":");
-    if (resolved.denial_reason) |reason| {
-        try std.json.Stringify.value(@tagName(reason), .{}, writer);
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"error_code\":");
-    if (resolved.error_code) |code| {
-        try std.json.Stringify.value(@tagName(code), .{}, writer);
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"error_message\":");
-    if (resolved.error_message) |message| {
-        try std.json.Stringify.value(message, .{}, writer);
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"exit_code\":");
-    if (resolved.exit_code) |code| {
-        try writer.print("{d}", .{code});
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"signal\":");
-    if (resolved.signal) |signal| {
-        try writer.print("{d}", .{signal});
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.print(
-        ",\"timed_out\":{s},\"has_process\":{s}}}",
-        .{
-            if (resolved.timed_out) "true" else "false",
-            if (resolved.has_process) "true" else "false",
-        },
-    );
+    try std.json.Stringify.value(types.PersistedToolOutcomeView.fromBorrowed(resolved), .{}, writer);
 }
 
 fn writeOptionalStringJson(writer: *std.Io.Writer, value: ?[]const u8) !void {

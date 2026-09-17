@@ -2180,6 +2180,9 @@ fn appendNotExecutedToolResult(
         .{
             .increment_total = false,
             .status = .failure,
+            // Never ran: denied, with the reason the typed contract
+            // reserves for runtime deferrals (ticket #178).
+            .outcome = .{ .status = .denied, .denial_reason = .policy_denied },
         },
     );
 }
@@ -2223,6 +2226,9 @@ fn appendContextDeferredToolResult(
         .{
             .increment_total = false,
             .status = .failure,
+            // Never ran: denied, with the reason the typed contract
+            // reserves for runtime deferrals (ticket #178).
+            .outcome = .{ .status = .denied, .denial_reason = .policy_denied },
         },
     );
 }
@@ -7194,7 +7200,7 @@ fn processQueuedPromptLoop(
                         prepared.memory,
                         .{
                             .increment_error = true,
-                            .outcome = .{ .status = .failed, .error_code = .tool_error },
+                            .outcome = .{ .status = .failed, .error_code = .tool_error, .error_message = "tool call blocked" },
                         },
                     );
                     continue;
@@ -7307,6 +7313,7 @@ fn processQueuedPromptLoop(
                                         .outcome = .{
                                             .status = if (terminal.status == .success) .completed else .failed,
                                             .error_code = if (terminal.status == .success) null else .tool_error,
+                                            .error_message = if (terminal.status == .success) null else "tool execution failed",
                                         },
                                     },
                                 );
@@ -7360,6 +7367,10 @@ fn processQueuedPromptLoop(
                                                 .invalid_arguments
                                             else
                                                 .startup_failed,
+                                            .error_message = if (terminal.kind == .validation_failure)
+                                                "tool call validation failed"
+                                            else
+                                                "tool unavailable",
                                         },
                                     },
                                 );
@@ -7449,7 +7460,11 @@ fn processQueuedPromptLoop(
                                         .increment_error = true,
                                         .record_completion = true,
                                         .status = .failure,
-                                        .outcome = .{ .status = .failed, .error_code = .tool_error },
+                                        .outcome = .{
+                                            .status = .failed,
+                                            .error_code = .tool_error,
+                                            .error_message = "unsupported tool call",
+                                        },
                                     },
                                 );
                             },
@@ -7516,7 +7531,11 @@ fn processQueuedPromptLoop(
                     prepared.memory,
                     .{
                         .increment_error = true,
-                        .outcome = .{ .status = .failed, .error_code = .tool_error },
+                        .outcome = .{
+                            .status = .failed,
+                            .error_code = .tool_error,
+                            .error_message = "repeated tool failure",
+                        },
                     },
                 );
                 continue;
@@ -7586,7 +7605,11 @@ fn processQueuedPromptLoop(
                         prepared.memory,
                         .{
                             .increment_error = true,
-                            .outcome = .{ .status = .failed, .error_code = .invalid_arguments },
+                            .outcome = .{
+                                .status = .failed,
+                                .error_code = .invalid_arguments,
+                                .error_message = "tool call validation failed",
+                            },
                         },
                     );
                     continue;
@@ -7626,7 +7649,11 @@ fn processQueuedPromptLoop(
                         prepared.memory,
                         .{
                             .increment_error = true,
-                            .outcome = .{ .status = .failed, .error_code = .startup_failed },
+                            .outcome = .{
+                                .status = .failed,
+                                .error_code = .startup_failed,
+                                .error_message = "tool unavailable",
+                            },
                         },
                     );
                     continue;

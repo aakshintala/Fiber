@@ -227,6 +227,87 @@ pub fn freeToolCallOutcome(alloc: std.mem.Allocator, outcome: PersistedToolOutco
     if (outcome.error_message) |message| alloc.free(message);
 }
 
+/// One JSON-serializable view of a persisted tool outcome (ticket #178).
+/// session_codec.zig and session_json.zig both emit this shape with
+/// std.json.Stringify.value so the two writers cannot drift. Field order
+/// matches the persisted object keys. error_message keeps the durable
+/// string-or-base64 encoding: plain strings stay strings, non-UTF8 bytes
+/// (which Stringify would emit as an integer array) fall back to the
+/// base64 object readers already accept.
+///
+/// ERROR-MESSAGE ENCODING CONTRACT (for future editors): this view is the
+/// only writer of outcome JSON. The codec reader accepts the string and
+/// base64-object forms, so any encoding emitted here must stay within
+/// those two. Do not add a third shape.
+///
+/// NULLS AND KEY STABILITY: every field is always emitted, including
+/// nulls (the reader requires all keys). Do not set
+/// emit_null_optional_fields=false at the call sites.
+pub const PersistedToolOutcomeView = struct {
+    status: ToolCallStatus,
+    reason: ?ToolDenialReason = null,
+    error_code: ?ToolErrorCode = null,
+    error_message: ?[]const u8 = null,
+    exit_code: ?i64 = null,
+    signal: ?u32 = null,
+    timed_out: bool = false,
+    has_process: bool = false,
+
+    pub fn fromBorrowed(outcome: PersistedToolOutcome) PersistedToolOutcomeView {
+        return .{
+            .status = outcome.status,
+            .reason = outcome.denial_reason,
+            .error_code = outcome.error_code,
+            .error_message = outcome.error_message,
+            .exit_code = outcome.exit_code,
+            .signal = outcome.signal,
+            .timed_out = outcome.timed_out,
+            .has_process = outcome.has_process,
+        };
+    }
+
+    pub fn jsonStringify(self: PersistedToolOutcomeView, jws: anytype) !void {
+        try jws.beginObject();
+        try jws.objectField("status");
+        try jws.write(self.status);
+        try jws.objectField("reason");
+        try jws.write(self.reason);
+        try jws.objectField("error_code");
+        try jws.write(self.error_code);
+        try jws.objectField("error_message");
+        try writeDurableMessageJson(jws, self.error_message);
+        try jws.objectField("exit_code");
+        try jws.write(self.exit_code);
+        try jws.objectField("signal");
+        try jws.write(self.signal);
+        try jws.objectField("timed_out");
+        try jws.write(self.timed_out);
+        try jws.objectField("has_process");
+        try jws.write(self.has_process);
+        try jws.endObject();
+    }
+};
+
+/// Durable string encoding shared by the outcome view: valid UTF-8 writes
+/// as a JSON string, anything else as {"encoding":"base64","data":...}.
+/// The base64 payload streams through beginWriteRaw/endWriteRaw so the
+/// Stringify state machine still sees a complete value; the alphabet
+/// itself needs no JSON escaping.
+fn writeDurableMessageJson(jws: anytype, message: ?[]const u8) !void {
+    const bytes = message orelse return jws.write(@as(?[]const u8, null));
+    if (std.unicode.utf8ValidateSlice(bytes)) return jws.write(bytes);
+    try jws.beginObject();
+    try jws.objectField("encoding");
+    try jws.write("base64");
+    try jws.objectField("data");
+    try jws.beginWriteRaw();
+    try jws.writer.writeByte('"');
+    try std.base64.standard.Encoder.encodeWriter(jws.writer, bytes);
+    try jws.writer.writeByte('"');
+    jws.endWriteRaw();
+    try jws.endObject();
+}
+
 /// Maps admission's typed denial reason onto the decided set. The legacy
 /// automatic denial never ran by policy, so it persists as policy_denied.
 pub fn decidedDenialReason(reason: ToolPermissionDenialReason) ToolDenialReason {
@@ -238,6 +319,21 @@ pub fn decidedDenialReason(reason: ToolPermissionDenialReason) ToolDenialReason 
         .review_evidence_incomplete => .review_evidence_incomplete,
         .review_unavailable => .review_unavailable,
         .auto_denied => .policy_denied,
+    };
+}
+
+/// Resume-display label for a decided denial reason (ticket #178).
+/// Mirrors the admission labels; the legacy automatic denial already
+/// persists as policy_denied, so it reads as a plain denial on resume.
+pub fn denialStatusLabel(reason: ?ToolDenialReason) []const u8 {
+    const resolved = reason orelse return "Denied";
+    return switch (resolved) {
+        .user_denied => "Denied",
+        .policy_denied => "Denied",
+        .permission_required => "Permission required",
+        .review_caution => "Safety caution",
+        .review_evidence_incomplete => "Review evidence incomplete",
+        .review_unavailable => "Review unavailable",
     };
 }
 

@@ -34,7 +34,9 @@ pub const ToolResultAccounting = struct {
     record_completion: bool = false,
     mark_write: bool = false,
     status: ?types.PersistedToolStatus = null,
-    outcome: ?types.ToolCallOutcome = null,
+    /// Required: every producer stamps the typed outcome directly
+    /// (ticket #178), so the coarse status below only mirrors it.
+    outcome: types.ToolCallOutcome,
 };
 
 pub fn appendAssistantToolCallStep(
@@ -71,9 +73,7 @@ pub fn appendToolResultContent(
         .tool_call_id = tool_call.id,
         .tool_name = tool_call.name,
         .tool_result_status = accounting.status orelse
-            if (accounting.outcome) |outcome|
-                runtime_execution_memory.persistedStatusForOutcome(outcome)
-            else if (accounting.increment_error) .failure else .success,
+            runtime_execution_memory.persistedStatusForOutcome(accounting.outcome),
         .tool_result_outcome = accounting.outcome,
         .tool_result_memory = memory,
     });
@@ -538,7 +538,7 @@ test "drained batch feedback follows all tool results and keeps its source call"
         calls[0],
         "first command completed",
         null,
-        .{},
+        .{ .outcome = .{ .status = .completed } },
     );
     try appendPermissionFeedback(
         alloc,
@@ -554,7 +554,7 @@ test "drained batch feedback follows all tool results and keeps its source call"
         calls[1],
         "second command completed",
         null,
-        .{},
+        .{ .outcome = .{ .status = .completed } },
     );
     try drainPendingUserSuffix(alloc, &batch, &suffix);
 

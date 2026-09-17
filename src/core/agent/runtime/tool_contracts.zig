@@ -70,9 +70,11 @@ pub const ToolExecutionResult = struct {
     model_output: []const u8,
     status: ToolExecutionStatus = .success,
     cancelled: bool = false,
-    /// Typed outcome set by code that knows what happened. Tools leave
-    /// this null; the runtime boundary derives it instead (ticket #178).
-    /// A set outcome always wins over the derived one.
+    /// Typed outcome set by the code that knows what happened (ticket
+    /// #178): admission stamps denials, and the orchestrator stamps
+    /// reject and deferral outcomes. Command tools publish structured
+    /// process facts instead, which the runtime boundary maps without
+    /// reading text. A set outcome always wins over the derived one.
     outcome: ?types.ToolCallOutcome = null,
     status_detail: ?[]const u8 = null,
     diff_entry: ?DiffEntryPayload = null,

@@ -637,7 +637,7 @@ fn callTtyRun(
         .replay_output = observed.replay_output,
         .next_cursor = observed.next_cursor,
         .output_incomplete = observed.output_incomplete,
-        .error_name = null,
+        .error_name = if (observed.timed_out) "TimeoutExpired" else null,
         .max_output_bytes = ctx.max_command_output_bytes,
         .published_running = observed.state == .running,
         .capacity_reserved = true,
@@ -776,7 +776,7 @@ fn callTtyInteract(
         .replay_output = observed.replay_output,
         .next_cursor = observed.next_cursor,
         .output_incomplete = observed.output_incomplete,
-        .error_name = null,
+        .error_name = if (observed.timed_out) "TimeoutExpired" else null,
         .max_output_bytes = ctx.max_command_output_bytes,
         .published_running = true,
     }) catch |err| return runtimeFailure(ctx, err);
@@ -1263,7 +1263,12 @@ fn snapshotFailed(state: managed_execution.SnapshotState) bool {
 
 // A stop reports success only when an exit was observed. Lost workers,
 // missing stops, and stops without an exit status fail closed so callers
-// never read them as clean stops.
+// never read them as clean stops. A stop on an already-completed
+// execution did nothing, so it mirrors the completed fate instead of
+// reporting success: an outside kill observed that way must stay a signal
+// failure, never a clean stop. A stopped-with-signal success means Fiber
+// or the user did the stopping; the outcome layer maps signal-on-success
+// to cancelled (never completed).
 fn stop_result_failed(state: managed_execution.SnapshotState) bool {
     return switch (state) {
         .lost => true,
@@ -1271,7 +1276,8 @@ fn stop_result_failed(state: managed_execution.SnapshotState) bool {
             .exit_code, .signal => false,
             .indeterminate, .finished => true,
         } else true,
-        .running, .completed => false,
+        .completed => snapshotFailed(state),
+        .running => false,
     };
 }
 
@@ -1293,6 +1299,10 @@ test "shell stop fails closed without an observed exit" {
     try std.testing.expect(!stop_result_failed(.{ .stopped = .{ .exit_code = 0 } }));
     try std.testing.expect(!stop_result_failed(.{ .stopped = .{ .signal = 9 } }));
     try std.testing.expect(!stop_result_failed(.{ .completed = .{ .exit_code = 0 } }));
+    // A stop on an already-completed execution did nothing: it mirrors
+    // the completed fate so an outside kill stays a signal failure.
+    try std.testing.expect(stop_result_failed(.{ .completed = .{ .signal = 9 } }));
+    try std.testing.expect(stop_result_failed(.{ .completed = .{ .exit_code = 7 } }));
     try std.testing.expectEqual(
         command_contract.CommandStatus.indeterminate,
         stopProjectedStatus(null),

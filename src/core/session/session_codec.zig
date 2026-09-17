@@ -1341,45 +1341,7 @@ fn writeOptionalToolOutcome(
         try writer.writeAll("null");
         return;
     };
-    try writer.writeAll("{\"status\":");
-    try writeJsonString(writer, @tagName(resolved.status));
-    try writer.writeAll(",\"reason\":");
-    if (resolved.denial_reason) |reason| {
-        try writeJsonString(writer, @tagName(reason));
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"error_code\":");
-    if (resolved.error_code) |code| {
-        try writeJsonString(writer, @tagName(code));
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"error_message\":");
-    if (resolved.error_message) |message| {
-        try writeDurableBytes(writer, message);
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"exit_code\":");
-    if (resolved.exit_code) |code| {
-        try writer.print("{d}", .{code});
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"signal\":");
-    if (resolved.signal) |signal| {
-        try writer.print("{d}", .{signal});
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.print(
-        ",\"timed_out\":{s},\"has_process\":{s}}}",
-        .{
-            if (resolved.timed_out) "true" else "false",
-            if (resolved.has_process) "true" else "false",
-        },
-    );
+    try std.json.Stringify.value(types.PersistedToolOutcomeView.fromBorrowed(resolved), .{}, writer);
 }
 
 fn writeTerminalReturnPresentation(
@@ -1983,24 +1945,31 @@ fn parseOptionalToolOutcome(
     });
     const error_message = if (object.get("error_message")) |message_value| switch (message_value) {
         .null => null,
-        .string => try parseDurableBytes(alloc, message_value),
+        // The writer emits strings for UTF-8 and base64 objects
+        // otherwise; both round-trip here.
+        .string, .object => try parseDurableBytes(alloc, message_value),
         else => return error.InvalidSessionFormat,
     } else return error.InvalidSessionFormat;
     errdefer if (error_message) |message| alloc.free(message);
     const denial_reason = if (object.get("reason")) |reason_value| switch (reason_value) {
         .null => null,
+        // Open set (§3 story 34): an unknown reason is a generic denial,
+        // never a resume breakage.
         .string => |text| std.meta.stringToEnum(
             types.ToolDenialReason,
             text,
-        ) orelse return error.InvalidSessionFormat,
+        ),
         else => return error.InvalidSessionFormat,
     } else return error.InvalidSessionFormat;
     const error_code = if (object.get("error_code")) |code_value| switch (code_value) {
         .null => null,
+        // Open set (§3 story 34): an unknown code is a generic failure,
+        // never a resume breakage. `status` stays closed: an unknown
+        // status still fails, since adding one is a version bump (§3).
         .string => |text| std.meta.stringToEnum(
             types.ToolErrorCode,
             text,
-        ) orelse return error.InvalidSessionFormat,
+        ),
         else => return error.InvalidSessionFormat,
     } else return error.InvalidSessionFormat;
     const exit_code = if (object.get("exit_code")) |code_value| switch (code_value) {
@@ -4224,4 +4193,56 @@ test "pre-outcome tool results reload without an outcome" {
 
     try std.testing.expectEqual(session.PersistedToolStatus.failure, owned[0].status);
     try std.testing.expect(owned[0].outcome == null);
+}
+
+test "unknown denial reason and error code reload as generic outcome" {
+    const alloc = std.testing.allocator;
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        "{\"tool_call_id\":\"call_future\",\"tool_name\":\"shell\",\"status\":\"failure\",\"output\":\"no\",\"output_handle\":null,\"preview\":null,\"output_bytes\":2,\"stored_output_bytes\":2,\"truncated\":false,\"provider_native\":false,\"created_at_ms\":1,\"permission_feedback\":[],\"committed_file_presentation\":null,\"command_output_replay\":null,\"command_process_presentation\":null,\"terminal_action_presentation\":null,\"outcome\":{\"status\":\"denied\",\"reason\":\"future_reason\",\"error_code\":\"future_code\",\"error_message\":\"newer fiber said why\",\"exit_code\":null,\"signal\":null,\"timed_out\":false,\"has_process\":false}}",
+        .{},
+    );
+    defer parsed.deinit();
+    const owned = try alloc.alloc(
+        session.PersistedToolResult,
+        1,
+    );
+    defer types.freePersistedToolResults(alloc, owned);
+    owned[0] = try parseToolResult(alloc, parsed.value, 5);
+
+    const outcome = owned[0].outcome orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(types.ToolCallStatus.denied, outcome.status);
+    try std.testing.expect(outcome.denial_reason == null);
+    try std.testing.expect(outcome.error_code == null);
+    try std.testing.expectEqualStrings("newer fiber said why", outcome.error_message.?);
+}
+
+test "non-utf8 outcome message survives the shared outcome writer" {
+    const alloc = std.testing.allocator;
+    const raw_message = try alloc.dupe(u8, &[_]u8{ 0xff, 0xfe, 0x41 });
+    defer alloc.free(raw_message);
+    var result = persistedResultForTest("call_binary", "shell");
+    result.status = .failure;
+    result.outcome = .{
+        .status = .failed,
+        .error_code = .tool_error,
+        .error_message = raw_message,
+    };
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try writePersistedToolResult(&encoded.writer, result);
+    try std.testing.expect(std.mem.find(u8, encoded.written(), "\"encoding\":\"base64\"") != null);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, encoded.written(), .{});
+    defer parsed.deinit();
+    const owned = try alloc.alloc(
+        session.PersistedToolResult,
+        1,
+    );
+    defer types.freePersistedToolResults(alloc, owned);
+    owned[0] = try parseToolResult(alloc, parsed.value, 5);
+
+    const outcome = owned[0].outcome orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualSlices(u8, raw_message, outcome.error_message.?);
 }

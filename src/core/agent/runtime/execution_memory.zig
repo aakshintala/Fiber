@@ -50,7 +50,15 @@ pub fn toolOutcomeForExecution(
         .signal = facts.signal,
         .timed_out = facts.timed_out,
     } else null;
-    if (status == .success) return .{ .status = .completed, .process = process };
+    // A successful tool result carrying a death signal is a stop by Fiber
+    // or the user (the stop tool reports success once the target is
+    // reaped), never an outside kill: outside kills surface as command
+    // failures. Report it cancelled, not completed, so an interrupt is
+    // never read as a clean run (spec issue #189 section 3, story 37).
+    if (status == .success) {
+        if (facts.signal != null) return .{ .status = .cancelled };
+        return .{ .status = .completed, .process = process };
+    }
     if (facts.timed_out) return .{
         .status = .failed,
         .error_code = .timeout,
@@ -110,9 +118,8 @@ pub fn toolOutcomeForDenial(reason: types.ToolPermissionDenialReason) types.Tool
 /// Coarse persisted bit derived from a typed outcome. Denied and
 /// cancelled persist as failure, matching the pre-outcome status values
 /// every downstream reader already handles.
-pub fn persistedStatusForOutcome(outcome: ?types.ToolCallOutcome) types.PersistedToolStatus {
-    const resolved = outcome orelse return .success;
-    return switch (resolved.status) {
+pub fn persistedStatusForOutcome(outcome: types.ToolCallOutcome) types.PersistedToolStatus {
+    return switch (outcome.status) {
         .completed => .success,
         .failed, .denied, .cancelled => .failure,
     };
@@ -1220,6 +1227,28 @@ test "user interrupt produces cancelled, not a signal failure" {
     );
     try std.testing.expectEqual(types.ToolCallStatus.cancelled, outcome.status);
     try std.testing.expect(outcome.error_code == null);
+}
+
+test "stop by fiber reports cancelled, never completed" {
+    const outcome = toolOutcomeForExecution(
+        std.testing.allocator,
+        .success,
+        false,
+        "{\"command\":\"sleep 5\",\"cwd\":\"/tmp\",\"signal\":15}",
+        null,
+    );
+    try std.testing.expectEqual(types.ToolCallStatus.cancelled, outcome.status);
+}
+
+test "successful stop without signal facts still completes" {
+    const outcome = toolOutcomeForExecution(
+        std.testing.allocator,
+        .success,
+        false,
+        "{\"command\":\"true\",\"cwd\":\"/tmp\",\"exit_code\":0}",
+        null,
+    );
+    try std.testing.expectEqual(types.ToolCallStatus.completed, outcome.status);
 }
 
 test "review hold produces denied review_caution" {
