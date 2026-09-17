@@ -2,6 +2,11 @@
 // fixtures. This retains the historical message-JSON shape that the agent-loop
 // tests assert on; it carries no endpoint, auth, or header behavior.
 const std = @import("std");
+const builtin = @import("builtin");
+
+comptime {
+    if (!builtin.is_test) @compileError("agent_request_body links transport fixtures; import it only from test builds");
+}
 const image_attachments = @import("../core/images/image_attachments.zig");
 const io_mod = @import("../core/shared/io.zig");
 const model_capabilities = @import("../core/config/model_capabilities.zig");
