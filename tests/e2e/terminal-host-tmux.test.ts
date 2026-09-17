@@ -69,6 +69,7 @@ import {
   terminalTransportPaths,
   tmuxCaptureHelperPids,
   tmuxPeerArtifacts,
+  tmuxTraceBackendIdentities,
   transportRoots,
   waitFor,
   waitForExit,
@@ -337,8 +338,6 @@ test.skipIf(!tmuxAvailable())(
           current: 5,
         });
         const baselineFds = processFdCount(host.pid!);
-        const baselinePeerArtifacts = tmuxPeerArtifacts();
-        const baselineCaptureHelpers = tmuxCaptureHelperPids();
         const response = await requestAction(
           connected.client,
           connected.revision!,
@@ -367,24 +366,23 @@ test.skipIf(!tmuxAvailable())(
         const recordName = readdirSync(state).find((name) =>
           name.startsWith("record-") && name.endsWith(".json")
         );
-        const identities = recordName
+        const identities: string[] = recordName
           ? [(JSON.parse(readFileSync(join(state, recordName), "utf8")) as {
             backend_identity: string;
           }).backend_identity]
           : [];
+        identities.push(...tmuxTraceBackendIdentities(trace));
+        expect(identities.length, `${fixture.owner}:${fixture.point}:${pass}`)
+          .toBeGreaterThan(0);
         await waitFor(() => !existsSync(transport.tmuxSocket), 5_000);
         await waitFor(() => directChildPids(host.pid!).length === 0, 5_000);
-        await waitFor(
-          () => JSON.stringify(tmuxCaptureHelperPids()) ===
-            JSON.stringify(baselineCaptureHelpers),
-          5_000,
-        );
+        await waitFor(() => tmuxCaptureHelperPids(identities).length === 0, 5_000);
         expect(
           privateTmuxProcessPids(transport.tmuxSocket, identities),
           `${fixture.owner}:${fixture.point}:${pass}`,
         ).toEqual([]);
-        expect(tmuxPeerArtifacts(), `${fixture.owner}:${fixture.point}:${pass}`)
-          .toEqual(baselinePeerArtifacts);
+        expect(tmuxPeerArtifacts(identities), `${fixture.owner}:${fixture.point}:${pass}`)
+          .toEqual([]);
         expect(
           readdirSync(paths.dir).filter((name) => name.startsWith("tmux-")),
           `${fixture.owner}:${fixture.point}:${pass}`,
@@ -427,8 +425,6 @@ test.skipIf(!tmuxAvailable())(
           current: 5,
         });
         const baselineFds = processFdCount(host.pid!);
-        const baselinePeerArtifacts = tmuxPeerArtifacts();
-        const baselineCaptureHelpers = tmuxCaptureHelperPids();
         for (let attempt = 0; attempt < 2; attempt++) {
           const startedAt = Date.now();
           const response = await requestAction(
@@ -488,22 +484,19 @@ test.skipIf(!tmuxAvailable())(
         const record = durableTerminalRecord(home).value as unknown as {
           backend_identity: string;
         };
+        const identities = [
+          ...new Set([record.backend_identity, ...tmuxTraceBackendIdentities(trace)]),
+        ];
         await waitFor(() => !existsSync(transport.tmuxSocket), 5_000);
         await waitFor(() => !processExists(childPid), 5_000);
         await waitFor(() => directChildPids(host.pid!).length === 0, 5_000);
-        await waitFor(
-          () => JSON.stringify(tmuxCaptureHelperPids()) ===
-            JSON.stringify(baselineCaptureHelpers),
-          5_000,
-        );
+        await waitFor(() => tmuxCaptureHelperPids(identities).length === 0, 5_000);
         expect(processExists(childPid), `${fixture.name}:${pass}`).toBe(false);
         expect(privateTmuxProcessPids(
           transport.tmuxSocket,
           [record.backend_identity],
         )).toEqual([]);
-        expect(tmuxPeerArtifacts(), `${fixture.name}:${pass}`).toEqual(
-          baselinePeerArtifacts,
-        );
+        expect(tmuxPeerArtifacts(identities), `${fixture.name}:${pass}`).toEqual([]);
         expect(
           readdirSync(paths.dir).filter((name) => name.startsWith("tmux-")),
           `${fixture.name}:${pass}`,
@@ -542,8 +535,6 @@ test.skipIf(!tmuxAvailable())(
     );
 
     const tmuxResource = rememberPrivateTmuxServer(home);
-    const baselinePeerArtifacts = tmuxPeerArtifacts();
-    const baselineCaptureHelpers = tmuxCaptureHelperPids();
     const trace = join(home, "tmux-sigttin-trace.log");
     const host = startHost(home, undefined, 250, {
       FIBER_TRACE_LOG: trace,
@@ -608,15 +599,14 @@ test.skipIf(!tmuxAvailable())(
     await waitFor(() => !processExists(childPid), 5_000);
     await waitFor(() => directChildPids(host.pid!).length === 0, 5_000);
     await waitFor(
-      () => JSON.stringify(tmuxCaptureHelperPids()) ===
-        JSON.stringify(baselineCaptureHelpers),
+      () => tmuxCaptureHelperPids([record.backend_identity]).length === 0,
       5_000,
     );
     expect(privateTmuxProcessPids(
       transport.tmuxSocket,
       [record.backend_identity],
     )).toEqual([]);
-    expect(tmuxPeerArtifacts()).toEqual(baselinePeerArtifacts);
+    expect(tmuxPeerArtifacts([record.backend_identity])).toEqual([]);
     expect(
       readdirSync(paths.dir).filter((name) => name.startsWith("tmux-")),
     ).toEqual([]);
@@ -743,8 +733,6 @@ exec /bin/bash "$@"
     );
 
     const tmuxResource = rememberPrivateTmuxServer(home);
-    const baselinePeerArtifacts = tmuxPeerArtifacts();
-    const baselineCaptureHelpers = tmuxCaptureHelperPids();
     const host = startHost(home, undefined, 250, {
       LD_PRELOAD: interposer,
       FIBER_E2E_TMUX_DESCENDANT_READY: descendantReady,
@@ -898,16 +886,10 @@ exec /bin/bash "$@"
     await waitFor(() => !processExists(descendantPid), 5_000);
     await waitFor(() => !processExists(laterStoppedPid), 5_000);
     await waitFor(() => directChildPids(host.pid!).length === 0, 5_000);
-    await waitFor(
-      () => JSON.stringify(tmuxCaptureHelperPids()) ===
-        JSON.stringify(baselineCaptureHelpers),
-      5_000,
-    );
-    expect(privateTmuxProcessPids(
-      transport.tmuxSocket,
-      [record.backend_identity, laterRecord.backend_identity],
-    )).toEqual([]);
-    expect(tmuxPeerArtifacts()).toEqual(baselinePeerArtifacts);
+    const identities = [record.backend_identity, laterRecord.backend_identity];
+    await waitFor(() => tmuxCaptureHelperPids(identities).length === 0, 5_000);
+    expect(privateTmuxProcessPids(transport.tmuxSocket, identities)).toEqual([]);
+    expect(tmuxPeerArtifacts(identities)).toEqual([]);
     expect(
       readdirSync(paths.dir).filter((name) => name.startsWith("tmux-")),
     ).toEqual([]);

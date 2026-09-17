@@ -333,16 +333,27 @@ export function privateTmuxProcessPids(
     .map((entry) => entry.pid);
 }
 
-export function tmuxPeerArtifacts(): string[] {
+// Peer artifacts and capture helpers are scoped to this test's backend
+// identities: E2E files share a machine concurrently (#130).
+export function tmuxPeerArtifacts(identities: string[]): string[] {
   return readdirSync("/tmp")
     .filter((name) =>
-      name.startsWith("fiber-tmux-capture-") ||
-      name.startsWith("fiber-tmux-marker-")
+      (name.startsWith("fiber-tmux-capture-") ||
+        name.startsWith("fiber-tmux-marker-")) &&
+      identities.some((identity) => name.includes(identity))
     )
     .sort();
 }
 
-export function tmuxCaptureHelperPids(): number[] {
+export function tmuxTraceBackendIdentities(tracePath: string): string[] {
+  if (!existsSync(tracePath)) return [];
+  return [...new Set(
+    [...readFileSync(tracePath, "utf8").matchAll(/tmux backend starting backend=(\S+)/g)]
+      .map((match) => match[1]!),
+  )];
+}
+
+export function tmuxCaptureHelperPids(identities: string[]): number[] {
   const output = execFileSync("ps", ["-axo", "pid=,command="], {
     encoding: "utf8",
   });
@@ -356,7 +367,8 @@ export function tmuxCaptureHelperPids(): number[] {
     .filter((entry): entry is { pid: number; command: string } => entry !== null)
     .filter((entry) =>
       entry.command.includes(FIBER_BIN) &&
-      entry.command.includes("--fiber-internal-terminal-tmux-capture")
+      entry.command.includes("--fiber-internal-terminal-tmux-capture") &&
+      identities.some((identity) => entry.command.includes(identity))
     )
     .map((entry) => entry.pid)
     .sort((left, right) => left - right);
