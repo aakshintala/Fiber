@@ -326,15 +326,15 @@ const EventBridge = struct {
         return @ptrCast(@alignCast(raw));
     }
 
-    fn content(raw: *anyopaque, chunk: []const u8) void {
-        sink(raw).emit(.{ .content_delta = chunk });
+    fn content(raw: *anyopaque, item_id: []const u8, chunk: []const u8) void {
+        sink(raw).emit(.{ .content_delta = .{ .item_id = item_id, .chunk = chunk } });
     }
 
-    fn reasoning(raw: *anyopaque, chunk: []const u8) void {
-        sink(raw).emit(.{ .reasoning_delta = chunk });
+    fn reasoning(raw: *anyopaque, item_id: []const u8, chunk: []const u8) void {
+        sink(raw).emit(.{ .reasoning_delta = .{ .item_id = item_id, .chunk = chunk } });
     }
 
-    fn toolInput(raw: *anyopaque, chunk: []const u8) void {
+    fn toolInput(raw: *anyopaque, _: []const u8, chunk: []const u8) void {
         sink(raw).emit(.{ .tool_input_delta = chunk });
     }
 
@@ -919,15 +919,19 @@ test "OpenAI Codex SSE maps text reasoning tools and usage" {
     const Capture = struct {
         content: std.ArrayList(u8) = .empty,
         reasoning: std.ArrayList(u8) = .empty,
+        content_ids: std.ArrayList([]const u8) = .empty,
+        reasoning_ids: std.ArrayList([]const u8) = .empty,
         saw_read_file: bool = false,
 
-        fn contentChunk(raw: *anyopaque, chunk: []const u8) void {
+        fn contentChunk(raw: *anyopaque, item_id: []const u8, chunk: []const u8) void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.content.appendSlice(std.testing.allocator, chunk) catch unreachable;
+            self.content_ids.append(std.testing.allocator, item_id) catch unreachable;
         }
-        fn reasoningChunk(raw: *anyopaque, chunk: []const u8) void {
+        fn reasoningChunk(raw: *anyopaque, item_id: []const u8, chunk: []const u8) void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.reasoning.appendSlice(std.testing.allocator, chunk) catch unreachable;
+            self.reasoning_ids.append(std.testing.allocator, item_id) catch unreachable;
         }
         fn toolStart(raw: *anyopaque, _: []const u8, name: []const u8, _: ?[]const u8) void {
             const self: *@This() = @ptrCast(@alignCast(raw));
@@ -937,6 +941,8 @@ test "OpenAI Codex SSE maps text reasoning tools and usage" {
     var capture: Capture = .{};
     defer capture.content.deinit(std.testing.allocator);
     defer capture.reasoning.deinit(std.testing.allocator);
+    defer capture.content_ids.deinit(std.testing.allocator);
+    defer capture.reasoning_ids.deinit(std.testing.allocator);
     const completion = try consumeSse(
         std.testing.allocator,
         &reader,
@@ -949,14 +955,20 @@ test "OpenAI Codex SSE maps text reasoning tools and usage" {
         null,
         .{},
     );
-    defer {
-        if (completion.content) |value| std.testing.allocator.free(@constCast(value));
-        types.freeToolCallSlice(std.testing.allocator, @constCast(completion.tool_calls));
-        if (completion.provider_state_json) |value| std.testing.allocator.free(@constCast(value));
-    }
+    defer freeOpenAICodexTestCompletion(completion);
     try std.testing.expectEqualStrings("hello", capture.content.items);
     try std.testing.expectEqualStrings("thinking", capture.reasoning.items);
     try std.testing.expect(capture.saw_read_file);
+    // The message id is minted at output_item.added, before the first chunk,
+    // and the reasoning block carries its own id.
+    try std.testing.expectEqual(@as(usize, 1), capture.content_ids.items.len);
+    try std.testing.expect(capture.content_ids.items[0].len > 0);
+    try std.testing.expectEqual(@as(usize, 1), capture.reasoning_ids.items.len);
+    try std.testing.expect(capture.reasoning_ids.items[0].len > 0);
+    try std.testing.expect(!std.mem.eql(u8, capture.content_ids.items[0], capture.reasoning_ids.items[0]));
+    try std.testing.expectEqualStrings(capture.content_ids.items[0], completion.message_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), completion.reasoning_item_ids.len);
+    try std.testing.expectEqualStrings(capture.reasoning_ids.items[0], completion.reasoning_item_ids[0]);
     try std.testing.expectEqual(@as(usize, 1), completion.tool_calls.len);
     try std.testing.expectEqualStrings("call_1", completion.tool_calls[0].id);
     try std.testing.expectEqualStrings("{\"path\":\"README.md\"}", completion.tool_calls[0].arguments_json);
@@ -975,7 +987,7 @@ fn consumeOpenAICodexTestSse(sse_text: []const u8, limits: CodexLimits) !types.M
         &reader,
         &callback_context,
         struct {
-            fn ignore(_: *anyopaque, _: []const u8) void {}
+            fn ignore(_: *anyopaque, _: []const u8, _: []const u8) void {}
         }.ignore,
         null,
         null,
@@ -988,6 +1000,9 @@ fn consumeOpenAICodexTestSse(sse_text: []const u8, limits: CodexLimits) !types.M
 
 fn freeOpenAICodexTestCompletion(completion: types.ModelCompletion) void {
     if (completion.content) |value| std.testing.allocator.free(@constCast(value));
+    if (completion.message_item_id) |value| std.testing.allocator.free(@constCast(value));
+    for (completion.reasoning_item_ids) |value| std.testing.allocator.free(@constCast(value));
+    if (completion.reasoning_item_ids.len > 0) std.testing.allocator.free(@constCast(completion.reasoning_item_ids));
     types.freeToolCallSlice(std.testing.allocator, @constCast(completion.tool_calls));
     if (completion.generation_id) |value| std.testing.allocator.free(@constCast(value));
     if (completion.provider_state_json) |value| std.testing.allocator.free(@constCast(value));

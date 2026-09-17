@@ -1279,6 +1279,14 @@ pub const ProviderFinishReason = enum {
 pub const ModelCompletion = struct {
     content: ?[]const u8 = null,
     tool_calls: []const ToolCall = &.{},
+    /// Fiber-minted id of the streaming assistant message, carried from the
+    /// first stream appearance through completion. Internal-only: never
+    /// serialized onto a provider request.
+    message_item_id: ?[]const u8 = null,
+    /// Fiber-minted ids of the streaming reasoning blocks, one per provider
+    /// output item, in first-appearance order. Internal-only like the
+    /// message id.
+    reasoning_item_ids: []const []const u8 = &.{},
     generation_id: ?[]const u8 = null,
     billing: ?ProviderBilling = null,
     /// Gateway generation or resolved-model metadata was malformed or conflicting.
@@ -1756,6 +1764,14 @@ pub const AssistantHistoryTurn = struct {
     user: UserTurn,
     assistant: []u8,
     execution: ExecutionMemory = .{},
+    /// Fiber-minted id of the assistant message, minted when the message
+    /// first appeared on the provider stream. Null for pre-id sessions: no
+    /// backfill, reads stay null-tolerant.
+    assistant_item_id: ?[]u8 = null,
+    /// Fiber-minted ids of the turn's reasoning blocks, one per provider
+    /// output item. Empty for pre-id sessions. Const-typed so turns borrow
+    /// directly from the completion that produced them.
+    reasoning_item_ids: []const []const u8 = &.{},
 };
 
 pub const InterruptedTerminalReason = enum {
@@ -1766,6 +1782,11 @@ pub const InterruptedTerminalReason = enum {
 pub const InterruptedHistoryTurn = struct {
     user: UserTurn,
     assistant: ?[]u8 = null,
+    /// Fiber-minted id of the partial assistant message, when the
+    /// interrupted stream had minted one. Null for pre-id sessions.
+    assistant_item_id: ?[]u8 = null,
+    /// Fiber-minted ids of the interrupted stream's reasoning blocks.
+    reasoning_item_ids: []const []const u8 = &.{},
     tool_call: ?ToolCall = null,
     completed_tool_names: [][]u8 = &.{},
     execution: ExecutionMemory = .{},
@@ -2067,10 +2088,14 @@ pub fn freeHistoryTurn(alloc: std.mem.Allocator, turn: HistoryTurn) void {
             freeUserTurn(alloc, entry.user);
             alloc.free(entry.assistant);
             freeExecutionMemory(alloc, entry.execution);
+            if (entry.assistant_item_id) |item_id| alloc.free(item_id);
+            freeItemIdSlice(alloc, entry.reasoning_item_ids);
         },
         .interrupted => |entry| {
             freeUserTurn(alloc, entry.user);
             if (entry.assistant) |assistant| alloc.free(assistant);
+            if (entry.assistant_item_id) |item_id| alloc.free(item_id);
+            freeItemIdSlice(alloc, entry.reasoning_item_ids);
             if (entry.tool_call) |tool_call| freeToolCall(alloc, tool_call);
             freeCompletedToolNames(alloc, entry.completed_tool_names);
             freeExecutionMemory(alloc, entry.execution);
@@ -2125,10 +2150,16 @@ pub fn dupeHistoryTurn(alloc: std.mem.Allocator, turn: HistoryTurn) !HistoryTurn
             errdefer alloc.free(assistant);
 
             const execution = try dupeExecutionMemory(alloc, entry.execution);
+            errdefer freeExecutionMemory(alloc, execution);
+            const assistant_item_id = if (entry.assistant_item_id) |item_id| try alloc.dupe(u8, item_id) else null;
+            errdefer if (assistant_item_id) |item_id| alloc.free(item_id);
+            const reasoning_item_ids = try dupeItemIdSlice(alloc, entry.reasoning_item_ids);
             break :blk .{ .assistant = .{
                 .user = user,
                 .assistant = assistant,
                 .execution = execution,
+                .assistant_item_id = assistant_item_id,
+                .reasoning_item_ids = reasoning_item_ids,
             } };
         },
         .interrupted => |entry| blk: {
@@ -2137,6 +2168,11 @@ pub fn dupeHistoryTurn(alloc: std.mem.Allocator, turn: HistoryTurn) !HistoryTurn
 
             const assistant = if (entry.assistant) |text| try alloc.dupe(u8, text) else null;
             errdefer if (assistant) |text| alloc.free(text);
+
+            const assistant_item_id = if (entry.assistant_item_id) |item_id| try alloc.dupe(u8, item_id) else null;
+            errdefer if (assistant_item_id) |item_id| alloc.free(item_id);
+            const reasoning_item_ids = try dupeItemIdSlice(alloc, entry.reasoning_item_ids);
+            errdefer freeItemIdSlice(alloc, reasoning_item_ids);
 
             const tool_call = if (entry.tool_call) |call| try dupeToolCall(alloc, call) else null;
             errdefer if (tool_call) |call| freeToolCall(alloc, call);
@@ -2157,6 +2193,8 @@ pub fn dupeHistoryTurn(alloc: std.mem.Allocator, turn: HistoryTurn) !HistoryTurn
             break :blk .{ .interrupted = .{
                 .user = user,
                 .assistant = assistant,
+                .assistant_item_id = assistant_item_id,
+                .reasoning_item_ids = reasoning_item_ids,
                 .tool_call = tool_call,
                 .completed_tool_names = completed_tool_names,
                 .execution = execution,
@@ -2229,6 +2267,30 @@ pub fn dupeCompletedToolNames(alloc: std.mem.Allocator, items: []const []u8) ![]
 pub fn freeCompletedToolNames(alloc: std.mem.Allocator, items: [][]u8) void {
     for (items) |item| alloc.free(item);
     if (items.len > 0) alloc.free(items);
+}
+
+/// Frees an owned const-typed item id slice (turn reasoning ids, completion
+/// reasoning ids borrowed into turns).
+fn freeItemIdSlice(alloc: std.mem.Allocator, items: []const []const u8) void {
+    for (items) |item| alloc.free(@constCast(item));
+    if (items.len > 0) alloc.free(@constCast(items));
+}
+
+/// Dupes a const-typed item id slice. The caller owns the result.
+fn dupeItemIdSlice(alloc: std.mem.Allocator, items: []const []const u8) ![]const []const u8 {
+    if (items.len == 0) return &.{};
+    const copy = try alloc.alloc([]const u8, items.len);
+    errdefer alloc.free(copy);
+    var copied: usize = 0;
+    errdefer {
+        var i: usize = 0;
+        while (i < copied) : (i += 1) alloc.free(@constCast(copy[i]));
+    }
+    for (items, 0..) |item, index| {
+        copy[index] = try alloc.dupe(u8, item);
+        copied += 1;
+    }
+    return copy;
 }
 
 pub fn dupeExecutionMemory(alloc: std.mem.Allocator, memory: ExecutionMemory) !ExecutionMemory {

@@ -2956,6 +2956,9 @@ fn persistRecoveryCheckpoint(
     job: QueuedPrompt,
     current_turn_messages: []const ChatMessage,
     assistant_source: []const u8,
+    /// Fiber-minted id of the in-flight assistant message, borrowed. The
+    /// persistence effect dupes it synchronously with the checkpoint.
+    assistant_message_id: ?[]const u8,
     route_model: []const u8,
     requested_fast_mode: bool,
     fast_mode: bool,
@@ -2989,6 +2992,7 @@ fn persistRecoveryCheckpoint(
             .images = job.images,
         },
         .assistant_source = @constCast(assistant_source),
+        .assistant_message_id = if (assistant_message_id) |item_id| @constCast(item_id) else null,
         .execution = execution,
         .cause = checkpointCause(cause),
         .action = checkpointAction(strategy),
@@ -3228,8 +3232,8 @@ const ProviderEventContext = struct {
 fn onProviderEvent(raw: *anyopaque, event: agent_stream_provider.Event) void {
     const ctx: *ProviderEventContext = @ptrCast(@alignCast(raw));
     switch (event) {
-        .content_delta => |chunk| runtime_assistant_stream.onStreamContentChunk(ctx.stream, chunk),
-        .reasoning_delta => |chunk| runtime_assistant_stream.onStreamReasoningChunk(ctx.stream, chunk),
+        .content_delta => |delta| runtime_assistant_stream.onStreamContentChunk(ctx.stream, delta.item_id, delta.chunk),
+        .reasoning_delta => |delta| runtime_assistant_stream.onStreamReasoningChunk(ctx.stream, delta.item_id, delta.chunk),
         .tool_input_delta => |chunk| runtime_assistant_stream.onStreamToolInputChunk(ctx.stream, chunk),
         .tool_started => |tool| if (ctx.required_vision)
             onRequiredVisionStreamToolStart(ctx.stream, tool.id, tool.name, tool.label)
@@ -4493,6 +4497,12 @@ fn processQueuedPromptLoop(
                 job.recovery_source_already_presented,
             );
             stream_ctx.beginRecoveryAttempt();
+            // Keep the checkpoint's message id for the resumed stream: the
+            // retry re-mints per output index, and the rekey analogue
+            // prefers this restored id so the item stays stable.
+            if (checkpoint.assistant_message_id) |item_id| {
+                stream_ctx.message_item_id = try stream_ctx.alloc.dupe(u8, item_id);
+            }
             restore_recovery_source = false;
         }
 
@@ -4557,6 +4567,7 @@ fn processQueuedPromptLoop(
                         stop_state,
                         stream_ctx.raw_text.items,
                     ),
+                    stream_ctx.message_item_id,
                     gateway_model,
                     selected_fast_mode,
                     route_fast_mode,
@@ -4594,6 +4605,7 @@ fn processQueuedPromptLoop(
                         stop_state,
                         stream_ctx.raw_text.items,
                     ),
+                    stream_ctx.message_item_id,
                     gateway_model,
                     selected_fast_mode,
                     route_fast_mode,
@@ -4765,6 +4777,7 @@ fn processQueuedPromptLoop(
                     job,
                     within_turn_suffix.items,
                     stream_ctx.raw_text.items,
+                    stream_ctx.message_item_id,
                     gateway_model,
                     selected_fast_mode,
                     route_fast_mode,
@@ -4873,6 +4886,7 @@ fn processQueuedPromptLoop(
                             stop_state,
                             stream_ctx.raw_text.items,
                         ),
+                        stream_ctx.message_item_id,
                         gateway_model,
                         selected_fast_mode,
                         route_fast_mode,
@@ -4970,6 +4984,7 @@ fn processQueuedPromptLoop(
                         stop_state,
                         stream_ctx.raw_text.items,
                     ),
+                    stream_ctx.message_item_id,
                     gateway_model,
                     selected_fast_mode,
                     route_fast_mode,
@@ -5012,6 +5027,7 @@ fn processQueuedPromptLoop(
                             stop_state,
                             stream_ctx.raw_text.items,
                         ),
+                        stream_ctx.message_item_id,
                         gateway_model,
                         selected_fast_mode,
                         route_fast_mode,
@@ -5237,6 +5253,11 @@ fn processQueuedPromptLoop(
                     arena,
                     completion.tool_calls,
                 );
+                try runtime_assistant_stream.attach_stream_message_ids(
+                    &stream_ctx,
+                    arena,
+                    completion,
+                );
             }
             if (recovery_strategy == .reconcile_tool and
                 streamSucceeded(stream_result) and
@@ -5260,6 +5281,7 @@ fn processQueuedPromptLoop(
                         stop_state,
                         stream_ctx.raw_text.items,
                     ),
+                    stream_ctx.message_item_id,
                     gateway_model,
                     selected_fast_mode,
                     route_fast_mode,
@@ -5319,6 +5341,7 @@ fn processQueuedPromptLoop(
                         stop_state,
                         stream_ctx.raw_text.items,
                     ),
+                    stream_ctx.message_item_id,
                     gateway_model,
                     selected_fast_mode,
                     route_fast_mode,
@@ -5440,6 +5463,7 @@ fn processQueuedPromptLoop(
                             stop_state,
                             stream_ctx.raw_text.items,
                         ),
+                        stream_ctx.message_item_id,
                         gateway_model,
                         selected_fast_mode,
                         route_fast_mode,
@@ -5480,6 +5504,7 @@ fn processQueuedPromptLoop(
                                 stop_state,
                                 stream_ctx.raw_text.items,
                             ),
+                            stream_ctx.message_item_id,
                             gateway_model,
                             selected_fast_mode,
                             route_fast_mode,
@@ -5646,6 +5671,7 @@ fn processQueuedPromptLoop(
                             stop_state,
                             partial_assistant,
                         ),
+                        stream_ctx.message_item_id,
                         gateway_model,
                         selected_fast_mode,
                         route_fast_mode,
@@ -5685,6 +5711,7 @@ fn processQueuedPromptLoop(
                                 stop_state,
                                 partial_assistant,
                             ),
+                            stream_ctx.message_item_id,
                             gateway_model,
                             selected_fast_mode,
                             route_fast_mode,
@@ -5896,6 +5923,7 @@ fn processQueuedPromptLoop(
                     within_turn_suffix.items,
                     &summary_accumulator,
                     assistant_text,
+                    null,
                     .failed,
                     null,
                     &finish_trace,
@@ -5913,6 +5941,7 @@ fn processQueuedPromptLoop(
                     within_turn_suffix.items,
                     &summary_accumulator,
                     partial_assistant,
+                    null,
                     .failed,
                     null,
                     &finish_trace,
@@ -6158,6 +6187,7 @@ fn processQueuedPromptLoop(
                     within_turn_suffix.items,
                     &summary_accumulator,
                     persisted_text,
+                    &completion,
                     .failed,
                     .length_limited,
                     &finish_trace,
@@ -6171,6 +6201,8 @@ fn processQueuedPromptLoop(
                 .user = .{ .text = job.prompt, .images = job.images },
                 .assistant = @constCast(assistant_text),
                 .execution = finish_execution,
+                .assistant_item_id = if (completion.message_item_id) |item_id| @constCast(item_id) else null,
+                .reasoning_item_ids = completion.reasoning_item_ids,
             } };
             types.setHistoryTurnSummary(&turn, completed_summary);
             try deps.propagate_history_turn(deps.ctx, turn);
@@ -6229,6 +6261,7 @@ fn processQueuedPromptLoop(
                     within_turn_suffix.items,
                     &summary_accumulator,
                     persisted_text,
+                    &completion,
                     .completed,
                     if (disposition == .length_limited)
                         .length_limited
@@ -6291,6 +6324,7 @@ fn processQueuedPromptLoop(
                         within_turn_suffix.items,
                         &summary_accumulator,
                         history_text,
+                        &completion,
                         .completed,
                         if (disposition == .length_limited)
                             .length_limited
@@ -8688,6 +8722,7 @@ fn processQueuedPromptLoop(
                     within_turn_suffix.items,
                     &summary_accumulator,
                     assistant_text,
+                    null,
                     .completed,
                     null,
                     &finish_trace,
@@ -8807,6 +8842,7 @@ fn processQueuedPromptLoop(
                 within_turn_suffix.items,
                 &summary_accumulator,
                 assistant_text,
+                null,
                 .completed,
                 null,
                 &finish_trace,
@@ -8883,6 +8919,7 @@ fn processQueuedPromptLoop(
                     within_turn_suffix.items,
                     &summary_accumulator,
                     persisted_text,
+                    null,
                     .completed,
                     null,
                     &finish_trace,
@@ -8939,6 +8976,7 @@ fn processQueuedPromptLoop(
                         within_turn_suffix.items,
                         &summary_accumulator,
                         rendered,
+                        null,
                         .completed,
                         null,
                         &finish_trace,
@@ -9017,6 +9055,7 @@ fn finishFailedTurnWithNotice(
             current_turn_messages,
             summary_accumulator,
             assistant_text,
+            null,
             .failed,
             null,
             finish_trace,
@@ -9051,6 +9090,9 @@ pub fn finishCommonAssistantTerminal(
     current_turn_messages: []const ChatMessage,
     summary_accumulator: *runtime_telemetry.TurnSummaryAccumulator,
     assistant_text: []const u8,
+    /// The completion that produced the turn's text, when a streamed one
+    /// did. Only its Fiber-minted item ids reach the persisted turn.
+    source_completion: ?*const types.ModelCompletion,
     outcome: types.TurnPresentationOutcome,
     disposition: ?types.ProviderCompletionDisposition,
     finish_trace: *PromptFinishTrace,
@@ -9067,6 +9109,7 @@ pub fn finishCommonAssistantTerminal(
         execution_memory,
         summary_accumulator,
         assistant_text,
+        source_completion,
         outcome,
         disposition,
         finish_trace,
@@ -9081,6 +9124,7 @@ fn finishCommonAssistantTerminalWithExecution(
     execution_memory: types.ExecutionMemory,
     summary_accumulator: *runtime_telemetry.TurnSummaryAccumulator,
     assistant_text: []const u8,
+    source_completion: ?*const types.ModelCompletion,
     outcome: types.TurnPresentationOutcome,
     disposition: ?types.ProviderCompletionDisposition,
     finish_trace: *PromptFinishTrace,
@@ -9093,6 +9137,7 @@ fn finishCommonAssistantTerminalWithExecution(
         execution_memory,
         summary_accumulator,
         assistant_text,
+        source_completion,
         outcome,
         disposition,
         finish_trace,

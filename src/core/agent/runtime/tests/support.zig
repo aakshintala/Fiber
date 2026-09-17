@@ -290,9 +290,9 @@ pub const FakeGateway = struct {
             return .{ .completed = .{} };
         }
 
-        for (completion.reasoning_chunks) |chunk| request.events.emit(.{ .reasoning_delta = chunk });
+        for (completion.reasoning_chunks) |chunk| request.events.emit(.{ .reasoning_delta = .{ .item_id = "", .chunk = chunk } });
         for (completion.chunks) |chunk| {
-            request.events.emit(.{ .content_delta = chunk });
+            request.events.emit(.{ .content_delta = .{ .item_id = "", .chunk = chunk } });
         }
         if (completion.cancel_after_chunks) request.cancel_flag.store(true, .seq_cst);
         if (completion.stream_error_after_chunks) |err| {

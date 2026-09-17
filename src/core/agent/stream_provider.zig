@@ -10,8 +10,12 @@ const model_provider = @import("../config/model_provider.zig");
 const Allocator = std.mem.Allocator;
 
 /// Transport parser callback shapes. Provider boundaries expose `EventSink`;
-/// concrete reducers may use these adapters internally.
-pub const StreamCallback = *const fn (ctx: *anyopaque, chunk: []const u8) void;
+/// concrete reducers may use these adapters internally. Content and reasoning
+/// chunks carry the Fiber-minted item id of their message or reasoning block
+/// beside the bytes, so chunk text stays byte-identical while every chunk is
+/// attributable to its item. An empty id means the item is not yet
+/// identified; the runtime mints one on arrival.
+pub const StreamCallback = *const fn (ctx: *anyopaque, item_id: []const u8, chunk: []const u8) void;
 pub const ToolStartCallback = *const fn (
     ctx: *anyopaque,
     tool_id: []const u8,
@@ -20,8 +24,14 @@ pub const ToolStartCallback = *const fn (
 ) void;
 
 pub const Event = union(enum) {
-    content_delta: []const u8,
-    reasoning_delta: []const u8,
+    content_delta: struct {
+        item_id: []const u8,
+        chunk: []const u8,
+    },
+    reasoning_delta: struct {
+        item_id: []const u8,
+        chunk: []const u8,
+    },
     tool_started: struct {
         id: []const u8,
         name: []const u8,
@@ -258,6 +268,9 @@ pub const Result = union(enum) {
         switch (self.*) {
             .completed => |completed| if (completed.ownership == .owned) {
                 if (completed.completion.content) |content| alloc.free(@constCast(content));
+                if (completed.completion.message_item_id) |item_id| alloc.free(@constCast(item_id));
+                for (completed.completion.reasoning_item_ids) |item_id| alloc.free(@constCast(item_id));
+                if (completed.completion.reasoning_item_ids.len > 0) alloc.free(@constCast(completed.completion.reasoning_item_ids));
                 if (completed.completion.generation_id) |id| alloc.free(@constCast(id));
                 if (completed.completion.billing) |billing| alloc.free(@constCast(billing.model));
                 types.freeToolCallSlice(alloc, @constCast(completed.completion.tool_calls));
@@ -322,8 +335,8 @@ test "stream provider accepts one typed request and emits ordered neutral events
             self.calls += 1;
             self.attempt_owner = request.provider_attempt_owner;
             try request.admission.admit();
-            request.events.emit(.{ .content_delta = "first" });
-            request.events.emit(.{ .reasoning_delta = "second" });
+            request.events.emit(.{ .content_delta = .{ .item_id = "", .chunk = "first" } });
+            request.events.emit(.{ .reasoning_delta = .{ .item_id = "", .chunk = "second" } });
             return .{ .completed = .{
                 .completion = .{ .content = "done" },
                 .usage = .{ .exact = .codex },
@@ -337,8 +350,8 @@ test "stream provider accepts one typed request and emits ordered neutral events
         fn emit(raw: *anyopaque, event: Event) void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             const chunk = switch (event) {
-                .content_delta => |value| value,
-                .reasoning_delta => |value| value,
+                .content_delta => |value| value.chunk,
+                .reasoning_delta => |value| value.chunk,
                 else => return,
             };
             self.chunks.appendSlice(std.testing.allocator, chunk) catch {

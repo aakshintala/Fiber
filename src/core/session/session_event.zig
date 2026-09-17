@@ -1881,6 +1881,36 @@ test "history_turn_committed event decode repairs duplicate-key tool arguments" 
     try std.testing.expect(std.mem.find(u8, step.tool_results[0].output, duplicate_arguments) == null);
 }
 
+test "event frames preserve message and reasoning item ids through the log" {
+    const alloc = std.testing.allocator;
+    const reasoning_ids: []const []const u8 = &.{"reason_a"};
+    const frame = Envelope{
+        .session_id = @constCast("session-1"),
+        .seq = 1,
+        .ts = 50,
+        .event = .{ .history_turn_committed = .{
+            .conversation_language = session.ConversationLanguage.literal("en"),
+            .total_input_tokens = 1,
+            .total_output_tokens = 2,
+            .turn = .{ .assistant = .{
+                .user = .{ .text = @constCast("hi") },
+                .assistant = @constCast("hello"),
+                .assistant_item_id = @constCast("item_msg"),
+                .reasoning_item_ids = reasoning_ids,
+            } },
+        } },
+    };
+    const encoded = try encodeFrame(alloc, frame);
+    defer alloc.free(encoded);
+    var decoded_frame = try decodeFrame(alloc, encoded);
+    defer decoded_frame.deinit(alloc);
+    const decoded = &decoded_frame.known;
+    const persisted = decoded.event.history_turn_committed.turn.assistant;
+    try std.testing.expectEqualStrings("item_msg", persisted.assistant_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), persisted.reasoning_item_ids.len);
+    try std.testing.expectEqualStrings("reason_a", persisted.reasoning_item_ids[0]);
+}
+
 test "event frame cap is inclusive of the required newline" {
     const alloc = std.testing.allocator;
     const frame = Envelope{

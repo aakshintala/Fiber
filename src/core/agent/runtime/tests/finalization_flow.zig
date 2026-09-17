@@ -1690,6 +1690,7 @@ test "common Stop terminal payload construction failure leaves guard open for on
             &messages,
             &summary,
             "candidate",
+            null,
             .failed,
             null,
             &finish_trace,

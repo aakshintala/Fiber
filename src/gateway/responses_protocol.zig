@@ -265,11 +265,28 @@ const ToolAccumulator = struct {
     }
 };
 
+const ReasoningAccumulator = struct {
+    output_index: i64,
+    item_id: []u8,
+
+    fn deinit(self: *ReasoningAccumulator, alloc: std.mem.Allocator) void {
+        alloc.free(self.item_id);
+        self.* = undefined;
+    }
+};
+
 pub const Reducer = struct {
     content: std.ArrayList(u8) = .empty,
     provider_state: std.Io.Writer.Allocating,
     provider_state_count: usize = 0,
     tools: std.ArrayList(ToolAccumulator) = .empty,
+    /// Fiber-minted id of the streaming assistant message, shared by text
+    /// deltas, refusal deltas, and the synthesized done-fallback. Minted when
+    /// the message item first appears, before anything is emitted about it.
+    message_item_id: ?[]u8 = null,
+    /// Fiber-minted reasoning ids, one per provider output item, mirroring
+    /// the tool accumulator keying.
+    reasoning_items: std.ArrayList(ReasoningAccumulator) = .empty,
     finish_reason: ?types.ProviderFinishReason = null,
     usage: types.Usage = .{},
     generation_id: ?[]u8 = null,
@@ -287,6 +304,9 @@ pub const Reducer = struct {
         self.provider_state.deinit();
         for (self.tools.items) |*tool| tool.deinit(alloc);
         self.tools.deinit(alloc);
+        if (self.message_item_id) |item_id| alloc.free(item_id);
+        for (self.reasoning_items.items) |*reasoning| reasoning.deinit(alloc);
+        self.reasoning_items.deinit(alloc);
         if (self.generation_id) |id| alloc.free(id);
         self.* = undefined;
     }
@@ -331,27 +351,36 @@ pub const Reducer = struct {
                         callback(callbacks.context, call_id, name, null);
                     }
                 }
+            } else if (std.mem.eql(u8, item_type, "message")) {
+                _ = try self.ensureMessageItemId(alloc);
+            } else if (std.mem.eql(u8, item_type, "reasoning")) {
+                _ = try self.ensureReasoningItemId(alloc, output_index);
             }
         } else if (std.mem.eql(u8, event_type, "response.output_text.delta") or
             std.mem.eql(u8, event_type, "response.refusal.delta"))
         {
             const delta = stringField(parsed.value.object, "delta") orelse return false;
             self.saw_content_delta = true;
-            callbacks.on_content(callbacks.context, delta);
+            const item_id = try self.ensureMessageItemId(alloc);
+            callbacks.on_content(callbacks.context, item_id, delta);
             try appendCaptured(alloc, &self.content, delta, content_capture_limit);
         } else if (std.mem.eql(u8, event_type, "response.reasoning_summary_text.delta") or
             std.mem.eql(u8, event_type, "response.reasoning_text.delta"))
         {
             const delta = stringField(parsed.value.object, "delta") orelse return false;
-            if (callbacks.on_reasoning) |callback| callback(callbacks.context, delta);
+            const output_index = integerField(parsed.value.object, "output_index");
+            const item_id = try self.reasoningIdForDelta(alloc, output_index);
+            if (callbacks.on_reasoning) |callback| callback(callbacks.context, item_id, delta);
         } else if (std.mem.eql(u8, event_type, "response.reasoning_summary_part.done")) {
-            if (callbacks.on_reasoning) |callback| callback(callbacks.context, "\n\n");
+            const output_index = integerField(parsed.value.object, "output_index");
+            const item_id = try self.reasoningIdForDelta(alloc, output_index);
+            if (callbacks.on_reasoning) |callback| callback(callbacks.context, item_id, "\n\n");
         } else if (std.mem.eql(u8, event_type, "response.function_call_arguments.delta")) {
             const output_index = integerField(parsed.value.object, "output_index") orelse return false;
             const delta = stringField(parsed.value.object, "delta") orelse return false;
             const index = findTool(self.tools.items, output_index) orelse return false;
             try appendToolArguments(alloc, &self.tools.items[index].arguments, delta, limits.tool_arguments_bytes);
-            if (callbacks.on_tool_input) |callback| callback(callbacks.context, delta);
+            if (callbacks.on_tool_input) |callback| callback(callbacks.context, "", delta);
         } else if (std.mem.eql(u8, event_type, "response.function_call_arguments.done")) {
             const output_index = integerField(parsed.value.object, "output_index") orelse return false;
             const arguments = stringField(parsed.value.object, "arguments") orelse return false;
@@ -360,7 +389,7 @@ pub const Reducer = struct {
             if (std.mem.startsWith(u8, arguments, self.tools.items[index].arguments.items)) {
                 const suffix = arguments[previous_len..];
                 try appendToolArguments(alloc, &self.tools.items[index].arguments, suffix, limits.tool_arguments_bytes);
-                if (suffix.len > 0) if (callbacks.on_tool_input) |callback| callback(callbacks.context, suffix);
+                if (suffix.len > 0) if (callbacks.on_tool_input) |callback| callback(callbacks.context, "", suffix);
             } else {
                 self.tools.items[index].arguments.clearRetainingCapacity();
                 try appendToolArguments(alloc, &self.tools.items[index].arguments, arguments, limits.tool_arguments_bytes);
@@ -404,11 +433,14 @@ pub const Reducer = struct {
                 self.provider_state_count += 1;
             } else if (std.mem.eql(u8, item_type, "message") and !self.saw_content_delta) {
                 if (item.object.get("content")) |parts| if (parts == .array) {
+                    // Synthesized fallback for a message that never streamed a
+                    // delta: it shares the streaming message's item.
+                    const item_id = try self.ensureMessageItemId(alloc);
                     for (parts.array.items) |part| {
                         if (part != .object) continue;
                         const text = stringField(part.object, "text") orelse
                             stringField(part.object, "refusal") orelse continue;
-                        callbacks.on_content(callbacks.context, text);
+                        callbacks.on_content(callbacks.context, item_id, text);
                         try appendCaptured(alloc, &self.content, text, content_capture_limit);
                     }
                 };
@@ -437,6 +469,46 @@ pub const Reducer = struct {
             return error.ResponseFailed;
         }
         return false;
+    }
+
+    /// Returns the streaming message's item id, minting it on first sight.
+    /// First appearance wins, so a retried output item keeps the id the
+    /// consumer already saw for this stream.
+    fn ensureMessageItemId(self: *Reducer, alloc: std.mem.Allocator) ![]const u8 {
+        if (self.message_item_id) |item_id| return item_id;
+        const item_id = try types.generate_item_id(alloc);
+        errdefer alloc.free(item_id);
+        self.message_item_id = item_id;
+        return item_id;
+    }
+
+    /// Returns the reasoning item id for an output index, minting it on
+    /// first sight. One id per output index item.
+    fn ensureReasoningItemId(self: *Reducer, alloc: std.mem.Allocator, output_index: i64) ![]const u8 {
+        if (findReasoning(self.reasoning_items.items, output_index)) |index| {
+            return self.reasoning_items.items[index].item_id;
+        }
+        const item_id = try types.generate_item_id(alloc);
+        errdefer alloc.free(item_id);
+        try self.reasoning_items.append(alloc, .{
+            .output_index = output_index,
+            .item_id = item_id,
+        });
+        return item_id;
+    }
+
+    /// Id carried beside a reasoning chunk. Deltas that name their output
+    /// index resolve exactly; ones that do not (such as the summary-part
+    /// separator) attribute to the most recent reasoning item, or to no
+    /// item when none has appeared yet.
+    fn reasoningIdForDelta(
+        self: *Reducer,
+        alloc: std.mem.Allocator,
+        output_index: ?i64,
+    ) ![]const u8 {
+        if (output_index) |index| return self.ensureReasoningItemId(alloc, index);
+        if (self.reasoning_items.items.len > 0) return self.reasoning_items.items[self.reasoning_items.items.len - 1].item_id;
+        return &.{};
     }
 
     pub fn finish(
@@ -494,9 +566,22 @@ pub const Reducer = struct {
         }
         const generation_id = self.generation_id;
         self.generation_id = null;
+        const message_item_id = self.message_item_id;
+        self.message_item_id = null;
+        var owned_reasoning: [][]const u8 = if (self.reasoning_items.items.len > 0)
+            try alloc.alloc([]const u8, self.reasoning_items.items.len)
+        else
+            &.{};
+        errdefer if (owned_reasoning.len > 0) alloc.free(owned_reasoning);
+        for (self.reasoning_items.items, 0..) |*reasoning, index| {
+            owned_reasoning[index] = reasoning.item_id;
+            reasoning.item_id = &.{};
+        }
         return .{
             .content = owned_content,
             .tool_calls = owned_tools,
+            .message_item_id = message_item_id,
+            .reasoning_item_ids = owned_reasoning,
             .generation_id = generation_id,
             .provider_state_json = owned_provider_state,
             .finish_reason = self.finish_reason orelse if (owned_tools.len > 0) .tool_calls else .stop,
@@ -563,6 +648,11 @@ fn appendCaptured(
 
 fn findTool(tools: []const ToolAccumulator, output_index: i64) ?usize {
     for (tools, 0..) |tool, index| if (tool.output_index == output_index) return index;
+    return null;
+}
+
+fn findReasoning(items: []const ReasoningAccumulator, output_index: i64) ?usize {
+    for (items, 0..) |item, index| if (item.output_index == output_index) return index;
     return null;
 }
 
