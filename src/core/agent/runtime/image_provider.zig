@@ -140,7 +140,7 @@ fn onContentChunk(raw: *anyopaque, chunk: []const u8) void {
 
 fn onEvent(raw: *anyopaque, event: agent_stream_provider.Event) void {
     switch (event) {
-        .content_delta => |chunk| onContentChunk(raw, chunk),
+        .content_delta => |delta| onContentChunk(raw, delta.chunk),
         else => {},
     }
 }

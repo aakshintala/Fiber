@@ -89,6 +89,18 @@ pub const StreamChunkContext = struct {
     /// a tool call appears on the stream so the early status row and every
     /// later lifecycle event share one id.
     tool_item_ids: std.StringHashMapUnmanaged([]u8) = .empty,
+    /// Fiber-minted id of the step's streaming assistant message, first
+    /// arrival wins. Owned here; reset on every recovery attempt because a
+    /// retried request re-mints per output index.
+    message_item_id: ?[]u8 = null,
+    /// Fiber-minted ids of the step's reasoning blocks, one per provider
+    /// output item in first-appearance order. Owned here; preserved across
+    /// recovery attempts so an interrupted block resumes under the same id.
+    reasoning_item_ids: std.ArrayList([]u8) = .empty,
+    /// Provider output index per reasoning id, in lockstep with
+    /// reasoning_item_ids. A null entry means the block arrived without an
+    /// index; indexed arrivals match their slot instead of minting anew.
+    reasoning_item_output_index: std.ArrayList(?i64) = .empty,
 
     fn markModelOutput(self: *StreamChunkContext) void {
         if (self.first_model_output_at_ms == null) self.first_model_output_at_ms = io_mod.milliTimestamp();
@@ -134,6 +146,10 @@ pub const StreamChunkContext = struct {
             self.alloc.free(entry.value_ptr.*);
         }
         self.tool_item_ids.deinit(self.alloc);
+        if (self.message_item_id) |item_id| self.alloc.free(item_id);
+        for (self.reasoning_item_ids.items) |item_id| self.alloc.free(item_id);
+        self.reasoning_item_ids.deinit(self.alloc);
+        self.reasoning_item_output_index.deinit(self.alloc);
     }
 
     pub fn beginRecoveryAttempt(self: *StreamChunkContext) void {
@@ -146,6 +162,11 @@ pub const StreamChunkContext = struct {
         self.saw_visible_text_after_tool_start = false;
         self.first_model_output_at_ms = null;
         self.published_phase = null;
+        // A retried request replays the same items, so the retry keeps the
+        // minted message and reasoning ids: stream arrival keys on the
+        // provider output index and reuses the slot instead of minting a
+        // new identity. Tool ids survive here for the same reason, keyed
+        // on the provider call id, which is stable.
     }
 
     /// Restores durable partial source before a restarted turn sends anything.
@@ -191,10 +212,26 @@ pub const StreamChunkContext = struct {
         try self.markdown.restorePresentedPrefix(self.alloc, source);
         self.recordTextOutput(source);
     }
+
+    /// Borrows the step's stream identities for interrupted-turn
+    /// persistence, so an interrupted block resumes under the same ids.
+    pub fn interruptedItemIds(self: *const StreamChunkContext) types.InterruptedItemIds {
+        return .{
+            .message = self.message_item_id,
+            .reasoning = self.reasoning_item_ids.items,
+        };
+    }
 };
 
-pub fn onStreamContentChunk(ctx: *anyopaque, chunk: []const u8) void {
+pub fn onStreamContentChunk(ctx: *anyopaque, item_id: []const u8, chunk: []const u8, output_index: ?i64) void {
     const stream_ctx: *StreamChunkContext = @ptrCast(@alignCast(ctx));
+    _ = output_index;
+    // Fail closed like tool starts below: an unidentified chunk stays
+    // suppressed until its item id mints, never delivered under no id.
+    stream_message_item_id(stream_ctx, item_id) catch |err| {
+        debug_trace.logf("agent", "message item id minting failed err={s}", .{@errorName(err)});
+        return;
+    };
     stream_ctx.markModelOutput();
     publishTurnPhase(stream_ctx, .generating);
     if (stream_ctx.token_progress) |progress| {
@@ -205,8 +242,14 @@ pub fn onStreamContentChunk(ctx: *anyopaque, chunk: []const u8) void {
     streamAssistantChunk(stream_ctx, chunk) catch {};
 }
 
-pub fn onStreamReasoningChunk(ctx: *anyopaque, chunk: []const u8) void {
+pub fn onStreamReasoningChunk(ctx: *anyopaque, item_id: []const u8, chunk: []const u8, output_index: ?i64) void {
     const stream_ctx: *StreamChunkContext = @ptrCast(@alignCast(ctx));
+    // Fail closed like content above: no chunk is delivered until the
+    // block's id is recorded.
+    stream_reasoning_item_id(stream_ctx, item_id, output_index) catch |err| {
+        debug_trace.logf("agent", "reasoning item id minting failed err={s}", .{@errorName(err)});
+        return;
+    };
     stream_ctx.markModelOutput();
     publishTurnPhase(stream_ctx, .thinking);
     if (stream_ctx.token_progress) |progress| {
@@ -342,6 +385,91 @@ fn stream_tool_item_id(stream_ctx: *StreamChunkContext, provider_id: []const u8)
 /// requests keep going out under the provider id. The caller owns the
 /// returned slice: each rekeyed call's id and provider id are allocated from
 /// `alloc`, which also backs the slice itself.
+/// Records the Fiber item id of the step's streaming assistant message.
+/// An empty arriving id means the item is not yet identified, so mint one;
+/// otherwise the first arrival wins, keeping the id stable when a stream
+/// carries several message items. The context owns the stored id.
+fn stream_message_item_id(stream_ctx: *StreamChunkContext, item_id: []const u8) Allocator.Error!void {
+    if (stream_ctx.message_item_id != null) return;
+    stream_ctx.message_item_id = if (item_id.len == 0)
+        try types.generate_item_id(stream_ctx.alloc)
+    else
+        try stream_ctx.alloc.dupe(u8, item_id);
+}
+
+/// Records a reasoning block's item id in first-appearance order, minting
+/// one when the arriving id is empty and ignoring repeats of a known id.
+/// An arrival that names a known output index reuses that slot's id, so a
+/// resumed stream replaying the same items keeps their identities instead
+/// of minting new ones; the fresh id is dropped like a rekeyed tool call.
+/// Index-less empty chunks share the latest id, keeping one block under
+/// one id without a provider key. The context owns every stored id.
+fn stream_reasoning_item_id(stream_ctx: *StreamChunkContext, item_id: []const u8, output_index: ?i64) Allocator.Error!void {
+    if (item_id.len != 0) {
+        for (stream_ctx.reasoning_item_ids.items, 0..) |known, slot| {
+            if (std.mem.eql(u8, known, item_id)) {
+                if (stream_ctx.reasoning_item_output_index.items[slot] == null) {
+                    stream_ctx.reasoning_item_output_index.items[slot] = output_index;
+                }
+                return;
+            }
+        }
+        if (output_index) |index| {
+            if (findReasoningSlot(stream_ctx.reasoning_item_output_index.items, index)) |_| return;
+        }
+        // Reserve both slots before duping: a later failure appends
+        // nothing, so nothing leaks.
+        try stream_ctx.reasoning_item_ids.ensureUnusedCapacity(stream_ctx.alloc, 1);
+        try stream_ctx.reasoning_item_output_index.ensureUnusedCapacity(stream_ctx.alloc, 1);
+        stream_ctx.reasoning_item_ids.appendAssumeCapacity(try stream_ctx.alloc.dupe(u8, item_id));
+        stream_ctx.reasoning_item_output_index.appendAssumeCapacity(output_index);
+        return;
+    }
+    if (output_index) |index| {
+        if (findReasoningSlot(stream_ctx.reasoning_item_output_index.items, index)) |_| return;
+    } else if (stream_ctx.reasoning_item_ids.items.len > 0) {
+        return;
+    }
+    try stream_ctx.reasoning_item_ids.ensureUnusedCapacity(stream_ctx.alloc, 1);
+    try stream_ctx.reasoning_item_output_index.ensureUnusedCapacity(stream_ctx.alloc, 1);
+    stream_ctx.reasoning_item_ids.appendAssumeCapacity(try types.generate_item_id(stream_ctx.alloc));
+    stream_ctx.reasoning_item_output_index.appendAssumeCapacity(output_index);
+}
+
+fn findReasoningSlot(indices: []const ?i64, output_index: i64) ?usize {
+    for (indices, 0..) |candidate, slot| {
+        if (candidate) |index| if (index == output_index) return slot;
+    }
+    return null;
+}
+
+/// Attaches the stream-minted message and reasoning ids to a completion,
+/// mirroring rekey_completion_tool_calls. The stream context is the
+/// cross-attempt authority: it always overwrites, so a checkpoint-restored
+/// id survives the retry that follows it. The caller owns the duped ids,
+/// which come from `alloc`; a previously set completion id is orphaned,
+/// never freed, exactly like a rekeyed tool call slice.
+pub fn attach_stream_message_ids(
+    stream_ctx: *StreamChunkContext,
+    alloc: Allocator,
+    completion: *types.ModelCompletion,
+) Allocator.Error!void {
+    if (stream_ctx.message_item_id) |item_id| {
+        completion.message_item_id = try alloc.dupe(u8, item_id);
+    }
+    if (stream_ctx.reasoning_item_ids.items.len > 0) {
+        const owned = try alloc.alloc([]const u8, stream_ctx.reasoning_item_ids.items.len);
+        errdefer alloc.free(owned);
+        var attached: usize = 0;
+        errdefer for (owned[0..attached]) |duped| alloc.free(@constCast(duped));
+        for (stream_ctx.reasoning_item_ids.items, 0..) |item_id, index| {
+            owned[index] = try alloc.dupe(u8, item_id);
+            attached += 1;
+        }
+        completion.reasoning_item_ids = owned;
+    }
+}
+
 pub fn rekey_completion_tool_calls(
     stream_ctx: *StreamChunkContext,
     alloc: Allocator,
@@ -994,10 +1122,10 @@ test "provider callbacks publish each activity phase transition once" {
     };
     defer stream_ctx.deinit();
 
-    onStreamReasoningChunk(&stream_ctx, "reasoning");
-    onStreamReasoningChunk(&stream_ctx, " continues");
-    onStreamContentChunk(&stream_ctx, "response");
-    onStreamContentChunk(&stream_ctx, " continues\n");
+    onStreamReasoningChunk(&stream_ctx, "", "reasoning", null);
+    onStreamReasoningChunk(&stream_ctx, "", " continues", null);
+    onStreamContentChunk(&stream_ctx, "", "response", null);
+    onStreamContentChunk(&stream_ctx, "", " continues\n", null);
     onStreamToolStart(&stream_ctx, "command_1", "shell", null);
 
     try std.testing.expectEqualSlices(
@@ -1225,7 +1353,7 @@ test "presented recovery source seeds continuation without rendering twice" {
     try std.testing.expectEqual(@as(usize, 0), capture.text_spans.items.len);
 
     stream_ctx.beginRecoveryAttempt();
-    onStreamContentChunk(&stream_ctx, "Partial output before EOF.Recovered final output once.");
+    onStreamContentChunk(&stream_ctx, "", "Partial output before EOF.Recovered final output once.", null);
     try flushAssistantStream(&stream_ctx);
 
     try std.testing.expectEqualStrings(
@@ -2017,9 +2145,9 @@ test "stream callbacks publish absolute raw output token progress" {
     defer stream_ctx.deinit();
 
     try pushTokenProgressUpdate(&stream_ctx, .changed);
-    onStreamReasoningChunk(&stream_ctx, "thinking ");
-    onStreamContentChunk(&stream_ctx, "visible");
-    onStreamContentChunk(&stream_ctx, " later\n");
+    onStreamReasoningChunk(&stream_ctx, "", "thinking ", null);
+    onStreamContentChunk(&stream_ctx, "", "visible", null);
+    onStreamContentChunk(&stream_ctx, "", " later\n", null);
 
     var expected_output = token_estimate.StreamingEstimator{};
     expected_output.consume("thinking ");
@@ -2039,7 +2167,9 @@ test "streamed presentation suppresses callback-time failures" {
         var capture = StreamCapture{};
         defer capture.deinit(alloc);
         var hook_set = capture.hooks();
-        var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+        // Index 0 is the message-id mint; index 1 is the first text
+        // allocation, so the presentation failure lands where it used to.
+        var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
         var stream_ctx = StreamChunkContext{
             .hooks = &hook_set,
             .turn_id = 1,
@@ -2047,7 +2177,7 @@ test "streamed presentation suppresses callback-time failures" {
         };
         defer stream_ctx.deinit();
 
-        onStreamContentChunk(&stream_ctx, "visible\n");
+        onStreamContentChunk(&stream_ctx, "", "visible\n", null);
 
         try std.testing.expect(failing.has_induced_failure);
         try std.testing.expect(stream_ctx.first_model_output_at_ms != null);
@@ -2059,7 +2189,7 @@ test "streamed presentation suppresses callback-time failures" {
         var capture = StreamCapture{};
         defer capture.deinit(alloc);
         var hook_set = capture.hooks();
-        var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 1 });
+        var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 2 });
         var stream_ctx = StreamChunkContext{
             .hooks = &hook_set,
             .turn_id = 1,
@@ -2067,7 +2197,7 @@ test "streamed presentation suppresses callback-time failures" {
         };
         defer stream_ctx.deinit();
 
-        onStreamContentChunk(&stream_ctx, "visible\n");
+        onStreamContentChunk(&stream_ctx, "", "visible\n", null);
 
         try std.testing.expect(failing.has_induced_failure);
         try std.testing.expectEqualStrings("visible\n", stream_ctx.raw_text.items);
@@ -2081,7 +2211,7 @@ test "streamed presentation suppresses callback-time failures" {
         var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = alloc };
         defer stream_ctx.deinit();
 
-        onStreamContentChunk(&stream_ctx, "visible\n");
+        onStreamContentChunk(&stream_ctx, "", "visible\n", null);
 
         try std.testing.expectEqualStrings("visible\n", stream_ctx.raw_text.items);
         try std.testing.expectEqual(@as(usize, 1), capture.source_calls);
@@ -2096,7 +2226,7 @@ test "streamed presentation suppresses callback-time failures" {
         var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = alloc };
         defer stream_ctx.deinit();
 
-        onStreamContentChunk(&stream_ctx, "visible\n");
+        onStreamContentChunk(&stream_ctx, "", "visible\n", null);
 
         try std.testing.expectEqualStrings("visible\n", stream_ctx.raw_text.items);
         try std.testing.expectEqual(@as(usize, 1), capture.event_calls);
@@ -2110,7 +2240,7 @@ test "streamed presentation suppresses callback-time failures" {
         var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = alloc };
         defer stream_ctx.deinit();
 
-        onStreamContentChunk(&stream_ctx, "visible\n");
+        onStreamContentChunk(&stream_ctx, "", "visible\n", null);
 
         try std.testing.expectEqualStrings("visible\n", stream_ctx.raw_text.items);
         try std.testing.expectEqual(@as(usize, 1), capture.event_calls);
@@ -2426,4 +2556,289 @@ test "tool item id minting fails closed on allocation failure" {
     // identity.
     onStreamToolStart(&stream_ctx, "call_provider", "read_file", "src/main.zig");
     try std.testing.expectEqual(@as(usize, 0), capture.lifecycle_events.items.len);
+}
+
+test "stream message chunk carries the item minted at first appearance" {
+    const alloc = std.testing.allocator;
+    var capture = StreamCapture{};
+    defer capture.deinit(alloc);
+    var hook_set = capture.hooks();
+    var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = alloc };
+    defer stream_ctx.deinit();
+
+    // The gateway mints at output_item.added time; the runtime receives the
+    // minted id beside every chunk.
+    const message_id = try types.generate_item_id(alloc);
+    defer alloc.free(message_id);
+    const reasoning_id = try types.generate_item_id(alloc);
+    defer alloc.free(reasoning_id);
+
+    onStreamReasoningChunk(&stream_ctx, reasoning_id, "thinking", null);
+    onStreamContentChunk(&stream_ctx, message_id, "hello", null);
+    onStreamContentChunk(&stream_ctx, message_id, " again", null);
+    onStreamReasoningChunk(&stream_ctx, reasoning_id, " more", null);
+
+    // One message id, stable across chunks; one reasoning id, recorded once.
+    try std.testing.expectEqualStrings(message_id, stream_ctx.message_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), stream_ctx.reasoning_item_ids.items.len);
+    try std.testing.expectEqualStrings(reasoning_id, stream_ctx.reasoning_item_ids.items[0]);
+    try std.testing.expect(!std.mem.eql(u8, message_id, reasoning_id));
+    // Chunk bytes are untouched by the side-channel id.
+    try std.testing.expectEqualStrings("hello again", stream_ctx.raw_text.items);
+
+    // The completion analogue attaches the same ids.
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var completion = types.ModelCompletion{ .content = "hello again" };
+    try attach_stream_message_ids(&stream_ctx, arena, &completion);
+    try std.testing.expectEqualStrings(message_id, completion.message_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), completion.reasoning_item_ids.len);
+    try std.testing.expectEqualStrings(reasoning_id, completion.reasoning_item_ids[0]);
+}
+
+test "same stream mints different message ids in different sessions" {
+    const alloc = std.testing.allocator;
+    var first_capture = StreamCapture{};
+    defer first_capture.deinit(alloc);
+    var first_hooks = first_capture.hooks();
+    var first = StreamChunkContext{ .hooks = &first_hooks, .turn_id = 1, .alloc = alloc };
+    defer first.deinit();
+    var second_capture = StreamCapture{};
+    defer second_capture.deinit(alloc);
+    var second_hooks = second_capture.hooks();
+    var second = StreamChunkContext{ .hooks = &second_hooks, .turn_id = 1, .alloc = alloc };
+    defer second.deinit();
+
+    // Unidentified chunks mint on arrival; random per mint, so two sessions
+    // never share an id.
+    onStreamContentChunk(&first, "", "hello", null);
+    onStreamContentChunk(&second, "", "hello", null);
+    const first_id = first.message_item_id.?;
+    const second_id = second.message_item_id.?;
+    try std.testing.expect(!std.mem.eql(u8, first_id, second_id));
+    onStreamContentChunk(&first, "", " again", null);
+    try std.testing.expectEqualStrings(first_id, first.message_item_id.?);
+}
+
+test "message item id survives stream start, completion, persistence, and resume" {
+    const alloc = std.testing.allocator;
+    var capture = StreamCapture{};
+    defer capture.deinit(alloc);
+    var hook_set = capture.hooks();
+    var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = alloc };
+    defer stream_ctx.deinit();
+
+    // Stage 1: the stream carries the id minted at first appearance.
+    const message_id = try types.generate_item_id(alloc);
+    defer alloc.free(message_id);
+    const reasoning_id = try types.generate_item_id(alloc);
+    defer alloc.free(reasoning_id);
+    onStreamReasoningChunk(&stream_ctx, reasoning_id, "thinking", 0);
+    onStreamContentChunk(&stream_ctx, message_id, "hello", null);
+    try std.testing.expectEqualStrings(message_id, stream_ctx.message_item_id.?);
+    const item_id = try alloc.dupe(u8, message_id);
+    defer alloc.free(item_id);
+    const stored_reasoning_id = try alloc.dupe(u8, reasoning_id);
+    defer alloc.free(stored_reasoning_id);
+
+    // Stage 2: completion attaches the same ids.
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var completion = types.ModelCompletion{ .content = "hello" };
+    try attach_stream_message_ids(&stream_ctx, arena, &completion);
+    try std.testing.expectEqualStrings(item_id, completion.message_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), completion.reasoning_item_ids.len);
+    try std.testing.expectEqualStrings(stored_reasoning_id, completion.reasoning_item_ids[0]);
+
+    // Stage 3: session persistence round-trips both ids; reopening the
+    // session reads them back unchanged.
+    const reasoning_ids = try arena.alloc([]u8, 1);
+    reasoning_ids[0] = try arena.dupe(u8, stored_reasoning_id);
+    const turn: types.HistoryTurn = .{ .assistant = .{
+        .user = .{ .text = @constCast("say hi") },
+        .assistant = @constCast("hello"),
+        .assistant_item_id = try arena.dupe(u8, item_id),
+        .reasoning_item_ids = reasoning_ids,
+    } };
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try test_session_codec.writeHistoryTurn(&encoded.writer, turn);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, encoded.written(), .{});
+    defer parsed.deinit();
+    const decoded = try test_session_codec.parseHistoryTurn(alloc, parsed.value);
+    defer types.freeHistoryTurn(alloc, decoded);
+    try std.testing.expectEqualStrings(item_id, decoded.assistant.assistant_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), decoded.assistant.reasoning_item_ids.len);
+    try std.testing.expectEqualStrings(stored_reasoning_id, decoded.assistant.reasoning_item_ids[0]);
+
+    // Stage 4: the provider wire carries text only; minted ids stay
+    // internal.
+    const messages = [_]ChatMessage{
+        .{ .role = .assistant, .content = "hello" },
+    };
+    const body = try test_request_body.buildGatewayRequestBodyWithOptions(alloc, "[]", &messages, .{}, .auto);
+    defer alloc.free(body);
+    try std.testing.expect(std.mem.find(u8, body, "hello") != null);
+    try std.testing.expect(std.mem.find(u8, body, item_id) == null);
+    try std.testing.expect(std.mem.find(u8, body, stored_reasoning_id) == null);
+
+    // Stage 5: interruption checkpoints both ids; reopening the session
+    // reads them back unchanged.
+    const checkpoint_reasoning = [_]test_session_codec.CheckpointReasoningId{
+        .{ .output_index = 0, .item_id = stored_reasoning_id },
+    };
+    const checkpoint = test_session_codec.RecoveryCheckpoint{
+        .turn_id = 1,
+        .user = .{ .text = @constCast("say hi") },
+        .assistant_source = @constCast("hello"),
+        .assistant_message_id = item_id,
+        .assistant_reasoning_ids = @constCast(checkpoint_reasoning[0..]),
+        .cause = .network_interrupted,
+        .action = .retrying_request,
+        .tool_state = .none,
+        .authority = .{ .provider = .codex, .model = @constCast("model") },
+        .requested_fast_mode = false,
+        .fast_mode = false,
+        .max_provider_attempts = 3,
+        .consumed_provider_attempts = 1,
+        .outstanding_reservation = false,
+    };
+    var checkpoint_out: std.Io.Writer.Allocating = .init(alloc);
+    defer checkpoint_out.deinit();
+    try test_session_codec.writeRecoveryCheckpoint(&checkpoint_out.writer, checkpoint);
+    var checkpoint_json = try std.json.parseFromSlice(std.json.Value, alloc, checkpoint_out.written(), .{});
+    defer checkpoint_json.deinit();
+    var reopened_checkpoint = try test_session_codec.parseRecoveryCheckpoint(alloc, checkpoint_json.value);
+    defer reopened_checkpoint.deinit(alloc);
+    try std.testing.expectEqualStrings(item_id, reopened_checkpoint.assistant_message_id.?);
+    try std.testing.expectEqual(@as(usize, 1), reopened_checkpoint.assistant_reasoning_ids.len);
+    try std.testing.expectEqual(@as(?i64, 0), reopened_checkpoint.assistant_reasoning_ids[0].output_index);
+    try std.testing.expectEqualStrings(stored_reasoning_id, reopened_checkpoint.assistant_reasoning_ids[0].item_id);
+
+    // Stage 6: the resumed stream reuses both ids instead of minting new
+    // identities. Fresh provider-side ids at the same output index
+    // resolve to the seeded slot; content keeps the first-won message id.
+    var resume_capture = StreamCapture{};
+    defer resume_capture.deinit(alloc);
+    var resume_hooks = resume_capture.hooks();
+    var resumed = StreamChunkContext{ .hooks = &resume_hooks, .turn_id = 1, .alloc = alloc };
+    defer resumed.deinit();
+    if (reopened_checkpoint.assistant_message_id) |resumed_id| {
+        resumed.message_item_id = try alloc.dupe(u8, resumed_id);
+    }
+    try resumed.reasoning_item_ids.ensureUnusedCapacity(alloc, reopened_checkpoint.assistant_reasoning_ids.len);
+    try resumed.reasoning_item_output_index.ensureUnusedCapacity(alloc, reopened_checkpoint.assistant_reasoning_ids.len);
+    for (reopened_checkpoint.assistant_reasoning_ids) |entry| {
+        resumed.reasoning_item_ids.appendAssumeCapacity(try alloc.dupe(u8, entry.item_id));
+        resumed.reasoning_item_output_index.appendAssumeCapacity(entry.output_index);
+    }
+    const replay_reasoning = try types.generate_item_id(alloc);
+    defer alloc.free(replay_reasoning);
+    const replay_message = try types.generate_item_id(alloc);
+    defer alloc.free(replay_message);
+    onStreamReasoningChunk(&resumed, replay_reasoning, "thinking", 0);
+    onStreamContentChunk(&resumed, replay_message, "hello", null);
+    try std.testing.expectEqualStrings(item_id, resumed.message_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), resumed.reasoning_item_ids.items.len);
+    try std.testing.expectEqualStrings(stored_reasoning_id, resumed.reasoning_item_ids.items[0]);
+    var resume_completion = types.ModelCompletion{ .content = "hello" };
+    try attach_stream_message_ids(&resumed, arena, &resume_completion);
+    try std.testing.expectEqualStrings(item_id, resume_completion.message_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), resume_completion.reasoning_item_ids.len);
+    try std.testing.expectEqualStrings(stored_reasoning_id, resume_completion.reasoning_item_ids[0]);
+}
+
+test "message item id minting fails closed on allocation failure" {
+    const alloc = std.testing.allocator;
+    var capture = StreamCapture{};
+    defer capture.deinit(alloc);
+    var hook_set = capture.hooks();
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = failing.allocator() };
+    defer stream_ctx.deinit();
+    // An unidentified chunk cannot mint: the error propagates and nothing
+    // is remembered.
+    try std.testing.expectError(error.OutOfMemory, stream_message_item_id(&stream_ctx, ""));
+    try std.testing.expect(stream_ctx.message_item_id == null);
+    // Fail closed: without an id the chunk is suppressed, never delivered
+    // under no identity. Later chunks retry the mint.
+    onStreamContentChunk(&stream_ctx, "", "hello", null);
+    try std.testing.expect(stream_ctx.message_item_id == null);
+    try std.testing.expectEqual(@as(usize, 0), stream_ctx.raw_text.items.len);
+    try std.testing.expectEqual(@as(usize, 0), capture.source_spans.items.len);
+    try std.testing.expectEqual(@as(usize, 0), capture.phase_updates.items.len);
+    onStreamReasoningChunk(&stream_ctx, "", "thinking", null);
+    try std.testing.expectEqual(@as(usize, 0), stream_ctx.reasoning_item_ids.items.len);
+}
+
+test "reasoning chunks from one output index share one id" {
+    const alloc = std.testing.allocator;
+    var capture = StreamCapture{};
+    defer capture.deinit(alloc);
+    var hook_set = capture.hooks();
+    var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = alloc };
+    defer stream_ctx.deinit();
+
+    // Unidentified chunks keyed to the same block share one minted id;
+    // chunk bytes stay identical.
+    onStreamReasoningChunk(&stream_ctx, "", "thinking", 0);
+    onStreamReasoningChunk(&stream_ctx, "", " more", 0);
+    try std.testing.expectEqual(@as(usize, 1), stream_ctx.reasoning_item_ids.items.len);
+    const first_id = try alloc.dupe(u8, stream_ctx.reasoning_item_ids.items[0]);
+    defer alloc.free(first_id);
+
+    // A new output index starts a new block with a new id.
+    onStreamReasoningChunk(&stream_ctx, "", "other", 1);
+    try std.testing.expectEqual(@as(usize, 2), stream_ctx.reasoning_item_ids.items.len);
+    try std.testing.expect(!std.mem.eql(u8, first_id, stream_ctx.reasoning_item_ids.items[1]));
+
+    // Replaying an index reuses its slot instead of minting anew, even
+    // when the replay carries a fresh provider-side id.
+    const fresh = try types.generate_item_id(alloc);
+    defer alloc.free(fresh);
+    onStreamReasoningChunk(&stream_ctx, fresh, "again", 0);
+    try std.testing.expectEqual(@as(usize, 2), stream_ctx.reasoning_item_ids.items.len);
+    try std.testing.expectEqualStrings(first_id, stream_ctx.reasoning_item_ids.items[0]);
+}
+
+fn checkReasoningItemRecordingAllocationFailures(alloc: Allocator) !void {
+    var capture = StreamCapture{};
+    defer capture.deinit(std.testing.allocator);
+    var hook_set = capture.hooks();
+    var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = alloc };
+    defer stream_ctx.deinit();
+    // Known-id dupe plus slot append, empty-index mint plus slot append,
+    // repeat arrivals, then completion attach dupes.
+    try stream_reasoning_item_id(&stream_ctx, "reason_a", 0);
+    try stream_reasoning_item_id(&stream_ctx, "", 1);
+    try stream_reasoning_item_id(&stream_ctx, "reason_a", 0);
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    var completion = types.ModelCompletion{};
+    try attach_stream_message_ids(&stream_ctx, arena_state.allocator(), &completion);
+}
+
+test "reasoning item recording cleans every partial allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        checkReasoningItemRecordingAllocationFailures,
+        .{},
+    );
+}
+
+test "index-less empty reasoning chunks share the latest id" {
+    const alloc = std.testing.allocator;
+    var capture = StreamCapture{};
+    defer capture.deinit(alloc);
+    var hook_set = capture.hooks();
+    var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = alloc };
+    defer stream_ctx.deinit();
+
+    // The generic contract's unidentified chunks from one block arrive
+    // without an index; they share one minted id and keep their bytes.
+    onStreamReasoningChunk(&stream_ctx, "", "thinking", null);
+    onStreamReasoningChunk(&stream_ctx, "", " more", null);
+    try std.testing.expectEqual(@as(usize, 1), stream_ctx.reasoning_item_ids.items.len);
 }

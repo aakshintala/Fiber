@@ -2344,7 +2344,7 @@ test "app direct ask delivers semantic presentation through the runtime sink" {
             request: agent_stream_provider.ModelRequest,
         ) !agent_stream_provider.Result {
             try request.admission.admit();
-            request.events.emit(.{ .content_delta = "Before table.\n" ++
+            request.events.emit(.{ .content_delta = .{ .item_id = "", .chunk = "Before table.\n" ++
                 "| Name | Count |\n" ++
                 "|------|------:|\n" ++
                 "| api | 7 |\n" ++
@@ -2352,7 +2352,7 @@ test "app direct ask delivers semantic presentation through the runtime sink" {
                 "```zig\n" ++
                 "const ready = true;\n" ++
                 "```\n\n" ++
-                "---\n" });
+                "---\n" } });
             return .{ .completed = .{ .completion = .{ .content = "", .finish_reason = .stop } } };
         }
     };

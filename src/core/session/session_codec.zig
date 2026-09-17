@@ -59,11 +59,27 @@ pub const TurnAuthority = struct {
     }
 };
 
+/// A reasoning block's identity for checkpoint resume: the provider output
+/// index it was recorded under plus its Fiber-minted item id. The index
+/// lets a resumed stream replaying the same items reuse their ids instead
+/// of minting new identities.
+pub const CheckpointReasoningId = struct {
+    output_index: ?i64 = null,
+    item_id: []u8,
+};
+
 pub const RecoveryCheckpoint = struct {
-    version: u8 = 2,
+    version: u8 = 3,
     turn_id: u64,
     user: session.UserTurn,
     assistant_source: []u8,
+    /// Fiber-minted id of the in-flight assistant message, when the
+    /// interrupted stream had minted one. Null for pre-id sessions: no
+    /// backfill, reads stay null-tolerant.
+    assistant_message_id: ?[]u8 = null,
+    /// Fiber-minted ids of the in-flight reasoning blocks with their
+    /// output indices. Empty for pre-id checkpoints, which stay readable.
+    assistant_reasoning_ids: []CheckpointReasoningId = &.{},
     execution: session.ExecutionMemory = .{},
     cause: types.ModelRecoveryCause,
     action: types.ModelRecoveryAction,
@@ -78,6 +94,9 @@ pub const RecoveryCheckpoint = struct {
     pub fn deinit(self: *RecoveryCheckpoint, alloc: Allocator) void {
         session.freeUserTurn(alloc, self.user);
         alloc.free(self.assistant_source);
+        if (self.assistant_message_id) |item_id| alloc.free(item_id);
+        for (self.assistant_reasoning_ids) |entry| alloc.free(entry.item_id);
+        if (self.assistant_reasoning_ids.len > 0) alloc.free(self.assistant_reasoning_ids);
         session.freeExecutionMemory(alloc, self.execution);
         self.authority.deinit(alloc);
         self.* = undefined;
@@ -88,6 +107,10 @@ pub const RecoveryCheckpoint = struct {
         errdefer session.freeUserTurn(alloc, user);
         const assistant_source = try alloc.dupe(u8, self.assistant_source);
         errdefer alloc.free(assistant_source);
+        const assistant_message_id = if (self.assistant_message_id) |item_id| try alloc.dupe(u8, item_id) else null;
+        errdefer if (assistant_message_id) |item_id| alloc.free(item_id);
+        const assistant_reasoning_ids = try dupeCheckpointReasoningIds(alloc, self.assistant_reasoning_ids);
+        errdefer freeCheckpointReasoningIds(alloc, assistant_reasoning_ids);
         const execution = try types.dupeExecutionMemory(alloc, self.execution);
         errdefer session.freeExecutionMemory(alloc, execution);
         const authority = try self.authority.dupe(alloc);
@@ -96,6 +119,8 @@ pub const RecoveryCheckpoint = struct {
             .turn_id = self.turn_id,
             .user = user,
             .assistant_source = assistant_source,
+            .assistant_message_id = assistant_message_id,
+            .assistant_reasoning_ids = assistant_reasoning_ids,
             .execution = execution,
             .cause = self.cause,
             .action = self.action,
@@ -109,6 +134,27 @@ pub const RecoveryCheckpoint = struct {
         };
     }
 };
+
+fn freeCheckpointReasoningIds(alloc: Allocator, ids: []const CheckpointReasoningId) void {
+    for (ids) |entry| alloc.free(entry.item_id);
+    if (ids.len > 0) alloc.free(@constCast(ids));
+}
+
+fn dupeCheckpointReasoningIds(alloc: Allocator, ids: []const CheckpointReasoningId) ![]CheckpointReasoningId {
+    if (ids.len == 0) return &.{};
+    const copy = try alloc.alloc(CheckpointReasoningId, ids.len);
+    errdefer alloc.free(copy);
+    var copied: usize = 0;
+    errdefer for (copy[0..copied]) |entry| alloc.free(entry.item_id);
+    for (ids, 0..) |entry, index| {
+        copy[index] = .{
+            .output_index = entry.output_index,
+            .item_id = try alloc.dupe(u8, entry.item_id),
+        };
+        copied += 1;
+    }
+    return copy;
+}
 
 pub const DurableSessionState = struct {
     id: []u8,
@@ -233,6 +279,15 @@ pub fn writeDurableBytes(writer: *std.Io.Writer, bytes: []const u8) !void {
     try writer.writeAll("\"}");
 }
 
+fn writeItemIdArray(writer: *std.Io.Writer, items: []const []const u8) !void {
+    try writer.writeByte('[');
+    for (items, 0..) |item_id, i| {
+        if (i > 0) try writer.writeByte(',');
+        try writeDurableBytes(writer, item_id);
+    }
+    try writer.writeByte(']');
+}
+
 pub fn parseDurableBytes(alloc: Allocator, value: std.json.Value) ![]u8 {
     switch (value) {
         .string => |text| return try alloc.dupe(u8, text),
@@ -314,6 +369,10 @@ pub fn writeHistoryTurn(writer: *std.Io.Writer, turn: session.HistoryTurn) !void
             try writeDurableBytes(writer, entry.assistant);
             try writer.writeAll(",\"execution\":");
             try writeExecutionMemory(writer, entry.execution);
+            try writer.writeAll(",\"assistant_item_id\":");
+            try writeOptionalDurableBytes(writer, entry.assistant_item_id);
+            try writer.writeAll(",\"reasoning_item_ids\":");
+            try writeItemIdArray(writer, entry.reasoning_item_ids);
             try writer.writeByte('}');
         },
         .interrupted => |entry| {
@@ -343,6 +402,10 @@ pub fn writeHistoryTurn(writer: *std.Io.Writer, turn: session.HistoryTurn) !void
                 try writer.writeAll(",\"cancelled_command\":");
                 try writeCancelledCommandPresentation(writer, presentation);
             }
+            try writer.writeAll(",\"assistant_item_id\":");
+            try writeOptionalDurableBytes(writer, entry.assistant_item_id);
+            try writer.writeAll(",\"reasoning_item_ids\":");
+            try writeItemIdArray(writer, entry.reasoning_item_ids);
             try writer.writeByte('}');
         },
     }
@@ -426,17 +489,36 @@ pub fn parseHistoryTurn(alloc: Allocator, value: std.json.Value) !session.Histor
         } };
     }
     if (std.mem.eql(u8, kind, "assistant")) {
-        const object = try exactObject(value, &.{ "kind", "user", "assistant", "execution" });
+        const source = try requireObject(value);
+        // Turns written before item ids carry only the four legacy keys;
+        // they parse with null ids and keep working.
+        const has_item_ids = source.get("assistant_item_id") != null or source.get("reasoning_item_ids") != null;
+        const object = if (has_item_ids)
+            try exactObject(value, &.{ "kind", "user", "assistant", "execution", "assistant_item_id", "reasoning_item_ids" })
+        else
+            try exactObject(value, &.{ "kind", "user", "assistant", "execution" });
         const user = try parseUserTurn(alloc, object.get("user") orelse return error.InvalidSessionFormat);
         errdefer session.freeUserTurn(alloc, user);
         const assistant = try parseRequiredDurableBytes(alloc, object, "assistant");
         errdefer alloc.free(assistant);
         const execution = try parseExecutionMemory(alloc, object.get("execution") orelse return error.InvalidSessionFormat);
         errdefer session.freeExecutionMemory(alloc, execution);
+        const assistant_item_id = if (has_item_ids)
+            try parseOptionalDurableBytes(alloc, object.get("assistant_item_id") orelse return error.InvalidSessionFormat)
+        else
+            null;
+        errdefer if (assistant_item_id) |item_id| alloc.free(item_id);
+        const reasoning_item_ids: [][]u8 = if (has_item_ids)
+            try parseDurableBytesArray(alloc, object.get("reasoning_item_ids") orelse return error.InvalidSessionFormat)
+        else
+            &.{};
+        errdefer session.freeCompletedToolNames(alloc, reasoning_item_ids);
         return .{ .assistant = .{
             .user = user,
             .assistant = assistant,
             .execution = execution,
+            .assistant_item_id = assistant_item_id,
+            .reasoning_item_ids = reasoning_item_ids,
         } };
     }
     if (std.mem.eql(u8, kind, "background_command")) {
@@ -481,11 +563,13 @@ pub fn parseHistoryTurn(alloc: Allocator, value: std.json.Value) !session.Histor
         const has_execution = source.get("execution") != null;
         const has_presentation = source.get("cancelled_command") != null;
         const has_terminal_reason = source.get("terminal_reason") != null;
+        const has_item_ids = source.get("assistant_item_id") != null or source.get("reasoning_item_ids") != null;
         const object = try exactInterruptedHistoryObject(
             value,
             has_execution,
             has_presentation,
             has_terminal_reason,
+            has_item_ids,
         );
         const user = try parseUserTurn(alloc, object.get("user") orelse return error.InvalidSessionFormat);
         errdefer session.freeUserTurn(alloc, user);
@@ -524,9 +608,21 @@ pub fn parseHistoryTurn(alloc: Allocator, value: std.json.Value) !session.Histor
         {
             return error.InvalidSessionFormat;
         }
+        const assistant_item_id = if (has_item_ids)
+            try parseOptionalDurableBytes(alloc, object.get("assistant_item_id") orelse return error.InvalidSessionFormat)
+        else
+            null;
+        errdefer if (assistant_item_id) |item_id| alloc.free(item_id);
+        const reasoning_item_ids: [][]u8 = if (has_item_ids)
+            try parseDurableBytesArray(alloc, object.get("reasoning_item_ids") orelse return error.InvalidSessionFormat)
+        else
+            &.{};
+        errdefer session.freeCompletedToolNames(alloc, reasoning_item_ids);
         return .{ .interrupted = .{
             .user = user,
             .assistant = assistant,
+            .assistant_item_id = assistant_item_id,
+            .reasoning_item_ids = reasoning_item_ids,
             .tool_call = tool_call,
             .completed_tool_names = completed_tool_names,
             .execution = execution,
@@ -580,7 +676,7 @@ fn validateStateWithPermissionMigration(
             return error.InvalidDurableField;
     }
     if (state.recovery_checkpoint) |checkpoint| {
-        if (checkpoint.version != 2 or
+        if (checkpoint.version != 3 or
             checkpoint.turn_id == 0 or
             checkpoint.max_provider_attempts == 0 or
             checkpoint.consumed_provider_attempts > checkpoint.max_provider_attempts or
@@ -769,6 +865,22 @@ pub fn writeRecoveryCheckpoint(writer: *std.Io.Writer, checkpoint: RecoveryCheck
     try writeUserTurn(writer, checkpoint.user);
     try writer.writeAll(",\"assistant_source\":");
     try writeDurableBytes(writer, checkpoint.assistant_source);
+    try writer.writeAll(",\"assistant_message_id\":");
+    try writeOptionalDurableBytes(writer, checkpoint.assistant_message_id);
+    try writer.writeAll(",\"assistant_reasoning_ids\":[");
+    for (checkpoint.assistant_reasoning_ids, 0..) |entry, index| {
+        if (index > 0) try writer.writeByte(',');
+        try writer.writeAll("{\"output_index\":");
+        if (entry.output_index) |output_index| {
+            try writer.print("{d}", .{output_index});
+        } else {
+            try writer.writeAll("null");
+        }
+        try writer.writeAll(",\"item_id\":");
+        try writeDurableBytes(writer, entry.item_id);
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
     try writer.writeAll(",\"execution\":");
     try writeExecutionMemory(writer, checkpoint.execution);
     try writer.writeAll(",\"cause\":");
@@ -996,10 +1108,25 @@ pub fn parseRecoveryCheckpoint(alloc: Allocator, value: std.json.Value) !Recover
                 "cause",     "action",                "tool_state",                 "route_model",             "requested_fast_mode",
                 "fast_mode", "max_provider_attempts", "consumed_provider_attempts", "outstanding_reservation",
             }),
-        2 => try exactObject(value, &.{
-            "version",   "turn_id",               "user",                       "assistant_source",        "execution",
-            "cause",     "action",                "tool_state",                 "authority",               "requested_fast_mode",
-            "fast_mode", "max_provider_attempts", "consumed_provider_attempts", "outstanding_reservation",
+        // Checkpoints written before message ids omit the id key; they
+        // parse with a null id and keep working.
+        2 => if (raw_object.get("assistant_message_id") != null)
+            try exactObject(value, &.{
+                "version",             "turn_id",   "user",                  "assistant_source",           "assistant_message_id",
+                "execution",           "cause",     "action",                "tool_state",                 "authority",
+                "requested_fast_mode", "fast_mode", "max_provider_attempts", "consumed_provider_attempts", "outstanding_reservation",
+            })
+        else
+            try exactObject(value, &.{
+                "version",   "turn_id",               "user",                       "assistant_source",        "execution",
+                "cause",     "action",                "tool_state",                 "authority",               "requested_fast_mode",
+                "fast_mode", "max_provider_attempts", "consumed_provider_attempts", "outstanding_reservation",
+            }),
+        3 => try exactObject(value, &.{
+            "version",                 "turn_id",             "user",      "assistant_source",      "assistant_message_id",
+            "assistant_reasoning_ids", "execution",           "cause",     "action",                "tool_state",
+            "authority",               "requested_fast_mode", "fast_mode", "max_provider_attempts", "consumed_provider_attempts",
+            "outstanding_reservation",
         }),
         else => return error.InvalidDurableField,
     };
@@ -1007,6 +1134,17 @@ pub fn parseRecoveryCheckpoint(alloc: Allocator, value: std.json.Value) !Recover
     errdefer session.freeUserTurn(alloc, user);
     const assistant_source = try parseDurableBytes(alloc, object.get("assistant_source") orelse return error.InvalidSessionFormat);
     errdefer alloc.free(assistant_source);
+    const assistant_message_id = if (object.get("assistant_message_id")) |stored|
+        try parseOptionalDurableBytes(alloc, stored)
+    else
+        null;
+    errdefer if (assistant_message_id) |item_id| alloc.free(item_id);
+    // Pre-reasoning checkpoints omit the key; they parse with no ids.
+    const assistant_reasoning_ids: []CheckpointReasoningId = if (object.get("assistant_reasoning_ids")) |stored|
+        try parseCheckpointReasoningIds(alloc, stored)
+    else
+        &.{};
+    errdefer freeCheckpointReasoningIds(alloc, assistant_reasoning_ids);
     const execution = try parseExecutionMemory(alloc, object.get("execution") orelse return error.InvalidSessionFormat);
     errdefer session.freeExecutionMemory(alloc, execution);
     const authority = if (version == 1) legacy: {
@@ -1028,10 +1166,12 @@ pub fn parseRecoveryCheckpoint(alloc: Allocator, value: std.json.Value) !Recover
     const consumed_provider_attempts = std.math.cast(usize, try requireU64(object, "consumed_provider_attempts")) orelse
         return error.InvalidDurableField;
     return .{
-        .version = 2,
+        .version = 3,
         .turn_id = try requireU64(object, "turn_id"),
         .user = user,
         .assistant_source = assistant_source,
+        .assistant_message_id = assistant_message_id,
+        .assistant_reasoning_ids = assistant_reasoning_ids,
         .execution = execution,
         .cause = std.meta.stringToEnum(types.ModelRecoveryCause, try requireString(object, "cause")) orelse
             return error.InvalidDurableField,
@@ -1046,6 +1186,30 @@ pub fn parseRecoveryCheckpoint(alloc: Allocator, value: std.json.Value) !Recover
         .consumed_provider_attempts = consumed_provider_attempts,
         .outstanding_reservation = try requireBool(object, "outstanding_reservation"),
     };
+}
+
+fn parseCheckpointReasoningIds(alloc: Allocator, value: std.json.Value) ![]CheckpointReasoningId {
+    if (value != .array) return error.InvalidSessionFormat;
+    if (value.array.items.len == 0) return &.{};
+    const ids = try alloc.alloc(CheckpointReasoningId, value.array.items.len);
+    errdefer alloc.free(ids);
+    var parsed_count: usize = 0;
+    errdefer for (ids[0..parsed_count]) |entry| alloc.free(entry.item_id);
+    for (value.array.items, 0..) |item, i| {
+        const entry = try exactObject(item, &.{ "output_index", "item_id" });
+        const output_index: ?i64 = switch (entry.get("output_index") orelse return error.InvalidSessionFormat) {
+            .null => null,
+            .integer => |number| number,
+            .number_string => |raw| std.fmt.parseInt(i64, raw, 10) catch return error.InvalidSessionFormat,
+            else => return error.InvalidSessionFormat,
+        };
+        ids[i] = .{
+            .output_index = output_index,
+            .item_id = try parseDurableBytes(alloc, entry.get("item_id") orelse return error.InvalidSessionFormat),
+        };
+        parsed_count += 1;
+    }
+    return ids;
 }
 
 fn parseTurnAuthority(alloc: Allocator, value: std.json.Value) !TurnAuthority {
@@ -2524,8 +2688,9 @@ fn exactInterruptedHistoryObject(
     has_execution: bool,
     has_presentation: bool,
     has_terminal_reason: bool,
+    has_item_ids: bool,
 ) !std.json.ObjectMap {
-    var keys: [8][]const u8 = undefined;
+    var keys: [10][]const u8 = undefined;
     keys[0] = "kind";
     keys[1] = "user";
     keys[2] = "assistant";
@@ -2542,6 +2707,12 @@ fn exactInterruptedHistoryObject(
     }
     if (has_terminal_reason) {
         keys[len] = "terminal_reason";
+        len += 1;
+    }
+    if (has_item_ids) {
+        keys[len] = "assistant_item_id";
+        len += 1;
+        keys[len] = "reasoning_item_ids";
         len += 1;
     }
     return exactObject(value, keys[0..len]);
@@ -4148,6 +4319,101 @@ test "tool call codec persists item and provider ids and reads legacy calls" {
     defer session.freeToolCall(alloc, legacy_call);
     try std.testing.expectEqualStrings("call_legacy", legacy_call.id);
     try std.testing.expect(legacy_call.provider_id == null);
+}
+
+test "message and reasoning item ids persist on turns and read legacy turns" {
+    const alloc = std.testing.allocator;
+    const reasoning_ids: []const []const u8 = &.{"reason_a"};
+    const turn = session.HistoryTurn{ .assistant = .{
+        .user = .{ .text = @constCast("say hi") },
+        .assistant = @constCast("hello"),
+        .assistant_item_id = @constCast("item_msg"),
+        .reasoning_item_ids = reasoning_ids,
+    } };
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try writeHistoryTurn(&out.writer, turn);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, out.written(), .{});
+    defer parsed.deinit();
+    const round_tripped = try parseHistoryTurn(alloc, parsed.value);
+    defer session.freeHistoryTurn(alloc, round_tripped);
+    try std.testing.expectEqualStrings("item_msg", round_tripped.assistant.assistant_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), round_tripped.assistant.reasoning_item_ids.len);
+    try std.testing.expectEqualStrings("reason_a", round_tripped.assistant.reasoning_item_ids[0]);
+
+    // Pre-id sessions carry neither key; they parse with null ids and keep
+    // working with no backfill.
+    var legacy = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        "{\"kind\":\"assistant\",\"user\":{\"text\":\"say hi\",\"images\":[]},\"assistant\":\"hello\",\"execution\":{\"schema_version\":3,\"tool_steps\":[],\"files\":[]}}",
+        .{},
+    );
+    defer legacy.deinit();
+    const legacy_turn = try parseHistoryTurn(alloc, legacy.value);
+    defer session.freeHistoryTurn(alloc, legacy_turn);
+    try std.testing.expect(legacy_turn.assistant.assistant_item_id == null);
+    try std.testing.expectEqual(@as(usize, 0), legacy_turn.assistant.reasoning_item_ids.len);
+}
+
+test "checkpoint codec persists the assistant message id and reads legacy checkpoints" {
+    const alloc = std.testing.allocator;
+    const reasoning_ids = [_]CheckpointReasoningId{
+        .{ .output_index = 0, .item_id = @constCast("reason_a") },
+        .{ .output_index = null, .item_id = @constCast("reason_b") },
+    };
+    const checkpoint = RecoveryCheckpoint{
+        .turn_id = 7,
+        .user = .{ .text = @constCast("go") },
+        .assistant_source = @constCast("partial"),
+        .assistant_message_id = @constCast("item_msg"),
+        .assistant_reasoning_ids = @constCast(reasoning_ids[0..]),
+        .cause = .network_interrupted,
+        .action = .retrying_request,
+        .tool_state = .none,
+        .authority = .{ .provider = .codex, .model = @constCast("model") },
+        .requested_fast_mode = false,
+        .fast_mode = false,
+        .max_provider_attempts = 3,
+        .consumed_provider_attempts = 1,
+        .outstanding_reservation = false,
+    };
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try writeRecoveryCheckpoint(&out.writer, checkpoint);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, out.written(), .{});
+    defer parsed.deinit();
+    var round_tripped = try parseRecoveryCheckpoint(alloc, parsed.value);
+    defer round_tripped.deinit(alloc);
+    try std.testing.expectEqualStrings("item_msg", round_tripped.assistant_message_id.?);
+    try std.testing.expectEqual(@as(usize, 2), round_tripped.assistant_reasoning_ids.len);
+    try std.testing.expectEqual(@as(?i64, 0), round_tripped.assistant_reasoning_ids[0].output_index);
+    try std.testing.expectEqualStrings("reason_a", round_tripped.assistant_reasoning_ids[0].item_id);
+    try std.testing.expect(round_tripped.assistant_reasoning_ids[1].output_index == null);
+    try std.testing.expectEqualStrings("reason_b", round_tripped.assistant_reasoning_ids[1].item_id);
+
+    // Pre-id checkpoints omit both keys; they parse with null ids and
+    // keep working with no backfill.
+    var legacy = try std.json.parseFromSlice(std.json.Value, alloc, out.written(), .{});
+    defer legacy.deinit();
+    legacy.value.object.getPtr("version").?.* = .{ .integer = 2 };
+    _ = legacy.value.object.orderedRemove("assistant_message_id");
+    _ = legacy.value.object.orderedRemove("assistant_reasoning_ids");
+    var legacy_checkpoint = try parseRecoveryCheckpoint(alloc, legacy.value);
+    defer legacy_checkpoint.deinit(alloc);
+    try std.testing.expect(legacy_checkpoint.assistant_message_id == null);
+    try std.testing.expectEqual(@as(usize, 0), legacy_checkpoint.assistant_reasoning_ids.len);
+
+    // Checkpoints from the message-id-only era carry the message id but
+    // no reasoning key; they resume with no reasoning ids.
+    var mid = try std.json.parseFromSlice(std.json.Value, alloc, out.written(), .{});
+    defer mid.deinit();
+    mid.value.object.getPtr("version").?.* = .{ .integer = 2 };
+    _ = mid.value.object.orderedRemove("assistant_reasoning_ids");
+    var mid_checkpoint = try parseRecoveryCheckpoint(alloc, mid.value);
+    defer mid_checkpoint.deinit(alloc);
+    try std.testing.expectEqualStrings("item_msg", mid_checkpoint.assistant_message_id.?);
+    try std.testing.expectEqual(@as(usize, 0), mid_checkpoint.assistant_reasoning_ids.len);
 }
 
 test "typed tool outcome survives session codec round trip" {

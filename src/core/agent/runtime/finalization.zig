@@ -154,6 +154,9 @@ pub fn finishAssistantTerminalWithExecution(
     execution: types.ExecutionMemory,
     summary: *TurnSummaryAccumulator,
     assistant_text: []const u8,
+    /// The completion that produced the turn's text, when a streamed one
+    /// did. Only its Fiber-minted item ids are read; the turn borrows them.
+    source_completion: ?*const types.ModelCompletion,
     outcome: types.TurnPresentationOutcome,
     disposition: ?types.ProviderCompletionDisposition,
     finish_trace: *PromptFinishTrace,
@@ -164,6 +167,8 @@ pub fn finishAssistantTerminalWithExecution(
         .user = .{ .text = job.prompt, .images = job.images },
         .assistant = @constCast(assistant_text),
         .execution = execution,
+        .assistant_item_id = if (source_completion) |completion| if (completion.message_item_id) |item_id| @constCast(item_id) else null else null,
+        .reasoning_item_ids = if (source_completion) |completion| completion.reasoning_item_ids else &.{},
     } };
     types.setHistoryTurnSummary(&turn, completed_summary);
     const finished = try types.dupeFinishedPrompt(
@@ -208,6 +213,7 @@ pub fn finishExecutionOnlyFailureIfNeeded(
         execution,
         summary,
         "",
+        null,
         .failed,
         null,
         finish_trace,
@@ -245,6 +251,7 @@ pub fn finalizeRetainedCandidateFailure(
         execution,
         summary,
         assistant_text,
+        null,
         .failed,
         null,
         finish_trace,

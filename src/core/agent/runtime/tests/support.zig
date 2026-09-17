@@ -290,9 +290,12 @@ pub const FakeGateway = struct {
             return .{ .completed = .{} };
         }
 
-        for (completion.reasoning_chunks) |chunk| request.events.emit(.{ .reasoning_delta = chunk });
+        // The fake's reasoning chunks form one block at output index 0,
+        // unidentified like a generic provider's, so the runtime keys them
+        // to one minted id.
+        for (completion.reasoning_chunks) |chunk| request.events.emit(.{ .reasoning_delta = .{ .item_id = "", .chunk = chunk, .output_index = 0 } });
         for (completion.chunks) |chunk| {
-            request.events.emit(.{ .content_delta = chunk });
+            request.events.emit(.{ .content_delta = .{ .item_id = "", .chunk = chunk } });
         }
         if (completion.cancel_after_chunks) request.cancel_flag.store(true, .seq_cst);
         if (completion.stream_error_after_chunks) |err| {
