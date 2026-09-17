@@ -179,6 +179,8 @@ fn writePersistedToolResultJson(writer: *std.Io.Writer, result: session.Persiste
         try writer.writeAll(",\"committed_file_presentation\":");
         try writeCommittedFilePresentationJson(writer, presentation);
     }
+    try writer.writeAll(",\"outcome\":");
+    try writeToolOutcomeJson(writer, result.outcome);
     try writer.writeByte('}');
 }
 
@@ -228,6 +230,14 @@ fn writeOptionalU32Json(writer: *std.Io.Writer, value: ?u32) !void {
     } else {
         try writer.writeAll("null");
     }
+}
+
+fn writeToolOutcomeJson(writer: *std.Io.Writer, outcome: ?types.PersistedToolOutcome) !void {
+    const resolved = outcome orelse {
+        try writer.writeAll("null");
+        return;
+    };
+    try std.json.Stringify.value(types.PersistedToolOutcomeView.fromBorrowed(resolved), .{}, writer);
 }
 
 fn writeOptionalStringJson(writer: *std.Io.Writer, value: ?[]const u8) !void {

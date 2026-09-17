@@ -618,10 +618,16 @@ test.skipIf(!tmuxAvailable())(
     const resumeGateway = startCodexQueue([]);
     let active: TmuxSession | null = null;
 
-    function expectDeferredPresentation(scrollback: string): void {
+    function expectDeferredPresentation(
+      scrollback: string,
+      deferredCount = "1 deferred",
+      deferredRow = `Context updated ${command}`,
+    ): void {
       expect(scrollback).toContain("1 failed");
-      expect(scrollback).toContain("1 deferred");
-      expect(scrollback).toContain(`Context updated ${command}`);
+      // Resumed views read the persisted typed outcome, which has no
+      // deferred status: a context-deferred tool resumes as denied.
+      expect(scrollback).toContain(deferredCount);
+      expect(scrollback).toContain(deferredRow);
       expect(scrollback).not.toContain("Not executed");
       expect(scrollback).not.toContain("├ terminal");
       expect(scrollback).not.toContain("└ terminal");
@@ -672,21 +678,25 @@ test.skipIf(!tmuxAvailable())(
         height: 60,
       });
       await waitForScrollback(active, finalMarker);
-      expectDeferredPresentation(await active.captureFullScrollback());
+      expectDeferredPresentation(
+        await active.captureFullScrollback(),
+        "1 denied",
+        `Denied ${command}`,
+      );
 
       await active.sendKeys("C-o");
       const detail = await active.waitForPane(
         (pane) =>
-          pane.includes(`Context updated ${command}`) &&
+          pane.includes(`Denied ${command}`) &&
           pane.includes("ordinary-failure-control"),
         TIMEOUT,
       );
-      expect(countOccurrences(detail, "Context updated")).toBe(1);
+      expect(detail).not.toContain("Context updated");
       expect(detail).not.toContain("Not executed");
       expect(detail).not.toContain('{"path":"nested/input.txt"}');
       expect(detail).not.toContain(JSON.stringify({ command, cwd: "nested" }));
       expect(detail).toContain(failureCommand);
-      expect(detail).toContain("1 deferred");
+      expect(detail).toContain("1 denied");
       expect(detail).toContain("1 failed");
       expect(readFileSync(resumeStderrPath, "utf8")).toBe("");
 

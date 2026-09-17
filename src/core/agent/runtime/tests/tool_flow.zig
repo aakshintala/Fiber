@@ -3792,7 +3792,7 @@ test "common serial execution memory preserves typed read coverage" {
     try std.testing.expect(!execution.files[1].model_view_covers_full_file);
 }
 
-test "bounded provider-executed results preserve raw typed status" {
+test "provider-executed results are never classified from output text" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3853,13 +3853,24 @@ test "bounded provider-executed results preserve raw typed status" {
 
     const execution = deps.history_turns.items[0].assistant.execution;
     try std.testing.expectEqual(@as(usize, 2), execution.tool_steps[0].tool_results.len);
+    // Provider-produced content is never fiber tool output: even an
+    // error-shaped payload completes without text classification, and the
+    // model still sees the raw payload. See ticket #178.
     try std.testing.expectEqual(
-        types.PersistedToolStatus.failure,
+        types.PersistedToolStatus.success,
         execution.tool_steps[0].tool_results[0].status,
     );
     try std.testing.expectEqual(
         types.PersistedToolStatus.success,
         execution.tool_steps[0].tool_results[1].status,
+    );
+    try std.testing.expectEqual(
+        types.ToolCallStatus.completed,
+        execution.tool_steps[0].tool_results[0].outcome.?.status,
+    );
+    try std.testing.expectEqual(
+        types.ToolCallStatus.completed,
+        execution.tool_steps[0].tool_results[1].outcome.?.status,
     );
 
     var replay: std.ArrayList(ChatMessage) = .empty;
@@ -3870,7 +3881,7 @@ test "bounded provider-executed results preserve raw typed status" {
         deps.history_turns.items,
     );
     try std.testing.expectEqual(
-        types.PersistedToolStatus.failure,
+        types.PersistedToolStatus.success,
         replay.items[2].tool_result_status.?,
     );
     try std.testing.expectEqual(

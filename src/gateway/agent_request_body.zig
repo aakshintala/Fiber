@@ -5,7 +5,6 @@ const std = @import("std");
 const image_attachments = @import("../core/images/image_attachments.zig");
 const io_mod = @import("../core/shared/io.zig");
 const model_capabilities = @import("../core/config/model_capabilities.zig");
-const tool_result_errors = @import("../core/tooling/tool_result_errors.zig");
 const types = @import("../core/shared/types.zig");
 
 pub const ChatRole = types.ChatRole;
@@ -526,11 +525,8 @@ fn writeChatMessageJsonInner(
                 try writer.writeAll("\"unknown\"");
             }
             const content = message.content orelse "";
-            const failed = if (message.tool_result_status) |status|
-                status == .failure
-            else
-                false;
-            const denied = failed and tool_result_errors.toolPermissionDenialReason(content) != null;
+            const denied = if (message.tool_result_outcome) |outcome| outcome.status == .denied else false;
+            const failed = if (message.tool_result_outcome) |outcome| outcome.status != .completed else if (message.tool_result_status) |status| status == .failure else false;
             if (denied) {
                 try writer.writeAll(",\"output\":{\"type\":\"execution-denied\",\"reason\":");
             } else if (failed) {
@@ -717,23 +713,27 @@ test "writeChatMessageJson serializes tool-result fallbacks and escaped output" 
     try std.testing.expect(std.mem.find(u8, json, "\"value\":\"line\\n\\ttext\"") != null);
 }
 
-test "writeChatMessageJson maps tool result status to the Vercel output variant" {
+test "writeChatMessageJson maps tool result outcome to the Vercel output variant" {
     const denial = "{\"error\":{\"type\":\"tool_permission_denied\",\"reason\":\"policy_denied\"}}";
     const review_hold = "{\"error\":{\"type\":\"tool_review_held\",\"reason\":\"review_caution\"}}";
-    const malformed_denial = "{\"error\":{\"type\":\"tool_permission_denied\",\"reason\":\"review_caution\"}}";
     const cases = [_]struct {
         status: ?types.PersistedToolStatus,
+        outcome: ?types.ToolCallOutcome,
         content: []const u8,
         output_type: []const u8,
         content_field: []const u8,
     }{
-        .{ .status = null, .content = "untyped result", .output_type = "text", .content_field = "value" },
-        .{ .status = .success, .content = "successful result", .output_type = "text", .content_field = "value" },
-        .{ .status = .failure, .content = "ordinary failure", .output_type = "error-text", .content_field = "value" },
-        .{ .status = .failure, .content = denial, .output_type = "execution-denied", .content_field = "reason" },
-        .{ .status = .failure, .content = review_hold, .output_type = "execution-denied", .content_field = "reason" },
-        .{ .status = .success, .content = denial, .output_type = "text", .content_field = "value" },
-        .{ .status = .failure, .content = malformed_denial, .output_type = "error-text", .content_field = "value" },
+        .{ .status = null, .outcome = null, .content = "untyped result", .output_type = "text", .content_field = "value" },
+        .{ .status = .success, .outcome = .{ .status = .completed }, .content = "successful result", .output_type = "text", .content_field = "value" },
+        .{ .status = .failure, .outcome = .{ .status = .failed, .error_code = .tool_error, .error_message = "boom" }, .content = "ordinary failure", .output_type = "error-text", .content_field = "value" },
+        .{ .status = .failure, .outcome = .{ .status = .denied, .denial_reason = .policy_denied }, .content = denial, .output_type = "execution-denied", .content_field = "reason" },
+        .{ .status = .failure, .outcome = .{ .status = .denied, .denial_reason = .review_caution }, .content = review_hold, .output_type = "execution-denied", .content_field = "reason" },
+        // Denied derives from the typed outcome alone: plain text still maps to execution-denied.
+        .{ .status = .failure, .outcome = .{ .status = .denied, .denial_reason = .user_denied }, .content = "plain text denial", .output_type = "execution-denied", .content_field = "reason" },
+        .{ .status = .failure, .outcome = .{ .status = .cancelled }, .content = "cancelled work", .output_type = "error-text", .content_field = "value" },
+        // Legacy null outcome falls back to the coarse status and never sniffs content.
+        .{ .status = .success, .outcome = null, .content = denial, .output_type = "text", .content_field = "value" },
+        .{ .status = .failure, .outcome = null, .content = denial, .output_type = "error-text", .content_field = "value" },
     };
 
     for (cases) |case| {
@@ -746,6 +746,7 @@ test "writeChatMessageJson maps tool result status to the Vercel output variant"
             .tool_call_id = "call_1",
             .tool_name = "terminal",
             .tool_result_status = case.status,
+            .tool_result_outcome = case.outcome,
         });
 
         var parsed = try std.json.parseFromSlice(

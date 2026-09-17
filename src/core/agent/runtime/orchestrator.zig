@@ -2180,6 +2180,9 @@ fn appendNotExecutedToolResult(
         .{
             .increment_total = false,
             .status = .failure,
+            // Never ran: denied, with the reason the typed contract
+            // reserves for runtime deferrals (ticket #178).
+            .outcome = .{ .status = .denied, .denial_reason = .policy_denied },
         },
     );
 }
@@ -2223,6 +2226,9 @@ fn appendContextDeferredToolResult(
         .{
             .increment_total = false,
             .status = .failure,
+            // Never ran: denied, with the reason the typed contract
+            // reserves for runtime deferrals (ticket #178).
+            .outcome = .{ .status = .denied, .denial_reason = .policy_denied },
         },
     );
 }
@@ -2230,11 +2236,10 @@ fn appendContextDeferredToolResult(
 fn providerExecutedResult(call: ToolCall) ?ToolExecutionResult {
     if (call.provenance != .provider_executed) return null;
     const provider_result = call.provider_result orelse return null;
-    const provider_status = runtime_execution_memory.classifyProviderExecutedResultStatus(
-        provider_result,
-    );
+    // Provider-produced content is never fiber tool output: its success
+    // is not inferred from text (ticket #178).
     return .{
-        .status = if (provider_status == .success) .success else .failure,
+        .status = .success,
         .model_output = provider_result,
         .inner_usage = if (runtime_tool_presentation.isProviderSearchAlias(call.name))
             .{ .web_search_requests = 1 }
@@ -2307,10 +2312,7 @@ fn appendProviderExecutedToolResult(
 ) !void {
     const execution = providerExecutedResult(call) orelse
         return error.MalformedProviderResultIdentity;
-    const provider_result = execution.model_output;
-    const provider_status = runtime_execution_memory.classifyProviderExecutedResultStatus(
-        provider_result,
-    );
+    const provider_outcome: types.ToolCallOutcome = .{ .status = .completed };
     const prepared = try runtime_execution_memory.prepareToolModelOutput(
         arena,
         config,
@@ -2358,9 +2360,10 @@ fn appendProviderExecutedToolResult(
         safe_tool_output,
         prepared.memory,
         .{
-            .increment_error = provider_status == .failure,
-            .record_completion = provider_status == .success,
-            .status = provider_status,
+            .increment_error = false,
+            .record_completion = true,
+            .status = runtime_execution_memory.persistedStatusForOutcome(provider_outcome),
+            .outcome = provider_outcome,
         },
     );
     if (provider_visible_lifecycle) |visible_lifecycle| {
@@ -6908,7 +6911,11 @@ fn processQueuedPromptLoop(
                         );
                         tool_dispatch.traceDeniedWebSearch(step_ctx, parallel_call, reason);
                         debug_trace.eventf("tool", "execution_result", step_ctx, "call_id={s} name={s} result_kind=permission_denied reason={s} model_output_bytes={d}", .{ parallel_call.id, parallel_call.name, @tagName(reason), denied_output.len });
-                        precomputed_results[group_index] = .{ .status = .failure, .model_output = denied_output };
+                        precomputed_results[group_index] = .{
+                            .status = .failure,
+                            .model_output = denied_output,
+                            .outcome = runtime_execution_memory.toolOutcomeForDenial(reason),
+                        };
                         continue;
                     }
 
@@ -7191,7 +7198,10 @@ fn processQueuedPromptLoop(
                         tool_call,
                         prepared.model_output,
                         prepared.memory,
-                        .{ .increment_error = true },
+                        .{
+                            .increment_error = true,
+                            .outcome = .{ .status = .failed, .error_code = .tool_error, .error_message = "tool call blocked" },
+                        },
                     );
                     continue;
                 },
@@ -7298,9 +7308,13 @@ fn processQueuedPromptLoop(
                                     safe_output,
                                     prepared_terminal.memory,
                                     .{
-                                        .increment_error = terminal.status == .failure or
-                                            tool_result_errors.isToolOutputError(safe_output),
+                                        .increment_error = terminal.status == .failure,
                                         .record_completion = true,
+                                        .outcome = .{
+                                            .status = if (terminal.status == .success) .completed else .failed,
+                                            .error_code = if (terminal.status == .success) null else .tool_error,
+                                            .error_message = if (terminal.status == .success) null else "tool execution failed",
+                                        },
                                     },
                                 );
                             },
@@ -7345,7 +7359,20 @@ fn processQueuedPromptLoop(
                                     tool_call,
                                     safe_output,
                                     prepared_terminal.memory,
-                                    .{ .increment_error = true },
+                                    .{
+                                        .increment_error = true,
+                                        .outcome = .{
+                                            .status = .failed,
+                                            .error_code = if (terminal.kind == .validation_failure)
+                                                .invalid_arguments
+                                            else
+                                                .startup_failed,
+                                            .error_message = if (terminal.kind == .validation_failure)
+                                                "tool call validation failed"
+                                            else
+                                                "tool unavailable",
+                                        },
+                                    },
                                 );
                             },
                             .file_mutation_failure => {
@@ -7385,7 +7412,14 @@ fn processQueuedPromptLoop(
                                     tool_call,
                                     safe_output,
                                     prepared_terminal.memory,
-                                    .{ .increment_error = true },
+                                    .{
+                                        .increment_error = true,
+                                        .outcome = .{
+                                            .status = .failed,
+                                            .error_code = .tool_error,
+                                            .error_message = "preflight failed",
+                                        },
+                                    },
                                 );
                                 try runtime_tool_admission.recordRejectedToolCall(
                                     deps,
@@ -7425,10 +7459,12 @@ fn processQueuedPromptLoop(
                                     .{
                                         .increment_error = true,
                                         .record_completion = true,
-                                        .status = runtime_execution_memory.persistedStatusForCurrentFxLocalResult(
-                                            .failure,
-                                            safe_output,
-                                        ),
+                                        .status = .failure,
+                                        .outcome = .{
+                                            .status = .failed,
+                                            .error_code = .tool_error,
+                                            .error_message = "unsupported tool call",
+                                        },
                                     },
                                 );
                             },
@@ -7493,7 +7529,14 @@ fn processQueuedPromptLoop(
                     tool_call,
                     safe_tool_output,
                     prepared.memory,
-                    .{ .increment_error = true },
+                    .{
+                        .increment_error = true,
+                        .outcome = .{
+                            .status = .failed,
+                            .error_code = .tool_error,
+                            .error_message = "repeated tool failure",
+                        },
+                    },
                 );
                 continue;
             }
@@ -7560,7 +7603,14 @@ fn processQueuedPromptLoop(
                         tool_call,
                         safe_tool_output,
                         prepared.memory,
-                        .{ .increment_error = true },
+                        .{
+                            .increment_error = true,
+                            .outcome = .{
+                                .status = .failed,
+                                .error_code = .invalid_arguments,
+                                .error_message = "tool call validation failed",
+                            },
+                        },
                     );
                     continue;
                 }
@@ -7597,7 +7647,14 @@ fn processQueuedPromptLoop(
                         tool_call,
                         safe_tool_output,
                         prepared.memory,
-                        .{ .increment_error = true },
+                        .{
+                            .increment_error = true,
+                            .outcome = .{
+                                .status = .failed,
+                                .error_code = .startup_failed,
+                                .error_message = "tool unavailable",
+                            },
+                        },
                     );
                     continue;
                 }
@@ -8022,7 +8079,14 @@ fn processQueuedPromptLoop(
                     tool_call,
                     prepared_failure.model_output,
                     prepared_failure.memory,
-                    .{ .increment_error = true },
+                    .{
+                        .increment_error = true,
+                        .outcome = .{
+                            .status = .failed,
+                            .error_code = .tool_error,
+                            .error_message = "preflight failed",
+                        },
+                    },
                 );
                 try runtime_tool_admission.recordRejectedToolCall(
                     deps,
@@ -8109,6 +8173,7 @@ fn processQueuedPromptLoop(
                     .{
                         .increment_total = false,
                         .status = .failure,
+                        .outcome = runtime_execution_memory.toolOutcomeForDenial(reason),
                     },
                 );
                 if (permission_outcome.feedback) |feedback| {
@@ -8325,14 +8390,14 @@ fn processQueuedPromptLoop(
             }) catch |err| blk: {
                 if (err == error.OutOfMemory) return error.OutOfMemory;
                 if (err == error.Cancelled and config.cancel_flag.load(.seq_cst)) {
-                    break :blk ToolExecutionResult{
+                    break :blk ToolExecutionResult.stamped(arena, .{
                         .status = .failure,
                         .cancelled = true,
                         .model_output = "command cancelled\n",
-                    };
+                    });
                 }
                 execution_error = err;
-                break :blk ToolExecutionResult{ .status = .failure, .model_output = try deps.format_tool_execution_error(deps.ctx, arena, tool_call.name, err) };
+                break :blk ToolExecutionResult.stamped(arena, .{ .status = .failure, .model_output = try deps.format_tool_execution_error(deps.ctx, arena, tool_call.name, err) });
             };
             var result_commit_pending = execution.result_commit != null;
             defer if (result_commit_pending) {
@@ -8559,6 +8624,7 @@ fn processQueuedPromptLoop(
             }
 
             if (execution.finish_turn) {
+                const finish_outcome = runtime_execution_memory.toolOutcomeForResult(arena, execution);
                 try runtime_tool_batch.appendToolResultContent(
                     arena,
                     &within_turn_suffix,
@@ -8568,13 +8634,10 @@ fn processQueuedPromptLoop(
                     safe_tool_output,
                     prepared.memory,
                     .{
-                        .increment_error = execution.status == .failure or
-                            tool_result_errors.isToolOutputError(safe_tool_output),
+                        .increment_error = finish_outcome.status != .completed,
                         .record_completion = execution.status == .success,
-                        .status = runtime_execution_memory.persistedStatusForCurrentFxLocalResult(
-                            execution.status,
-                            safe_tool_output,
-                        ),
+                        .status = runtime_execution_memory.persistedStatusForOutcome(finish_outcome),
+                        .outcome = finish_outcome,
                     },
                 );
                 if (execution.result_commit) |commit| {

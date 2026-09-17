@@ -473,7 +473,14 @@ fn callRun(
         return runtimeFailure(ctx, err);
     };
     defer prepared.deinit(ctx.allocator);
-    return finishPrepared(ctx, runtime, &prepared, .command);
+    // Typed timeout signal: a synchronously started command reaches
+    // .stopped(null) only via error.TimeoutExpired. Cancellations return
+    // before this point, so no error-name round trip is needed.
+    const start_timed_out = switch (prepared.snapshot.state) {
+        .stopped => |status| status == null,
+        else => false,
+    };
+    return finishPrepared(ctx, runtime, &prepared, .command, start_timed_out);
 }
 
 fn callInteract(
@@ -492,7 +499,7 @@ fn callInteract(
         {
             var prepared = retained;
             defer prepared.deinit(ctx.allocator);
-            return finishPrepared(ctx, runtime, &prepared, .command);
+            return finishPrepared(ctx, runtime, &prepared, .command, false);
         }
     }
     if (runtime.backendFor(session_id) == .tty) {
@@ -506,7 +513,7 @@ fn callInteract(
         ctx.cancel_flag,
     ) catch |err| return runtimeFailure(ctx, err);
     defer prepared.deinit(ctx.allocator);
-    return finishPrepared(ctx, runtime, &prepared, .command);
+    return finishPrepared(ctx, runtime, &prepared, .command, false);
 }
 
 fn callStop(
@@ -525,7 +532,7 @@ fn callStop(
     switch (outcome) {
         .prepared => |*prepared| {
             defer prepared.deinit(ctx.allocator);
-            return finishPrepared(ctx, runtime, prepared, .stop);
+            return finishPrepared(ctx, runtime, prepared, .stop, false);
         },
         .failure => |body| return .{ .failure = body },
     }
@@ -640,7 +647,7 @@ fn callTtyRun(
     session_owned = false;
     defer prepared.deinit(ctx.allocator);
     _ = owner;
-    return finishPrepared(ctx, runtime, &prepared, .command);
+    return finishPrepared(ctx, runtime, &prepared, .command, observed.timed_out);
 }
 
 fn callTtyInteract(
@@ -774,10 +781,11 @@ fn callTtyInteract(
         .published_running = true,
     }) catch |err| return runtimeFailure(ctx, err);
     defer prepared.deinit(ctx.allocator);
+    const tty_timed_out = observed.timed_out;
     return if (accepted_bytes) |count|
-        finishPreparedWithAccepted(ctx, runtime, &prepared, count)
+        finishPreparedWithAccepted(ctx, runtime, &prepared, count, tty_timed_out)
     else
-        finishPrepared(ctx, runtime, &prepared, .command);
+        finishPrepared(ctx, runtime, &prepared, .command, tty_timed_out);
 }
 
 fn ttyShell(
@@ -899,6 +907,7 @@ fn finishPreparedWithAccepted(
     runtime: *managed_execution.Runtime,
     prepared: *managed_execution.PreparedSnapshot,
     accepted_bytes: u32,
+    timed_out: bool,
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const body = formatSnapshotWithLimit(
         ctx.allocator,
@@ -914,7 +923,7 @@ fn finishPreparedWithAccepted(
         return runtimeFailure(ctx, err);
     };
     errdefer ctx.allocator.free(body);
-    publishSnapshotMetadata(ctx, prepared.snapshot) catch |err| {
+    publishSnapshotMetadata(ctx, prepared.snapshot, timed_out) catch |err| {
         runtime.cancelDelivery(
             prepared.snapshot.execution_id,
             prepared.reservation_id,
@@ -932,6 +941,7 @@ fn finishPrepared(
     runtime: *managed_execution.Runtime,
     prepared: *managed_execution.PreparedSnapshot,
     action: enum { command, stop },
+    timed_out: bool,
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const body = formatSnapshotWithLimit(
         ctx.allocator,
@@ -947,7 +957,7 @@ fn finishPrepared(
         return .{ .failure = try ctx.allocator.dupe(u8, "shell result is unavailable") };
     };
     errdefer ctx.allocator.free(body);
-    publishSnapshotMetadata(ctx, prepared.snapshot) catch |err| {
+    publishSnapshotMetadata(ctx, prepared.snapshot, timed_out) catch |err| {
         runtime.cancelDelivery(
             prepared.snapshot.execution_id,
             prepared.reservation_id,
@@ -971,6 +981,7 @@ fn finishPrepared(
 fn publishSnapshotMetadata(
     ctx: tool_dispatch.DispatchContext,
     snapshot: managed_execution.Snapshot,
+    timed_out: bool,
 ) !void {
     if (ctx.command_result_json_sink == null and
         ctx.tool_result_memory_sink == null) return;
@@ -988,10 +999,6 @@ fn publishSnapshotMetadata(
             .signal = null,
             .termination_indeterminate = false,
         };
-    const timed_out = if (snapshot.error_name) |name|
-        std.mem.eql(u8, name, "TimeoutExpired")
-    else
-        false;
     var memory = types.ToolResultMemory{
         .output_bytes = snapshot.stdout_bytes +| snapshot.stderr_bytes,
         .stored_output_bytes = snapshot.stdout_bytes +| snapshot.stderr_bytes,
@@ -1256,7 +1263,12 @@ fn snapshotFailed(state: managed_execution.SnapshotState) bool {
 
 // A stop reports success only when an exit was observed. Lost workers,
 // missing stops, and stops without an exit status fail closed so callers
-// never read them as clean stops.
+// never read them as clean stops. A stop on an already-completed
+// execution did nothing, so it mirrors the completed fate instead of
+// reporting success: an outside kill observed that way must stay a signal
+// failure, never a clean stop. A stopped-with-signal success means Fiber
+// or the user did the stopping; the outcome layer maps signal-on-success
+// to cancelled (never completed).
 fn stop_result_failed(state: managed_execution.SnapshotState) bool {
     return switch (state) {
         .lost => true,
@@ -1264,7 +1276,8 @@ fn stop_result_failed(state: managed_execution.SnapshotState) bool {
             .exit_code, .signal => false,
             .indeterminate, .finished => true,
         } else true,
-        .running, .completed => false,
+        .completed => snapshotFailed(state),
+        .running => false,
     };
 }
 
@@ -1286,6 +1299,10 @@ test "shell stop fails closed without an observed exit" {
     try std.testing.expect(!stop_result_failed(.{ .stopped = .{ .exit_code = 0 } }));
     try std.testing.expect(!stop_result_failed(.{ .stopped = .{ .signal = 9 } }));
     try std.testing.expect(!stop_result_failed(.{ .completed = .{ .exit_code = 0 } }));
+    // A stop on an already-completed execution did nothing: it mirrors
+    // the completed fate so an outside kill stays a signal failure.
+    try std.testing.expect(stop_result_failed(.{ .completed = .{ .signal = 9 } }));
+    try std.testing.expect(stop_result_failed(.{ .completed = .{ .exit_code = 7 } }));
     try std.testing.expectEqual(
         command_contract.CommandStatus.indeterminate,
         stopProjectedStatus(null),
@@ -1324,7 +1341,7 @@ test "stopped shell metadata projects missing exits as indeterminate" {
             .state = state,
             .output_delta = @constCast(""),
             .output_truncated = false,
-        });
+        }, false);
         try std.testing.expect(std.mem.find(
             u8,
             command_result_json orelse return error.TestExpectedEqual,
@@ -1796,7 +1813,7 @@ test "stopped execution is a successful shell observation without command failur
             .state = .{ .stopped = status },
             .output_delta = @constCast(""),
             .output_truncated = false,
-        });
+        }, false);
         try std.testing.expect(memory != null);
         try std.testing.expect(memory.?.command_process_presentation == null);
     }
@@ -2111,6 +2128,7 @@ test "shell delivery advances only after result commit" {
         &runtime,
         &prepared,
         .command,
+        false,
     );
     defer result.deinit(alloc);
     try std.testing.expect(commit_token != null);

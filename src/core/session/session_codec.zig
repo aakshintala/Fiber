@@ -1233,6 +1233,8 @@ fn writePersistedToolResult(writer: *std.Io.Writer, result: session.PersistedToo
         writer,
         result.terminal_action_presentation,
     );
+    try writer.writeAll(",\"outcome\":");
+    try writeOptionalToolOutcome(writer, result.outcome);
     try writer.writeByte('}');
 }
 
@@ -1329,6 +1331,17 @@ fn writeOptionalTerminalActionPresentation(
             try writer.writeByte('}');
         },
     }
+}
+
+fn writeOptionalToolOutcome(
+    writer: *std.Io.Writer,
+    outcome: ?types.PersistedToolOutcome,
+) !void {
+    const resolved = outcome orelse {
+        try writer.writeAll("null");
+        return;
+    };
+    try std.json.Stringify.value(types.PersistedToolOutcomeView.fromBorrowed(resolved), .{}, writer);
 }
 
 fn writeTerminalReturnPresentation(
@@ -1802,11 +1815,30 @@ fn parseToolResult(
         "command_process_presentation",
         "terminal_action_presentation",
     };
+    const v5_outcome_keys = &.{
+        "tool_call_id",
+        "tool_name",
+        "status",
+        "output",
+        "output_handle",
+        "preview",
+        "output_bytes",
+        "stored_output_bytes",
+        "truncated",
+        "provider_native",
+        "created_at_ms",
+        "permission_feedback",
+        "committed_file_presentation",
+        "command_output_replay",
+        "command_process_presentation",
+        "terminal_action_presentation",
+        "outcome",
+    };
     const result_shape: ExactVariantObject = switch (schema_version) {
         1 => .{ .object = try exactObject(value, v1_keys), .extended = false },
         2 => try exactVariantObject(value, v2_keys, v2_extended_keys),
         3 => .{ .object = try exactObject(value, v3_keys), .extended = true },
-        4, 5 => .{ .object = try exactObject(value, v4_keys), .extended = true },
+        4, 5 => try exactVariantObject(value, v4_keys, v5_outcome_keys),
         else => return error.InvalidSessionFormat,
     };
     const object = result_shape.object;
@@ -1866,6 +1898,11 @@ fn parseToolResult(
         )
     else
         null;
+    const outcome = try parseOptionalToolOutcome(
+        alloc,
+        object.get("outcome"),
+    );
+    errdefer if (outcome) |resolved| types.freeToolCallOutcome(alloc, resolved);
     return .{
         .tool_call_id = tool_call_id,
         .tool_name = tool_name,
@@ -1886,6 +1923,90 @@ fn parseToolResult(
         .command_output_replay = command_output_replay,
         .command_process_presentation = command_process_presentation,
         .terminal_action_presentation = terminal_action_presentation,
+        .outcome = outcome,
+    };
+}
+
+fn parseOptionalToolOutcome(
+    alloc: Allocator,
+    value: ?std.json.Value,
+) !?types.PersistedToolOutcome {
+    const raw = value orelse return null;
+    if (raw == .null) return null;
+    const object = try exactObject(raw, &.{
+        "status",
+        "reason",
+        "error_code",
+        "error_message",
+        "exit_code",
+        "signal",
+        "timed_out",
+        "has_process",
+    });
+    const error_message = if (object.get("error_message")) |message_value| switch (message_value) {
+        .null => null,
+        // The writer emits strings for UTF-8 and base64 objects
+        // otherwise; both round-trip here.
+        .string, .object => try parseDurableBytes(alloc, message_value),
+        else => return error.InvalidSessionFormat,
+    } else return error.InvalidSessionFormat;
+    errdefer if (error_message) |message| alloc.free(message);
+    const denial_reason = if (object.get("reason")) |reason_value| switch (reason_value) {
+        .null => null,
+        // Open set (§3 story 34): an unknown reason is a generic denial,
+        // never a resume breakage.
+        .string => |text| std.meta.stringToEnum(
+            types.ToolDenialReason,
+            text,
+        ),
+        else => return error.InvalidSessionFormat,
+    } else return error.InvalidSessionFormat;
+    const error_code = if (object.get("error_code")) |code_value| switch (code_value) {
+        .null => null,
+        // Open set (§3 story 34): an unknown code is a generic failure,
+        // never a resume breakage. `status` stays closed: an unknown
+        // status still fails, since adding one is a version bump (§3).
+        .string => |text| std.meta.stringToEnum(
+            types.ToolErrorCode,
+            text,
+        ),
+        else => return error.InvalidSessionFormat,
+    } else return error.InvalidSessionFormat;
+    const exit_code = if (object.get("exit_code")) |code_value| switch (code_value) {
+        .null => null,
+        // Event frames decode with parse_numbers=false, so numbers
+        // arrive as strings; accept both forms like requireI64 does.
+        .integer => |code| code,
+        .number_string => |text| std.fmt.parseInt(
+            i64,
+            text,
+            10,
+        ) catch return error.InvalidSessionFormat,
+        else => return error.InvalidSessionFormat,
+    } else return error.InvalidSessionFormat;
+    const signal = if (object.get("signal")) |signal_value| switch (signal_value) {
+        .null => null,
+        .integer => |raw_signal| std.math.cast(u32, raw_signal) orelse
+            return error.InvalidSessionFormat,
+        .number_string => |text| std.fmt.parseUnsigned(
+            u32,
+            text,
+            10,
+        ) catch return error.InvalidSessionFormat,
+        else => return error.InvalidSessionFormat,
+    } else return error.InvalidSessionFormat;
+    return .{
+        .status = std.meta.stringToEnum(
+            types.ToolCallStatus,
+            try requireString(object, "status"),
+        ) orelse return error.InvalidSessionFormat,
+        .denial_reason = denial_reason,
+        .error_code = error_code,
+        .error_message = error_message,
+        .exit_code = exit_code,
+        .signal = signal,
+        .timed_out = try requireBool(object, "timed_out"),
+        .has_process = try requireBool(object, "has_process"),
     };
 }
 
@@ -4027,4 +4148,159 @@ test "tool call codec persists item and provider ids and reads legacy calls" {
     defer session.freeToolCall(alloc, legacy_call);
     try std.testing.expectEqualStrings("call_legacy", legacy_call.id);
     try std.testing.expect(legacy_call.provider_id == null);
+}
+
+test "typed tool outcome survives session codec round trip" {
+    const alloc = std.testing.allocator;
+    const error_message = try alloc.dupe(u8, "Command timed out");
+    // Sole owner: the writer below only borrows, so one defer covers
+    // success and error paths alike.
+    defer alloc.free(error_message);
+    var result = persistedResultForTest("call_timeout", "shell");
+    result.status = .failure;
+    result.outcome = .{
+        .status = .failed,
+        .error_code = .timeout,
+        .error_message = error_message,
+        .timed_out = true,
+        .has_process = true,
+    };
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try writePersistedToolResult(&encoded.writer, result);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, encoded.written(), .{});
+    defer parsed.deinit();
+    const owned = try alloc.alloc(
+        session.PersistedToolResult,
+        1,
+    );
+    defer types.freePersistedToolResults(alloc, owned);
+    owned[0] = try parseToolResult(alloc, parsed.value, 5);
+
+    const outcome = owned[0].outcome orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(session.PersistedToolStatus.failure, owned[0].status);
+    try std.testing.expectEqual(types.ToolCallStatus.failed, outcome.status);
+    try std.testing.expectEqual(types.ToolErrorCode.timeout, outcome.error_code.?);
+    try std.testing.expectEqualStrings("Command timed out", outcome.error_message.?);
+    try std.testing.expect(outcome.timed_out);
+    try std.testing.expect(outcome.has_process);
+}
+
+test "pre-outcome tool results reload without an outcome" {
+    const alloc = std.testing.allocator;
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        "{\"tool_call_id\":\"call_legacy\",\"tool_name\":\"read_file\",\"status\":\"failure\",\"output\":\"Tool read_file failed: missing\",\"output_handle\":null,\"preview\":null,\"output_bytes\":29,\"stored_output_bytes\":29,\"truncated\":false,\"provider_native\":false,\"created_at_ms\":1,\"permission_feedback\":[],\"committed_file_presentation\":null,\"command_output_replay\":null,\"command_process_presentation\":null,\"terminal_action_presentation\":null}",
+        .{},
+    );
+    defer parsed.deinit();
+    const owned = try alloc.alloc(
+        session.PersistedToolResult,
+        1,
+    );
+    defer types.freePersistedToolResults(alloc, owned);
+    owned[0] = try parseToolResult(alloc, parsed.value, 5);
+
+    try std.testing.expectEqual(session.PersistedToolStatus.failure, owned[0].status);
+    try std.testing.expect(owned[0].outcome == null);
+}
+
+test "unknown denial reason and error code reload as generic outcome" {
+    const alloc = std.testing.allocator;
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        "{\"tool_call_id\":\"call_future\",\"tool_name\":\"shell\",\"status\":\"failure\",\"output\":\"no\",\"output_handle\":null,\"preview\":null,\"output_bytes\":2,\"stored_output_bytes\":2,\"truncated\":false,\"provider_native\":false,\"created_at_ms\":1,\"permission_feedback\":[],\"committed_file_presentation\":null,\"command_output_replay\":null,\"command_process_presentation\":null,\"terminal_action_presentation\":null,\"outcome\":{\"status\":\"denied\",\"reason\":\"future_reason\",\"error_code\":\"future_code\",\"error_message\":\"newer fiber said why\",\"exit_code\":null,\"signal\":null,\"timed_out\":false,\"has_process\":false}}",
+        .{},
+    );
+    defer parsed.deinit();
+    const owned = try alloc.alloc(
+        session.PersistedToolResult,
+        1,
+    );
+    defer types.freePersistedToolResults(alloc, owned);
+    owned[0] = try parseToolResult(alloc, parsed.value, 5);
+
+    const outcome = owned[0].outcome orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(types.ToolCallStatus.denied, outcome.status);
+    try std.testing.expect(outcome.denial_reason == null);
+    try std.testing.expect(outcome.error_code == null);
+    try std.testing.expectEqualStrings("newer fiber said why", outcome.error_message.?);
+}
+
+test "non-utf8 outcome message survives the shared outcome writer" {
+    const alloc = std.testing.allocator;
+    const raw_message = try alloc.dupe(u8, &[_]u8{ 0xff, 0xfe, 0x41 });
+    defer alloc.free(raw_message);
+    var result = persistedResultForTest("call_binary", "shell");
+    result.status = .failure;
+    result.outcome = .{
+        .status = .failed,
+        .error_code = .tool_error,
+        .error_message = raw_message,
+    };
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try writePersistedToolResult(&encoded.writer, result);
+    try std.testing.expect(std.mem.find(u8, encoded.written(), "\"encoding\":\"base64\"") != null);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, encoded.written(), .{});
+    defer parsed.deinit();
+    const owned = try alloc.alloc(
+        session.PersistedToolResult,
+        1,
+    );
+    defer types.freePersistedToolResults(alloc, owned);
+    owned[0] = try parseToolResult(alloc, parsed.value, 5);
+
+    const outcome = owned[0].outcome orelse return error.TestExpectedEqual;
+    try std.testing.expectEqualSlices(u8, raw_message, outcome.error_message.?);
+}
+
+test "outcome process facts parse under event-log number encoding" {
+    const alloc = std.testing.allocator;
+    // Event frames decode with parse_numbers=false, so numeric outcome
+    // fields arrive as number strings. A stamped exit_code broke recovery
+    // commits because only .integer was accepted here.
+    const completed_raw =
+        "{\"status\":\"completed\",\"reason\":null,\"error_code\":null," ++
+        "\"error_message\":null,\"exit_code\":0,\"signal\":null," ++
+        "\"timed_out\":false,\"has_process\":true}";
+    var completed_parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        completed_raw,
+        .{ .parse_numbers = false },
+    );
+    defer completed_parsed.deinit();
+    const completed = (try parseOptionalToolOutcome(
+        alloc,
+        completed_parsed.value,
+    )) orelse return error.TestExpectedEqual;
+    defer types.freeToolCallOutcome(alloc, completed);
+    try std.testing.expectEqual(types.ToolCallStatus.completed, completed.status);
+    try std.testing.expectEqual(@as(?i64, 0), completed.exit_code);
+    try std.testing.expect(completed.has_process);
+
+    const signal_raw =
+        "{\"status\":\"failed\",\"reason\":null,\"error_code\":\"signal\"," ++
+        "\"error_message\":\"killed\",\"exit_code\":null,\"signal\":9," ++
+        "\"timed_out\":false,\"has_process\":true}";
+    var signal_parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        signal_raw,
+        .{ .parse_numbers = false },
+    );
+    defer signal_parsed.deinit();
+    const killed = (try parseOptionalToolOutcome(
+        alloc,
+        signal_parsed.value,
+    )) orelse return error.TestExpectedEqual;
+    defer types.freeToolCallOutcome(alloc, killed);
+    try std.testing.expectEqual(types.ToolCallStatus.failed, killed.status);
+    try std.testing.expectEqual(types.ToolErrorCode.signal, killed.error_code.?);
+    try std.testing.expectEqual(@as(?u32, 9), killed.signal);
 }

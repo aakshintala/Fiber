@@ -2575,6 +2575,24 @@ fn appendHistoryMessagesImpl(
     return in_leading_summary_prefix;
 }
 
+/// Borrowed view of a persisted tool outcome for resume projections.
+/// Null stays null so legacy records without outcomes keep the coarse
+/// status fallback downstream (ticket #178).
+fn borrowedToolOutcome(outcome: ?core_types.PersistedToolOutcome) ?core_types.ToolCallOutcome {
+    const resolved = outcome orelse return null;
+    return .{
+        .status = resolved.status,
+        .denial_reason = resolved.denial_reason,
+        .error_code = resolved.error_code,
+        .error_message = resolved.error_message,
+        .process = if (resolved.has_process) .{
+            .exit_code = resolved.exit_code,
+            .signal = resolved.signal,
+            .timed_out = resolved.timed_out,
+        } else null,
+    };
+}
+
 fn appendExecutionMemoryMessages(
     alloc: Allocator,
     messages: *std.ArrayList(message.Message),
@@ -2594,6 +2612,7 @@ fn appendExecutionMemoryMessages(
                 .tool_call_id = result.tool_call_id,
                 .tool_name = result.tool_name,
                 .tool_result_status = result.status,
+                .tool_result_outcome = borrowedToolOutcome(result.outcome),
             });
         }
         for (step.tool_results) |result| {
@@ -2628,6 +2647,7 @@ pub fn appendExecutionMemoryChatMessages(
                 .tool_call_id = result.tool_call_id,
                 .tool_name = result.tool_name,
                 .tool_result_status = result.status,
+                .tool_result_outcome = borrowedToolOutcome(result.outcome),
             });
         }
         for (step.tool_results) |result| {
@@ -3712,6 +3732,89 @@ test "resume projection replays assistant tool execution memory before final ans
     try std.testing.expect(std.mem.find(u8, messages.items[3].content.?.asText(), "model_view=full") != null);
     try std.testing.expectEqual(.assistant, messages.items[4].role);
     try std.testing.expectEqualStrings("main wires the app", messages.items[4].content.?.asText());
+}
+
+test "resume projections carry persisted typed outcomes to live and chat messages" {
+    const alloc = std.testing.allocator;
+    var calls = [_]ToolCall{
+        .{ .id = "call_deny", .name = "write_file", .arguments_json = "{\"path\":\"note.txt\"}" },
+        .{ .id = "call_fail", .name = "terminal", .arguments_json = "{}" },
+        .{ .id = "call_legacy", .name = "read_file", .arguments_json = "{\"path\":\"main.zig\"}" },
+    };
+    const failed_message = @constCast("command failed");
+    var results = [_]PersistedToolResult{
+        .{
+            .tool_call_id = @constCast("call_deny"),
+            .tool_name = @constCast("write_file"),
+            .status = .failure,
+            .output = @constCast("denied output"),
+            .output_bytes = 14,
+            .stored_output_bytes = 14,
+            .outcome = .{ .status = .denied, .denial_reason = .policy_denied },
+        },
+        .{
+            .tool_call_id = @constCast("call_fail"),
+            .tool_name = @constCast("terminal"),
+            .status = .failure,
+            .output = @constCast("failed output"),
+            .output_bytes = 13,
+            .stored_output_bytes = 13,
+            .outcome = .{
+                .status = .failed,
+                .error_code = .tool_error,
+                .error_message = failed_message,
+                .exit_code = 1,
+                .has_process = true,
+            },
+        },
+        .{
+            .tool_call_id = @constCast("call_legacy"),
+            .tool_name = @constCast("read_file"),
+            .status = .success,
+            .output = @constCast("legacy output"),
+            .output_bytes = 13,
+            .stored_output_bytes = 13,
+        },
+    };
+    var steps = [_]ToolExecutionStep{.{
+        .tool_calls = calls[0..],
+        .tool_results = results[0..],
+    }};
+    const history = [_]HistoryTurn{.{ .assistant = .{
+        .user = .{ .text = @constCast("run the tools") },
+        .assistant = @constCast("done"),
+        .execution = .{ .tool_steps = steps[0..] },
+    } }};
+
+    var messages: std.ArrayList(message.Message) = .empty;
+    defer deinitMessages(alloc, &messages);
+    try appendHistoryMessages(alloc, &messages, &history);
+    try std.testing.expectEqual(@as(usize, 6), messages.items.len);
+
+    const denied = messages.items[2].tool_result_outcome orelse return error.TestExpectedOutcome;
+    try std.testing.expectEqual(core_types.ToolCallStatus.denied, denied.status);
+    try std.testing.expectEqual(core_types.ToolDenialReason.policy_denied, denied.denial_reason.?);
+    const failed = messages.items[3].tool_result_outcome orelse return error.TestExpectedOutcome;
+    try std.testing.expectEqual(core_types.ToolCallStatus.failed, failed.status);
+    try std.testing.expectEqual(core_types.ToolErrorCode.tool_error, failed.error_code.?);
+    try std.testing.expectEqualStrings("command failed", failed.error_message.?);
+    try std.testing.expectEqual(@as(?i64, 1), failed.process.?.exit_code);
+    // Legacy records without an outcome carry null so readers keep the coarse status.
+    try std.testing.expect(messages.items[4].tool_result_outcome == null);
+    try std.testing.expectEqual(core_types.PersistedToolStatus.success, messages.items[4].tool_result_status.?);
+
+    var chat_messages: std.ArrayList(core_types.ChatMessage) = .empty;
+    defer chat_messages.deinit(alloc);
+    try appendHistoryChatMessages(alloc, &chat_messages, &history);
+    try std.testing.expectEqual(@as(usize, 6), chat_messages.items.len);
+
+    const chat_denied = chat_messages.items[2].tool_result_outcome orelse return error.TestExpectedOutcome;
+    try std.testing.expectEqual(core_types.ToolCallStatus.denied, chat_denied.status);
+    try std.testing.expectEqual(core_types.ToolDenialReason.policy_denied, chat_denied.denial_reason.?);
+    const chat_failed = chat_messages.items[3].tool_result_outcome orelse return error.TestExpectedOutcome;
+    try std.testing.expectEqual(core_types.ToolCallStatus.failed, chat_failed.status);
+    try std.testing.expectEqualStrings("command failed", chat_failed.error_message.?);
+    try std.testing.expect(chat_messages.items[4].tool_result_outcome == null);
 }
 
 test "resume projections omit empty terminal assistant after completed execution" {

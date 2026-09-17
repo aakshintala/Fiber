@@ -31,7 +31,6 @@ const ui_render = @import("../render.zig");
 const types = @import("../../core/shared/types.zig");
 const command_output_content = @import("../../core/tooling/command_output_content.zig");
 const captured_command = @import("../../core/tooling/captured_command.zig");
-const tool_result_errors = @import("../../core/tooling/tool_result_errors.zig");
 const vt_emulator = @import("../../core/terminal/engine.zig");
 const result_store = @import("../../core/session/result_store.zig");
 const session_child_store = @import("../../core/session/session_child_store.zig");
@@ -2589,6 +2588,8 @@ test "historical tool detail attaches to the exact replayed status entry" {
 }
 
 test "historical deferred tool detail keeps the call without result evidence" {
+    // Deferred producers stamp denied/policy_denied at write time; resume
+    // derives the kind from that outcome, never from the sentinel text.
     const alloc = std.testing.allocator;
     var runtime = TranscriptRuntime{};
     defer runtime.deinit(alloc);
@@ -2597,7 +2598,7 @@ test "historical deferred tool detail keeps the call without result evidence" {
     const entry_id = try runtime.writeCompletedToolStatusReturningEntryId(
         alloc,
         &metrics,
-        .deferred,
+        .denied,
         "Context updated: Running cat nested/input.txt",
         true,
     );
@@ -2622,13 +2623,14 @@ test "historical deferred tool detail keeps the call without result evidence" {
             .truncated = true,
             .command_output_replay = .unavailable,
             .command_process_presentation = .{ .exit_code = 7 },
+            .outcome = .{ .status = .denied, .denial_reason = .policy_denied },
         },
     );
 
     const detail = runtime.toolDetailForEntry(entry_id).?;
     try std.testing.expectEqualStrings("run_command", detail.tool_name);
     try std.testing.expectEqualStrings("{\"command\":\"cat nested/input.txt\"}", detail.arguments_json.?);
-    try std.testing.expectEqual(types.ToolOutcomeKind.deferred, detail.outcome.?);
+    try std.testing.expectEqual(types.ToolOutcomeKind.denied, detail.outcome.?);
     try std.testing.expect(detail.result == null);
     try std.testing.expect(detail.result_handle == null);
     try std.testing.expect(detail.command_artifact_handle == null);
@@ -2662,8 +2664,10 @@ test "historical deferred tool detail keeps the call without result evidence" {
         },
     );
     const legacy_detail = runtime.toolDetailForEntry(legacy_entry_id).?;
-    try std.testing.expectEqual(types.ToolOutcomeKind.denied, legacy_detail.outcome.?);
-    try std.testing.expect(legacy_detail.result == null);
+    // Pre-outcome records carry no typed outcome, so resume falls through
+    // to the coarse status instead of reading the sentinel text.
+    try std.testing.expectEqual(types.ToolOutcomeKind.failed, legacy_detail.outcome.?);
+    try std.testing.expectEqualStrings(types.deferred_tool_result_output, legacy_detail.result.?);
 
     const failed_entry_id = try runtime.writeCompletedToolStatusReturningEntryId(
         alloc,
@@ -2732,9 +2736,10 @@ test "historical permission denial keeps denied outcome without internal result 
     );
 
     const detail = runtime.toolDetailForEntry(entry_id).?;
-    try std.testing.expectEqual(types.ToolOutcomeKind.denied, detail.outcome.?);
-    try std.testing.expect(detail.result == null);
-    try std.testing.expect(detail.result_handle == null);
+    // Pre-outcome denial records carry no typed outcome, so resume falls
+    // through to the coarse status instead of reading the denial JSON.
+    try std.testing.expectEqual(types.ToolOutcomeKind.failed, detail.outcome.?);
+    try std.testing.expectEqualStrings(denial_output, detail.result.?);
     try std.testing.expect(detail.command_output_entry_id == null);
 }
 
@@ -5222,11 +5227,18 @@ pub const TranscriptRuntime = struct {
         lifecycle_id: ?types.ToolLifecycleId,
         command_output_entry_id: ?u32,
     ) !void {
-        const context_deferred = types.isContextDeferredToolResult(result);
-        const deferred = types.isDeferredToolResult(result);
-        const permission_denied = tool_result_errors.toolPermissionDenialReason(result.output) != null;
-        const shell_command = !deferred and
-            !permission_denied and
+        // The typed outcome is authoritative (ticket #178): denied and
+        // deferred-ness come from the persisted outcome, never from output
+        // text. Deferred producers stamp denied/policy_denied at write
+        // time, so no text fallback remains for either new or legacy
+        // records; legacy records without an outcome fall through to the
+        // structured presentations and coarse status below.
+        const typed_kind: ?types.ToolOutcomeKind = if (result.outcome) |outcome|
+            types.ToolOutcomeKind.fromStatus(outcome.status)
+        else
+            null;
+        const permission_denied = typed_kind == .denied;
+        const shell_command = !permission_denied and
             activity_kind == .command and
             std.mem.eql(u8, call.name, "shell");
         const projected_shell_result = if (shell_command)
@@ -5235,8 +5247,7 @@ pub const TranscriptRuntime = struct {
             null;
         defer if (projected_shell_result) |value| alloc.free(value);
         const presentation_result = projected_shell_result orelse result.output;
-        const command_artifact_handle = if (!deferred and
-            !permission_denied and
+        const command_artifact_handle = if (!permission_denied and
             activity_kind == .command and
             !shell_command)
             command_output_runtime.commandArtifactHandleFromResult(result.output)
@@ -5249,10 +5260,8 @@ pub const TranscriptRuntime = struct {
             lifecycle_id,
             call.name,
             activity_kind,
-            if (context_deferred)
-                .deferred
-            else if (deferred or permission_denied)
-                .denied
+            if (typed_kind) |kind|
+                kind
             else if (result.terminal_action_presentation) |presentation|
                 presentation.outcomeKind()
             else if (result.status == .success or
@@ -5261,8 +5270,8 @@ pub const TranscriptRuntime = struct {
                 .completed
             else
                 .failed,
-            if (deferred or permission_denied) null else presentation_result,
-            if (deferred or permission_denied) null else .{
+            if (permission_denied) null else presentation_result,
+            if (permission_denied) null else .{
                 .output_handle = if (shell_command) null else result.output_handle,
                 .preview = projected_shell_result orelse result.preview,
                 .output_bytes = result.output_bytes,
@@ -5273,7 +5282,7 @@ pub const TranscriptRuntime = struct {
                 .terminal_action_presentation = result.terminal_action_presentation,
             },
             command_artifact_handle,
-            if (deferred or permission_denied) null else command_output_entry_id,
+            if (permission_denied) null else command_output_entry_id,
         );
         if (self.toolDetailPtr(entry_id)) |detail| {
             detail.created_at_ms = result.created_at_ms;
@@ -12586,4 +12595,45 @@ test "notification bell writes standalone BEL bytes" {
 
 test {
     _ = @import("runtime_tests.zig");
+}
+
+test "historical typed denial keeps denied outcome without denial-shaped text" {
+    const alloc = std.testing.allocator;
+    var runtime = TranscriptRuntime{};
+    defer runtime.deinit(alloc);
+
+    var metrics: Metrics = .{};
+    const entry_id = try runtime.writeCompletedToolStatusReturningEntryId(
+        alloc,
+        &metrics,
+        .denied,
+        "Denied shell",
+        true,
+    );
+    const output = "policy blocked this action";
+    try runtime.attachHistoricalToolDetail(
+        alloc,
+        entry_id,
+        .{
+            .id = "denied-shell",
+            .name = "shell",
+            .arguments_json = "{}",
+        },
+        .command,
+        .{
+            .tool_call_id = @constCast("denied-shell"),
+            .tool_name = @constCast("shell"),
+            .status = .failure,
+            .output = @constCast(output),
+            .output_bytes = output.len,
+            .stored_output_bytes = output.len,
+            .outcome = .{
+                .status = .denied,
+                .denial_reason = .policy_denied,
+            },
+        },
+    );
+
+    const detail = runtime.toolDetailForEntry(entry_id).?;
+    try std.testing.expectEqual(types.ToolOutcomeKind.denied, detail.outcome.?);
 }

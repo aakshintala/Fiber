@@ -131,7 +131,211 @@ pub const ToolOutcomeKind = enum {
     cancelled,
     failed,
     deferred,
+
+    /// Derives the display kind from a typed tool outcome. `deferred`
+    /// stays TUI-only: the TUI sets it directly, never from an outcome.
+    pub fn fromStatus(status: ToolCallStatus) ToolOutcomeKind {
+        return switch (status) {
+            .completed => .completed,
+            .failed => .failed,
+            .denied => .denied,
+            .cancelled => .cancelled,
+        };
+    }
 };
+
+/// Closed tool-call status from spec issue #189 section 3 (ticket #178).
+/// Produced by the code that knows what happened, never inferred from text.
+pub const ToolCallStatus = enum {
+    completed,
+    failed,
+    denied,
+    cancelled,
+};
+
+/// Decided denial reasons from spec issue #189 section 3. Open set for
+/// consumers; producers emit only these. Legacy `auto_denied` maps to
+/// `policy_denied` via decidedDenialReason.
+pub const ToolDenialReason = enum {
+    user_denied,
+    policy_denied,
+    permission_required,
+    review_caution,
+    review_evidence_incomplete,
+    review_unavailable,
+};
+
+/// Initial failure codes from spec issue #189 section 3. Open set for
+/// consumers; unknown codes render as generic failures.
+pub const ToolErrorCode = enum {
+    nonzero_exit,
+    signal,
+    timeout,
+    indeterminate,
+    startup_failed,
+    invalid_arguments,
+    io_failure,
+    tool_error,
+};
+
+/// Process facts for any call that ran a process, whatever the tool's
+/// name. Consumers key on presence, never on tool kind.
+pub const ToolProcessFacts = struct {
+    exit_code: ?i64 = null,
+    signal: ?u32 = null,
+    timed_out: bool = false,
+};
+
+/// Borrowed runtime view of a finished tool call. The persisted form is
+/// PersistedToolOutcome; makePersistedToolResult owns the conversion.
+pub const ToolCallOutcome = struct {
+    status: ToolCallStatus = .completed,
+    denial_reason: ?ToolDenialReason = null,
+    error_code: ?ToolErrorCode = null,
+    error_message: ?[]const u8 = null,
+    process: ?ToolProcessFacts = null,
+};
+
+/// Owned persisted form of ToolOutcome. Null on a PersistedToolResult
+/// means the record predates typed outcomes; readers fall back to status.
+pub const PersistedToolOutcome = struct {
+    status: ToolCallStatus = .completed,
+    denial_reason: ?ToolDenialReason = null,
+    error_code: ?ToolErrorCode = null,
+    error_message: ?[]u8 = null,
+    exit_code: ?i64 = null,
+    signal: ?u32 = null,
+    timed_out: bool = false,
+    has_process: bool = false,
+};
+
+/// Caller owns the returned message copy. Callee dupes via alloc.
+pub fn dupeToolCallOutcome(alloc: std.mem.Allocator, outcome: ToolCallOutcome) !PersistedToolOutcome {
+    return .{
+        .status = outcome.status,
+        .denial_reason = outcome.denial_reason,
+        .error_code = outcome.error_code,
+        .error_message = if (outcome.error_message) |message| try alloc.dupe(u8, message) else null,
+        .exit_code = if (outcome.process) |process| process.exit_code else null,
+        .signal = if (outcome.process) |process| process.signal else null,
+        .timed_out = if (outcome.process) |process| process.timed_out else false,
+        .has_process = outcome.process != null,
+    };
+}
+
+pub fn freeToolCallOutcome(alloc: std.mem.Allocator, outcome: PersistedToolOutcome) void {
+    if (outcome.error_message) |message| alloc.free(message);
+}
+
+/// One JSON-serializable view of a persisted tool outcome (ticket #178).
+/// session_codec.zig and session_json.zig both emit this shape with
+/// std.json.Stringify.value so the two writers cannot drift. Field order
+/// matches the persisted object keys. error_message keeps the durable
+/// string-or-base64 encoding: plain strings stay strings, non-UTF8 bytes
+/// (which Stringify would emit as an integer array) fall back to the
+/// base64 object readers already accept.
+///
+/// ERROR-MESSAGE ENCODING CONTRACT (for future editors): this view is the
+/// only writer of outcome JSON. The codec reader accepts the string and
+/// base64-object forms, so any encoding emitted here must stay within
+/// those two. Do not add a third shape.
+///
+/// NULLS AND KEY STABILITY: every field is always emitted, including
+/// nulls (the reader requires all keys). Do not set
+/// emit_null_optional_fields=false at the call sites.
+pub const PersistedToolOutcomeView = struct {
+    status: ToolCallStatus,
+    reason: ?ToolDenialReason = null,
+    error_code: ?ToolErrorCode = null,
+    error_message: ?[]const u8 = null,
+    exit_code: ?i64 = null,
+    signal: ?u32 = null,
+    timed_out: bool = false,
+    has_process: bool = false,
+
+    pub fn fromBorrowed(outcome: PersistedToolOutcome) PersistedToolOutcomeView {
+        return .{
+            .status = outcome.status,
+            .reason = outcome.denial_reason,
+            .error_code = outcome.error_code,
+            .error_message = outcome.error_message,
+            .exit_code = outcome.exit_code,
+            .signal = outcome.signal,
+            .timed_out = outcome.timed_out,
+            .has_process = outcome.has_process,
+        };
+    }
+
+    pub fn jsonStringify(self: PersistedToolOutcomeView, jws: anytype) !void {
+        try jws.beginObject();
+        try jws.objectField("status");
+        try jws.write(self.status);
+        try jws.objectField("reason");
+        try jws.write(self.reason);
+        try jws.objectField("error_code");
+        try jws.write(self.error_code);
+        try jws.objectField("error_message");
+        try writeDurableMessageJson(jws, self.error_message);
+        try jws.objectField("exit_code");
+        try jws.write(self.exit_code);
+        try jws.objectField("signal");
+        try jws.write(self.signal);
+        try jws.objectField("timed_out");
+        try jws.write(self.timed_out);
+        try jws.objectField("has_process");
+        try jws.write(self.has_process);
+        try jws.endObject();
+    }
+};
+
+/// Durable string encoding shared by the outcome view: valid UTF-8 writes
+/// as a JSON string, anything else as {"encoding":"base64","data":...}.
+/// The base64 payload streams through beginWriteRaw/endWriteRaw so the
+/// Stringify state machine still sees a complete value; the alphabet
+/// itself needs no JSON escaping.
+fn writeDurableMessageJson(jws: anytype, message: ?[]const u8) !void {
+    const bytes = message orelse return jws.write(@as(?[]const u8, null));
+    if (std.unicode.utf8ValidateSlice(bytes)) return jws.write(bytes);
+    try jws.beginObject();
+    try jws.objectField("encoding");
+    try jws.write("base64");
+    try jws.objectField("data");
+    try jws.beginWriteRaw();
+    try jws.writer.writeByte('"');
+    try std.base64.standard.Encoder.encodeWriter(jws.writer, bytes);
+    try jws.writer.writeByte('"');
+    jws.endWriteRaw();
+    try jws.endObject();
+}
+
+/// Maps admission's typed denial reason onto the decided set. The legacy
+/// automatic denial never ran by policy, so it persists as policy_denied.
+pub fn decidedDenialReason(reason: ToolPermissionDenialReason) ToolDenialReason {
+    return switch (reason) {
+        .user_denied => .user_denied,
+        .policy_denied => .policy_denied,
+        .permission_required => .permission_required,
+        .review_caution => .review_caution,
+        .review_evidence_incomplete => .review_evidence_incomplete,
+        .review_unavailable => .review_unavailable,
+        .auto_denied => .policy_denied,
+    };
+}
+
+/// Resume-display label for a decided denial reason (ticket #178).
+/// Mirrors the admission labels; the legacy automatic denial already
+/// persists as policy_denied, so it reads as a plain denial on resume.
+pub fn denialStatusLabel(reason: ?ToolDenialReason) []const u8 {
+    const resolved = reason orelse return "Denied";
+    return switch (resolved) {
+        .user_denied => "Denied",
+        .policy_denied => "Denied",
+        .permission_required => "Permission required",
+        .review_caution => "Safety caution",
+        .review_evidence_incomplete => "Review evidence incomplete",
+        .review_unavailable => "Review unavailable",
+    };
+}
 
 pub const ToolOutcome = struct {
     kind: ToolOutcomeKind,
@@ -759,6 +963,7 @@ pub const PersistedToolResult = struct {
     command_output_replay: ?CommandOutputReplay = null,
     command_process_presentation: ?CommandProcessPresentation = null,
     terminal_action_presentation: ?TerminalActionPresentation = null,
+    outcome: ?PersistedToolOutcome = null,
 };
 
 pub const CommandOutputReplayDescriptor = struct {
@@ -982,6 +1187,7 @@ pub const ChatMessage = struct {
     /// The value is a validated JSON array and is never sent across provider routes.
     provider_state_json: ?[]const u8 = null,
     tool_result_status: ?PersistedToolStatus = null,
+    tool_result_outcome: ?ToolCallOutcome = null,
     tool_result_memory: ?ToolResultMemory = null,
     permission_feedback: bool = false,
     cache_policy: ChatCachePolicy = .default,
@@ -2222,6 +2428,21 @@ fn dupePersistedToolResult(alloc: std.mem.Allocator, result: PersistedToolResult
     else
         null;
     errdefer if (command_output_replay) |replay| freeCommandOutputReplay(alloc, replay);
+    const outcome = if (result.outcome) |resolved| blk: {
+        const message = if (resolved.error_message) |text| try alloc.dupe(u8, text) else null;
+        errdefer if (message) |text| alloc.free(text);
+        break :blk PersistedToolOutcome{
+            .status = resolved.status,
+            .denial_reason = resolved.denial_reason,
+            .error_code = resolved.error_code,
+            .error_message = message,
+            .exit_code = resolved.exit_code,
+            .signal = resolved.signal,
+            .timed_out = resolved.timed_out,
+            .has_process = resolved.has_process,
+        };
+    } else null;
+    errdefer if (outcome) |resolved| freeToolCallOutcome(alloc, resolved);
     return .{
         .tool_call_id = tool_call_id,
         .tool_name = tool_name,
@@ -2239,6 +2460,7 @@ fn dupePersistedToolResult(alloc: std.mem.Allocator, result: PersistedToolResult
         .command_output_replay = command_output_replay,
         .command_process_presentation = result.command_process_presentation,
         .terminal_action_presentation = result.terminal_action_presentation,
+        .outcome = outcome,
     };
 }
 
@@ -2253,6 +2475,7 @@ fn freePersistedToolResult(alloc: std.mem.Allocator, result: PersistedToolResult
         freeCommittedFilePresentation(alloc, presentation);
     }
     if (result.command_output_replay) |replay| freeCommandOutputReplay(alloc, replay);
+    if (result.outcome) |outcome| freeToolCallOutcome(alloc, outcome);
 }
 
 pub fn dupeCommandOutputReplay(

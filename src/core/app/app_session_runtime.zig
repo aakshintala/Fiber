@@ -3320,9 +3320,14 @@ pub fn Runtime(comptime App: type) type {
                 call.name,
                 call.arguments_json,
             );
-            const context_deferred = types.isContextDeferredToolResult(result);
-            const deferred = types.isDeferredToolResult(result);
-            const permission_denial_reason = tool_result_errors.toolPermissionDenialReason(result.output);
+            // The typed outcome is authoritative (ticket #178): denied
+            // comes from the persisted outcome, never from output text.
+            // Deferred producers stamp denied/policy_denied at write time.
+            const typed_kind: ?types.ToolOutcomeKind = if (result.outcome) |outcome|
+                types.ToolOutcomeKind.fromStatus(outcome.status)
+            else
+                null;
+            const permission_denied = typed_kind == .denied;
 
             var action_arena = std.heap.ArenaAllocator.init(app.alloc);
             defer action_arena.deinit();
@@ -3341,23 +3346,12 @@ pub fn Runtime(comptime App: type) type {
             else
                 null;
             const outcome_decision = command_decision orelse terminal_action_decision;
-            const formatted_action_base = if (deferred)
+            const formatted_action_base = if (permission_denied)
                 try app.describeToolActionDeniedWithAdvertised(
                     action_arena.allocator(),
                     call,
                     null,
-                    if (context_deferred)
-                        types.context_deferred_tool_status_label
-                    else
-                        types.deferred_tool_result_output,
-                    &.{},
-                )
-            else if (permission_denial_reason) |reason|
-                try app.describeToolActionDeniedWithAdvertised(
-                    action_arena.allocator(),
-                    call,
-                    null,
-                    tool_admission.permissionDeniedStatusLabel(reason),
+                    types.denialStatusLabel(if (result.outcome) |outcome| outcome.denial_reason else null),
                     &.{},
                 )
             else if (outcome_decision) |decision|
@@ -3396,10 +3390,8 @@ pub fn Runtime(comptime App: type) type {
             const action = try app.alloc.dupe(u8, formatted_action);
             defer app.alloc.free(action);
 
-            const outcome: types.ToolOutcomeKind = if (context_deferred)
-                .deferred
-            else if (deferred or permission_denial_reason != null)
-                .denied
+            const outcome: types.ToolOutcomeKind = if (typed_kind) |kind|
+                kind
             else if (outcome_decision) |decision|
                 decision.outcome
             else if (result.status == .success)
@@ -3411,7 +3403,7 @@ pub fn Runtime(comptime App: type) type {
                 outcome,
                 action,
             );
-            if (!is_command or deferred or permission_denial_reason != null) {
+            if (!is_command or permission_denied) {
                 try sink.attachHistoricalToolDetail(entry_id, call, result);
                 return;
             }
@@ -5569,6 +5561,9 @@ test "execution replay renders persisted permission feedback after its tool resu
 }
 
 test "execution replay preserves permission denial reasons" {
+    // Denial reasons survive resume via the stamped typed outcome, never
+    // via the denial JSON text. The legacy automatic denial already
+    // persists as policy_denied, so it reads back as a plain denial.
     const alloc = std.testing.allocator;
     var app = try TestApp.init(alloc, "/workspace");
     defer app.deinit();
@@ -5623,6 +5618,10 @@ test "execution replay preserves permission denial reasons" {
             .output = outputs[index],
             .output_bytes = outputs[index].len,
             .stored_output_bytes = outputs[index].len,
+            .outcome = .{
+                .status = .denied,
+                .denial_reason = types.decidedDenialReason(reason),
+            },
         };
     }
     var steps = [_]types.ToolExecutionStep{.{
@@ -5639,7 +5638,7 @@ test "execution replay preserves permission denial reasons" {
     );
     try std.testing.expectEqual(@as(usize, 7), app.completed_tool_statuses.items.len);
     try std.testing.expectEqualStrings("● Denied run_command\n", app.completed_tool_statuses.items[0]);
-    try std.testing.expectEqualStrings("● Denied by auto agent run_command\n", app.completed_tool_statuses.items[1]);
+    try std.testing.expectEqualStrings("● Denied run_command\n", app.completed_tool_statuses.items[1]);
     try std.testing.expectEqualStrings("● Denied run_command\n", app.completed_tool_statuses.items[2]);
     try std.testing.expectEqualStrings("● Permission required run_command\n", app.completed_tool_statuses.items[3]);
     try std.testing.expectEqualStrings("● Safety caution run_command\n", app.completed_tool_statuses.items[4]);
@@ -6193,6 +6192,8 @@ test "execution replay keeps invalid question results on the generic path" {
 }
 
 test "execution replay preserves paired deferred tools without command output" {
+    // Deferred producers stamp denied/policy_denied at write time; resume
+    // derives kinds and labels from that outcome, never from text.
     const alloc = std.testing.allocator;
     var app = try TestApp.init(alloc, "/workspace");
     defer app.deinit();
@@ -6222,6 +6223,7 @@ test "execution replay preserves paired deferred tools without command output" {
             .output = @constCast(types.context_deferred_tool_result_output),
             .output_bytes = types.context_deferred_tool_result_output.len,
             .stored_output_bytes = types.context_deferred_tool_result_output.len,
+            .outcome = .{ .status = .denied, .denial_reason = .policy_denied },
         },
         .{
             .tool_call_id = @constCast("call_command"),
@@ -6235,6 +6237,7 @@ test "execution replay preserves paired deferred tools without command output" {
             .truncated = true,
             .command_output_replay = .unavailable,
             .command_process_presentation = .{ .exit_code = 7 },
+            .outcome = .{ .status = .denied, .denial_reason = .policy_denied },
         },
         .{
             .tool_call_id = @constCast("call_legacy"),
@@ -6243,6 +6246,7 @@ test "execution replay preserves paired deferred tools without command output" {
             .output = @constCast(types.deferred_tool_result_output),
             .output_bytes = types.deferred_tool_result_output.len,
             .stored_output_bytes = types.deferred_tool_result_output.len,
+            .outcome = .{ .status = .denied, .denial_reason = .policy_denied },
         },
     };
     var steps = [_]types.ToolExecutionStep{.{
@@ -6254,13 +6258,13 @@ test "execution replay preserves paired deferred tools without command output" {
 
     try std.testing.expectEqualSlices(
         types.ToolOutcomeKind,
-        &.{ .deferred, .deferred, .denied },
+        &.{ .denied, .denied, .denied },
         app.completed_tool_outcomes.items,
     );
     try std.testing.expectEqual(@as(usize, 3), app.completed_tool_statuses.items.len);
-    try std.testing.expectEqualStrings("● Context updated read_file\n", app.completed_tool_statuses.items[0]);
-    try std.testing.expectEqualStrings("● Context updated run_command\n", app.completed_tool_statuses.items[1]);
-    try std.testing.expectEqualStrings("● Not executed read_file\n", app.completed_tool_statuses.items[2]);
+    try std.testing.expectEqualStrings("● Denied read_file\n", app.completed_tool_statuses.items[0]);
+    try std.testing.expectEqualStrings("● Denied run_command\n", app.completed_tool_statuses.items[1]);
+    try std.testing.expectEqualStrings("● Denied read_file\n", app.completed_tool_statuses.items[2]);
     try std.testing.expectEqual(@as(usize, 3), app.historical_tool_detail_entry_ids.items.len);
     try std.testing.expectEqual(@as(usize, 0), app.transcript.items.len);
     try std.testing.expectEqual(@as(usize, 0), app.command_output_writes.items.len);

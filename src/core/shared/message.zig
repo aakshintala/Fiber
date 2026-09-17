@@ -34,6 +34,7 @@ pub const Message = struct {
     tool_call_id: ?[]const u8 = null,
     tool_name: ?[]const u8 = null,
     tool_result_status: ?types.PersistedToolStatus = null,
+    tool_result_outcome: ?types.ToolCallOutcome = null,
     tool_result_memory: ?types.ToolResultMemory = null,
     permission_feedback: bool = false,
     owns_content: bool = false,
