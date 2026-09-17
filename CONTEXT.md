@@ -62,6 +62,38 @@ _Avoid_: offset, index
 
 ## Routing
 
+**Connection**:
+A configured endpoint a user can send models to: its credential, default protocol, default base URL, billing kind and the models it offers. Connections belong to the user's profile, never to a project.
+_Avoid_: provider, account, backend
+
+**Preset**:
+A connection shipped with Fiber, such as `codex` or `opencode-go`. A user connection with the same name overrides it field by field.
+_Avoid_: built-in provider
+
+**Model reference**:
+A model named by its connection and model id, written `connection/model` and split at the first slash. Sessions and settings always store the full reference.
+_Avoid_: model id, qualified name
+
+**Alias**:
+A short name a user defines for a model reference. It resolves only where a person or a tool call types it, so editing an alias never changes a stored reference.
+_Avoid_: nickname, shortcut
+
+**Protocol**:
+One wire format for talking to models, such as Responses, Chat Completions, Anthropic Messages or Google Generative AI. A connection has a default protocol, and a model may use another.
+_Avoid_: API, provider
+
+**Route**:
+A model reference resolved to the connection, protocol and base URL a request is sent to.
+_Avoid_: target, endpoint
+
+**Credential kind**:
+How a connection authenticates: a login owned by an auth scheme, a stored key, a reference to an environment variable, or none.
+_Avoid_: auth source, auth strategy
+
+**Billing kind**:
+Whether a connection charges per use (metered) or through a plan (subscription), declared by the connection rather than inferred from how it logs in.
+_Avoid_: pricing mode, plan type
+
 **Provider state**:
 Data a model provider returns that only that provider can read back, such as encrypted reasoning or a message's provider-side id. Fiber stores it verbatim and never interprets it.
 _Avoid_: reasoning state, signature blob
