@@ -1347,6 +1347,28 @@ export async function readSession(
   };
 }
 
+// Pane output reaches durable storage on its own channel, so it can trail a
+// startup failure that the control channel already reported.
+export async function readSessionUntilContains(
+  client: FrameClient,
+  revision: number,
+  nextCorrelation: () => number,
+  sessionId: string,
+  needle: string,
+  label: string,
+): Promise<string> {
+  let output = "";
+  try {
+    await waitFor(async () => {
+      output = (await readSession(client, revision, nextCorrelation(), sessionId)).output;
+      return output.includes(needle);
+    }, 5_000, label);
+  } catch (error) {
+    throw new Error(`${label}: ${JSON.stringify(needle)} never reached session output ${JSON.stringify(output)}`, { cause: error });
+  }
+  return output;
+}
+
 export async function startCommand(
   client: FrameClient,
   revision: number,
