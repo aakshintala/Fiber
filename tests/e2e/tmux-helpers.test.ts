@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -16,8 +17,10 @@ import {
   isVolatileTokenStatusRow,
   paneExitMatches,
   parseSingleChildPid,
+  sweepOrphanedTmuxResources,
   TmuxSession,
   tmuxAvailable,
+  tmuxSocketPath,
 } from "./tmux-helpers";
 
 const tmuxTest = test.skipIf(!tmuxAvailable());
@@ -303,5 +306,43 @@ tmuxTest("minimum history lines survive a fresh tmux server restart", async () =
         stdio: "pipe",
       });
     } catch {}
+  }
+});
+
+tmuxTest("isolated session teardown removes its tmux server and socket", async () => {
+  const ownSockets = () =>
+    new Set(readdirSync(tmuxSocketPath("")).filter((entry) => entry.startsWith(`fiber-e2e-${process.pid}-`)));
+  const before = ownSockets();
+  const session = await TmuxSession.create({ cmd: "sleep 60", isolated: true, startupWaitMs: 0 });
+  const created = [...ownSockets()].filter((entry) => !before.has(entry));
+  expect(created).toHaveLength(1);
+  await session.kill();
+  expect(existsSync(tmuxSocketPath(created[0]))).toBe(false);
+  expect(spawnSync("tmux", ["-L", created[0], "has-session"]).status).not.toBe(0);
+});
+
+tmuxTest("orphan sweep removes a dead run's tmux resources and keeps a live run's", () => {
+  const deadPid = spawnSync("true").pid!;
+  const stamp = Date.now();
+  const deadSocket = `fiber-e2e-${deadPid}-1-${stamp}`;
+  const liveSocket = `fiber-e2e-${process.pid}-999999-${stamp}`;
+  const deadSession = `fiber-test-${deadPid}-1`;
+  try {
+    for (const socket of [deadSocket, liveSocket]) {
+      execFileSync("tmux", ["-L", socket, "new-session", "-d", "sleep 60"], { stdio: "pipe" });
+    }
+    execFileSync("tmux", ["new-session", "-d", "-s", deadSession, "sleep 60"], { stdio: "pipe" });
+
+    sweepOrphanedTmuxResources();
+
+    expect(existsSync(tmuxSocketPath(deadSocket))).toBe(false);
+    expect(spawnSync("tmux", ["has-session", "-t", deadSession]).status).not.toBe(0);
+    expect(spawnSync("tmux", ["-L", liveSocket, "has-session"]).status).toBe(0);
+  } finally {
+    for (const socket of [deadSocket, liveSocket]) {
+      spawnSync("tmux", ["-L", socket, "kill-server"]);
+      rmSync(tmuxSocketPath(socket), { force: true });
+    }
+    spawnSync("tmux", ["kill-session", "-t", deadSession]);
   }
 });
