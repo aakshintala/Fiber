@@ -129,7 +129,14 @@ fn resolveEndpointSelection(
 
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
     hasher.update(transport_hash_context);
-    hasher.update(authority_root);
+    // Transport identity is the state-root owner: HOME when the override is
+    // unset (the pinned contract), the override when set so distinct roots
+    // get distinct sockets and share nothing.
+    if (try profile_paths.validatedOverride()) |override_root| {
+        hasher.update(override_root);
+    } else {
+        hasher.update(home);
+    }
     var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
     hasher.final(&digest);
     const digest_hex = std.fmt.bytesToHex(
