@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const io_mod = @import("core/shared/io.zig");
+const profile_paths = @import("core/shared/profile_paths.zig");
 
 pub const version = "0.0.1-dev";
 
@@ -2804,6 +2805,19 @@ fn mainC(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) !v
     const raw_args = rawArgs(c_argc, c_argv);
     const raw_env: RawEnviron = @ptrCast(c_envp);
 
+    // Fail fast on a bad state root before touching any state: falling back
+    // would write where the caller did not expect it (issue #132).
+    if (rawEnvValue(raw_env, profile_paths.state_dir_env_name)) |value| {
+        if (!profile_paths.stateDirValid(value)) {
+            if (value.len == 0) {
+                writeStderrFast("fiber: FIBER_STATE_DIR is set but empty; unset it to use $HOME/.fiber\n") catch {};
+            } else {
+                writeStderrFast("fiber: FIBER_STATE_DIR must be an absolute path; unset it to use $HOME/.fiber\n") catch {};
+            }
+            exitFast(1);
+        }
+    }
+
     if (comptime terminal_host.isSupported()) {
         if (terminal_tmux_session.isCaptureModeRaw(raw_args)) {
             io_mod.setRawEnviron(raw_env);
@@ -3088,6 +3102,16 @@ fn writeStdoutFast(text: []const u8) !void {
     var remaining = text;
     while (remaining.len > 0) {
         const written = std.c.write(std.posix.STDOUT_FILENO, remaining.ptr, remaining.len);
+        if (written <= 0) return error.WriteFailed;
+        remaining = remaining[@intCast(written)..];
+    }
+}
+
+fn writeStderrFast(text: []const u8) !void {
+    @setRuntimeSafety(false);
+    var remaining = text;
+    while (remaining.len > 0) {
+        const written = std.c.write(std.posix.STDERR_FILENO, remaining.ptr, remaining.len);
         if (written <= 0) return error.WriteFailed;
         remaining = remaining[@intCast(written)..];
     }

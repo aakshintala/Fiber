@@ -65,19 +65,21 @@ fn strip_trailing_slashes(path: []const u8) []const u8 {
 }
 
 /// Pure match of an already-absolute path against the store file and its
-/// parent directory. Case-insensitive because the profile root typically
-/// lives on a case-insensitive volume. No allocation, no I/O.
-fn is_store_path(path: []const u8, home: []const u8) bool {
+/// parent directory. The root is the resolved state root (the
+/// FIBER_STATE_DIR override when set, else `$HOME/.fiber`), so the deny
+/// follows the override. Case-insensitive because the profile root
+/// typically lives on a case-insensitive volume. No allocation, no I/O.
+fn is_store_path(path: []const u8, root: []const u8) bool {
     const target = strip_trailing_slashes(path);
-    const root = strip_trailing_slashes(home);
-    if (root.len == 0 or target.len <= root.len) return false;
-    if (!eql_ignore_case(target[0..root.len], root)) return false;
-    const rest = target[root.len..];
+    const base = strip_trailing_slashes(root);
+    if (base.len == 0) return false;
+    if (eql_ignore_case(target, base)) return true;
+    if (target.len <= base.len) return false;
+    if (!eql_ignore_case(target[0..base.len], base)) return false;
+    const rest = target[base.len..];
+    if (rest.len != store_file_name.len + 1) return false;
     if (rest[0] != '/') return false;
-    if (eql_ignore_case(rest, "/.fiber")) return true;
-    if (rest.len != "/.fiber/".len + store_file_name.len) return false;
-    if (!eql_ignore_case(rest[0.."/.fiber/".len], "/.fiber/")) return false;
-    return eql_ignore_case(rest["/.fiber/".len..], store_file_name);
+    return eql_ignore_case(rest[1..], store_file_name);
 }
 
 fn has_glob_meta(token: []const u8) bool {
@@ -218,6 +220,16 @@ fn clean_home() ?[]const u8 {
     return home;
 }
 
+/// Caller-owned deny root: the validated FIBER_STATE_DIR override when
+/// set, else `$HOME/.fiber`. Null when unresolvable; callers keep the
+/// fail-closed rule (exact filename denies, store shapes hold) so an
+/// unresolvable root never narrows a deny.
+fn resolve_deny_root(alloc: std.mem.Allocator) !?[]u8 {
+    if (try profile_paths.validatedOverride()) |root| return try alloc.dupe(u8, root);
+    const home = clean_home() orelse return null;
+    return try std.fs.path.join(alloc, &.{ strip_trailing_slashes(home), profile_paths.root_dir_name });
+}
+
 fn expand_home_prefix(alloc: std.mem.Allocator, home: []const u8, token: []const u8) ![]u8 {
     if (std.mem.startsWith(u8, token, "${HOME}")) {
         return std.fs.path.join(alloc, &.{ strip_trailing_slashes(home), token["${HOME}".len..] });
@@ -288,7 +300,7 @@ fn is_foreign_tilde_store(token: []const u8) bool {
 
 const StoreIdentities = struct {
     arena: std.heap.ArenaAllocator,
-    home: []const u8,
+    root: []const u8,
     file_lex: []const u8,
     dir_lex: []const u8,
     file_real: ?[]const u8,
@@ -311,20 +323,20 @@ const StoreIdentities = struct {
 /// Lexical store paths plus their `realpath` identities where they exist.
 /// A missing identity is not an error: lexical matching still denies exact
 /// spellings, and resolution matches widen the deny where available.
-fn resolve_store_identities(alloc: std.mem.Allocator, home: []const u8) !StoreIdentities {
+fn resolve_store_identities(alloc: std.mem.Allocator, root: []const u8) !StoreIdentities {
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     errdefer arena_state.deinit();
     const scratch = arena_state.allocator();
-    const trimmed = strip_trailing_slashes(home);
-    const dir_lex = try std.fs.path.join(scratch, &.{ trimmed, profile_paths.root_dir_name });
-    const file_lex = try std.fs.path.join(scratch, &.{ trimmed, profile_paths.root_dir_name, store_file_name });
+    const trimmed = strip_trailing_slashes(root);
+    const owned_dir = try scratch.dupe(u8, trimmed);
+    const file_lex = try std.fs.path.join(scratch, &.{ trimmed, store_file_name });
     return .{
         .arena = arena_state,
-        .home = home,
+        .root = owned_dir,
         .file_lex = file_lex,
-        .dir_lex = dir_lex,
+        .dir_lex = owned_dir,
         .file_real = io_mod.realpathAlloc(scratch, file_lex) catch null,
-        .dir_real = io_mod.realpathAlloc(scratch, dir_lex) catch null,
+        .dir_real = io_mod.realpathAlloc(scratch, owned_dir) catch null,
     };
 }
 
@@ -354,10 +366,10 @@ fn check_glob_pattern(alloc: std.mem.Allocator, stores: StoreIdentities, pattern
     if (std.mem.lastIndexOfScalar(u8, literal, '/')) |slash| {
         const parent = strip_trailing_slashes(literal[0..slash]);
         if (parent.len > 0) {
-            if (is_store_path(parent, stores.home)) return .deny;
+            if (is_store_path(parent, stores.root)) return .deny;
             if (realpath_opt(alloc, parent)) |resolved| {
                 defer alloc.free(resolved);
-                if (is_store_path(resolved, stores.home) or stores.matches_resolved(resolved)) return .deny;
+                if (is_store_path(resolved, stores.root) or stores.matches_resolved(resolved)) return .deny;
             }
         }
     }
@@ -442,10 +454,10 @@ fn check_expanded_token(alloc: std.mem.Allocator, stores: StoreIdentities, absol
     if (has_glob_meta(absolute)) return check_glob_pattern(alloc, stores, absolute);
     const lexical = try std.fs.path.resolve(alloc, &.{absolute});
     defer alloc.free(lexical);
-    if (is_store_path(lexical, stores.home)) return .deny;
+    if (is_store_path(lexical, stores.root)) return .deny;
     const resolved = realpath_opt(alloc, absolute) orelse return .allow;
     defer alloc.free(resolved);
-    if (is_store_path(resolved, stores.home) or stores.matches_resolved(resolved)) return .deny;
+    if (is_store_path(resolved, stores.root) or stores.matches_resolved(resolved)) return .deny;
     return .allow;
 }
 
@@ -515,12 +527,19 @@ fn check_command_token(alloc: std.mem.Allocator, home: ?[]const u8, stores: ?Sto
     };
     const expanded = try expand_home_prefix(alloc, known, word);
     defer alloc.free(expanded);
+    // An unresolvable root (missing HOME, invalid override) never narrows
+    // a deny: the exact filename already denied above, and anything
+    // store-shaped holds instead of allowing.
+    const owned = stores orelse {
+        if (is_store_shaped(expanded) or has_unresolved_env(expanded)) return .hold;
+        return .allow;
+    };
     const absolute = try join_cwd(alloc, cwd, expanded) orelse {
         if (is_store_shaped(expanded) or has_unresolved_env(expanded)) return .hold;
         return .allow;
     };
     defer alloc.free(absolute);
-    return check_clean_token(alloc, stores.?, absolute);
+    return check_clean_token(alloc, owned, absolute);
 }
 
 /// Command verdict for `run_command` targets: deny wins, then hold, else
@@ -528,9 +547,14 @@ fn check_command_token(alloc: std.mem.Allocator, home: ?[]const u8, stores: ?Sto
 /// of a long command still denies.
 pub fn check_command_target(alloc: std.mem.Allocator, target_path: []const u8) !Verdict {
     const home = clean_home();
+    const root_owned = resolve_deny_root(alloc) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => null,
+    };
+    defer if (root_owned) |root| alloc.free(root);
     var stores: ?StoreIdentities = null;
     defer if (stores) |*owned| owned.deinit();
-    if (home) |known| stores = try resolve_store_identities(alloc, known);
+    if (root_owned) |root| stores = try resolve_store_identities(alloc, root);
     const separator = std.mem.find(u8, target_path, "::");
     const cwd = if (separator) |index| target_path[0..index] else "";
     const command = if (separator) |index| target_path[index + 2 ..] else target_path;
@@ -561,10 +585,23 @@ pub fn check_file_target(alloc: std.mem.Allocator, workspace_root: []const u8, t
         if (is_store_shaped(word) or has_unresolved_env(word)) return .hold;
         return .allow;
     };
-    var stores = try resolve_store_identities(alloc, home);
-    defer stores.deinit();
+    const root_owned = resolve_deny_root(alloc) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => null,
+    };
+    defer if (root_owned) |root| alloc.free(root);
+    var stores: ?StoreIdentities = null;
+    defer if (stores) |*owned| owned.deinit();
+    if (root_owned) |root| stores = try resolve_store_identities(alloc, root);
     const expanded = try expand_home_prefix(alloc, home, word);
     defer alloc.free(expanded);
+    // An unresolvable root never narrows a deny: the exact filename fails
+    // closed, anything store-shaped holds, the rest allows.
+    const owned = stores orelse {
+        if (contains_store_file(expanded)) return .deny;
+        if (is_store_shaped(expanded) or has_unresolved_env(expanded)) return .hold;
+        return .allow;
+    };
     const absolute = try join_cwd(alloc, workspace_root, expanded) orelse {
         // Unanchorable spelling with no workspace root: the exact filename
         // fails closed, anything store-shaped holds, the rest allows.
@@ -573,7 +610,7 @@ pub fn check_file_target(alloc: std.mem.Allocator, workspace_root: []const u8, t
         return .allow;
     };
     defer alloc.free(absolute);
-    return check_clean_token(alloc, stores, absolute);
+    return check_clean_token(alloc, owned, absolute);
 }
 
 /// Test-only HOME swap shared by this file's and `permissions.zig`'s
@@ -592,6 +629,10 @@ pub const TestHome = struct {
 
     pub fn install_without_home(alloc: std.mem.Allocator) !*TestHome {
         return install_inner(alloc);
+    }
+
+    fn putEnv(self: *TestHome, key: []const u8, value: []const u8) !void {
+        try self.map.put(key, value);
     }
 
     fn install_inner(alloc: std.mem.Allocator) !*TestHome {
@@ -632,13 +673,13 @@ var test_home_depth: usize = 0;
 var test_home_empty: ?std.process.Environ.Map = null;
 
 test "store match covers the credential file and its parent directory" {
-    const home = "/home/fiber";
+    const root = "/home/fiber/.fiber";
     for ([_][]const u8{
         "/home/fiber/.fiber/chatgpt-auth.json",
         "/home/fiber/.fiber",
         "/home/fiber/.fiber/",
     }) |denied| {
-        try std.testing.expect(is_store_path(denied, home));
+        try std.testing.expect(is_store_path(denied, root));
     }
     for ([_][]const u8{
         "/home/fiber/.fiber/settings.json",
@@ -654,21 +695,23 @@ test "store match covers the credential file and its parent directory" {
         "/tmp/chatgpt-auth.json",
         "/home/fiber/.fiber2/chatgpt-auth.json",
     }) |allowed| {
-        try std.testing.expect(!is_store_path(allowed, home));
+        try std.testing.expect(!is_store_path(allowed, root));
     }
 }
 
 test "store match ignores case for case-insensitive profile volumes" {
-    try std.testing.expect(is_store_path("/home/fiber/.FIBER/CHATGPT-AUTH.JSON", "/home/fiber"));
-    try std.testing.expect(is_store_path("/home/fiber/.fiber/ChatGPT-Auth.Json", "/home/fiber"));
-    try std.testing.expect(!is_store_path("/home/fiber/.fiber/settings.json", "/home/fiber"));
+    const root = "/home/fiber/.fiber";
+    try std.testing.expect(is_store_path("/home/fiber/.fiber/CHATGPT-AUTH.JSON", root));
+    try std.testing.expect(is_store_path("/home/fiber/.Fiber/ChatGPT-Auth.Json", root));
+    try std.testing.expect(!is_store_path("/home/fiber/.fiber/settings.json", root));
 }
 
-test "store match respects the home boundary" {
-    try std.testing.expect(!is_store_path("/home/fiber2/.fiber/chatgpt-auth.json", "/home/fiber"));
-    try std.testing.expect(!is_store_path("/home/fiber", "/home/fiber"));
-    try std.testing.expect(!is_store_path("", "/home/fiber"));
-    try std.testing.expect(is_store_path("/home/fiber/.fiber/chatgpt-auth.json", "/home/fiber/"));
+test "store match respects the root boundary" {
+    const root = "/home/fiber/.fiber";
+    try std.testing.expect(!is_store_path("/home/fiber2/.fiber/chatgpt-auth.json", root));
+    try std.testing.expect(!is_store_path("/home/fiber", root));
+    try std.testing.expect(!is_store_path("", root));
+    try std.testing.expect(is_store_path("/home/fiber/.fiber/chatgpt-auth.json", "/home/fiber/.fiber/"));
 }
 
 test "policy denies the exact path the runtime loader reads" {
@@ -792,6 +835,75 @@ test "file target fails closed without a home" {
     try std.testing.expectEqual(Verdict.hold, try check_file_target(alloc, workspace, "~/.fiber"));
     try std.testing.expectEqual(Verdict.hold, try check_file_target(alloc, workspace, "$P/.fiber/settings.json"));
     try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, "notes.txt"));
+}
+
+test "deny follows the state dir override" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    try tmp.dir.createDirPath(io_mod.getIo(), "state");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const state = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "state");
+    defer alloc.free(state);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+
+    const test_home = try TestHome.install(alloc, home);
+    defer test_home.deinit();
+    try test_home.putEnv(profile_paths.state_dir_env_name, state);
+
+    // Drift guard: the denied path is the same file the runtime loader
+    // opens under the override.
+    const loader_path = try profile_paths.chatgptAuthPath(alloc, home);
+    defer alloc.free(loader_path);
+    const expect_override = try std.fs.path.join(alloc, &.{ state, "chatgpt-auth.json" });
+    defer alloc.free(expect_override);
+    try std.testing.expectEqualStrings(expect_override, loader_path);
+
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, loader_path));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, state));
+
+    // The old default path is just a same-named file once overridden.
+    const legacy = try std.fs.path.join(alloc, &.{ home, ".fiber", "chatgpt-auth.json" });
+    defer alloc.free(legacy);
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, legacy));
+
+    const neighbor = try std.fs.path.join(alloc, &.{ state, "settings.json" });
+    defer alloc.free(neighbor);
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, neighbor));
+
+    const target = try std.fmt.allocPrint(alloc, "{s}::cat {s}/chatgpt-auth.json", .{ workspace, state });
+    defer alloc.free(target);
+    try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, target));
+}
+
+test "deny fails closed on an invalid state dir override" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+
+    const test_home = try TestHome.install(alloc, home);
+    defer test_home.deinit();
+    try test_home.putEnv(profile_paths.state_dir_env_name, "relative/path");
+
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, "/any/chatgpt-auth.json"));
+    try std.testing.expectEqual(Verdict.hold, try check_file_target(alloc, workspace, "$P/.fiber/settings.json"));
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, "notes.txt"));
+
+    const prefix = try std.fmt.allocPrint(alloc, "{s}::", .{workspace});
+    defer alloc.free(prefix);
+    const denied = try std.mem.concat(alloc, u8, &.{ prefix, "cat $P/.fiber/chatgpt-auth.json" });
+    defer alloc.free(denied);
+    try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, denied));
 }
 
 test "command target denies shell spellings of the store" {

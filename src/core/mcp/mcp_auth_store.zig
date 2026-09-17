@@ -378,18 +378,65 @@ fn openOrCreateLockedDir() !LockedDir {
     return openOrCreateLockedDirControlled(null);
 }
 
-fn openOrCreateLockedDirControlled(
-    cancel_flag: ?*const std.atomic.Value(bool),
-) !LockedDir {
+/// Opens (creating) the profile root: the FIBER_STATE_DIR override when
+/// set, else `$HOME/.fiber`. The override parent must already exist, just
+/// as HOME must exist today; only the root itself is created on demand.
+fn openOrCreateStateRoot() !io_mod.VerifiedDir {
+    if (try profile_paths.validatedOverride()) |root| {
+        const parent_path = std.fs.path.dirname(root) orelse return error.InvalidFiberStateDir;
+        const leaf = std.fs.path.basename(root);
+        var parent_dir = io_mod.VerifiedDir{
+            .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), parent_path, .{ .iterate = true }),
+        };
+        defer parent_dir.close();
+        return io_mod.openOrCreateVerifiedPrivateDir(&parent_dir, leaf);
+    }
     const home = io_mod.getenv("HOME") orelse return error.HomeNotSet;
     var home_dir = io_mod.VerifiedDir{
         .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{ .iterate = true }),
     };
     defer home_dir.close();
-    var root = try io_mod.openOrCreateVerifiedPrivateDir(
+    return io_mod.openOrCreateVerifiedPrivateDir(
         &home_dir,
         profile_paths.root_dir_name,
     );
+}
+
+/// Opens the existing profile root, or null when absent. Same private-dir
+/// verification either way; an invalid override is an error, not a fallback.
+fn openExistingStateRoot() !?io_mod.VerifiedDir {
+    if (try profile_paths.validatedOverride()) |root| {
+        var dir = std.Io.Dir.openDirAbsolute(io_mod.getIo(), root, .{
+            .iterate = true,
+            .follow_symlinks = false,
+        }) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
+        errdefer dir.close(io_mod.getIo());
+        try normalizeAndVerifyPrivateDir(dir);
+        return .{ .dir = dir };
+    }
+    const home = io_mod.getenv("HOME") orelse return error.HomeNotSet;
+    var home_dir = io_mod.VerifiedDir{
+        .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{
+            .iterate = true,
+        }),
+    };
+    defer home_dir.close();
+    return openExistingPrivateChild(
+        &home_dir,
+        profile_paths.root_dir_name,
+    ) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
+}
+
+fn openOrCreateLockedDirControlled(
+    cancel_flag: ?*const std.atomic.Value(bool),
+) !LockedDir {
+    var root = try openOrCreateStateRoot();
     defer root.close();
     var credentials_dir = try io_mod.openOrCreateVerifiedPrivateDir(
         &root,
@@ -420,20 +467,7 @@ fn openExistingLockedDir() !?LockedDir {
 fn openExistingLockedDirControlled(
     cancel_flag: ?*const std.atomic.Value(bool),
 ) !?LockedDir {
-    const home = io_mod.getenv("HOME") orelse return error.HomeNotSet;
-    var home_dir = io_mod.VerifiedDir{
-        .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{
-            .iterate = true,
-        }),
-    };
-    defer home_dir.close();
-    var root = openExistingPrivateChild(
-        &home_dir,
-        profile_paths.root_dir_name,
-    ) catch |err| switch (err) {
-        error.FileNotFound => return null,
-        else => return err,
-    };
+    var root = (try openExistingStateRoot()) orelse return null;
     defer root.close();
     var credentials_dir = openExistingPrivateChild(
         &root,

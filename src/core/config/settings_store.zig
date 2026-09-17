@@ -308,27 +308,25 @@ pub const Store = struct {
 
     pub fn initFromHome(alloc: Allocator, home_path: []const u8, mode: OpenMode) !Store {
         const zio = io_mod.getIo();
-        var home = std.Io.Dir.openDirAbsolute(zio, home_path, .{ .iterate = true }) catch |err| switch (err) {
-            error.FileNotFound => {
-                if (mode == .read_only) return initReadOnlyAbsent(alloc, home_path);
-                return err;
-            },
-            else => return err,
-        };
-        defer home.close(zio);
-
-        var durable_home = home.openDir(zio, profile_paths.root_dir_name, .{
+        // Resolve the state root first: the FIBER_STATE_DIR override moves
+        // settings with every other profile path, so this store must not
+        // build `$HOME/.fiber` itself.
+        const root = try profile_paths.resolveStateRoot(alloc, home_path);
+        defer alloc.free(root);
+        var durable_home = std.Io.Dir.openDirAbsolute(zio, root, .{
             .iterate = true,
             .follow_symlinks = false,
         }) catch |err| switch (err) {
             error.FileNotFound => blk: {
                 if (mode == .read_only) return initReadOnlyAbsent(alloc, home_path);
 
-                var verified_home = io_mod.VerifiedDir{
-                    .dir = try std.Io.Dir.openDirAbsolute(zio, home_path, .{ .iterate = true }),
+                const parent_path = std.fs.path.dirname(root) orelse return error.DurablePathUnsafe;
+                const leaf = std.fs.path.basename(root);
+                var verified_parent = io_mod.VerifiedDir{
+                    .dir = try std.Io.Dir.openDirAbsolute(zio, parent_path, .{ .iterate = true }),
                 };
-                defer verified_home.close();
-                const created = try io_mod.openOrCreateVerifiedPrivateDir(&verified_home, profile_paths.root_dir_name);
+                defer verified_parent.close();
+                const created = try io_mod.openOrCreateVerifiedPrivateDir(&verified_parent, leaf);
                 break :blk created.dir;
             },
             error.NotDir, error.SymLinkLoop => return error.DurablePathUnsafe,

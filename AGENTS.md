@@ -101,7 +101,7 @@ Do not scatter help text or argument parsing across multiple files.
 
 ## Configuration and State
 
-Profile configuration and runtime state lives under `~/.fiber/`. Project `.fiber.json` contains committed project defaults only.
+Profile configuration and runtime state lives under `~/.fiber/`, or under `$FIBER_STATE_DIR` when that variable is set to an absolute path (one root per process; two processes given different roots share nothing). Project `.fiber.json` contains committed project defaults only.
 
 Project `.fiber.json` accepts only repo-safe defaults (`sandbox`, `max_agent_steps`, `max_tool_result_bytes`, `context`); every profile-owned key is dropped from it before its value is parsed. Environment variables override profile workspace settings, which override profile global settings, then project defaults, then built-in defaults. `src/core/config/config_runtime.zig` implements the layering.
 

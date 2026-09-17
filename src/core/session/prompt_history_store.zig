@@ -60,11 +60,11 @@ pub const Store = struct {
 
     pub fn initFromHome(alloc: Allocator, home_path: []const u8) !Store {
         const zio = io_mod.getIo();
-        var home = try std.Io.Dir.openDirAbsolute(zio, home_path, .{ .iterate = true });
-        defer home.close(zio);
+        const root = try profile_paths.resolveStateRoot(alloc, home_path);
+        defer alloc.free(root);
 
         var durable_home: ?io_mod.VerifiedDir = null;
-        if (home.openDir(zio, profile_paths.root_dir_name, .{
+        if (std.Io.Dir.openDirAbsolute(zio, root, .{
             .iterate = true,
             .follow_symlinks = false,
         })) |dir| {
@@ -219,16 +219,31 @@ pub const Store = struct {
         if (self.durable_home == null) {
             if (self.fail_layout_creation) return error.DurableLayoutFailed;
             const zio = io_mod.getIo();
-            var home = io_mod.VerifiedDir{
-                .dir = std.Io.Dir.openDirAbsolute(zio, self.home_path, .{
-                    .iterate = true,
-                }) catch return error.DurableLayoutFailed,
-            };
-            defer home.close();
-            self.durable_home = io_mod.openOrCreateVerifiedPrivateDir(&home, profile_paths.root_dir_name) catch |err| switch (err) {
-                error.PrivateStatePermissionsUnsupported, error.DurablePathUnsafe => return err,
-                else => return error.DurableLayoutFailed,
-            };
+            if (try profile_paths.validatedOverride()) |root| {
+                const parent_path = std.fs.path.dirname(root) orelse return error.DurableLayoutFailed;
+                const leaf = std.fs.path.basename(root);
+                var parent = io_mod.VerifiedDir{
+                    .dir = std.Io.Dir.openDirAbsolute(zio, parent_path, .{
+                        .iterate = true,
+                    }) catch return error.DurableLayoutFailed,
+                };
+                defer parent.close();
+                self.durable_home = io_mod.openOrCreateVerifiedPrivateDir(&parent, leaf) catch |err| switch (err) {
+                    error.PrivateStatePermissionsUnsupported, error.DurablePathUnsafe => return err,
+                    else => return error.DurableLayoutFailed,
+                };
+            } else {
+                var home = io_mod.VerifiedDir{
+                    .dir = std.Io.Dir.openDirAbsolute(zio, self.home_path, .{
+                        .iterate = true,
+                    }) catch return error.DurableLayoutFailed,
+                };
+                defer home.close();
+                self.durable_home = io_mod.openOrCreateVerifiedPrivateDir(&home, profile_paths.root_dir_name) catch |err| switch (err) {
+                    error.PrivateStatePermissionsUnsupported, error.DurablePathUnsafe => return err,
+                    else => return error.DurableLayoutFailed,
+                };
+            }
         }
 
         self.durable_home.?.dir.setPermissions(
@@ -865,6 +880,48 @@ fn filterOtherWorkspaceRecords(
 
 fn historyPath(alloc: Allocator, home: []const u8) ![]u8 {
     return profile_paths.promptHistoryPath(alloc, home);
+}
+
+test "state dir override isolates prompt history between roots" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    try tmp.dir.createDirPath(io_mod.getIo(), "state-a");
+    try tmp.dir.createDirPath(io_mod.getIo(), "state-b");
+    const home_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home_path);
+    const root_a = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "state-a");
+    defer alloc.free(root_a);
+    const root_b = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "state-b");
+    defer alloc.free(root_b);
+
+    const env = try profile_paths.TestEnv.install(alloc, &.{
+        .{ .key = "HOME", .value = home_path },
+        .{ .key = profile_paths.state_dir_env_name, .value = root_a },
+    });
+    defer env.deinit();
+
+    var store_a = try Store.initFromHome(alloc, home_path);
+    defer store_a.deinit(alloc);
+    _ = try store_a.append(alloc, 1, "/tmp/workspace", "hello-a");
+    try std.testing.expect(std.mem.startsWith(u8, store_a.displayPath(), root_a));
+
+    try env.put(profile_paths.state_dir_env_name, root_b);
+    var store_b = try Store.initFromHome(alloc, home_path);
+    defer store_b.deinit(alloc);
+    const entries_b = try store_b.loadRecentForWorkspace(alloc, "/tmp/workspace", 100);
+    defer freeLoadedEntries(alloc, entries_b);
+    try std.testing.expectEqual(@as(usize, 0), entries_b.len);
+    try std.testing.expect(std.mem.startsWith(u8, store_b.displayPath(), root_b));
+
+    try env.put(profile_paths.state_dir_env_name, root_a);
+    var store_a_again = try Store.initFromHome(alloc, home_path);
+    defer store_a_again.deinit(alloc);
+    const entries_a = try store_a_again.loadRecentForWorkspace(alloc, "/tmp/workspace", 100);
+    defer freeLoadedEntries(alloc, entries_a);
+    try std.testing.expectEqual(@as(usize, 1), entries_a.len);
+    try std.testing.expectEqualStrings("hello-a", entries_a[0].text);
 }
 
 fn ensureFixtureHome(home: []const u8) !void {

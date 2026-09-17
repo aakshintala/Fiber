@@ -58,6 +58,13 @@ Codex OAuth:
 Your session is stored at `~/.fiber/chatgpt-auth.json` and refreshed when
 needed.
 
+To point a Fiber process at a private state directory instead of
+`~/.fiber` — for example one directory per daemon — set `FIBER_STATE_DIR`
+to an absolute path. Sessions, settings, MCP config and credentials,
+skills, prompt history, usage, backups, logs, and recordings all live
+under that root, and two processes given different roots share nothing.
+A relative or empty value fails at startup instead of falling back.
+
 ## Choose a model
 
 Fiber has no built-in default model, so you pick one. List what your account

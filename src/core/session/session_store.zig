@@ -435,11 +435,22 @@ fn openUsageRecoveryProfileRoot(
     home_path: []const u8,
 ) !?io_mod.VerifiedDir {
     const zio = io_mod.getIo();
+    if (try profile_paths.validatedOverride()) |root| {
+        const profile = std.Io.Dir.openDirAbsolute(zio, root, .{
+            .iterate = true,
+            .follow_symlinks = false,
+        }) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            error.NotDir, error.SymLinkLoop => return error.InvalidUsageRecoveryIndex,
+            else => return err,
+        };
+        return try verifyUsageRecoveryProfileRoot(profile);
+    }
     var home = try std.Io.Dir.openDirAbsolute(zio, home_path, .{
         .iterate = true,
     });
     defer home.close(zio);
-    var profile = home.openDir(zio, profile_paths.root_dir_name, .{
+    const profile = home.openDir(zio, profile_paths.root_dir_name, .{
         .iterate = true,
         .follow_symlinks = false,
     }) catch |err| switch (err) {
@@ -447,14 +458,20 @@ fn openUsageRecoveryProfileRoot(
         error.NotDir, error.SymLinkLoop => return error.InvalidUsageRecoveryIndex,
         else => return err,
     };
-    errdefer profile.close(zio);
-    const stat = try profile.stat(zio);
+    return try verifyUsageRecoveryProfileRoot(profile);
+}
+
+fn verifyUsageRecoveryProfileRoot(profile: std.Io.Dir) !io_mod.VerifiedDir {
+    const zio = io_mod.getIo();
+    var owned = profile;
+    errdefer owned.close(zio);
+    const stat = try owned.stat(zio);
     if (stat.kind != .directory or
         stat.permissions.toMode() & 0o777 != 0o700)
     {
         return error.InvalidUsageRecoveryIndex;
     }
-    return .{ .dir = profile };
+    return .{ .dir = owned };
 }
 
 fn openUsageRecoveryDir(
