@@ -19,6 +19,21 @@ pub fn writeInput(
     verified_images: ?[]const image_attachments.VerifiedSnapshot,
     limits: ReplayLimits,
 ) !void {
+    // The Responses wire contract keys function_call and function_call_output
+    // items by provider call id. Fiber-owned tool calls carry a minted item id
+    // in `id` with the provider id beside it in `provider_id`, so map each
+    // item id back to its wire id before serializing (tool results link by
+    // item id and resolve through the same map).
+    var wire_ids = std.StringHashMap([]const u8).init(alloc);
+    defer wire_ids.deinit();
+    for (messages) |message| {
+        if (message.role != .assistant) continue;
+        for (message.tool_calls) |tool_call| {
+            wire_ids.put(tool_call.id, tool_call.provider_id orelse tool_call.id) catch
+                return error.OutOfMemory;
+        }
+    }
+
     var first = true;
     for (messages, 0..) |message, message_index| {
         switch (message.role) {
@@ -73,7 +88,7 @@ pub fn writeInput(
                 for (message.tool_calls) |call| {
                     try writeComma(writer, &first);
                     try writer.writeAll("{\"type\":\"function_call\",\"call_id\":");
-                    try std.json.Stringify.value(call.id, .{}, writer);
+                    try std.json.Stringify.value(call.provider_id orelse call.id, .{}, writer);
                     try writer.writeAll(",\"name\":");
                     try std.json.Stringify.value(call.name, .{}, writer);
                     try writer.writeAll(",\"arguments\":");
@@ -84,7 +99,8 @@ pub fn writeInput(
             .tool => {
                 try writeComma(writer, &first);
                 try writer.writeAll("{\"type\":\"function_call_output\",\"call_id\":");
-                try std.json.Stringify.value(message.tool_call_id orelse "", .{}, writer);
+                const wire_id = if (message.tool_call_id) |item_id| wire_ids.get(item_id) else null;
+                try std.json.Stringify.value(wire_id orelse message.tool_call_id orelse "", .{}, writer);
                 try writer.writeAll(",\"output\":");
                 try std.json.Stringify.value(message.content orelse "", .{}, writer);
                 try writer.writeByte('}');
@@ -835,4 +851,30 @@ test "Responses protocol owns one subscription billing projection" {
         44,
         .{ .input_tokens = 10 },
     )) == null);
+}
+
+test "Responses input emits provider ids while linking results by item id" {
+    const alloc = std.testing.allocator;
+    var calls = [_]types.ToolCall{.{
+        .id = "item_abc",
+        .name = "read_file",
+        .arguments_json = "{\"path\":\"a.txt\"}",
+        .provider_id = "call_provider",
+    }};
+    const messages = [_]types.ChatMessage{
+        .{ .role = .assistant, .tool_calls = calls[0..] },
+        .{ .role = .tool, .content = "contents", .tool_call_id = "item_abc", .tool_name = "read_file" },
+    };
+
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try writeInput(&out.writer, alloc, &messages, null, .{
+        .tool_calls = 128,
+        .tool_identity_bytes = 256,
+        .tool_arguments_bytes = 65536,
+        .provider_state_bytes = 65536,
+    });
+    const body = out.written();
+    try std.testing.expect(std.mem.find(u8, body, "\"call_id\":\"call_provider\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "item_abc") == null);
 }
