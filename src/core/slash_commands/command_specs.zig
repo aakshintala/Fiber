@@ -13,6 +13,7 @@ pub const TopLevelKind = enum {
     permissions,
     mcp,
     models,
+    config,
     doctor,
     session,
     sessions,

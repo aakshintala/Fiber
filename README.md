@@ -85,6 +85,29 @@ remembers it. With no model set, the shell opens the picker for you.
 
 For a single command, pass `--model <id>` or set `FIBER_MODEL`.
 
+## Configure profiles
+
+Install-time settings live in the profile global layer. Read the effective
+value and where it came from:
+
+```bash
+./zig-out/bin/fiber config get <key>
+```
+
+Write one without opening the shell, for example when provisioning a machine
+before first launch:
+
+```bash
+./zig-out/bin/fiber config set permission_mode auto
+./zig-out/bin/fiber config set auto_upgrade false
+```
+
+Settable keys are `effort`, `permission_mode`, `auto_upgrade`,
+`max_agent_steps`, `max_tool_result_bytes`, and `first_call_tool_choice`;
+`get` also reads `model`. The model default stays with
+`fiber models use <id>` so the id is checked against the model catalog.
+Both commands accept `--json`.
+
 ## Run it
 
 Start Fiber from the project you want to work on:

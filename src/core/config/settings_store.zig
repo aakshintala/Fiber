@@ -94,6 +94,10 @@ pub const UserSettingsPatch = struct {
     permission_mode: ?types.PermissionMode = null,
     yolo_acknowledged: ?bool = null,
     effort: ?types.ReasoningEffort = null,
+    auto_upgrade: ?bool = null,
+    max_agent_steps: ?usize = null,
+    max_tool_result_bytes: ?usize = null,
+    first_call_tool_choice: ?types.ToolChoice = null,
     slash_menu_categories: ?bool = null,
     collapse_tool_calls: ?bool = null,
     startup_scrollback: ?bool = null,
@@ -108,6 +112,10 @@ pub const UserSettingsPatch = struct {
             self.permission_mode == null and
             self.yolo_acknowledged == null and
             self.effort == null and
+            self.auto_upgrade == null and
+            self.max_agent_steps == null and
+            self.max_tool_result_bytes == null and
+            self.first_call_tool_choice == null and
             self.slash_menu_categories == null and
             self.collapse_tool_calls == null and
             self.startup_scrollback == null and
@@ -871,6 +879,11 @@ pub fn validateModel(model: []const u8) !void {
 
 fn validateUserPatch(patch: UserSettingsPatch) !void {
     if (patch.model_preference) |preference| try validateModel(preference.model);
+    // The reader rejects max_tool_result_bytes below this floor, so refuse it
+    // at write time instead of persisting a value startup cannot load.
+    if (patch.max_tool_result_bytes) |value| {
+        if (value < tool_result_limits.min_configured_tool_result_bytes) return error.InvalidDurableField;
+    }
 }
 
 fn validAdditionalDirectoryPath(path: []const u8) bool {
@@ -890,6 +903,36 @@ test "collapse tool calls user patch writes the profile preference" {
     const application = try applyUserPatchToRoot(arena.allocator(), &root, .{ .collapse_tool_calls = true });
     try std.testing.expect(application.changed);
     try std.testing.expect(root.object.get("collapse_tool_calls").?.bool);
+}
+
+test "numeric and enum user patches write profile preferences" {
+    const alloc = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    var parsed = try std.json.parseFromSlice(std.json.Value, arena.allocator(), "{}", .{});
+    defer parsed.deinit();
+    var root = parsed.value;
+
+    const application = try applyUserPatchToRoot(arena.allocator(), &root, .{
+        .auto_upgrade = true,
+        .max_agent_steps = 50,
+        .max_tool_result_bytes = 65536,
+        .first_call_tool_choice = .none,
+    });
+    try std.testing.expect(application.changed);
+    try std.testing.expect(root.object.get("auto_upgrade").?.bool);
+    try std.testing.expectEqual(@as(i64, 50), root.object.get("max_agent_steps").?.integer);
+    try std.testing.expectEqual(@as(i64, 65536), root.object.get("max_tool_result_bytes").?.integer);
+    try std.testing.expectEqualStrings("none", root.object.get("first_call_tool_choice").?.string);
+
+    // Reapplying the stored values is a no-op commit.
+    const repeat = try applyUserPatchToRoot(arena.allocator(), &root, .{
+        .auto_upgrade = true,
+        .max_agent_steps = 50,
+        .max_tool_result_bytes = 65536,
+        .first_call_tool_choice = .none,
+    });
+    try std.testing.expect(!repeat.changed);
 }
 
 test "provider patch writes one bounded provider model collection" {
@@ -944,6 +987,10 @@ fn applyUserPatchToRoot(
     if (patch.permission_mode) |value| application.changed = try putString(arena, &root.object, "permission_mode", @tagName(value)) or application.changed;
     if (patch.yolo_acknowledged) |value| application.changed = try putBool(arena, &root.object, "yolo_acknowledged", value) or application.changed;
     if (patch.effort) |value| application.changed = try putString(arena, &root.object, "effort", value.label()) or application.changed;
+    if (patch.auto_upgrade) |value| application.changed = try putBool(arena, &root.object, "auto_upgrade", value) or application.changed;
+    if (patch.max_agent_steps) |value| application.changed = try putInteger(arena, &root.object, "max_agent_steps", value) or application.changed;
+    if (patch.max_tool_result_bytes) |value| application.changed = try putInteger(arena, &root.object, "max_tool_result_bytes", value) or application.changed;
+    if (patch.first_call_tool_choice) |value| application.changed = try putString(arena, &root.object, "first_call_tool_choice", value.label()) or application.changed;
     if (patch.slash_menu_categories) |value| application.changed = try putBool(arena, &root.object, "slash_menu_categories", value) or application.changed;
     if (patch.collapse_tool_calls) |value| application.changed = try putBool(arena, &root.object, "collapse_tool_calls", value) or application.changed;
     if (patch.startup_scrollback) |value| application.changed = try putBool(arena, &root.object, "startup_scrollback", value) or application.changed;
@@ -1489,6 +1536,15 @@ fn putBool(arena: Allocator, object: *std.json.ObjectMap, key: []const u8, value
         if (existing == .bool and existing.bool == value) return false;
     }
     try object.put(arena, key, .{ .bool = value });
+    return true;
+}
+
+fn putInteger(arena: Allocator, object: *std.json.ObjectMap, key: []const u8, value: usize) !bool {
+    const integer = std.math.cast(i64, value) orelse return error.IntegerValueOutOfRange;
+    if (object.get(key)) |existing| {
+        if (existing == .integer and existing.integer == integer) return false;
+    }
+    try object.put(arena, key, .{ .integer = integer });
     return true;
 }
 
