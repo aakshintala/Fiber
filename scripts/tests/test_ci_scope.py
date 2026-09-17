@@ -12,6 +12,7 @@ ALWAYS = ["scope", "shellcheck", "static"]
 FULL_EXTRA = [
     "bench",
     "binary-size",
+    "build",
     "conformance",
     "e2e",
     "native",
@@ -20,26 +21,47 @@ FULL_EXTRA = [
 LINUX_X86 = {
     "name": "linux-x86_64",
     "runner": "ubuntu-24.04",
-    "zig_tarball": "zig-x86_64-linux",
+    "target": "x86_64-linux",
 }
 LINUX_ARM = {
     "name": "linux-aarch64",
     "runner": "ubuntu-24.04-arm",
-    "zig_tarball": "zig-aarch64-linux",
+    "target": "aarch64-linux",
 }
 MACOS_ARM = {
     "name": "macos-aarch64",
     "runner": "macos-15",
-    "zig_tarball": "zig-aarch64-macos",
+    "target": "aarch64-macos",
 }
-ALL_PLATFORMS = [LINUX_X86, LINUX_ARM, MACOS_ARM]
 
 
-def _shards(count: int) -> list[dict[str, object]]:
-    return [
-        {"index": index, "shard_count": count, "label": "{}/{}".format(index + 1, count)}
-        for index in range(count)
-    ]
+def _entry(
+    platform: dict[str, str], index: int, shard_count: int, lanes: int
+) -> dict[str, object]:
+    return {
+        "name": platform["name"],
+        "runner": platform["runner"],
+        "target": platform["target"],
+        "index": index,
+        "shard_count": shard_count,
+        "label": "{}/{}".format(index + 1, shard_count),
+        "lanes": lanes,
+    }
+
+
+def _e2e_matrix(*, linux_shards: int, macos_shards: int) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for platform in (LINUX_X86, LINUX_ARM):
+        for index in range(linux_shards):
+            entries.append(_entry(platform, index, linux_shards, 3))
+    for index in range(macos_shards):
+        entries.append(_entry(MACOS_ARM, index, macos_shards, 4))
+    return entries
+
+
+FULL_MATRIX = _e2e_matrix(linux_shards=3, macos_shards=1)
+SINGLE_FILE_MATRIX = _e2e_matrix(linux_shards=1, macos_shards=1)
+TWO_FILE_MATRIX = _e2e_matrix(linux_shards=2, macos_shards=1)
 
 
 class SelectJobsTests(unittest.TestCase):
@@ -65,6 +87,7 @@ class SelectJobsTests(unittest.TestCase):
 
     def _assert_jobs(self, selection, extra: list[str]) -> None:
         self.assertEqual(sorted(ALWAYS + extra), selection.jobs)
+        self.assertEqual("e2e" in selection.jobs, "build" in selection.jobs)
 
     def _class_for(self, selection, path: str) -> str:
         return dict(selection.path_classes)[path]
@@ -73,8 +96,7 @@ class SelectJobsTests(unittest.TestCase):
         selection = self._select(["README.md", "docs/guide.md"])
         self._assert_jobs(selection, [])
         self.assertEqual("", selection.e2e_files)
-        self.assertEqual([], selection.e2e_platforms)
-        self.assertEqual([], selection.e2e_shards)
+        self.assertEqual([], selection.e2e_matrix)
         self.assertEqual("STATIC", self._class_for(selection, "README.md"))
         self.assertEqual("STATIC", self._class_for(selection, "docs/guide.md"))
         self.assertEqual("always selected", selection.reasons["static"])
@@ -82,6 +104,7 @@ class SelectJobsTests(unittest.TestCase):
         self.assertEqual(
             "no changed path selects it", selection.reasons["pgso-driver"]
         )
+        self.assertEqual("no changed path selects it", selection.reasons["build"])
 
     def test_unreferenced_script_is_static(self) -> None:
         self._write({"scripts/orphan_ci_scope.sh": "#!/bin/sh\n"})
@@ -156,10 +179,9 @@ class SelectJobsTests(unittest.TestCase):
             "E2E_FILE(alpha.test.ts)",
             self._class_for(selection, "tests/e2e/alpha.test.ts"),
         )
-        self._assert_jobs(selection, ["e2e", "pgso-driver"])
+        self._assert_jobs(selection, ["build", "e2e", "pgso-driver"])
         self.assertEqual("alpha.test.ts", selection.e2e_files)
-        self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
-        self.assertEqual(_shards(1), selection.e2e_shards)
+        self.assertEqual(SINGLE_FILE_MATRIX, selection.e2e_matrix)
         self.assertEqual("no changed path selects it", selection.reasons["native"])
         self.assertEqual("no changed path selects it", selection.reasons["bench"])
         self.assertEqual(
@@ -168,13 +190,16 @@ class SelectJobsTests(unittest.TestCase):
         self.assertEqual(
             "no changed path selects it", selection.reasons["binary-size"]
         )
+        self.assertEqual(
+            "selected whenever e2e is selected", selection.reasons["build"]
+        )
 
     def test_tui_performance_selects_bench(self) -> None:
         self._write({"tests/e2e/tui-performance.test.ts": "export {}\n"})
         selection = self._select(["tests/e2e/tui-performance.test.ts"])
-        self._assert_jobs(selection, ["bench", "e2e", "pgso-driver"])
+        self._assert_jobs(selection, ["bench", "build", "e2e", "pgso-driver"])
         self.assertEqual("tui-performance.test.ts", selection.e2e_files)
-        self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
+        self.assertEqual(SINGLE_FILE_MATRIX, selection.e2e_matrix)
         self.assertIn("tui-performance.test.ts", selection.reasons["bench"])
 
     def test_shared_e2e_inputs(self) -> None:
@@ -192,11 +217,10 @@ class SelectJobsTests(unittest.TestCase):
                 selection = self._select([path])
                 self.assertEqual("E2E_SHARED", self._class_for(selection, path))
                 self._assert_jobs(
-                    selection, ["bench", "conformance", "e2e", "pgso-driver"]
+                    selection, ["bench", "build", "conformance", "e2e", "pgso-driver"]
                 )
                 self.assertEqual("all", selection.e2e_files)
-                self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
-                self.assertEqual(_shards(3), selection.e2e_shards)
+                self.assertEqual(FULL_MATRIX, selection.e2e_matrix)
 
     def test_e2e_file_mixed_with_source_is_full(self) -> None:
         self._write({"src/main.zig": "pub fn main() void {}\n"})
@@ -204,14 +228,14 @@ class SelectJobsTests(unittest.TestCase):
         self.assertEqual("FULL", self._class_for(selection, "src/main.zig"))
         self._assert_jobs(selection, FULL_EXTRA)
         self.assertEqual("all", selection.e2e_files)
-        self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
+        self.assertEqual(FULL_MATRIX, selection.e2e_matrix)
 
     def test_source_is_full(self) -> None:
         self._write({"src/main.zig": "pub fn main() void {}\n"})
         selection = self._select(["src/main.zig"])
         self.assertEqual("FULL", self._class_for(selection, "src/main.zig"))
         self._assert_jobs(selection, FULL_EXTRA)
-        self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
+        self.assertEqual(FULL_MATRIX, selection.e2e_matrix)
         self.assertIn("native", selection.jobs)
 
     def test_build_zig_is_full(self) -> None:
@@ -249,7 +273,7 @@ class SelectJobsTests(unittest.TestCase):
         selection = self._select(["tests/e2e/gone.test.ts"])
         self.assertEqual("E2E_SHARED", self._class_for(selection, "tests/e2e/gone.test.ts"))
         self._assert_jobs(
-            selection, ["bench", "conformance", "e2e", "pgso-driver"]
+            selection, ["bench", "build", "conformance", "e2e", "pgso-driver"]
         )
         self.assertEqual("all", selection.e2e_files)
 
@@ -273,6 +297,7 @@ class SelectJobsTests(unittest.TestCase):
             selection,
             [
                 "bench",
+                "build",
                 "conformance",
                 "e2e",
                 "native",
@@ -281,24 +306,85 @@ class SelectJobsTests(unittest.TestCase):
         )
         self.assertNotIn("binary-size", selection.jobs)
         self.assertEqual("all", selection.e2e_files)
-        self.assertEqual(ALL_PLATFORMS, selection.e2e_platforms)
-        self.assertEqual(_shards(3), selection.e2e_shards)
+        self.assertEqual(FULL_MATRIX, selection.e2e_matrix)
         self.assertEqual(
             "manual dispatch excludes binary-size",
             selection.reasons["binary-size"],
         )
 
+    def test_full_e2e_matrix_has_seven_entries(self) -> None:
+        selection = self._select(["src/main.zig"])
+        self.assertEqual(FULL_MATRIX, selection.e2e_matrix)
+        self.assertEqual(7, len(selection.e2e_matrix))
+        linux = [entry for entry in selection.e2e_matrix if entry["name"].startswith("linux-")]
+        macos = [entry for entry in selection.e2e_matrix if entry["name"] == "macos-aarch64"]
+        self.assertEqual(6, len(linux))
+        self.assertEqual(3, len([e for e in linux if e["name"] == "linux-x86_64"]))
+        self.assertEqual(3, len([e for e in linux if e["name"] == "linux-aarch64"]))
+        self.assertTrue(all(entry["lanes"] == 3 for entry in linux))
+        self.assertTrue(all(entry["shard_count"] == 3 for entry in linux))
+        self.assertEqual(1, len(macos))
+        self.assertEqual(4, macos[0]["lanes"])
+        self.assertEqual(1, macos[0]["shard_count"])
+        self.assertEqual("1/1", macos[0]["label"])
+
+    def test_single_file_e2e_matrix_is_one_shard_per_platform(self) -> None:
+        selection = self._select(["tests/e2e/alpha.test.ts"])
+        self.assertEqual(SINGLE_FILE_MATRIX, selection.e2e_matrix)
+        self.assertEqual(3, len(selection.e2e_matrix))
+        self.assertTrue(all(entry["shard_count"] == 1 for entry in selection.e2e_matrix))
+        self.assertEqual(
+            ["linux-x86_64", "linux-aarch64", "macos-aarch64"],
+            [entry["name"] for entry in selection.e2e_matrix],
+        )
+
+    def test_two_file_e2e_matrix_caps_macos_at_one_shard(self) -> None:
+        selection = self._select(["tests/e2e/alpha.test.ts", "tests/e2e/beta.test.ts"])
+        self.assertEqual("alpha.test.ts beta.test.ts", selection.e2e_files)
+        self.assertEqual(TWO_FILE_MATRIX, selection.e2e_matrix)
+        linux = [entry for entry in selection.e2e_matrix if entry["name"].startswith("linux-")]
+        macos = [entry for entry in selection.e2e_matrix if entry["name"] == "macos-aarch64"]
+        self.assertEqual(4, len(linux))
+        self.assertTrue(all(entry["shard_count"] == 2 for entry in linux))
+        self.assertEqual(1, len(macos))
+        self.assertEqual(1, macos[0]["shard_count"])
+
     def test_shard_count_follows_selected_file_count(self) -> None:
         one = self._select(["tests/e2e/alpha.test.ts"])
-        self.assertEqual(_shards(1), one.e2e_shards)
+        self.assertEqual(SINGLE_FILE_MATRIX, one.e2e_matrix)
 
         two = self._select(["tests/e2e/alpha.test.ts", "tests/e2e/beta.test.ts"])
         self.assertEqual("alpha.test.ts beta.test.ts", two.e2e_files)
-        self.assertEqual(_shards(2), two.e2e_shards)
+        self.assertEqual(TWO_FILE_MATRIX, two.e2e_matrix)
 
         full = self._select(["src/main.zig"])
         self.assertEqual("all", full.e2e_files)
-        self.assertEqual(_shards(3), full.e2e_shards)
+        self.assertEqual(FULL_MATRIX, full.e2e_matrix)
+
+    def test_build_is_selected_exactly_when_e2e_is(self) -> None:
+        docs = self._select(["README.md"])
+        self.assertNotIn("e2e", docs.jobs)
+        self.assertNotIn("build", docs.jobs)
+
+        one = self._select(["tests/e2e/alpha.test.ts"])
+        self.assertIn("e2e", one.jobs)
+        self.assertIn("build", one.jobs)
+
+        full = self._select(["src/main.zig"])
+        self.assertIn("e2e", full.jobs)
+        self.assertIn("build", full.jobs)
+
+        dispatch = self._select(["README.md"], event="workflow_dispatch")
+        self.assertIn("e2e", dispatch.jobs)
+        self.assertIn("build", dispatch.jobs)
+
+        for path in (self.root / "tests" / "e2e").glob("*.test.ts"):
+            path.unlink()
+        self._write({"tests/e2e/helpers.ts": "x\n"})
+        empty = self._select(["tests/e2e/helpers.ts"])
+        self.assertNotIn("e2e", empty.jobs)
+        self.assertNotIn("build", empty.jobs)
+        self.assertEqual([], empty.e2e_matrix)
 
     def test_init_py_is_full(self) -> None:
         self._write({"scripts/__init__.py": ""})

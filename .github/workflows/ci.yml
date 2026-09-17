@@ -31,9 +31,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       jobs: ${{ steps.select.outputs.jobs }}
-      e2e_platforms: ${{ steps.select.outputs.e2e_platforms }}
+      e2e_matrix: ${{ steps.select.outputs.e2e_matrix }}
       e2e_files: ${{ steps.select.outputs.e2e_files }}
-      e2e_shards: ${{ steps.select.outputs.e2e_shards }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -129,7 +128,7 @@ jobs:
     if: contains(fromJSON(needs.scope.outputs.jobs), 'native')
     needs: scope
     runs-on: ${{ matrix.platform.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -142,7 +141,8 @@ jobs:
             optimize: ReleaseSafe
           # Debug on the 3-vCPU macOS runner (#312): the ReleaseSafe test
           # compile alone took 452s there. Linux keeps ReleaseSafe unit tests,
-          # and the macOS E2E shards still build and drive ReleaseSafe.
+          # and the macOS E2E job still drives a ReleaseSafe binary, now
+          # cross-built on Linux rather than built on the runner.
           - name: macos-aarch64
             runner: macos-15
             optimize: Debug
@@ -232,50 +232,93 @@ jobs:
         env:
           FIBER_SOUND: "0"
 
-  # E2E platforms and shards come from the scope job. When e2e is selected,
-  # all three platforms run. A small file selection emits fewer shards so
-  # none are empty.
-  e2e:
-    name: E2E (${{ matrix.platform.name }}, shard ${{ matrix.shard.label }})
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'e2e')
+  # Build every E2E binary on Linux, including the macOS cross-compile. The
+  # matrix is static because e2e always selects all three platforms when it
+  # runs at all. The aarch64-macos cross-build from Linux passed the entire
+  # macOS E2E suite in run 35251849826; build.zig links only libc and Zig
+  # ad-hoc signs the output.
+  build:
+    name: Build (${{ matrix.target }})
+    if: contains(fromJSON(needs.scope.outputs.jobs), 'build')
     needs: scope
-    runs-on: ${{ matrix.platform.runner }}
-    timeout-minutes: 240
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(needs.scope.outputs.e2e_platforms) }}
-        shard: ${{ fromJSON(needs.scope.outputs.e2e_shards) }}
+        target:
+          - x86_64-linux
+          - aarch64-linux
+          - aarch64-macos
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Zig
+        uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: ci-build-${{ matrix.target }}
+
+      - name: Build
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+
+      - name: Upload Fiber binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: fiber-${{ matrix.target }}
+          path: zig-out/bin/fiber
+          if-no-files-found: error
+
+  # E2E jobs come from the scope job as a flat matrix: one entry per
+  # platform-shard. When e2e is selected, all three platforms run. Linux
+  # emits up to 3 shards and macOS emits 1, each capped at the selected
+  # file count so none are empty. Binaries are built once on Linux and
+  # downloaded here.
+  e2e:
+    name: E2E (${{ matrix.name }}, shard ${{ matrix.label }})
+    if: contains(fromJSON(needs.scope.outputs.jobs), 'e2e')
+    needs: [scope, build]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.scope.outputs.e2e_matrix) }}
     env:
       FIBER_REQUIRE_TMUX: "1"
-      SHARD_INDEX: ${{ matrix.shard.index }}
-      SHARD_COUNT: ${{ matrix.shard.shard_count }}
+      SHARD_INDEX: ${{ matrix.index }}
+      SHARD_COUNT: ${{ matrix.shard_count }}
       E2E_FILES: ${{ needs.scope.outputs.e2e_files }}
       # Files within a shard run concurrently, each in its own tmux server.
-      # Three lanes on a 4-vCPU runner leaves headroom; these tests are
-      # latency-bound, so lanes overlap waiting rather than contend for CPU.
-      E2E_LANES: "3"
+      # These tests are latency-bound, so lanes overlap waiting rather than
+      # contend for CPU. Linux keeps 3 lanes on a 4-vCPU runner. macOS uses
+      # 4 lanes: that ran the whole suite in 541s with no retries on a
+      # 3-vCPU macos-15. 6 lanes finished in 423s but tripped a timing race.
+      E2E_LANES: ${{ matrix.lanes }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
+      # E2E tests still shell out to zig to compile fixtures. Issue #331
+      # removes that later.
       - name: Setup Zig
         uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27
         with:
           version: ${{ env.ZIG_VERSION }}
           use-cache: false
 
-      - name: Restore native Zig cache
-        uses: actions/cache/restore@v5
+      # tests/e2e/eval-helpers.ts and tests/e2e/mcp-stdio.test.ts resolve
+      # FIBER_BIN to zig-out/bin/fiber. actions/upload-artifact does not
+      # preserve the executable bit, so chmod after the download.
+      - name: Download Fiber binary
+        uses: actions/download-artifact@v7
         with:
-          path: .zig-cache
-          key: ci-e2e-read-only-${{ matrix.platform.name }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            setup-zig-cache-v2-native-${{ matrix.platform.zig_tarball }}-${{ env.ZIG_VERSION }}-ci-native-${{ matrix.platform.name }}-ReleaseSafe-
+          name: fiber-${{ matrix.target }}
+          path: zig-out/bin
 
-      - name: Build
-        run: zig build -Doptimize=ReleaseSafe
+      - name: Restore executable bit
+        run: chmod +x zig-out/bin/fiber
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -284,8 +327,6 @@ jobs:
 
       - name: Install E2E system dependencies
         shell: bash
-        # 17 for the shard plus headroom for one per-file retry.
-        timeout-minutes: 22
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             missing=()
@@ -432,7 +473,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: flake-retries-${{ matrix.platform.name }}-shard-${{ matrix.shard.index }}
+          name: flake-retries-${{ matrix.name }}-shard-${{ matrix.index }}
           path: ${{ runner.temp }}/fiber-flake-retries.txt
           if-no-files-found: warn
           retention-days: 7
@@ -546,9 +587,9 @@ jobs:
             section_format: elf
             expected_file: "ELF 64-bit LSB.*ARM aarch64"
           # Cross-compiled from Linux. The job passes an explicit -Dtarget, so
-          # the runner OS does not change what is built. A full run uses four
-          # macOS jobs — native checks and three E2E shards — so the size
-          # delta stays on Linux and keeps under GitHub's five-concurrent-macOS-job
+          # the runner OS does not change what is built. A full run uses two
+          # macOS jobs (native checks and one E2E shard), so the size delta
+          # stays on Linux and keeps under GitHub's five-concurrent-macOS-job
           # cap.
           - name: macos-aarch64
             target: aarch64-macos
@@ -718,6 +759,7 @@ jobs:
       - native
       - pgso-driver
       - conformance
+      - build
       - e2e
       - bench
       - binary-size
