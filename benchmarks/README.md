@@ -24,6 +24,35 @@ process baseline is diagnostic only and is never subtracted.
 
 When adding features, consider their impact on startup latency. The `fiber help` path is the baseline cold-start benchmark.
 
+## Peak resident memory
+
+The same `bench` job measures peak RSS for the six heavy workloads from the
+PGSO corpus and fails when one exceeds its budget:
+
+| workload | measured peak | budget |
+| --- | ---: | ---: |
+| file-index-100k | 18.36 MiB | 40 MiB |
+| ui-activity | 2.23 MiB | 8 MiB |
+| approval-transcript | 13.91 MiB | 32 MiB |
+| approval-diff | 4.31 MiB | 12 MiB |
+| approval-payload | 10.05 MiB | 24 MiB |
+| approval-combined | 16.77 MiB | 40 MiB |
+
+Measured peaks are macOS arm64 ReleaseSafe medians across three runs (spread
+under 0.05 MiB per workload). Every budget is at least 2x the measured peak,
+leaving headroom for Linux runner variance. Reproduce locally with:
+
+```bash
+python3 benchmarks/measure_memory.py   # builds benches, writes benchmarks/results/memory.json
+python3 benchmarks/check_budgets.py    # enforces latency and memory budgets
+```
+
+Measurement uses `getrusage(RUSAGE_CHILDREN).ru_maxrss` from the Python
+standard library, which reports bytes on macOS and kilobytes on Linux, so no
+GNU time dependency is needed. Enforcement is Linux-only, matching the latency
+gate: local runs report peaks as informational. The job summary lists the
+per-workload table.
+
 ## Binary size observability
 
 Every pull request that selects the full CI pipeline runs the `binary-size`

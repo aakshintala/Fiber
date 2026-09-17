@@ -17,7 +17,7 @@ entries = []
 rows = []
 
 for f in sorted(glob.glob(os.path.join(RESULTS_DIR, "*.json"))):
-    if os.path.basename(f) == "summary.json":
+    if os.path.basename(f) in ("summary.json", "memory.json"):
         continue
     data = json.load(open(f))
     r = data["results"][0]
