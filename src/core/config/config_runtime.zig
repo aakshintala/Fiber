@@ -875,10 +875,11 @@ pub fn parsePermissionAction(raw: []const u8) ?types.PermissionAction {
     return null;
 }
 
-/// Keys `fiber config get` reports and `fiber config set` accepts, except
-/// `model`: model ids must be discovered from the catalog first, so `fiber
-/// models use` stays the only writer and a second write path cannot drift
-/// from it. Reading needs no catalog, so `model` joins get as a read key.
+/// Keys `fiber config get` reports and `fiber config set` accepts. `model`
+/// keeps a second writer: `fiber models use` checks the id against the
+/// catalog while `config set model` is a pure local write with syntax-only
+/// validation, so a provisioning loop uses one verb. `config set` never
+/// touches the network.
 pub const config_get_keys = [_][]const u8{
     "model",
     "effort",
@@ -902,6 +903,13 @@ pub fn isConfigGetKey(key: []const u8) bool {
 /// the reader either rejects the whole settings file or silently drops the
 /// value, and neither is an acceptable outcome for an explicit write.
 pub fn parseConfigSetPatch(key: []const u8, value: []const u8) !UserSettingsPatch {
+    if (std.mem.eql(u8, key, "model")) {
+        if (value.len == 0) return error.InvalidConfigValue;
+        for (value) |byte| {
+            if (std.ascii.isWhitespace(byte)) return error.InvalidConfigValue;
+        }
+        return .{ .model_preference = .{ .provider = .codex, .model = value } };
+    }
     if (std.mem.eql(u8, key, "effort")) {
         const effort = types.ReasoningEffort.parse(value) orelse return error.InvalidConfigValue;
         return .{ .effort = effort };
@@ -975,7 +983,12 @@ test "config set patch validates every key at write time" {
     try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("first_call_tool_choice", "required"));
     try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("first_call_tool_choice", ""));
 
-    try std.testing.expectError(error.UnknownConfigKey, parseConfigSetPatch("model", "x"));
+    const model = try parseConfigSetPatch("model", "gpt-5.6-sol");
+    try std.testing.expectEqualStrings("gpt-5.6-sol", model.model_preference.?.model);
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("model", ""));
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("model", "has space"));
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("model", " padded "));
+
     try std.testing.expectError(error.UnknownConfigKey, parseConfigSetPatch("yolo_acknowledged", "true"));
 }
 

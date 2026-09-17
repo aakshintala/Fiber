@@ -102,11 +102,14 @@ before first launch:
 ./zig-out/bin/fiber config set auto_upgrade false
 ```
 
-Settable keys are `effort`, `permission_mode`, `auto_upgrade`,
-`max_agent_steps`, `max_tool_result_bytes`, and `first_call_tool_choice`;
-`get` also reads `model`. The model default stays with
-`fiber models use <id>` so the id is checked against the model catalog.
-Both commands accept `--json`.
+Settable keys are `model`, `effort`, `permission_mode`, `auto_upgrade`,
+`max_agent_steps`, `max_tool_result_bytes`, and `first_call_tool_choice`.
+`config set` writes the profile global layer only and never touches the
+network: `config set model <id>` checks syntax only (non-empty, no
+whitespace). `fiber models use <id>` keeps the catalog-checked path and
+warns instead of failing when it cannot reach one. An unset model reads
+back as `(unset)` with source `unset`: fiber ships no compiled-in default
+model. Both commands accept `--json`.
 
 ## Run it
 

@@ -2915,25 +2915,24 @@ describe("cli: config", () => {
   );
 
   test(
-    "fiber config refuses unknown keys, bad values, and model writes",
+    "fiber config refuses unknown keys and bad values; model is a pure local write",
     async () => {
       const home = createIsolatedTestHome();
       const env = { ...NO_GATEWAY_AUTH, HOME: home };
       const settingsPath = join(home, ".fiber", "settings.json");
       try {
-        // model has exactly one writer: the catalog-checked `fiber models use`.
-        const model = await runFx(["config", "set", "model", "foo"], { env });
-        expect(model.code).toBe(1);
-        expect(model.stderr).toContain("fiber models use");
+        // No compiled-in default model: an unset key reports explicitly.
+        const unset = await runFx(["config", "get", "model"], { env });
+        expect(unset.code).toBe(0);
+        expect(unset.stdout).toBe("(unset)  (unset)\n");
         expect(existsSync(settingsPath)).toBe(false);
 
-        const modelJson = await runFx(["config", "set", "model", "foo", "--json"], { env });
-        expect(modelJson.code).toBe(1);
-        expect(JSON.parse(modelJson.stdout.trim())).toEqual({
-          kind: "config.set",
-          ok: false,
-          error: expect.stringContaining("fiber models use"),
-          code: "UseModelsUse",
+        const unsetJson = await runFx(["config", "get", "model", "--json"], { env });
+        expect(unsetJson.code).toBe(0);
+        expect(JSON.parse(unsetJson.stdout.trim())).toEqual({
+          kind: "config.get",
+          ok: true,
+          data: { key: "model", value: "(unset)", source: "unset" },
         });
         expect(existsSync(settingsPath)).toBe(false);
 
@@ -2951,6 +2950,7 @@ describe("cli: config", () => {
         }
 
         // Values the reader would reject or silently drop fail at write time.
+        // `config set model` checks syntax only: non-empty, no whitespace.
         for (const [key, value] of [
           ["effort", "ultra!!!"],
           ["permission_mode", "loud"],
@@ -2959,12 +2959,38 @@ describe("cli: config", () => {
           ["max_agent_steps", "-1"],
           ["max_tool_result_bytes", "1023"],
           ["first_call_tool_choice", "required"],
+          ["model", ""],
+          ["model", "has space"],
+          ["model", " padded "],
         ] as Array<[string, string]>) {
           const result = await runFx(["config", "set", key, value], { env });
           expect(result.code).toBe(2);
           expect(result.stderr).toContain(`invalid value for '${key}'`);
         }
         expect(existsSync(settingsPath)).toBe(false);
+
+        // Pure configuration write: no catalog fetch, so it works offline.
+        const model = await runFx(["config", "set", "model", "offline/model"], { env });
+        expect(model.code).toBe(0);
+        expect(model.stderr).toBe("");
+        expect(model.stdout).toBe("[config] model=offline/model\n");
+
+        const get = await runFx(["config", "get", "model"], { env });
+        expect(get.code).toBe(0);
+        expect(get.stdout).toBe("offline/model  (user_global)\n");
+        expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({
+          models: { codex: "offline/model" },
+        });
+
+        const modelJson = await runFx(["config", "set", "model", "other/model", "--json"], { env });
+        expect(modelJson.code).toBe(0);
+        expect(JSON.parse(modelJson.stdout.trim())).toEqual({
+          kind: "config.set",
+          ok: true,
+          data: { key: "model", value: "other/model" },
+        });
+        const getAgain = await runFx(["config", "get", "model"], { env });
+        expect(getAgain.stdout).toBe("other/model  (user_global)\n");
       } finally {
         cleanupIsolatedTestHome(home);
       }
