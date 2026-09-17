@@ -161,8 +161,8 @@ Do not run the complete deterministic suite locally as the default loop. Run the
 focused test for the changed path, build, and exercise that path with
 `./zig-out/bin/fiber`.
 
-Then commit, push the branch, and open a draft pull request. `ci.yml` is the only
-entrypoint, and scope follows the pull request's state:
+Then commit, push the branch, and open a pull request. `ci.yml` is the only
+entrypoint. Draft is allowed as a signal to humans, but CI ignores it.
 
 * **Every push** runs shellcheck on every tracked `*.sh` file and the static
   gates (formatting, public-surface audit, PGSO corpus validation,
@@ -178,18 +178,13 @@ entrypoint, and scope follows the pull request's state:
   `.github/`, `tests/`, `benchmarks/`, `scripts/` or `build.zig` names it.
   The scope job's log prints each path's class and why each job ran or
   skipped.
-* **Draft** adds the Linux x86_64 build, unit tests, smoke, and the
-  duration-balanced Linux x86_64 E2E shards. Fast
-  feedback while the work is still moving; agents should use this instead of
-  running the suite locally.
-* **Ready** adds only what draft did not run: the remaining native platforms
-  (`ubuntu-24.04-arm`, `macos-15`), the same E2E shards on those
-  platforms, benchmarks, the three-platform binary size comparison, and the
-  isolated MCP conformance package.
+* Selected jobs run in parallel on Linux x86_64, linux-aarch64
+  (`ubuntu-24.04-arm`) and macOS arm64 (`macos-15`) with no stage gate: native
+  build, unit tests and smoke; E2E shards; plus for full-pipeline changes
+  benchmarks, the binary size comparison and MCP conformance.
 
-The slowest job differs by scope, so name the scope with any timing claim.
 Before calling a job the critical path, run `scripts/ci-timings.sh <pr-number>`,
-which prints job durations for a pull request's latest draft and ready runs.
+which prints job durations for the pull request's latest completed run.
 
 A push does not trigger CI. A branch with no pull request has nothing to gate,
 and `release.yml` owns `main`.
@@ -200,9 +195,8 @@ required check by name on the head commit and ignores which event produced it.
 It fails unless every selected job succeeded and every unselected job was
 skipped.
 
-Marking a pull request ready re-runs CI on the same commit, so the ready-scope
-result supersedes the draft one. Evidence comes only from the current run: a
-result from an ancestor commit does not count.
+Evidence comes only from a run on the current head commit; a result from an
+ancestor commit does not count.
 
 A failed check is evidence. Repair it in a new commit and let CI run again;
 never rerun a failed test to green. The one exception is the workflow's own
@@ -217,22 +211,18 @@ backstop run means main is broken, so stop the line and fix forward. Live
 model evals stay separate because they need credentials and are not
 deterministic.
 
-A ready pull request stays ready while you repair it. Draft scope skips the
-ready-only jobs, so a fix pushed to a draft pull request is never checked by the
-job that failed. Push the fix to the ready pull request and read the new run.
-
 The macOS arm64 PGSO candidate workflow does not run on pull requests. When a
 change touches `build.zig` or `scripts/pgso/`, dispatch it with
-`workflow_dispatch` on the pull request's head commit only after the ready run
-passes — it uses `cancel-in-progress` on the branch ref, so dispatching earlier
-just gets cancelled by the next push — and do not merge until that run passes.
+`workflow_dispatch` on the pull request's head commit only after `CI` passes
+there — it uses `cancel-in-progress` on the branch ref, so
+dispatching earlier just gets cancelled by the next push — and do not merge
+until that run passes.
 
 ## Landing a pull request
 
-Open a draft pull request as soon as the branch is pushed, and mark it ready once
-the gate passes.
+Open a pull request as soon as the branch is pushed.
 
-Land a ready pull request when `CI` is green on its head commit and the
+Land a pull request when `CI` is green on its head commit and the
 session's instructions authorize landing. Without that authorization, stop at
 green and report the pull request and its run to the owner.
 

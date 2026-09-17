@@ -55,11 +55,11 @@ Read the test output rather than the exit status. `zig build test` can print
 
 ## Open a pull request
 
-Push your branch and open a draft pull request straight away. A branch with no
+Push your branch and open a pull request straight away. A branch with no
 pull request runs no continuous integration.
 
-`ci.yml` is the only entrypoint, and what it runs depends on the state of the
-pull request:
+`ci.yml` is the only entrypoint. Draft is allowed as a signal to humans, but
+CI ignores it.
 
 - every push runs shellcheck on every tracked `*.sh` file and the static
   gates (formatting, public-surface audit, PGSO corpus validation,
@@ -70,12 +70,11 @@ pull request:
   inputs run all E2E files and conformance; everything else runs the full
   pipeline; any E2E or full-pipeline selection also runs the PGSO driver unit
   tests
-- a draft adds the Linux x86_64 build, unit tests, smoke, and the
-  Linux x86_64 end-to-end shards
-- a ready pull request adds only what draft did not run: the remaining
-  native platforms, the same end-to-end shards on Linux aarch64 and
-  macOS arm64, benchmarks, binary-size comparison, and the isolated MCP
-  conformance package
+- selected jobs run in parallel on Linux x86_64, linux-aarch64
+  (`ubuntu-24.04-arm`) and macOS arm64 (`macos-15`) with no stage gate:
+  native build, unit tests and smoke; end-to-end shards; plus for
+  full-pipeline changes benchmarks, the binary size comparison, and the
+  isolated MCP conformance package
 
 A failing end-to-end shard file retries once, immediately. A retry that
 passes is annotated on the run and reported by the non-blocking Flake watch
@@ -85,21 +84,18 @@ test) rather than rerunning. Unit-test, build, and lint jobs never retry.
 One check, `CI`, aggregates the result. It is the only check `main` requires.
 A selected job must succeed; an unselected job must be skipped.
 
-Marking a pull request ready re-runs everything on the same commit, so the ready
-result replaces the draft one. Evidence must come from the current commit; a
-passing run on an earlier commit does not count.
+Evidence must come from a run on the current head commit; a passing run on
+an earlier commit does not count.
 
 If a check fails, that is the answer. Fix the cause in a new commit and let it
 run again. Do not rerun a failed test hoping for green.
 
-Keep a ready pull request ready while you fix it. A draft skips the ready-only
-jobs, so a fix pushed to a draft is never checked by the job that failed.
-
 The macOS arm64 PGSO candidate workflow does not run on pull requests. If you
 change `build.zig` or `scripts/pgso/`, run it by hand with `workflow_dispatch`
-on your branch only after the ready run passes — it uses `cancel-in-progress`
-on the branch ref, so dispatching earlier just gets cancelled by the next push
-— and merge only after it passes. It produces size, behavior, and
+on your branch only after `CI` passes on the head commit — it uses
+`cancel-in-progress` on the branch ref, so dispatching earlier just gets
+cancelled by the next push — and merge only after it passes. It produces size,
+behavior, and
 performance evidence and changes no release artifact. Its pinned toolchain, local reproduction command,
 and failure rules are in
 [`scripts/pgso/README.md`](scripts/pgso/README.md).
@@ -148,8 +144,8 @@ Answer these first, and stop to define them if any is unclear:
 
 ## Benchmarks
 
-Startup latency benchmarks run as the `bench` job of `ci.yml` on ready pull
-requests. The job builds a ReleaseSafe binary and measures wall-clock time with
+Startup latency benchmarks run as the `bench` job of `ci.yml` whenever the
+full pipeline is selected. The job builds a ReleaseSafe binary and measures wall-clock time with
 [hyperfine](https://github.com/sharkdp/hyperfine) against fixed budgets:
 
 | Command                 | Budget | What it measures                        |

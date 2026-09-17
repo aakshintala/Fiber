@@ -342,7 +342,7 @@ class BinarySizeWorkflowTests(unittest.TestCase):
         for name, target, runner in (
             ("linux-x86_64", "x86_64-linux", "ubuntu-24.04"),
             ("linux-aarch64", "aarch64-linux", "ubuntu-24.04-arm"),
-            # Cross-compiled on Linux so ready scope stays under the five-job
+            # Cross-compiled on Linux so a full CI run stays under the five-job
             # macOS concurrency cap.
             ("macos-aarch64", "aarch64-macos", "ubuntu-24.04"),
         ):

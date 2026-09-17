@@ -14,13 +14,12 @@ import os
 import pathlib
 import re
 import sys
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 
 ALWAYS_JOBS = ("scope", "shellcheck", "static")
 SELECTABLE_JOBS = (
-    "native-linux",
-    "native-extra",
+    "native",
     "pgso-driver",
     "conformance",
     "e2e",
@@ -55,7 +54,6 @@ SCAN_FILES = ("build.zig",)
 SKIP_DIR_NAMES = {".git", "node_modules", ".zig-cache", "zig-out"}
 TUI_PERFORMANCE = "tui-performance.test.ts"
 _E2E_ROOT_TEST = re.compile(r"^tests/e2e/([^/]+\.test\.ts)$")
-_LOGICAL_JOBS = ("native",) + SELECTABLE_JOBS
 
 
 class Selection:
@@ -81,7 +79,6 @@ class Selection:
 def select_jobs(
     changed_paths: Sequence[str],
     event: str,
-    draft: bool,
     head_root: pathlib.Path,
 ) -> Selection:
     """Return the job selection for ``changed_paths`` against ``head_root``."""
@@ -100,9 +97,19 @@ def select_jobs(
         (path, classify_path(path, head_root, references)) for path in paths
     ]
     wanted, e2e_all, e2e_names, selectors = _jobs_from_classes(path_classes)
-    jobs, platforms, e2e_files, skip_reasons = apply_event_and_draft_filter(
-        event, draft, wanted, e2e_all, e2e_names
-    )
+    skip_reasons: dict[str, str] = {}
+
+    if event == "workflow_dispatch":
+        jobs = set(ALWAYS_JOBS + SELECTABLE_JOBS)
+        jobs.discard("binary-size")
+        skip_reasons["binary-size"] = "manual dispatch excludes binary-size"
+        e2e_files = "all"
+        platforms = [dict(platform) for platform in ALL_PLATFORMS]
+    else:
+        jobs = set(wanted)
+        e2e_files = "all" if e2e_all else " ".join(sorted(e2e_names))
+        platforms = [dict(platform) for platform in ALL_PLATFORMS]
+
     jobs.update(ALWAYS_JOBS)
 
     file_count = _e2e_file_count(head_root, e2e_files)
@@ -155,51 +162,6 @@ def classify_path(
             return "FULL"
         return "STATIC"
     return "FULL"
-
-
-def apply_event_and_draft_filter(
-    event: str,
-    draft: bool,
-    wanted: Iterable[str],
-    e2e_all: bool,
-    e2e_names: Iterable[str],
-) -> tuple[set[str], list[dict[str, str]], str, dict[str, str]]:
-    """TEMPORARY: #253 deletes this function.
-
-    ``workflow_dispatch`` ignores the diff and selects every job except
-    ``binary-size``. A draft pull request maps ``native`` to ``native-linux``
-    and drops ready-only jobs. A ready pull request maps ``native`` to
-    ``native-extra`` and keeps those jobs.
-    """
-
-    wanted_jobs = set(wanted)
-    skip_reasons: dict[str, str] = {}
-
-    if event == "workflow_dispatch":
-        jobs = set(ALWAYS_JOBS + SELECTABLE_JOBS)
-        jobs.discard("binary-size")
-        skip_reasons["binary-size"] = "manual dispatch excludes binary-size"
-        return jobs, [dict(platform) for platform in ALL_PLATFORMS], "all", skip_reasons
-
-    jobs = {job for job in wanted_jobs if job != "native"}
-    e2e_files = "all" if e2e_all else " ".join(sorted(e2e_names))
-
-    if draft:
-        platforms = [dict(PLATFORM_LINUX_X86_64)]
-        if "native" in wanted_jobs:
-            jobs.add("native-linux")
-            skip_reasons["native-extra"] = "ready-only job; draft pull request"
-        for job in ("conformance", "bench", "binary-size"):
-            if job in jobs:
-                jobs.discard(job)
-                skip_reasons[job] = "ready-only job; draft pull request"
-        return jobs, platforms, e2e_files, skip_reasons
-
-    platforms = [dict(PLATFORM_LINUX_AARCH64), dict(PLATFORM_MACOS_AARCH64)]
-    if "native" in wanted_jobs:
-        jobs.add("native-extra")
-        skip_reasons["native-linux"] = "draft-only job; ready pull request"
-    return jobs, platforms, e2e_files, skip_reasons
 
 
 def aggregate_errors(
@@ -297,7 +259,7 @@ def _is_referenced(script_path: str, corpus: Sequence[tuple[str, str]]) -> bool:
 def _jobs_from_classes(
     path_classes: Sequence[tuple[str, str]],
 ) -> tuple[set[str], bool, set[str], dict[str, list[str]]]:
-    selectors = {job: [] for job in _LOGICAL_JOBS}  # type: dict[str, list[str]]
+    selectors = {job: [] for job in SELECTABLE_JOBS}  # type: dict[str, list[str]]
     e2e_all = False
     e2e_names: set[str] = set()
 
@@ -370,7 +332,6 @@ def _job_reasons(
     skip_reasons: Mapping[str, str],
     selectors: Mapping[str, Sequence[str]],
 ) -> dict[str, str]:
-    native_selectors = list(selectors.get("native", ()))
     reasons: dict[str, str] = {}
     for job in ALL_JOBS:
         if job in skip_reasons:
@@ -386,8 +347,6 @@ def _job_reasons(
             reasons[job] = "manual dispatch selects every job except binary-size"
             continue
         marked = list(selectors.get(job, ()))
-        if job in ("native-linux", "native-extra") and native_selectors:
-            marked = native_selectors
         if marked:
             reasons[job] = "selected by " + ", ".join(marked)
         else:
@@ -428,7 +387,6 @@ def _cmd_select(args: argparse.Namespace) -> int:
     selection = select_jobs(
         paths,
         event=args.event,
-        draft=args.draft == "true",
         head_root=args.head_root,
     )
     _write_outputs(selection)
@@ -468,7 +426,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=("pull_request", "workflow_dispatch"),
         required=True,
     )
-    select_parser.add_argument("--draft", choices=("true", "false"), required=True)
     select_parser.add_argument("--head-root", type=pathlib.Path, required=True)
     subparsers.add_parser("aggregate", help="fail-close the CI aggregate check")
     args = parser.parse_args(argv)
