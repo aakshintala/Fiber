@@ -7856,39 +7856,11 @@ test "orphan command output does not leak into current compact rows" {
     try expectGridOccurrenceCount(&h, "dedupe-command-row", 0);
 }
 
-test "long assistant reply keeps emission order across a retention trim" {
-    // Pins fx #796 (half 1): visible transcript rows must stay in emission
-    // order when a long assistant reply trims retained content mid-stream.
-    var h = try Harness.init(std.testing.allocator, 40, 24, 4);
-    defer h.deinit();
-    h.shell.max_retained_transcript_bytes = 1024;
-
-    try h.shell.initViewport(&h.metrics, 1);
-    const total: usize = 200;
-    var i: usize = 0;
-    while (i < total) : (i += 1) {
-        const line = try std.fmt.allocPrint(h.alloc, "L{d:0>3}: the quick brown fox jumps over the lazy dog\n", .{i + 1});
-        defer h.alloc.free(line);
-        _ = try h.shell.streamAssistantChunk(h.alloc, &h.metrics, line);
-        if (i % 5 == 4) {
-            try h.renderTranscriptFrameIfDirty();
-            try h.flush();
-        }
-    }
-    try h.renderTranscriptFrame();
-    try h.flush();
-
-    // The structured cap must actually have evicted the head mid-stream,
-    // or this test proves nothing. (Paint rebuilds from entries, so the
-    // structured eviction is the retention boundary it reads across.)
-    try std.testing.expect(h.shell.entries.items.len > 0);
-    try std.testing.expect(h.shell.entries.items[0] == .assistant_turn);
-    const retained_text = h.shell.entries.items[0].assistant_turn.segments.text.items;
-    try std.testing.expect(std.mem.find(u8, retained_text, "L001:") == null);
-    try std.testing.expect(std.mem.find(u8, retained_text, "L200:") != null);
-
-    // Every numbered row still on the grid must appear exactly once, in
-    // increasing emission order, ending at the tail.
+/// Scans the visible grid for `Lddd:` emission markers and asserts they
+/// appear exactly once each, in strictly increasing emission order. No
+/// marker may exceed `ceiling`, the number of lines emitted so far. Returns
+/// the marker count and the highest line number on the grid.
+fn checkFrameEmissionOrder(h: *Harness, ceiling: usize) !struct { count: usize, last: usize } {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(h.alloc);
     var prev: usize = 0;
@@ -7907,6 +7879,7 @@ test "long assistant reply keeps emission order across a retention trim" {
             {
                 const n = try std.fmt.parseInt(usize, buf.items[j + 1 .. j + 4], 10);
                 try std.testing.expect(n > prev);
+                try std.testing.expect(n <= ceiling);
                 prev = n;
                 last = n;
                 count += 1;
@@ -7917,7 +7890,52 @@ test "long assistant reply keeps emission order across a retention trim" {
         }
     }
     try std.testing.expect(count > 0);
-    try std.testing.expectEqual(total, last);
+    return .{ .count = count, .last = last };
+}
+
+test "long assistant reply keeps emission order across a retention trim" {
+    // Pins fx #796 (half 1): visible transcript rows must stay in emission
+    // order when a long assistant reply trims retained content mid-stream.
+    var h = try Harness.init(std.testing.allocator, 40, 24, 4);
+    defer h.deinit();
+    h.shell.max_retained_transcript_bytes = 1024;
+
+    try h.shell.initViewport(&h.metrics, 1);
+    const total: usize = 200;
+    var tail_seen: usize = 0;
+    var i: usize = 0;
+    while (i < total) : (i += 1) {
+        const line = try std.fmt.allocPrint(h.alloc, "L{d:0>3}: the quick brown fox jumps over the lazy dog\n", .{i + 1});
+        defer h.alloc.free(line);
+        _ = try h.shell.streamAssistantChunk(h.alloc, &h.metrics, line);
+        if (i % 5 == 4) {
+            try h.renderTranscriptFrameIfDirty();
+            try h.flush();
+            // Each frame mid-eviction must already be ordered: a reorder
+            // that later scrolls away would pass a final-grid-only check
+            // unnoticed. The visible tail must also advance monotonically.
+            const frame = try checkFrameEmissionOrder(&h, i + 1);
+            try std.testing.expect(frame.last >= tail_seen);
+            tail_seen = frame.last;
+        }
+    }
+    try h.renderTranscriptFrame();
+    try h.flush();
+
+    // The structured cap must actually have evicted the head mid-stream,
+    // or this test proves nothing. (Paint rebuilds from entries, so the
+    // structured eviction is the retention boundary it reads across.)
+    try std.testing.expect(h.shell.entries.items.len > 0);
+    try std.testing.expect(h.shell.entries.items[0] == .assistant_turn);
+    const retained_text = h.shell.entries.items[0].assistant_turn.segments.text.items;
+    try std.testing.expect(std.mem.find(u8, retained_text, "L001:") == null);
+    try std.testing.expect(std.mem.find(u8, retained_text, "L200:") != null);
+
+    // Every numbered row still on the grid must appear exactly once, in
+    // increasing emission order, ending at the tail.
+    const final = try checkFrameEmissionOrder(&h, total);
+    try std.testing.expect(final.last >= tail_seen);
+    try std.testing.expectEqual(total, final.last);
 }
 
 test "two-cell character survives the wrap column and the column before it" {
