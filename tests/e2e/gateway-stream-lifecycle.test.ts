@@ -4221,10 +4221,15 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         expect(detail.history.map((turn: { kind: string }) => turn.kind))
           .not.toContain("compacted_summary");
         const firstStep = detail.history[0].execution.tool_steps[0];
-        expect(firstStep.tool_calls[0].id).toBe(callId);
+        // Canonical history carries the Fiber-minted item id (#174), random
+        // per run: discover this run's id instead of pinning the provider id.
+        const itemId = firstStep.tool_calls[0].id as string;
+        expect(typeof itemId).toBe("string");
+        expect(itemId.length).toBeGreaterThan(0);
+        expect(itemId).not.toBe(callId);
         expect(firstStep.tool_results[0]).toEqual(
           expect.objectContaining({
-            tool_call_id: callId,
+            tool_call_id: itemId,
             tool_name: "read_file",
             status: "success",
           }),
@@ -4299,7 +4304,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
         };
         expect(finalDetail.history_len).toBe(10);
         expect(finalDetail.history[0].execution.tool_steps[0].tool_calls[0].id)
-          .toBe(callId);
+          .toBe(itemId);
       } finally {
         gateway.stop();
         rmSync(root.root, { recursive: true, force: true });
