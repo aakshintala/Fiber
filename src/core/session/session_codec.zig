@@ -1974,13 +1974,25 @@ fn parseOptionalToolOutcome(
     } else return error.InvalidSessionFormat;
     const exit_code = if (object.get("exit_code")) |code_value| switch (code_value) {
         .null => null,
+        // Event frames decode with parse_numbers=false, so numbers
+        // arrive as strings; accept both forms like requireI64 does.
         .integer => |code| code,
+        .number_string => |text| std.fmt.parseInt(
+            i64,
+            text,
+            10,
+        ) catch return error.InvalidSessionFormat,
         else => return error.InvalidSessionFormat,
     } else return error.InvalidSessionFormat;
     const signal = if (object.get("signal")) |signal_value| switch (signal_value) {
         .null => null,
         .integer => |raw_signal| std.math.cast(u32, raw_signal) orelse
             return error.InvalidSessionFormat,
+        .number_string => |text| std.fmt.parseUnsigned(
+            u32,
+            text,
+            10,
+        ) catch return error.InvalidSessionFormat,
         else => return error.InvalidSessionFormat,
     } else return error.InvalidSessionFormat;
     return .{
@@ -4245,4 +4257,50 @@ test "non-utf8 outcome message survives the shared outcome writer" {
 
     const outcome = owned[0].outcome orelse return error.TestExpectedEqual;
     try std.testing.expectEqualSlices(u8, raw_message, outcome.error_message.?);
+}
+
+test "outcome process facts parse under event-log number encoding" {
+    const alloc = std.testing.allocator;
+    // Event frames decode with parse_numbers=false, so numeric outcome
+    // fields arrive as number strings. A stamped exit_code broke recovery
+    // commits because only .integer was accepted here.
+    const completed_raw =
+        "{\"status\":\"completed\",\"reason\":null,\"error_code\":null," ++
+        "\"error_message\":null,\"exit_code\":0,\"signal\":null," ++
+        "\"timed_out\":false,\"has_process\":true}";
+    var completed_parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        completed_raw,
+        .{ .parse_numbers = false },
+    );
+    defer completed_parsed.deinit();
+    const completed = (try parseOptionalToolOutcome(
+        alloc,
+        completed_parsed.value,
+    )) orelse return error.TestExpectedEqual;
+    defer types.freeToolCallOutcome(alloc, completed);
+    try std.testing.expectEqual(types.ToolCallStatus.completed, completed.status);
+    try std.testing.expectEqual(@as(?i64, 0), completed.exit_code);
+    try std.testing.expect(completed.has_process);
+
+    const signal_raw =
+        "{\"status\":\"failed\",\"reason\":null,\"error_code\":\"signal\"," ++
+        "\"error_message\":\"killed\",\"exit_code\":null,\"signal\":9," ++
+        "\"timed_out\":false,\"has_process\":true}";
+    var signal_parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        signal_raw,
+        .{ .parse_numbers = false },
+    );
+    defer signal_parsed.deinit();
+    const killed = (try parseOptionalToolOutcome(
+        alloc,
+        signal_parsed.value,
+    )) orelse return error.TestExpectedEqual;
+    defer types.freeToolCallOutcome(alloc, killed);
+    try std.testing.expectEqual(types.ToolCallStatus.failed, killed.status);
+    try std.testing.expectEqual(types.ToolErrorCode.signal, killed.error_code.?);
+    try std.testing.expectEqual(@as(?u32, 9), killed.signal);
 }
