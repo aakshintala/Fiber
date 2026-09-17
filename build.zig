@@ -73,6 +73,12 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_exe_tests.step);
 
+    // Everything `test` compiles, without running it, so CI can time
+    // compilation and execution separately.
+    const test_compile_step = b.step("test-compile", "Build the unit tests without running them");
+    test_compile_step.dependOn(b.getInstallStep());
+    test_compile_step.dependOn(&exe_tests.step);
+
     const mcp_test_exports = b.createModule(.{
         .root_source_file = b.path("src/mcp_test_exports.zig"),
         .target = target,
@@ -202,6 +208,7 @@ pub fn build(b: *std.Build) void {
     );
     const run_ui_activity_bench_tests = b.addRunArtifact(ui_activity_bench_tests);
     test_step.dependOn(&run_ui_activity_bench_tests.step);
+    test_compile_step.dependOn(&ui_activity_bench_tests.step);
     const test_ui_activity_bench_step = b.step(
         "test-ui-activity-benchmark",
         "Run UI activity benchmark policy tests",
