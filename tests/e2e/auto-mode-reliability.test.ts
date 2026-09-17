@@ -612,13 +612,19 @@ describe("lean auto mode reliability", () => {
         expect.objectContaining({ name: "shell", status: "error" }),
       );
       const trace = readFileSync(tracePath, "utf8");
+      // Trace markers carry the Fiber-minted item id (#174), random per
+      // run: discover this run's id from its own review marker.
+      const itemId = trace.match(
+        /event=auto_review_start tool_name=shell action_kind=command call_id=(\S+)/,
+      )?.[1];
+      expect(itemId).toBeDefined();
       expect(trace).toContain(
         "event=auto_review_start tool_name=shell action_kind=command " +
-          "call_id=clean_tty_status",
+          `call_id=${itemId}`,
       );
       expect(trace).not.toContain(
         "event=execution_start turn_id=1 step_id=1 " +
-          "call_id=clean_tty_status name=shell",
+          `call_id=${itemId} name=shell`,
       );
     },
     TIMEOUT,
