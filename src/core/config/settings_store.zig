@@ -1939,6 +1939,68 @@ fn writeStoreFixture(dir: std.Io.Dir, sub_path: []const u8, text: []const u8) !v
     try file.writeStreamingAll(io_mod.getIo(), text);
 }
 
+test "state dir override isolates settings between roots" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    try tmp.dir.createDirPath(io_mod.getIo(), "state-a");
+    try tmp.dir.createDirPath(io_mod.getIo(), "state-b");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const root_a = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "state-a");
+    defer alloc.free(root_a);
+    const root_b = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "state-b");
+    defer alloc.free(root_b);
+
+    const env = try profile_paths.TestEnv.install(alloc, &.{
+        .{ .key = "HOME", .value = home },
+        .{ .key = profile_paths.state_dir_env_name, .value = root_a },
+    });
+    defer env.deinit();
+
+    {
+        var store = try Store.initFromHome(alloc, home, .writable);
+        defer store.deinit(alloc);
+        var outcome = try store.applyUserPatch(alloc, .{ .startup_scrollback = false });
+        defer outcome.deinit(alloc);
+        try std.testing.expect(outcome == .committed);
+        const bytes = try store.readPrimaryForTest(alloc);
+        defer alloc.free(bytes);
+        try std.testing.expect(std.mem.find(u8, bytes, "\"startup_scrollback\":false") != null);
+    }
+    // The write landed under the override, not the default location.
+    if (tmp.dir.openDir(io_mod.getIo(), "home/.fiber", .{ .iterate = true })) |leaked| {
+        var dir = leaked;
+        dir.close(io_mod.getIo());
+        return error.TestExpectedMissing;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+
+    // A sibling root starts absent.
+    try env.put(profile_paths.state_dir_env_name, root_b);
+    {
+        var store = try Store.initFromHome(alloc, home, .writable);
+        defer store.deinit(alloc);
+        var loaded = try store.loadPrimary(alloc);
+        defer loaded.deinit(alloc);
+        try std.testing.expect(loaded == .absent);
+    }
+
+    // Root-a still has its settings.
+    try env.put(profile_paths.state_dir_env_name, root_a);
+    {
+        var store = try Store.initFromHome(alloc, home, .read_only);
+        defer store.deinit(alloc);
+        var loaded = try store.loadPrimary(alloc);
+        defer loaded.deinit(alloc);
+        try std.testing.expect(loaded == .valid);
+        try std.testing.expect(std.mem.find(u8, loaded.valid, "\"startup_scrollback\":false") != null);
+    }
+}
+
 test "user patch writes user preferences at top level" {
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});

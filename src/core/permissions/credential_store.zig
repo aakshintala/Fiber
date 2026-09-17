@@ -523,7 +523,12 @@ fn check_command_token(alloc: std.mem.Allocator, home: ?[]const u8, stores: ?Sto
     if (is_foreign_tilde_store(word)) return .hold;
     const known = home orelse {
         if (is_store_shaped(word) or has_unresolved_env(word)) return .hold;
-        return .allow;
+        // No HOME to expand from, but the spelling can still name the
+        // overridden root lexically: let the resolved identities widen.
+        const unshaped = stores orelse return .allow;
+        const absolute = try join_cwd(alloc, cwd, word) orelse return .allow;
+        defer alloc.free(absolute);
+        return check_clean_token(alloc, unshaped, absolute);
     };
     const expanded = try expand_home_prefix(alloc, known, word);
     defer alloc.free(expanded);
@@ -580,11 +585,6 @@ pub fn check_file_target(alloc: std.mem.Allocator, workspace_root: []const u8, t
     const word = std.mem.trim(u8, stripped, " \t\r\n");
     if (word.len == 0) return .allow;
     if (is_foreign_tilde_store(word)) return .hold;
-    const home = clean_home() orelse {
-        if (contains_store_file(word)) return .deny;
-        if (is_store_shaped(word) or has_unresolved_env(word)) return .hold;
-        return .allow;
-    };
     const root_owned = resolve_deny_root(alloc) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => null,
@@ -593,15 +593,26 @@ pub fn check_file_target(alloc: std.mem.Allocator, workspace_root: []const u8, t
     var stores: ?StoreIdentities = null;
     defer if (stores) |*owned| owned.deinit();
     if (root_owned) |root| stores = try resolve_store_identities(alloc, root);
-    const expanded = try expand_home_prefix(alloc, home, word);
-    defer alloc.free(expanded);
     // An unresolvable root never narrows a deny: the exact filename fails
     // closed, anything store-shaped holds, the rest allows.
     const owned = stores orelse {
-        if (contains_store_file(expanded)) return .deny;
-        if (is_store_shaped(expanded) or has_unresolved_env(expanded)) return .hold;
+        if (contains_store_file(word)) return .deny;
+        if (is_store_shaped(word) or has_unresolved_env(word)) return .hold;
         return .allow;
     };
+    // The root resolves; HOME is only needed to expand ~/ and $HOME
+    // spellings. Without it the raw spelling still faces the lexical and
+    // resolved match, so the parent-directory deny covers the overridden
+    // root instead of narrowing to exact filenames.
+    const expanded = if (clean_home()) |home|
+        try expand_home_prefix(alloc, home, word)
+    else if (contains_store_file(word))
+        return .deny
+    else if (is_store_shaped(word) or has_unresolved_env(word))
+        return .hold
+    else
+        try alloc.dupe(u8, word);
+    defer alloc.free(expanded);
     const absolute = try join_cwd(alloc, workspace_root, expanded) orelse {
         // Unanchorable spelling with no workspace root: the exact filename
         // fails closed, anything store-shaped holds, the rest allows.
@@ -904,6 +915,52 @@ test "deny fails closed on an invalid state dir override" {
     const denied = try std.mem.concat(alloc, u8, &.{ prefix, "cat $P/.fiber/chatgpt-auth.json" });
     defer alloc.free(denied);
     try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, denied));
+}
+
+test "deny covers the override root without a home" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    try tmp.dir.createDirPath(io_mod.getIo(), "state");
+    try tmp.dir.createDirPath(io_mod.getIo(), "other-state");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const state = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "state");
+    defer alloc.free(state);
+    const other_state = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "other-state");
+    defer alloc.free(other_state);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+
+    const test_home = try TestHome.install_without_home(alloc);
+    defer test_home.deinit();
+    try test_home.putEnv(profile_paths.state_dir_env_name, state);
+
+    // Revert-check: the old early return on absent HOME narrowed the deny
+    // to exact filenames, so the overridden parent directory allowed.
+    const store = try std.fs.path.join(alloc, &.{ state, "chatgpt-auth.json" });
+    defer alloc.free(store);
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, state));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, store));
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, "/any/chatgpt-auth.json"));
+    try std.testing.expectEqual(Verdict.hold, try check_file_target(alloc, workspace, "$P/.fiber/settings.json"));
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, "notes.txt"));
+
+    const prefix = try std.fmt.allocPrint(alloc, "{s}::", .{workspace});
+    defer alloc.free(prefix);
+    const listed = try std.mem.concat(alloc, u8, &.{ prefix, "ls ", state });
+    defer alloc.free(listed);
+    try std.testing.expectEqual(Verdict.deny, try check_command_target(alloc, listed));
+
+    // A sibling root's store file is just a same-named file elsewhere.
+    try test_home.putEnv("HOME", home);
+    try test_home.putEnv(profile_paths.state_dir_env_name, other_state);
+    try std.testing.expectEqual(Verdict.allow, try check_file_target(alloc, workspace, store));
+    const other_store = try std.fs.path.join(alloc, &.{ other_state, "chatgpt-auth.json" });
+    defer alloc.free(other_store);
+    try std.testing.expectEqual(Verdict.deny, try check_file_target(alloc, workspace, other_store));
 }
 
 test "command target denies shell spellings of the store" {

@@ -32,8 +32,8 @@ const recordings_dir_name = "recordings";
 /// expect it. The returned slice strips trailing slashes (except a lone
 /// root) and borrows from the process environment; do not free it.
 /// True for values resolveStateRoot accepts: non-empty and absolute.
-/// Shared with the startup gate in main.zig so the check and the resolver
-/// cannot drift apart.
+/// Shared with the startup gate in config_runtime.zig so the check and the
+/// resolver cannot drift apart.
 pub fn stateDirValid(raw: []const u8) bool {
     var value = raw;
     while (value.len > 1 and value[value.len - 1] == '/') value = value[0 .. value.len - 1];

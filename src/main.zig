@@ -2805,17 +2805,10 @@ fn mainC(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) !v
     const raw_args = rawArgs(c_argc, c_argv);
     const raw_env: RawEnviron = @ptrCast(c_envp);
 
-    // Fail fast on a bad state root before touching any state: falling back
-    // would write where the caller did not expect it (issue #132).
-    if (rawEnvValue(raw_env, profile_paths.state_dir_env_name)) |value| {
-        if (!profile_paths.stateDirValid(value)) {
-            if (value.len == 0) {
-                writeStderrFast("fiber: FIBER_STATE_DIR is set but empty; unset it to use $HOME/.fiber\n") catch {};
-            } else {
-                writeStderrFast("fiber: FIBER_STATE_DIR must be an absolute path; unset it to use $HOME/.fiber\n") catch {};
-            }
-            exitFast(1);
-        }
+    // Fail fast on a bad state root before touching any state (issue #132).
+    if (config_runtime.checkStateDir(rawEnvValue(raw_env, profile_paths.state_dir_env_name)).message()) |text| {
+        writeStderrFast(text) catch {};
+        exitFast(1);
     }
 
     if (comptime terminal_host.isSupported()) {

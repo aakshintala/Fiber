@@ -238,6 +238,30 @@ describe("cli: help", () => {
   );
 
   test(
+    "invalid FIBER_STATE_DIR fails fast naming the variable",
+    async () => {
+      for (const value of ["", "relative/path"]) {
+        const result = await runFx(["--help"], {
+          env: { FIBER_STATE_DIR: value },
+        });
+        expect(result.code).toBe(1);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toContain("FIBER_STATE_DIR");
+      }
+      const validRoot = mkdtempSync(join(tmpdir(), "fiber-state-dir-"));
+      try {
+        const ok = await runFx(["--help"], {
+          env: { FIBER_STATE_DIR: validRoot },
+        });
+        expect(ok.code).toBe(0);
+      } finally {
+        rmSync(validRoot, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
     "fiber ask help renders documented options through both aliases",
     async () => {
       const env = {
