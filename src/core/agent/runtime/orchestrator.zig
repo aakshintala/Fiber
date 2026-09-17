@@ -1619,7 +1619,7 @@ test "terminal request normalization unwraps only exact eligible native calls" {
             .id = "terminal-call",
             .name = "terminal",
             .arguments_json = wrapped,
-            .provisional_id = "provisional-terminal",
+            .provider_id = "provisional-terminal",
             .provider_result = "provider-result",
             .provenance = .provider_executed,
         },
@@ -1641,7 +1641,7 @@ test "terminal request normalization unwraps only exact eligible native calls" {
         normalized[0].arguments_json,
     );
     try std.testing.expectEqualStrings(calls[0].id, normalized[0].id);
-    try std.testing.expectEqualStrings(calls[0].provisional_id.?, normalized[0].provisional_id.?);
+    try std.testing.expectEqualStrings(calls[0].provider_id.?, normalized[0].provider_id.?);
     try std.testing.expectEqualStrings(calls[0].provider_result.?, normalized[0].provider_result.?);
     try std.testing.expectEqual(calls[0].provenance, normalized[0].provenance);
     try std.testing.expectEqualStrings(calls[1].arguments_json, normalized[1].arguments_json);
@@ -2318,17 +2318,14 @@ fn appendProviderExecutedToolResult(
         execution.model_output,
     );
     const safe_tool_output = prepared.model_output;
-    const visible_id = stream_ctx.provisional_statuses.visibleId(call);
     const ProviderVisibleLifecycle = struct {
         call: ToolCall,
         status_started: bool,
     };
     var provider_visible_lifecycle: ?ProviderVisibleLifecycle = null;
-    if (visible_id) |id| {
-        var visible_call = call;
-        visible_call.id = id;
+    if (stream_ctx.provisional_statuses.is_tracked(call.id)) {
         provider_visible_lifecycle = .{
-            .call = visible_call,
+            .call = call,
             .status_started = true,
         };
     } else if (runtime_tool_presentation.isProviderSearchAlias(call.name)) {
@@ -5230,6 +5227,11 @@ fn processQueuedPromptLoop(
                     arena,
                     deps.tool_registry,
                     subagent_request_eligible,
+                    completion.tool_calls,
+                );
+                completion.tool_calls = try runtime_assistant_stream.rekey_completion_tool_calls(
+                    &stream_ctx,
+                    arena,
                     completion.tool_calls,
                 );
             }

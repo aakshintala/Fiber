@@ -929,7 +929,6 @@ fn appendCompletedToolStatus(h: *Harness, label: []const u8) !u32 {
     const id = types.ToolLifecycleId{ .turn_id = 1, .call_id = label };
     _ = try h.shell.applyToolLifecycle(h.alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "test_tool",
         .activity_kind = .read,
         .arguments_json = "{}",
@@ -3538,7 +3537,6 @@ fn applyCompletedReadForGroupFinalityResizeTest(
     _ = try h.shell.applyToolLifecycle(h.alloc, .{ .authoritative_started = .{
         .id = id,
         .presentation_group_id = group_id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
@@ -3645,7 +3643,6 @@ test "completed tool group lets streamed assistant hard lines enter history" {
     _ = try h.shell.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = active_id,
         .presentation_group_id = group,
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
@@ -3744,7 +3741,6 @@ test "hidden auto approval lifecycle reposition adds no compact scroll rows" {
     });
     _ = try h.shell.applyToolLifecycle(h.alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"seq 1 1\"}",
@@ -6231,7 +6227,6 @@ test "compact command completion keeps restored history footer stable" {
     const id = types.ToolLifecycleId{ .turn_id = 1, .call_id = "command" };
     _ = try h.shell.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"sleep 5\"}",

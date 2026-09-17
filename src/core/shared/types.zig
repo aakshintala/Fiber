@@ -1,4 +1,5 @@
 const std = @import("std");
+const io_mod = @import("io.zig");
 const text_utils = @import("text_utils.zig");
 
 pub const Layout = struct {
@@ -147,7 +148,6 @@ pub const ToolLifecycleEvent = union(enum) {
     authoritative_started: struct {
         id: ToolLifecycleId,
         presentation_group_id: ?ToolPresentationGroupId = null,
-        reconciles_provisional_call_id: ?[]const u8,
         tool_name: []const u8,
         activity_kind: ToolActivityKind,
         arguments_json: ?[]const u8 = null,
@@ -612,12 +612,36 @@ pub const ToolArgumentIntegrity = enum {
     }
 };
 
+/// Mints a Fiber item id from random bytes, the same way generateSessionId
+/// does. Random per mint, so two sessions whose provider returns the same
+/// call id still diverge. The caller owns the returned slice.
+pub fn generate_item_id(alloc: std.mem.Allocator) ![]u8 {
+    var random_bytes: [9]u8 = undefined;
+    io_mod.getIo().random(&random_bytes);
+    const id = try alloc.alloc(u8, std.base64.url_safe_no_pad.Encoder.calcSize(random_bytes.len));
+    _ = std.base64.url_safe_no_pad.Encoder.encode(id, &random_bytes);
+    return id;
+}
+
+test "generated item id is a compact url-safe token" {
+    const first = try generate_item_id(std.testing.allocator);
+    defer std.testing.allocator.free(first);
+    const second = try generate_item_id(std.testing.allocator);
+    defer std.testing.allocator.free(second);
+    try std.testing.expectEqual(@as(usize, 12), first.len);
+    try std.testing.expect(!std.mem.eql(u8, first, second));
+}
+
 pub const ToolCall = struct {
+    /// Fiber-minted item id: the call's identity from stream appearance
+    /// through execution, persistence, and resume.
     id: []const u8,
     name: []const u8,
     arguments_json: []const u8,
     argument_integrity: ToolArgumentIntegrity = .valid,
-    provisional_id: ?[]const u8 = null,
+    /// Provider-issued call id, persisted beside the item id and used only
+    /// to build provider requests. Null for calls that never crossed the wire.
+    provider_id: ?[]const u8 = null,
     provider_result: ?[]const u8 = null,
     final_identity: FinalToolIdentity = .valid,
     provenance: ToolExecutionProvenance = .fiber_local,
@@ -1355,7 +1379,8 @@ pub fn authoritativeToolAdmission(completion: ModelCompletion) AuthoritativeTool
     }
 
     for (completion.tool_calls) |call| {
-        const final_identity = if (call.final_identity == .valid and call.id.len == 0)
+        const wire_id = call.provider_id orelse call.id;
+        const final_identity = if (call.final_identity == .valid and wire_id.len == 0)
             FinalToolIdentity.empty
         else
             call.final_identity;
@@ -1373,8 +1398,10 @@ pub fn authoritativeToolAdmission(completion: ModelCompletion) AuthoritativeTool
     }
 
     for (completion.tool_calls, 0..) |call, i| {
+        const wire_id = call.provider_id orelse call.id;
         for (completion.tool_calls[0..i]) |prior| {
-            if (std.mem.eql(u8, prior.id, call.id)) return .reject_duplicate_identity;
+            const prior_wire_id = prior.provider_id orelse prior.id;
+            if (std.mem.eql(u8, prior_wire_id, wire_id)) return .reject_duplicate_identity;
         }
     }
 
@@ -1438,6 +1465,25 @@ test "authoritative tool admission rejects duplicate final ids across provenance
             else => return error.TestUnexpectedResult,
         }
     }
+}
+
+test "authoritative tool admission rejects duplicate provider ids under distinct item ids" {
+    const calls = [_]ToolCall{
+        .{ .id = "item-a", .name = "read_file", .arguments_json = "{}", .provider_id = "call_same" },
+        .{ .id = "item-b", .name = "read_file", .arguments_json = "{}", .provider_id = "call_same" },
+    };
+    switch (authoritativeToolAdmission(.{ .tool_calls = &calls })) {
+        .reject_duplicate_identity => {},
+        else => return error.TestUnexpectedResult,
+    }
+    const distinct = [_]ToolCall{
+        .{ .id = "item-a", .name = "read_file", .arguments_json = "{}", .provider_id = "call_one" },
+        .{ .id = "item-b", .name = "read_file", .arguments_json = "{}", .provider_id = "call_two" },
+    };
+    try std.testing.expectEqual(
+        AuthoritativeToolAdmission.admitted,
+        authoritativeToolAdmission(.{ .tool_calls = &distinct }),
+    );
 }
 
 test "authoritative tool admission rejects malformed provider arguments but admits local recovery" {
@@ -2315,8 +2361,8 @@ pub fn dupeToolCall(alloc: std.mem.Allocator, call: ToolCall) !ToolCall {
     errdefer alloc.free(name);
     const arguments_json = try alloc.dupe(u8, call.arguments_json);
     errdefer alloc.free(arguments_json);
-    const provisional_id = if (call.provisional_id) |value| try alloc.dupe(u8, value) else null;
-    errdefer if (provisional_id) |value| alloc.free(value);
+    const provider_id = if (call.provider_id) |value| try alloc.dupe(u8, value) else null;
+    errdefer if (provider_id) |value| alloc.free(value);
     const provider_result = if (call.provider_result) |result| try alloc.dupe(u8, result) else null;
     errdefer if (provider_result) |result| alloc.free(result);
     return .{
@@ -2324,7 +2370,7 @@ pub fn dupeToolCall(alloc: std.mem.Allocator, call: ToolCall) !ToolCall {
         .name = name,
         .arguments_json = arguments_json,
         .argument_integrity = call.argument_integrity,
-        .provisional_id = provisional_id,
+        .provider_id = provider_id,
         .provider_result = provider_result,
         .final_identity = call.final_identity,
         .provenance = call.provenance,
@@ -2335,7 +2381,7 @@ pub fn freeToolCall(alloc: std.mem.Allocator, call: ToolCall) void {
     alloc.free(call.id);
     alloc.free(call.name);
     alloc.free(call.arguments_json);
-    if (call.provisional_id) |provisional_id| alloc.free(provisional_id);
+    if (call.provider_id) |provider_id| alloc.free(provider_id);
     if (call.provider_result) |provider_result| alloc.free(provider_result);
 }
 

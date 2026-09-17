@@ -514,15 +514,15 @@ pub fn dupeRedactedToolCall(alloc: Allocator, call: ToolCall) !ToolCall {
         call.arguments_json,
     );
     errdefer alloc.free(arguments_json);
-    const provisional_id = if (call.provisional_id) |value| try durableIdentifier(alloc, value) else null;
-    errdefer if (provisional_id) |value| alloc.free(value);
+    const provider_id = if (call.provider_id) |value| try durableIdentifier(alloc, value) else null;
+    errdefer if (provider_id) |value| alloc.free(value);
     const provider_result = if (call.provider_result) |result| try redactText(alloc, result) else null;
     errdefer if (provider_result) |result| alloc.free(result);
     return .{
         .id = id,
         .name = name,
         .arguments_json = arguments_json,
-        .provisional_id = provisional_id,
+        .provider_id = provider_id,
         .provider_result = provider_result,
         .final_identity = call.final_identity,
         .provenance = call.provenance,
@@ -781,7 +781,7 @@ test "execution memory removes token-shaped call ids from JSON and replay" {
         .id = secret_id,
         .name = "read_file",
         .arguments_json = "{\"path\":\"README.md\"}",
-        .provisional_id = secret_id,
+        .provider_id = secret_id,
     }};
     const messages = [_]ChatMessage{
         .{ .role = .assistant, .tool_calls = calls[0..] },
@@ -953,7 +953,7 @@ test "durable execution memory pseudonymizes sensitive call ids consistently" {
         .id = secret_id,
         .name = "read_file",
         .arguments_json = "{\"path\":\"notes.txt\"}",
-        .provisional_id = secret_id,
+        .provider_id = secret_id,
     };
     const result = try makePersistedToolResult(
         alloc,
@@ -989,7 +989,7 @@ test "durable execution memory pseudonymizes sensitive call ids consistently" {
     try std.testing.expectEqual(@as(usize, 1), files.items.len);
     try std.testing.expect(!std.mem.eql(u8, secret_id, result.tool_call_id));
     try std.testing.expectEqualStrings(result.tool_call_id, persisted_calls[0].id);
-    try std.testing.expectEqualStrings(result.tool_call_id, persisted_calls[0].provisional_id.?);
+    try std.testing.expectEqualStrings(result.tool_call_id, persisted_calls[0].provider_id.?);
     try std.testing.expectEqualStrings(result.tool_call_id, files.items[0].tool_call_id);
 }
 
@@ -1581,8 +1581,8 @@ fn expectEquivalentNormalExecutionMemory(
                 actual_call.arguments_json,
             );
             try expectOptionalStringEqual(
-                expected_call.provisional_id,
-                actual_call.provisional_id,
+                expected_call.provider_id,
+                actual_call.provider_id,
             );
             try expectOptionalStringEqual(
                 expected_call.provider_result,

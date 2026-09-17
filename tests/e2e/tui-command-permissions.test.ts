@@ -1919,13 +1919,23 @@ describe("effect-aware command permissions", () => {
         );
         expect(trace).toContain("command runner explicit environment=user shell=");
         expect(trace).not.toContain("authority=direct_only route=direct_read_only");
+        // Trace markers carry the Fiber-minted item id (#174), random per
+        // run: discover this run's ids from its own start markers.
+        const firstItemId = trace.match(
+          /event=execution_start turn_id=1 step_id=1 call_id=(\S+)/,
+        )?.[1];
+        const secondItemId = trace.match(
+          /event=execution_start turn_id=2 step_id=3 call_id=(\S+)/,
+        )?.[1];
+        expect(firstItemId).toBeDefined();
+        expect(secondItemId).toBeDefined();
         expectTraceOrder(trace, [
-          "event=permission_decision turn_id=1 step_id=1 call_id=terminal_session_command",
-          "event=execution_start turn_id=1 step_id=1 call_id=terminal_session_command",
-          "event=execution_result turn_id=1 step_id=1 call_id=terminal_session_command",
+          `event=permission_decision turn_id=1 step_id=1 call_id=${firstItemId}`,
+          `event=execution_start turn_id=1 step_id=1 call_id=${firstItemId}`,
+          `event=execution_result turn_id=1 step_id=1 call_id=${firstItemId}`,
           "event=assistant_completion turn_id=1 step_id=2",
-          "event=execution_start turn_id=2 step_id=3 call_id=terminal_session_pwd",
-          "event=execution_result turn_id=2 step_id=3 call_id=terminal_session_pwd",
+          `event=execution_start turn_id=2 step_id=3 call_id=${secondItemId}`,
+          `event=execution_result turn_id=2 step_id=3 call_id=${secondItemId}`,
           "event=assistant_completion turn_id=2 step_id=4",
         ]);
         await activeSession.sendText("/quit");

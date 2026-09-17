@@ -4110,9 +4110,19 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
           outputType: "text",
         },
       ]);
-      expect(countTraceEvent(observed.trace, "before_tool_execution", "read_a"))
+      // Trace markers carry the Fiber-minted item id (#174), random per
+      // run: discover this run's ids from its own execution markers.
+      const readItemId = observed.trace.match(
+        /event=before_tool_execution turn_id=\d+ step_id=\d+ call_id=(\S+) name=read_file/,
+      )?.[1];
+      const grepItemId = observed.trace.match(
+        /event=before_tool_execution turn_id=\d+ step_id=\d+ call_id=(\S+) name=grep_files/,
+      )?.[1];
+      expect(readItemId).toBeDefined();
+      expect(grepItemId).toBeDefined();
+      expect(countTraceEvent(observed.trace, "before_tool_execution", readItemId))
         .toBe(1);
-      expect(countTraceEvent(observed.trace, "before_tool_execution", "grep_b"))
+      expect(countTraceEvent(observed.trace, "before_tool_execution", grepItemId))
         .toBe(1);
       for (
         const sentinel of [
@@ -4628,17 +4638,29 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
         ),
       ).toBe(1);
       const trace = readFileSync(tracePath, "utf8");
+      // Trace markers carry the Fiber-minted item id (#174), random per
+      // run: discover this run's ids from its own result/start markers.
+      const unsupportedItemId = trace.match(
+        new RegExp(
+          `event=execution_result turn_id=1 step_id=1 call_id=(\\S+) name=${unsupportedToolName} result_kind=unsupported`,
+        ),
+      )?.[1];
+      const supportedItemId = trace.match(
+        /event=execution_start turn_id=1 step_id=1 call_id=(\S+) name=shell/,
+      )?.[1];
+      expect(unsupportedItemId).toBeDefined();
+      expect(supportedItemId).toBeDefined();
       expect(trace).toContain(
-        `event=execution_result turn_id=1 step_id=1 call_id=${unsupportedCallId} name=${unsupportedToolName} result_kind=unsupported`,
+        `event=execution_result turn_id=1 step_id=1 call_id=${unsupportedItemId} name=${unsupportedToolName} result_kind=unsupported`,
       );
       expect(
         trace.split("\n").some((line) =>
           line.includes("event=execution_start") &&
-          line.includes(`call_id=${unsupportedCallId}`)
+          line.includes(`call_id=${unsupportedItemId}`)
         ),
       ).toBe(false);
       expect(trace).toContain(
-        `event=execution_start turn_id=1 step_id=1 call_id=${supportedCallId} name=shell`,
+        `event=execution_start turn_id=1 step_id=1 call_id=${supportedItemId} name=shell`,
       );
       expect(existsSync(tapePath)).toBe(true);
       expect(readFileSync(stderrPath, "utf8")).toBe("");
@@ -4797,11 +4819,15 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
       expect(withoutWorkspaceStatusline(fullAtFirst)).not.toContain(workspace);
 
       const trace = readFileSync(tracePath, "utf8");
-      for (const callId of [
-        "tool_summary_first",
-        "tool_summary_nested",
-        "tool_summary_third",
-      ]) {
+      // Trace markers carry the Fiber-minted item ids (#174), random per
+      // run: collect this run's ids instead of pinning provider call ids.
+      const startedIds = new Set(
+        [...trace.matchAll(
+          /event=execution_start turn_id=1 step_id=1 call_id=(\S+)/g,
+        )].map((match) => match[1]),
+      );
+      expect(startedIds.size).toBe(3);
+      for (const callId of startedIds) {
         expect(
           countOccurrences(trace, `event=execution_start turn_id=1 step_id=1 call_id=${callId}`),
         ).toBe(1);

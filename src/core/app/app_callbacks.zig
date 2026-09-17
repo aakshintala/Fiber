@@ -2086,7 +2086,6 @@ test "worker bridge deps forward UI operations" {
         app.alloc,
         .{ .authoritative_started = .{
             .id = .{ .turn_id = 8, .call_id = "read-8" },
-            .reconciles_provisional_call_id = null,
             .tool_name = "read_file",
             .activity_kind = .read,
         } },

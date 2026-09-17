@@ -2147,7 +2147,6 @@ test "authoritative lifecycle detail is retained by its compact status entry" {
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
         .presentation_group_id = .{ .turn_id = 1, .anchor_step_id = 4 },
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
         .arguments_json = "{\"path\":\"README.md\"}",
@@ -2186,7 +2185,6 @@ test "paused tool turn can resume the same lifecycle identity before finalizatio
     const id = types.ToolLifecycleId{ .turn_id = 41, .call_id = "resume-tool" };
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
@@ -2208,7 +2206,6 @@ test "paused tool turn can resume the same lifecycle identity before finalizatio
 
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
@@ -2270,7 +2267,6 @@ test "nonzero command remains Ran in the current compact projection" {
     const id = types.ToolLifecycleId{ .turn_id = 1, .call_id = "exit-7" };
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "terminal",
         .activity_kind = .command,
         .arguments_json = "{\"action\":\"exec\",\"command\":\"false\"}",
@@ -2298,14 +2294,12 @@ test "terminal lifecycle records distinguish captured exec from durable actions"
 
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = exec_id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "terminal",
         .activity_kind = .command,
         .arguments_json = "{\"action\":\"exec\",\"command\":\"printf exec\"}",
     } });
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = start_id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "terminal",
         .activity_kind = .command,
         .arguments_json = "{\"action\":\"start\",\"command\":\"printf start\"}",
@@ -2337,7 +2331,6 @@ test "nonzero streamed command reuses its active output block" {
     const id = types.ToolLifecycleId{ .turn_id = 2, .call_id = "streamed-exit-7" };
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "terminal",
         .activity_kind = .command,
         .arguments_json = "{\"action\":\"exec\",\"command\":\"printf lines; exit 7\"}",
@@ -2426,7 +2419,6 @@ test "compact run command group stays width safe after resize" {
     const id = types.ToolLifecycleId{ .turn_id = 3, .call_id = "long-command-header" };
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"printf a deliberately long command preview\"}",
@@ -3069,7 +3061,6 @@ test "command terminal detail owns the consolidated command output entry" {
     const id = types.ToolLifecycleId{ .turn_id = 9, .call_id = "command-9" };
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"printf demo\"}",
@@ -3176,7 +3167,6 @@ test "command terminal detail resolves split command output source rows" {
     const id = types.ToolLifecycleId{ .turn_id = 9, .call_id = "command-split" };
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"printf demo\"}",
@@ -3222,7 +3212,6 @@ test "command output consolidation preserves current compact ownership" {
     const id = types.ToolLifecycleId{ .turn_id = 1, .call_id = "streaming-command" };
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"stream\"}",
@@ -3724,7 +3713,6 @@ test "command terminal detail resolves its lifecycle output instead of the lates
     for ([_]types.ToolLifecycleId{ first, second }) |id| {
         _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
             .id = id,
-            .reconciles_provisional_call_id = null,
             .tool_name = "run_command",
             .activity_kind = .command,
             .arguments_json = "{\"command\":\"printf demo\"}",
@@ -3777,14 +3765,12 @@ test "command output consolidation keeps compact tool order" {
 
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = first,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"printf first\"}",
     } });
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = second,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"printf second\"}",
@@ -4464,7 +4450,6 @@ pub const TranscriptRuntime = struct {
                 alloc,
                 started.id,
                 started.presentation_group_id,
-                started.reconciles_provisional_call_id,
                 started.tool_name,
                 started.activity_kind,
                 started.arguments_json,
@@ -4790,80 +4775,12 @@ pub const TranscriptRuntime = struct {
         alloc: Allocator,
         id: types.ToolLifecycleId,
         presentation_group_id: ?types.ToolPresentationGroupId,
-        reconciliation_alias: ?[]const u8,
         tool_name: []const u8,
         activity_kind: types.ToolActivityKind,
         arguments_json: ?[]const u8,
         place_after_current_transcript: bool,
     ) !?types.ToolActivityKind {
         if (!admitLifecycleStart(&self.lifecycle_state, id)) return null;
-
-        const alias_id: ?types.ToolLifecycleId = if (reconciliation_alias) |call_id|
-            if (call_id.len > 0)
-                .{ .turn_id = id.turn_id, .call_id = call_id }
-            else
-                null
-        else
-            null;
-        const alias_is_distinct = if (alias_id) |alias|
-            alias.turn_id != id.turn_id or !std.mem.eql(u8, alias.call_id, id.call_id)
-        else
-            false;
-
-        if (alias_is_distinct) {
-            const alias = alias_id.?;
-            if (self.lifecycle_state.record(alias)) |alias_record| {
-                if (self.lifecycle_state.record(id) != null) {
-                    debug_trace.logf(
-                        "ui_activity",
-                        "lifecycle identity collision turn_id={d} kind=authoritative_started",
-                        .{id.turn_id},
-                    );
-                    return error.LifecycleReconciliationCollision;
-                }
-                if (alias_record.phase == .terminal) {
-                    traceLateLifecycleEvent(alias, "authoritative_started");
-                    return null;
-                }
-                var detail_start = try self.prepareToolDetailStart(
-                    alloc,
-                    alias_record.entry_id,
-                    id,
-                    tool_name,
-                    activity_kind,
-                    arguments_json,
-                );
-                defer detail_start.deinit(alloc);
-                try self.lifecycle_state.ensureRecordCapacity(alloc);
-                const owned_call_id = try alloc.dupe(u8, id.call_id);
-                errdefer alloc.free(owned_call_id);
-                const owned_tool_name = try alloc.dupe(u8, tool_name);
-                errdefer alloc.free(owned_tool_name);
-                const line = try lifecycleStartLine(alloc, tool_name);
-                defer alloc.free(line);
-                if (!try self.replacePinnedLifecycleStatus(
-                    alloc,
-                    alias_record.entry_id,
-                    line,
-                    place_after_current_transcript,
-                )) return error.MissingLifecycleTranscriptEntry;
-                self.lifecycle_state.rekeyOwned(
-                    alloc,
-                    alias,
-                    .{ .turn_id = id.turn_id, .call_id = owned_call_id },
-                    owned_tool_name,
-                    activity_kind,
-                );
-                self.commitLifecycleToolDetailStart(
-                    alloc,
-                    id,
-                    alias_record.entry_id,
-                    &detail_start,
-                );
-                self.commitToolPresentationGroup(alias_record.entry_id, id, presentation_group_id);
-                return activity_kind;
-            }
-        }
 
         if (self.lifecycle_state.recordPtr(id)) |record| {
             if (record.phase == .terminal) {

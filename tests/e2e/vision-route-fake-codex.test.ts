@@ -543,8 +543,19 @@ describe("Vision route fake Codex", () => {
         );
         expect(detail.code).toBe(0);
         expect(detail.stderr).toBe("");
-        const persisted = JSON.stringify(JSON.parse(detail.stdout));
-        expect(persisted).toContain("native_vision");
+        // Persisted history carries the Fiber-minted item id (#174), random
+        // per run: the provider call id lives on the provider wire only
+        // (asserted above on the rejection request).
+        const persistedJson = JSON.parse(detail.stdout);
+        const persistedStep =
+          persistedJson.data.history[0].execution.tool_steps[0];
+        const visionItemId = persistedStep.tool_calls[0].id as string;
+        expect(typeof visionItemId).toBe("string");
+        expect(visionItemId.length).toBeGreaterThan(0);
+        expect(visionItemId).not.toBe("native_vision");
+        expect(persistedStep.tool_results[0].tool_call_id).toBe(visionItemId);
+        const persisted = JSON.stringify(persistedJson);
+        expect(persisted).not.toContain("native_vision");
         expect(persisted).toContain("Vision is unavailable for this request.");
         expect(imageCodex.codex.requests).toHaveLength(3);
       } finally {

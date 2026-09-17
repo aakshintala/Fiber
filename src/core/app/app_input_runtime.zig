@@ -10115,7 +10115,6 @@ test "app_input_runtime active tool Escape waits for terminal feedback before re
     app.stream.active = true;
     _ = try app.shell.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = .{ .turn_id = 1, .call_id = "command" },
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
     } });

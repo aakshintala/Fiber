@@ -4868,7 +4868,6 @@ test "core.app_render_runtime lifecycle rewrite recovers normal buffer after fil
     const lifecycle_id = types.ToolLifecycleId{ .turn_id = 1, .call_id = "streaming-command" };
     _ = try app.shell.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = lifecycle_id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"stream\"}",

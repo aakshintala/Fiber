@@ -161,7 +161,7 @@ pub const ProvisionalToolStatuses = struct {
         turn_id: u64,
         call: ToolCall,
     ) !void {
-        const call_id = self.visibleId(call) orelse return;
+        if (!self.has(call.id)) return;
         const summary = try std.fmt.allocPrint(
             arena,
             "{s} failed: invalid JSON arguments",
@@ -169,7 +169,7 @@ pub const ProvisionalToolStatuses = struct {
         );
         try hooks.push_tool_lifecycle(hooks.ctx, .{
             .terminal = .{
-                .id = .{ .turn_id = turn_id, .call_id = call_id },
+                .id = .{ .turn_id = turn_id, .call_id = call.id },
                 .outcome = .{ .kind = .failed, .summary = summary },
             },
         });
@@ -484,12 +484,19 @@ pub const ProvisionalToolStatuses = struct {
         }
     }
 
-    pub fn visibleId(self: *const ProvisionalToolStatuses, call: ToolCall) ?[]const u8 {
-        if (self.has(call.id)) return call.id;
-        if (call.provisional_id) |provisional_id| {
-            if (self.has(provisional_id)) return provisional_id;
+    fn trackedStatusMatchesCalls(
+        status: TrackedStatus,
+        calls: []const ToolCall,
+    ) bool {
+        for (calls) |call| {
+            if (std.mem.eql(u8, status.id, call.id)) return true;
         }
-        return null;
+        return false;
+    }
+
+    /// Reports whether an item id already owns an early status row.
+    pub fn is_tracked(self: *const ProvisionalToolStatuses, id: []const u8) bool {
+        return self.has(id);
     }
 
     fn record(self: *ProvisionalToolStatuses, alloc: Allocator, id: []const u8) !bool {
@@ -538,17 +545,17 @@ pub const ProvisionalToolStatuses = struct {
         return null;
     }
 
-    fn trackedStatusMatchesCalls(
-        status: TrackedStatus,
-        calls: []const ToolCall,
-    ) bool {
-        for (calls) |call| {
-            if (std.mem.eql(u8, status.id, call.id)) return true;
-            if (call.provisional_id) |provisional_id| {
-                if (std.mem.eql(u8, status.id, provisional_id)) return true;
-            }
+    fn terminalTarget(
+        self: *const ProvisionalToolStatuses,
+        call: ToolCall,
+        authoritative_started: bool,
+    ) ?TerminalTarget {
+        if (authoritative_started) {
+            const tracked_id: ?[]const u8 = if (self.has(call.id)) call.id else null;
+            return .{ .call = call, .tracked_id = tracked_id };
         }
-        return false;
+        if (!self.has(call.id)) return null;
+        return .{ .call = call, .tracked_id = call.id };
     }
 
     fn recordTerminal(self: *ProvisionalToolStatuses, alloc: Allocator, id: []const u8) !bool {
@@ -570,21 +577,6 @@ pub const ProvisionalToolStatuses = struct {
         call: ToolCall,
         tracked_id: ?[]const u8,
     };
-
-    fn terminalTarget(
-        self: *const ProvisionalToolStatuses,
-        call: ToolCall,
-        authoritative_started: bool,
-    ) ?TerminalTarget {
-        const visible_id = self.visibleId(call);
-        if (authoritative_started) {
-            return .{ .call = call, .tracked_id = visible_id };
-        }
-        const provisional_id = visible_id orelse return null;
-        var visible_call = call;
-        visible_call.id = provisional_id;
-        return .{ .call = visible_call, .tracked_id = provisional_id };
-    }
 
     fn ensureTerminalTarget(
         self: *const ProvisionalToolStatuses,
@@ -748,7 +740,6 @@ pub noinline fn startToolVisibleLifecycle(
     try hooks.push_tool_lifecycle(hooks.ctx, .{ .authoritative_started = .{
         .id = .{ .turn_id = turn_id, .call_id = call.id },
         .presentation_group_id = presentation_group_id,
-        .reconciles_provisional_call_id = call.provisional_id,
         .tool_name = call.name,
         .activity_kind = activity_kind,
         .arguments_json = redacted_arguments,
@@ -1803,7 +1794,6 @@ test "provisional lifecycle remains distinct from authoritative lifecycle" {
     switch (capture.events.items[2]) {
         .authoritative_started => |event| {
             try std.testing.expectEqualStrings("read_1", event.id.call_id);
-            try std.testing.expect(event.reconciles_provisional_call_id == null);
             try std.testing.expectEqual(
                 types.ToolPresentationGroupId{ .turn_id = 1, .anchor_step_id = 9 },
                 event.presentation_group_id.?,
@@ -1843,7 +1833,7 @@ test "provisional lifecycle keeps a tracked id when progress publication fails" 
     try std.testing.expect(capture.events.items[0] == .provisional);
 }
 
-test "rejected completion ignores a tracked provisional id when final id is untracked" {
+test "rejected completion settles only tracked item ids" {
     const alloc = std.testing.allocator;
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
@@ -1854,27 +1844,31 @@ test "rejected completion ignores a tracked provisional id when final id is untr
     var statuses = ProvisionalToolStatuses{};
     defer statuses.deinit(alloc);
 
-    _ = try statuses.record(alloc, "provisional_read");
+    _ = try statuses.record(alloc, "item_read");
     const calls = [_]ToolCall{.{
-        .id = "final_read",
-        .provisional_id = "provisional_read",
+        .id = "item_read",
+        .provider_id = "call_provider",
         .name = "read_file",
         .arguments_json = "{}",
     }};
-    try statuses.finishRejectedCompletions(&hooks, arena, 1, &calls, &.{});
-
+    const untracked = [_]ToolCall{.{
+        .id = "item_other",
+        .provider_id = "call_other",
+        .name = "read_file",
+        .arguments_json = "{}",
+    }};
+    try statuses.finishRejectedCompletions(&hooks, arena, 1, &untracked, &.{});
     try std.testing.expectEqual(@as(usize, 0), capture.events.items.len);
 
-    _ = try statuses.record(alloc, "final_read");
     try statuses.finishRejectedCompletions(&hooks, arena, 1, &calls, &.{});
     try std.testing.expectEqual(@as(usize, 1), capture.events.items.len);
     switch (capture.events.items[0]) {
-        .terminal => |terminal| try std.testing.expectEqualStrings("final_read", terminal.id.call_id),
+        .terminal => |terminal| try std.testing.expectEqualStrings("item_read", terminal.id.call_id),
         else => return error.TestExpectedEqual,
     }
 }
 
-test "provisional lifecycle terminal matching prefers final id then provisional id" {
+test "provisional lifecycle terminal matching uses the item id" {
     const alloc = std.testing.allocator;
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
@@ -1885,22 +1879,26 @@ test "provisional lifecycle terminal matching prefers final id then provisional 
     var statuses = ProvisionalToolStatuses{};
     defer statuses.deinit(alloc);
 
-    _ = try statuses.record(alloc, "provisional_read");
-    const fallback_call = ToolCall{
-        .id = "final_read",
-        .provisional_id = "provisional_read",
+    _ = try statuses.record(alloc, "item_read");
+    const tracked_call = ToolCall{
+        .id = "item_read",
+        .provider_id = "call_provider",
         .name = "read_file",
         .arguments_json = "{}",
     };
-    try std.testing.expectEqualStrings("provisional_read", statuses.visibleId(fallback_call).?);
-    try statuses.finishMalformedToolArguments(&hooks, arena, 1, fallback_call);
+    try statuses.finishMalformedToolArguments(&hooks, arena, 1, tracked_call);
 
-    _ = try statuses.record(alloc, "final_read");
-    try std.testing.expectEqualStrings("final_read", statuses.visibleId(fallback_call).?);
+    const untracked_call = ToolCall{
+        .id = "item_other",
+        .provider_id = "call_other",
+        .name = "read_file",
+        .arguments_json = "{}",
+    };
+    try statuses.finishMalformedToolArguments(&hooks, arena, 1, untracked_call);
 
     const provider_calls = [_]ToolCall{.{
-        .id = "provider_final",
-        .provisional_id = "provisional_read",
+        .id = "item_provider",
+        .provider_id = "call_provider",
         .name = "read_file",
         .arguments_json = "{}",
         .argument_integrity = .malformed_json,
@@ -1915,14 +1913,14 @@ test "provisional lifecycle terminal matching prefers final id then provisional 
         .arguments_json = "{",
     });
 
-    try std.testing.expectEqual(@as(usize, 3), capture.events.items.len);
+    try std.testing.expectEqual(@as(usize, 2), capture.events.items.len);
     for (capture.events.items) |event| {
         switch (event) {
             .terminal => |terminal| {
                 if (std.mem.eql(u8, terminal.id.call_id, "mcp_invalid")) {
                     try std.testing.expectEqualStrings("mcp_lookup failed: invalid JSON arguments", terminal.outcome.summary);
                 } else {
-                    try std.testing.expectEqualStrings("provisional_read", terminal.id.call_id);
+                    try std.testing.expectEqualStrings("item_read", terminal.id.call_id);
                     try std.testing.expectEqualStrings("tool call failed: invalid JSON arguments", terminal.outcome.summary);
                 }
             },
@@ -1942,10 +1940,10 @@ test "admitted provisional settlement consumes visible identity exactly once" {
     var statuses = ProvisionalToolStatuses{};
     defer statuses.deinit(alloc);
 
-    _ = try statuses.record(alloc, "provisional_read");
+    _ = try statuses.record(alloc, "item_read");
     const call = ToolCall{
-        .id = "final_read",
-        .provisional_id = "provisional_read",
+        .id = "item_read",
+        .provider_id = "call_provider",
         .name = "read_file",
         .arguments_json = "{}",
     };
@@ -1971,7 +1969,7 @@ test "admitted provisional settlement consumes visible identity exactly once" {
     try std.testing.expectEqual(@as(usize, 1), capture.events.items.len);
     switch (capture.events.items[0]) {
         .terminal => |terminal| {
-            try std.testing.expectEqualStrings("provisional_read", terminal.id.call_id);
+            try std.testing.expectEqualStrings("item_read", terminal.id.call_id);
             try std.testing.expectEqual(types.ToolOutcomeKind.denied, terminal.outcome.kind);
             try std.testing.expect(std.mem.find(u8, terminal.outcome.summary, "Not executed") != null);
         },

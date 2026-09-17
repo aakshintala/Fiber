@@ -32,7 +32,6 @@ const Harness = struct {
                 alloc,
                 .{ .authoritative_started = .{
                     .id = .{ .turn_id = 1, .call_id = call_id },
-                    .reconciles_provisional_call_id = null,
                     .tool_name = "read_file",
                     .activity_kind = .read,
                 } },

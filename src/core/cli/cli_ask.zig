@@ -4061,7 +4061,6 @@ fn testProcessQueuedPromptToolThenUnauthorized(agent: *agent_runtime.Agent, deps
     try deps.push_tool_lifecycle(deps.ctx, .{
         .authoritative_started = .{
             .id = .{ .turn_id = job.turn_id, .call_id = "read_1" },
-            .reconciles_provisional_call_id = null,
             .tool_name = "read_file",
             .activity_kind = .read,
         },
@@ -8720,7 +8719,6 @@ test "CLI tagged stream routes source output rendering and diagnostics by mode" 
     try deps.push_tool_lifecycle(deps.ctx, .{
         .authoritative_started = .{
             .id = .{ .turn_id = 1, .call_id = "read_1" },
-            .reconciles_provisional_call_id = null,
             .tool_name = "read_file",
             .activity_kind = .read,
         },
@@ -8895,7 +8893,6 @@ test "CLI nonterminal progress preserves distinct deferred labels without duplic
     const deps = agentRuntimeDeps(&ctx);
     try deps.push_tool_lifecycle(deps.ctx, .{ .authoritative_started = .{
         .id = .{ .turn_id = 1, .call_id = "deferred_write" },
-        .reconciles_provisional_call_id = null,
         .tool_name = "write_file",
         .activity_kind = .write,
     } });
@@ -8911,7 +8908,6 @@ test "CLI nonterminal progress preserves distinct deferred labels without duplic
 
     try deps.push_tool_lifecycle(deps.ctx, .{ .authoritative_started = .{
         .id = .{ .turn_id = 2, .call_id = "retry_write" },
-        .reconciles_provisional_call_id = null,
         .tool_name = "write_file",
         .activity_kind = .write,
     } });
@@ -8927,7 +8923,6 @@ test "CLI nonterminal progress preserves distinct deferred labels without duplic
 
     try deps.push_tool_lifecycle(deps.ctx, .{ .authoritative_started = .{
         .id = .{ .turn_id = 3, .call_id = "final_retry_write" },
-        .reconciles_provisional_call_id = null,
         .tool_name = "write_file",
         .activity_kind = .write,
     } });
@@ -8939,7 +8934,6 @@ test "CLI nonterminal progress preserves distinct deferred labels without duplic
 
     try deps.push_tool_lifecycle(deps.ctx, .{ .authoritative_started = .{
         .id = .{ .turn_id = 4, .call_id = "resolved_write" },
-        .reconciles_provisional_call_id = null,
         .tool_name = "write_file",
         .activity_kind = .write,
     } });
@@ -8954,7 +8948,6 @@ test "CLI nonterminal progress preserves distinct deferred labels without duplic
 
     try deps.push_tool_lifecycle(deps.ctx, .{ .authoritative_started = .{
         .id = .{ .turn_id = 5, .call_id = "invalid_fetch" },
-        .reconciles_provisional_call_id = null,
         .tool_name = "web_fetch",
         .activity_kind = .read,
     } });
@@ -8983,7 +8976,6 @@ test "CLI nonterminal progress preserves distinct deferred labels without duplic
 
     try deps.push_tool_lifecycle(deps.ctx, .{ .authoritative_started = .{
         .id = .{ .turn_id = 7, .call_id = "legacy_deferred_write" },
-        .reconciles_provisional_call_id = null,
         .tool_name = "write_file",
         .activity_kind = .write,
     } });
@@ -9002,7 +8994,6 @@ test "CLI nonterminal progress preserves distinct deferred labels without duplic
 
     try deps.push_tool_lifecycle(deps.ctx, .{ .authoritative_started = .{
         .id = .{ .turn_id = 8, .call_id = "legacy_retry_write" },
-        .reconciles_provisional_call_id = null,
         .tool_name = "write_file",
         .activity_kind = .write,
     } });

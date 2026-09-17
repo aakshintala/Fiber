@@ -1798,7 +1798,6 @@ fn queueToolStart(
 ) !void {
     try queueLifecycle(app, .{ .authoritative_started = .{
         .id = .{ .turn_id = turn_id, .call_id = call_id },
-        .reconciles_provisional_call_id = null,
         .tool_name = tool_name,
         .activity_kind = if (std.mem.eql(u8, tool_name, "read_file"))
             .read
@@ -2490,7 +2489,6 @@ test "core.app_worker_runtime syncState preserves footer until cancelled tool te
     const lifecycle_id = types.ToolLifecycleId{ .turn_id = 1, .call_id = "command" };
     _ = try app.shell.applyToolLifecycle(std.testing.allocator, .{ .authoritative_started = .{
         .id = lifecycle_id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
     } });

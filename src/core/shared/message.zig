@@ -137,7 +137,7 @@ pub fn freeToolCalls(alloc: std.mem.Allocator, tool_calls: []const ToolCall) voi
         alloc.free(call.id);
         alloc.free(call.name);
         alloc.free(call.arguments_json);
-        if (call.provisional_id) |provisional_id| alloc.free(provisional_id);
+        if (call.provider_id) |provider_id| alloc.free(provider_id);
         if (call.provider_result) |provider_result| alloc.free(provider_result);
     }
     if (tool_calls.len > 0) alloc.free(tool_calls);
