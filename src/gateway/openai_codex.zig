@@ -326,15 +326,15 @@ const EventBridge = struct {
         return @ptrCast(@alignCast(raw));
     }
 
-    fn content(raw: *anyopaque, item_id: []const u8, chunk: []const u8) void {
-        sink(raw).emit(.{ .content_delta = .{ .item_id = item_id, .chunk = chunk } });
+    fn content(raw: *anyopaque, item_id: []const u8, chunk: []const u8, output_index: ?i64) void {
+        sink(raw).emit(.{ .content_delta = .{ .item_id = item_id, .chunk = chunk, .output_index = output_index } });
     }
 
-    fn reasoning(raw: *anyopaque, item_id: []const u8, chunk: []const u8) void {
-        sink(raw).emit(.{ .reasoning_delta = .{ .item_id = item_id, .chunk = chunk } });
+    fn reasoning(raw: *anyopaque, item_id: []const u8, chunk: []const u8, output_index: ?i64) void {
+        sink(raw).emit(.{ .reasoning_delta = .{ .item_id = item_id, .chunk = chunk, .output_index = output_index } });
     }
 
-    fn toolInput(raw: *anyopaque, _: []const u8, chunk: []const u8) void {
+    fn toolInput(raw: *anyopaque, _: []const u8, chunk: []const u8, _: ?i64) void {
         sink(raw).emit(.{ .tool_input_delta = chunk });
     }
 
@@ -923,12 +923,12 @@ test "OpenAI Codex SSE maps text reasoning tools and usage" {
         reasoning_ids: std.ArrayList([]const u8) = .empty,
         saw_read_file: bool = false,
 
-        fn contentChunk(raw: *anyopaque, item_id: []const u8, chunk: []const u8) void {
+        fn contentChunk(raw: *anyopaque, item_id: []const u8, chunk: []const u8, _: ?i64) void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.content.appendSlice(std.testing.allocator, chunk) catch unreachable;
             self.content_ids.append(std.testing.allocator, item_id) catch unreachable;
         }
-        fn reasoningChunk(raw: *anyopaque, item_id: []const u8, chunk: []const u8) void {
+        fn reasoningChunk(raw: *anyopaque, item_id: []const u8, chunk: []const u8, _: ?i64) void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.reasoning.appendSlice(std.testing.allocator, chunk) catch unreachable;
             self.reasoning_ids.append(std.testing.allocator, item_id) catch unreachable;
@@ -987,7 +987,7 @@ fn consumeOpenAICodexTestSse(sse_text: []const u8, limits: CodexLimits) !types.M
         &reader,
         &callback_context,
         struct {
-            fn ignore(_: *anyopaque, _: []const u8, _: []const u8) void {}
+            fn ignore(_: *anyopaque, _: []const u8, _: []const u8, _: ?i64) void {}
         }.ignore,
         null,
         null,

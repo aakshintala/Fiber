@@ -2269,15 +2269,23 @@ pub fn freeCompletedToolNames(alloc: std.mem.Allocator, items: [][]u8) void {
     if (items.len > 0) alloc.free(items);
 }
 
+/// Fiber-minted item ids of an interrupted stream, borrowed. Persisted on
+/// the interrupted turn so the identities survive session reopen and resume.
+/// Null and empty mean the stream minted nothing before interrupting.
+pub const InterruptedItemIds = struct {
+    message: ?[]const u8 = null,
+    reasoning: []const []const u8 = &.{},
+};
+
 /// Frees an owned const-typed item id slice (turn reasoning ids, completion
 /// reasoning ids borrowed into turns).
-fn freeItemIdSlice(alloc: std.mem.Allocator, items: []const []const u8) void {
+pub fn freeItemIdSlice(alloc: std.mem.Allocator, items: []const []const u8) void {
     for (items) |item| alloc.free(@constCast(item));
     if (items.len > 0) alloc.free(@constCast(items));
 }
 
 /// Dupes a const-typed item id slice. The caller owns the result.
-fn dupeItemIdSlice(alloc: std.mem.Allocator, items: []const []const u8) ![]const []const u8 {
+pub fn dupeItemIdSlice(alloc: std.mem.Allocator, items: []const []const u8) ![]const []const u8 {
     if (items.len == 0) return &.{};
     const copy = try alloc.alloc([]const u8, items.len);
     errdefer alloc.free(copy);

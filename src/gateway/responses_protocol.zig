@@ -362,7 +362,9 @@ pub const Reducer = struct {
             const delta = stringField(parsed.value.object, "delta") orelse return false;
             self.saw_content_delta = true;
             const item_id = try self.ensureMessageItemId(alloc);
-            callbacks.on_content(callbacks.context, item_id, delta);
+            // The message id is stream-scoped first-wins, so the runtime
+            // needs no index for content.
+            callbacks.on_content(callbacks.context, item_id, delta, null);
             try appendCaptured(alloc, &self.content, delta, content_capture_limit);
         } else if (std.mem.eql(u8, event_type, "response.reasoning_summary_text.delta") or
             std.mem.eql(u8, event_type, "response.reasoning_text.delta"))
@@ -370,17 +372,17 @@ pub const Reducer = struct {
             const delta = stringField(parsed.value.object, "delta") orelse return false;
             const output_index = integerField(parsed.value.object, "output_index");
             const item_id = try self.reasoningIdForDelta(alloc, output_index);
-            if (callbacks.on_reasoning) |callback| callback(callbacks.context, item_id, delta);
+            if (callbacks.on_reasoning) |callback| callback(callbacks.context, item_id, delta, output_index);
         } else if (std.mem.eql(u8, event_type, "response.reasoning_summary_part.done")) {
             const output_index = integerField(parsed.value.object, "output_index");
             const item_id = try self.reasoningIdForDelta(alloc, output_index);
-            if (callbacks.on_reasoning) |callback| callback(callbacks.context, item_id, "\n\n");
+            if (callbacks.on_reasoning) |callback| callback(callbacks.context, item_id, "\n\n", output_index);
         } else if (std.mem.eql(u8, event_type, "response.function_call_arguments.delta")) {
             const output_index = integerField(parsed.value.object, "output_index") orelse return false;
             const delta = stringField(parsed.value.object, "delta") orelse return false;
             const index = findTool(self.tools.items, output_index) orelse return false;
             try appendToolArguments(alloc, &self.tools.items[index].arguments, delta, limits.tool_arguments_bytes);
-            if (callbacks.on_tool_input) |callback| callback(callbacks.context, "", delta);
+            if (callbacks.on_tool_input) |callback| callback(callbacks.context, "", delta, output_index);
         } else if (std.mem.eql(u8, event_type, "response.function_call_arguments.done")) {
             const output_index = integerField(parsed.value.object, "output_index") orelse return false;
             const arguments = stringField(parsed.value.object, "arguments") orelse return false;
@@ -389,7 +391,7 @@ pub const Reducer = struct {
             if (std.mem.startsWith(u8, arguments, self.tools.items[index].arguments.items)) {
                 const suffix = arguments[previous_len..];
                 try appendToolArguments(alloc, &self.tools.items[index].arguments, suffix, limits.tool_arguments_bytes);
-                if (suffix.len > 0) if (callbacks.on_tool_input) |callback| callback(callbacks.context, "", suffix);
+                if (suffix.len > 0) if (callbacks.on_tool_input) |callback| callback(callbacks.context, "", suffix, output_index);
             } else {
                 self.tools.items[index].arguments.clearRetainingCapacity();
                 try appendToolArguments(alloc, &self.tools.items[index].arguments, arguments, limits.tool_arguments_bytes);
@@ -440,7 +442,7 @@ pub const Reducer = struct {
                         if (part != .object) continue;
                         const text = stringField(part.object, "text") orelse
                             stringField(part.object, "refusal") orelse continue;
-                        callbacks.on_content(callbacks.context, item_id, text);
+                        callbacks.on_content(callbacks.context, item_id, text, null);
                         try appendCaptured(alloc, &self.content, text, content_capture_limit);
                     }
                 };
@@ -564,15 +566,17 @@ pub const Reducer = struct {
             tool.name = &.{};
             initialized += 1;
         }
-        const generation_id = self.generation_id;
-        self.generation_id = null;
-        const message_item_id = self.message_item_id;
-        self.message_item_id = null;
+        // Allocate before taking ownership of the ids below: if this
+        // fails the reducer still owns everything and deinit frees it.
         var owned_reasoning: [][]const u8 = if (self.reasoning_items.items.len > 0)
             try alloc.alloc([]const u8, self.reasoning_items.items.len)
         else
             &.{};
         errdefer if (owned_reasoning.len > 0) alloc.free(owned_reasoning);
+        const generation_id = self.generation_id;
+        self.generation_id = null;
+        const message_item_id = self.message_item_id;
+        self.message_item_id = null;
         for (self.reasoning_items.items, 0..) |*reasoning, index| {
             owned_reasoning[index] = reasoning.item_id;
             reasoning.item_id = &.{};

@@ -24,6 +24,7 @@ const FakeAgentRuntimeDeps = test_support.FakeAgentRuntimeDeps;
 const PromptFixture = test_support.PromptFixture;
 
 const runFakePrompt = test_support.runFakePrompt;
+const session_codec = @import("../../../session/session_codec.zig");
 const expectBodyContains = test_support.expectBodyContains;
 const expectBodyNotContains = test_support.expectBodyNotContains;
 const expectBodyContainsInOrder = test_support.expectBodyContainsInOrder;
@@ -173,6 +174,102 @@ test "processQueuedPrompt persists partial-text cancellation as interrupted once
     try std.testing.expect(hooks.history_turns.items[0] == .interrupted);
     try std.testing.expectEqualStrings("Partial answer", hooks.history_turns.items[0].interrupted.assistant.?);
     try std.testing.expect(hooks.history_turns.items[0].interrupted.tool_call == null);
+}
+
+test "interrupted stream keeps its item ids across persist, reopen, and resume" {
+    const alloc = std.testing.allocator;
+    // Phase 1: stream one reasoning block and message text, then cancel.
+    const chunks = [_][]const u8{ "Partial answer", " more" };
+    const reasoning = [_][]const u8{ "thinking", " harder" };
+    const completions = [_]FakeCompletion{.{ .chunks = &chunks, .reasoning_chunks = &reasoning, .cancel_after_chunks = true }};
+    var gateway = FakeGateway.init(alloc, &completions);
+    defer gateway.deinit();
+    var hooks = FakeAgentRuntimeDeps.init(alloc);
+    defer hooks.deinit();
+    var fixture = PromptFixture{};
+
+    try runFakePrompt(&gateway, &hooks, fixture.config(), fixture.job());
+
+    try std.testing.expectEqual(@as(usize, 1), hooks.history_turns.items.len);
+    try std.testing.expect(hooks.history_turns.items[0] == .interrupted);
+    const interrupted = hooks.history_turns.items[0].interrupted;
+    // The interrupted turn persists the REAL stream-minted ids, not null.
+    const message_id = interrupted.assistant_item_id orelse return error.TestMissingItemId;
+    try std.testing.expectEqual(@as(usize, 1), interrupted.reasoning_item_ids.len);
+    const reasoning_id = interrupted.reasoning_item_ids[0];
+    try std.testing.expect(!std.mem.eql(u8, message_id, reasoning_id));
+    const partial_text = try alloc.dupe(u8, interrupted.assistant.?);
+    defer alloc.free(partial_text);
+
+    // Phase 2: persist and reopen through the real session codec.
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try session_codec.writeHistoryTurn(&encoded.writer, hooks.history_turns.items[0]);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, encoded.written(), .{});
+    defer parsed.deinit();
+    const reopened = try session_codec.parseHistoryTurn(alloc, parsed.value);
+    defer types.freeHistoryTurn(alloc, reopened);
+    try std.testing.expectEqualStrings(message_id, reopened.interrupted.assistant_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), reopened.interrupted.reasoning_item_ids.len);
+    try std.testing.expectEqualStrings(reasoning_id, reopened.interrupted.reasoning_item_ids[0]);
+
+    // Phase 3: resume from a checkpoint on the interrupted turn's ids,
+    // round-tripped through the checkpoint codec like a session reopen.
+    const checkpoint_reasoning = [_]session_codec.CheckpointReasoningId{
+        .{ .output_index = 0, .item_id = @constCast(reasoning_id) },
+    };
+    const checkpoint_in = session_codec.RecoveryCheckpoint{
+        .turn_id = 1,
+        .user = .{ .text = @constCast("user prompt") },
+        .assistant_source = partial_text,
+        .assistant_message_id = @constCast(message_id),
+        .assistant_reasoning_ids = @constCast(checkpoint_reasoning[0..]),
+        .cause = .response_interrupted,
+        .action = .retrying_request,
+        .tool_state = .none,
+        .authority = .{ .provider = .codex, .model = @constCast("anthropic/claude-opus-4.6") },
+        .requested_fast_mode = false,
+        .fast_mode = false,
+        .max_provider_attempts = 8,
+        // A fresh-attempt resume: no outstanding reservation, so the
+        // credential-authority gate (a billing guard orthogonal to item
+        // identity) admits it.
+        .consumed_provider_attempts = 0,
+        .outstanding_reservation = false,
+    };
+    var checkpoint_out: std.Io.Writer.Allocating = .init(alloc);
+    defer checkpoint_out.deinit();
+    try session_codec.writeRecoveryCheckpoint(&checkpoint_out.writer, checkpoint_in);
+    var checkpoint_json = try std.json.parseFromSlice(std.json.Value, alloc, checkpoint_out.written(), .{});
+    defer checkpoint_json.deinit();
+    // Borrowed by the resumed job below; freed after the run.
+    var checkpoint = try session_codec.parseRecoveryCheckpoint(alloc, checkpoint_json.value);
+    defer checkpoint.deinit(alloc);
+
+    // Phase 4: the resumed run finishes the turn; the completed turn
+    // reuses both ids instead of minting new identities.
+    const resume_chunks = [_][]const u8{" resumed"};
+    const resume_completions = [_]FakeCompletion{.{ .chunks = &resume_chunks, .content = "Partial answer more resumed" }};
+    var resume_gateway = FakeGateway.init(alloc, &resume_completions);
+    defer resume_gateway.deinit();
+    var resume_hooks = FakeAgentRuntimeDeps.init(alloc);
+    defer resume_hooks.deinit();
+    var resume_fixture = PromptFixture{};
+    var reopened_history = [_]HistoryTurn{try types.dupeHistoryTurn(alloc, reopened)};
+    defer types.freeHistoryTurn(alloc, reopened_history[0]);
+    var job2 = resume_fixture.job();
+    job2.history = reopened_history[0..];
+    job2.recovery_checkpoint = checkpoint;
+    try runFakePrompt(&resume_gateway, &resume_hooks, resume_fixture.config(), job2);
+
+    var completed: ?HistoryTurn = null;
+    for (resume_hooks.history_turns.items) |turn| {
+        if (turn == .assistant) completed = turn;
+    }
+    const final_turn = completed orelse return error.TestMissingCompletedTurn;
+    try std.testing.expectEqualStrings(message_id, final_turn.assistant.assistant_item_id.?);
+    try std.testing.expectEqual(@as(usize, 1), final_turn.assistant.reasoning_item_ids.len);
+    try std.testing.expectEqualStrings(reasoning_id, final_turn.assistant.reasoning_item_ids[0]);
 }
 
 test "streamed presentation preserves raw partial through cancellation" {

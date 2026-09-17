@@ -30,6 +30,7 @@ pub fn persistInterruptedTurnOnce(
     current_turn_messages: []const types.ChatMessage,
     retained_candidate: ?[]const u8,
     terminal_materializing: *bool,
+    item_ids: types.InterruptedItemIds,
 ) !void {
     return persistInterruptedTurnWithPresentation(
         hooks,
@@ -44,6 +45,7 @@ pub fn persistInterruptedTurnOnce(
         retained_candidate,
         terminal_materializing,
         null,
+        item_ids,
     );
 }
 
@@ -60,6 +62,7 @@ pub fn persistInterruptedCommandTurnOnce(
     retained_candidate: ?[]const u8,
     terminal_materializing: *bool,
     cancelled_command: ?types.CancelledCommandPresentation,
+    item_ids: types.InterruptedItemIds,
 ) !void {
     return persistInterruptedTurnWithPresentation(
         hooks,
@@ -74,6 +77,7 @@ pub fn persistInterruptedCommandTurnOnce(
         retained_candidate,
         terminal_materializing,
         cancelled_command,
+        item_ids,
     );
 }
 
@@ -90,6 +94,7 @@ fn persistInterruptedTurnWithPresentation(
     retained_candidate: ?[]const u8,
     terminal_materializing: *bool,
     cancelled_command: ?types.CancelledCommandPresentation,
+    item_ids: types.InterruptedItemIds,
 ) !void {
     if (persisted.*) return;
 
@@ -111,6 +116,13 @@ fn persistInterruptedTurnWithPresentation(
     defer types.freeExecutionMemory(std.heap.c_allocator, execution);
     terminal_materializing.* = true;
 
+    // The interrupted stream's identities persist with the turn, so resume
+    // reuses them instead of minting new ones. Borrowed below, freed here.
+    const assistant_item_id = if (item_ids.message) |id| try std.heap.c_allocator.dupe(u8, id) else null;
+    defer if (assistant_item_id) |id| std.heap.c_allocator.free(id);
+    const reasoning_item_ids = try types.dupeItemIdSlice(std.heap.c_allocator, item_ids.reasoning);
+    defer types.freeItemIdSlice(std.heap.c_allocator, reasoning_item_ids);
+
     if (retained_candidate) |candidate| {
         const assistant = try lifecycle_hooks.prompt.joinVisibleSegments(
             std.heap.c_allocator,
@@ -121,6 +133,8 @@ fn persistInterruptedTurnWithPresentation(
         const turn: HistoryTurn = .{ .interrupted = .{
             .user = .{ .text = job.prompt, .images = job.images },
             .assistant = @constCast(assistant),
+            .assistant_item_id = assistant_item_id,
+            .reasoning_item_ids = reasoning_item_ids,
             .tool_call = durable_active_tool_call,
             .completed_tool_names = completed_tool_names,
             .execution = execution,
@@ -162,6 +176,8 @@ fn persistInterruptedTurnWithPresentation(
     const turn: HistoryTurn = .{ .interrupted = .{
         .user = .{ .text = job.prompt, .images = job.images },
         .assistant = if (partial_assistant) |text| if (text.len > 0) @constCast(text) else null else null,
+        .assistant_item_id = assistant_item_id,
+        .reasoning_item_ids = reasoning_item_ids,
         .tool_call = durable_active_tool_call,
         .completed_tool_names = completed_tool_names,
         .execution = execution,
@@ -195,6 +211,7 @@ pub fn persistFailedPartialTurnOnce(
     trace_ctx: TraceContext,
     current_turn_messages: []const types.ChatMessage,
     terminal_materializing: *bool,
+    item_ids: types.InterruptedItemIds,
 ) !void {
     if (persisted.*) return;
     if (partial_assistant.len == 0) return;
@@ -207,9 +224,16 @@ pub fn persistFailedPartialTurnOnce(
     defer types.freeExecutionMemory(std.heap.c_allocator, execution);
     terminal_materializing.* = true;
 
+    const assistant_item_id = if (item_ids.message) |id| try std.heap.c_allocator.dupe(u8, id) else null;
+    defer if (assistant_item_id) |id| std.heap.c_allocator.free(id);
+    const reasoning_item_ids = try types.dupeItemIdSlice(std.heap.c_allocator, item_ids.reasoning);
+    defer types.freeItemIdSlice(std.heap.c_allocator, reasoning_item_ids);
+
     const turn: HistoryTurn = .{ .interrupted = .{
         .user = .{ .text = job.prompt, .images = job.images },
         .assistant = @constCast(partial_assistant),
+        .assistant_item_id = assistant_item_id,
+        .reasoning_item_ids = reasoning_item_ids,
         .execution = execution,
         .terminal_reason = .failed,
     } };

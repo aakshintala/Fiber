@@ -14,8 +14,10 @@ const Allocator = std.mem.Allocator;
 /// chunks carry the Fiber-minted item id of their message or reasoning block
 /// beside the bytes, so chunk text stays byte-identical while every chunk is
 /// attributable to its item. An empty id means the item is not yet
-/// identified; the runtime mints one on arrival.
-pub const StreamCallback = *const fn (ctx: *anyopaque, item_id: []const u8, chunk: []const u8) void;
+/// identified; the runtime mints one on arrival. The output index keys
+/// unidentified reasoning chunks to their block, so consecutive chunks from
+/// one block share one minted id.
+pub const StreamCallback = *const fn (ctx: *anyopaque, item_id: []const u8, chunk: []const u8, output_index: ?i64) void;
 pub const ToolStartCallback = *const fn (
     ctx: *anyopaque,
     tool_id: []const u8,
@@ -27,10 +29,12 @@ pub const Event = union(enum) {
     content_delta: struct {
         item_id: []const u8,
         chunk: []const u8,
+        output_index: ?i64 = null,
     },
     reasoning_delta: struct {
         item_id: []const u8,
         chunk: []const u8,
+        output_index: ?i64 = null,
     },
     tool_started: struct {
         id: []const u8,
