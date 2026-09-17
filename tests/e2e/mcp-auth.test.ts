@@ -943,6 +943,114 @@ describe("MCP remote authentication lifecycle", () => {
     expect(auth.revocations).toBe(2);
   }, 30_000);
 
+  test("fixed oauth.callback_port binds the configured loopback port", async () => {
+    upstream = startModernMcpHttpFixture("json");
+    auth = startAuthFixture(upstream.url);
+    const root = createRoot(auth);
+    const probe = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("probe");
+      },
+    });
+    const fixedPort = probe.port;
+    probe.stop(true);
+    const profilePath = join(root.home, ".fiber", "mcp.json");
+    const profile = JSON.parse(readFileSync(profilePath, "utf8"));
+    profile.mcp.fixture.oauth.callback_port = fixedPort;
+    writeFileSync(profilePath, JSON.stringify(profile));
+
+    const authenticated = await runFx(["mcp", "login", "fixture"], {
+      cwd: root.workspace,
+      env: {
+        ...baseEnv(root),
+      },
+      timeoutMs: 20_000,
+    });
+    expect(authenticated.code, authenticated.stderr).toBe(0);
+    expect(authenticated.stderr).toBe("");
+    expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
+    expect(auth.authorizationRequests).toBe(1);
+    expect(auth.tokenExchanges).toBe(1);
+    expect(existsSync(root.openLog)).toBe(true);
+    const authorizationUrl = new URL(
+      readFileSync(root.openLog, "utf8").trim(),
+    );
+    const redirectUri = new URL(
+      authorizationUrl.searchParams.get("redirect_uri")!,
+    );
+    expect(redirectUri.hostname).toBe("127.0.0.1");
+    expect(redirectUri.port).toBe(String(fixedPort));
+    expect(redirectUri.pathname).toBe("/callback");
+    expect(
+      await waitForFileText(root.callbackLog, "Authorization complete", 5_000),
+    ).toBe(true);
+  }, 30_000);
+
+  test("authorization metadata issuer with a trailing slash completes", async () => {
+    upstream = startModernMcpHttpFixture("json");
+    auth = startAuthFixture(upstream.url, {
+      authorizationServerTrailingSlash: true,
+    });
+    const root = createRoot(auth);
+
+    const authenticated = await runFx(["mcp", "login", "fixture"], {
+      cwd: root.workspace,
+      env: {
+        ...baseEnv(root),
+      },
+      timeoutMs: 20_000,
+    });
+    // The CLI maps the typed issuer_mismatch outcome
+    // (src/core/mcp/mcp_auth.zig) to McpAuthorizationIssuerMismatch, so a
+    // clean success proves it was not produced.
+    expect(authenticated.code, authenticated.stderr).toBe(0);
+    expect(authenticated.stderr).toBe("");
+    expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
+    expect(authenticated.stderr).not.toContain(
+      "McpAuthorizationIssuerMismatch",
+    );
+    expect(auth.authorizationRequests).toBe(1);
+    expect(auth.tokenExchanges).toBe(1);
+  }, 30_000);
+
+  test("occupied oauth.callback_port fails closed instead of choosing another port", async () => {
+    upstream = startModernMcpHttpFixture("json");
+    auth = startAuthFixture(upstream.url);
+    const root = createRoot(auth);
+    const blocker = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("blocked");
+      },
+    });
+    const occupiedPort = blocker.port;
+    const profilePath = join(root.home, ".fiber", "mcp.json");
+    const profile = JSON.parse(readFileSync(profilePath, "utf8"));
+    profile.mcp.fixture.oauth.callback_port = occupiedPort;
+    writeFileSync(profilePath, JSON.stringify(profile));
+
+    const attempted = await runFx(["mcp", "login", "fixture"], {
+      cwd: root.workspace,
+      env: {
+        ...baseEnv(root),
+      },
+      timeoutMs: 20_000,
+    });
+    blocker.stop(true);
+    expect(attempted.code).not.toBe(0);
+    expect(attempted.stderr).toContain("McpOAuthCallbackPortInUse");
+    expect(attempted.stdout).not.toContain(
+      "Authenticated MCP server 'fixture'",
+    );
+    // Fail-closed before opening the authorization URL: no silent fallback
+    // to another port. The TUI renders this error with the guidance at
+    // src/core/app/app_commands.zig:708.
+    expect(auth.authorizationRequests).toBe(0);
+    expect(auth.tokenExchanges).toBe(0);
+    expect(existsSync(root.openLog)).toBe(false);
+  }, 30_000);
+
   test("rejected stored credentials report required auth without discovery fallback", async () => {
     upstream = startModernMcpHttpFixture("json");
     auth = startAuthFixture(upstream.url, {
