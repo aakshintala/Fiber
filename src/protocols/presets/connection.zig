@@ -305,7 +305,7 @@ pub fn parseSetInto(
 /// Parses one connection object with the same strict keys whether the JSON
 /// came from an embedded preset or user settings. Merges the parsed fields
 /// over `target`, so callers layer overrides by parsing into the preset.
-pub fn parseInto(
+fn parseInto(
     alloc: Allocator,
     value: std.json.Value,
     name: []const u8,
