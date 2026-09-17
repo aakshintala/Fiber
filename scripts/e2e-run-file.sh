@@ -21,7 +21,7 @@ mkdir -p "$lane_dir"
 # A tmux socket must stay under the 104-byte sun_path limit, and the isolated
 # launch path appends a ~31-char socket name under <dir>/tmux-<uid>/. TMPDIR on
 # macOS is a ~48-char /var/folders path, which overruns; /tmp is the same choice
-# terminal-host.test.ts makes for the same reason.
+# terminal-host-helpers.ts makes for the same reason.
 tmux_tmp_dir="$(mktemp -d /tmp/fe2e-XXXXXX)"
 junit_report="${lane_dir}/junit.xml"
 

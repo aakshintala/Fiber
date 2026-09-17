@@ -367,6 +367,8 @@ pub const Backend = struct {
             backend_identity,
         );
         errdefer paths.deinit(alloc);
+        // Tests read this to scope leak checks when startup fails before the record exists.
+        debug_trace.logf("terminal_host", "tmux backend starting backend={s}", .{backend_identity});
         cleanupFiles(&paths);
         try writeLauncherConfig(alloc, paths.config, config);
         errdefer cleanupFiles(&paths);
