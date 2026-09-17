@@ -203,40 +203,6 @@ pub fn isToolReviewHeldOutput(output: []const u8) bool {
     return isToolErrorOutputType(output, "tool_review_held");
 }
 
-pub fn toolPermissionDenialReason(output: []const u8) ?types.ToolPermissionDenialReason {
-    var parsed = std.json.parseFromSlice(std.json.Value, std.heap.c_allocator, output, .{}) catch return null;
-    defer parsed.deinit();
-
-    const root = switch (parsed.value) {
-        .object => |object| object,
-        else => return null,
-    };
-    const error_value = switch (root.get("error") orelse return null) {
-        .object => |object| object,
-        else => return null,
-    };
-    const type_value = switch (error_value.get("type") orelse return null) {
-        .string => |value| value,
-        else => return null,
-    };
-    const review_held = std.mem.eql(u8, type_value, "tool_review_held");
-    if (!review_held and !std.mem.eql(u8, type_value, "tool_permission_denied")) return null;
-    const reason_value = switch (error_value.get("reason") orelse return null) {
-        .string => |value| value,
-        else => return null,
-    };
-    const reason = std.meta.stringToEnum(
-        types.ToolPermissionDenialReason,
-        reason_value,
-    ) orelse return null;
-    const review_reason = switch (reason) {
-        .review_caution, .review_evidence_incomplete, .review_unavailable => true,
-        .user_denied, .auto_denied, .policy_denied, .permission_required => false,
-    };
-    if (review_held != review_reason) return null;
-    return reason;
-}
-
 pub fn toolExecutionFailureJson(alloc: Allocator, failure: ExecutionFailure) Allocator.Error![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
@@ -445,29 +411,11 @@ test "review hold JSON preserves typed reasons apart from permission denial" {
     try std.testing.expect(std.mem.find(u8, caution, "approval_request_id") == null);
     try std.testing.expect(isToolReviewHeldOutput(caution));
     try std.testing.expect(!isToolPermissionDeniedOutput(caution));
-    try std.testing.expectEqual(
-        @as(?types.ToolPermissionDenialReason, .review_caution),
-        toolPermissionDenialReason(caution),
-    );
     try std.testing.expect(std.mem.find(u8, unavailable, "\"reason\":\"review_unavailable\"") != null);
     try std.testing.expect(std.mem.find(u8, unavailable, "\"advice\"") == null);
     try std.testing.expect(isToolReviewHeldOutput(unavailable));
-    try std.testing.expectEqual(
-        @as(?types.ToolPermissionDenialReason, .review_unavailable),
-        toolPermissionDenialReason(unavailable),
-    );
     try std.testing.expect(std.mem.find(u8, incomplete, "\"reason\":\"review_evidence_incomplete\"") != null);
     try std.testing.expect(std.mem.find(u8, incomplete, "Do not retry unchanged") != null);
-    try std.testing.expectEqual(
-        @as(?types.ToolPermissionDenialReason, .review_evidence_incomplete),
-        toolPermissionDenialReason(incomplete),
-    );
-    try std.testing.expect(toolPermissionDenialReason(
-        "{\"error\":{\"type\":\"tool_review_held\",\"reason\":\"auto_denied\"}}",
-    ) == null);
-    try std.testing.expect(toolPermissionDenialReason(
-        "{\"error\":{\"type\":\"tool_permission_denied\",\"reason\":\"review_caution\"}}",
-    ) == null);
 }
 
 test "tool permission denied JSON explains policy and headless blockers" {
@@ -497,12 +445,6 @@ test "tool permission denied JSON explains policy and headless blockers" {
         "The tool did not run. This is a legacy automatic denial; choose a materially different safe action or explain the blocker.",
         auto_error.get("suggestion").?.string,
     );
-    try std.testing.expectEqual(
-        types.ToolPermissionDenialReason.auto_denied,
-        toolPermissionDenialReason(auto_payload).?,
-    );
-    try std.testing.expect(toolPermissionDenialReason("not json") == null);
-    try std.testing.expect(toolPermissionDenialReason("{\"error\":{\"type\":\"different\",\"reason\":\"auto_denied\"}}") == null);
 
     const policy_error = policy.value.object.get("error").?.object;
     try std.testing.expectEqualStrings("Network or browser access was denied by configured policy", policy_error.get("message").?.string);
