@@ -581,12 +581,12 @@ const AuthorizationMetadataOutcome = union(enum) {
     issuer_mismatch: IssuerMismatch,
 };
 
-/// Root-form issuer comparison shared by metadata validation and the
-/// credential store. `scheme://host` and `scheme://host/` are the same
-/// issuer; any string carrying a path (anything after the host) compares
-/// exactly, so `https://host/path` vs `https://host/path/`, `//` vs `/`,
-/// and all other mismatches fail closed. Authorization-response issuers
-/// are intentionally not compared this way.
+/// Root-form issuer comparison shared by metadata validation,
+/// authorization-response validation, and the credential store.
+/// `scheme://host` and `scheme://host/` are the same issuer; any string
+/// carrying a path (anything after the host) compares exactly, so
+/// `https://host/path` vs `https://host/path/`, `//` vs `/`, and all
+/// other mismatches fail closed.
 /// Reimplemented from upstream vercel-labs/fx.
 pub fn issuersEqual(a: []const u8, b: []const u8) bool {
     if (std.mem.eql(u8, a, b)) return true;
@@ -711,7 +711,7 @@ pub fn validateAuthorizationResponse(
         return error.AuthorizationResponseIssuerMissing;
     }
     if (response.issuer) |issuer| {
-        if (!std.mem.eql(u8, expected_issuer, issuer)) {
+        if (!issuersEqual(expected_issuer, issuer)) {
             return error.AuthorizationResponseIssuerMismatch;
         }
     }
@@ -2558,7 +2558,7 @@ test "scope policy unions prior and challenged scopes without duplicates" {
     );
 }
 
-test "authorization response uses exact state and issuer comparison" {
+test "authorization response tolerates one root trailing slash, else fails closed" {
     const alloc = std.testing.allocator;
     var response = try parseAuthorizationRedirect(
         alloc,
@@ -2571,11 +2571,28 @@ test "authorization response uses exact state and issuer comparison" {
         true,
         response,
     );
+    // Exactly one root-form trailing slash is the same issuer.
+    try validateAuthorizationResponse(
+        "state-1",
+        "https://login.example.com/",
+        true,
+        response,
+    );
+    // Any other mismatch still fails closed.
     try std.testing.expectError(
         error.AuthorizationResponseIssuerMismatch,
         validateAuthorizationResponse(
             "state-1",
-            "https://login.example.com/",
+            "https://other.example.com",
+            true,
+            response,
+        ),
+    );
+    try std.testing.expectError(
+        error.AuthorizationResponseIssuerMismatch,
+        validateAuthorizationResponse(
+            "state-1",
+            "https://login.example.com//",
             true,
             response,
         ),

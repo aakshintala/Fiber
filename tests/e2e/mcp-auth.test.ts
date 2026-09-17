@@ -13,7 +13,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir, networkInterfaces, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { runFx } from "./eval-helpers";
@@ -195,6 +195,8 @@ function startAuthFixture(
     failFeatureRefreshAfterRotation?: boolean;
     rejectResourceTemplateAuth?: boolean;
     authorizationServerTrailingSlash?: boolean;
+    authorizationMetadataTrailingSlash?: boolean;
+    authorizationResponseTrailingSlash?: boolean;
     authorizationResponseIssuer?: string;
     omitScopes?: boolean;
     rejectDiscoveryWithoutChallenge?: boolean;
@@ -423,7 +425,9 @@ function startAuthFixture(
       }
       if (url.pathname === "/.well-known/oauth-authorization-server") {
         const metadata = {
-          issuer: origin,
+          issuer: options.authorizationMetadataTrailingSlash
+            ? `${origin}/`
+            : origin,
           authorization_endpoint: `${origin}/authorize`,
           token_endpoint: `${origin}/token`,
           revocation_endpoint: `${origin}/revoke`,
@@ -458,7 +462,9 @@ function startAuthFixture(
         );
         redirect.searchParams.set(
           "iss",
-          options.authorizationResponseIssuer ?? origin,
+          options.authorizationResponseTrailingSlash
+            ? `${origin}/`
+            : (options.authorizationResponseIssuer ?? origin),
         );
         return Response.redirect(redirect, 302);
       }
@@ -946,7 +952,9 @@ describe("MCP remote authentication lifecycle", () => {
   test("fixed oauth.callback_port binds the configured loopback port", async () => {
     upstream = startModernMcpHttpFixture("json");
     auth = startAuthFixture(upstream.url);
-    const root = createRoot(auth);
+    // No automatic authorization follow: the test drives the callback
+    // itself so the bind probes below run while the listener is alive.
+    const root = createRoot(auth, true, "http", auth.url, false);
     const probe = Bun.serve({
       port: 0,
       fetch() {
@@ -960,19 +968,14 @@ describe("MCP remote authentication lifecycle", () => {
     profile.mcp.fixture.oauth.callback_port = fixedPort;
     writeFileSync(profilePath, JSON.stringify(profile));
 
-    const authenticated = await runFx(["mcp", "login", "fixture"], {
+    const pending = runFx(["mcp", "login", "fixture"], {
       cwd: root.workspace,
       env: {
         ...baseEnv(root),
       },
       timeoutMs: 20_000,
     });
-    expect(authenticated.code, authenticated.stderr).toBe(0);
-    expect(authenticated.stderr).toBe("");
-    expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
-    expect(auth.authorizationRequests).toBe(1);
-    expect(auth.tokenExchanges).toBe(1);
-    expect(existsSync(root.openLog)).toBe(true);
+    expect(await waitForFile(root.openLog, 5_000)).toBe(true);
     const authorizationUrl = new URL(
       readFileSync(root.openLog, "utf8").trim(),
     );
@@ -982,12 +985,75 @@ describe("MCP remote authentication lifecycle", () => {
     expect(redirectUri.hostname).toBe("127.0.0.1");
     expect(redirectUri.port).toBe(String(fixedPort));
     expect(redirectUri.pathname).toBe("/callback");
+    // Liveness control: the loopback port must be held right now, so the
+    // external bind below is meaningful and not racing a dead listener.
+    let loopbackRebound = false;
+    try {
+      const duplicate = Bun.serve({
+        hostname: "127.0.0.1",
+        port: fixedPort,
+        fetch() {
+          return new Response("duplicate");
+        },
+      });
+      duplicate.stop(true);
+      loopbackRebound = true;
+    } catch {
+      // Expected: the callback listener holds 127.0.0.1:fixedPort.
+    }
+    expect(loopbackRebound).toBe(false);
+    // Independent of the advertised URI: the same port must still be free
+    // on every other local address. A wildcard-bound socket would claim
+    // it too, so a successful bind proves the listener is loopback-only.
+    const extIp = Object.values(networkInterfaces())
+      .flat()
+      .find((info) => info?.family === "IPv4" && !info.internal)?.address;
+    expect(extIp).toBeDefined();
+    let externalBindError: unknown = null;
+    let external: ReturnType<typeof Bun.serve> | null = null;
+    try {
+      external = Bun.serve({
+        hostname: extIp!,
+        port: fixedPort,
+        fetch() {
+          return new Response("external");
+        },
+      });
+    } catch (err) {
+      externalBindError = err;
+    }
+    external?.stop(true);
+    expect(externalBindError).toBeNull();
+    // Complete the authorization the opener script would have followed.
+    const follow = Bun.spawn(
+      [
+        "curl",
+        "--location",
+        "--silent",
+        "--show-error",
+        authorizationUrl.toString(),
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const [body, followCode] = await Promise.all([
+      new Response(follow.stdout).text(),
+      follow.exited,
+    ]);
+    expect(followCode).toBe(0);
+    writeFileSync(root.callbackLog, body);
+    const authenticated = await pending;
+    expect(authenticated.code, authenticated.stderr).toBe(0);
+    expect(authenticated.stderr).toBe("");
+    expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
+    expect(auth.authorizationRequests).toBe(1);
+    expect(auth.tokenExchanges).toBe(1);
+    expect(existsSync(root.openLog)).toBe(true);
     expect(
       await waitForFileText(root.callbackLog, "Authorization complete", 5_000),
     ).toBe(true);
   }, 30_000);
 
-  test("authorization metadata issuer with a trailing slash completes", async () => {
+  test("protected-resource authorization server with a trailing slash completes", async () => {
     upstream = startModernMcpHttpFixture("json");
     auth = startAuthFixture(upstream.url, {
       authorizationServerTrailingSlash: true,
@@ -1001,9 +1067,65 @@ describe("MCP remote authentication lifecycle", () => {
       },
       timeoutMs: 20_000,
     });
-    // The CLI maps the typed issuer_mismatch outcome
-    // (src/core/mcp/mcp_auth.zig) to McpAuthorizationIssuerMismatch, so a
-    // clean success proves it was not produced.
+    // This slashes authorization_servers in the protected-resource
+    // document only; metadata issuer and callback iss stay identical, so a
+    // clean success proves metadata-discovery tolerance
+    // (src/core/mcp/mcp_auth.zig issuersEqual), not response validation.
+    expect(authenticated.code, authenticated.stderr).toBe(0);
+    expect(authenticated.stderr).toBe("");
+    expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
+    expect(authenticated.stderr).not.toContain(
+      "McpAuthorizationIssuerMismatch",
+    );
+    expect(auth.authorizationRequests).toBe(1);
+    expect(auth.tokenExchanges).toBe(1);
+  }, 30_000);
+
+  test("authorization response issuer with a trailing slash completes", async () => {
+    upstream = startModernMcpHttpFixture("json");
+    auth = startAuthFixture(upstream.url, {
+      authorizationResponseTrailingSlash: true,
+    });
+    const root = createRoot(auth);
+
+    const authenticated = await runFx(["mcp", "login", "fixture"], {
+      cwd: root.workspace,
+      env: {
+        ...baseEnv(root),
+      },
+      timeoutMs: 20_000,
+    });
+    // Metadata issuer is origin while the callback returns iss origin/, so
+    // the differing values reach validateAuthorizationResponse and a clean
+    // success proves response-side trailing-slash tolerance.
+    expect(authenticated.code, authenticated.stderr).toBe(0);
+    expect(authenticated.stderr).toBe("");
+    expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
+    expect(authenticated.stderr).not.toContain(
+      "McpAuthorizationIssuerMismatch",
+    );
+    expect(auth.authorizationRequests).toBe(1);
+    expect(auth.tokenExchanges).toBe(1);
+  }, 30_000);
+
+  test("authorization metadata issuer with a trailing slash completes", async () => {
+    upstream = startModernMcpHttpFixture("json");
+    auth = startAuthFixture(upstream.url, {
+      authorizationMetadataTrailingSlash: true,
+    });
+    const root = createRoot(auth);
+
+    const authenticated = await runFx(["mcp", "login", "fixture"], {
+      cwd: root.workspace,
+      env: {
+        ...baseEnv(root),
+      },
+      timeoutMs: 20_000,
+    });
+    // Metadata issuer is origin/ while the callback returns iss origin, so
+    // the differing values reach validateAuthorizationResponse from the
+    // opposite direction and a clean success proves response-side
+    // trailing-slash tolerance there too.
     expect(authenticated.code, authenticated.stderr).toBe(0);
     expect(authenticated.stderr).toBe("");
     expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
