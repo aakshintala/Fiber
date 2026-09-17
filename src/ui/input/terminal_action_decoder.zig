@@ -177,6 +177,11 @@ pub const Decoder = struct {
             return ingress;
         }
 
+        debug_trace.logf(
+            "input",
+            "pending escape expired as bare escape waited_ms={d}",
+            .{now_ms - self.started_ms},
+        );
         const was_cancel_pending = self.cancel_pending;
         self.reset();
         appendAction(&ingress, .escape, was_cancel_pending);
