@@ -95,21 +95,6 @@ pub fn inspectTerminalActionFieldCorrection(
     };
 }
 
-pub const ToolOutputClassification = enum {
-    structured_tool_execution_failed,
-    active_legacy_tool_failure,
-    adapter_semantic_failure,
-    non_failure,
-};
-
-const adapter_semantic_failure_prefixes = [_][]const u8{
-    "Unsupported tool:",
-    "read_file failed:",
-    "edit_file failed:",
-    "open_url not supported",
-    "failed to open ",
-};
-
 pub fn toolPermissionDeniedJson(alloc: Allocator, tool_name: []const u8, reason: types.ToolPermissionDenialReason) Allocator.Error![]u8 {
     switch (reason) {
         .user_denied, .auto_denied, .policy_denied, .permission_required => {},
@@ -375,30 +360,6 @@ pub fn isToolExecutionFailedOutput(output: []const u8) bool {
     return isToolErrorOutputType(output, "tool_execution_failed");
 }
 
-pub fn isToolOutputError(output: []const u8) bool {
-    return switch (classifyToolOutput(output)) {
-        .structured_tool_execution_failed, .active_legacy_tool_failure => true,
-        .adapter_semantic_failure, .non_failure => false,
-    };
-}
-
-pub fn classifyToolOutput(output: []const u8) ToolOutputClassification {
-    if (isToolErrorOutputType(output, "tool_execution_failed")) {
-        return .structured_tool_execution_failed;
-    }
-    if (std.mem.startsWith(u8, output, "Tool ") and
-        std.mem.find(u8, output, "failed:") != null)
-    {
-        return .active_legacy_tool_failure;
-    }
-    for (adapter_semantic_failure_prefixes) |prefix| {
-        if (std.mem.startsWith(u8, output, prefix)) {
-            return .adapter_semantic_failure;
-        }
-    }
-    return .non_failure;
-}
-
 fn isToolErrorOutputType(output: []const u8, expected_type: []const u8) bool {
     var parsed = std.json.parseFromSlice(std.json.Value, std.heap.c_allocator, output, .{}) catch return false;
     defer parsed.deinit();
@@ -657,67 +618,6 @@ test "filesystem access denial JSON preserves recovery details" {
         }
         try std.testing.expect(std.mem.find(u8, suggestion, "correct OS filesystem permissions") != null);
         try std.testing.expect(isToolExecutionFailedOutput(payload));
-        try std.testing.expect(isToolOutputError(payload));
-    }
-}
-
-test "isToolOutputError recognizes active tool failure shape" {
-    try std.testing.expect(isToolOutputError("Tool read_file failed: file not found"));
-    try std.testing.expect(isToolOutputError("{\"error\":{\"type\":\"tool_execution_failed\",\"tool_name\":\"read_file\",\"message\":\"failed\"}}"));
-    try std.testing.expect(!isToolOutputError("file content here"));
-    try std.testing.expect(!isToolOutputError("Tool result: success"));
-}
-
-test "tool output classification preserves structured and legacy categories" {
-    try std.testing.expectEqual(
-        ToolOutputClassification.structured_tool_execution_failed,
-        classifyToolOutput("{\"error\":{\"type\":\"tool_execution_failed\",\"tool_name\":\"read_file\",\"message\":\"failed\"}}"),
-    );
-    try std.testing.expectEqual(
-        ToolOutputClassification.active_legacy_tool_failure,
-        classifyToolOutput("Tool read_file failed: file not found"),
-    );
-
-    const adapter_failures = [_][]const u8{
-        "Unsupported tool: legacy_tool",
-        "read_file failed: missing.txt",
-        "edit_file failed: old_string not found",
-        "open_url not supported on this OS",
-        "failed to open https://example.test",
-    };
-    for (adapter_failures) |output| {
-        try std.testing.expectEqual(
-            ToolOutputClassification.adapter_semantic_failure,
-            classifyToolOutput(output),
-        );
-        try std.testing.expect(!isToolOutputError(output));
-    }
-
-    const non_failures = [_][]const u8{
-        "",
-        "{",
-        "[]",
-        "null",
-        "{\"error\":\"tool_execution_failed\"}",
-        "{\"error\":{\"type\":\"tool_permission_denied\"}}",
-        "Tool read_file failed",
-        "Tooling read_file failed:",
-        "prefix read_file failed: missing.txt",
-        "Browser not reachable (snapshot): NoTargetsFound",
-        "CDP error: Cannot find context",
-        "agent-browser failed to start: FileNotFound",
-        "agent-browser exited 2: bad args",
-        "agent-browser terminated abnormally",
-        "browser operation timed out (snapshot) after 1ms",
-        "Navigated to https://example.test",
-    };
-    for (non_failures) |output| {
-        try std.testing.expectEqual(
-            ToolOutputClassification.non_failure,
-            classifyToolOutput(output),
-        );
-        try std.testing.expect(!isToolExecutionFailedOutput(output));
-        try std.testing.expect(!isToolOutputError(output));
     }
 }
 

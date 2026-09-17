@@ -193,7 +193,7 @@ fn callTtyStop(
         .replay_output = observed.replay_output,
         .next_cursor = observed.next_cursor,
         .output_incomplete = observed.output_incomplete,
-        .error_name = if (observed.timed_out) "TimeoutExpired" else null,
+        .error_name = null,
         .max_output_bytes = ctx.max_output_bytes,
         .published_running = true,
     }) catch |err| return .{ .failure = try failureBody(ctx.alloc, err) };

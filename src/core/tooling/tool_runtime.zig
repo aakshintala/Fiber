@@ -4860,6 +4860,7 @@ test "run_command timeout returns model-visible failure" {
         .failure,
         prepared.model_output,
         prepared.memory,
+        null,
     );
     defer execution_memory.freeTransientPersistedToolResult(alloc, persisted);
     var calls = [_]types.ToolCall{tool_call};

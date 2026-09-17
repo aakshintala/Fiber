@@ -473,7 +473,14 @@ fn callRun(
         return runtimeFailure(ctx, err);
     };
     defer prepared.deinit(ctx.allocator);
-    return finishPrepared(ctx, runtime, &prepared, .command);
+    // Typed timeout signal: a synchronously started command reaches
+    // .stopped(null) only via error.TimeoutExpired. Cancellations return
+    // before this point, so no error-name round trip is needed.
+    const start_timed_out = switch (prepared.snapshot.state) {
+        .stopped => |status| status == null,
+        else => false,
+    };
+    return finishPrepared(ctx, runtime, &prepared, .command, start_timed_out);
 }
 
 fn callInteract(
@@ -492,7 +499,7 @@ fn callInteract(
         {
             var prepared = retained;
             defer prepared.deinit(ctx.allocator);
-            return finishPrepared(ctx, runtime, &prepared, .command);
+            return finishPrepared(ctx, runtime, &prepared, .command, false);
         }
     }
     if (runtime.backendFor(session_id) == .tty) {
@@ -506,7 +513,7 @@ fn callInteract(
         ctx.cancel_flag,
     ) catch |err| return runtimeFailure(ctx, err);
     defer prepared.deinit(ctx.allocator);
-    return finishPrepared(ctx, runtime, &prepared, .command);
+    return finishPrepared(ctx, runtime, &prepared, .command, false);
 }
 
 fn callStop(
@@ -525,7 +532,7 @@ fn callStop(
     switch (outcome) {
         .prepared => |*prepared| {
             defer prepared.deinit(ctx.allocator);
-            return finishPrepared(ctx, runtime, prepared, .stop);
+            return finishPrepared(ctx, runtime, prepared, .stop, false);
         },
         .failure => |body| return .{ .failure = body },
     }
@@ -630,7 +637,7 @@ fn callTtyRun(
         .replay_output = observed.replay_output,
         .next_cursor = observed.next_cursor,
         .output_incomplete = observed.output_incomplete,
-        .error_name = if (observed.timed_out) "TimeoutExpired" else null,
+        .error_name = null,
         .max_output_bytes = ctx.max_command_output_bytes,
         .published_running = observed.state == .running,
         .capacity_reserved = true,
@@ -640,7 +647,7 @@ fn callTtyRun(
     session_owned = false;
     defer prepared.deinit(ctx.allocator);
     _ = owner;
-    return finishPrepared(ctx, runtime, &prepared, .command);
+    return finishPrepared(ctx, runtime, &prepared, .command, observed.timed_out);
 }
 
 fn callTtyInteract(
@@ -769,15 +776,16 @@ fn callTtyInteract(
         .replay_output = observed.replay_output,
         .next_cursor = observed.next_cursor,
         .output_incomplete = observed.output_incomplete,
-        .error_name = if (observed.timed_out) "TimeoutExpired" else null,
+        .error_name = null,
         .max_output_bytes = ctx.max_command_output_bytes,
         .published_running = true,
     }) catch |err| return runtimeFailure(ctx, err);
     defer prepared.deinit(ctx.allocator);
+    const tty_timed_out = observed.timed_out;
     return if (accepted_bytes) |count|
-        finishPreparedWithAccepted(ctx, runtime, &prepared, count)
+        finishPreparedWithAccepted(ctx, runtime, &prepared, count, tty_timed_out)
     else
-        finishPrepared(ctx, runtime, &prepared, .command);
+        finishPrepared(ctx, runtime, &prepared, .command, tty_timed_out);
 }
 
 fn ttyShell(
@@ -899,6 +907,7 @@ fn finishPreparedWithAccepted(
     runtime: *managed_execution.Runtime,
     prepared: *managed_execution.PreparedSnapshot,
     accepted_bytes: u32,
+    timed_out: bool,
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const body = formatSnapshotWithLimit(
         ctx.allocator,
@@ -914,7 +923,7 @@ fn finishPreparedWithAccepted(
         return runtimeFailure(ctx, err);
     };
     errdefer ctx.allocator.free(body);
-    publishSnapshotMetadata(ctx, prepared.snapshot) catch |err| {
+    publishSnapshotMetadata(ctx, prepared.snapshot, timed_out) catch |err| {
         runtime.cancelDelivery(
             prepared.snapshot.execution_id,
             prepared.reservation_id,
@@ -932,6 +941,7 @@ fn finishPrepared(
     runtime: *managed_execution.Runtime,
     prepared: *managed_execution.PreparedSnapshot,
     action: enum { command, stop },
+    timed_out: bool,
 ) tool_dispatch.DispatchError!tool_dispatch.ToolResult {
     const body = formatSnapshotWithLimit(
         ctx.allocator,
@@ -947,7 +957,7 @@ fn finishPrepared(
         return .{ .failure = try ctx.allocator.dupe(u8, "shell result is unavailable") };
     };
     errdefer ctx.allocator.free(body);
-    publishSnapshotMetadata(ctx, prepared.snapshot) catch |err| {
+    publishSnapshotMetadata(ctx, prepared.snapshot, timed_out) catch |err| {
         runtime.cancelDelivery(
             prepared.snapshot.execution_id,
             prepared.reservation_id,
@@ -971,6 +981,7 @@ fn finishPrepared(
 fn publishSnapshotMetadata(
     ctx: tool_dispatch.DispatchContext,
     snapshot: managed_execution.Snapshot,
+    timed_out: bool,
 ) !void {
     if (ctx.command_result_json_sink == null and
         ctx.tool_result_memory_sink == null) return;
@@ -988,10 +999,6 @@ fn publishSnapshotMetadata(
             .signal = null,
             .termination_indeterminate = false,
         };
-    const timed_out = if (snapshot.error_name) |name|
-        std.mem.eql(u8, name, "TimeoutExpired")
-    else
-        false;
     var memory = types.ToolResultMemory{
         .output_bytes = snapshot.stdout_bytes +| snapshot.stderr_bytes,
         .stored_output_bytes = snapshot.stdout_bytes +| snapshot.stderr_bytes,
@@ -1324,7 +1331,7 @@ test "stopped shell metadata projects missing exits as indeterminate" {
             .state = state,
             .output_delta = @constCast(""),
             .output_truncated = false,
-        });
+        }, false);
         try std.testing.expect(std.mem.find(
             u8,
             command_result_json orelse return error.TestExpectedEqual,
@@ -1796,7 +1803,7 @@ test "stopped execution is a successful shell observation without command failur
             .state = .{ .stopped = status },
             .output_delta = @constCast(""),
             .output_truncated = false,
-        });
+        }, false);
         try std.testing.expect(memory != null);
         try std.testing.expect(memory.?.command_process_presentation == null);
     }
@@ -2111,6 +2118,7 @@ test "shell delivery advances only after result commit" {
         &runtime,
         &prepared,
         .command,
+        false,
     );
     defer result.deinit(alloc);
     try std.testing.expect(commit_token != null);

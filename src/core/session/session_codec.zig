@@ -1233,6 +1233,8 @@ fn writePersistedToolResult(writer: *std.Io.Writer, result: session.PersistedToo
         writer,
         result.terminal_action_presentation,
     );
+    try writer.writeAll(",\"outcome\":");
+    try writeOptionalToolOutcome(writer, result.outcome);
     try writer.writeByte('}');
 }
 
@@ -1329,6 +1331,55 @@ fn writeOptionalTerminalActionPresentation(
             try writer.writeByte('}');
         },
     }
+}
+
+fn writeOptionalToolOutcome(
+    writer: *std.Io.Writer,
+    outcome: ?types.PersistedToolOutcome,
+) !void {
+    const resolved = outcome orelse {
+        try writer.writeAll("null");
+        return;
+    };
+    try writer.writeAll("{\"status\":");
+    try writeJsonString(writer, @tagName(resolved.status));
+    try writer.writeAll(",\"reason\":");
+    if (resolved.denial_reason) |reason| {
+        try writeJsonString(writer, @tagName(reason));
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"error_code\":");
+    if (resolved.error_code) |code| {
+        try writeJsonString(writer, @tagName(code));
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"error_message\":");
+    if (resolved.error_message) |message| {
+        try writeDurableBytes(writer, message);
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"exit_code\":");
+    if (resolved.exit_code) |code| {
+        try writer.print("{d}", .{code});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"signal\":");
+    if (resolved.signal) |signal| {
+        try writer.print("{d}", .{signal});
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(
+        ",\"timed_out\":{s},\"has_process\":{s}}}",
+        .{
+            if (resolved.timed_out) "true" else "false",
+            if (resolved.has_process) "true" else "false",
+        },
+    );
 }
 
 fn writeTerminalReturnPresentation(
@@ -1802,11 +1853,30 @@ fn parseToolResult(
         "command_process_presentation",
         "terminal_action_presentation",
     };
+    const v5_outcome_keys = &.{
+        "tool_call_id",
+        "tool_name",
+        "status",
+        "output",
+        "output_handle",
+        "preview",
+        "output_bytes",
+        "stored_output_bytes",
+        "truncated",
+        "provider_native",
+        "created_at_ms",
+        "permission_feedback",
+        "committed_file_presentation",
+        "command_output_replay",
+        "command_process_presentation",
+        "terminal_action_presentation",
+        "outcome",
+    };
     const result_shape: ExactVariantObject = switch (schema_version) {
         1 => .{ .object = try exactObject(value, v1_keys), .extended = false },
         2 => try exactVariantObject(value, v2_keys, v2_extended_keys),
         3 => .{ .object = try exactObject(value, v3_keys), .extended = true },
-        4, 5 => .{ .object = try exactObject(value, v4_keys), .extended = true },
+        4, 5 => try exactVariantObject(value, v4_keys, v5_outcome_keys),
         else => return error.InvalidSessionFormat,
     };
     const object = result_shape.object;
@@ -1866,6 +1936,11 @@ fn parseToolResult(
         )
     else
         null;
+    const outcome = try parseOptionalToolOutcome(
+        alloc,
+        object.get("outcome"),
+    );
+    errdefer if (outcome) |resolved| types.freeToolCallOutcome(alloc, resolved);
     return .{
         .tool_call_id = tool_call_id,
         .tool_name = tool_name,
@@ -1886,6 +1961,71 @@ fn parseToolResult(
         .command_output_replay = command_output_replay,
         .command_process_presentation = command_process_presentation,
         .terminal_action_presentation = terminal_action_presentation,
+        .outcome = outcome,
+    };
+}
+
+fn parseOptionalToolOutcome(
+    alloc: Allocator,
+    value: ?std.json.Value,
+) !?types.PersistedToolOutcome {
+    const raw = value orelse return null;
+    if (raw == .null) return null;
+    const object = try exactObject(raw, &.{
+        "status",
+        "reason",
+        "error_code",
+        "error_message",
+        "exit_code",
+        "signal",
+        "timed_out",
+        "has_process",
+    });
+    const error_message = if (object.get("error_message")) |message_value| switch (message_value) {
+        .null => null,
+        .string => try parseDurableBytes(alloc, message_value),
+        else => return error.InvalidSessionFormat,
+    } else return error.InvalidSessionFormat;
+    errdefer if (error_message) |message| alloc.free(message);
+    const denial_reason = if (object.get("reason")) |reason_value| switch (reason_value) {
+        .null => null,
+        .string => |text| std.meta.stringToEnum(
+            types.ToolDenialReason,
+            text,
+        ) orelse return error.InvalidSessionFormat,
+        else => return error.InvalidSessionFormat,
+    } else return error.InvalidSessionFormat;
+    const error_code = if (object.get("error_code")) |code_value| switch (code_value) {
+        .null => null,
+        .string => |text| std.meta.stringToEnum(
+            types.ToolErrorCode,
+            text,
+        ) orelse return error.InvalidSessionFormat,
+        else => return error.InvalidSessionFormat,
+    } else return error.InvalidSessionFormat;
+    const exit_code = if (object.get("exit_code")) |code_value| switch (code_value) {
+        .null => null,
+        .integer => |code| code,
+        else => return error.InvalidSessionFormat,
+    } else return error.InvalidSessionFormat;
+    const signal = if (object.get("signal")) |signal_value| switch (signal_value) {
+        .null => null,
+        .integer => |raw_signal| std.math.cast(u32, raw_signal) orelse
+            return error.InvalidSessionFormat,
+        else => return error.InvalidSessionFormat,
+    } else return error.InvalidSessionFormat;
+    return .{
+        .status = std.meta.stringToEnum(
+            types.ToolCallStatus,
+            try requireString(object, "status"),
+        ) orelse return error.InvalidSessionFormat,
+        .denial_reason = denial_reason,
+        .error_code = error_code,
+        .error_message = error_message,
+        .exit_code = exit_code,
+        .signal = signal,
+        .timed_out = try requireBool(object, "timed_out"),
+        .has_process = try requireBool(object, "has_process"),
     };
 }
 
@@ -4027,4 +4167,61 @@ test "tool call codec persists item and provider ids and reads legacy calls" {
     defer session.freeToolCall(alloc, legacy_call);
     try std.testing.expectEqualStrings("call_legacy", legacy_call.id);
     try std.testing.expect(legacy_call.provider_id == null);
+}
+
+test "typed tool outcome survives session codec round trip" {
+    const alloc = std.testing.allocator;
+    const error_message = try alloc.dupe(u8, "Command timed out");
+    // Sole owner: the writer below only borrows, so one defer covers
+    // success and error paths alike.
+    defer alloc.free(error_message);
+    var result = persistedResultForTest("call_timeout", "shell");
+    result.status = .failure;
+    result.outcome = .{
+        .status = .failed,
+        .error_code = .timeout,
+        .error_message = error_message,
+        .timed_out = true,
+        .has_process = true,
+    };
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try writePersistedToolResult(&encoded.writer, result);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, encoded.written(), .{});
+    defer parsed.deinit();
+    const owned = try alloc.alloc(
+        session.PersistedToolResult,
+        1,
+    );
+    defer types.freePersistedToolResults(alloc, owned);
+    owned[0] = try parseToolResult(alloc, parsed.value, 5);
+
+    const outcome = owned[0].outcome orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(session.PersistedToolStatus.failure, owned[0].status);
+    try std.testing.expectEqual(types.ToolCallStatus.failed, outcome.status);
+    try std.testing.expectEqual(types.ToolErrorCode.timeout, outcome.error_code.?);
+    try std.testing.expectEqualStrings("Command timed out", outcome.error_message.?);
+    try std.testing.expect(outcome.timed_out);
+    try std.testing.expect(outcome.has_process);
+}
+
+test "pre-outcome tool results reload without an outcome" {
+    const alloc = std.testing.allocator;
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        "{\"tool_call_id\":\"call_legacy\",\"tool_name\":\"read_file\",\"status\":\"failure\",\"output\":\"Tool read_file failed: missing\",\"output_handle\":null,\"preview\":null,\"output_bytes\":29,\"stored_output_bytes\":29,\"truncated\":false,\"provider_native\":false,\"created_at_ms\":1,\"permission_feedback\":[],\"committed_file_presentation\":null,\"command_output_replay\":null,\"command_process_presentation\":null,\"terminal_action_presentation\":null}",
+        .{},
+    );
+    defer parsed.deinit();
+    const owned = try alloc.alloc(
+        session.PersistedToolResult,
+        1,
+    );
+    defer types.freePersistedToolResults(alloc, owned);
+    owned[0] = try parseToolResult(alloc, parsed.value, 5);
+
+    try std.testing.expectEqual(session.PersistedToolStatus.failure, owned[0].status);
+    try std.testing.expect(owned[0].outcome == null);
 }

@@ -3,7 +3,6 @@ const runtime_agent = @import("runtime/agent.zig");
 const runtime_config = @import("runtime/config.zig");
 const runtime_checkpoint = @import("runtime/checkpoint.zig");
 const runtime_deps = @import("runtime/deps.zig");
-const runtime_execution_memory = @import("runtime/execution_memory.zig");
 const runtime_finalization = @import("runtime/finalization.zig");
 const runtime_lifecycle = @import("runtime/lifecycle.zig");
 const runtime_orchestrator = @import("runtime/orchestrator.zig");
@@ -37,8 +36,6 @@ pub const dispatchAttentionRequiredCheckpoint = runtime_lifecycle.dispatchAttent
 pub const TurnFinalizationGuard = runtime_finalization.TurnFinalizationGuard;
 pub const Config = runtime_config.Config;
 pub const processAgentPrompt = runtime_orchestrator.processAgentPrompt;
-pub const persistedStatusForCurrentFxLocalResult = runtime_execution_memory.persistedStatusForCurrentFxLocalResult;
-pub const classifyProviderExecutedResultStatus = runtime_execution_memory.classifyProviderExecutedResultStatus;
 pub const normalizeAssistantTextForDisplay = runtime_assistant_stream.normalizeAssistantTextForDisplay;
 
 test {

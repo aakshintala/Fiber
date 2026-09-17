@@ -70,6 +70,10 @@ pub const ToolExecutionResult = struct {
     model_output: []const u8,
     status: ToolExecutionStatus = .success,
     cancelled: bool = false,
+    /// Typed outcome set by code that knows what happened. Tools leave
+    /// this null; the runtime boundary derives it instead (ticket #178).
+    /// A set outcome always wins over the derived one.
+    outcome: ?types.ToolCallOutcome = null,
     status_detail: ?[]const u8 = null,
     diff_entry: ?DiffEntryPayload = null,
     finish_turn: bool = false,

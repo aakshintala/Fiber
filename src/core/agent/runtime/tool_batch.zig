@@ -3,7 +3,6 @@ const types = @import("../../shared/types.zig");
 const debug_trace = @import("../../shared/debug_trace.zig");
 const diff = @import("../../output/diff.zig");
 const tool_dispatch = @import("../../tooling/tool_dispatch.zig");
-const tool_result_errors = @import("../../tooling/tool_result_errors.zig");
 
 const runtime_config = @import("config.zig");
 const runtime_execution_memory = @import("execution_memory.zig");
@@ -35,6 +34,7 @@ pub const ToolResultAccounting = struct {
     record_completion: bool = false,
     mark_write: bool = false,
     status: ?types.PersistedToolStatus = null,
+    outcome: ?types.ToolCallOutcome = null,
 };
 
 pub fn appendAssistantToolCallStep(
@@ -71,7 +71,10 @@ pub fn appendToolResultContent(
         .tool_call_id = tool_call.id,
         .tool_name = tool_call.name,
         .tool_result_status = accounting.status orelse
-            if (accounting.increment_error) .failure else .success,
+            if (accounting.outcome) |outcome|
+                runtime_execution_memory.persistedStatusForOutcome(outcome)
+            else if (accounting.increment_error) .failure else .success,
+        .tool_result_outcome = accounting.outcome,
         .tool_result_memory = memory,
     });
     if (accounting.record_completion) {
@@ -244,6 +247,7 @@ pub fn assembleParallelToolResults(
             try hooks.pushContextNotice(notice);
         }
         debug_trace.eventf("tool", "execution_result", step_ctx, "call_id={s} name={s} result_kind={s} model_output_bytes={d}", .{ original_call.id, original_call.name, runtime_telemetry.toolExecutionResultKind(execution), safe_tool_output.len });
+        const parallel_outcome = runtime_execution_memory.toolOutcomeForResult(arena, execution);
         try appendToolResultContent(
             arena,
             within_turn_suffix,
@@ -253,12 +257,10 @@ pub fn assembleParallelToolResults(
             safe_tool_output,
             prepared.memory,
             .{
-                .increment_error = execution.status == .failure or tool_result_errors.isToolOutputError(safe_tool_output),
+                .increment_error = parallel_outcome.status != .completed,
                 .record_completion = execution.status == .success,
-                .status = runtime_execution_memory.persistedStatusForCurrentFxLocalResult(
-                    execution.status,
-                    safe_tool_output,
-                ),
+                .status = runtime_execution_memory.persistedStatusForOutcome(parallel_outcome),
+                .outcome = parallel_outcome,
             },
         );
     }
@@ -351,15 +353,14 @@ pub fn processCommittedFileResult(
         );
         break :blk null;
     };
+    const committed_outcome = runtime_execution_memory.toolOutcomeForResult(history_allocator, execution);
     within_turn_suffix.appendAssumeCapacity(.{
         .role = .tool,
         .content = execution.model_output,
         .tool_call_id = tool_call.id,
         .tool_name = tool_call.name,
-        .tool_result_status = runtime_execution_memory.persistedStatusForCurrentFxLocalResult(
-            execution.status,
-            execution.model_output,
-        ),
+        .tool_result_status = runtime_execution_memory.persistedStatusForOutcome(committed_outcome),
+        .tool_result_outcome = committed_outcome,
         .tool_result_memory = prepared_memory,
     });
     debug_trace.eventf(
@@ -453,6 +454,7 @@ pub fn appendOrdinaryExecutedResult(
     execution: ToolExecutionResult,
 ) !void {
     const activity = runtime_tool_presentation.activityKindForCall(arena, tool_registry, tool_call);
+    const ordinary_outcome = runtime_execution_memory.toolOutcomeForResult(arena, execution);
     try appendToolResultContent(
         arena,
         within_turn_suffix,
@@ -462,13 +464,11 @@ pub fn appendOrdinaryExecutedResult(
         model_output,
         memory,
         .{
-            .increment_error = execution.status == .failure or tool_result_errors.isToolOutputError(model_output),
+            .increment_error = ordinary_outcome.status != .completed,
             .record_completion = true,
             .mark_write = activity == .write or activity == .edit,
-            .status = runtime_execution_memory.persistedStatusForCurrentFxLocalResult(
-                execution.status,
-                model_output,
-            ),
+            .status = runtime_execution_memory.persistedStatusForOutcome(ordinary_outcome),
+            .outcome = ordinary_outcome,
         },
     );
 }

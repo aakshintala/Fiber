@@ -5224,7 +5224,14 @@ pub const TranscriptRuntime = struct {
     ) !void {
         const context_deferred = types.isContextDeferredToolResult(result);
         const deferred = types.isDeferredToolResult(result);
-        const permission_denied = tool_result_errors.toolPermissionDenialReason(result.output) != null;
+        // Typed outcomes win when present; the text reads below are the
+        // legacy fallback for records persisted before typed outcomes.
+        const typed_kind: ?types.ToolOutcomeKind = if (result.outcome) |outcome|
+            types.ToolOutcomeKind.fromStatus(outcome.status)
+        else
+            null;
+        const permission_denied = typed_kind == .denied or
+            tool_result_errors.toolPermissionDenialReason(result.output) != null;
         const shell_command = !deferred and
             !permission_denied and
             activity_kind == .command and
@@ -5251,6 +5258,8 @@ pub const TranscriptRuntime = struct {
             activity_kind,
             if (context_deferred)
                 .deferred
+            else if (typed_kind) |kind|
+                kind
             else if (deferred or permission_denied)
                 .denied
             else if (result.terminal_action_presentation) |presentation|
@@ -12586,4 +12595,45 @@ test "notification bell writes standalone BEL bytes" {
 
 test {
     _ = @import("runtime_tests.zig");
+}
+
+test "historical typed denial keeps denied outcome without denial-shaped text" {
+    const alloc = std.testing.allocator;
+    var runtime = TranscriptRuntime{};
+    defer runtime.deinit(alloc);
+
+    var metrics: Metrics = .{};
+    const entry_id = try runtime.writeCompletedToolStatusReturningEntryId(
+        alloc,
+        &metrics,
+        .denied,
+        "Denied shell",
+        true,
+    );
+    const output = "policy blocked this action";
+    try runtime.attachHistoricalToolDetail(
+        alloc,
+        entry_id,
+        .{
+            .id = "denied-shell",
+            .name = "shell",
+            .arguments_json = "{}",
+        },
+        .command,
+        .{
+            .tool_call_id = @constCast("denied-shell"),
+            .tool_name = @constCast("shell"),
+            .status = .failure,
+            .output = @constCast(output),
+            .output_bytes = output.len,
+            .stored_output_bytes = output.len,
+            .outcome = .{
+                .status = .denied,
+                .denial_reason = .policy_denied,
+            },
+        },
+    );
+
+    const detail = runtime.toolDetailForEntry(entry_id).?;
+    try std.testing.expectEqual(types.ToolOutcomeKind.denied, detail.outcome.?);
 }

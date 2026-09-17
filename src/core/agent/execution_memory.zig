@@ -15,6 +15,7 @@ pub fn makePersistedToolResult(
     status: types.PersistedToolStatus,
     output_src: []const u8,
     memory: ?types.ToolResultMemory,
+    outcome: ?types.ToolCallOutcome,
 ) !types.PersistedToolResult {
     const tool_call_id = try durableIdentifier(alloc, tool_call_id_src);
     errdefer alloc.free(tool_call_id);
@@ -31,6 +32,8 @@ pub fn makePersistedToolResult(
     else
         null else null;
     errdefer if (command_output_replay) |replay| types.freeCommandOutputReplay(alloc, replay);
+    const owned_outcome = if (outcome) |resolved| try types.dupeToolCallOutcome(alloc, resolved) else null;
+    errdefer if (owned_outcome) |resolved| types.freeToolCallOutcome(alloc, resolved);
     var result: types.PersistedToolResult = .{
         .tool_call_id = tool_call_id,
         .tool_name = tool_name,
@@ -46,6 +49,7 @@ pub fn makePersistedToolResult(
         .command_output_replay = command_output_replay,
         .command_process_presentation = if (memory) |info| info.command_process_presentation else null,
         .terminal_action_presentation = if (memory) |info| info.terminal_action_presentation else null,
+        .outcome = owned_outcome,
     };
     if (memory) |info| {
         if (info.committed_file_presentation) |presentation| {
@@ -253,6 +257,10 @@ const ChatMessageAdapter = struct {
         return value.tool_result_status;
     }
 
+    fn toolOutcome(value: Message) ?types.ToolCallOutcome {
+        return value.tool_result_outcome;
+    }
+
     fn toolResultMemory(value: Message) ?types.ToolResultMemory {
         return value.tool_result_memory;
     }
@@ -295,6 +303,10 @@ const MessageAdapter = struct {
 
     fn toolResultStatus(value: Message) ?types.PersistedToolStatus {
         return value.tool_result_status;
+    }
+
+    fn toolOutcome(_: Message) ?types.ToolCallOutcome {
+        return null;
     }
 
     fn toolResultMemory(value: Message) ?types.ToolResultMemory {
@@ -362,6 +374,7 @@ fn buildNormalExecutionMemory(
                 status,
                 output,
                 result_memory,
+                Adapter.toolOutcome(result_msg),
             );
             var owns_record = true;
             errdefer if (owns_record) {
@@ -473,6 +486,9 @@ pub fn freeTransientPersistedToolResult(
     }
     if (result.command_output_replay) |replay| {
         types.freeCommandOutputReplay(alloc, replay);
+    }
+    if (result.outcome) |outcome| {
+        types.freeToolCallOutcome(alloc, outcome);
     }
 }
 
@@ -845,6 +861,7 @@ test "durable execution memory masks token-shaped values" {
             .stored_output_bytes = 64,
             .truncated = true,
         },
+        null,
     );
     defer freeTransientPersistedToolResult(alloc, result);
 
@@ -962,6 +979,7 @@ test "durable execution memory pseudonymizes sensitive call ids consistently" {
         .success,
         "notes",
         .{ .model_view_covers_full_file = true },
+        null,
     );
     defer freeTransientPersistedToolResult(alloc, result);
 
