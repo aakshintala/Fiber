@@ -29,29 +29,42 @@ When adding features, consider their impact on startup latency. The `fiber help`
 The same `bench` job measures peak RSS for the six heavy workloads from the
 PGSO corpus and fails when one exceeds its budget:
 
-| workload | measured peak | budget |
-| --- | ---: | ---: |
-| file-index-100k | 18.36 MiB | 40 MiB |
-| ui-activity | 2.23 MiB | 8 MiB |
-| approval-transcript | 13.91 MiB | 32 MiB |
-| approval-diff | 4.31 MiB | 12 MiB |
-| approval-payload | 10.05 MiB | 24 MiB |
-| approval-combined | 16.77 MiB | 40 MiB |
+| workload | macOS peak | Linux peak | budget |
+| --- | ---: | ---: | ---: |
+| file-index-100k | 18.36 MiB | 15.77 MiB | 40 MiB |
+| ui-activity | 2.23 MiB | 13.52 MiB | 28 MiB |
+| approval-transcript | 13.91 MiB | 13.50 MiB | 32 MiB |
+| approval-diff | 4.31 MiB | 13.48 MiB | 28 MiB |
+| approval-payload | 10.05 MiB | 13.52 MiB | 28 MiB |
+| approval-combined | 16.77 MiB | 13.96 MiB | 40 MiB |
 
-Measured peaks are macOS arm64 ReleaseSafe medians across three runs (spread
-under 0.05 MiB per workload). Every budget is at least 2x the measured peak,
-leaving headroom for Linux runner variance. Reproduce locally with:
+macOS peaks are arm64 ReleaseSafe medians across three runs (spread under
+0.05 MiB per workload). Linux peaks are the single ubuntu-24.04 bench job
+sample from this pull request's CI run. Every budget is at least 2x the
+larger of the two peaks for its workload (lowest headroom is 2.07x on
+ui-activity and approval-payload against Linux), so the gate that runs on
+Linux is calibrated from Linux data. Linux peaks for the five smaller
+workloads cluster near 13.5 MiB regardless of workload, which reads as an
+allocator floor rather than workload-driven usage. The Linux sample is a
+single run, so the 2x rule also absorbs runner variance; if later Linux runs
+measure higher, recalibrate the budgets and this table from the new numbers.
+Reproduce locally with:
 
 ```bash
-python3 benchmarks/measure_memory.py   # builds benches, writes benchmarks/results/memory.json
-python3 benchmarks/check_budgets.py    # enforces latency and memory budgets
+python3 benchmarks/measure_memory.py                # builds benches, writes benchmarks/results/memory.json
+python3 benchmarks/check_budgets.py --memory-only   # checks the memory gate without hyperfine results
 ```
+
+`--memory-only` skips the latency gate, so the check passes on a machine
+with only `memory.json` present. Without it, `check_budgets.py` also requires
+hyperfine latency JSON and fails with no result files found.
 
 Measurement uses `getrusage(RUSAGE_CHILDREN).ru_maxrss` from the Python
 standard library, which reports bytes on macOS and kilobytes on Linux, so no
 GNU time dependency is needed. Enforcement is Linux-only, matching the latency
 gate: local runs report peaks as informational. The job summary lists the
-per-workload table.
+per-workload table with budget and over/under delta columns, so a regression
+shows the workload and its delta, not just the peak.
 
 ## Binary size observability
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Enforce raw per-command wall-clock latency budgets against hyperfine results."""
 
+import argparse
 import json
 import glob
 import os
@@ -16,15 +17,15 @@ LINUX_BUDGETS = {
 }
 DEFAULT_LINUX_BUDGET = 0.002
 
-# Peak RSS budgets in MiB per heavy workload. Each is at least 2x the peak
-# measured on macOS arm64 ReleaseSafe (see benchmarks/README.md), leaving
-# headroom for Linux runner variance.
+# Peak RSS budgets in MiB per heavy workload. Each is at least 2x the larger
+# of the macOS arm64 median and the Linux CI peak (see benchmarks/README.md),
+# leaving headroom for Linux runner variance.
 MEMORY_BUDGETS_MIB = {
     "file-index-100k": 40.0,
-    "ui-activity": 8.0,
+    "ui-activity": 28.0,
     "approval-transcript": 32.0,
-    "approval-diff": 12.0,
-    "approval-payload": 24.0,
+    "approval-diff": 28.0,
+    "approval-payload": 28.0,
     "approval-combined": 40.0,
 }
 
@@ -127,7 +128,7 @@ def check_memory_results(memory_path, system_name):
         tag = "PASS" if ok else "FAIL"
         print(
             f"  {tag}  {name:<20s} peak={mib:>7.2f} MiB  "
-            f"(limit: {budget:.0f} MiB)"
+            f"(limit: {budget:.0f} MiB, delta: {mib - budget:+.2f} MiB)"
         )
         if not ok:
             failed = True
@@ -135,26 +136,42 @@ def check_memory_results(memory_path, system_name):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--memory-only",
+        action="store_true",
+        help="enforce only the peak RSS gate (no hyperfine results needed)",
+    )
+    args = parser.parse_args()
     system_name = os.environ.get("FIBER_BENCH_SYSTEM", platform.system())
-    result_files = sorted(
-        glob.glob(
-            os.environ.get(
-                "FIBER_BENCH_RESULTS_GLOB",
-                "benchmarks/results/*.json",
+    if args.memory_only:
+        latency_ok = True
+    else:
+        result_files = sorted(
+            glob.glob(
+                os.environ.get(
+                    "FIBER_BENCH_RESULTS_GLOB",
+                    "benchmarks/results/*.json",
+                )
             )
         )
-    )
-    latency_ok = check_results(result_files, system_name)
+        latency_ok = check_results(result_files, system_name)
     memory_path = os.environ.get(
         "FIBER_MEMORY_RESULTS", "benchmarks/results/memory.json"
     )
     memory_ok = check_memory_results(memory_path, system_name)
     if latency_ok and memory_ok:
         if system_name != "Linux":
-            print(
-                f"\nLinux 2ms budget not evaluated on {system_name}; "
-                "raw local means are informational"
-            )
+            if args.memory_only:
+                print(
+                    f"\nMemory gate not evaluated on {system_name}; "
+                    "reported peaks are informational"
+                )
+            else:
+                print(
+                    f"\nLinux 2ms budget not evaluated on {system_name}; "
+                    "raw local means are informational"
+                )
             return 0
         print("\nAll commands within budget")
         return 0

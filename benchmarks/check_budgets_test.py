@@ -76,6 +76,28 @@ class BudgetContractTests(unittest.TestCase):
             },
         )
 
+    def test_budgets_hold_twofold_headroom_on_both_platforms(self) -> None:
+        macos_peaks = {
+            "file-index-100k": 18.36,
+            "ui-activity": 2.23,
+            "approval-transcript": 13.91,
+            "approval-diff": 4.31,
+            "approval-payload": 10.05,
+            "approval-combined": 16.77,
+        }
+        linux_peaks = {
+            "file-index-100k": 15.77,
+            "ui-activity": 13.52,
+            "approval-transcript": 13.50,
+            "approval-diff": 13.48,
+            "approval-payload": 13.52,
+            "approval-combined": 13.96,
+        }
+        for name, budget in check_budgets.MEMORY_BUDGETS_MIB.items():
+            self.assertGreaterEqual(
+                budget, 2 * max(macos_peaks[name], linux_peaks[name]), name
+            )
+
     def test_darwin_has_no_memory_budget(self) -> None:
         self.assertIsNone(check_budgets.memory_budget("Darwin", "ui-activity"))
         self.assertIsNotNone(check_budgets.memory_budget("Linux", "ui-activity"))

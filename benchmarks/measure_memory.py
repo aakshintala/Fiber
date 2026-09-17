@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import check_budgets
 import json
 import os
 import pathlib
@@ -93,10 +94,15 @@ def build_benches():
 
 def summary_markdown(results_path):
     data = json.loads(pathlib.Path(results_path).read_text())
-    lines = ["| workload | peak RSS (MiB) |", "| --- | ---: |"]
+    lines = [
+        "| workload | peak RSS (MiB) | budget (MiB) | delta (MiB) |",
+        "| --- | ---: | ---: | ---: |",
+    ]
     for workload in WORKLOADS:
         entry = data["workloads"][workload]
-        lines.append(f"| {workload} | {entry['peak_rss_bytes'] / 2**20:.2f} |")
+        mib = entry["peak_rss_bytes"] / 2**20
+        budget = check_budgets.MEMORY_BUDGETS_MIB[workload]
+        lines.append(f"| {workload} | {mib:.2f} | {budget:.0f} | {mib - budget:+.2f} |")
     return "\n".join(lines)
 
 
