@@ -136,18 +136,21 @@ jobs:
         platform:
           - name: linux-x86_64
             runner: ubuntu-24.04
+            optimize: ReleaseSafe
           - name: linux-aarch64
             runner: ubuntu-24.04-arm
+            optimize: ReleaseSafe
+          # Debug on the 3-vCPU macOS runner (#312): the ReleaseSafe test
+          # compile alone took 452s there. Linux keeps ReleaseSafe unit tests,
+          # and the macOS E2E shards still build and drive ReleaseSafe.
           - name: macos-aarch64
             runner: macos-15
-            # See the Build step below: this runner is slower when the two
-            # compiles overlap, so it builds the exe first.
-            serial_build: true
+            optimize: Debug
     steps:
       - uses: actions/checkout@v5
 
-      # Diagnostic for the unexplained 10m to 14m30 spread in this job and the
-      # serial_build timings above. Never fails the job.
+      # Diagnostic for the unexplained spread in this job's duration. Never
+      # fails the job.
       - name: Report runner hardware
         if: runner.os == 'macOS'
         run: sysctl hw.ncpu hw.physicalcpu hw.memsize machdep.cpu.brand_string; uptime; true
@@ -156,7 +159,7 @@ jobs:
         uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27
         with:
           version: ${{ env.ZIG_VERSION }}
-          cache-key: ci-native-${{ matrix.platform.name }}-ReleaseSafe
+          cache-key: ci-native-${{ matrix.platform.name }}-${{ matrix.platform.optimize }}
 
       - name: Check formatting
         run: zig fmt --check src/
@@ -164,24 +167,15 @@ jobs:
       - name: Audit public surface
         run: ./scripts/check-public-surface.sh
 
-      # `zig build test` builds and installs the exe too, and the build runner
-      # compiles the exe and the test binary concurrently. On the 4-core Linux
-      # runners that hides the exe build entirely, measured at -3m38. On
-      # macos-15-arm64 the overlap is slower than building serially, measured
-      # at +2m13 against seven serial samples, so that platform builds first
-      # and the test step reuses the cache.
-      - name: Build
-        if: matrix.platform.serial_build
-        run: zig build -Doptimize=ReleaseSafe
-
       # Compile and execution are separate steps so their durations are
       # reported separately (#254). `test-compile` builds everything `test`
-      # runs, and the next step reuses the cache.
+      # runs, including the exe the smoke test uses, and the next step reuses
+      # the cache.
       - name: Compile unit tests
         run: |
           started_at=$SECONDS
           trap 'printf "Unit test compile elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
-          zig build test-compile -Doptimize=ReleaseSafe
+          zig build test-compile -Doptimize=${{ matrix.platform.optimize }}
 
       - name: Run unit tests
         env:
@@ -190,9 +184,9 @@ jobs:
           started_at=$SECONDS
           trap 'printf "Unit test run elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
           if command -v timeout >/dev/null 2>&1; then
-            timeout "${TEST_TIMEOUT_SECONDS}s" zig build test -Doptimize=ReleaseSafe
+            timeout "${TEST_TIMEOUT_SECONDS}s" zig build test -Doptimize=${{ matrix.platform.optimize }}
           else
-            zig build test -Doptimize=ReleaseSafe
+            zig build test -Doptimize=${{ matrix.platform.optimize }}
           fi
 
       - name: Smoke test fresh binary
