@@ -10,16 +10,12 @@ const model_catalog = @import("model_catalog.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Bundle = struct {
-    pub const AuthStrategy = enum {
-        chatgpt,
-    };
     pub const Capabilities = struct {
         vision_fallback: bool = false,
     };
 
     capabilities: Capabilities = .{},
     presentation: ?*const provider_catalog.Entry = null,
-    auth_strategy: ?AuthStrategy = null,
     fallback_model_capabilities_fn: *const fn ([]const u8) model_capabilities.Capabilities = emptyModelCapabilities,
     agent_stream: ?stream_provider.Provider = null,
     cli_model_catalog: ?gateway_provider.CliModelCatalogProvider = null,

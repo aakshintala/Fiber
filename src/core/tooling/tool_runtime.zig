@@ -60,7 +60,7 @@ const test_builtin_tools = if (builtin.is_test)
 else
     struct {};
 const test_builtin_gateway = if (builtin.is_test)
-    @import("../../builtins/gateway.zig")
+    @import("../../builtins/gateway_fixture.zig")
 else
     struct {};
 
