@@ -11,6 +11,8 @@ const text_utils = @import("../shared/text_utils.zig");
 const project_config = @import("../mcp/project_config.zig");
 const model_provider = @import("model_provider.zig");
 const model_preferences = @import("model_preferences.zig");
+const connection_mod = @import("../../protocols/presets/connection.zig");
+const presets_mod = @import("../../protocols/presets/presets.zig");
 pub const context_limits = @import("context_limits.zig");
 
 const Allocator = std.mem.Allocator;
@@ -114,10 +116,12 @@ pub const Settings = struct {
     notification_max: ?bool = null,
     permission_rules: types.PermissionRuleSet = .{},
     has_permission_rules: bool = false,
+    connections: connection_mod.ConnectionSet = .{},
 
     pub fn deinit(self: *Settings, alloc: Allocator) void {
         self.models.deinit(alloc);
         self.permission_rules.deinit(alloc);
+        self.connections.deinit(alloc);
         self.* = .{};
     }
 };
@@ -398,6 +402,11 @@ fn loadMergedSettingsDetailedWithOptionalHome(
         .prompt_history_store_allowed = &prompt_history_store_allowed,
     };
 
+    // Embedded presets parse here at startup through the user-config parser;
+    // user layers merge over them field by field below. A broken preset is a
+    // programmer bug: fail the load rather than boot without it.
+    try presets_mod.loadInto(alloc, &settings.connections, null);
+
     var user_root: ?std.json.Parsed(std.json.Value) = null;
     defer if (user_root) |*parsed| parsed.deinit();
 
@@ -669,6 +678,7 @@ fn isProfileOnlySettingKey(key: []const u8) bool {
     inline for (&.{
         "model",
         "models",
+        "connections",
         "effort",
         "slash_menu_categories",
         "collapse_tool_calls",
@@ -784,12 +794,15 @@ fn mergeDetailedSettingsLayer(
     source: ConfigSource,
     permission_source: DetailedPermissionSource,
 ) !void {
+    var conn_detail = connection_mod.ParseDetail{};
+    defer conn_detail.deinit(alloc);
     if (parseSettingsValueForLayer(
         alloc,
         value,
         settings_layer,
         tolerate_non_object_user_containers,
         source != .user_workspace,
+        &conn_detail,
     )) |layer_settings| {
         var incoming = layer_settings;
         defer incoming.deinit(alloc);
@@ -813,10 +826,22 @@ fn mergeDetailedSettingsLayer(
                 },
             }
         }
-        mergeSettings(state.settings, &incoming, alloc);
+        try mergeSettings(state.settings, &incoming, alloc);
     } else |err| {
         if (err == error.OutOfMemory) return err;
         if (diagnostic_layer == .user and err == error.InvalidModelValue) state.prompt_history_store_allowed.* = false;
+        if (err == error.UnknownConnectionKey) {
+            // The parser names the connection and key, so the startup
+            // notice reads `key=connections.<name>.<key>`.
+            const setting_key = try conn_detail.settingKey(alloc);
+            errdefer alloc.free(setting_key);
+            try state.diagnostics.append(alloc, .{
+                .layer = diagnostic_layer,
+                .cause = .unknown_config_key,
+                .setting_key = setting_key,
+            });
+            return;
+        }
         try state.diagnostics.append(alloc, .{
             .layer = diagnostic_layer,
             .cause = diagnosticCauseForParseError(err),
@@ -1201,6 +1226,9 @@ fn discoverPathsWithOptionalHome(alloc: Allocator, home_dir: ?[]const u8, worksp
 pub fn loadMergedSettingsFromPaths(alloc: Allocator, paths: Paths) !Settings {
     var settings = Settings{};
     errdefer settings.deinit(alloc);
+    // Embedded presets parse here at startup through the user-config parser;
+    // user layers merge over them field by field below.
+    try presets_mod.loadInto(alloc, &settings.connections, null);
 
     const user_text = try readOptionalUserSettingsFile(alloc, paths);
     defer if (user_text) |owned| alloc.free(owned);
@@ -1212,10 +1240,10 @@ pub fn loadMergedSettingsFromPaths(alloc: Allocator, paths: Paths) !Settings {
 
         try mergeSettingsFile(&settings, alloc, paths.workspace_settings);
 
-        var user_settings = try parseSettingsValueForLayer(alloc, parsed.value, .profile, false, true);
+        var user_settings = try parseSettingsValueForLayer(alloc, parsed.value, .profile, false, true, null);
         defer user_settings.deinit(alloc);
         user_settings.context_limits.retag(.user_global);
-        mergeSettings(&settings, &user_settings, alloc);
+        try mergeSettings(&settings, &user_settings, alloc);
 
         try mergeWorkspaceOverridesFromValue(&settings, alloc, parsed.value, paths.workspace_root);
         return settings;
@@ -1313,10 +1341,10 @@ fn mergeWorkspaceOverridesFromValue(target: *Settings, alloc: Allocator, root_va
     const override_val = workspaces_val.object.get(workspace_root) orelse return;
     if (override_val != .object) return;
 
-    var override_settings = try parseSettingsValueForLayer(alloc, override_val, .profile, true, false);
+    var override_settings = try parseSettingsValueForLayer(alloc, override_val, .profile, true, false, null);
     defer override_settings.deinit(alloc);
     override_settings.context_limits.retag(.user_workspace);
-    mergeSettings(target, &override_settings, alloc);
+    try mergeSettings(target, &override_settings, alloc);
 }
 
 fn mergeSettingsFile(target: *Settings, alloc: Allocator, path: []const u8) !void {
@@ -1325,7 +1353,7 @@ fn mergeSettingsFile(target: *Settings, alloc: Allocator, path: []const u8) !voi
 
     var parsed = try parseSettingsJsonForLayer(alloc, bytes, .project);
     defer parsed.deinit(alloc);
-    mergeSettings(target, &parsed, alloc);
+    try mergeSettings(target, &parsed, alloc);
 }
 
 fn readOptionalFile(alloc: Allocator, path: []const u8) !?[]u8 {
@@ -1351,7 +1379,7 @@ fn parseSettingsJson(alloc: Allocator, json_text: []const u8) !Settings {
 fn parseSettingsJsonForLayer(alloc: Allocator, json_text: []const u8, layer: SettingsLayer) !Settings {
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, json_text, .{});
     defer parsed.deinit();
-    return parseSettingsValueForLayer(alloc, parsed.value, layer, false, true);
+    return parseSettingsValueForLayer(alloc, parsed.value, layer, false, true, null);
 }
 
 const JsonStringToken = struct {
@@ -1529,6 +1557,7 @@ fn parseSettingsValueForLayer(
     layer: SettingsLayer,
     tolerate_non_object_user_containers: bool,
     parse_workspace_statusline: bool,
+    conn_detail: ?*connection_mod.ParseDetail,
 ) !Settings {
     if (root != .object) return error.InvalidSettingsShape;
 
@@ -1541,6 +1570,7 @@ fn parseSettingsValueForLayer(
         root,
         tolerate_non_object_user_containers,
         parse_workspace_statusline,
+        conn_detail,
     );
     try parseProjectSafeFields(&settings, root);
 
@@ -1553,8 +1583,15 @@ fn parseProfileOnlyFields(
     root: std.json.Value,
     tolerate_non_object_user_containers: bool,
     parse_workspace_statusline: bool,
+    conn_detail: ?*connection_mod.ParseDetail,
 ) !void {
     if (root.object.contains("skill_match_fuzzy")) return error.RetiredSkillMatchFuzzy;
+    // Profile-only (decision 9): the project layer never reaches this
+    // function, so `connections` in a project `.fiber.json` parses as
+    // nothing and is reported as an ignored profile-owned key instead.
+    if (root.object.get("connections")) |connections_value| {
+        try connection_mod.parseSetInto(alloc, connections_value, &settings.connections, conn_detail);
+    }
     if (root.object.get("model")) |model_value| {
         const value = model_value;
         if (value != .string) return error.InvalidModelType;
@@ -1708,8 +1745,9 @@ fn parseProjectSafeFields(settings: *Settings, root: std.json.Value) !void {
     }
 }
 
-fn mergeSettings(target: *Settings, incoming: *Settings, alloc: Allocator) void {
+fn mergeSettings(target: *Settings, incoming: *Settings, alloc: Allocator) !void {
     target.models.mergeOwnedFrom(alloc, &incoming.models);
+    try target.connections.mergeFrom(alloc, &incoming.connections);
     if (incoming.permission_mode) |value| target.permission_mode = value;
     if (incoming.yolo_acknowledged) |value| target.yolo_acknowledged = value;
     if (incoming.max_agent_steps) |value| target.max_agent_steps = value;
@@ -2289,7 +2327,7 @@ test "max_tool_result_bytes parses resolves merges and serializes" {
 
     var second = try parseSettingsJson(std.testing.allocator, "{\"max_tool_result_bytes\":131072}");
     defer second.deinit(std.testing.allocator);
-    mergeSettings(&first, &second, std.testing.allocator);
+    try mergeSettings(&first, &second, std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 131072), first.max_tool_result_bytes.?);
 
     var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, "{\"max_tool_result_bytes\":131072}", .{});
@@ -2330,7 +2368,7 @@ test "startup_scrollback parses merges rejects invalid type and round trips" {
 
     var second = try parseSettingsJson(std.testing.allocator, "{\"startup_scrollback\":false}");
     defer second.deinit(std.testing.allocator);
-    mergeSettings(&first, &second, std.testing.allocator);
+    try mergeSettings(&first, &second, std.testing.allocator);
     try std.testing.expectEqual(false, first.startup_scrollback.?);
 
     try std.testing.expectError(error.InvalidStartupScrollbackType, parseSettingsJson(std.testing.allocator, "{\"startup_scrollback\":\"off\"}"));
@@ -2353,7 +2391,7 @@ test "collapse tool calls parses merges and rejects invalid types" {
 
     var second = try parseSettingsJson(std.testing.allocator, "{\"collapse_tool_calls\":false}");
     defer second.deinit(std.testing.allocator);
-    mergeSettings(&first, &second, std.testing.allocator);
+    try mergeSettings(&first, &second, std.testing.allocator);
     try std.testing.expect(!first.collapse_tool_calls.?);
 
     try std.testing.expectError(
@@ -2373,7 +2411,7 @@ test "slash menu categories parses merges and rejects invalid types" {
 
     var second = try parseSettingsJson(std.testing.allocator, "{\"slash_menu_categories\":false}");
     defer second.deinit(std.testing.allocator);
-    mergeSettings(&first, &second, std.testing.allocator);
+    try mergeSettings(&first, &second, std.testing.allocator);
     try std.testing.expectEqual(false, first.slash_menu_categories.?);
 
     try std.testing.expectError(
@@ -2393,7 +2431,7 @@ test "first_call_tool_choice parses merges and round trips" {
 
     var second = try parseSettingsJson(std.testing.allocator, "{\"first_call_tool_choice\":\"auto\"}");
     defer second.deinit(std.testing.allocator);
-    mergeSettings(&first, &second, std.testing.allocator);
+    try mergeSettings(&first, &second, std.testing.allocator);
     try std.testing.expectEqual(types.ToolChoice.auto, first.first_call_tool_choice.?);
 
     var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, "{\"first_call_tool_choice\":\"none\"}", .{});
@@ -3240,7 +3278,7 @@ test "global statusline fields parse and merge independently" {
     );
     defer incoming.deinit(std.testing.allocator);
 
-    mergeSettings(&target, &incoming, std.testing.allocator);
+    try mergeSettings(&target, &incoming, std.testing.allocator);
 
     try std.testing.expectEqual(true, target.statusline_context.?);
     try std.testing.expectEqual(true, target.statusline_session.?);
@@ -3464,7 +3502,7 @@ test "notification settings default off parse and merge by field" {
         "{\"notifications\":{\"attention_required\":true,\"max\":true}}",
     );
     defer workspace.deinit(std.testing.allocator);
-    mergeSettings(&global, &workspace, std.testing.allocator);
+    try mergeSettings(&global, &workspace, std.testing.allocator);
 
     try std.testing.expectEqual(true, global.notification_turn_end.?);
     try std.testing.expectEqual(true, global.notification_attention_required.?);
@@ -3900,4 +3938,130 @@ test "malformed or duplicate additional directories do not discard sibling setti
         }
         try std.testing.expect(found_diagnostic);
     }
+}
+
+test "embedded codex preset loads with no user connections" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", "{}\n");
+
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+
+    var detailed = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
+    defer detailed.deinit(std.testing.allocator);
+
+    const codex = detailed.settings.connections.get("codex") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqualStrings("https://chatgpt.com/backend-api/codex/responses", codex.base_url.?);
+    try std.testing.expectEqual(connection_mod.CredentialKind.oauth, codex.credential.?);
+    try std.testing.expectEqual(connection_mod.Protocol.responses, codex.protocol.?);
+    try std.testing.expectEqual(connection_mod.BillingKind.subscription, codex.billing.?);
+}
+
+test "user connections.codex override merges over the embedded preset" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    try writeFixtureFile(
+        tmp.dir,
+        "home/.fiber/settings.json",
+        "{\"connections\":{\"codex\":{\"base_url\":\"http://127.0.0.1:9\"}}}\n",
+    );
+
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+
+    var detailed = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
+    defer detailed.deinit(std.testing.allocator);
+
+    const codex = detailed.settings.connections.get("codex") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqualStrings("http://127.0.0.1:9", codex.base_url.?);
+    try std.testing.expectEqual(connection_mod.CredentialKind.oauth, codex.credential.?);
+    try std.testing.expectEqual(connection_mod.Protocol.responses, codex.protocol.?);
+    try std.testing.expectEqual(connection_mod.BillingKind.subscription, codex.billing.?);
+
+    var ordinary = try loadMergedSettingsFromHome(std.testing.allocator, home_root, workspace_root);
+    defer ordinary.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(
+        "http://127.0.0.1:9",
+        ordinary.connections.get("codex").?.base_url.?,
+    );
+}
+
+test "unknown connection key fails settings load naming the connection and key" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    try writeFixtureFile(
+        tmp.dir,
+        "home/.fiber/settings.json",
+        "{\"connections\":{\"codex\":{\"base_url\":\"http://127.0.0.1:9\",\"bogus\":true}}}\n",
+    );
+
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+
+    var detailed = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
+    defer detailed.deinit(std.testing.allocator);
+
+    var found = false;
+    for (detailed.diagnostics) |diagnostic| {
+        if (diagnostic.layer == .user and
+            diagnostic.cause == .unknown_config_key and
+            diagnostic.setting_key != null and
+            std.mem.eql(u8, diagnostic.setting_key.?, "connections.codex.bogus"))
+        {
+            found = true;
+        }
+    }
+    try std.testing.expect(found);
+    // The broken layer does not half-apply: the preset still resolves intact.
+    const codex = detailed.settings.connections.get("codex") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqualStrings("https://chatgpt.com/backend-api/codex/responses", codex.base_url.?);
+}
+
+test "project .fiber.json connections have no effect" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", "{}\n");
+    try writeFixtureFile(
+        tmp.dir,
+        "workspace/.fiber.json",
+        "{\"connections\":{\"codex\":{\"base_url\":\"http://evil.test\"}},\"max_agent_steps\":7}\n",
+    );
+
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+
+    var detailed = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
+    defer detailed.deinit(std.testing.allocator);
+
+    const codex = detailed.settings.connections.get("codex") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqualStrings("https://chatgpt.com/backend-api/codex/responses", codex.base_url.?);
+    try std.testing.expectEqual(@as(usize, 7), detailed.settings.max_agent_steps.?);
+    var ignored = false;
+    for (detailed.diagnostics) |diagnostic| {
+        if (diagnostic.layer == .project and
+            diagnostic.cause == .ignored_project_user_only_setting and
+            diagnostic.setting_key != null and
+            std.mem.eql(u8, diagnostic.setting_key.?, "connections"))
+        {
+            ignored = true;
+        }
+    }
+    try std.testing.expect(ignored);
 }
