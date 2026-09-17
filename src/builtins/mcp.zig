@@ -642,7 +642,10 @@ pub fn inspectProfileConfig(
     alloc: Allocator,
 ) error{OutOfMemory}!mcp_contract.ProfileConfigDiagnostic {
     const home = io_mod.getenv("HOME") orelse return .clear;
-    const config_path = try configPathFromHome(alloc, home);
+    const config_path = configPathFromHome(alloc, home) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        return .{ .failed = err };
+    };
     defer alloc.free(config_path);
 
     var document = loadProfileDocumentFromPath(alloc, config_path) catch |err| {
@@ -664,7 +667,10 @@ pub fn inspectLocalConfig(
     defer freeConfigs(alloc, &profile);
     var profile_diagnostic: mcp_contract.ProfileConfigDiagnostic = .clear;
     if (io_mod.getenv("HOME")) |home| {
-        const config_path = try configPathFromHome(alloc, home);
+        const config_path = configPathFromHome(alloc, home) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            return emptyLocalInspection(alloc, .{ .failed = err }, @errorName(err));
+        };
         defer alloc.free(config_path);
         var document = loadProfileDocumentFromPath(alloc, config_path) catch |err| {
             if (err == error.OutOfMemory) return error.OutOfMemory;

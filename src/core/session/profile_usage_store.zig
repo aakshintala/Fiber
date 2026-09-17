@@ -279,19 +279,37 @@ pub const Store = struct {
     fn ensureWritable(self: *Store) !void {
         if (self.durable_home == null) {
             const zio = io_mod.getIo();
-            var home = io_mod.VerifiedDir{
-                .dir = std.Io.Dir.openDirAbsolute(zio, self.home_path, .{
-                    .iterate = true,
-                }) catch return error.DurableLayoutFailed,
-            };
-            defer home.close();
-            self.durable_home = io_mod.openOrCreateVerifiedPrivateDir(
-                &home,
-                profile_paths.root_dir_name,
-            ) catch |err| switch (err) {
-                error.PrivateStatePermissionsUnsupported, error.DurablePathUnsafe => return err,
-                else => return error.DurableLayoutFailed,
-            };
+            if (try profile_paths.validatedOverride()) |root| {
+                const parent_path = std.fs.path.dirname(root) orelse return error.DurableLayoutFailed;
+                const leaf = std.fs.path.basename(root);
+                var parent = io_mod.VerifiedDir{
+                    .dir = std.Io.Dir.openDirAbsolute(zio, parent_path, .{
+                        .iterate = true,
+                    }) catch return error.DurableLayoutFailed,
+                };
+                defer parent.close();
+                self.durable_home = io_mod.openOrCreateVerifiedPrivateDir(
+                    &parent,
+                    leaf,
+                ) catch |err| switch (err) {
+                    error.PrivateStatePermissionsUnsupported, error.DurablePathUnsafe => return err,
+                    else => return error.DurableLayoutFailed,
+                };
+            } else {
+                var home = io_mod.VerifiedDir{
+                    .dir = std.Io.Dir.openDirAbsolute(zio, self.home_path, .{
+                        .iterate = true,
+                    }) catch return error.DurableLayoutFailed,
+                };
+                defer home.close();
+                self.durable_home = io_mod.openOrCreateVerifiedPrivateDir(
+                    &home,
+                    profile_paths.root_dir_name,
+                ) catch |err| switch (err) {
+                    error.PrivateStatePermissionsUnsupported, error.DurablePathUnsafe => return err,
+                    else => return error.DurableLayoutFailed,
+                };
+            }
         }
         self.durable_home.?.dir.setPermissions(
             io_mod.getIo(),
@@ -616,6 +634,20 @@ fn openExistingUsageFile(
 
 fn openExistingDurableHome(home_path: []const u8) !?io_mod.VerifiedDir {
     const zio = io_mod.getIo();
+    if (try profile_paths.validatedOverride()) |root| {
+        const dir = std.Io.Dir.openDirAbsolute(zio, root, .{
+            .iterate = true,
+            .follow_symlinks = false,
+        }) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            error.NotDir, error.SymLinkLoop => return error.DurablePathUnsafe,
+            else => return err,
+        };
+        errdefer dir.close(zio);
+        const stat = try dir.stat(zio);
+        if (stat.kind != .directory) return error.DurablePathUnsafe;
+        return .{ .dir = dir };
+    }
     var home = try std.Io.Dir.openDirAbsolute(zio, home_path, .{ .iterate = true });
     defer home.close(zio);
 

@@ -99,9 +99,11 @@ fn resolveEndpointSelection(
 ) !EndpointSelection {
     const runtime_base = runtimeBase(target) orelse
         return error.TerminalHostUnsupported;
+    const state_root = try profile_paths.resolveStateRoot(alloc, home);
+    defer alloc.free(state_root);
     const authority_root = try std.fs.path.join(
         alloc,
-        &.{ home, profile_paths.root_dir_name, host_dir_name },
+        &.{ state_root, host_dir_name },
     );
     errdefer alloc.free(authority_root);
     const profile_endpoint = try std.fs.path.join(
@@ -127,7 +129,14 @@ fn resolveEndpointSelection(
 
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
     hasher.update(transport_hash_context);
-    hasher.update(home);
+    // Transport identity is the state-root owner: HOME when the override is
+    // unset (the pinned contract), the override when set so distinct roots
+    // get distinct sockets and share nothing.
+    if (try profile_paths.validatedOverride()) |override_root| {
+        hasher.update(override_root);
+    } else {
+        hasher.update(home);
+    }
     var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
     hasher.final(&digest);
     const digest_hex = std.fmt.bytesToHex(
@@ -209,8 +218,14 @@ pub const Paths = struct {
         );
         var selection_owned = true;
         errdefer if (selection_owned) selection.deinit(alloc);
+        // The state root's parent plays the home_dir role: HOME when the
+        // override is unset, the override's parent when it is set.
+        const state_root = try profile_paths.resolveStateRoot(alloc, home);
+        defer alloc.free(state_root);
+        const parent_path = std.fs.path.dirname(state_root) orelse return error.HomeNotSet;
+        const leaf = std.fs.path.basename(state_root);
         var home_dir = io_mod.VerifiedDir{
-            .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{
+            .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), parent_path, .{
                 .iterate = true,
                 .follow_symlinks = false,
             }),
@@ -218,7 +233,7 @@ pub const Paths = struct {
         errdefer home_dir.close();
         var fiber_dir = try io_mod.openOrCreateVerifiedPrivateDir(
             &home_dir,
-            profile_paths.root_dir_name,
+            leaf,
         );
         errdefer fiber_dir.close();
         var host_dir = try io_mod.openOrCreateVerifiedPrivateDir(

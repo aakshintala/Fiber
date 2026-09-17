@@ -80,6 +80,19 @@ pub const Mutation = struct {
 };
 
 pub fn load(alloc: Allocator) !?Session {
+    if (try profile_paths.validatedOverride()) |root| {
+        var fiber_dir = std.Io.Dir.openDirAbsolute(io_mod.getIo(), root, .{
+            .iterate = true,
+            .follow_symlinks = false,
+        }) catch |err| {
+            if (err != error.FileNotFound) {
+                debug_trace.logf("auth", "ChatGPT session load failed step=open_profile err={s}", .{@errorName(err)});
+            }
+            return null;
+        };
+        defer fiber_dir.close(io_mod.getIo());
+        return loadFromDir(alloc, &fiber_dir, false);
+    }
     const home = io_mod.getenv("HOME") orelse return null;
     var home_dir = std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{ .iterate = true }) catch |err| {
         debug_trace.logf("auth", "ChatGPT session load failed step=open_home err={s}", .{@errorName(err)});
@@ -140,6 +153,17 @@ pub fn saveNewSession(alloc: Allocator, session: Session) !void {
 }
 
 pub fn beginExistingMutation() !?Mutation {
+    if (try profile_paths.validatedOverride()) |root| {
+        var fiber_dir = std.Io.Dir.openDirAbsolute(io_mod.getIo(), root, .{
+            .iterate = true,
+            .follow_symlinks = false,
+        }) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
+        errdefer fiber_dir.close(io_mod.getIo());
+        return try lockMutation(try verifyExistingPrivateFxDir(fiber_dir));
+    }
     const home = io_mod.getenv("HOME") orelse return error.HomeNotSet;
     var home_dir = io_mod.VerifiedDir{
         .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{ .iterate = true }),
@@ -154,6 +178,16 @@ pub fn beginExistingMutation() !?Mutation {
 }
 
 fn beginMutation() !Mutation {
+    if (try profile_paths.validatedOverride()) |root| {
+        const parent_path = std.fs.path.dirname(root) orelse return error.InvalidFiberStateDir;
+        const leaf = std.fs.path.basename(root);
+        var parent_dir = io_mod.VerifiedDir{
+            .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), parent_path, .{ .iterate = true }),
+        };
+        defer parent_dir.close();
+        const fiber_dir = try io_mod.openOrCreateVerifiedPrivateDir(&parent_dir, leaf);
+        return lockMutation(fiber_dir);
+    }
     const home = io_mod.getenv("HOME") orelse return error.HomeNotSet;
     var home_dir = io_mod.VerifiedDir{
         .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{ .iterate = true }),
@@ -177,23 +211,28 @@ fn lockMutation(open_fiber_dir: io_mod.VerifiedDir) !Mutation {
 }
 
 fn openExistingPrivateFxDir(home_dir: *io_mod.VerifiedDir) !io_mod.VerifiedDir {
-    var dir = try home_dir.dir.openDir(io_mod.getIo(), profile_paths.root_dir_name, .{
+    const dir = try home_dir.dir.openDir(io_mod.getIo(), profile_paths.root_dir_name, .{
         .iterate = true,
         .follow_symlinks = false,
     });
-    errdefer dir.close(io_mod.getIo());
+    return verifyExistingPrivateFxDir(dir);
+}
 
-    const initial_stat = try dir.stat(io_mod.getIo());
+fn verifyExistingPrivateFxDir(dir: std.Io.Dir) !io_mod.VerifiedDir {
+    var owned = dir;
+    errdefer owned.close(io_mod.getIo());
+
+    const initial_stat = try owned.stat(io_mod.getIo());
     if (initial_stat.kind != .directory) return error.DurablePathUnsafe;
     if (initial_stat.permissions.toMode() & 0o200 == 0) return error.PrivateStatePermissionsUnsupported;
-    dir.setPermissions(io_mod.getIo(), std.Io.File.Permissions.fromMode(0o700)) catch {
+    owned.setPermissions(io_mod.getIo(), std.Io.File.Permissions.fromMode(0o700)) catch {
         return error.PrivateStatePermissionsUnsupported;
     };
-    const stat = try dir.stat(io_mod.getIo());
+    const stat = try owned.stat(io_mod.getIo());
     if (stat.kind != .directory or stat.permissions.toMode() & 0o777 != 0o700) {
         return error.PrivateStatePermissionsUnsupported;
     }
-    return .{ .dir = dir };
+    return .{ .dir = owned };
 }
 
 pub fn parse(alloc: Allocator, bytes: []const u8) !Session {

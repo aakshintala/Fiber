@@ -15,6 +15,15 @@ fn profileFileFromHome(
     file_name: []const u8,
     max_bytes: usize,
 ) host.SecretStorePresence {
+    if (profile_paths.validatedOverride() catch return .unavailable) |root| {
+        var profile_dir = std.Io.Dir.openDirAbsolute(
+            io_mod.getIo(),
+            root,
+            .{ .iterate = true, .follow_symlinks = false },
+        ) catch |err| return if (err == error.FileNotFound) .missing else .unavailable;
+        defer profile_dir.close(io_mod.getIo());
+        return profileFileFromDir(&profile_dir, file_name, max_bytes);
+    }
     const home = home_value orelse return .unavailable;
     var home_dir = std.Io.Dir.openDirAbsolute(
         io_mod.getIo(),
@@ -29,7 +38,14 @@ fn profileFileFromHome(
         .{ .iterate = true, .follow_symlinks = false },
     ) catch |err| return if (err == error.FileNotFound) .missing else .unavailable;
     defer profile_dir.close(io_mod.getIo());
+    return profileFileFromDir(&profile_dir, file_name, max_bytes);
+}
 
+fn profileFileFromDir(
+    profile_dir: *std.Io.Dir,
+    file_name: []const u8,
+    max_bytes: usize,
+) host.SecretStorePresence {
     var file = profile_dir.openFile(io_mod.getIo(), file_name, .{
         .mode = .read_only,
         .allow_directory = false,

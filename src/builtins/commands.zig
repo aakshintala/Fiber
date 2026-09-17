@@ -309,6 +309,7 @@ pub const top_level_examples = [_]TopLevelExample{
 pub const top_level_notes = [_][]const u8{
     "Run `fiber <command> --help` for command-specific usage and options.",
     "Run `/help` inside an interactive session for slash commands.",
+    "Set FIBER_STATE_DIR to keep fiber state out of ~/.fiber.",
 };
 
 pub const top_level_registry = TopLevelRegistry{

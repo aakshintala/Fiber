@@ -999,6 +999,13 @@ pub const Root = struct {
         mode: OpenMode,
     ) !Root {
         const zio = io_mod.getIo();
+        // Route the override through the resolver instead of building
+        // `$HOME/.fiber` here (issue #132): sessions and locks live under
+        // FIBER_STATE_DIR when set. Prefix routing only; the default path
+        // below is untouched.
+        if (try profile_paths.validatedOverride()) |root| {
+            return initFromStateRoot(alloc, root, mode);
+        }
         var home = std.Io.Dir.openDirAbsolute(zio, home_path, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => blk: {
                 if (mode == .read_only) {
@@ -1069,6 +1076,94 @@ pub const Root = struct {
                         .display_root = try std.fs.path.join(
                             alloc,
                             &.{ home_path, profile_paths.root_dir_name, profile_paths.sessions_dir_name },
+                        ),
+                        .mode = mode,
+                    };
+                }
+                var parent = io_mod.VerifiedDir{ .dir = durable_home };
+                const created = try io_mod.openOrCreateVerifiedPrivateDir(
+                    &parent,
+                    profile_paths.sessions_dir_name,
+                );
+                break :blk created.dir;
+            },
+            error.NotDir, error.SymLinkLoop => return error.SessionPathUnsafe,
+            else => return err,
+        };
+        errdefer sessions_dir.close(zio);
+        if (mode == .writable) {
+            sessions_dir.setPermissions(zio, private_dir_permissions) catch
+                return error.PrivateStatePermissionsUnsupported;
+        }
+        try verifyPrivateDir(sessions_dir, mode);
+        const display_root = try io_mod.dirRealpathAlloc(alloc, sessions_dir, ".");
+        return .{
+            .sessions = .{ .dir = sessions_dir },
+            .display_root = display_root,
+            .mode = mode,
+        };
+    }
+
+    /// Override-root variant of initFromHome (issue #132). Mirrors the
+    /// default flow above with the resolved FIBER_STATE_DIR root in place
+    /// of `$HOME/.fiber`: same layout, permissions, and locking, only the
+    /// prefix differs. Kept as a mirror so the default path stays
+    /// byte-identical.
+    fn initFromStateRoot(alloc: Allocator, root: []const u8, mode: OpenMode) !Root {
+        const zio = io_mod.getIo();
+        var durable_home = std.Io.Dir.openDirAbsolute(zio, root, .{
+            .iterate = true,
+            .follow_symlinks = false,
+        }) catch |err| switch (err) {
+            error.FileNotFound => blk: {
+                if (mode == .read_only) {
+                    return .{
+                        .sessions = null,
+                        .display_root = try std.fs.path.join(
+                            alloc,
+                            &.{ root, profile_paths.sessions_dir_name },
+                        ),
+                        .mode = mode,
+                    };
+                }
+                const parent_path = std.fs.path.dirname(root) orelse return error.SessionPathUnsafe;
+                std.Io.Dir.createDirAbsolute(zio, parent_path, private_dir_permissions) catch |create_err| switch (create_err) {
+                    error.PathAlreadyExists => {},
+                    else => return create_err,
+                };
+                var parent = io_mod.VerifiedDir{
+                    .dir = try std.Io.Dir.openDirAbsolute(zio, parent_path, .{
+                        .iterate = true,
+                    }),
+                };
+                defer parent.close();
+                const created = try io_mod.openOrCreateVerifiedPrivateDir(
+                    &parent,
+                    std.fs.path.basename(root),
+                );
+                break :blk created.dir;
+            },
+            error.NotDir, error.SymLinkLoop => return error.SessionPathUnsafe,
+            else => return err,
+        };
+        defer durable_home.close(zio);
+        if (mode == .writable) {
+            durable_home.setPermissions(zio, private_dir_permissions) catch
+                return error.PrivateStatePermissionsUnsupported;
+        }
+        try verifyPrivateDir(durable_home, mode);
+
+        var sessions_dir = durable_home.openDir(zio, profile_paths.sessions_dir_name, .{
+            .iterate = true,
+            .follow_symlinks = false,
+        }) catch |err| switch (err) {
+            error.FileNotFound => blk: {
+                if (mode == .read_only) {
+                    return .{
+                        .sessions = null,
+                        .display_root = try std.fs.path.join(
+                            alloc,
+                            &.{ root, profile_paths.sessions_dir_name },
                         ),
                         .mode = mode,
                     };
@@ -4107,6 +4202,81 @@ test "root init rejects symlinked durable and sessions roots" {
             error.SessionPathUnsafe,
             Root.initFromHome(alloc, home, .writable),
         );
+    }
+}
+
+test "sessions stay under the default root without an override" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+
+    // Negative control: with the variable unset the session root is
+    // exactly `$HOME/.fiber/sessions`, so reverting the routing breaks it.
+    const env = try profile_paths.TestEnv.install(alloc, &.{
+        .{ .key = "HOME", .value = home },
+    });
+    defer env.deinit();
+
+    var root = try Root.initFromHome(alloc, home, .writable);
+    defer root.deinit(alloc);
+    const expected = try std.fs.path.join(alloc, &.{ home, ".fiber", "sessions" });
+    defer alloc.free(expected);
+    try std.testing.expectEqualStrings(expected, root.display_root);
+}
+
+test "state dir override isolates sessions and locks between roots" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    try tmp.dir.createDirPath(io_mod.getIo(), "state-a");
+    try tmp.dir.createDirPath(io_mod.getIo(), "state-b");
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const root_a = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "state-a");
+    defer alloc.free(root_a);
+    const root_b = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "state-b");
+    defer alloc.free(root_b);
+
+    const env = try profile_paths.TestEnv.install(alloc, &.{
+        .{ .key = "HOME", .value = home },
+        .{ .key = profile_paths.state_dir_env_name, .value = root_a },
+    });
+    defer env.deinit();
+
+    var initial = try testState(alloc, "session-isolation-a", 10);
+    defer initial.deinit(alloc);
+    {
+        var root = try Root.initFromHome(alloc, home, .writable);
+        defer root.deinit(alloc);
+        try std.testing.expect(std.mem.startsWith(u8, root.display_root, root_a));
+        var loaded = try root.startWritableSession(alloc, initial, .{});
+        defer loaded.deinit(alloc);
+    }
+
+    try env.put(profile_paths.state_dir_env_name, root_b);
+    {
+        var root = try Root.initFromHome(alloc, home, .writable);
+        defer root.deinit(alloc);
+        try std.testing.expect(std.mem.startsWith(u8, root.display_root, root_b));
+        // The session and its locks from root-a are invisible under root-b.
+        try std.testing.expectError(
+            error.SessionNotFound,
+            root.resumeForWrite(alloc, "session-isolation-a", .{}),
+        );
+    }
+
+    // And nothing leaked into the default location.
+    if (tmp.dir.openDir(io_mod.getIo(), "home/.fiber", .{ .iterate = true })) |leaked| {
+        var dir = leaked;
+        dir.close(io_mod.getIo());
+        return error.TestExpectedMissing;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
     }
 }
 

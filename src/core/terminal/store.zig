@@ -495,8 +495,14 @@ pub const ProfileStore = struct {
         options: Options,
     ) !ProfileStore {
         try options.validate();
+        // The state root's parent plays the home_dir role: HOME when the
+        // override is unset, the override's parent when it is set.
+        const state_root = try profile_paths.resolveStateRoot(alloc, home);
+        defer alloc.free(state_root);
+        const parent_path = std.fs.path.dirname(state_root) orelse return error.HomeNotSet;
+        const leaf = std.fs.path.basename(state_root);
         var home_dir = io_mod.VerifiedDir{
-            .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), home, .{
+            .dir = try std.Io.Dir.openDirAbsolute(io_mod.getIo(), parent_path, .{
                 .iterate = true,
                 .follow_symlinks = false,
             }),
@@ -504,7 +510,7 @@ pub const ProfileStore = struct {
         defer home_dir.close();
         var fiber_dir = try io_mod.openOrCreateVerifiedPrivateDir(
             &home_dir,
-            profile_paths.root_dir_name,
+            leaf,
         );
         defer fiber_dir.close();
         var sessions_dir = try io_mod.openOrCreateVerifiedPrivateDir(

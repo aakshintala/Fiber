@@ -30,6 +30,48 @@ test "missing model guidance spells fiber lowercase and names a way to fix it" {
     try std.testing.expect(std.mem.find(u8, missing_model_message, "FIBER_MODEL") != null);
 }
 
+/// Startup gate for FIBER_STATE_DIR (issue #132). main.zig invokes only
+/// this typed result: a set-but-unusable value fails the process before
+/// any state is touched, because falling back would write where the caller
+/// did not expect it. Environment only: the root must be known before
+/// settings.json can be read, so it sits above the config layering.
+pub const StateDirGate = enum {
+    ok,
+    empty,
+    relative,
+
+    pub fn message(self: StateDirGate) ?[]const u8 {
+        return switch (self) {
+            .ok => null,
+            .empty => "fiber: FIBER_STATE_DIR is set but empty; unset it to use $HOME/.fiber\n",
+            .relative => "fiber: FIBER_STATE_DIR must be an absolute path; unset it to use $HOME/.fiber\n",
+        };
+    }
+};
+
+pub fn checkStateDir(value: ?[]const u8) StateDirGate {
+    const raw = value orelse return .ok;
+    if (profile_paths.stateDirValid(raw)) return .ok;
+    return if (raw.len == 0) .empty else .relative;
+}
+
+test "state dir gate passes unset and absolute values" {
+    try std.testing.expectEqual(StateDirGate.ok, checkStateDir(null));
+    try std.testing.expectEqual(StateDirGate.ok, checkStateDir("/tmp/state"));
+    try std.testing.expectEqual(StateDirGate.ok, checkStateDir("/tmp/state/"));
+    try std.testing.expect(checkStateDir(null).message() == null);
+    try std.testing.expect(checkStateDir("/tmp/state").message() == null);
+}
+
+test "state dir gate names the variable for empty and relative values" {
+    try std.testing.expectEqual(StateDirGate.empty, checkStateDir(""));
+    try std.testing.expectEqual(StateDirGate.relative, checkStateDir("relative/path"));
+    for ([_]StateDirGate{ .empty, .relative }) |gate| {
+        const text = gate.message() orelse return error.TestExpectedMessage;
+        try std.testing.expect(std.mem.find(u8, text, "FIBER_STATE_DIR") != null);
+    }
+}
+
 pub const Paths = struct {
     home_dir: ?[]u8 = null,
     user_settings: ?[]u8 = null,

@@ -5,7 +5,7 @@ const skill_contract = @import("../skills/skill_contract.zig");
 const skill_runtime = @import("../skills/skill_runtime.zig");
 
 const Allocator = std.mem.Allocator;
-pub const LoadSkillsError = Allocator.Error;
+pub const LoadSkillsError = Allocator.Error || error{ HomeNotSet, InvalidFiberStateDir };
 
 pub const LoadedSkills = struct {
     dir: []u8 = &.{},
