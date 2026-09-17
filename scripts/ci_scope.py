@@ -22,6 +22,7 @@ SELECTABLE_JOBS = (
     "native",
     "pgso-driver",
     "conformance",
+    "build",
     "e2e",
     "bench",
     "binary-size",
@@ -31,17 +32,23 @@ ALL_JOBS = ALWAYS_JOBS + SELECTABLE_JOBS
 PLATFORM_LINUX_X86_64 = {
     "name": "linux-x86_64",
     "runner": "ubuntu-24.04",
-    "zig_tarball": "zig-x86_64-linux",
+    "target": "x86_64-linux",
+    "shard_count": 3,
+    "lanes": 3,
 }
 PLATFORM_LINUX_AARCH64 = {
     "name": "linux-aarch64",
     "runner": "ubuntu-24.04-arm",
-    "zig_tarball": "zig-aarch64-linux",
+    "target": "aarch64-linux",
+    "shard_count": 3,
+    "lanes": 3,
 }
 PLATFORM_MACOS_AARCH64 = {
     "name": "macos-aarch64",
     "runner": "macos-15",
-    "zig_tarball": "zig-aarch64-macos",
+    "target": "aarch64-macos",
+    "shard_count": 1,
+    "lanes": 4,
 }
 ALL_PLATFORMS = (
     PLATFORM_LINUX_X86_64,
@@ -62,16 +69,14 @@ class Selection:
     def __init__(
         self,
         jobs: Sequence[str],
-        e2e_platforms: Sequence[Mapping[str, str]],
         e2e_files: str,
-        e2e_shards: Sequence[Mapping[str, object]],
+        e2e_matrix: Sequence[Mapping[str, object]],
         path_classes: Sequence[tuple[str, str]],
         reasons: Mapping[str, str],
     ) -> None:
         self.jobs = list(jobs)
-        self.e2e_platforms = [dict(platform) for platform in e2e_platforms]
         self.e2e_files = e2e_files
-        self.e2e_shards = [dict(shard) for shard in e2e_shards]
+        self.e2e_matrix = [dict(entry) for entry in e2e_matrix]
         self.path_classes = list(path_classes)
         self.reasons = dict(reasons)
 
@@ -104,22 +109,24 @@ def select_jobs(
         jobs.discard("binary-size")
         skip_reasons["binary-size"] = "manual dispatch excludes binary-size"
         e2e_files = "all"
-        platforms = [dict(platform) for platform in ALL_PLATFORMS]
     else:
         jobs = set(wanted)
         e2e_files = "all" if e2e_all else " ".join(sorted(e2e_names))
-        platforms = [dict(platform) for platform in ALL_PLATFORMS]
 
     jobs.update(ALWAYS_JOBS)
 
     file_count = _e2e_file_count(head_root, e2e_files)
-    if "e2e" not in jobs or file_count == 0 or not platforms:
+    if "e2e" not in jobs or file_count == 0:
         jobs.discard("e2e")
         e2e_files = ""
-        platforms = []
-        shards: list[dict[str, object]] = []
+        e2e_matrix: list[dict[str, object]] = []
     else:
-        shards = _e2e_shard_matrix(file_count)
+        e2e_matrix = _e2e_matrix(file_count)
+
+    if "e2e" in jobs:
+        jobs.add("build")
+    else:
+        jobs.discard("build")
 
     reasons = _job_reasons(
         event=event,
@@ -129,9 +136,8 @@ def select_jobs(
     )
     return Selection(
         jobs=sorted(jobs),
-        e2e_platforms=platforms,
         e2e_files=e2e_files,
-        e2e_shards=shards,
+        e2e_matrix=e2e_matrix,
         path_classes=path_classes,
         reasons=reasons,
     )
@@ -312,18 +318,25 @@ def _e2e_file_count(head_root: pathlib.Path, e2e_files: str) -> int:
     return len(e2e_files.split())
 
 
-def _e2e_shard_matrix(file_count: int) -> list[dict[str, object]]:
-    shard_count = min(3, file_count)
-    if shard_count <= 0:
-        return []
-    return [
-        {
-            "index": index,
-            "shard_count": shard_count,
-            "label": "{}/{}".format(index + 1, shard_count),
-        }
-        for index in range(shard_count)
-    ]
+def _e2e_matrix(file_count: int) -> list[dict[str, object]]:
+    matrix: list[dict[str, object]] = []
+    for platform in ALL_PLATFORMS:
+        shard_count = min(int(platform["shard_count"]), file_count)
+        if shard_count <= 0:
+            continue
+        for index in range(shard_count):
+            matrix.append(
+                {
+                    "name": platform["name"],
+                    "runner": platform["runner"],
+                    "target": platform["target"],
+                    "index": index,
+                    "shard_count": shard_count,
+                    "label": "{}/{}".format(index + 1, shard_count),
+                    "lanes": platform["lanes"],
+                }
+            )
+    return matrix
 
 
 def _job_reasons(
@@ -343,6 +356,9 @@ def _job_reasons(
         if job not in jobs:
             reasons[job] = "no changed path selects it"
             continue
+        if job == "build":
+            reasons[job] = "selected whenever e2e is selected"
+            continue
         if event == "workflow_dispatch":
             reasons[job] = "manual dispatch selects every job except binary-size"
             continue
@@ -361,9 +377,8 @@ def _compact_json(value: object) -> str:
 def _write_outputs(selection: Selection) -> None:
     lines = [
         "jobs={}".format(_compact_json(selection.jobs)),
-        "e2e_platforms={}".format(_compact_json(selection.e2e_platforms)),
+        "e2e_matrix={}".format(_compact_json(selection.e2e_matrix)),
         "e2e_files={}".format(selection.e2e_files),
-        "e2e_shards={}".format(_compact_json(selection.e2e_shards)),
     ]
     text = "\n".join(lines) + "\n"
     github_output = os.environ.get("GITHUB_OUTPUT")
