@@ -153,6 +153,13 @@ HOME="$SESSION_FIXTURE_HOME" hyperfine \
 
 echo ""
 
+# Peak RSS per heavy workload (getrusage, no GNU time dependency). Runs before
+# the budget check so check_budgets.py can enforce the memory gate.
+echo "--- peak RSS ---"
+python3 "${REPO_ROOT}/benchmarks/measure_memory.py"
+
+echo ""
+
 # Combine results into a single summary for CI
 echo "--- summary ---"
 python3 "${REPO_ROOT}/benchmarks/summarize.py"

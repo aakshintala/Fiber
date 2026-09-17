@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Enforce raw per-command wall-clock latency budgets against hyperfine results."""
 
+import argparse
 import json
 import glob
 import os
@@ -15,6 +16,24 @@ LINUX_BUDGETS = {
     "fiber sessions --json": 0.002,
 }
 DEFAULT_LINUX_BUDGET = 0.002
+
+# Peak RSS budgets in MiB per heavy workload. Each is at least 2x the larger
+# of the macOS arm64 median and the Linux CI peak (see benchmarks/README.md),
+# leaving headroom for Linux runner variance.
+MEMORY_BUDGETS_MIB = {
+    "file-index-100k": 40.0,
+    "ui-activity": 28.0,
+    "approval-transcript": 32.0,
+    "approval-diff": 28.0,
+    "approval-payload": 28.0,
+    "approval-combined": 40.0,
+}
+
+
+def memory_budget(system_name, workload):
+    if system_name != "Linux":
+        return None
+    return MEMORY_BUDGETS_MIB.get(workload)
 
 
 def command_budget(system_name, command):
@@ -31,7 +50,7 @@ def check_results(result_files, system_name):
     filtered_files = [
         result_file
         for result_file in result_files
-        if os.path.basename(result_file) != "summary.json"
+        if os.path.basename(result_file) not in ("summary.json", "memory.json")
     ]
     if not filtered_files:
         print("No benchmark result files found after excluding summary.json")
@@ -73,26 +92,93 @@ def check_results(result_files, system_name):
     return not failed
 
 
+def check_memory_results(memory_path, system_name):
+    if not os.path.isfile(memory_path):
+        if system_name != "Linux":
+            print(f"  INFO  no memory results at {memory_path} (Linux-only gate)")
+            return True
+        print(f"No memory results found at {memory_path}")
+        return False
+    with open(memory_path) as file:
+        data = json.load(file)
+    workloads = data.get("workloads", {})
+    failed = False
+    for name in sorted(set(workloads) | set(MEMORY_BUDGETS_MIB)):
+        budget = memory_budget(system_name, name)
+        entry = workloads.get(name)
+        if entry is None:
+            print(f"  FAIL  {name:<20s} missing from memory results")
+            failed = True
+            continue
+        mib = entry["peak_rss_bytes"] / 2**20
+        if budget is None:
+            if name not in MEMORY_BUDGETS_MIB:
+                print(f"  INFO  {name:<20s} peak={mib:>7.2f} MiB  (no budget defined)")
+                continue
+            print(
+                f"  INFO  {name:<20s} peak={mib:>7.2f} MiB  "
+                f"(Linux budget: {MEMORY_BUDGETS_MIB[name]:.0f} MiB)"
+            )
+            continue
+        if name not in MEMORY_BUDGETS_MIB:
+            print(f"  FAIL  {name:<20s} peak={mib:>7.2f} MiB  (no budget defined)")
+            failed = True
+            continue
+        ok = mib <= budget
+        tag = "PASS" if ok else "FAIL"
+        print(
+            f"  {tag}  {name:<20s} peak={mib:>7.2f} MiB  "
+            f"(limit: {budget:.0f} MiB, delta: {mib - budget:+.2f} MiB)"
+        )
+        if not ok:
+            failed = True
+    return not failed
+
+
 def main():
-    system_name = platform.system()
-    result_files = sorted(
-        glob.glob(
-            os.environ.get(
-                "FIBER_BENCH_RESULTS_GLOB",
-                "benchmarks/results/*.json",
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--memory-only",
+        action="store_true",
+        help="enforce only the peak RSS gate (no hyperfine results needed)",
+    )
+    args = parser.parse_args()
+    system_name = os.environ.get("FIBER_BENCH_SYSTEM", platform.system())
+    if args.memory_only:
+        latency_ok = True
+    else:
+        result_files = sorted(
+            glob.glob(
+                os.environ.get(
+                    "FIBER_BENCH_RESULTS_GLOB",
+                    "benchmarks/results/*.json",
+                )
             )
         )
+        latency_ok = check_results(result_files, system_name)
+    memory_path = os.environ.get(
+        "FIBER_MEMORY_RESULTS", "benchmarks/results/memory.json"
     )
-    if check_results(result_files, system_name):
+    memory_ok = check_memory_results(memory_path, system_name)
+    if latency_ok and memory_ok:
         if system_name != "Linux":
-            print(
-                f"\nLinux 2ms budget not evaluated on {system_name}; "
-                "raw local means are informational"
-            )
+            if args.memory_only:
+                print(
+                    f"\nMemory gate not evaluated on {system_name}; "
+                    "reported peaks are informational"
+                )
+            else:
+                print(
+                    f"\nLinux 2ms budget not evaluated on {system_name}; "
+                    "raw local means are informational"
+                )
             return 0
         print("\nAll commands within budget")
         return 0
-    print("\nLatency budget exceeded")
+    if not latency_ok:
+        print("\nLatency budget exceeded")
+    if not memory_ok:
+        print("\nMemory budget exceeded")
     return 1
 
 
