@@ -128,6 +128,30 @@ pub const top_level_specs = [_]TopLevelSpec{
         },
     },
     .{
+        .kind = .config,
+        .token = "config",
+        .usage = "config get <key> [--json] | config set <key> <value> [--json]",
+        .summary = "Show or set profile configuration",
+        .options = &.{
+            .{ .flag = "get <key>", .description = "Show the effective value and its source" },
+            .{ .flag = "set <key> <value>", .description = "Write the profile global value" },
+            json_option,
+        },
+        .details = &.{
+            "Keys:",
+            "  fiber config get model|effort|permission_mode|auto_upgrade|max_agent_steps|max_tool_result_bytes|first_call_tool_choice",
+            "  fiber config set model|effort|permission_mode|auto_upgrade|max_agent_steps|max_tool_result_bytes|first_call_tool_choice <value>",
+            "",
+            "get reports the effective value and where it came from, so an",
+            "environment override or project file is visible instead of confusing.",
+            "An unset model reports (unset) with source unset: fiber ships",
+            "no compiled-in default model.",
+            "set writes the profile global layer only and never touches the",
+            "network. `config set model` checks syntax only; `fiber models use`",
+            "checks the id against the catalog when it can reach one.",
+        },
+    },
+    .{
         .kind = .doctor,
         .token = "doctor",
         .usage = "doctor [--json]",
@@ -268,6 +292,7 @@ pub const top_level_help_groups = [_]TopLevelHelpGroup{
     .{ .entries = &.{
         .{ .kind = .status, .usage = "status" },
         .{ .kind = .doctor, .usage = "doctor" },
+        .{ .kind = .config, .usage = "config get|set" },
         .{ .kind = .mcp, .usage = "mcp <command> ..." },
         .{ .kind = .permissions, .usage = "permissions" },
         .{ .kind = .workspace, .usage = "workspace" },

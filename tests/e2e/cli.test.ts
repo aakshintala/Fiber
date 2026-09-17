@@ -1584,6 +1584,7 @@ describe("cli: read-only no-create matrix", () => {
     { args: ["session", "show", "last", "--json"], code: 1, error: "no saved sessions" },
     { args: ["session", "show", "--id", "missing.valid-id", "--json"], code: 1, error: "record not found" },
     { args: ["doctor", "--json"], code: 0, kind: "doctor" },
+    { args: ["config", "get", "model", "--json"], code: 0, kind: "config.get" },
   ] as const;
 
   for (const probe of probes) {
@@ -2806,6 +2807,191 @@ describe("cli: models", () => {
       } finally {
         proc.kill("SIGKILL");
         server.stop();
+        cleanupIsolatedTestHome(home);
+      }
+    },
+    TIMEOUT,
+  );
+});
+
+describe("cli: config", () => {
+  test(
+    "fiber config set writes profile keys and config get reads them back",
+    async () => {
+      const home = createIsolatedTestHome();
+      const env = { ...NO_GATEWAY_AUTH, HOME: home };
+      const settingsPath = join(home, ".fiber", "settings.json");
+      try {
+        const cases: Array<[string, string, string]> = [
+          ["effort", "high", "[config] effort=high\n"],
+          ["permission_mode", "yolo", "[config] permission_mode=yolo\n"],
+          ["auto_upgrade", "true", "[config] auto_upgrade=true\n"],
+          ["max_agent_steps", "50", "[config] max_agent_steps=50\n"],
+          ["max_tool_result_bytes", "131072", "[config] max_tool_result_bytes=131072\n"],
+          ["first_call_tool_choice", "none", "[config] first_call_tool_choice=none\n"],
+        ];
+        for (const [key, value, text] of cases) {
+          const set = await runFx(["config", "set", key, value], { env });
+          expect(set.code).toBe(0);
+          expect(set.stderr).toBe("");
+          expect(set.stdout).toBe(text);
+
+          const get = await runFx(["config", "get", key], { env });
+          expect(get.code).toBe(0);
+          expect(get.stderr).toBe("");
+          expect(get.stdout).toBe(`${value}  (user_global)\n`);
+        }
+        expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({
+          effort: "high",
+          permission_mode: "yolo",
+          auto_upgrade: true,
+          max_agent_steps: 50,
+          max_tool_result_bytes: 131072,
+          first_call_tool_choice: "none",
+        });
+
+        const getJson = await runFx(["config", "get", "effort", "--json"], { env });
+        expect(getJson.code).toBe(0);
+        expect(JSON.parse(getJson.stdout.trim())).toEqual({
+          kind: "config.get",
+          ok: true,
+          data: { key: "effort", value: "high", source: "user_global" },
+        });
+
+        const setJson = await runFx(["config", "set", "effort", "low", "--json"], { env });
+        expect(setJson.code).toBe(0);
+        expect(JSON.parse(setJson.stdout.trim())).toEqual({
+          kind: "config.set",
+          ok: true,
+          data: { key: "effort", value: "low" },
+        });
+      } finally {
+        cleanupIsolatedTestHome(home);
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "fiber config get surfaces process overrides instead of stored values",
+    async () => {
+      const home = createIsolatedTestHome();
+      const stored = { ...NO_GATEWAY_AUTH, HOME: home };
+      try {
+        mkdirSync(join(home, ".fiber"), { recursive: true });
+        writeFileSync(
+          join(home, ".fiber", "settings.json"),
+          JSON.stringify({ models: { codex: "stored/model" }, max_agent_steps: 8 }),
+        );
+
+        const storedModel = await runFx(["config", "get", "model"], { env: stored });
+        expect(storedModel.code).toBe(0);
+        expect(storedModel.stdout).toBe("stored/model  (user_global)\n");
+
+        const overridden = {
+          ...stored,
+          FIBER_MODEL: "env/model",
+          FIBER_PERMISSION_MODE: "yolo",
+          FIBER_MAX_AGENT_STEPS: "42",
+        };
+        const envModel = await runFx(["config", "get", "model"], { env: overridden });
+        expect(envModel.stdout).toBe("env/model  (process_override)\n");
+        const envMode = await runFx(["config", "get", "permission_mode"], { env: overridden });
+        expect(envMode.stdout).toBe("yolo  (process_override)\n");
+        const envSteps = await runFx(["config", "get", "max_agent_steps"], { env: overridden });
+        expect(envSteps.stdout).toBe("42  (process_override)\n");
+
+        const envJson = await runFx(["config", "get", "model", "--json"], { env: overridden });
+        expect(JSON.parse(envJson.stdout.trim())).toEqual({
+          kind: "config.get",
+          ok: true,
+          data: { key: "model", value: "env/model", source: "process_override" },
+        });
+      } finally {
+        cleanupIsolatedTestHome(home);
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "fiber config refuses unknown keys and bad values; model is a pure local write",
+    async () => {
+      const home = createIsolatedTestHome();
+      const env = { ...NO_GATEWAY_AUTH, HOME: home };
+      const settingsPath = join(home, ".fiber", "settings.json");
+      try {
+        // No compiled-in default model: an unset key reports explicitly.
+        const unset = await runFx(["config", "get", "model"], { env });
+        expect(unset.code).toBe(0);
+        expect(unset.stdout).toBe("(unset)  (unset)\n");
+        expect(existsSync(settingsPath)).toBe(false);
+
+        const unsetJson = await runFx(["config", "get", "model", "--json"], { env });
+        expect(unsetJson.code).toBe(0);
+        expect(JSON.parse(unsetJson.stdout.trim())).toEqual({
+          kind: "config.get",
+          ok: true,
+          data: { key: "model", value: "(unset)", source: "unset" },
+        });
+        expect(existsSync(settingsPath)).toBe(false);
+
+        // Unknown keys and missing operands are usage errors.
+        for (const args of [
+          ["config", "get", "yolo_acknowledged"],
+          ["config", "get"],
+          ["config", "set", "effort"],
+          ["config", "set", "wat", "1"],
+          ["config", "bogus"],
+        ]) {
+          const result = await runFx(args, { env });
+          expect(result.code).toBe(2);
+          expect(result.stderr).toContain("usage: fiber config");
+        }
+
+        // Values the reader would reject or silently drop fail at write time.
+        // `config set model` checks syntax only: non-empty, no whitespace.
+        for (const [key, value] of [
+          ["effort", "ultra!!!"],
+          ["permission_mode", "loud"],
+          ["auto_upgrade", "maybe"],
+          ["max_agent_steps", "many"],
+          ["max_agent_steps", "-1"],
+          ["max_tool_result_bytes", "1023"],
+          ["first_call_tool_choice", "required"],
+          ["model", ""],
+          ["model", "has space"],
+          ["model", " padded "],
+        ] as Array<[string, string]>) {
+          const result = await runFx(["config", "set", key, value], { env });
+          expect(result.code).toBe(2);
+          expect(result.stderr).toContain(`invalid value for '${key}'`);
+        }
+        expect(existsSync(settingsPath)).toBe(false);
+
+        // Pure configuration write: no catalog fetch, so it works offline.
+        const model = await runFx(["config", "set", "model", "offline/model"], { env });
+        expect(model.code).toBe(0);
+        expect(model.stderr).toBe("");
+        expect(model.stdout).toBe("[config] model=offline/model\n");
+
+        const get = await runFx(["config", "get", "model"], { env });
+        expect(get.code).toBe(0);
+        expect(get.stdout).toBe("offline/model  (user_global)\n");
+        expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({
+          models: { codex: "offline/model" },
+        });
+
+        const modelJson = await runFx(["config", "set", "model", "other/model", "--json"], { env });
+        expect(modelJson.code).toBe(0);
+        expect(JSON.parse(modelJson.stdout.trim())).toEqual({
+          kind: "config.set",
+          ok: true,
+          data: { key: "model", value: "other/model" },
+        });
+        const getAgain = await runFx(["config", "get", "model"], { env });
+        expect(getAgain.stdout).toBe("other/model  (user_global)\n");
+      } finally {
         cleanupIsolatedTestHome(home);
       }
     },

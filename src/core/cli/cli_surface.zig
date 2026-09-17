@@ -47,6 +47,7 @@ const tool_dispatch = @import("../tooling/tool_dispatch.zig");
 const tool_set_contract = @import("../tooling/tool_set.zig");
 const workspace_commands = @import("../workspace/workspace_commands.zig");
 const usage_cli_runtime = @import("usage_cli_runtime.zig");
+const agent_steps = @import("../config/agent_steps.zig");
 
 const Allocator = std.mem.Allocator;
 const CommandCatalog = command_specs.TopLevelRegistry;
@@ -61,6 +62,7 @@ pub const Command = union(enum) {
     permissions: []const [:0]const u8,
     mcp: []const [:0]const u8,
     models: []const [:0]const u8,
+    config: []const [:0]const u8,
     doctor: []const [:0]const u8,
     session: []const [:0]const u8,
     sessions: []const [:0]const u8,
@@ -292,6 +294,273 @@ fn writeModelsUseError(
     try writeStderr(deps, "\n");
 }
 
+/// `fiber config get` reports the effective value and its source; `fiber config
+/// set` writes the profile global layer. Some keys keep another writer
+/// (`fiber models use` checks the model id against the catalog,
+/// `fiber permissions mode` owns its surface); keeping them here is
+/// intentional so a provisioning loop uses one verb. `config set` never
+/// touches the network.
+fn runTopLevelConfig(
+    alloc: Allocator,
+    rest: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    if (rest.len == 0) {
+        try writeTopLevelUsage(cfg.command_catalog, deps, .config);
+        return .handled_usage_error;
+    }
+    if (std.mem.eql(u8, rest[0], "get")) {
+        return runConfigGet(alloc, rest[1..], cfg, deps);
+    }
+    if (std.mem.eql(u8, rest[0], "set")) {
+        return runConfigSet(alloc, rest[1..], cfg, deps);
+    }
+    try writeTopLevelUsage(cfg.command_catalog, deps, .config);
+    return .handled_usage_error;
+}
+
+const ConfigGetArgs = struct {
+    format: output_contracts.OutputFormat = .text,
+    key: []const u8,
+};
+
+fn parseConfigGetArgs(args: []const [:0]const u8) !ConfigGetArgs {
+    var options = ConfigGetArgs{ .key = undefined };
+    var key_seen = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (key_seen) return error.InvalidConfigArgs;
+        key_seen = true;
+        options.key = arg;
+    }
+    if (!key_seen) return error.InvalidConfigArgs;
+    if (!config_runtime.isConfigGetKey(options.key)) return error.InvalidConfigArgs;
+    return options;
+}
+
+const ConfigSetArgs = struct {
+    format: output_contracts.OutputFormat = .text,
+    key: []const u8,
+    value: []const u8,
+};
+
+fn parseConfigSetArgs(args: []const [:0]const u8) !ConfigSetArgs {
+    var options = ConfigSetArgs{ .key = undefined, .value = undefined };
+    var positional: usize = 0;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) {
+            options.format = .json;
+            continue;
+        }
+        if (positional == 0) options.key = arg else if (positional == 1) options.value = arg else return error.InvalidConfigArgs;
+        positional += 1;
+    }
+    if (positional != 2) return error.InvalidConfigArgs;
+    return options;
+}
+
+const ConfigGetView = struct {
+    /// Owned by the caller; freed after rendering.
+    value: []u8,
+    source: config_runtime.ConfigSource,
+};
+
+/// Compiled defaults behind `config get`, taken from startup state so the
+/// command reports the same effective values the runtime would use. The
+/// non-interactive entry config zeroes these fields, so cfg cannot supply
+/// them. `model` has no compiled default: an empty default means unset.
+const ConfigGetDefaults = struct {
+    model: []const u8,
+    effort: types.ReasoningEffort,
+    permission_mode: types.PermissionMode,
+    auto_upgrade: bool,
+    max_agent_steps: usize,
+    max_tool_result_bytes: usize,
+    first_call_tool_choice: types.ToolChoice,
+};
+
+const ConfigGetOverrides = struct {
+    model: ?[]const u8,
+    permission_mode: ?[]const u8,
+    max_agent_steps: ?[]const u8,
+};
+
+/// Resolves the effective value and source for a `config get` key, mirroring
+/// startup layering: process overrides win, then the merged settings layers
+/// by source, then the compiled default. Returns null when `model` is unset:
+/// fiber ships no compiled-in default model, so there is no default to
+/// report. The value is always allocated so union labels never borrow a
+/// temporary. Pure over its inputs so tests cover it without touching the
+/// profile.
+fn resolveConfigGet(
+    alloc: Allocator,
+    key: []const u8,
+    settings: *const config_runtime.Settings,
+    sources: *const config_runtime.ConfigSources,
+    defaults: ConfigGetDefaults,
+    overrides: ConfigGetOverrides,
+) !?ConfigGetView {
+    if (std.mem.eql(u8, key, "model")) {
+        if (overrides.model) |raw| {
+            const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+            if (trimmed.len > 0) return .{ .value = try alloc.dupe(u8, trimmed), .source = .process_override };
+        }
+        if (settings.models.get(.codex)) |stored| {
+            return .{ .value = try alloc.dupe(u8, stored), .source = sources.models.get(.codex) };
+        }
+        if (defaults.model.len > 0) {
+            return .{ .value = try alloc.dupe(u8, defaults.model), .source = .compiled_default };
+        }
+        return null;
+    }
+    if (std.mem.eql(u8, key, "effort")) {
+        const effort: types.ReasoningEffort = settings.effort orelse defaults.effort;
+        return .{ .value = try alloc.dupe(u8, effort.label()), .source = sources.effort };
+    }
+    if (std.mem.eql(u8, key, "permission_mode")) {
+        if (overrides.permission_mode) |raw| {
+            if (config_runtime.parsePermissionMode(raw)) |mode| return .{ .value = try alloc.dupe(u8, @tagName(mode)), .source = .process_override };
+        }
+        return .{ .value = try alloc.dupe(u8, @tagName(settings.permission_mode orelse defaults.permission_mode)), .source = sources.permission_mode };
+    }
+    if (std.mem.eql(u8, key, "auto_upgrade")) {
+        const enabled = settings.auto_upgrade orelse defaults.auto_upgrade;
+        return .{ .value = try alloc.dupe(u8, if (enabled) "true" else "false"), .source = sources.auto_upgrade };
+    }
+    if (std.mem.eql(u8, key, "max_agent_steps")) {
+        if (agent_steps.parseMaxAgentSteps(overrides.max_agent_steps)) |limit| {
+            return .{ .value = try std.fmt.allocPrint(alloc, "{d}", .{limit}), .source = .process_override };
+        }
+        const limit = settings.max_agent_steps orelse defaults.max_agent_steps;
+        return .{ .value = try std.fmt.allocPrint(alloc, "{d}", .{limit}), .source = sources.max_agent_steps };
+    }
+    if (std.mem.eql(u8, key, "max_tool_result_bytes")) {
+        const limit = settings.max_tool_result_bytes orelse defaults.max_tool_result_bytes;
+        return .{ .value = try std.fmt.allocPrint(alloc, "{d}", .{limit}), .source = sources.max_tool_result_bytes };
+    }
+    const choice: types.ToolChoice = settings.first_call_tool_choice orelse defaults.first_call_tool_choice;
+    return .{ .value = try alloc.dupe(u8, choice.label()), .source = sources.first_call_tool_choice };
+}
+
+fn runConfigGet(
+    alloc: Allocator,
+    args: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    const parsed = parseConfigGetArgs(args) catch |err| {
+        try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .config, output_contracts.Kind.config_get.jsonName(), err, args);
+        return .handled_usage_error;
+    };
+    var startup = try deps.load_startup_state_without_credentials(alloc, cfg.default_model, cfg.default_agent_step_limit);
+    defer startup.deinit(alloc);
+    try writeConfigDiagnostics(alloc, deps, startup.config_diagnostics);
+    var detailed = try config_runtime.loadMergedSettingsDetailed(alloc, startup.workspace_root);
+    defer detailed.deinit(alloc);
+    if (try resolveConfigGet(alloc, parsed.key, &detailed.settings, &detailed.sources, .{
+        .model = startup.selected_model,
+        .effort = startup.effort,
+        .permission_mode = startup.permission_mode,
+        .auto_upgrade = startup.auto_upgrade,
+        .max_agent_steps = startup.agent_step_limit,
+        .max_tool_result_bytes = startup.max_tool_result_bytes,
+        .first_call_tool_choice = startup.first_call_tool_choice,
+    }, .{
+        .model = deps.getenv(deps.env_ctx, "FIBER_MODEL"),
+        .permission_mode = deps.getenv(deps.env_ctx, "FIBER_PERMISSION_MODE"),
+        .max_agent_steps = deps.getenv(deps.env_ctx, "FIBER_MAX_AGENT_STEPS"),
+    })) |view| {
+        defer alloc.free(view.value);
+        const text = try (output_contracts.ConfigGetSnapshot{
+            .key = parsed.key,
+            .value = view.value,
+            .source = @tagName(view.source),
+        }).render(alloc, parsed.format);
+        defer alloc.free(text);
+        try writeFormattedOutput(deps, text, parsed.format);
+        return .handled_success;
+    }
+    const unset_text = try (output_contracts.ConfigGetSnapshot{
+        .key = parsed.key,
+        .value = "(unset)",
+        .source = "unset",
+    }).render(alloc, parsed.format);
+    defer alloc.free(unset_text);
+    try writeFormattedOutput(deps, unset_text, parsed.format);
+    return .handled_success;
+}
+
+/// Canonical stored spelling of a just-validated set patch, so the
+/// confirmation echoes what the reader will load back. Owned by the caller.
+fn configSetDisplayValue(alloc: Allocator, patch: config_runtime.UserSettingsPatch, key: []const u8) ![]u8 {
+    if (std.mem.eql(u8, key, "model")) return alloc.dupe(u8, patch.model_preference.?.model);
+    if (std.mem.eql(u8, key, "effort")) return alloc.dupe(u8, patch.effort.?.label());
+    if (std.mem.eql(u8, key, "permission_mode")) return alloc.dupe(u8, @tagName(patch.permission_mode.?));
+    if (std.mem.eql(u8, key, "auto_upgrade")) return alloc.dupe(u8, if (patch.auto_upgrade.?) "true" else "false");
+    if (std.mem.eql(u8, key, "max_agent_steps")) return std.fmt.allocPrint(alloc, "{d}", .{patch.max_agent_steps.?});
+    if (std.mem.eql(u8, key, "max_tool_result_bytes")) return std.fmt.allocPrint(alloc, "{d}", .{patch.max_tool_result_bytes.?});
+    return alloc.dupe(u8, patch.first_call_tool_choice.?.label());
+}
+
+fn runConfigSet(
+    alloc: Allocator,
+    args: []const [:0]const u8,
+    cfg: Config,
+    deps: RunDeps,
+) !RunResult {
+    const parsed = parseConfigSetArgs(args) catch |err| {
+        try writeUsageOrJsonError(alloc, cfg.command_catalog, deps, .config, output_contracts.Kind.config_set.jsonName(), err, args);
+        return .handled_usage_error;
+    };
+    const patch = config_runtime.parseConfigSetPatch(parsed.key, parsed.value) catch |err| {
+        if (parsed.format == .json) {
+            const message: []const u8 = switch (err) {
+                error.UnknownConfigKey => "unknown configuration key",
+                else => "invalid value for configuration key",
+            };
+            try writeJsonCommandFailure(alloc, deps, output_contracts.Kind.config_set.jsonName(), err, message);
+        } else if (err == error.UnknownConfigKey) {
+            try writeTopLevelUsage(cfg.command_catalog, deps, .config);
+        } else {
+            try writeStderr(deps, "fiber config set: invalid value for '");
+            try writeStderr(deps, parsed.key);
+            try writeStderr(deps, "'\n");
+        }
+        return .handled_usage_error;
+    };
+    var attempt = config_runtime.attemptUserPreferences(alloc, patch);
+    defer attempt.deinit(alloc);
+    switch (attempt) {
+        .failure => |failure| {
+            debug_trace.logf("config", "config set persistence failed err={s}", .{@errorName(failure.err)});
+            const message = "fiber config set failed";
+            if (parsed.format == .json) {
+                try writeJsonCommandFailure(alloc, deps, output_contracts.Kind.config_set.jsonName(), failure.err, message);
+            } else {
+                var out: std.Io.Writer.Allocating = .init(alloc);
+                defer out.deinit();
+                try out.writer.print("{s}: {s}.\n", .{ message, @errorName(failure.err) });
+                try writeStderr(deps, out.written());
+            }
+            return .handled_failure;
+        },
+        .outcome => {},
+    }
+    const display = try configSetDisplayValue(alloc, patch, parsed.key);
+    defer alloc.free(display);
+    const text = try (output_contracts.ConfigSetSnapshot{
+        .key = parsed.key,
+        .value = display,
+    }).render(alloc, parsed.format);
+    defer alloc.free(text);
+    try writeFormattedOutput(deps, text, parsed.format);
+    return .handled_success;
+}
+
 const UpgradeOptions = struct {
     format: output_contracts.OutputFormat = .text,
 };
@@ -518,6 +787,7 @@ pub fn parse(command_catalog: CommandCatalog, args: []const [:0]const u8) Comman
         },
         'c' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .@"continue")) return .{ .resume_session = .{ .args = args[1..] } };
+            if (command_specs.matchesTopLevel(command_catalog, command, .config)) return .{ .config = args[1..] };
         },
         'd' => {
             if (command_specs.matchesTopLevel(command_catalog, command, .debug)) return .{ .debug = args[1..] };
@@ -917,6 +1187,9 @@ fn runNonInteractiveWithDeps(
             defer alloc.free(text);
             try writeFormattedOutput(deps, text, opts.format);
             return .handled_success;
+        },
+        .config => |rest| {
+            return runTopLevelConfig(alloc, rest, cfg, deps);
         },
         .doctor => |rest| {
             const opts = parseLocalSurfaceArgs(rest) catch |err| {
@@ -3271,6 +3544,7 @@ fn commandFailureMessage(err: anyerror) ?[]const u8 {
         error.InvalidSessionRemoveArgs,
         error.InvalidResumeArgs,
         error.InvalidPermissionArgs,
+        error.InvalidConfigArgs,
         => "invalid arguments",
         else => null,
     };
@@ -4142,6 +4416,10 @@ test "parse recognizes every top-level command and preserves unknown commands" {
     }
     switch (parse(command_catalog, &.{ @constCast("models"), @constCast("--json") })) {
         .models => |rest| try std.testing.expectEqual(@as(usize, 1), rest.len),
+        else => return error.TestExpectedEqual,
+    }
+    switch (parse(command_catalog, &.{ @constCast("config"), @constCast("get"), @constCast("model") })) {
+        .config => |rest| try std.testing.expectEqual(@as(usize, 2), rest.len),
         else => return error.TestExpectedEqual,
     }
     switch (parse(command_catalog, &.{ @constCast("mcp"), @constCast("add"), @constCast("fixture"), @constCast("node") })) {
@@ -6117,6 +6395,162 @@ test "permissions mode argument parsing accepts mode and json" {
     try std.testing.expectEqual(types.PermissionMode.yolo, parsed.mode);
     try std.testing.expectEqual(output_contracts.OutputFormat.json, parsed.format);
     try std.testing.expectError(error.InvalidPermissionArgs, parsePermissionsModeArgs(&.{@constCast("wat")}));
+}
+
+test "config get argument parsing accepts known keys and json" {
+    const parsed = try parseConfigGetArgs(&.{ @constCast("max_agent_steps"), @constCast("--json") });
+    try std.testing.expectEqualStrings("max_agent_steps", parsed.key);
+    try std.testing.expectEqual(output_contracts.OutputFormat.json, parsed.format);
+    try std.testing.expectError(error.InvalidConfigArgs, parseConfigGetArgs(&.{}));
+    try std.testing.expectError(error.InvalidConfigArgs, parseConfigGetArgs(&.{@constCast("yolo_acknowledged")}));
+    try std.testing.expectError(error.InvalidConfigArgs, parseConfigGetArgs(&.{ @constCast("model"), @constCast("extra") }));
+}
+
+test "config set argument parsing requires key and value" {
+    const parsed = try parseConfigSetArgs(&.{ @constCast("effort"), @constCast("high") });
+    try std.testing.expectEqualStrings("effort", parsed.key);
+    try std.testing.expectEqualStrings("high", parsed.value);
+    try std.testing.expectError(error.InvalidConfigArgs, parseConfigSetArgs(&.{}));
+    try std.testing.expectError(error.InvalidConfigArgs, parseConfigSetArgs(&.{@constCast("effort")}));
+    try std.testing.expectError(error.InvalidConfigArgs, parseConfigSetArgs(&.{ @constCast("effort"), @constCast("high"), @constCast("extra") }));
+}
+
+test "config get resolves compiled defaults without stored values" {
+    var settings = config_runtime.Settings{};
+    defer settings.deinit(std.testing.allocator);
+    const sources = config_runtime.ConfigSources{};
+    const defaults = ConfigGetDefaults{
+        .model = "default/model",
+        .effort = .auto,
+        .permission_mode = .auto,
+        .auto_upgrade = false,
+        .max_agent_steps = 25,
+        .max_tool_result_bytes = 65536,
+        .first_call_tool_choice = .auto,
+    };
+    const overrides = ConfigGetOverrides{ .model = null, .permission_mode = null, .max_agent_steps = null };
+    const alloc = std.testing.allocator;
+    var view = (try resolveConfigGet(alloc, "model", &settings, &sources, defaults, overrides)).?;
+    defer alloc.free(view.value);
+    try std.testing.expectEqualStrings("default/model", view.value);
+    try std.testing.expectEqual(config_runtime.ConfigSource.compiled_default, view.source);
+    alloc.free(view.value);
+    view = (try resolveConfigGet(alloc, "effort", &settings, &sources, defaults, overrides)).?;
+    try std.testing.expectEqualStrings("auto", view.value);
+    alloc.free(view.value);
+    view = (try resolveConfigGet(alloc, "max_agent_steps", &settings, &sources, defaults, overrides)).?;
+    try std.testing.expectEqualStrings("25", view.value);
+    try std.testing.expectEqual(config_runtime.ConfigSource.compiled_default, view.source);
+}
+
+test "config get prefers process overrides and reports their source" {
+    var settings = config_runtime.Settings{
+        .permission_mode = .ask,
+        .max_agent_steps = 8,
+    };
+    defer settings.deinit(std.testing.allocator);
+    try settings.models.putCopy(std.testing.allocator, .codex, "stored/model");
+    const sources = config_runtime.ConfigSources{
+        .models = blk: {
+            var values = config_runtime.ProviderModelSources{};
+            values.set(.codex, .user_global);
+            break :blk values;
+        },
+        .permission_mode = .user_global,
+        .max_agent_steps = .project,
+    };
+    const defaults = ConfigGetDefaults{
+        .model = "default/model",
+        .effort = .auto,
+        .permission_mode = .auto,
+        .auto_upgrade = false,
+        .max_agent_steps = 25,
+        .max_tool_result_bytes = 65536,
+        .first_call_tool_choice = .auto,
+    };
+    const alloc = std.testing.allocator;
+    const stored_overrides = ConfigGetOverrides{ .model = null, .permission_mode = null, .max_agent_steps = null };
+    var view = (try resolveConfigGet(alloc, "model", &settings, &sources, defaults, stored_overrides)).?;
+    try std.testing.expectEqualStrings("stored/model", view.value);
+    try std.testing.expectEqual(config_runtime.ConfigSource.user_global, view.source);
+    alloc.free(view.value);
+    view = (try resolveConfigGet(alloc, "max_agent_steps", &settings, &sources, defaults, stored_overrides)).?;
+    try std.testing.expectEqualStrings("8", view.value);
+    try std.testing.expectEqual(config_runtime.ConfigSource.project, view.source);
+    alloc.free(view.value);
+
+    const override_inputs = ConfigGetOverrides{
+        .model = "  env/model  ",
+        .permission_mode = "yolo",
+        .max_agent_steps = "42",
+    };
+    view = (try resolveConfigGet(alloc, "model", &settings, &sources, defaults, override_inputs)).?;
+    try std.testing.expectEqualStrings("env/model", view.value);
+    try std.testing.expectEqual(config_runtime.ConfigSource.process_override, view.source);
+    alloc.free(view.value);
+    view = (try resolveConfigGet(alloc, "permission_mode", &settings, &sources, defaults, override_inputs)).?;
+    try std.testing.expectEqualStrings("yolo", view.value);
+    try std.testing.expectEqual(config_runtime.ConfigSource.process_override, view.source);
+    alloc.free(view.value);
+    view = (try resolveConfigGet(alloc, "max_agent_steps", &settings, &sources, defaults, override_inputs)).?;
+    try std.testing.expectEqualStrings("42", view.value);
+    try std.testing.expectEqual(config_runtime.ConfigSource.process_override, view.source);
+    alloc.free(view.value);
+
+    // A blank model override and unparsable permission/steps overrides fall
+    // back to the stored layers instead of reporting an empty or dropped value.
+    const blank_inputs = ConfigGetOverrides{
+        .model = "   ",
+        .permission_mode = "loud",
+        .max_agent_steps = "many",
+    };
+    view = (try resolveConfigGet(alloc, "model", &settings, &sources, defaults, blank_inputs)).?;
+    try std.testing.expectEqualStrings("stored/model", view.value);
+    alloc.free(view.value);
+    view = (try resolveConfigGet(alloc, "permission_mode", &settings, &sources, defaults, blank_inputs)).?;
+    try std.testing.expectEqualStrings("ask", view.value);
+    try std.testing.expectEqual(config_runtime.ConfigSource.user_global, view.source);
+    alloc.free(view.value);
+    view = (try resolveConfigGet(alloc, "max_agent_steps", &settings, &sources, defaults, blank_inputs)).?;
+    try std.testing.expectEqualStrings("8", view.value);
+    alloc.free(view.value);
+}
+
+test "config get reports an unset model instead of a compiled default" {
+    var settings = config_runtime.Settings{};
+    defer settings.deinit(std.testing.allocator);
+    const sources = config_runtime.ConfigSources{};
+    const defaults = ConfigGetDefaults{
+        .model = "",
+        .effort = .auto,
+        .permission_mode = .auto,
+        .auto_upgrade = false,
+        .max_agent_steps = 25,
+        .max_tool_result_bytes = 65536,
+        .first_call_tool_choice = .auto,
+    };
+    const overrides = ConfigGetOverrides{ .model = null, .permission_mode = null, .max_agent_steps = null };
+    try std.testing.expect(try resolveConfigGet(std.testing.allocator, "model", &settings, &sources, defaults, overrides) == null);
+}
+
+test "config set confirmation echoes the canonical stored spelling" {
+    const alloc = std.testing.allocator;
+    const effort = try config_runtime.parseConfigSetPatch("effort", "default");
+    const effort_display = try configSetDisplayValue(alloc, effort, "effort");
+    defer alloc.free(effort_display);
+    try std.testing.expectEqualStrings("auto", effort_display);
+    const steps = try config_runtime.parseConfigSetPatch("max_agent_steps", "007");
+    const steps_display = try configSetDisplayValue(alloc, steps, "max_agent_steps");
+    defer alloc.free(steps_display);
+    try std.testing.expectEqualStrings("7", steps_display);
+    const upgrade = try config_runtime.parseConfigSetPatch("auto_upgrade", "on");
+    const upgrade_display = try configSetDisplayValue(alloc, upgrade, "auto_upgrade");
+    defer alloc.free(upgrade_display);
+    try std.testing.expectEqualStrings("true", upgrade_display);
+    const model = try config_runtime.parseConfigSetPatch("model", "gpt-5.6-sol");
+    const model_display = try configSetDisplayValue(alloc, model, "model");
+    defer alloc.free(model_display);
+    try std.testing.expectEqualStrings("gpt-5.6-sol", model_display);
 }
 
 test "permissions rule add argument parsing accepts scope flags and action" {

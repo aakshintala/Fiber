@@ -46,6 +46,8 @@ pub const Kind = enum {
     mcp_doctor,
     models,
     models_use,
+    config_get,
+    config_set,
     doctor,
     session_list,
     session_show,
@@ -79,6 +81,8 @@ pub const Kind = enum {
             .mcp_doctor => "mcp.doctor",
             .models => "models",
             .models_use => "models.use",
+            .config_get => "config.get",
+            .config_set => "config.set",
             .doctor => "doctor",
             .session_list => "session.list",
             .session_show => "session.show",
@@ -2431,6 +2435,69 @@ pub const ModelUseSnapshot = struct {
     }
 };
 
+pub const ConfigGetSnapshot = struct {
+    key: []const u8,
+    value: []const u8,
+    source: []const u8,
+
+    pub fn render(self: ConfigGetSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: ConfigGetSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(alloc, "{s}  ({s})\n", .{ self.value, self.source });
+    }
+
+    pub fn renderJson(self: ConfigGetSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"key\":",
+            .{Kind.config_get.jsonName()},
+        );
+        try std.json.Stringify.value(self.key, .{}, &out.writer);
+        try out.writer.writeAll(",\"value\":");
+        try std.json.Stringify.value(self.value, .{}, &out.writer);
+        try out.writer.writeAll(",\"source\":");
+        try std.json.Stringify.value(self.source, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
+pub const ConfigSetSnapshot = struct {
+    key: []const u8,
+    value: []const u8,
+
+    pub fn render(self: ConfigSetSnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
+        return switch (format) {
+            .text => self.renderText(alloc),
+            .json => self.renderJson(alloc),
+        };
+    }
+
+    pub fn renderText(self: ConfigSetSnapshot, alloc: Allocator) ![]u8 {
+        return std.fmt.allocPrint(alloc, "[config] {s}={s}\n", .{ self.key, self.value });
+    }
+
+    pub fn renderJson(self: ConfigSetSnapshot, alloc: Allocator) ![]u8 {
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        try out.writer.print(
+            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"key\":",
+            .{Kind.config_set.jsonName()},
+        );
+        try std.json.Stringify.value(self.key, .{}, &out.writer);
+        try out.writer.writeAll(",\"value\":");
+        try std.json.Stringify.value(self.value, .{}, &out.writer);
+        try out.writer.writeAll("}}");
+        return try out.toOwnedSlice();
+    }
+};
+
 pub const SessionRenameSnapshot = struct {
     id: []const u8,
     title: []const u8,
@@ -3000,6 +3067,41 @@ test "command failure snapshot renders stable escaped json" {
     try std.testing.expectEqualStrings(
         "{\"ok\":false,\"kind\":\"models\",\"error\":\"could not list \\\"models\\\"\",\"code\":\"ConnectionRefused\"}",
         rendered,
+    );
+}
+
+test "config get snapshot renders value with source in text and json" {
+    const snapshot = ConfigGetSnapshot{
+        .key = "permission_mode",
+        .value = "auto",
+        .source = "user_global",
+    };
+    const text = try snapshot.render(std.testing.allocator, .text);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("auto  (user_global)\n", text);
+
+    const json = try snapshot.render(std.testing.allocator, .json);
+    defer std.testing.allocator.free(json);
+    try std.testing.expectEqualStrings(
+        "{\"ok\":true,\"kind\":\"config.get\",\"data\":{\"key\":\"permission_mode\",\"value\":\"auto\",\"source\":\"user_global\"}}",
+        json,
+    );
+}
+
+test "config set snapshot renders stored key and value in text and json" {
+    const snapshot = ConfigSetSnapshot{
+        .key = "max_agent_steps",
+        .value = "50",
+    };
+    const text = try snapshot.render(std.testing.allocator, .text);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("[config] max_agent_steps=50\n", text);
+
+    const json = try snapshot.render(std.testing.allocator, .json);
+    defer std.testing.allocator.free(json);
+    try std.testing.expectEqualStrings(
+        "{\"ok\":true,\"kind\":\"config.set\",\"data\":{\"key\":\"max_agent_steps\",\"value\":\"50\"}}",
+        json,
     );
 }
 

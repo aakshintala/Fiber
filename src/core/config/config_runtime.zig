@@ -164,12 +164,17 @@ pub const ConfigSources = struct {
     models: ProviderModelSources = .{},
     permission_mode: ConfigSource = .compiled_default,
     effort: ConfigSource = .compiled_default,
+    auto_upgrade: ConfigSource = .compiled_default,
+    max_agent_steps: ConfigSource = .compiled_default,
+    max_tool_result_bytes: ConfigSource = .compiled_default,
+    first_call_tool_choice: ConfigSource = .compiled_default,
     slash_menu_categories: ConfigSource = .compiled_default,
     collapse_tool_calls: ConfigSource = .compiled_default,
     startup_scrollback: ConfigSource = .compiled_default,
     prompt_history_enabled: ConfigSource = .compiled_default,
     statusline_context: ConfigSource = .compiled_default,
     statusline_session: ConfigSource = .compiled_default,
+    statusline_workspace: ConfigSource = .compiled_default,
     notification_turn_end: ConfigSource = .compiled_default,
     notification_attention_required: ConfigSource = .compiled_default,
     notification_max: ConfigSource = .compiled_default,
@@ -739,12 +744,17 @@ fn updateConfigSources(sources: *ConfigSources, settings: Settings, source: Conf
     }
     if (settings.permission_mode != null) sources.permission_mode = source;
     if (settings.effort != null) sources.effort = source;
+    if (settings.auto_upgrade != null) sources.auto_upgrade = source;
+    if (settings.max_agent_steps != null) sources.max_agent_steps = source;
+    if (settings.max_tool_result_bytes != null) sources.max_tool_result_bytes = source;
+    if (settings.first_call_tool_choice != null) sources.first_call_tool_choice = source;
     if (settings.slash_menu_categories != null) sources.slash_menu_categories = source;
     if (settings.collapse_tool_calls != null) sources.collapse_tool_calls = source;
     if (settings.startup_scrollback != null) sources.startup_scrollback = source;
     if (settings.prompt_history_enabled != null) sources.prompt_history_enabled = source;
     if (settings.statusline_context != null) sources.statusline_context = source;
     if (settings.statusline_session != null) sources.statusline_session = source;
+    if (settings.statusline_workspace != null) sources.statusline_workspace = source;
     if (settings.notification_turn_end != null) sources.notification_turn_end = source;
     if (settings.notification_attention_required != null) sources.notification_attention_required = source;
     if (settings.notification_max != null) sources.notification_max = source;
@@ -863,6 +873,123 @@ pub fn parsePermissionAction(raw: []const u8) ?types.PermissionAction {
     if (std.ascii.eqlIgnoreCase(raw, "ask")) return .ask;
     if (std.ascii.eqlIgnoreCase(raw, "deny")) return .deny;
     return null;
+}
+
+/// Keys `fiber config get` reports and `fiber config set` accepts. `model`
+/// keeps a second writer: `fiber models use` checks the id against the
+/// catalog while `config set model` is a pure local write with syntax-only
+/// validation, so a provisioning loop uses one verb. `config set` never
+/// touches the network.
+pub const config_get_keys = [_][]const u8{
+    "model",
+    "effort",
+    "permission_mode",
+    "auto_upgrade",
+    "max_agent_steps",
+    "max_tool_result_bytes",
+    "first_call_tool_choice",
+};
+
+pub fn isConfigGetKey(key: []const u8) bool {
+    for (config_get_keys) |known| {
+        if (std.mem.eql(u8, key, known)) return true;
+    }
+    return false;
+}
+
+/// Validates a `fiber config set <key> <value>` pair and builds the profile
+/// patch. Every check the reader would apply later (enum spellings, the
+/// max_tool_result_bytes floor, non-negative integers) happens here, because
+/// the reader either rejects the whole settings file or silently drops the
+/// value, and neither is an acceptable outcome for an explicit write.
+pub fn parseConfigSetPatch(key: []const u8, value: []const u8) !UserSettingsPatch {
+    if (std.mem.eql(u8, key, "model")) {
+        if (value.len == 0) return error.InvalidConfigValue;
+        for (value) |byte| {
+            if (std.ascii.isWhitespace(byte)) return error.InvalidConfigValue;
+        }
+        return .{ .model_preference = .{ .provider = .codex, .model = value } };
+    }
+    if (std.mem.eql(u8, key, "effort")) {
+        const effort = types.ReasoningEffort.parse(value) orelse return error.InvalidConfigValue;
+        return .{ .effort = effort };
+    }
+    if (std.mem.eql(u8, key, "permission_mode")) {
+        const mode = parsePermissionMode(value) orelse return error.InvalidConfigValue;
+        return .{ .permission_mode = mode };
+    }
+    if (std.mem.eql(u8, key, "auto_upgrade")) {
+        return .{ .auto_upgrade = try parseConfigBool(value) };
+    }
+    if (std.mem.eql(u8, key, "max_agent_steps")) {
+        return .{ .max_agent_steps = try parseConfigUsize(value) };
+    }
+    if (std.mem.eql(u8, key, "max_tool_result_bytes")) {
+        const bytes = try parseConfigUsize(value);
+        if (bytes < tool_result_limits.min_configured_tool_result_bytes) return error.InvalidConfigValue;
+        return .{ .max_tool_result_bytes = bytes };
+    }
+    if (std.mem.eql(u8, key, "first_call_tool_choice")) {
+        const choice = types.ToolChoice.parse(value) orelse return error.InvalidConfigValue;
+        return .{ .first_call_tool_choice = choice };
+    }
+    return error.UnknownConfigKey;
+}
+
+fn parseConfigBool(raw: []const u8) !bool {
+    if (std.ascii.eqlIgnoreCase(raw, "true") or std.ascii.eqlIgnoreCase(raw, "on") or std.mem.eql(u8, raw, "1")) return true;
+    if (std.ascii.eqlIgnoreCase(raw, "false") or std.ascii.eqlIgnoreCase(raw, "off") or std.mem.eql(u8, raw, "0")) return false;
+    return error.InvalidConfigValue;
+}
+
+fn parseConfigUsize(raw: []const u8) !usize {
+    return std.fmt.parseInt(usize, raw, 10) catch return error.InvalidConfigValue;
+}
+
+test "config set patch validates every key at write time" {
+    const effort = try parseConfigSetPatch("effort", "high");
+    try std.testing.expectEqualStrings("high", effort.effort.?.label());
+    const effort_default = try parseConfigSetPatch("effort", "default");
+    try std.testing.expectEqualStrings("auto", effort_default.effort.?.label());
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("effort", ""));
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("effort", "ultra!!!"));
+
+    const mode = try parseConfigSetPatch("permission_mode", "yolo");
+    try std.testing.expectEqual(types.PermissionMode.yolo, mode.permission_mode.?);
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("permission_mode", "loud"));
+
+    const upgrade = try parseConfigSetPatch("auto_upgrade", "false");
+    try std.testing.expect(!upgrade.auto_upgrade.?);
+    try std.testing.expect((try parseConfigSetPatch("auto_upgrade", "ON")).auto_upgrade.?);
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("auto_upgrade", "maybe"));
+
+    const steps = try parseConfigSetPatch("max_agent_steps", "50");
+    try std.testing.expectEqual(@as(usize, 50), steps.max_agent_steps.?);
+    // Zero is the explicit unbounded marker, not a missing value.
+    try std.testing.expectEqual(@as(usize, 0), (try parseConfigSetPatch("max_agent_steps", "0")).max_agent_steps.?);
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("max_agent_steps", "-1"));
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("max_agent_steps", "many"));
+
+    const bytes = try parseConfigSetPatch("max_tool_result_bytes", "65536");
+    try std.testing.expectEqual(@as(usize, 65536), bytes.max_tool_result_bytes.?);
+    // Below the reader floor: writing it would persist a value startup rejects.
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("max_tool_result_bytes", "1023"));
+    try std.testing.expectEqual(@as(usize, 1024), (try parseConfigSetPatch("max_tool_result_bytes", "1024")).max_tool_result_bytes.?);
+
+    const choice = try parseConfigSetPatch("first_call_tool_choice", "none");
+    try std.testing.expectEqual(types.ToolChoice.none, choice.first_call_tool_choice.?);
+    // The reader silently drops anything ToolChoice cannot parse, so the
+    // writer must refuse it instead of storing a value that never applies.
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("first_call_tool_choice", "required"));
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("first_call_tool_choice", ""));
+
+    const model = try parseConfigSetPatch("model", "gpt-5.6-sol");
+    try std.testing.expectEqualStrings("gpt-5.6-sol", model.model_preference.?.model);
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("model", ""));
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("model", "has space"));
+    try std.testing.expectError(error.InvalidConfigValue, parseConfigSetPatch("model", " padded "));
+
+    try std.testing.expectError(error.UnknownConfigKey, parseConfigSetPatch("yolo_acknowledged", "true"));
 }
 
 pub fn makeAbsolutePath(path_abs: []const u8) !void {
