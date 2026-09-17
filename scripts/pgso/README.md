@@ -2,7 +2,17 @@
 
 This directory owns the non-publishing Stage 1 build for a smaller macOS arm64 `fiber` candidate. It preserves Zig ReleaseSafe semantics and the complete product feature set, then uses native LLVM profiles to keep measured hot code speed-oriented and compile profile-proven cold functions for size.
 
-The candidate is accepted only when it is no larger than **7.800 MiB**, has the preferred **0.250 MiB** of size headroom, passes the deterministic product corpus, and stays within a **10%** p50 and p95 performance regression limit. The ordinary ReleaseSafe binary remains the control and recovery path.
+The candidate is accepted only when it is **no larger than its control**, passes the deterministic product corpus, and stays within a **10%** p50 and p95 performance regression limit. The ordinary ReleaseSafe binary remains the control and recovery path, so the control's size is the only size the candidate has to beat. The absolute ceiling this replaced (7.800 MiB, with 0.250 MiB preferred headroom) came from upstream fx and never bound: the last candidate was 5.12 MiB against an 8.37 MiB control. An absolute cap of 20 MiB now lives in CI's `binary-size` job, which runs on every pull request for all three targets.
+
+## When this runs
+
+Never on a pull request. A full run is 54 macOS jobs against a cap of 5 concurrent, so it takes every macOS slot for 70-100 minutes and stops pull-request CI for everyone.
+
+- **Release.** `release.yml` calls this workflow, and only a candidate from a successful aggregate is packaged. This is the gate that matters.
+- **Nightly at 11:00 UTC**, and only when `main` has moved since the last successful run. A gate job compares `main`'s HEAD against the last successful run's `headSha` and skips the rest when they match. A failed nightly opens an issue labelled `pgso-nightly`, or comments on the open one, so a week of failures is one issue.
+- **`workflow_dispatch`**, on demand, when you want candidate evidence for a `build.zig` or `scripts/pgso/` change before the nightly gets to it.
+
+A `build.zig` change that breaks the candidate therefore surfaces at the nightly run rather than pre-merge, and is fixed forward. Same contract as `main-backstop`.
 
 ## Toolchain and target
 

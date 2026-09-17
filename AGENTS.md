@@ -211,12 +211,14 @@ backstop run means main is broken, so stop the line and fix forward. Live
 model evals stay separate because they need credentials and are not
 deterministic.
 
-The macOS arm64 PGSO candidate workflow does not run on pull requests. When a
-change touches `build.zig` or `scripts/pgso/`, dispatch it with
-`workflow_dispatch` on the pull request's head commit only after `CI` passes
-there — it uses `cancel-in-progress` on the branch ref, so
-dispatching earlier just gets cancelled by the next push — and do not merge
-until that run passes.
+The macOS arm64 PGSO candidate workflow never runs on a pull request, not even
+for a `build.zig` or `scripts/pgso/` change. It takes every macOS slot for
+70-100 minutes, which stops PR CI for everyone. It runs at release, which is
+the gate that matters, and nightly at 11:00 UTC when `main` has moved since the
+last successful run. A `build.zig` change that breaks the candidate surfaces at
+the nightly run and is fixed forward, the same contract as `main-backstop`. A
+failed nightly opens or comments on an issue labelled `pgso-nightly`.
+`workflow_dispatch` stays available if you want that evidence sooner.
 
 ## Landing a pull request
 

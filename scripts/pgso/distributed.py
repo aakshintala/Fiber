@@ -864,10 +864,6 @@ def run_candidate(arguments: argparse.Namespace) -> pathlib.Path:
     if not isinstance(minimum_macos, str):
         raise PgsoError("seed control minimum macOS is invalid")
     candidate = verify_candidate(toolchain, paths, expected_minos=minimum_macos)
-    if not candidate.artifact.preferred_headroom_met:
-        raise PgsoError(
-            "candidate meets the hard size ceiling but lacks 0.250 MiB preferred adoption headroom"
-        )
     artifacts = {
         "control": {
             "sha256": sha256_file(paths.control_binary),

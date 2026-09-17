@@ -8,7 +8,9 @@ import tempfile
 import unittest
 
 from scripts import macho_sections
+from scripts import binary_size
 from scripts.binary_size import (
+    MAXIMUM_BYTES,
     BinarySizeError,
     append_delta_table,
     build_report,
@@ -228,6 +230,72 @@ class BinarySizeCliTests(unittest.TestCase):
                 "The PR binary is smaller than the base binary.",
                 markdown_report(report),
             )
+
+    def test_a_binary_over_the_maximum_fails_the_job_with_evidence(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fiber-binary-size-") as tmp:
+            root = pathlib.Path(tmp)
+            base_binary = root / "base-fiber"
+            head_binary = root / "head-fiber"
+            # Sparse files: a real 20 MiB write would make this test slow for
+            # no added coverage.
+            for path, size in (
+                (base_binary, MAXIMUM_BYTES),
+                (head_binary, MAXIMUM_BYTES + 1),
+            ):
+                path.write_bytes(b"")
+                with path.open("r+b") as stream:
+                    stream.truncate(size)
+            base_sections = root / "base-sections.txt"
+            head_sections = root / "head-sections.txt"
+            base_sections.write_text("Segment __TEXT: 100\n", encoding="utf-8")
+            head_sections.write_text("Segment __TEXT: 101\n", encoding="utf-8")
+            json_path = root / "report.json"
+            markdown_path = root / "report.md"
+
+            with self.assertRaisesRegex(SystemExit, "over the"):
+                binary_size.main([
+                    "--base-binary", str(base_binary),
+                    "--head-binary", str(head_binary),
+                    "--base-sections", str(base_sections),
+                    "--head-sections", str(head_sections),
+                    "--base-sha", "a" * 40,
+                    "--head-sha", "b" * 40,
+                    "--target", "aarch64-macos",
+                    "--output-json", str(json_path),
+                    "--output-markdown", str(markdown_path),
+                ])
+
+            # The evidence is written before the job fails, so the artifact
+            # upload still has something to attach.
+            report = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertEqual("over-maximum", report["status"])
+            self.assertEqual(20 * 1_048_576, report["maximum_bytes"])
+            self.assertIn("Over the 20 MiB ceiling", markdown_path.read_text())
+
+    def test_a_binary_exactly_at_the_maximum_passes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fiber-binary-size-") as tmp:
+            root = pathlib.Path(tmp)
+            base_binary = root / "base-fiber"
+            head_binary = root / "head-fiber"
+            for path in (base_binary, head_binary):
+                path.write_bytes(b"")
+                with path.open("r+b") as stream:
+                    stream.truncate(MAXIMUM_BYTES)
+            sections = root / "sections.txt"
+            sections.write_text("Segment __TEXT: 100\n", encoding="utf-8")
+
+            report = build_report(
+                base_binary=base_binary,
+                head_binary=head_binary,
+                base_sections=sections,
+                head_sections=sections,
+                base_sha="a" * 40,
+                head_sha="b" * 40,
+                target="aarch64-macos",
+                warning_bytes=52_429,
+            )
+
+            self.assertEqual("ok", report["status"])
 
     def test_section_parser_requires_executable_text_segment(self) -> None:
         with tempfile.TemporaryDirectory(prefix="fiber-binary-size-") as tmp:

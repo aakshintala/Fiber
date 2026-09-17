@@ -10,6 +10,11 @@ from collections.abc import Sequence
 
 MIB = 1_048_576
 DEFAULT_WARNING_BYTES = 52_429
+# The absolute ceiling every ReleaseSafe target must stay under. This is the
+# only hard size gate on a pull request: PGSO now measures its candidate
+# against its control rather than an absolute number, and it no longer runs
+# per pull request. Linux ReleaseSafe is about 8.8 MB today.
+MAXIMUM_BYTES = 20 * MIB
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 TARGET_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
 SEGMENT_PATTERN = re.compile(r"^Segment\s+(\S+):\s+(\d+)")
@@ -139,17 +144,25 @@ def build_report(
     head = artifact_evidence(head_binary, head_sha)
     base_segments, base_section_values = parse_sections(base_sections, target)
     head_segments, head_section_values = parse_sections(head_sections, target)
-    delta_bytes = int(head["size_bytes"]) - int(base["size_bytes"])
+    head_bytes = int(head["size_bytes"])
+    delta_bytes = head_bytes - int(base["size_bytes"])
     if delta_bytes > 0:
         direction = "increase"
     elif delta_bytes < 0:
         direction = "decrease"
     else:
         direction = "unchanged"
+    if head_bytes > MAXIMUM_BYTES:
+        status = "over-maximum"
+    elif delta_bytes >= warning_bytes:
+        status = "warning"
+    else:
+        status = "ok"
     return {
         "schema_version": 1,
-        "status": "warning" if delta_bytes >= warning_bytes else "ok",
+        "status": status,
         "target": target,
+        "maximum_bytes": MAXIMUM_BYTES,
         "warning_threshold_bytes": warning_bytes,
         "base": base,
         "head": head,
@@ -195,7 +208,15 @@ def markdown_report(report: dict[str, object]) -> str:
     assert isinstance(delta, dict)
     status = str(report["status"])
     direction = str(delta["direction"])
-    if status == "warning":
+    if status == "over-maximum":
+        maximum_bytes = int(report["maximum_bytes"])
+        signal = (
+            f"**Over the {maximum_bytes / MIB:.0f} MiB ceiling.** "
+            f"{int(head['size_bytes']):,} bytes "
+            f"({float(head['size_mib']):.6f} MiB) exceeds the "
+            f"{maximum_bytes:,} byte maximum for a ReleaseSafe target."
+        )
+    elif status == "warning":
         warning_bytes = int(report["warning_threshold_bytes"])
         signal = (
             "Review recommended: the increase meets the informational threshold of "
@@ -210,8 +231,8 @@ def markdown_report(report: dict[str, object]) -> str:
     lines: list[str] = [
         "# Binary size",
         "",
-        "This comparison is informational. "
-        "Release PGSO qualification remains authoritative.",
+        "The delta is informational; the "
+        f"{int(report['maximum_bytes']) / MIB:.0f} MiB ceiling is enforced.",
         "",
         f"Target: `{report['target']}`",
         "",
@@ -304,6 +325,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"delta_bytes={int(delta['size_bytes'])}\n"
             f"status={report['status']}\n",
             encoding="utf-8",
+        )
+    if report["status"] == "over-maximum":
+        raise SystemExit(
+            f"{args.target} ReleaseSafe is over the "
+            f"{MAXIMUM_BYTES:,} byte ceiling; see {args.output_markdown}"
         )
     return 0
 

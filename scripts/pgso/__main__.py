@@ -444,11 +444,6 @@ def run_command(arguments: argparse.Namespace) -> pathlib.Path:
             paths,
             expected_minos=control_minos,
         )
-        if not candidate.artifact.preferred_headroom_met:
-            raise PgsoError(
-                "candidate meets the hard size ceiling but lacks "
-                "0.250 MiB preferred adoption headroom"
-            )
         artifacts = {
             "control": {
                 "path": str(control),

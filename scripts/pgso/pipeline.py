@@ -907,9 +907,13 @@ def validate_candidate_metadata(
         raise PgsoError("candidate retains an LLVM profile section")
 
 
-def validate_candidate_size(candidate: pathlib.Path) -> ArtifactEvidence:
+def validate_candidate_size(
+    candidate: pathlib.Path,
+    control: pathlib.Path,
+) -> ArtifactEvidence:
     _require_nonempty_file(candidate, "candidate executable")
-    return size_gate(candidate.stat().st_size)
+    _require_nonempty_file(control, "ReleaseSafe control")
+    return size_gate(candidate.stat().st_size, control.stat().st_size)
 
 
 def reject_profile_outputs(
@@ -974,7 +978,10 @@ def verify_candidate(
         dependencies=dependencies.stdout,
     )
     validate_candidate_metadata(metadata, expected_minos=expected_minos)
-    artifact = validate_candidate_size(paths.candidate_binary)
+    artifact = validate_candidate_size(
+        paths.candidate_binary,
+        paths.control_binary,
+    )
 
     before = set(paths.candidate_profiles.glob("*.profraw"))
     environment = _runtime_environment(paths)

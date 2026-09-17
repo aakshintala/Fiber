@@ -583,14 +583,23 @@ sys.stderr.write('optimizer warning')""",
                         expected_minos="13.0",
                     )
 
-    def test_candidate_size_rejects_more_than_7_800_mib(self) -> None:
+    def test_candidate_size_rejects_a_candidate_larger_than_its_control(self) -> None:
         candidate = self.root / "candidate"
-        candidate.write_bytes(b"")
-        with candidate.open("r+b") as stream:
-            stream.truncate(8_178_893)
+        control = self.root / "control"
+        for path, size in ((candidate, 8_178_893), (control, 8_178_892)):
+            path.write_bytes(b"")
+            with path.open("r+b") as stream:
+                stream.truncate(size)
 
-        with self.assertRaisesRegex(PgsoError, "exceeds 7.800 MiB"):
-            validate_candidate_size(candidate)
+        with self.assertRaisesRegex(PgsoError, "exceeds the"):
+            validate_candidate_size(candidate, control)
+
+        with candidate.open("r+b") as stream:
+            stream.truncate(8_178_892)
+        self.assertEqual(
+            0.0,
+            validate_candidate_size(candidate, control).headroom_mib,
+        )
 
     def test_candidate_must_not_create_an_adversarial_profile_file(self) -> None:
         before: set[pathlib.Path] = set()
