@@ -29,10 +29,9 @@ class BuildIdentity:
 class ArtifactEvidence:
     size_bytes: int
     size_mib: float
-    ceiling_mib: float
+    control_size_bytes: int
+    control_size_mib: float
     headroom_mib: float
-    preferred_headroom_mib: float
-    preferred_headroom_met: bool
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -74,29 +73,34 @@ def bytes_to_mib(byte_count: int) -> float:
     return byte_count / MIB
 
 
-def size_gate(
-    byte_count: int,
-    ceiling_mib: float = 7.800,
-    preferred_headroom_mib: float = 0.250,
-) -> ArtifactEvidence:
+def size_gate(byte_count: int, control_byte_count: int) -> ArtifactEvidence:
+    """Accept a candidate only when it is no larger than its control.
+
+    The absolute 7.800 MiB ceiling this replaced came from upstream fx and
+    never bound: the last candidate was 5.12 MiB against an 8.37 MiB control.
+    The control is the binary that ships if the candidate is rejected, so it is
+    the only size the candidate has to beat. The absolute cap now lives in the
+    per-pull-request `binary-size` job instead.
+    """
     if byte_count <= 0:
         raise PgsoError("artifact is empty or has an invalid negative size")
+    if control_byte_count <= 0:
+        raise PgsoError("control is empty or has an invalid negative size")
 
     size_mib = bytes_to_mib(byte_count)
-    if size_mib > ceiling_mib:
+    control_size_mib = bytes_to_mib(control_byte_count)
+    if byte_count > control_byte_count:
         raise PgsoError(
-            f"artifact size {size_mib:.6f} MiB exceeds "
-            f"{ceiling_mib:.3f} MiB ceiling"
+            f"candidate size {size_mib:.6f} MiB exceeds the "
+            f"{control_size_mib:.6f} MiB control"
         )
 
-    headroom_mib = ceiling_mib - size_mib
     return ArtifactEvidence(
         size_bytes=byte_count,
         size_mib=size_mib,
-        ceiling_mib=ceiling_mib,
-        headroom_mib=headroom_mib,
-        preferred_headroom_mib=preferred_headroom_mib,
-        preferred_headroom_met=headroom_mib >= preferred_headroom_mib,
+        control_size_bytes=control_byte_count,
+        control_size_mib=control_size_mib,
+        headroom_mib=control_size_mib - size_mib,
     )
 
 

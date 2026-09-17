@@ -733,7 +733,7 @@ jobs:
           retention-days: 30
 
       - name: Upload binaries for investigation
-        if: steps.size.outputs.warning == 'true'
+        if: failure() || steps.size.outputs.warning == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: binary-size-binaries-${{ matrix.name }}-${{ github.event.pull_request.number }}

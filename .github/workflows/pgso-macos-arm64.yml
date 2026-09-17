@@ -1,14 +1,19 @@
 name: macOS arm64 PGSO candidate
 
-# No pull_request trigger. GitHub evaluates path filters for that event against
-# the whole pull request diff rather than the push, so a long-lived branch that
-# once touched build.zig or scripts/pgso keeps matching on every later push, and
-# a one-line test edit re-ran 54 macOS jobs. CI runs macOS on every push that
-# selects the full pipeline, and release.yml calls this workflow directly.
-# Run it by hand with workflow_dispatch when the corpus or the build changes.
+# No pull_request trigger. A full run is 54 macOS jobs against a cap of 5
+# concurrent, so it takes every macOS slot for 70-100 minutes and stops
+# pull-request CI for everyone. Release is the gate that matters and calls this
+# workflow directly; the nightly catches a broken candidate within a day and is
+# fixed forward, the same contract as main-backstop. Dispatch it by hand when
+# you want that evidence sooner.
 on:
   workflow_call:
   workflow_dispatch:
+  # 11:00 UTC is 04:00 PDT. Over 8.7 days and 305 CI runs, 05:00 PDT had zero
+  # run starts and zero CI-active minutes; a run started here finishes by about
+  # 05:40 PDT, before the 08:00 ramp.
+  schedule:
+    - cron: "0 11 * * *"
 
 concurrency:
   group: pgso-macos-arm64-${{ github.ref }}
@@ -17,13 +22,52 @@ concurrency:
 permissions:
   actions: read
   contents: read
+  issues: write
 
 env:
   FIBER_SOUND: "0"
 
 jobs:
+  # A scheduled run on an unchanged main would burn 135 macOS slot-minutes to
+  # rebuild a candidate that already qualified. Release and manual runs always
+  # proceed.
+  gate:
+    name: Check whether main moved
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - name: Compare HEAD against the last successful run
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != schedule ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "$GITHUB_EVENT_NAME is not a schedule; proceeding."
+            exit 0
+          fi
+          last="$(gh run list \
+            --workflow pgso-macos-arm64.yml \
+            --status success \
+            --limit 1 \
+            --json headSha \
+            --jq '.[0].headSha // ""')"
+          if [ "$last" = "$GITHUB_SHA" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "main is still at $GITHUB_SHA, which already qualified. Skipping."
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "main moved from ${last:-none} to $GITHUB_SHA. Running."
+          fi
+
   seed:
     name: Build seed and plan shards
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: macos-15
     timeout-minutes: 60
     outputs:
@@ -454,3 +498,40 @@ jobs:
           path: ${{ runner.temp }}/fiber-pgso-aggregate
           if-no-files-found: error
           retention-days: 14
+
+  # A nightly has no pull request to turn red and nobody reads the email. One
+  # issue per outage, not one per night.
+  report-failure:
+    name: Report a failed nightly
+    needs: [gate, seed, train, candidate, behavior, startup, heavy, aggregate]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Open or update the pgso-nightly issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          body="The nightly macOS arm64 PGSO candidate run failed on \`$GITHUB_SHA\`.
+
+          Run: $RUN_URL
+
+          Release is gated on this workflow, so a release cannot ship until it is green again."
+          existing="$(gh issue list \
+            --label pgso-nightly \
+            --state open \
+            --limit 1 \
+            --json number \
+            --jq '.[0].number // ""')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Commented on #$existing."
+          else
+            gh issue create \
+              --title "Nightly macOS arm64 PGSO candidate is failing" \
+              --label pgso-nightly \
+              --body "$body"
+          fi

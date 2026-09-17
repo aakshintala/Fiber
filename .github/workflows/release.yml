@@ -79,6 +79,10 @@ jobs:
     permissions:
       actions: read
       contents: read
+      # The called workflow declares issues: write for its nightly failure
+      # report. A caller that grants less fails the run outright, even though
+      # that job never runs on a release.
+      issues: write
     uses: ./.github/workflows/pgso-macos-arm64.yml
 
   sign-macos-arm64:

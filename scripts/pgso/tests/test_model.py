@@ -86,33 +86,30 @@ class PgsoModelTests(unittest.TestCase):
             self.assertEqual(7, evidence["size_bytes"])
             self.assertEqual(sha256_file(path), evidence["sha256"])
 
-    def test_size_gate_reports_exact_mib_and_preferred_headroom(self) -> None:
-        evidence = size_gate(7_837_920)
+    def test_size_gate_measures_the_candidate_against_its_control(self) -> None:
+        evidence = size_gate(5_368_709, 8_778_874)
 
         self.assertEqual(1.0, bytes_to_mib(1_048_576))
-        self.assertEqual(7_837_920, evidence.size_bytes)
-        self.assertEqual(7.474822998046875, evidence.size_mib)
-        self.assertEqual(7.800, evidence.ceiling_mib)
-        self.assertEqual(0.3251770019531248, evidence.headroom_mib)
-        self.assertEqual(0.250, evidence.preferred_headroom_mib)
-        self.assertTrue(evidence.preferred_headroom_met)
+        self.assertEqual(5_368_709, evidence.size_bytes)
+        self.assertEqual(5.119999885559082, evidence.size_mib)
+        self.assertEqual(8_778_874, evidence.control_size_bytes)
+        self.assertEqual(8.372186660766602, evidence.control_size_mib)
+        self.assertEqual(3.2521867752075195, evidence.headroom_mib)
 
-    def test_size_gate_enforces_the_integral_byte_boundary(self) -> None:
-        self.assertEqual(8_178_892, size_gate(8_178_892).size_bytes)
-        with self.assertRaisesRegex(PgsoError, "exceeds 7.800 MiB"):
-            size_gate(8_178_893)
+    def test_size_gate_accepts_a_candidate_that_ties_its_control(self) -> None:
+        evidence = size_gate(8_178_892, 8_178_892)
 
-    def test_size_gate_records_insufficient_preferred_headroom(self) -> None:
-        evidence = size_gate(8_000_000)
-
-        self.assertFalse(evidence.preferred_headroom_met)
-        self.assertGreater(evidence.headroom_mib, 0)
+        self.assertEqual(0.0, evidence.headroom_mib)
+        with self.assertRaisesRegex(PgsoError, "exceeds the"):
+            size_gate(8_178_893, 8_178_892)
 
     def test_size_gate_rejects_empty_or_negative_artifacts(self) -> None:
         for byte_count in (0, -1):
             with self.subTest(byte_count=byte_count):
                 with self.assertRaisesRegex(PgsoError, "artifact is empty"):
-                    size_gate(byte_count)
+                    size_gate(byte_count, 8_178_892)
+                with self.assertRaisesRegex(PgsoError, "control is empty"):
+                    size_gate(8_178_892, byte_count)
 
     def test_require_empty_stderr_rejects_unexpected_output(self) -> None:
         require_empty_stderr("profile use", "")
