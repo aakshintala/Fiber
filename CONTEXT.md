@@ -59,3 +59,13 @@ _Avoid_: transient event, live event
 **Sequence number**:
 A durable event's contiguous position in its session's log, never reset or reused for the life of the session. Reconnect and resume cursors are sequence numbers; ephemeral events have none.
 _Avoid_: offset, index
+
+## Routing
+
+**Provider state**:
+Data a model provider returns that only that provider can read back, such as encrypted reasoning or a message's provider-side id. Fiber stores it verbatim and never interprets it.
+_Avoid_: reasoning state, signature blob
+
+**Origin**:
+The connection, endpoint fingerprint, protocol and model that produced an item. Provider state is replayed only to an exact origin match; any other route gets the history transform.
+_Avoid_: provider tag, source
