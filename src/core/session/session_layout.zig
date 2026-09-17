@@ -29,8 +29,12 @@ pub fn generateSessionId(alloc: Allocator) ![]u8 {
     var random_bytes: [session_id_random_bytes]u8 = undefined;
     io_mod.getIo().random(&random_bytes);
     const id = try alloc.alloc(u8, session_id_encoded_bytes);
-    _ = std.base64.url_safe_no_pad.Encoder.encode(id, &random_bytes);
-    return id;
+    // A leading '-' makes `fiber resume <id>` parse the id as a flag.
+    while (true) {
+        _ = std.base64.url_safe_no_pad.Encoder.encode(id, &random_bytes);
+        if (id[0] != '-') return id;
+        io_mod.getIo().random(&random_bytes);
+    }
 }
 
 pub fn generateTerminalSessionId(alloc: Allocator) ![]u8 {
@@ -57,6 +61,14 @@ test "generated session id is a compact url-safe token" {
     }
 
     try validateSessionId("1786460757753-1786460757753277000-ef75d8fd94fdab1");
+}
+
+test "generated session ids never start with a dash" {
+    for (0..4096) |_| {
+        const id = try generateSessionId(std.testing.allocator);
+        defer std.testing.allocator.free(id);
+        try std.testing.expect(id[0] != '-');
+    }
 }
 
 test "generated terminal session id is compact and path safe" {
