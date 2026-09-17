@@ -305,8 +305,8 @@ const MessageAdapter = struct {
         return value.tool_result_status;
     }
 
-    fn toolOutcome(_: Message) ?types.ToolCallOutcome {
-        return null;
+    fn toolOutcome(value: Message) ?types.ToolCallOutcome {
+        return value.tool_result_outcome;
     }
 
     fn toolResultMemory(value: Message) ?types.ToolResultMemory {
