@@ -13,7 +13,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir, networkInterfaces, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { runFx } from "./eval-helpers";
@@ -195,6 +195,8 @@ function startAuthFixture(
     failFeatureRefreshAfterRotation?: boolean;
     rejectResourceTemplateAuth?: boolean;
     authorizationServerTrailingSlash?: boolean;
+    authorizationMetadataTrailingSlash?: boolean;
+    authorizationResponseTrailingSlash?: boolean;
     authorizationResponseIssuer?: string;
     omitScopes?: boolean;
     rejectDiscoveryWithoutChallenge?: boolean;
@@ -423,7 +425,9 @@ function startAuthFixture(
       }
       if (url.pathname === "/.well-known/oauth-authorization-server") {
         const metadata = {
-          issuer: origin,
+          issuer: options.authorizationMetadataTrailingSlash
+            ? `${origin}/`
+            : origin,
           authorization_endpoint: `${origin}/authorize`,
           token_endpoint: `${origin}/token`,
           revocation_endpoint: `${origin}/revoke`,
@@ -458,7 +462,9 @@ function startAuthFixture(
         );
         redirect.searchParams.set(
           "iss",
-          options.authorizationResponseIssuer ?? origin,
+          options.authorizationResponseTrailingSlash
+            ? `${origin}/`
+            : (options.authorizationResponseIssuer ?? origin),
         );
         return Response.redirect(redirect, 302);
       }
@@ -941,6 +947,228 @@ describe("MCP remote authentication lifecycle", () => {
     expect(loggedOut.stdout).toContain("Logged out of MCP server 'fixture'");
     expect(existsSync(credentialPath)).toBe(false);
     expect(auth.revocations).toBe(2);
+  }, 30_000);
+
+  test("fixed oauth.callback_port binds the configured loopback port", async () => {
+    upstream = startModernMcpHttpFixture("json");
+    auth = startAuthFixture(upstream.url);
+    // No automatic authorization follow: the test drives the callback
+    // itself so the bind probes below run while the listener is alive.
+    const root = createRoot(auth, true, "http", auth.url, false);
+    const probe = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("probe");
+      },
+    });
+    const fixedPort = probe.port;
+    probe.stop(true);
+    const profilePath = join(root.home, ".fiber", "mcp.json");
+    const profile = JSON.parse(readFileSync(profilePath, "utf8"));
+    profile.mcp.fixture.oauth.callback_port = fixedPort;
+    writeFileSync(profilePath, JSON.stringify(profile));
+
+    const pending = runFx(["mcp", "login", "fixture"], {
+      cwd: root.workspace,
+      env: {
+        ...baseEnv(root),
+      },
+      timeoutMs: 20_000,
+    });
+    expect(await waitForFile(root.openLog, 5_000)).toBe(true);
+    const authorizationUrl = new URL(
+      readFileSync(root.openLog, "utf8").trim(),
+    );
+    const redirectUri = new URL(
+      authorizationUrl.searchParams.get("redirect_uri")!,
+    );
+    expect(redirectUri.hostname).toBe("127.0.0.1");
+    expect(redirectUri.port).toBe(String(fixedPort));
+    expect(redirectUri.pathname).toBe("/callback");
+    // Liveness control: the loopback port must be held right now, so the
+    // external bind below is meaningful and not racing a dead listener.
+    let loopbackRebound = false;
+    try {
+      const duplicate = Bun.serve({
+        hostname: "127.0.0.1",
+        port: fixedPort,
+        fetch() {
+          return new Response("duplicate");
+        },
+      });
+      duplicate.stop(true);
+      loopbackRebound = true;
+    } catch {
+      // Expected: the callback listener holds 127.0.0.1:fixedPort.
+    }
+    expect(loopbackRebound).toBe(false);
+    // Independent of the advertised URI: the same port must still be free
+    // on every other local address. A wildcard-bound socket would claim
+    // it too, so a successful bind proves the listener is loopback-only.
+    const extIp = Object.values(networkInterfaces())
+      .flat()
+      .find((info) => info?.family === "IPv4" && !info.internal)?.address;
+    expect(extIp).toBeDefined();
+    let externalBindError: unknown = null;
+    let external: ReturnType<typeof Bun.serve> | null = null;
+    try {
+      external = Bun.serve({
+        hostname: extIp!,
+        port: fixedPort,
+        fetch() {
+          return new Response("external");
+        },
+      });
+    } catch (err) {
+      externalBindError = err;
+    }
+    external?.stop(true);
+    expect(externalBindError).toBeNull();
+    // Complete the authorization the opener script would have followed.
+    const follow = Bun.spawn(
+      [
+        "curl",
+        "--location",
+        "--silent",
+        "--show-error",
+        authorizationUrl.toString(),
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const [body, followCode] = await Promise.all([
+      new Response(follow.stdout).text(),
+      follow.exited,
+    ]);
+    expect(followCode).toBe(0);
+    writeFileSync(root.callbackLog, body);
+    const authenticated = await pending;
+    expect(authenticated.code, authenticated.stderr).toBe(0);
+    expect(authenticated.stderr).toBe("");
+    expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
+    expect(auth.authorizationRequests).toBe(1);
+    expect(auth.tokenExchanges).toBe(1);
+    expect(existsSync(root.openLog)).toBe(true);
+    expect(
+      await waitForFileText(root.callbackLog, "Authorization complete", 5_000),
+    ).toBe(true);
+  }, 30_000);
+
+  test("protected-resource authorization server with a trailing slash completes", async () => {
+    upstream = startModernMcpHttpFixture("json");
+    auth = startAuthFixture(upstream.url, {
+      authorizationServerTrailingSlash: true,
+    });
+    const root = createRoot(auth);
+
+    const authenticated = await runFx(["mcp", "login", "fixture"], {
+      cwd: root.workspace,
+      env: {
+        ...baseEnv(root),
+      },
+      timeoutMs: 20_000,
+    });
+    // This slashes authorization_servers in the protected-resource
+    // document only; metadata issuer and callback iss stay identical, so a
+    // clean success proves metadata-discovery tolerance
+    // (src/core/mcp/mcp_auth.zig issuersEqual), not response validation.
+    expect(authenticated.code, authenticated.stderr).toBe(0);
+    expect(authenticated.stderr).toBe("");
+    expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
+    expect(authenticated.stderr).not.toContain(
+      "McpAuthorizationIssuerMismatch",
+    );
+    expect(auth.authorizationRequests).toBe(1);
+    expect(auth.tokenExchanges).toBe(1);
+  }, 30_000);
+
+  test("authorization response issuer with a trailing slash is rejected", async () => {
+    upstream = startModernMcpHttpFixture("json");
+    auth = startAuthFixture(upstream.url, {
+      authorizationResponseTrailingSlash: true,
+    });
+    const root = createRoot(auth);
+
+    const attempted = await runFx(["mcp", "login", "fixture"], {
+      cwd: root.workspace,
+      env: {
+        ...baseEnv(root),
+      },
+      timeoutMs: 20_000,
+    });
+    // Metadata issuer is origin while the callback returns iss origin/.
+    // SEP-2468 / RFC 9207 forbids trailing-slash normalization of iss
+    // before comparison, so the login fails closed before token exchange.
+    expect(attempted.code).not.toBe(0);
+    expect(attempted.stderr).toContain("McpAuthorizationIssuerMismatch");
+    expect(attempted.stdout).not.toContain(
+      "Authenticated MCP server 'fixture'",
+    );
+    expect(auth.authorizationRequests).toBe(1);
+    expect(auth.tokenExchanges).toBe(0);
+  }, 30_000);
+
+  test("authorization metadata issuer with a trailing slash is rejected at response", async () => {
+    upstream = startModernMcpHttpFixture("json");
+    auth = startAuthFixture(upstream.url, {
+      authorizationMetadataTrailingSlash: true,
+    });
+    const root = createRoot(auth);
+
+    const attempted = await runFx(["mcp", "login", "fixture"], {
+      cwd: root.workspace,
+      env: {
+        ...baseEnv(root),
+      },
+      timeoutMs: 20_000,
+    });
+    // Metadata issuer is origin/ while the callback returns iss origin.
+    // Discovery tolerates the difference (issuersEqual) and reaches
+    // authorization, but strict response comparison rejects iss origin
+    // against expected origin/ before token exchange.
+    expect(attempted.code).not.toBe(0);
+    expect(attempted.stderr).toContain("McpAuthorizationIssuerMismatch");
+    expect(attempted.stdout).not.toContain(
+      "Authenticated MCP server 'fixture'",
+    );
+    expect(auth.authorizationRequests).toBe(1);
+    expect(auth.tokenExchanges).toBe(0);
+  }, 30_000);
+
+  test("occupied oauth.callback_port fails closed instead of choosing another port", async () => {
+    upstream = startModernMcpHttpFixture("json");
+    auth = startAuthFixture(upstream.url);
+    const root = createRoot(auth);
+    const blocker = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("blocked");
+      },
+    });
+    const occupiedPort = blocker.port;
+    const profilePath = join(root.home, ".fiber", "mcp.json");
+    const profile = JSON.parse(readFileSync(profilePath, "utf8"));
+    profile.mcp.fixture.oauth.callback_port = occupiedPort;
+    writeFileSync(profilePath, JSON.stringify(profile));
+
+    const attempted = await runFx(["mcp", "login", "fixture"], {
+      cwd: root.workspace,
+      env: {
+        ...baseEnv(root),
+      },
+      timeoutMs: 20_000,
+    });
+    blocker.stop(true);
+    expect(attempted.code).not.toBe(0);
+    expect(attempted.stderr).toContain("McpOAuthCallbackPortInUse");
+    expect(attempted.stdout).not.toContain(
+      "Authenticated MCP server 'fixture'",
+    );
+    // Fail-closed before opening the authorization URL: no silent fallback
+    // to another port. The TUI renders this error with the guidance at
+    // src/core/app/app_commands.zig:708.
+    expect(auth.authorizationRequests).toBe(0);
+    expect(auth.tokenExchanges).toBe(0);
+    expect(existsSync(root.openLog)).toBe(false);
   }, 30_000);
 
   test("rejected stored credentials report required auth without discovery fallback", async () => {
