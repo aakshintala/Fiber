@@ -637,8 +637,6 @@ test.skipIf(process.platform !== "linux" || !tmuxAvailable())(
     const paths = hostPaths(home);
     const transport = terminalTransportPaths(home);
     const wrapper = join(home, "bash");
-    const interposerSource = join(home, "tcsetpgrp-gate.c");
-    const interposer = join(home, "tcsetpgrp-gate.so");
     const descendantReady = join(home, "descendant-stopped");
     const handoffAssigned = join(home, "tcsetpgrp-assigned");
     const handoffRelease = join(home, "tcsetpgrp-release");
@@ -647,67 +645,6 @@ test.skipIf(process.platform !== "linux" || !tmuxAvailable())(
     const laterStoppedPidProof = join(home, "later-stopped-pid");
     const laterResumedProof = join(home, "later-stop-resumed");
 
-    writeFileSync(
-      interposerSource,
-      `#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <fcntl.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-
-static int launcher_process(void) {
-  char bytes[512];
-  int fd = open("/proc/self/cmdline", O_RDONLY);
-  if (fd < 0) return 0;
-  ssize_t count = read(fd, bytes, sizeof(bytes));
-  close(fd);
-  const char needle[] = "--fiber-internal-terminal-tmux-launcher";
-  if (count < (ssize_t)(sizeof(needle) - 1)) return 0;
-  for (ssize_t i = 0; i <= count - (ssize_t)(sizeof(needle) - 1); i++) {
-    if (memcmp(bytes + i, needle, sizeof(needle) - 1) == 0) return 1;
-  }
-  return 0;
-}
-
-static void touch_path(const char *path) {
-  if (path == NULL) return;
-  int fd = open(path, O_CREAT | O_WRONLY, 0600);
-  if (fd >= 0) close(fd);
-}
-
-int tcsetpgrp(int fd, pid_t pgrp) {
-  static int (*real_tcsetpgrp)(int, pid_t);
-  if (real_tcsetpgrp == NULL) {
-    *(void **)(&real_tcsetpgrp) = dlsym(RTLD_NEXT, "tcsetpgrp");
-  }
-  if (!launcher_process()) return real_tcsetpgrp(fd, pgrp);
-  const char *ready = getenv("FIBER_E2E_TMUX_DESCENDANT_READY");
-  for (int i = 0; ready != NULL && access(ready, F_OK) != 0 && i < 1000; i++) {
-    usleep(5000);
-  }
-  int result = real_tcsetpgrp(fd, pgrp);
-  touch_path(getenv("FIBER_E2E_TMUX_HANDOFF_ASSIGNED"));
-  const char *release = getenv("FIBER_E2E_TMUX_HANDOFF_RELEASE");
-  for (int i = 0; release != NULL && access(release, F_OK) != 0 && i < 1000; i++) {
-    usleep(5000);
-  }
-  return result;
-}
-`,
-    );
-    execFileSync(
-      "cc",
-      [
-        "-shared",
-        "-fPIC",
-        interposerSource,
-        "-ldl",
-        "-o",
-        interposer,
-      ],
-      { stdio: "pipe", timeout: 10_000 },
-    );
     writeFileSync(
       wrapper,
       `#!/bin/bash
@@ -734,10 +671,9 @@ exec /bin/bash "$@"
 
     const tmuxResource = rememberPrivateTmuxServer(home);
     const host = startHost(home, undefined, 250, {
-      LD_PRELOAD: interposer,
-      FIBER_E2E_TMUX_DESCENDANT_READY: descendantReady,
-      FIBER_E2E_TMUX_HANDOFF_ASSIGNED: handoffAssigned,
-      FIBER_E2E_TMUX_HANDOFF_RELEASE: handoffRelease,
+      FIBER_TERMINAL_TEST_TMUX_DESCENDANT_READY: descendantReady,
+      FIBER_TERMINAL_TEST_TMUX_HANDOFF_ASSIGNED: handoffAssigned,
+      FIBER_TERMINAL_TEST_TMUX_HANDOFF_RELEASE: handoffRelease,
       FIBER_TERMINAL_TEST_TMUX_DEADLINE_MS: "2000",
     });
     const stderr = streamText(host.stderr);
@@ -900,8 +836,6 @@ exec /bin/bash "$@"
     expect(processFdCount(host.pid!)).toBeLessThanOrEqual(hostFds + 2);
     for (const path of [
       wrapper,
-      interposerSource,
-      interposer,
       descendantReady,
       handoffAssigned,
       handoffRelease,

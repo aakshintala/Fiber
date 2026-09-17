@@ -2256,11 +2256,37 @@ fn receiveBeforeDeadline(
     }
 }
 
+fn waitForTestPath(name: []const u8) void {
+    const path = io_mod.getenv(name) orelse return;
+    var remaining: usize = 1000;
+    while (remaining > 0) : (remaining -= 1) {
+        if (std.Io.Dir.accessAbsolute(io_mod.getIo(), path, .{})) |_| {
+            return;
+        } else |_| {
+            io_mod.sleep(poll_ns);
+        }
+    }
+}
+
+fn touchTestPath(name: []const u8) void {
+    const path = io_mod.getenv(name) orelse return;
+    var file = std.Io.Dir.createFileAbsolute(
+        io_mod.getIo(),
+        path,
+        .{ .truncate = true },
+    ) catch return;
+    file.close(io_mod.getIo());
+}
+
 fn assignForegroundProcessGroup(fd: c_int, pgrp: std.posix.pid_t) bool {
     if (io_mod.getenv("FIBER_TERMINAL_TEST_TMUX_TCSETPGRP_FAILURE") != null) {
         return false;
     }
-    return tcsetpgrp(fd, pgrp) == 0;
+    waitForTestPath("FIBER_TERMINAL_TEST_TMUX_DESCENDANT_READY");
+    const assigned = tcsetpgrp(fd, pgrp) == 0;
+    touchTestPath("FIBER_TERMINAL_TEST_TMUX_HANDOFF_ASSIGNED");
+    waitForTestPath("FIBER_TERMINAL_TEST_TMUX_HANDOFF_RELEASE");
+    return assigned;
 }
 
 fn signalLauncherProcessGroup(pid: std.c.pid_t, signal: std.c.SIG) !void {
