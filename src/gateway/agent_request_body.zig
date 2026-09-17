@@ -32,7 +32,7 @@ pub fn writeChatMessageJson(
     writer: *std.Io.Writer,
     message: ChatMessage,
 ) !void {
-    writeChatMessageJsonInner(scratch_alloc, writer, message, false, null, null) catch |err| return err;
+    writeChatMessageJsonInner(scratch_alloc, writer, message, false, null, null, null) catch |err| return err;
 }
 
 pub fn writeChatMessageJsonCached(
@@ -40,7 +40,25 @@ pub fn writeChatMessageJsonCached(
     writer: *std.Io.Writer,
     message: ChatMessage,
 ) !void {
-    writeChatMessageJsonInner(scratch_alloc, writer, message, true, null, null) catch |err| return err;
+    writeChatMessageJsonInner(scratch_alloc, writer, message, true, null, null, null) catch |err| return err;
+}
+
+fn writeChatMessageJsonWithWireIds(
+    scratch_alloc: std.mem.Allocator,
+    writer: *std.Io.Writer,
+    message: ChatMessage,
+    wire_ids: ?*const std.StringHashMap([]const u8),
+) !void {
+    writeChatMessageJsonInner(scratch_alloc, writer, message, false, null, null, wire_ids) catch |err| return err;
+}
+
+fn writeChatMessageJsonCachedWithWireIds(
+    scratch_alloc: std.mem.Allocator,
+    writer: *std.Io.Writer,
+    message: ChatMessage,
+    wire_ids: ?*const std.StringHashMap([]const u8),
+) !void {
+    writeChatMessageJsonInner(scratch_alloc, writer, message, true, null, null, wire_ids) catch |err| return err;
 }
 
 pub fn buildGatewayRequestBodyWithOptions(
@@ -229,6 +247,16 @@ fn buildGatewayRequestBodyValidated(
     const cache_breakpoint_idx = if (options.prompt_caching) findCacheBreakpoint(messages) else null;
     var prefix_cacheable = true;
 
+    var wire_ids = std.StringHashMap([]const u8).init(alloc);
+    defer wire_ids.deinit();
+    for (messages) |message| {
+        if (message.role != .assistant) continue;
+        for (message.tool_calls) |tool_call| {
+            wire_ids.put(tool_call.id, tool_call.provider_id orelse tool_call.id) catch
+                return error.OutOfMemory;
+        }
+    }
+
     try out.writer.writeAll("{\"prompt\":[");
     for (messages, 0..) |message, i| {
         if (budget) |active| try active.check();
@@ -246,11 +274,12 @@ fn buildGatewayRequestBodyValidated(
                 use_cache,
                 active,
                 verified_images,
+                &wire_ids,
             );
         } else if (use_cache) {
-            try writeChatMessageJsonCached(std.heap.c_allocator, &out.writer, message);
+            try writeChatMessageJsonCachedWithWireIds(std.heap.c_allocator, &out.writer, message, &wire_ids);
         } else {
-            try writeChatMessageJson(std.heap.c_allocator, &out.writer, message);
+            try writeChatMessageJsonWithWireIds(std.heap.c_allocator, &out.writer, message, &wire_ids);
         }
         if (message.cache_policy == .no_cache) prefix_cacheable = false;
         if (budget) |active| try active.check();
@@ -396,6 +425,7 @@ fn writeChatMessageJsonInner(
     cached: bool,
     budget: ?BuildBudget,
     verified_images: ?[]const image_attachments.VerifiedSnapshot,
+    wire_ids: ?*const std.StringHashMap([]const u8),
 ) !void {
     try writer.writeAll("{\"role\":");
     try std.json.Stringify.value(roleName(message.role), .{}, writer);
@@ -468,7 +498,7 @@ fn writeChatMessageJsonInner(
             for (message.tool_calls) |tool_call| {
                 if (wrote_part) try writer.writeByte(',');
                 try writer.writeAll("{\"type\":\"tool-call\",\"toolCallId\":");
-                try std.json.Stringify.value(tool_call.id, .{}, writer);
+                try std.json.Stringify.value(tool_call.provider_id orelse tool_call.id, .{}, writer);
                 try writer.writeAll(",\"toolName\":");
                 try std.json.Stringify.value(tool_call.name, .{}, writer);
                 try writer.writeAll(",\"input\":");
@@ -480,7 +510,11 @@ fn writeChatMessageJsonInner(
         },
         .tool => {
             try writer.writeAll(",\"content\":[{\"type\":\"tool-result\",\"toolCallId\":");
-            if (message.tool_call_id) |tool_call_id| {
+            const wire_id = if (wire_ids) |map| blk: {
+                const item_id = message.tool_call_id orelse break :blk null;
+                break :blk map.get(item_id);
+            } else null;
+            if (wire_id orelse message.tool_call_id) |tool_call_id| {
                 try std.json.Stringify.value(tool_call_id, .{}, writer);
             } else {
                 try writer.writeAll("\"\"");
@@ -1070,4 +1104,24 @@ test "gateway request validation rejects mismatched tool result names" {
     };
 
     try std.testing.expectError(error.InvalidGatewayHistory, buildGatewayRequestBodyWithOptions(alloc, "[]", &messages, .{}, .auto));
+}
+
+test "gateway request emits provider ids while linking results by item id" {
+    const alloc = std.testing.allocator;
+    var calls = [_]ToolCall{.{
+        .id = "item_abc",
+        .name = "read_file",
+        .arguments_json = "{\"path\":\"a.txt\"}",
+        .provider_id = "call_provider",
+    }};
+    const messages = [_]ChatMessage{
+        .{ .role = .assistant, .tool_calls = calls[0..] },
+        .{ .role = .tool, .content = "contents", .tool_call_id = "item_abc", .tool_name = "read_file" },
+        .{ .role = .user, .content = "next" },
+    };
+
+    const body = try buildGatewayRequestBodyWithOptions(alloc, "[]", &messages, .{}, .auto);
+    defer alloc.free(body);
+    try std.testing.expect(std.mem.find(u8, body, "\"toolCallId\":\"call_provider\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "item_abc") == null);
 }

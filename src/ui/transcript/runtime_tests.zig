@@ -9340,7 +9340,6 @@ test "command output detail retargets when first split source row is pruned" {
 
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = lifecycle_id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"printf split\"}",
@@ -12446,7 +12445,6 @@ fn setupRecordedCommandOutputAtomicFixture(
     };
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = lifecycle_id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"printf atomic\"}",
@@ -13440,7 +13438,6 @@ fn startLifecycle(
 ) !u32 {
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = lifecycleId(turn_id, call_id),
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
@@ -13457,7 +13454,6 @@ test "current compact projection groups tool rows without mutating entries" {
     const read_id = lifecycleId(1, "read");
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = read_id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
@@ -13469,7 +13465,6 @@ test "current compact projection groups tool rows without mutating entries" {
     const edit_id = lifecycleId(1, "edit");
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = edit_id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "edit_file",
         .activity_kind = .edit,
     } });
@@ -13521,7 +13516,6 @@ test "current compact projection finalizes tool groups from turn finished fallba
         } else {
             _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
                 .id = id,
-                .reconciles_provisional_call_id = null,
                 .tool_name = "read_file",
                 .activity_kind = .read,
             } });
@@ -13898,7 +13892,6 @@ test "command terminal replacement preserves committed scrollback anchor" {
     const id = lifecycleId(1, "cancelled-command");
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"sleep 30\"}",
@@ -14484,7 +14477,6 @@ test "visual epoch retains command output blocks and detail associations" {
     const id = lifecycleId(1, "retained-command");
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "shell",
         .activity_kind = .command,
         .arguments_json = "{\"request\":{\"action\":\"run\",\"command\":\"true\"}}",
@@ -14548,11 +14540,11 @@ test "transcript lifecycle identity updates are idempotent and atomic" {
             .activity_kind = .read,
         } });
     }
-    const provisional_id = lifecycleId(1, "call");
-    const entry_id = runtime.toolActivityRecord(provisional_id).?.entry_id;
+    const item_id = lifecycleId(1, "call");
+    const entry_id = runtime.toolActivityRecord(item_id).?.entry_id;
     try std.testing.expectEqualStrings(
         "read_file",
-        runtime.toolActivityRecord(provisional_id).?.tool_name.?,
+        runtime.toolActivityRecord(item_id).?.tool_name.?,
     );
     // Force record-map growth so stale pointers fail deterministically.
     inline for ([_][]const u8{ "alias", "target", "fill-1", "fill-2", "fill-3" }) |call_id| {
@@ -14562,20 +14554,15 @@ test "transcript lifecycle identity updates are idempotent and atomic" {
             .activity_kind = .read,
         } });
     }
-    const authoritative_id = lifecycleId(1, "authoritative-" ++ ("x" ** 800));
-    const record_capacity_before = runtime.lifecycle_state.records.capacity();
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
-        .id = authoritative_id,
+        .id = item_id,
         .presentation_group_id = .{ .turn_id = 1, .anchor_step_id = 12 },
-        .reconciles_provisional_call_id = "call",
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
-    try std.testing.expect(runtime.lifecycle_state.records.capacity() > record_capacity_before);
-    try std.testing.expect(runtime.toolActivityRecord(provisional_id) == null);
     try std.testing.expectEqual(
         entry_id,
-        runtime.toolActivityRecord(authoritative_id).?.entry_id,
+        runtime.toolActivityRecord(item_id).?.entry_id,
     );
     try std.testing.expectEqual(
         types.ToolPresentationGroupId{ .turn_id = 1, .anchor_step_id = 11 },
@@ -14583,15 +14570,11 @@ test "transcript lifecycle identity updates are idempotent and atomic" {
     );
     const alias_before = runtime.toolActivityRecord(lifecycleId(1, "alias")).?.entry_id;
     const target_before = runtime.toolActivityRecord(lifecycleId(1, "target")).?.entry_id;
-    try std.testing.expectError(
-        error.LifecycleReconciliationCollision,
-        runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
-            .id = lifecycleId(1, "target"),
-            .reconciles_provisional_call_id = "alias",
-            .tool_name = "glob_files",
-            .activity_kind = .list,
-        } }),
-    );
+    _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
+        .id = lifecycleId(1, "target"),
+        .tool_name = "glob_files",
+        .activity_kind = .list,
+    } });
     try std.testing.expectEqual(alias_before, runtime.toolActivityRecord(lifecycleId(1, "alias")).?.entry_id);
     try std.testing.expectEqual(target_before, runtime.toolActivityRecord(lifecycleId(1, "target")).?.entry_id);
     const records_before = runtime.toolActivityRecordCount();
@@ -14640,7 +14623,6 @@ test "authoritative lifecycle can place a provisional row after the latest trans
 
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"printf approved\"}",
@@ -14731,7 +14713,6 @@ test "coalesced approval lifecycle reposition preserves an authoritative committ
     });
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"seq 1 1\"}",
@@ -14827,7 +14808,6 @@ test "coalesced approval lifecycle reposition preserves its anchor when retentio
 
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"seq 1 1\"}",
@@ -14877,7 +14857,6 @@ test "transcript lifecycle preserves caller resolved activity metadata" {
     const id = lifecycleId(1, "custom-browser");
     const started_kind = (try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "custom_probe_tool",
         .activity_kind = .open,
     } })) orelse return error.TestExpectedEqual;
@@ -14978,7 +14957,6 @@ test "transcript lifecycle terminal and finalization transitions stay batch safe
 
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = lifecycleId(2, "late-start"),
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
@@ -15167,7 +15145,6 @@ fn checkLifecycleRepositionAllocationFailuresImpl(alloc: Allocator) !void {
     const diagnostic_before = runtime.transcriptCommitDiagnostic();
     _ = runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"seq 1 1\"}",
@@ -15513,7 +15490,6 @@ fn checkCommandProcessTerminalAllocationFailuresImpl(alloc: Allocator) !void {
 
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "run_command",
         .activity_kind = .command,
         .arguments_json = "{\"command\":\"true\"}",
@@ -15832,7 +15808,6 @@ test "finality floor holds unfenced tool turn across quiet ticks and settles aft
         _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
             .id = id,
             .presentation_group_id = .{ .turn_id = 2, .anchor_step_id = 1 },
-            .reconciles_provisional_call_id = null,
             .tool_name = "read_file",
             .activity_kind = .read,
         } });
@@ -15869,7 +15844,6 @@ test "finality floor holds unfenced tool turn across quiet ticks and settles aft
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = late_call,
         .presentation_group_id = .{ .turn_id = 2, .anchor_step_id = 1 },
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
@@ -16214,7 +16188,6 @@ test "finality candidates keep tool turn and replaceable tail offsets independen
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
         .presentation_group_id = .{ .turn_id = 5, .anchor_step_id = 1 },
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
@@ -16254,7 +16227,6 @@ fn applyCompletedReadForFinalityTest(
     _ = try runtime.applyToolLifecycle(alloc, .{ .authoritative_started = .{
         .id = id,
         .presentation_group_id = presentation_group_id,
-        .reconciles_provisional_call_id = null,
         .tool_name = "read_file",
         .activity_kind = .read,
     } });

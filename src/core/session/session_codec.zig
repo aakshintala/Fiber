@@ -1180,6 +1180,8 @@ fn writeToolCall(writer: *std.Io.Writer, tool_call: session.ToolCall) !void {
     try writeDurableBytes(writer, tool_call.name);
     try writer.writeAll(",\"arguments_json\":");
     try writeDurableBytes(writer, tool_call.arguments_json);
+    try writer.writeAll(",\"provider_id\":");
+    try writeOptionalDurableBytes(writer, tool_call.provider_id);
     try writer.writeAll(",\"provider_result\":");
     try writeOptionalDurableBytes(writer, tool_call.provider_result);
     try writer.writeByte('}');
@@ -1623,12 +1625,27 @@ fn parseToolCalls(alloc: Allocator, value: std.json.Value) ![]session.ToolCall {
 }
 
 fn parseToolCall(alloc: Allocator, value: std.json.Value) !session.ToolCall {
-    const object = try exactObject(value, &.{
-        "id",
-        "name",
-        "arguments_json",
-        "provider_result",
-    });
+    const object = try requireObject(value);
+    // Sessions written before item ids carry only the provider id as "id";
+    // they parse with a null provider id and keep working because request
+    // building falls back to the item id.
+    if (object.count() != 4 and object.count() != 5) return error.InvalidSessionFormat;
+    const keys: []const []const u8 = if (object.count() == 5)
+        &.{
+            "id",
+            "name",
+            "arguments_json",
+            "provider_id",
+            "provider_result",
+        }
+    else
+        &.{
+            "id",
+            "name",
+            "arguments_json",
+            "provider_result",
+        };
+    _ = try exactObject(value, keys);
     const id = try parseRequiredDurableBytes(alloc, object, "id");
     errdefer alloc.free(id);
     const name = try parseRequiredDurableBytes(alloc, object, "name");
@@ -1641,6 +1658,11 @@ fn parseToolCall(alloc: Allocator, value: std.json.Value) !session.ToolCall {
         alloc.free(arguments_json);
         arguments_json = safe_arguments;
     }
+    const provider_id = if (object.get("provider_id")) |stored|
+        try parseOptionalDurableBytes(alloc, stored)
+    else
+        null;
+    errdefer if (provider_id) |stored| alloc.free(stored);
     const provider_result = try parseOptionalDurableBytes(
         alloc,
         object.get("provider_result") orelse return error.InvalidSessionFormat,
@@ -1650,6 +1672,7 @@ fn parseToolCall(alloc: Allocator, value: std.json.Value) !session.ToolCall {
         .name = name,
         .arguments_json = arguments_json,
         .argument_integrity = argument_integrity,
+        .provider_id = provider_id,
         .provider_result = provider_result,
     };
 }
@@ -3973,4 +3996,35 @@ fn fuzzDurableSessionOptionalFields(_: void, smith: *std.testing.Smith) !void {
         .max_value_bytes = buffer.len,
     }) catch return;
     state.deinit(std.testing.allocator);
+}
+
+test "tool call codec persists item and provider ids and reads legacy calls" {
+    const alloc = std.testing.allocator;
+    const call = session.ToolCall{
+        .id = @constCast("item_abc"),
+        .name = @constCast("read_file"),
+        .arguments_json = @constCast("{}"),
+        .provider_id = @constCast("call_provider"),
+    };
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try writeToolCall(&out.writer, call);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, out.written(), .{});
+    defer parsed.deinit();
+    const round_tripped = try parseToolCall(alloc, parsed.value);
+    defer session.freeToolCall(alloc, round_tripped);
+    try std.testing.expectEqualStrings("item_abc", round_tripped.id);
+    try std.testing.expectEqualStrings("call_provider", round_tripped.provider_id.?);
+
+    var legacy = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        "{\"id\":\"call_legacy\",\"name\":\"read_file\",\"arguments_json\":\"{}\",\"provider_result\":null}",
+        .{},
+    );
+    defer legacy.deinit();
+    const legacy_call = try parseToolCall(alloc, legacy.value);
+    defer session.freeToolCall(alloc, legacy_call);
+    try std.testing.expectEqualStrings("call_legacy", legacy_call.id);
+    try std.testing.expect(legacy_call.provider_id == null);
 }

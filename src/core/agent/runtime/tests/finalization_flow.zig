@@ -631,10 +631,17 @@ test "processQueuedPrompt step limit writes active debug trace" {
     const trace = try io_mod.readFileToEnd(alloc, &trace_file, 8192);
     defer alloc.free(trace);
 
+    var step_item_id: []const u8 = "none";
+    for (hooks.lifecycle_events.items) |event| {
+        if (event == .terminal) step_item_id = event.terminal.id.call_id;
+    }
+    try std.testing.expect(!std.mem.eql(u8, step_item_id, "call_1"));
+    const step_needle = try std.fmt.allocPrint(alloc, "last_tool_call_id={s} outcome_kind=step_limit", .{step_item_id});
+    defer alloc.free(step_needle);
     try std.testing.expect(std.mem.find(u8, trace, "[agent] step start step=1 limit=1") != null);
     try std.testing.expect(std.mem.find(u8, trace, "[agent] step completion step=1") != null);
-    try std.testing.expect(std.mem.find(u8, trace, "[agent] step limit reached turn_id=1 step_id=1 step_index=1 step_limit=1 gateway_messages=2 completed_tool_count=1 completed_tool_names=read_file last_tool_call_name=read_file last_tool_call_id=call_1 outcome_kind=step_limit") != null);
-    try std.testing.expect(std.mem.find(u8, trace, "event=step_limit_reached turn_id=1 step_id=1 step_index=1 step_limit=1 gateway_messages=2 completed_tool_count=1 completed_tool_names=read_file last_tool_call_name=read_file last_tool_call_id=call_1 outcome_kind=step_limit") != null);
+    try std.testing.expect(std.mem.count(u8, trace, step_needle) == 2);
+    try std.testing.expect(std.mem.find(u8, trace, "last_tool_call_id=call_1") == null);
     try std.testing.expect(std.mem.find(u8, trace, "{\"path\":\"a\"}") == null);
 }
 
@@ -1244,8 +1251,9 @@ test "common Stop finish_turn retains candidate and execution memory" {
     try std.testing.expectEqual(@as(usize, 1), turn.execution.tool_steps.len);
     try std.testing.expectEqualStrings(
         "call_finish",
-        turn.execution.tool_steps[0].tool_calls[0].id,
+        turn.execution.tool_steps[0].tool_calls[0].provider_id.?,
     );
+    try std.testing.expect(!std.mem.eql(u8, "call_finish", turn.execution.tool_steps[0].tool_calls[0].id));
     try std.testing.expectEqual(
         types.PersistedToolStatus.success,
         turn.execution.tool_steps[0].tool_results[0].status,
@@ -1297,12 +1305,14 @@ test "common Stop cancellation excludes active call and keeps typed failed peer"
     try std.testing.expectEqual(@as(usize, 1), deps.history_turns.items.len);
     const turn = deps.history_turns.items[0].interrupted;
     try std.testing.expectEqualStrings("candidate", turn.assistant.?);
-    try std.testing.expectEqualStrings("call_active", turn.tool_call.?.id);
+    try std.testing.expectEqualStrings("call_active", turn.tool_call.?.provider_id.?);
+    try std.testing.expect(!std.mem.eql(u8, "call_active", turn.tool_call.?.id));
     try std.testing.expectEqual(@as(usize, 1), turn.execution.tool_steps.len);
     try std.testing.expectEqualStrings(
         "call_peer",
-        turn.execution.tool_steps[0].tool_calls[0].id,
+        turn.execution.tool_steps[0].tool_calls[0].provider_id.?,
     );
+    try std.testing.expect(!std.mem.eql(u8, "call_peer", turn.execution.tool_steps[0].tool_calls[0].id));
     try std.testing.expectEqual(
         types.PersistedToolStatus.failure,
         turn.execution.tool_steps[0].tool_results[0].status,
@@ -1357,13 +1367,15 @@ test "common Stop interruption keeps only completed calls from a partially attem
 
     try std.testing.expectEqual(@as(usize, 2), deps.executed_names.items.len);
     const turn = deps.history_turns.items[0].interrupted;
-    try std.testing.expectEqualStrings("call_cancelled", turn.tool_call.?.id);
+    try std.testing.expectEqualStrings("call_cancelled", turn.tool_call.?.provider_id.?);
+    try std.testing.expect(!std.mem.eql(u8, "call_cancelled", turn.tool_call.?.id));
     try std.testing.expectEqual(@as(usize, 1), turn.execution.tool_steps.len);
     try std.testing.expectEqual(@as(usize, 1), turn.execution.tool_steps[0].tool_calls.len);
     try std.testing.expectEqualStrings(
         "call_completed",
-        turn.execution.tool_steps[0].tool_calls[0].id,
+        turn.execution.tool_steps[0].tool_calls[0].provider_id.?,
     );
+    try std.testing.expect(!std.mem.eql(u8, "call_completed", turn.execution.tool_steps[0].tool_calls[0].id));
     try std.testing.expectEqual(@as(usize, 1), turn.execution.tool_steps[0].tool_results.len);
     try std.testing.expectEqualStrings(
         "completed result",
@@ -1418,9 +1430,12 @@ test "common Stop parallel cancellation preserves ordinary cancelled peer as com
     const step = turn.execution.tool_steps[0];
     try std.testing.expectEqual(@as(usize, 3), step.tool_calls.len);
     try std.testing.expectEqual(@as(usize, 3), step.tool_results.len);
-    try std.testing.expectEqualStrings("call_ordinary_cancel", step.tool_calls[0].id);
-    try std.testing.expectEqualStrings("call_owner_signal", step.tool_calls[1].id);
-    try std.testing.expectEqualStrings("call_completed_peer", step.tool_calls[2].id);
+    try std.testing.expectEqualStrings("call_ordinary_cancel", step.tool_calls[0].provider_id.?);
+    try std.testing.expectEqualStrings("call_owner_signal", step.tool_calls[1].provider_id.?);
+    try std.testing.expectEqualStrings("call_completed_peer", step.tool_calls[2].provider_id.?);
+    try std.testing.expect(!std.mem.eql(u8, "call_ordinary_cancel", step.tool_calls[0].id));
+    try std.testing.expect(!std.mem.eql(u8, "call_owner_signal", step.tool_calls[1].id));
+    try std.testing.expect(!std.mem.eql(u8, "call_completed_peer", step.tool_calls[2].id));
     try std.testing.expectEqual(
         types.PersistedToolStatus.failure,
         step.tool_results[0].status,
@@ -1487,7 +1502,8 @@ test "common Stop failure excludes a later call without a result" {
     try std.testing.expectEqual(@as(usize, 1), execution.tool_steps.len);
     const step = execution.tool_steps[0];
     try std.testing.expectEqual(@as(usize, 1), step.tool_calls.len);
-    try std.testing.expectEqualStrings("call_completed", step.tool_calls[0].id);
+    try std.testing.expectEqualStrings("call_completed", step.tool_calls[0].provider_id.?);
+    try std.testing.expect(!std.mem.eql(u8, "call_completed", step.tool_calls[0].id));
     try std.testing.expectEqual(@as(usize, 1), step.tool_results.len);
 
     var replay: std.ArrayList(ChatMessage) = .empty;
@@ -1500,13 +1516,10 @@ test "common Stop failure excludes a later call without a result" {
     try std.testing.expectEqual(@as(usize, 4), replay.items.len);
     try std.testing.expectEqual(@as(usize, 1), replay.items[1].tool_calls.len);
     try std.testing.expectEqualStrings(
-        "call_completed",
         replay.items[1].tool_calls[0].id,
-    );
-    try std.testing.expectEqualStrings(
-        "call_completed",
         replay.items[2].tool_call_id.?,
     );
+    try std.testing.expect(!std.mem.eql(u8, "call_completed", replay.items[1].tool_calls[0].id));
 }
 
 test "common Stop history propagation failure preserves recovery checkpoint" {

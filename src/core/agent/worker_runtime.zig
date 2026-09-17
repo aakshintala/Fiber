@@ -2941,11 +2941,6 @@ pub fn dupeToolLifecycleEvent(
         .authoritative_started => |started| blk: {
             const call_id = try alloc.dupe(u8, started.id.call_id);
             errdefer alloc.free(call_id);
-            const alias = if (started.reconciles_provisional_call_id) |value|
-                try alloc.dupe(u8, value)
-            else
-                null;
-            errdefer if (alias) |value| alloc.free(value);
             const tool_name = try alloc.dupe(u8, started.tool_name);
             errdefer alloc.free(tool_name);
             const arguments_json = if (started.arguments_json) |value|
@@ -2956,7 +2951,6 @@ pub fn dupeToolLifecycleEvent(
             break :blk .{ .authoritative_started = .{
                 .id = .{ .turn_id = started.id.turn_id, .call_id = call_id },
                 .presentation_group_id = started.presentation_group_id,
-                .reconciles_provisional_call_id = alias,
                 .tool_name = tool_name,
                 .activity_kind = started.activity_kind,
                 .arguments_json = arguments_json,
@@ -3015,9 +3009,6 @@ pub fn freeToolLifecycleEvent(
         },
         .authoritative_started => |started| {
             alloc.free(@constCast(started.id.call_id));
-            if (started.reconciles_provisional_call_id) |alias| {
-                alloc.free(@constCast(alias));
-            }
             alloc.free(@constCast(started.tool_name));
             if (started.arguments_json) |arguments_json| {
                 alloc.free(@constCast(arguments_json));
@@ -4767,7 +4758,6 @@ test "typed lifecycle worker events duplicate and free every payload variant" {
         .{ .authoritative_started = .{
             .id = .{ .turn_id = 1, .call_id = "final" },
             .presentation_group_id = .{ .turn_id = 1, .anchor_step_id = 3 },
-            .reconciles_provisional_call_id = "provisional",
             .tool_name = "glob_files",
             .activity_kind = .list,
         } },
@@ -4792,7 +4782,6 @@ test "typed lifecycle worker events duplicate and free every payload variant" {
 fn checkToolLifecycleDupAllocationFailure(alloc: std.mem.Allocator) !void {
     const owned = try dupeToolLifecycleEvent(alloc, .{ .authoritative_started = .{
         .id = .{ .turn_id = 7, .call_id = "final" },
-        .reconciles_provisional_call_id = "provisional",
         .tool_name = "read_file",
         .activity_kind = .read,
     } });
@@ -4801,10 +4790,6 @@ fn checkToolLifecycleDupAllocationFailure(alloc: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(
         "final",
         owned.authoritative_started.id.call_id,
-    );
-    try std.testing.expectEqualStrings(
-        "provisional",
-        owned.authoritative_started.reconciles_provisional_call_id.?,
     );
     try std.testing.expectEqualStrings(
         "read_file",

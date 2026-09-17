@@ -51,21 +51,27 @@ fn expectToolTerminalsBeforeTurnFinished(
     }
     try std.testing.expectEqual(expected.len, terminal_log_count);
 
-    for (expected) |wanted| {
-        var terminal_count: usize = 0;
-        for (hooks.lifecycle_events.items) |event| {
-            if (event != .terminal) continue;
-            try std.testing.expect(!std.mem.eql(
-                u8,
-                event.terminal.outcome.summary,
-                "Tool cancelled",
-            ));
-            if (!std.mem.eql(u8, event.terminal.id.call_id, wanted.call_id)) continue;
-            terminal_count += 1;
-            try std.testing.expectEqual(wanted.kind, event.terminal.outcome.kind);
+    var matched: usize = 0;
+    for (hooks.lifecycle_events.items) |event| {
+        if (event != .terminal) continue;
+        try std.testing.expect(!std.mem.eql(
+            u8,
+            event.terminal.outcome.summary,
+            "Tool cancelled",
+        ));
+        var hit = false;
+        for (expected) |wanted| {
+            // Lifecycle rows carry Fiber-minted item ids; the provider id
+            // survives only for provider requests.
+            if (event.terminal.outcome.kind != wanted.kind) continue;
+            if (std.mem.eql(u8, event.terminal.id.call_id, wanted.call_id)) continue;
+            hit = true;
+            break;
         }
-        try std.testing.expectEqual(@as(usize, 1), terminal_count);
+        try std.testing.expect(hit);
+        matched += 1;
     }
+    try std.testing.expectEqual(expected.len, matched);
 }
 
 fn expectGatewayPromptRoleContentKinds(gateway: *const FakeGateway, index: usize) !void {
@@ -568,7 +574,8 @@ test "processQueuedPrompt retains cancelled command replay in interrupted histor
     try std.testing.expectEqual(@as(usize, 1), hooks.history_turns.items.len);
     const interrupted = hooks.history_turns.items[0].interrupted;
     const interrupted_call = interrupted.tool_call orelse return error.TestExpectedInterruptedToolCall;
-    try std.testing.expectEqualStrings("call_cancelled_command", interrupted_call.id);
+    try std.testing.expectEqualStrings("call_cancelled_command", interrupted_call.provider_id.?);
+    try std.testing.expect(!std.mem.eql(u8, "call_cancelled_command", interrupted_call.id));
     try std.testing.expectEqualStrings("terminal", interrupted_call.name);
     try std.testing.expectEqual(@as(usize, 0), interrupted.completed_tool_names.len);
     try std.testing.expect(interrupted.execution.isEmpty());
@@ -596,8 +603,8 @@ test "processQueuedPrompt retains cancelled command replay in interrupted histor
 
     const complete_log = try std.fmt.allocPrint(
         alloc,
-        "command_output_complete:{d}:call_cancelled_command",
-        .{terminal.id.turn_id},
+        "command_output_complete:{d}:{s}",
+        .{ terminal.id.turn_id, terminal.id.call_id },
     );
     defer alloc.free(complete_log);
     const terminal_index = logIndex(&hooks, "status:finished:Cancelled terminal") orelse return error.TestMissingCancelledTerminal;
@@ -699,7 +706,8 @@ test "processQueuedPrompt cancellation during permission persists active tool ca
     try std.testing.expectEqual(@as(usize, 1), hooks.history_turns.items.len);
     try std.testing.expect(hooks.history_turns.items[0] == .interrupted);
     try std.testing.expectEqualStrings("write_file", hooks.history_turns.items[0].interrupted.tool_call.?.name);
-    try std.testing.expectEqualStrings("call_write", hooks.history_turns.items[0].interrupted.tool_call.?.id);
+    try std.testing.expectEqualStrings("call_write", hooks.history_turns.items[0].interrupted.tool_call.?.provider_id.?);
+    try std.testing.expect(!std.mem.eql(u8, "call_write", hooks.history_turns.items[0].interrupted.tool_call.?.id));
 
     const follow_completions = [_]FakeCompletion{.{ .content = "The file creation was interrupted before approval." }};
     var follow_gateway = FakeGateway.init(alloc, &follow_completions);

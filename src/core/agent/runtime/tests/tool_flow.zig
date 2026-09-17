@@ -603,9 +603,9 @@ test "same completion duplicate skill calls both execute for explicit rereads" {
     try std.testing.expectEqual(@as(usize, 2), hooks.validated_names.items.len);
     try std.testing.expectEqual(@as(usize, 2), hooks.availability_checked_names.items.len);
     try std.testing.expectEqual(@as(usize, 2), hooks.permission_names.items.len);
-    try std.testing.expectEqualStrings("call_1", hooks.permission_call_ids.items[0]);
+    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.permission_call_ids.items);
     try std.testing.expectEqual(@as(usize, 2), hooks.executed_names.items.len);
-    try std.testing.expectEqualStrings("call_1", hooks.executed_call_ids.items[0]);
+    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.executed_call_ids.items);
     try std.testing.expect(!logContains(&hooks, "skip:skill"));
     try expectLifecycleCallIds(
         hooks.lifecycle_events.items,
@@ -666,7 +666,7 @@ test "processQueuedPrompt presents invalid registered call without running it" {
     try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.propagated_grants.items.len);
-    try expectSingleTerminalOutcome(hooks.lifecycle_events.items, "call_1", .failed);
+    try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.failed});
     try expectBodyContains(&gateway, 1, "web_fetch arguments failed registered-tool validation");
 }
 
@@ -826,7 +826,7 @@ test "processQueuedPrompt malformed parallel fallback emits one terminal and rej
     for (hooks.lifecycle_events.items) |event| {
         switch (event) {
             .terminal => |terminal| {
-                if (std.mem.eql(u8, terminal.id.call_id, "call_bad")) {
+                if (terminal.outcome.kind == .failed) {
                     terminal_count += 1;
                 }
             },
@@ -912,7 +912,7 @@ test "legacy web_fetch prompt is presented but rejected before permission dns ht
     try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.propagated_grants.items.len);
-    try expectSingleTerminalOutcome(hooks.lifecycle_events.items, "call_1", .failed);
+    try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.failed});
     try expectBodyContains(&gateway, 1, "web_fetch arguments failed registered-tool validation");
 }
 
@@ -937,7 +937,7 @@ test "invalid web_fetch is presented but fails before permission dns http or cac
     try std.testing.expectEqual(@as(usize, 0), hooks.availability_checked_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
-    try expectSingleTerminalOutcome(hooks.lifecycle_events.items, "call_1", .failed);
+    try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.failed});
     try expectBodyContains(&gateway, 1, "web_fetch arguments failed registered-tool validation");
 }
 
@@ -968,7 +968,7 @@ test "denied web_fetch is presented without dns http or cache work" {
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
     try std.testing.expectEqual(@as(usize, 1), hooks.rejected_names.items.len);
     try std.testing.expectEqualStrings("web_fetch", hooks.rejected_names.items[0]);
-    try expectSingleTerminalOutcome(hooks.lifecycle_events.items, "call_1", .denied);
+    try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.denied});
     try std.testing.expectEqual(@as(usize, 0), hooks.system_notices.items.len);
     try expectBodyContains(&gateway, 1, "permission_required");
 }
@@ -1102,7 +1102,6 @@ test "shell lifecycle resolves one display target before execution" {
     var completed_count: usize = 0;
     for (hooks.lifecycle_events.items) |event| switch (event) {
         .progress => |progress| {
-            if (!std.mem.eql(u8, progress.id.call_id, "inspect_call")) continue;
             try std.testing.expectEqualStrings(
                 "start shell session terminal-cold-session",
                 progress.text,
@@ -1110,7 +1109,6 @@ test "shell lifecycle resolves one display target before execution" {
             active_count += 1;
         },
         .terminal => |terminal| {
-            if (!std.mem.eql(u8, terminal.id.call_id, "inspect_call")) continue;
             try std.testing.expectEqualStrings(
                 "done shell session terminal-cold-session",
                 terminal.outcome.summary,
@@ -1395,14 +1393,10 @@ test "parallel streamed cancellation closes every concrete tool action" {
 
         try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
         try std.testing.expectEqual(types.TurnPresentationOutcome.interrupted, hooks.finalized_outcome.?);
-        for (calls) |call| {
-            if (call.provenance == .provider_executed) continue;
-            try expectSingleTerminalOutcome(
-                hooks.lifecycle_events.items,
-                call.id,
-                .cancelled,
-            );
-        }
+        try expectTerminalKindsInOrder(
+            hooks.lifecycle_events.items,
+            &.{ .cancelled, .cancelled, .cancelled },
+        );
         try std.testing.expectEqual(@as(usize, 1), hooks.inner_usages.items.len);
         try std.testing.expectEqualStrings("exa_search", hooks.inner_usage_names.items[0]);
         try std.testing.expectEqual(@as(u32, 1), hooks.inner_usages.items[0].web_search_requests);
@@ -1674,7 +1668,7 @@ test "malformed TUI web_search is presented without permission grant or backend 
     try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.propagated_grants.items.len);
-    try expectSingleTerminalOutcome(hooks.lifecycle_events.items, "call_1", .failed);
+    try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.failed});
     try expectBodyContains(&gateway, 1, "web_search arguments failed registered-tool validation");
 }
 fn expectRejectedPrompt(completion: FakeCompletion, expected_error: anyerror) !void {
@@ -1715,12 +1709,73 @@ fn lifecycleCallId(event: types.ToolLifecycleEvent) ?[]const u8 {
 
 fn expectLifecycleCallIds(
     events: []const types.ToolLifecycleEvent,
-    expected: []const []const u8,
+    provider_ids: []const []const u8,
 ) !void {
-    try std.testing.expectEqual(expected.len, events.len);
-    for (events, expected) |event, call_id| {
-        try std.testing.expectEqualStrings(call_id, lifecycleCallId(event).?);
+    try std.testing.expectEqual(provider_ids.len, events.len);
+    for (events, provider_ids) |event, provider_id| {
+        const call_id = lifecycleCallId(event) orelse return error.TestExpectedEqual;
+        try std.testing.expect(call_id.len > 0);
+        try std.testing.expect(!std.mem.eql(u8, call_id, provider_id));
     }
+    for (events, 0..) |event, i| {
+        for (events, 0..) |other, j| {
+            const same_provider = std.mem.eql(u8, provider_ids[i], provider_ids[j]);
+            const same_item = std.mem.eql(
+                u8,
+                lifecycleCallId(event).?,
+                lifecycleCallId(other).?,
+            );
+            try std.testing.expectEqual(same_provider, same_item);
+        }
+    }
+}
+
+fn expectTerminalKindsInOrder(
+    events: []const types.ToolLifecycleEvent,
+    expected: []const types.ToolOutcomeKind,
+) !void {
+    var index: usize = 0;
+    for (events) |event| {
+        if (event != .terminal) continue;
+        try std.testing.expect(index < expected.len);
+        try std.testing.expectEqual(expected[index], event.terminal.outcome.kind);
+        index += 1;
+    }
+    try std.testing.expectEqual(expected.len, index);
+}
+
+/// Asserts observed call identities (permission, execution) match the
+/// lifecycle item ids in first-appearance order.
+fn expectCallIdentityMatchesLifecycle(
+    alloc: std.mem.Allocator,
+    events: []const types.ToolLifecycleEvent,
+    observed: []const []const u8,
+) !void {
+    var ordered = try lifecycleItemIdsInOrder(alloc, events);
+    defer ordered.deinit(alloc);
+    try std.testing.expectEqual(ordered.items.len, observed.len);
+    for (ordered.items, observed) |expected, actual| {
+        try std.testing.expectEqualStrings(expected, actual);
+    }
+}
+/// Collects the distinct lifecycle item ids in first-appearance order so
+/// tests can cross-link lifecycle rows with permission, execution, and
+/// history records without knowing the minted ids.
+fn lifecycleItemIdsInOrder(
+    alloc: std.mem.Allocator,
+    events: []const types.ToolLifecycleEvent,
+) !std.ArrayList([]const u8) {
+    var ordered: std.ArrayList([]const u8) = .empty;
+    errdefer ordered.deinit(alloc);
+    for (events) |event| {
+        const call_id = lifecycleCallId(event) orelse continue;
+        for (ordered.items) |existing| {
+            if (std.mem.eql(u8, existing, call_id)) break;
+        } else {
+            try ordered.append(alloc, call_id);
+        }
+    }
+    return ordered;
 }
 
 fn expectSingleTerminalOutcome(
@@ -1788,10 +1843,6 @@ test "local tool emits authoritative progress and terminal lifecycle by default"
     try expectLifecycleCallIds(
         hooks.lifecycle_events.items,
         &.{ "call_read", "call_read", "call_read" },
-    );
-    try std.testing.expect(
-        hooks.lifecycle_events.items[0].authoritative_started
-            .reconciles_provisional_call_id == null,
     );
     try std.testing.expectEqual(
         types.ToolOutcomeKind.completed,
@@ -1928,7 +1979,6 @@ test "vision OOM propagates through assembled orchestrator without a tool result
         error.OutOfMemory,
         runFakePrompt(&gateway, &hooks, fixture.config(), job),
     );
-
     try std.testing.expectEqual(@as(usize, 1), vision_runtime.execution_count);
     try std.testing.expectEqual(@as(usize, 0), vision_runtime.result_count);
     try std.testing.expect(failing.has_induced_failure);
@@ -1945,11 +1995,14 @@ test "vision OOM propagates through assembled orchestrator without a tool result
         "anthropic/claude-opus-4.6",
         gateway.request_models.items[0],
     );
+
     try expectBodyNotContains(&gateway, 0, "OutOfMemory");
     var saw_started = false;
     for (hooks.lifecycle_events.items) |event| switch (event) {
         .authoritative_started => |started| {
-            if (std.mem.eql(u8, started.id.call_id, "call_vision_oom")) {
+            if (started.id.call_id.len > 0 and
+                !std.mem.eql(u8, started.id.call_id, "call_vision_oom"))
+            {
                 saw_started = true;
             }
         },
@@ -2155,16 +2208,15 @@ test "provider search finalizes when stop includes provider result and final ans
     try std.testing.expectEqualStrings(provider_result, step.tool_results[0].output);
 }
 
-test "interactive authoritative identity reconciles changed provisional id" {
+test "interactive authoritative identity keeps the stream-minted item id" {
     const alloc = std.testing.allocator;
     const streamed = [_]ToolCall{toolCall(
-        "provisional_read",
+        "final_read",
         "read_file",
         "{\"path\":\"README.md\"}",
     )};
     const calls = [_]ToolCall{.{
         .id = "final_read",
-        .provisional_id = "provisional_read",
         .name = "read_file",
         .arguments_json = "{\"path\":\"README.md\"}",
     }};
@@ -2186,18 +2238,15 @@ test "interactive authoritative identity reconciles changed provisional id" {
     try expectLifecycleCallIds(
         hooks.lifecycle_events.items,
         &.{
-            "provisional_read",
-            "provisional_read",
+            "final_read",
+            "final_read",
             "final_read",
             "final_read",
             "final_read",
         },
     );
     const authoritative = hooks.lifecycle_events.items[2].authoritative_started;
-    try std.testing.expectEqualStrings(
-        "provisional_read",
-        authoritative.reconciles_provisional_call_id.?,
-    );
+    try std.testing.expect(authoritative.id.call_id.len > 0);
 }
 
 test "modern serial preparation classifies once and disabled context keeps legacy execution" {
@@ -2325,15 +2374,9 @@ test "modern directory glob executes while nested project instructions load" {
     try expectBodyContains(&gateway, 1, "MODERN_DIRECTORY_SCOPE_RULE");
     try expectBodyNotContains(&gateway, 1, types.context_deferred_tool_result_output);
     try std.testing.expectEqual(@as(usize, 1), hooks.permission_names.items.len);
-    try std.testing.expectEqualStrings(
-        "inspect_directory_a",
-        hooks.permission_call_ids.items[0],
-    );
+    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.permission_call_ids.items);
     try std.testing.expectEqual(@as(usize, 1), hooks.executed_names.items.len);
-    try std.testing.expectEqualStrings(
-        "inspect_directory_a",
-        hooks.executed_call_ids.items[0],
-    );
+    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.executed_call_ids.items);
 }
 
 test "modern parallel preparation validates and checks availability once" {
@@ -2463,21 +2506,25 @@ test "same-batch retarget defers stale scoped call before permission and reloads
     try std.testing.expect(!FreshnessApplicableContext.execution_reissue_saw_new_target);
     try expectBodyNotContains(&gateway, 1, FreshnessApplicableContext.content);
     try expectBodyContains(&gateway, 2, FreshnessApplicableContext.content);
-    const expected_ids = [_][]const u8{ "retarget", "stable_info", "scoped_reissue" };
-    try std.testing.expectEqual(expected_ids.len, hooks.permission_call_ids.items.len);
-    try std.testing.expectEqual(expected_ids.len, hooks.executed_call_ids.items.len);
-    for (expected_ids, hooks.permission_call_ids.items, hooks.executed_call_ids.items) |expected, permission_id, execution_id| {
-        try std.testing.expectEqualStrings(expected, permission_id);
-        try std.testing.expectEqualStrings(expected, execution_id);
-    }
+    var retarget_ids = try lifecycleItemIdsInOrder(alloc, hooks.lifecycle_events.items);
+    defer retarget_ids.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 4), retarget_ids.items.len);
+    const execution_before_assert = hooks.history_turns.items[0].assistant.execution;
+    try std.testing.expectEqualStrings(execution_before_assert.tool_steps[0].tool_calls[0].id, hooks.permission_call_ids.items[0]);
+    try std.testing.expectEqualStrings(execution_before_assert.tool_steps[0].tool_calls[2].id, hooks.permission_call_ids.items[1]);
+    try std.testing.expectEqualStrings(execution_before_assert.tool_steps[1].tool_calls[0].id, hooks.permission_call_ids.items[2]);
+    try std.testing.expectEqualStrings(execution_before_assert.tool_steps[0].tool_calls[0].id, hooks.executed_call_ids.items[0]);
+    try std.testing.expectEqualStrings(execution_before_assert.tool_steps[0].tool_calls[2].id, hooks.executed_call_ids.items[1]);
+    try std.testing.expectEqualStrings(execution_before_assert.tool_steps[1].tool_calls[0].id, hooks.executed_call_ids.items[2]);
 
     var stale_provisional: usize = 0;
     var stale_progress: usize = 0;
     var stale_terminal: usize = 0;
     var stale_authoritative: usize = 0;
+    const stale_item_id = retarget_ids.items[0];
     for (hooks.lifecycle_events.items) |event| {
         const call_id = lifecycleCallId(event) orelse continue;
-        if (!std.mem.eql(u8, call_id, "stale_read")) continue;
+        if (!std.mem.eql(u8, call_id, stale_item_id)) continue;
         switch (event) {
             .provisional => stale_provisional += 1,
             .progress => stale_progress += 1,
@@ -2558,10 +2605,13 @@ test "same-batch file mutation retarget stops before permission and execution" {
     try runFakePrompt(&gateway, &hooks, fixture.config(), job);
 
     try std.testing.expectEqual(@as(usize, 2), gateway.index);
+    var file_mutation_ids = try lifecycleItemIdsInOrder(alloc, hooks.lifecycle_events.items);
+    defer file_mutation_ids.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 2), file_mutation_ids.items.len);
     try std.testing.expectEqual(@as(usize, 1), hooks.permission_call_ids.items.len);
-    try std.testing.expectEqualStrings("retarget", hooks.permission_call_ids.items[0]);
+    try std.testing.expectEqualStrings(file_mutation_ids.items[0], hooks.permission_call_ids.items[0]);
     try std.testing.expectEqual(@as(usize, 1), hooks.executed_call_ids.items.len);
-    try std.testing.expectEqualStrings("retarget", hooks.executed_call_ids.items[0]);
+    try std.testing.expectEqualStrings(file_mutation_ids.items[0], hooks.executed_call_ids.items[0]);
     try std.testing.expectError(
         error.FileNotFound,
         std.Io.Dir.accessAbsolute(std.testing.io, old_output, .{}),
@@ -2640,10 +2690,13 @@ test "same-batch missing target defers newly resolvable scope until reissue" {
     try expectBodyNotContains(&gateway, 0, FreshnessApplicableContext.content);
     try expectBodyNotContains(&gateway, 1, FreshnessApplicableContext.content);
     try expectBodyContains(&gateway, 2, FreshnessApplicableContext.content);
-    const expected_ids = [_][]const u8{ "resolve_scope", "scoped_reissue" };
-    try std.testing.expectEqual(expected_ids.len, hooks.permission_call_ids.items.len);
-    try std.testing.expectEqual(expected_ids.len, hooks.executed_call_ids.items.len);
-    for (expected_ids, hooks.permission_call_ids.items, hooks.executed_call_ids.items) |expected, permission_id, execution_id| {
+    var reissue_ids = try lifecycleItemIdsInOrder(alloc, hooks.lifecycle_events.items);
+    defer reissue_ids.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 3), reissue_ids.items.len);
+    const expected_resolved = [_][]const u8{ reissue_ids.items[1], reissue_ids.items[2] };
+    try std.testing.expectEqual(expected_resolved.len, hooks.permission_call_ids.items.len);
+    try std.testing.expectEqual(expected_resolved.len, hooks.executed_call_ids.items.len);
+    for (expected_resolved, hooks.permission_call_ids.items, hooks.executed_call_ids.items) |expected, permission_id, execution_id| {
         try std.testing.expectEqualStrings(expected, permission_id);
         try std.testing.expectEqualStrings(expected, execution_id);
     }
@@ -2652,7 +2705,7 @@ test "same-batch missing target defers newly resolvable scope until reissue" {
     var stale_authoritative: usize = 0;
     for (hooks.lifecycle_events.items) |event| {
         const call_id = lifecycleCallId(event) orelse continue;
-        if (!std.mem.eql(u8, call_id, "initial_missing")) continue;
+        if (!std.mem.eql(u8, call_id, reissue_ids.items[0])) continue;
         switch (event) {
             .terminal => |terminal| {
                 stale_terminal += 1;
@@ -2725,10 +2778,9 @@ test "modern mixed batch materializes unsupported terminal before admission" {
             "terminal_unsupported",
         },
     );
-    try expectSingleTerminalOutcome(
+    try expectTerminalKindsInOrder(
         hooks.lifecycle_events.items,
-        "terminal_unsupported",
-        .failed,
+        &.{ .completed, .failed },
     );
     try std.testing.expectEqualStrings(
         "Failed missing_tool",
@@ -2783,21 +2835,17 @@ test "modern cancellation during later context selection stops before context or
     try std.testing.expect(ApplicableContextDelta.saw_expected_input);
     try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
-    try expectSingleTerminalOutcome(
+    try expectTerminalKindsInOrder(
         hooks.lifecycle_events.items,
-        "terminal_fetch",
-        .failed,
-    );
-    try expectSingleTerminalOutcome(
-        hooks.lifecycle_events.items,
-        "candidate_read",
-        .cancelled,
+        &.{ .failed, .cancelled },
     );
     try std.testing.expectEqual(@as(usize, 0), hooks.diff_count);
     try std.testing.expectEqual(@as(usize, 1), hooks.history_turns.items.len);
     const interrupted = hooks.history_turns.items[0].interrupted;
     try std.testing.expect(interrupted.execution.isEmpty());
-    try std.testing.expectEqualStrings("candidate_read", interrupted.tool_call.?.id);
+    try std.testing.expectEqualStrings("candidate_read", interrupted.tool_call.?.provider_id.?);
+    try std.testing.expect(interrupted.tool_call.?.id.len > 0);
+    try std.testing.expect(!std.mem.eql(u8, interrupted.tool_call.?.id, "candidate_read"));
     try std.testing.expectEqual(@as(usize, 1), hooks.finalization_count);
     try std.testing.expectEqual(types.TurnPresentationOutcome.interrupted, hooks.finalized_outcome.?);
 }
@@ -2959,13 +3007,12 @@ test "modern context delta defers effectful call exactly once" {
     defer alloc.free(target);
 
     const streamed = [_]ToolCall{toolCall(
-        "provisional_write",
+        "final_write",
         "write_file",
         "{\"path\":\"nested/input.txt\",\"content\":\"changed\"}",
     )};
     const calls = [_]ToolCall{.{
         .id = "final_write",
-        .provisional_id = "provisional_write",
         .name = "write_file",
         .arguments_json = "{\"path\":\"nested/input.txt\",\"content\":\"changed\"}",
     }};
@@ -3074,16 +3121,11 @@ test "modern context delta does not defer unrelated effectful call" {
         1,
         types.context_deferred_tool_result_output,
     );
-    const expected_ids = [_][]const u8{ "nested_read", "root_create" };
-    try std.testing.expectEqual(expected_ids.len, hooks.permission_call_ids.items.len);
-    try std.testing.expectEqual(expected_ids.len, hooks.executed_call_ids.items.len);
-    for (expected_ids, hooks.permission_call_ids.items, hooks.executed_call_ids.items) |expected, permission_id, execution_id| {
-        try std.testing.expectEqualStrings(expected, permission_id);
-        try std.testing.expectEqualStrings(expected, execution_id);
-    }
+    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.permission_call_ids.items);
+    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.executed_call_ids.items);
 }
 
-test "modern later selector errors escape atomically and settle changed provisional identity" {
+test "modern later selector errors escape atomically and settle the stream-minted item id" {
     const alloc = std.testing.allocator;
     defer FailingApplicableContext.reset(.out_of_memory, "");
     var tmp = std.testing.tmpDir(.{});
@@ -3100,13 +3142,12 @@ test "modern later selector errors escape atomically and settle changed provisio
     defer alloc.free(target);
 
     const streamed = [_]ToolCall{toolCall(
-        "provisional_read",
+        "final_read",
         "read_file",
         "{\"path\":\"nested/input.txt\"}",
     )};
     const calls = [_]ToolCall{.{
         .id = "final_read",
-        .provisional_id = "provisional_read",
         .name = "read_file",
         .arguments_json = "{\"path\":\"nested/input.txt\"}",
     }};
@@ -3158,7 +3199,7 @@ test "modern later selector errors escape atomically and settle changed provisio
 
         try expectLifecycleCallIds(
             hooks.lifecycle_events.items,
-            &.{ "provisional_read", "provisional_read", "provisional_read" },
+            &.{ "final_read", "final_read", "final_read" },
         );
         try std.testing.expect(hooks.lifecycle_events.items[0] == .provisional);
         try std.testing.expect(hooks.lifecycle_events.items[1] == .progress);
@@ -3175,7 +3216,7 @@ test "modern later selector errors escape atomically and settle changed provisio
     }
 }
 
-test "modern preparation errors settle changed provisional identity before selection" {
+test "modern preparation errors settle the stream-minted item id before selection" {
     const alloc = std.testing.allocator;
     defer ApplicableContextDelta.reset("", null);
     var tmp = std.testing.tmpDir(.{});
@@ -3192,13 +3233,12 @@ test "modern preparation errors settle changed provisional identity before selec
     defer alloc.free(target);
 
     const streamed = [_]ToolCall{toolCall(
-        "provisional_read",
+        "final_read",
         "read_file",
         "{\"path\":\"nested/input.txt\"}",
     )};
     const calls = [_]ToolCall{.{
         .id = "final_read",
-        .provisional_id = "provisional_read",
         .name = "read_file",
         .arguments_json = "{\"path\":\"nested/input.txt\"}",
     }};
@@ -3236,7 +3276,7 @@ test "modern preparation errors settle changed provisional identity before selec
 
     try expectLifecycleCallIds(
         hooks.lifecycle_events.items,
-        &.{ "provisional_read", "provisional_read", "provisional_read" },
+        &.{ "final_read", "final_read", "final_read" },
     );
     try std.testing.expect(hooks.lifecycle_events.items[0] == .provisional);
     try std.testing.expect(hooks.lifecycle_events.items[1] == .progress);
@@ -3256,7 +3296,7 @@ fn failContextGateCommit() std.mem.Allocator.Error!void {
     return error.OutOfMemory;
 }
 
-test "modern post-selection context commit OOM settles changed provisional identity" {
+test "modern post-selection context commit OOM settles the stream-minted item id" {
     const alloc = std.testing.allocator;
     defer ApplicableContextDelta.reset("", null);
     defer runtime_orchestrator.TestHooks.context_gate_commit = null;
@@ -3274,13 +3314,12 @@ test "modern post-selection context commit OOM settles changed provisional ident
     defer alloc.free(target);
 
     const streamed = [_]ToolCall{toolCall(
-        "provisional_read",
+        "final_read",
         "read_file",
         "{\"path\":\"nested/input.txt\"}",
     )};
     const calls = [_]ToolCall{.{
         .id = "final_read",
-        .provisional_id = "provisional_read",
         .name = "read_file",
         .arguments_json = "{\"path\":\"nested/input.txt\"}",
     }};
@@ -3317,12 +3356,12 @@ test "modern post-selection context commit OOM settles changed provisional ident
         if (fail_terminal_publication) {
             try expectLifecycleCallIds(
                 hooks.lifecycle_events.items,
-                &.{ "provisional_read", "provisional_read" },
+                &.{ "final_read", "final_read" },
             );
         } else {
             try expectLifecycleCallIds(
                 hooks.lifecycle_events.items,
-                &.{ "provisional_read", "provisional_read", "provisional_read" },
+                &.{ "final_read", "final_read", "final_read" },
             );
             try std.testing.expect(hooks.lifecycle_events.items[2] == .terminal);
             const terminal = hooks.lifecycle_events.items[2].terminal;
@@ -3434,11 +3473,7 @@ test "local runtime absence closes streamed and tool-call-only activity" {
         try std.testing.expectEqualStrings("web_search", hooks.availability_checked_names.items[0]);
         try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
         try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
-        try expectSingleTerminalOutcome(
-            hooks.lifecycle_events.items,
-            "call_1",
-            .failed,
-        );
+        try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.failed});
         try expectBodyContains(&gateway, 1, tool_dispatch.web_search_unavailable_message);
     }
 }
@@ -3475,11 +3510,7 @@ test "parallel invalid web_fetch closes streamed and tool-call-only activity" {
         try std.testing.expectEqualStrings("read_file", hooks.executed_names.items[0]);
         try std.testing.expectEqual(@as(usize, 0), hooks.propagated_grants.items.len);
         try std.testing.expectEqual(@as(usize, 1), countText(&hooks, "\n"));
-        try expectSingleTerminalOutcome(
-            hooks.lifecycle_events.items,
-            "call_fetch",
-            .failed,
-        );
+        try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{ .failed, .completed });
         try expectBodyContains(&gateway, 1, "web_fetch arguments failed registered-tool validation");
     }
 }
@@ -3509,11 +3540,7 @@ test "parallel web_fetch denial closes streamed and tool-call-only activity" {
 
         try std.testing.expectEqual(@as(usize, 1), hooks.executed_names.items.len);
         try std.testing.expectEqualStrings("read_file", hooks.executed_names.items[0]);
-        try expectSingleTerminalOutcome(
-            hooks.lifecycle_events.items,
-            "call_fetch",
-            .denied,
-        );
+        try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{ .denied, .completed });
     }
 }
 
@@ -3671,7 +3698,8 @@ test "completed tool turn persists execution memory on assistant history" {
     const execution = hooks.history_turns.items[0].assistant.execution;
     try std.testing.expectEqual(@as(usize, 1), execution.tool_steps.len);
     try std.testing.expectEqualStrings("I'll inspect it.", execution.tool_steps[0].assistant.?);
-    try std.testing.expectEqualStrings("call_read", execution.tool_steps[0].tool_calls[0].id);
+    try std.testing.expectEqualStrings("call_read", execution.tool_steps[0].tool_calls[0].provider_id.?);
+    try std.testing.expect(!std.mem.eql(u8, "call_read", execution.tool_steps[0].tool_calls[0].id));
     try std.testing.expectEqualStrings("read_file", execution.tool_steps[0].tool_results[0].tool_name);
     try std.testing.expectEqualStrings("<path>src/main.zig</path>\nconst std = @import(\"std\");", execution.tool_steps[0].tool_results[0].output);
     try std.testing.expectEqual(@as(usize, 1), execution.files.len);
@@ -4006,9 +4034,10 @@ test "processQueuedPrompt denied normal permission appends structured denial wit
         hooks.permission_review_models.items[0],
     );
     try std.testing.expectEqualStrings(
-        "call_1",
+        lifecycleCallId(hooks.lifecycle_events.items[0]).?,
         hooks.permission_review_target_call_ids.items[0],
     );
+    try std.testing.expect(!std.mem.eql(u8, "call_1", hooks.permission_review_target_call_ids.items[0]));
     try std.testing.expectEqual(permission_auto_classifier.ReviewOrigin.root, hooks.permission_review_origins.items[0]);
     try std.testing.expectEqual(@as(usize, 1), hooks.permission_review_root_authority_counts.items[0]);
     try std.testing.expectEqual(@as(usize, 1), hooks.permission_review_pending_call_counts.items[0]);
@@ -4403,8 +4432,11 @@ test "batched permission feedback follows every tool result before the next gate
     ) == null);
     try std.testing.expectEqual(@as(usize, 2), hooks.permission_review_pending_call_counts.items[0]);
     try std.testing.expectEqual(@as(usize, 2), hooks.permission_review_pending_call_counts.items[1]);
-    try std.testing.expectEqualStrings("call_first", hooks.permission_review_target_call_ids.items[0]);
-    try std.testing.expectEqualStrings("call_second", hooks.permission_review_target_call_ids.items[1]);
+    var batched_ids = try lifecycleItemIdsInOrder(alloc, hooks.lifecycle_events.items);
+    defer batched_ids.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 2), batched_ids.items.len);
+    try std.testing.expectEqualStrings(batched_ids.items[0], hooks.permission_review_target_call_ids.items[0]);
+    try std.testing.expectEqualStrings(batched_ids.items[1], hooks.permission_review_target_call_ids.items[1]);
     try std.testing.expectEqual(@as(usize, 2), gateway.request_bodies.items.len);
     try expectBodyContainsInOrder(&gateway, 1, &.{
         "first command completed",
@@ -4751,8 +4783,21 @@ test "processQueuedPrompt retains a terminal correction across valid neighboring
     try std.testing.expectEqual(@as(usize, 2), deps.rejected_names.items.len);
     try std.testing.expectEqual(@as(usize, 2), deps.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 2), deps.executed_names.items.len);
-    try std.testing.expectEqualStrings("terminal_valid_1", deps.executed_call_ids.items[0]);
-    try std.testing.expectEqualStrings("terminal_valid_2", deps.executed_call_ids.items[1]);
+    try std.testing.expectEqual(@as(usize, 2), deps.executed_call_ids.items.len);
+    try std.testing.expect(!std.mem.eql(u8, deps.executed_call_ids.items[0], deps.executed_call_ids.items[1]));
+    for (deps.executed_call_ids.items) |executed_id| {
+        try std.testing.expect(!std.mem.eql(u8, "terminal_valid_1", executed_id));
+        try std.testing.expect(!std.mem.eql(u8, "terminal_valid_2", executed_id));
+        var seen_in_lifecycle = false;
+        for (deps.lifecycle_events.items) |event| {
+            const lifecycle_id = lifecycleCallId(event) orelse continue;
+            if (std.mem.eql(u8, lifecycle_id, executed_id)) {
+                seen_in_lifecycle = true;
+                break;
+            }
+        }
+        try std.testing.expect(seen_in_lifecycle);
+    }
     const execution = deps.history_turns.items[0].assistant.execution;
     try std.testing.expectEqual(@as(usize, 2), execution.tool_steps.len);
     for (execution.tool_steps) |step| {
@@ -5174,7 +5219,7 @@ test "PreToolUse block is presented but stops before tool semantics" {
     try std.testing.expectEqual(@as(usize, 0), deps.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), deps.executed_names.items.len);
     try std.testing.expectEqual(@as(usize, 1), deps.rejected_names.items.len);
-    try expectSingleTerminalOutcome(deps.lifecycle_events.items, "call_read", .failed);
+    try expectTerminalKindsInOrder(deps.lifecycle_events.items, &.{.failed});
 
     const execution = deps.history_turns.items[0].assistant.execution;
     try std.testing.expectEqualStrings(
@@ -5311,8 +5356,13 @@ test "PreToolUse owner cancellation interrupts before assistant tool-call persis
     );
     try std.testing.expectEqualStrings(
         "call_read",
-        deps.history_turns.items[0].interrupted.tool_call.?.id,
+        deps.history_turns.items[0].interrupted.tool_call.?.provider_id.?,
     );
+    try std.testing.expect(!std.mem.eql(
+        u8,
+        "call_read",
+        deps.history_turns.items[0].interrupted.tool_call.?.id,
+    ));
 }
 
 test "PreToolUse Cancelled error without owner signal fails closed" {
@@ -5577,13 +5627,19 @@ test "processQueuedPrompt interrupted active call preserves prior completed exec
 
     try std.testing.expectEqual(@as(usize, 1), deps.history_turns.items.len);
     const turn = deps.history_turns.items[0].interrupted;
-    try std.testing.expectEqualStrings("call_active", turn.tool_call.?.id);
+    try std.testing.expectEqualStrings("call_active", turn.tool_call.?.provider_id.?);
+    try std.testing.expect(!std.mem.eql(u8, "call_active", turn.tool_call.?.id));
     try std.testing.expectEqual(@as(usize, 1), turn.execution.tool_steps.len);
     try std.testing.expectEqual(@as(usize, 1), turn.execution.tool_steps[0].tool_calls.len);
     try std.testing.expectEqualStrings(
         "call_completed",
-        turn.execution.tool_steps[0].tool_calls[0].id,
+        turn.execution.tool_steps[0].tool_calls[0].provider_id.?,
     );
+    try std.testing.expect(!std.mem.eql(
+        u8,
+        "call_completed",
+        turn.execution.tool_steps[0].tool_calls[0].id,
+    ));
     try std.testing.expectEqual(@as(usize, 1), turn.execution.tool_steps[0].tool_results.len);
     try std.testing.expectEqualStrings(
         "completed result",
@@ -5624,9 +5680,7 @@ test "execution cancellation closes every later streamed tool action" {
 
     try std.testing.expectEqual(@as(usize, 1), deps.executed_names.items.len);
     try std.testing.expectEqual(types.TurnPresentationOutcome.interrupted, deps.finalized_outcome.?);
-    try expectSingleTerminalOutcome(deps.lifecycle_events.items, "active_command", .cancelled);
-    try expectSingleTerminalOutcome(deps.lifecycle_events.items, "later_read", .cancelled);
-    try expectSingleTerminalOutcome(deps.lifecycle_events.items, "later_search", .completed);
+    try expectTerminalKindsInOrder(deps.lifecycle_events.items, &.{ .cancelled, .cancelled, .completed });
     try std.testing.expectEqual(@as(usize, 1), deps.inner_usages.items.len);
     try std.testing.expectEqualStrings("exa_search", deps.inner_usage_names.items[0]);
     try std.testing.expectEqual(@as(u32, 1), deps.inner_usages.items[0].web_search_requests);
@@ -5744,8 +5798,13 @@ test "processQueuedPrompt pauses retryable failures and preserves execution on t
         try std.testing.expectEqual(@as(usize, 1), turn.execution.tool_steps.len);
         try std.testing.expectEqualStrings(
             "call_completed",
-            turn.execution.tool_steps[0].tool_calls[0].id,
+            turn.execution.tool_steps[0].tool_calls[0].provider_id.?,
         );
+        try std.testing.expect(!std.mem.eql(
+            u8,
+            "call_completed",
+            turn.execution.tool_steps[0].tool_calls[0].id,
+        ));
         try std.testing.expectEqual(
             types.PersistedToolStatus.success,
             turn.execution.tool_steps[0].tool_results[0].status,
@@ -5803,7 +5862,7 @@ test "processQueuedPrompt redacts interrupted active tool before history and rep
 
     try expectBodyNotContains(&follow_gateway, 0, secret_id);
     try expectBodyNotContains(&follow_gateway, 0, secret_path);
-    try expectBodyContains(&follow_gateway, 0, persisted_call.id);
+    try expectBodyContains(&follow_gateway, 0, persisted_call.provider_id.?);
 }
 
 test "processQueuedPrompt finish_turn notice preserves execution without final assistant text" {
@@ -5836,8 +5895,13 @@ test "processQueuedPrompt finish_turn notice preserves execution without final a
     try std.testing.expectEqual(@as(usize, 1), turn.execution.tool_steps.len);
     try std.testing.expectEqualStrings(
         "call_1",
-        turn.execution.tool_steps[0].tool_calls[0].id,
+        turn.execution.tool_steps[0].tool_calls[0].provider_id.?,
     );
+    try std.testing.expect(!std.mem.eql(
+        u8,
+        "call_1",
+        turn.execution.tool_steps[0].tool_calls[0].id,
+    ));
     try std.testing.expectEqual(
         types.PersistedToolStatus.success,
         turn.execution.tool_steps[0].tool_results[0].status,
@@ -6028,7 +6092,10 @@ test "child live authority refresh denies the next tool action before execution"
 
     try std.testing.expectEqual(@as(usize, 3), provider.calls);
     try std.testing.expectEqual(@as(usize, 1), hooks.executed_names.items.len);
-    try std.testing.expectEqualStrings("live_1", hooks.executed_call_ids.items[0]);
+    var live_ids = try lifecycleItemIdsInOrder(alloc, hooks.lifecycle_events.items);
+    defer live_ids.deinit(alloc);
+    try std.testing.expectEqualStrings(live_ids.items[0], hooks.executed_call_ids.items[0]);
+    try std.testing.expect(!std.mem.eql(u8, "live_1", hooks.executed_call_ids.items[0]));
     try std.testing.expectEqual(@as(usize, 3), activity.count);
     try std.testing.expectEqual(runtime_deps.ToolActivityPhase.started, activity.phases[0]);
     try std.testing.expectEqual(runtime_deps.ToolActivityPhase.succeeded, activity.phases[1]);
