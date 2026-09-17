@@ -84,7 +84,7 @@ _Avoid_: API, provider
 
 **Route**:
 A model reference resolved to the connection, protocol and base URL a request is sent to.
-_Avoid_: target, endpoint
+_Avoid_: target
 
 **Credential kind**:
 How a connection authenticates: a login owned by an auth scheme, a stored key, a reference to an environment variable, or none.
