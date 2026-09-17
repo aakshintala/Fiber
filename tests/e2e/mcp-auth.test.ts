@@ -1081,59 +1081,57 @@ describe("MCP remote authentication lifecycle", () => {
     expect(auth.tokenExchanges).toBe(1);
   }, 30_000);
 
-  test("authorization response issuer with a trailing slash completes", async () => {
+  test("authorization response issuer with a trailing slash is rejected", async () => {
     upstream = startModernMcpHttpFixture("json");
     auth = startAuthFixture(upstream.url, {
       authorizationResponseTrailingSlash: true,
     });
     const root = createRoot(auth);
 
-    const authenticated = await runFx(["mcp", "login", "fixture"], {
+    const attempted = await runFx(["mcp", "login", "fixture"], {
       cwd: root.workspace,
       env: {
         ...baseEnv(root),
       },
       timeoutMs: 20_000,
     });
-    // Metadata issuer is origin while the callback returns iss origin/, so
-    // the differing values reach validateAuthorizationResponse and a clean
-    // success proves response-side trailing-slash tolerance.
-    expect(authenticated.code, authenticated.stderr).toBe(0);
-    expect(authenticated.stderr).toBe("");
-    expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
-    expect(authenticated.stderr).not.toContain(
-      "McpAuthorizationIssuerMismatch",
+    // Metadata issuer is origin while the callback returns iss origin/.
+    // SEP-2468 / RFC 9207 forbids trailing-slash normalization of iss
+    // before comparison, so the login fails closed before token exchange.
+    expect(attempted.code).not.toBe(0);
+    expect(attempted.stderr).toContain("McpAuthorizationIssuerMismatch");
+    expect(attempted.stdout).not.toContain(
+      "Authenticated MCP server 'fixture'",
     );
     expect(auth.authorizationRequests).toBe(1);
-    expect(auth.tokenExchanges).toBe(1);
+    expect(auth.tokenExchanges).toBe(0);
   }, 30_000);
 
-  test("authorization metadata issuer with a trailing slash completes", async () => {
+  test("authorization metadata issuer with a trailing slash is rejected at response", async () => {
     upstream = startModernMcpHttpFixture("json");
     auth = startAuthFixture(upstream.url, {
       authorizationMetadataTrailingSlash: true,
     });
     const root = createRoot(auth);
 
-    const authenticated = await runFx(["mcp", "login", "fixture"], {
+    const attempted = await runFx(["mcp", "login", "fixture"], {
       cwd: root.workspace,
       env: {
         ...baseEnv(root),
       },
       timeoutMs: 20_000,
     });
-    // Metadata issuer is origin/ while the callback returns iss origin, so
-    // the differing values reach validateAuthorizationResponse from the
-    // opposite direction and a clean success proves response-side
-    // trailing-slash tolerance there too.
-    expect(authenticated.code, authenticated.stderr).toBe(0);
-    expect(authenticated.stderr).toBe("");
-    expect(authenticated.stdout).toContain("Authenticated MCP server 'fixture'");
-    expect(authenticated.stderr).not.toContain(
-      "McpAuthorizationIssuerMismatch",
+    // Metadata issuer is origin/ while the callback returns iss origin.
+    // Discovery tolerates the difference (issuersEqual) and reaches
+    // authorization, but strict response comparison rejects iss origin
+    // against expected origin/ before token exchange.
+    expect(attempted.code).not.toBe(0);
+    expect(attempted.stderr).toContain("McpAuthorizationIssuerMismatch");
+    expect(attempted.stdout).not.toContain(
+      "Authenticated MCP server 'fixture'",
     );
     expect(auth.authorizationRequests).toBe(1);
-    expect(auth.tokenExchanges).toBe(1);
+    expect(auth.tokenExchanges).toBe(0);
   }, 30_000);
 
   test("occupied oauth.callback_port fails closed instead of choosing another port", async () => {

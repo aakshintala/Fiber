@@ -581,8 +581,9 @@ const AuthorizationMetadataOutcome = union(enum) {
     issuer_mismatch: IssuerMismatch,
 };
 
-/// Root-form issuer comparison shared by metadata validation,
-/// authorization-response validation, and the credential store.
+/// Root-form issuer comparison shared by metadata discovery validation
+/// and the credential store. Authorization-response `iss` comparison stays
+/// exact per RFC 9207: a trailing-slash variant is a mismatch.
 /// `scheme://host` and `scheme://host/` are the same issuer; any string
 /// carrying a path (anything after the host) compares exactly, so
 /// `https://host/path` vs `https://host/path/`, `//` vs `/`, and all
@@ -711,7 +712,7 @@ pub fn validateAuthorizationResponse(
         return error.AuthorizationResponseIssuerMissing;
     }
     if (response.issuer) |issuer| {
-        if (!issuersEqual(expected_issuer, issuer)) {
+        if (!std.mem.eql(u8, expected_issuer, issuer)) {
             return error.AuthorizationResponseIssuerMismatch;
         }
     }
@@ -2558,7 +2559,7 @@ test "scope policy unions prior and challenged scopes without duplicates" {
     );
 }
 
-test "authorization response tolerates one root trailing slash, else fails closed" {
+test "authorization response rejects a trailing-slash iss in either direction" {
     const alloc = std.testing.allocator;
     var response = try parseAuthorizationRedirect(
         alloc,
@@ -2571,12 +2572,30 @@ test "authorization response tolerates one root trailing slash, else fails close
         true,
         response,
     );
-    // Exactly one root-form trailing slash is the same issuer.
-    try validateAuthorizationResponse(
-        "state-1",
-        "https://login.example.com/",
-        true,
-        response,
+    // SEP-2468 / RFC 9207: no trailing-slash normalization of iss before
+    // comparison, so a trailing-slash variant is a mismatch either way.
+    try std.testing.expectError(
+        error.AuthorizationResponseIssuerMismatch,
+        validateAuthorizationResponse(
+            "state-1",
+            "https://login.example.com/",
+            true,
+            response,
+        ),
+    );
+    var slashed = try parseAuthorizationRedirect(
+        alloc,
+        "http://127.0.0.1:3000/callback?code=abc&state=state-1&iss=https%3A%2F%2Flogin.example.com%2F",
+    );
+    defer slashed.deinit(alloc);
+    try std.testing.expectError(
+        error.AuthorizationResponseIssuerMismatch,
+        validateAuthorizationResponse(
+            "state-1",
+            "https://login.example.com",
+            true,
+            slashed,
+        ),
     );
     // Any other mismatch still fails closed.
     try std.testing.expectError(
