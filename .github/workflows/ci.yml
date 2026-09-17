@@ -437,6 +437,97 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # MEASUREMENT ONLY (#312), not for merge: a Linux cross-compiled macOS
+  # binary shared with one folded macOS E2E job, at two lane counts.
+  xbuild-macos:
+    name: Measure cross-build (macos-aarch64)
+    if: contains(fromJSON(needs.scope.outputs.jobs), 'e2e')
+    needs: scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Zig
+        uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          use-cache: false
+      - name: Build
+        run: zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
+      - name: Upload binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: fiber-xbuild-macos-aarch64
+          path: zig-out/bin/fiber
+          if-no-files-found: error
+          retention-days: 1
+
+  e2e-macos-fold:
+    name: Measure folded E2E (macos-aarch64, ${{ matrix.lanes }} lanes)
+    needs: [scope, xbuild-macos]
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        lanes: [6, 4]
+    env:
+      FIBER_REQUIRE_TMUX: "1"
+      SHARD_INDEX: "0"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Report runner hardware
+        run: sysctl hw.ncpu hw.physicalcpu hw.memsize machdep.cpu.brand_string; uptime; true
+      - name: Setup Zig
+        uses: aakshintala/setup-zig@8e85b004ccca16ca97fd3105612eaa043b909f27
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          use-cache: false
+      - name: Download binary
+        uses: actions/download-artifact@v7
+        with:
+          name: fiber-xbuild-macos-aarch64
+          path: zig-out/bin
+      - name: Prepare binary
+        run: chmod +x zig-out/bin/fiber && ./zig-out/bin/fiber --version
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install E2E system dependencies
+        run: |
+          command -v tmux >/dev/null 2>&1 || brew install tmux
+          printf 'set-option -g history-limit 100000\n' > "$HOME/.tmux.conf"
+      - name: Install E2E dependencies
+        run: bun install --frozen-lockfile
+        working-directory: tests/e2e
+      - name: Run all E2E files in one job
+        shell: bash
+        working-directory: tests/e2e
+        run: |
+          set -euo pipefail
+          selection_file="$RUNNER_TEMP/sel.txt"
+          bun ci-shards.ts --shard-count 1 --shard-index 0 --files all > "$selection_file"
+          results_dir="$RUNNER_TEMP/results"
+          mkdir -p "$results_dir"
+          ( while sleep 30; do printf 'LOAD %s\n' "$(sysctl -n vm.loadavg)"; done ) &
+          load_pid=$!
+          started=$SECONDS
+          RESULTS_DIR="$results_dir" xargs -P "${{ matrix.lanes }}" -I{} bash -c \
+            's=$SECONDS; "$GITHUB_WORKSPACE/scripts/e2e-run-file.sh" "$1"; printf "FILETIME %s %ss\n" "$1" "$((SECONDS - s))"' _ {} \
+            < "$selection_file"
+          kill "$load_pid" || true
+          printf 'TOTAL %ss with %s lanes\n' "$((SECONDS - started))" "${{ matrix.lanes }}"
+          status=0
+          while IFS= read -r f; do
+            d="$results_dir/$(printf '%s' "$f" | tr -c '[:alnum:]' '-')"
+            [ -f "$d/retried" ] && echo "RETRIED $f"
+            if [ ! -f "$d/status" ] || [ "$(cat "$d/status")" != 0 ]; then echo "FAILED $f"; status=1; fi
+          done < "$selection_file"
+          exit "$status"
+
   # Non-blocking watcher: fails loudly when any shard passed after retry,
   # so green-with-retries stays visible. Deliberately NOT in the aggregate
   # CI job's needs: it must never block merging, only demand flake issues.
