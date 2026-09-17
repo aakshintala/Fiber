@@ -7855,3 +7855,153 @@ test "orphan command output does not leak into current compact rows" {
 
     try expectGridOccurrenceCount(&h, "dedupe-command-row", 0);
 }
+
+/// Scans the visible grid for `Lddd:` emission markers and asserts they
+/// appear exactly once each, in strictly increasing emission order. No
+/// marker may exceed `ceiling`, the number of lines emitted so far. Returns
+/// the marker count and the highest line number on the grid.
+fn checkFrameEmissionOrder(h: *Harness, ceiling: usize) !struct { count: usize, last: usize } {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(h.alloc);
+    var prev: usize = 0;
+    var count: usize = 0;
+    var last: usize = 0;
+    var row: u16 = 1;
+    while (row <= h.vt.rows) : (row += 1) {
+        buf.clearRetainingCapacity();
+        try h.vt.rowText(row, &buf);
+        var j: usize = 0;
+        while (j + 5 <= buf.items.len) {
+            if (buf.items[j] == 'L' and buf.items[j + 4] == ':' and
+                std.ascii.isDigit(buf.items[j + 1]) and
+                std.ascii.isDigit(buf.items[j + 2]) and
+                std.ascii.isDigit(buf.items[j + 3]))
+            {
+                const n = try std.fmt.parseInt(usize, buf.items[j + 1 .. j + 4], 10);
+                try std.testing.expect(n > prev);
+                try std.testing.expect(n <= ceiling);
+                prev = n;
+                last = n;
+                count += 1;
+                j += 5;
+            } else {
+                j += 1;
+            }
+        }
+    }
+    try std.testing.expect(count > 0);
+    return .{ .count = count, .last = last };
+}
+
+test "long assistant reply keeps emission order across a retention trim" {
+    // Pins fx #796 (half 1): visible transcript rows must stay in emission
+    // order when a long assistant reply trims retained content mid-stream.
+    var h = try Harness.init(std.testing.allocator, 40, 24, 4);
+    defer h.deinit();
+    h.shell.max_retained_transcript_bytes = 1024;
+
+    try h.shell.initViewport(&h.metrics, 1);
+    const total: usize = 200;
+    var tail_seen: usize = 0;
+    var i: usize = 0;
+    while (i < total) : (i += 1) {
+        const line = try std.fmt.allocPrint(h.alloc, "L{d:0>3}: the quick brown fox jumps over the lazy dog\n", .{i + 1});
+        defer h.alloc.free(line);
+        _ = try h.shell.streamAssistantChunk(h.alloc, &h.metrics, line);
+        if (i % 5 == 4) {
+            try h.renderTranscriptFrameIfDirty();
+            try h.flush();
+            // Each frame mid-eviction must already be ordered: a reorder
+            // that later scrolls away would pass a final-grid-only check
+            // unnoticed. The visible tail must also advance monotonically.
+            const frame = try checkFrameEmissionOrder(&h, i + 1);
+            try std.testing.expect(frame.last >= tail_seen);
+            tail_seen = frame.last;
+        }
+    }
+    try h.renderTranscriptFrame();
+    try h.flush();
+
+    // The structured cap must actually have evicted the head mid-stream,
+    // or this test proves nothing. (Paint rebuilds from entries, so the
+    // structured eviction is the retention boundary it reads across.)
+    try std.testing.expect(h.shell.entries.items.len > 0);
+    try std.testing.expect(h.shell.entries.items[0] == .assistant_turn);
+    const retained_text = h.shell.entries.items[0].assistant_turn.segments.text.items;
+    try std.testing.expect(std.mem.find(u8, retained_text, "L001:") == null);
+    try std.testing.expect(std.mem.find(u8, retained_text, "L200:") != null);
+
+    // Every numbered row still on the grid must appear exactly once, in
+    // increasing emission order, ending at the tail.
+    const final = try checkFrameEmissionOrder(&h, total);
+    try std.testing.expect(final.last >= tail_seen);
+    try std.testing.expectEqual(total, final.last);
+}
+
+test "two-cell character survives the wrap column and the column before it" {
+    // Pins fx #796 (half 2): a two-cell character sitting on the wrap column
+    // must not be overwritten by the wrap, and the text after it must land
+    // intact on the continuation row. At 40 columns the assistant gutter is
+    // 2, so 38 content cells fit: W28 + 28 fillers + 漢 + TAIL is exact-fit,
+    // W32 ends exactly on 漢, and W33 pushes 漢 onto the next row.
+    var h = try Harness.init(std.testing.allocator, 40, 24, 4);
+    defer h.deinit();
+
+    try h.shell.initViewport(&h.metrics, 1);
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(h.alloc);
+    for ([_]usize{ 28, 31, 32, 33 }) |n| {
+        const line = try std.fmt.allocPrint(h.alloc, "W{d}:", .{n});
+        defer h.alloc.free(line);
+        try body.appendSlice(h.alloc, line);
+        try body.appendNTimes(h.alloc, 'x', n);
+        try body.appendSlice(h.alloc, "漢TAIL\n");
+    }
+    // Split a chunk immediately after a wrap-column 漢 to stress resume.
+    const split = std.mem.find(u8, body.items, "漢TAIL\nW33:").?;
+    _ = try h.shell.streamAssistantChunk(h.alloc, &h.metrics, body.items[0 .. split + "漢".len]);
+    try h.renderTranscriptFrameIfDirty();
+    try h.flush();
+    _ = try h.shell.streamAssistantChunk(h.alloc, &h.metrics, body.items[split + "漢".len ..]);
+    try h.renderTranscriptFrame();
+    try h.flush();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(h.alloc);
+
+    // Exact fit: no wrap, tail intact on the same row.
+    const exact_row = try findRowContaining(&h, "W28:");
+    buf.clearRetainingCapacity();
+    try h.vt.rowTextTrimmed(exact_row, &buf);
+    try std.testing.expect(std.mem.endsWith(u8, buf.items, "漢TAIL"));
+
+    // Minus-one control: 漢 occupies the two cells before the last one, so
+    // exactly one tail cell still fits; the rest wraps whole.
+    const control_row = try findRowContaining(&h, "W31:");
+    buf.clearRetainingCapacity();
+    try h.vt.rowTextTrimmed(control_row, &buf);
+    try std.testing.expect(std.mem.endsWith(u8, buf.items, "漢T"));
+    buf.clearRetainingCapacity();
+    try h.vt.rowTextTrimmed(control_row + 1, &buf);
+    try std.testing.expectEqualStrings("AIL", std.mem.trimStart(u8, buf.items, " "));
+
+    // Wrap column: 漢 fills the last two cells; TAIL wraps whole.
+    const edge_row = try findRowContaining(&h, "W32:");
+    buf.clearRetainingCapacity();
+    try h.vt.rowTextTrimmed(edge_row, &buf);
+    try std.testing.expect(std.mem.endsWith(u8, buf.items, "漢"));
+    buf.clearRetainingCapacity();
+    try h.vt.rowTextTrimmed(edge_row + 1, &buf);
+    try std.testing.expectEqualStrings("TAIL", std.mem.trimStart(u8, buf.items, " "));
+    // Cell-level pin: lead cell holds U+6F22, trailing cell is a placeholder.
+    const lead = h.vt.cellAt(edge_row, 39) orelse return error.TestExpectedGridText;
+    try std.testing.expectEqual(@as(u21, 0x6F22), lead.codepoint);
+    try std.testing.expectEqual(@as(u8, 2), lead.width);
+    const trail = h.vt.cellAt(edge_row, 40) orelse return error.TestExpectedGridText;
+    try std.testing.expectEqual(@as(u8, 0), trail.width);
+    // Past the edge: 漢 moves to the continuation row intact, TAIL follows.
+    const wrap_row = try findRowContaining(&h, "W33:");
+    buf.clearRetainingCapacity();
+    try h.vt.rowTextTrimmed(wrap_row + 1, &buf);
+    try std.testing.expectEqualStrings("漢TAIL", std.mem.trimStart(u8, buf.items, " "));
+}
