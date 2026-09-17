@@ -6,13 +6,83 @@
  *
  * Requires: tmux installed and available in PATH.
  */
+import { afterAll } from "bun:test";
 import { execFileSync, execSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FIBER_BIN, REPO_ROOT } from "./eval-helpers";
 
 let sessionCounter = 0;
+let orphanSweepDone = false;
+const ownedSockets = new Set<string>();
+
+function releaseOwnedSocket(socketName: string): void {
+  ownedSockets.delete(socketName);
+  try {
+    execFileSync("tmux", ["-L", socketName, "kill-server"], { stdio: "pipe" });
+  } catch {}
+  rmSync(tmuxSocketPath(socketName), { force: true });
+}
+
+// Tests that end a session with /quit and drop it never call kill().
+const releaseOwnedSockets = () => {
+  for (const socketName of [...ownedSockets]) releaseOwnedSocket(socketName);
+};
+// ponytail: afterAll binds to the first test file that loads this module, so a
+// multi-file local `bun test` leaves later files' sockets for the next run's sweep.
+try {
+  afterAll(releaseOwnedSockets);
+} catch {
+  // Outside `bun test`, afterAll throws, but exit hooks run.
+  process.on("exit", releaseOwnedSockets);
+}
+
+// tmux never unlinks its socket file, even after kill-server.
+export function tmuxSocketPath(socketName: string): string {
+  return join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${process.getuid!()}`, socketName);
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Removes tmux servers, sockets and default-server sessions left by a test
+ * process that died before its teardown ran. Every name embeds the owning
+ * pid, so a live run's resources are never touched.
+ */
+export function sweepOrphanedTmuxResources(): void {
+  const socketDir = tmuxSocketPath("");
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(socketDir);
+  } catch {}
+  for (const entry of entries) {
+    const match = /^fiber-(?:e2e|env-isolation|pe|history-limit)-(\d+)-/.exec(entry);
+    if (!match || processAlive(Number(match[1]))) continue;
+    releaseOwnedSocket(entry);
+  }
+  let sessions: string[] = [];
+  try {
+    sessions = execFileSync("tmux", ["list-sessions", "-F", "#{session_name}"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).split("\n");
+  } catch {}
+  for (const session of sessions) {
+    const match = /^fiber-test-(\d+)-\d+/.exec(session);
+    if (!match || processAlive(Number(match[1]))) continue;
+    try {
+      execFileSync("tmux", ["kill-session", "-t", session], { stdio: "pipe" });
+    } catch {}
+  }
+}
 
 export const FAKE_GATEWAY_MODEL = "openai/gpt-5";
 const TMUX_CAPTURE_MAX_BUFFER = 32 * 1024 * 1024;
@@ -431,6 +501,7 @@ export type WaitForPaneOptions = {
 export class TmuxSession {
   readonly name: string;
   private readonly socketName?: string;
+  private readonly ownsSocket: boolean;
   private readonly exitStatusPath: string;
   private readonly stderrPath?: string;
   private lastCaptureError: unknown = null;
@@ -441,10 +512,13 @@ export class TmuxSession {
     exitStatusPath: string,
     socketName?: string,
     stderrPath?: string,
+    ownsSocket = false,
   ) {
     this.name = name;
     this.exitStatusPath = exitStatusPath;
     this.socketName = socketName;
+    this.ownsSocket = ownsSocket;
+    if (ownsSocket) ownedSockets.add(socketName!);
     this.stderrPath = stderrPath;
   }
 
@@ -484,6 +558,10 @@ export class TmuxSession {
       );
     }
 
+    if (!orphanSweepDone) {
+      orphanSweepDone = true;
+      sweepOrphanedTmuxResources();
+    }
     const sequence = ++sessionCounter;
     const name = `fiber-test-${process.pid}-${sequence}`;
     const resolvedSocketName = socketName ?? (isolated
@@ -678,6 +756,7 @@ export class TmuxSession {
       exitStatusPath,
       resolvedSocketName,
       stderrPath,
+      socketName === undefined && isolated,
     );
     try {
       if (remainOnExit) {
@@ -1296,6 +1375,11 @@ export class TmuxSession {
     try {
       execSync(`${this.tmuxCommand()} kill-session -t ${this.name}`, { stdio: "pipe" });
     } catch {}
+    if (this.ownsSocket) {
+      releaseOwnedSocket(this.socketName!);
+      rmSync(this.exitStatusPath, { force: true });
+      return;
+    }
 
     const deadline = Date.now() + 1_000;
     let missingServerChecks = 0;
