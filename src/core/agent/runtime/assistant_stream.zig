@@ -14,6 +14,14 @@ const test_builtin_tools = if (@import("builtin").is_test)
     @import("../../../builtins/tools.zig")
 else
     struct {};
+const test_session_codec = if (@import("builtin").is_test)
+    @import("../../session/session_codec.zig")
+else
+    struct {};
+const test_request_body = if (@import("builtin").is_test)
+    @import("../../../gateway/agent_request_body.zig")
+else
+    struct {};
 
 const runtime_deps = @import("deps.zig");
 const runtime_telemetry = @import("telemetry.zig");
@@ -277,16 +285,24 @@ pub fn onStreamToolStart(ctx: *anyopaque, tool_id: []const u8, tool_name: []cons
         // newline, and any text landing after the notice reopens the response
         // row.
         .ineligible => {},
-        .eligible => |metadata| stream_ctx.provisional_statuses.publish(
-            stream_ctx.hooks,
-            stream_ctx.alloc,
-            stream_ctx.turn_id,
-            streamToolItemId(stream_ctx, tool_id),
-            tool_name,
-            metadata.activity_kind,
-            metadata.action_label,
-            label_value,
-        ) catch {},
+        .eligible => |metadata| {
+            // Never publish under the provider id: when minting fails the
+            // status row stays suppressed until a later event mints one.
+            const item_id = stream_tool_item_id(stream_ctx, tool_id) catch |err| {
+                debug_trace.logf("agent", "tool item id minting failed err={s}", .{@errorName(err)});
+                return;
+            };
+            stream_ctx.provisional_statuses.publish(
+                stream_ctx.hooks,
+                stream_ctx.alloc,
+                stream_ctx.turn_id,
+                item_id,
+                tool_name,
+                metadata.activity_kind,
+                metadata.action_label,
+                label_value,
+            ) catch {};
+        },
     }
 }
 
@@ -304,19 +320,18 @@ pub fn recordStreamToolStart(ctx: *anyopaque, tool_name: []const u8) void {
 /// Returns the Fiber item id for a provider call id appearing on the stream,
 /// minting and remembering it on first sight. The early status row and every
 /// later lifecycle event share this id; the provider id survives only on the
-/// rekeyed ToolCall. Falls back to the provider id when allocation fails.
-pub fn streamToolItemId(stream_ctx: *StreamChunkContext, provider_id: []const u8) []const u8 {
+/// rekeyed ToolCall. Never falls back to the provider id: allocation failure
+/// is returned so the caller suppresses the event instead of publishing a
+/// foreign identity. The map owns both the provider-id key and the item id;
+/// StreamChunkContext.deinit frees them, so callers must not free the result.
+fn stream_tool_item_id(stream_ctx: *StreamChunkContext, provider_id: []const u8) Allocator.Error![]const u8 {
     if (provider_id.len == 0) return provider_id;
     if (stream_ctx.tool_item_ids.get(provider_id)) |existing| return existing;
-    const owned_provider = stream_ctx.alloc.dupe(u8, provider_id) catch return provider_id;
+    const owned_provider = try stream_ctx.alloc.dupe(u8, provider_id);
     errdefer stream_ctx.alloc.free(owned_provider);
-    const item_id = types.generateItemId(stream_ctx.alloc) catch return provider_id;
+    const item_id = try types.generate_item_id(stream_ctx.alloc);
     errdefer stream_ctx.alloc.free(item_id);
-    stream_ctx.tool_item_ids.put(stream_ctx.alloc, owned_provider, item_id) catch {
-        stream_ctx.alloc.free(owned_provider);
-        stream_ctx.alloc.free(item_id);
-        return provider_id;
-    };
+    try stream_ctx.tool_item_ids.put(stream_ctx.alloc, owned_provider, item_id);
     return item_id;
 }
 
@@ -324,8 +339,10 @@ pub fn streamToolItemId(stream_ctx: *StreamChunkContext, provider_id: []const u8
 /// reusing the stream-minted id when the call was seen starting. Calls with
 /// no stream start mint a fresh item id, so every lifecycle event, the
 /// result-to-call link, and the persisted record share one id while provider
-/// requests keep going out under the provider id.
-pub fn rekeyCompletionToolCalls(
+/// requests keep going out under the provider id. The caller owns the
+/// returned slice: each rekeyed call's id and provider id are allocated from
+/// `alloc`, which also backs the slice itself.
+pub fn rekey_completion_tool_calls(
     stream_ctx: *StreamChunkContext,
     alloc: Allocator,
     calls: []const ToolCall,
@@ -342,9 +359,9 @@ pub fn rekeyCompletionToolCalls(
     }
     for (calls, 0..) |call, index| {
         const item_id: []u8 = if (call.id.len == 0)
-            try types.generateItemId(alloc)
+            try types.generate_item_id(alloc)
         else
-            try alloc.dupe(u8, streamToolItemId(stream_ctx, call.id));
+            try alloc.dupe(u8, try stream_tool_item_id(stream_ctx, call.id));
         const provider_id: ?[]u8 = if (call.id.len == 0)
             null
         else
@@ -2281,7 +2298,7 @@ test "stream tool start mints a stable item id reused by completion rekey" {
         .name = "read_file",
         .arguments_json = "{\"path\":\"src/main.zig\"}",
     }};
-    const rekeyed = try rekeyCompletionToolCalls(&stream_ctx, arena, &completed);
+    const rekeyed = try rekey_completion_tool_calls(&stream_ctx, arena, &completed);
     try std.testing.expectEqualStrings(item_id, rekeyed[0].id);
     try std.testing.expectEqualStrings("call_provider", rekeyed[0].provider_id.?);
 
@@ -2290,7 +2307,7 @@ test "stream tool start mints a stable item id reused by completion rekey" {
         .name = "read_file",
         .arguments_json = "{}",
     }};
-    const rekeyed_unseen = try rekeyCompletionToolCalls(&stream_ctx, arena, &unseen);
+    const rekeyed_unseen = try rekey_completion_tool_calls(&stream_ctx, arena, &unseen);
     try std.testing.expect(!std.mem.eql(u8, "call_unseen", rekeyed_unseen[0].id));
     try std.testing.expectEqualStrings("call_unseen", rekeyed_unseen[0].provider_id.?);
 }
@@ -2308,8 +2325,105 @@ test "same provider call id mints different item ids in different sessions" {
     var second = StreamChunkContext{ .hooks = &second_hooks, .turn_id = 1, .alloc = alloc };
     defer second.deinit();
 
-    const first_id = streamToolItemId(&first, "call_shared");
-    const second_id = streamToolItemId(&second, "call_shared");
+    const first_id = try stream_tool_item_id(&first, "call_shared");
+    const second_id = try stream_tool_item_id(&second, "call_shared");
     try std.testing.expect(!std.mem.eql(u8, first_id, second_id));
-    try std.testing.expectEqualStrings(first_id, streamToolItemId(&first, "call_shared"));
+    try std.testing.expectEqualStrings(first_id, try stream_tool_item_id(&first, "call_shared"));
+}
+
+test "tool item id survives stream start, completion, persistence, and resume" {
+    const alloc = std.testing.allocator;
+    var capture = StreamCapture{};
+    defer capture.deinit(alloc);
+    var hook_set = capture.hooks();
+    var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = alloc };
+    defer stream_ctx.deinit();
+
+    // Stage 1: stream start mints the item id behind the early status row.
+    onStreamToolStart(&stream_ctx, "call_provider", "read_file", "src/main.zig");
+    const stream_item_id = stream_ctx.tool_item_ids.get("call_provider") orelse
+        return error.TestExpectedEqual;
+    try std.testing.expect(!std.mem.eql(u8, stream_item_id, "call_provider"));
+    try std.testing.expectEqual(@as(usize, 2), capture.lifecycle_events.items.len);
+    try std.testing.expectEqualStrings(
+        stream_item_id,
+        capture.lifecycle_events.items[0].provisional.id.call_id,
+    );
+    try std.testing.expectEqualStrings(
+        stream_item_id,
+        capture.lifecycle_events.items[1].progress.id.call_id,
+    );
+    const item_id = try alloc.dupe(u8, stream_item_id);
+    defer alloc.free(item_id);
+
+    // Stage 2: completion rekeys onto the same item id, keeping the provider
+    // id beside it for wire requests.
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const completed = [_]ToolCall{.{
+        .id = "call_provider",
+        .name = "read_file",
+        .arguments_json = "{\"path\":\"src/main.zig\"}",
+    }};
+    const rekeyed = try rekey_completion_tool_calls(&stream_ctx, arena, &completed);
+    try std.testing.expectEqualStrings(item_id, rekeyed[0].id);
+    try std.testing.expectEqualStrings("call_provider", rekeyed[0].provider_id.?);
+
+    // Stage 3: session persistence round-trips both ids.
+    var steps = [_]types.ToolExecutionStep{.{
+        .tool_calls = @constCast(rekeyed),
+    }};
+    const turn: types.HistoryTurn = .{ .assistant = .{
+        .user = .{ .text = @constCast("read src/main.zig") },
+        .assistant = @constCast("reading"),
+        .execution = .{ .tool_steps = steps[0..] },
+    } };
+    var encoded: std.Io.Writer.Allocating = .init(alloc);
+    defer encoded.deinit();
+    try test_session_codec.writeHistoryTurn(&encoded.writer, turn);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, encoded.written(), .{});
+    defer parsed.deinit();
+    const decoded = try test_session_codec.parseHistoryTurn(alloc, parsed.value);
+    defer types.freeHistoryTurn(alloc, decoded);
+    const restored = decoded.assistant.execution.tool_steps[0].tool_calls[0];
+    try std.testing.expectEqualStrings(item_id, restored.id);
+    try std.testing.expectEqualStrings("call_provider", restored.provider_id.?);
+
+    // Stage 4: resumed history goes back on the wire under the provider id
+    // while the tool result still links by item id.
+    const resumed_id = try arena.dupe(u8, restored.id);
+    const resumed_provider = try arena.dupe(u8, restored.provider_id.?);
+    var resumed_calls = [_]ToolCall{.{
+        .id = resumed_id,
+        .name = "read_file",
+        .arguments_json = "{\"path\":\"src/main.zig\"}",
+        .provider_id = resumed_provider,
+    }};
+    const messages = [_]ChatMessage{
+        .{ .role = .assistant, .tool_calls = resumed_calls[0..] },
+        .{ .role = .tool, .content = "contents", .tool_call_id = resumed_id, .tool_name = "read_file" },
+    };
+    const body = try test_request_body.buildGatewayRequestBodyWithOptions(alloc, "[]", &messages, .{}, .auto);
+    defer alloc.free(body);
+    try std.testing.expect(std.mem.find(u8, body, "\"toolCallId\":\"call_provider\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, item_id) == null);
+}
+
+test "tool item id minting fails closed on allocation failure" {
+    const alloc = std.testing.allocator;
+    var capture = StreamCapture{};
+    defer capture.deinit(alloc);
+    var hook_set = capture.hooks();
+    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
+    var stream_ctx = StreamChunkContext{ .hooks = &hook_set, .turn_id = 1, .alloc = failing.allocator() };
+    defer stream_ctx.deinit();
+    // No fallback to the provider id: the error propagates and nothing is
+    // remembered.
+    try std.testing.expectError(error.OutOfMemory, stream_tool_item_id(&stream_ctx, "call_provider"));
+    try std.testing.expect(stream_ctx.tool_item_ids.get("call_provider") == null);
+    // The early status row stays suppressed instead of publishing a foreign
+    // identity.
+    onStreamToolStart(&stream_ctx, "call_provider", "read_file", "src/main.zig");
+    try std.testing.expectEqual(@as(usize, 0), capture.lifecycle_events.items.len);
 }

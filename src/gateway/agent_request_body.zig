@@ -43,7 +43,7 @@ pub fn writeChatMessageJsonCached(
     writeChatMessageJsonInner(scratch_alloc, writer, message, true, null, null, null) catch |err| return err;
 }
 
-fn writeChatMessageJsonWithWireIds(
+fn write_chat_message_json_with_wire_ids(
     scratch_alloc: std.mem.Allocator,
     writer: *std.Io.Writer,
     message: ChatMessage,
@@ -52,7 +52,7 @@ fn writeChatMessageJsonWithWireIds(
     writeChatMessageJsonInner(scratch_alloc, writer, message, false, null, null, wire_ids) catch |err| return err;
 }
 
-fn writeChatMessageJsonCachedWithWireIds(
+fn write_chat_message_json_cached_with_wire_ids(
     scratch_alloc: std.mem.Allocator,
     writer: *std.Io.Writer,
     message: ChatMessage,
@@ -277,9 +277,9 @@ fn buildGatewayRequestBodyValidated(
                 &wire_ids,
             );
         } else if (use_cache) {
-            try writeChatMessageJsonCachedWithWireIds(std.heap.c_allocator, &out.writer, message, &wire_ids);
+            try write_chat_message_json_cached_with_wire_ids(std.heap.c_allocator, &out.writer, message, &wire_ids);
         } else {
-            try writeChatMessageJsonWithWireIds(std.heap.c_allocator, &out.writer, message, &wire_ids);
+            try write_chat_message_json_with_wire_ids(std.heap.c_allocator, &out.writer, message, &wire_ids);
         }
         if (message.cache_policy == .no_cache) prefix_cacheable = false;
         if (budget) |active| try active.check();

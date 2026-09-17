@@ -613,10 +613,9 @@ pub const ToolArgumentIntegrity = enum {
 };
 
 /// Mints a Fiber item id from random bytes, the same way generateSessionId
-/// does. Shared by tool calls and (in #200) messages, so it lives here
-/// rather than in tool-specific code. Random per mint, so two sessions
-/// whose provider returns the same call id still diverge.
-pub fn generateItemId(alloc: std.mem.Allocator) ![]u8 {
+/// does. Random per mint, so two sessions whose provider returns the same
+/// call id still diverge. The caller owns the returned slice.
+pub fn generate_item_id(alloc: std.mem.Allocator) ![]u8 {
     var random_bytes: [9]u8 = undefined;
     io_mod.getIo().random(&random_bytes);
     const id = try alloc.alloc(u8, std.base64.url_safe_no_pad.Encoder.calcSize(random_bytes.len));
@@ -625,9 +624,9 @@ pub fn generateItemId(alloc: std.mem.Allocator) ![]u8 {
 }
 
 test "generated item id is a compact url-safe token" {
-    const first = try generateItemId(std.testing.allocator);
+    const first = try generate_item_id(std.testing.allocator);
     defer std.testing.allocator.free(first);
-    const second = try generateItemId(std.testing.allocator);
+    const second = try generate_item_id(std.testing.allocator);
     defer std.testing.allocator.free(second);
     try std.testing.expectEqual(@as(usize, 12), first.len);
     try std.testing.expect(!std.mem.eql(u8, first, second));

@@ -2323,7 +2323,7 @@ fn appendProviderExecutedToolResult(
         status_started: bool,
     };
     var provider_visible_lifecycle: ?ProviderVisibleLifecycle = null;
-    if (stream_ctx.provisional_statuses.isTracked(call.id)) {
+    if (stream_ctx.provisional_statuses.is_tracked(call.id)) {
         provider_visible_lifecycle = .{
             .call = call,
             .status_started = true,
@@ -5229,7 +5229,7 @@ fn processQueuedPromptLoop(
                     subagent_request_eligible,
                     completion.tool_calls,
                 );
-                completion.tool_calls = try runtime_assistant_stream.rekeyCompletionToolCalls(
+                completion.tool_calls = try runtime_assistant_stream.rekey_completion_tool_calls(
                     &stream_ctx,
                     arena,
                     completion.tool_calls,

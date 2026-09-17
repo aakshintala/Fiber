@@ -603,9 +603,9 @@ test "same completion duplicate skill calls both execute for explicit rereads" {
     try std.testing.expectEqual(@as(usize, 2), hooks.validated_names.items.len);
     try std.testing.expectEqual(@as(usize, 2), hooks.availability_checked_names.items.len);
     try std.testing.expectEqual(@as(usize, 2), hooks.permission_names.items.len);
-    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.permission_call_ids.items);
+    try expect_call_identity_matches_lifecycle(alloc, hooks.lifecycle_events.items, hooks.permission_call_ids.items);
     try std.testing.expectEqual(@as(usize, 2), hooks.executed_names.items.len);
-    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.executed_call_ids.items);
+    try expect_call_identity_matches_lifecycle(alloc, hooks.lifecycle_events.items, hooks.executed_call_ids.items);
     try std.testing.expect(!logContains(&hooks, "skip:skill"));
     try expectLifecycleCallIds(
         hooks.lifecycle_events.items,
@@ -666,7 +666,7 @@ test "processQueuedPrompt presents invalid registered call without running it" {
     try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.propagated_grants.items.len);
-    try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.failed});
+    try expect_terminal_kinds_in_order(hooks.lifecycle_events.items, &.{.failed});
     try expectBodyContains(&gateway, 1, "web_fetch arguments failed registered-tool validation");
 }
 
@@ -912,7 +912,7 @@ test "legacy web_fetch prompt is presented but rejected before permission dns ht
     try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.propagated_grants.items.len);
-    try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.failed});
+    try expect_terminal_kinds_in_order(hooks.lifecycle_events.items, &.{.failed});
     try expectBodyContains(&gateway, 1, "web_fetch arguments failed registered-tool validation");
 }
 
@@ -937,7 +937,7 @@ test "invalid web_fetch is presented but fails before permission dns http or cac
     try std.testing.expectEqual(@as(usize, 0), hooks.availability_checked_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
-    try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.failed});
+    try expect_terminal_kinds_in_order(hooks.lifecycle_events.items, &.{.failed});
     try expectBodyContains(&gateway, 1, "web_fetch arguments failed registered-tool validation");
 }
 
@@ -968,7 +968,7 @@ test "denied web_fetch is presented without dns http or cache work" {
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
     try std.testing.expectEqual(@as(usize, 1), hooks.rejected_names.items.len);
     try std.testing.expectEqualStrings("web_fetch", hooks.rejected_names.items[0]);
-    try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.denied});
+    try expect_terminal_kinds_in_order(hooks.lifecycle_events.items, &.{.denied});
     try std.testing.expectEqual(@as(usize, 0), hooks.system_notices.items.len);
     try expectBodyContains(&gateway, 1, "permission_required");
 }
@@ -1393,7 +1393,7 @@ test "parallel streamed cancellation closes every concrete tool action" {
 
         try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
         try std.testing.expectEqual(types.TurnPresentationOutcome.interrupted, hooks.finalized_outcome.?);
-        try expectTerminalKindsInOrder(
+        try expect_terminal_kinds_in_order(
             hooks.lifecycle_events.items,
             &.{ .cancelled, .cancelled, .cancelled },
         );
@@ -1668,7 +1668,7 @@ test "malformed TUI web_search is presented without permission grant or backend 
     try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.propagated_grants.items.len);
-    try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.failed});
+    try expect_terminal_kinds_in_order(hooks.lifecycle_events.items, &.{.failed});
     try expectBodyContains(&gateway, 1, "web_search arguments failed registered-tool validation");
 }
 fn expectRejectedPrompt(completion: FakeCompletion, expected_error: anyerror) !void {
@@ -1730,7 +1730,7 @@ fn expectLifecycleCallIds(
     }
 }
 
-fn expectTerminalKindsInOrder(
+fn expect_terminal_kinds_in_order(
     events: []const types.ToolLifecycleEvent,
     expected: []const types.ToolOutcomeKind,
 ) !void {
@@ -1746,7 +1746,7 @@ fn expectTerminalKindsInOrder(
 
 /// Asserts observed call identities (permission, execution) match the
 /// lifecycle item ids in first-appearance order.
-fn expectCallIdentityMatchesLifecycle(
+fn expect_call_identity_matches_lifecycle(
     alloc: std.mem.Allocator,
     events: []const types.ToolLifecycleEvent,
     observed: []const []const u8,
@@ -2374,9 +2374,9 @@ test "modern directory glob executes while nested project instructions load" {
     try expectBodyContains(&gateway, 1, "MODERN_DIRECTORY_SCOPE_RULE");
     try expectBodyNotContains(&gateway, 1, types.context_deferred_tool_result_output);
     try std.testing.expectEqual(@as(usize, 1), hooks.permission_names.items.len);
-    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.permission_call_ids.items);
+    try expect_call_identity_matches_lifecycle(alloc, hooks.lifecycle_events.items, hooks.permission_call_ids.items);
     try std.testing.expectEqual(@as(usize, 1), hooks.executed_names.items.len);
-    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.executed_call_ids.items);
+    try expect_call_identity_matches_lifecycle(alloc, hooks.lifecycle_events.items, hooks.executed_call_ids.items);
 }
 
 test "modern parallel preparation validates and checks availability once" {
@@ -2778,7 +2778,7 @@ test "modern mixed batch materializes unsupported terminal before admission" {
             "terminal_unsupported",
         },
     );
-    try expectTerminalKindsInOrder(
+    try expect_terminal_kinds_in_order(
         hooks.lifecycle_events.items,
         &.{ .completed, .failed },
     );
@@ -2835,7 +2835,7 @@ test "modern cancellation during later context selection stops before context or
     try std.testing.expect(ApplicableContextDelta.saw_expected_input);
     try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
-    try expectTerminalKindsInOrder(
+    try expect_terminal_kinds_in_order(
         hooks.lifecycle_events.items,
         &.{ .failed, .cancelled },
     );
@@ -3121,8 +3121,8 @@ test "modern context delta does not defer unrelated effectful call" {
         1,
         types.context_deferred_tool_result_output,
     );
-    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.permission_call_ids.items);
-    try expectCallIdentityMatchesLifecycle(alloc, hooks.lifecycle_events.items, hooks.executed_call_ids.items);
+    try expect_call_identity_matches_lifecycle(alloc, hooks.lifecycle_events.items, hooks.permission_call_ids.items);
+    try expect_call_identity_matches_lifecycle(alloc, hooks.lifecycle_events.items, hooks.executed_call_ids.items);
 }
 
 test "modern later selector errors escape atomically and settle the stream-minted item id" {
@@ -3473,7 +3473,7 @@ test "local runtime absence closes streamed and tool-call-only activity" {
         try std.testing.expectEqualStrings("web_search", hooks.availability_checked_names.items[0]);
         try std.testing.expectEqual(@as(usize, 0), hooks.permission_names.items.len);
         try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
-        try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{.failed});
+        try expect_terminal_kinds_in_order(hooks.lifecycle_events.items, &.{.failed});
         try expectBodyContains(&gateway, 1, tool_dispatch.web_search_unavailable_message);
     }
 }
@@ -3510,7 +3510,7 @@ test "parallel invalid web_fetch closes streamed and tool-call-only activity" {
         try std.testing.expectEqualStrings("read_file", hooks.executed_names.items[0]);
         try std.testing.expectEqual(@as(usize, 0), hooks.propagated_grants.items.len);
         try std.testing.expectEqual(@as(usize, 1), countText(&hooks, "\n"));
-        try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{ .failed, .completed });
+        try expect_terminal_kinds_in_order(hooks.lifecycle_events.items, &.{ .failed, .completed });
         try expectBodyContains(&gateway, 1, "web_fetch arguments failed registered-tool validation");
     }
 }
@@ -3540,7 +3540,7 @@ test "parallel web_fetch denial closes streamed and tool-call-only activity" {
 
         try std.testing.expectEqual(@as(usize, 1), hooks.executed_names.items.len);
         try std.testing.expectEqualStrings("read_file", hooks.executed_names.items[0]);
-        try expectTerminalKindsInOrder(hooks.lifecycle_events.items, &.{ .denied, .completed });
+        try expect_terminal_kinds_in_order(hooks.lifecycle_events.items, &.{ .denied, .completed });
     }
 }
 
@@ -5219,7 +5219,7 @@ test "PreToolUse block is presented but stops before tool semantics" {
     try std.testing.expectEqual(@as(usize, 0), deps.permission_names.items.len);
     try std.testing.expectEqual(@as(usize, 0), deps.executed_names.items.len);
     try std.testing.expectEqual(@as(usize, 1), deps.rejected_names.items.len);
-    try expectTerminalKindsInOrder(deps.lifecycle_events.items, &.{.failed});
+    try expect_terminal_kinds_in_order(deps.lifecycle_events.items, &.{.failed});
 
     const execution = deps.history_turns.items[0].assistant.execution;
     try std.testing.expectEqualStrings(
@@ -5680,7 +5680,7 @@ test "execution cancellation closes every later streamed tool action" {
 
     try std.testing.expectEqual(@as(usize, 1), deps.executed_names.items.len);
     try std.testing.expectEqual(types.TurnPresentationOutcome.interrupted, deps.finalized_outcome.?);
-    try expectTerminalKindsInOrder(deps.lifecycle_events.items, &.{ .cancelled, .cancelled, .completed });
+    try expect_terminal_kinds_in_order(deps.lifecycle_events.items, &.{ .cancelled, .cancelled, .completed });
     try std.testing.expectEqual(@as(usize, 1), deps.inner_usages.items.len);
     try std.testing.expectEqualStrings("exa_search", deps.inner_usage_names.items[0]);
     try std.testing.expectEqual(@as(u32, 1), deps.inner_usages.items[0].web_search_requests);

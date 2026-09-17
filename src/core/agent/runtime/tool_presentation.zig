@@ -495,7 +495,7 @@ pub const ProvisionalToolStatuses = struct {
     }
 
     /// Reports whether an item id already owns an early status row.
-    pub fn isTracked(self: *const ProvisionalToolStatuses, id: []const u8) bool {
+    pub fn is_tracked(self: *const ProvisionalToolStatuses, id: []const u8) bool {
         return self.has(id);
     }
 
