@@ -1274,7 +1274,13 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
       ];
       await ctx.session.resizeWindow(80, 14);
       await ctx.session.sendText("Request the long command approval fixture.");
-      const initialPane = await ctx.session.waitForText(APPROVAL_PROMPT, TIMEOUT);
+      // The prompt text renders before the choice rows and controls; wait for the full review.
+      const initialPane = await waitForPaneState(
+        ctx.session,
+        "complete fragmented approval review",
+        (pane) => pane.includes(APPROVAL_PROMPT) && pane.includes("1–3 Choose"),
+        TIMEOUT,
+      );
       expect(initialPane).toContain(`${COMMAND_SCROLL_LINE_PREFIX}001`);
       const initialRows = initialPane.split("\n");
       const initialChoiceThreeRow = initialRows.findIndex((row) => row.includes("3. No"));
@@ -2926,7 +2932,19 @@ describe.skipIf(SKIP)("tui: decision prompt input isolation", () => {
 
       const expected = `${typed.slice(0, typed.length - 48)}42${typed.slice(typed.length - 32)}`;
       const body = ctx.codex.requests[1]?.body ?? "";
-      expect(requestContainsExactString(body, expected)).toBe(true);
+      if (!requestContainsExactString(body, expected)) {
+        // #277: capture whether a split arrow key expired as a bare escape.
+        const inputTrace = readTrace(ctx.tracePath)
+          .split("\n")
+          .filter((line) => /escape|control sequence|mouse report/.test(line))
+          .slice(-40)
+          .join("\n");
+        throw new Error(
+          `submitted freeform text did not match the edited draft\n` +
+            `request body tail:\n${body.slice(-2_000)}\n` +
+            `input trace escape lines:\n${inputTrace}`,
+        );
+      }
       expect(requestContainsExactString(body, paste_flood)).toBe(false);
       await assertProcessAliveAndClean(ctx);
     },
