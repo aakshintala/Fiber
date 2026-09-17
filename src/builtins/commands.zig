@@ -366,7 +366,7 @@ pub const slash_specs = [_]SlashSpec{
     .{ .kind = .compact, .command = "/compact", .help_entry = "/compact", .completion_description = "compact older conversation turns", .presentation_category = .session },
     .{ .kind = .settings, .command = "/settings", .help_entry = "/settings [startup-scrollback [on|off]]", .completion_description = "browse and update settings", .presentation_category = .appearance, .has_args = true, .accepts_payload = true },
     .{ .kind = .workspace, .command = "/workspace", .help_entry = "/workspace [list|add PATH|remove PATH|clear]", .completion_description = "manage additional workspace directories", .presentation_category = .workspace, .show_in_welcome = true, .has_args = true, .accepts_payload = true },
-    .{ .kind = .background, .command = "/background", .help_entry = "/background [stop <session-id> [--force]]", .completion_description = "list and stop background shell sessions", .presentation_category = .session, .has_args = true, .accepts_payload = true },
+    .{ .kind = .background, .command = "/background", .help_entry = "/background [stop <job-id> [--force]]", .completion_description = "list and stop background jobs", .presentation_category = .session, .has_args = true, .accepts_payload = true },
     .{ .kind = .quit, .command = "/quit", .aliases = &.{"/exit"}, .help_entry = "/quit", .completion_description = "exit the interactive shell", .presentation_category = .general, .show_in_welcome = true },
 };
 
