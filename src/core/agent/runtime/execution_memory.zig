@@ -30,12 +30,9 @@ pub fn steeringMessage(alloc: Allocator, text: []const u8) ![]u8 {
     return std.fmt.allocPrint(alloc, steering_open ++ "{s}" ++ steering_close, .{text});
 }
 
-/// Typed outcome for a locally executed tool call (ticket #178). A stop
-/// by Fiber or the user is `cancelled`; `signal` covers only a kill from
-/// outside Fiber. Process facts come from the structured command result,
-/// never from output text. `scratch` is used only while parsing the
-/// command result; the returned outcome borrows `command_result_json` and
-/// `status_detail`, never the parse tree.
+/// Typed outcome for a locally executed tool call (ticket #178).
+/// Delegates to the single choke point in tool_contracts; kept so the
+/// call sites below need no change.
 pub fn toolOutcomeForExecution(
     scratch: Allocator,
     status: ToolExecutionStatus,
@@ -43,55 +40,13 @@ pub fn toolOutcomeForExecution(
     command_result_json: ?[]const u8,
     status_detail: ?[]const u8,
 ) types.ToolCallOutcome {
-    if (cancelled) return .{ .status = .cancelled };
-    const facts = commandFacts(scratch, command_result_json);
-    const process: ?types.ToolProcessFacts = if (facts.present) .{
-        .exit_code = facts.exit_code,
-        .signal = facts.signal,
-        .timed_out = facts.timed_out,
-    } else null;
-    // A successful tool result carrying a death signal is a stop by Fiber
-    // or the user (the stop tool reports success once the target is
-    // reaped), never an outside kill: outside kills surface as command
-    // failures. Report it cancelled, not completed, so an interrupt is
-    // never read as a clean run (spec issue #189 section 3, story 37).
-    if (status == .success) {
-        if (facts.signal != null) return .{ .status = .cancelled };
-        return .{ .status = .completed, .process = process };
-    }
-    if (facts.timed_out) return .{
-        .status = .failed,
-        .error_code = .timeout,
-        .error_message = status_detail orelse "Command timed out",
-        .process = process,
-    };
-    if (facts.signal) |_| return .{
-        .status = .failed,
-        .error_code = .signal,
-        .error_message = status_detail orelse "Command terminated by signal",
-        .process = process,
-    };
-    if (facts.termination_indeterminate) return .{
-        .status = .failed,
-        .error_code = .indeterminate,
-        .error_message = status_detail orelse "Command status could not be confirmed",
-        .process = process,
-    };
-    if (facts.exit_code) |code| {
-        if (code != 0) return .{
-            .status = .failed,
-            .error_code = .nonzero_exit,
-            .error_message = status_detail orelse "Command exited with non-zero status",
-            .process = process,
-        };
-        return .{ .status = .completed, .process = process };
-    }
-    return .{
-        .status = .failed,
-        .error_code = .tool_error,
-        .error_message = status_detail orelse "Tool execution failed",
-        .process = process,
-    };
+    return runtime_tool_contracts.toolOutcomeForExecution(
+        scratch,
+        status,
+        cancelled,
+        command_result_json,
+        status_detail,
+    );
 }
 
 /// Typed outcome for a finished execution, preferring an outcome the
@@ -122,38 +77,6 @@ pub fn persistedStatusForOutcome(outcome: types.ToolCallOutcome) types.Persisted
     return switch (outcome.status) {
         .completed => .success,
         .failed, .denied, .cancelled => .failure,
-    };
-}
-
-const CommandFacts = struct {
-    present: bool = false,
-    exit_code: ?i64 = null,
-    signal: ?u32 = null,
-    timed_out: bool = false,
-    termination_indeterminate: bool = false,
-};
-
-fn commandFacts(scratch: Allocator, command_result_json: ?[]const u8) CommandFacts {
-    const encoded = command_result_json orelse return .{};
-    const Parsed = struct {
-        exit_code: ?i64 = null,
-        signal: ?u32 = null,
-        timed_out: bool = false,
-        termination_indeterminate: bool = false,
-    };
-    const parsed = std.json.parseFromSlice(
-        Parsed,
-        scratch,
-        encoded,
-        .{ .ignore_unknown_fields = true },
-    ) catch return .{};
-    defer parsed.deinit();
-    return .{
-        .present = true,
-        .exit_code = parsed.value.exit_code,
-        .signal = parsed.value.signal,
-        .timed_out = parsed.value.timed_out,
-        .termination_indeterminate = parsed.value.termination_indeterminate,
     };
 }
 

@@ -8390,14 +8390,14 @@ fn processQueuedPromptLoop(
             }) catch |err| blk: {
                 if (err == error.OutOfMemory) return error.OutOfMemory;
                 if (err == error.Cancelled and config.cancel_flag.load(.seq_cst)) {
-                    break :blk ToolExecutionResult{
+                    break :blk ToolExecutionResult.stamped(arena, .{
                         .status = .failure,
                         .cancelled = true,
                         .model_output = "command cancelled\n",
-                    };
+                    });
                 }
                 execution_error = err;
-                break :blk ToolExecutionResult{ .status = .failure, .model_output = try deps.format_tool_execution_error(deps.ctx, arena, tool_call.name, err) };
+                break :blk ToolExecutionResult.stamped(arena, .{ .status = .failure, .model_output = try deps.format_tool_execution_error(deps.ctx, arena, tool_call.name, err) });
             };
             var result_commit_pending = execution.result_commit != null;
             defer if (result_commit_pending) {

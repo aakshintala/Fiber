@@ -1040,7 +1040,7 @@ fn visionPathFailure(alloc: Allocator, err: anyerror) Allocator.Error!ToolExecut
     const details = [_]tool_result_errors.Detail{
         .{ .name = "error", .value = .{ .string = @errorName(err) } },
     };
-    return .{
+    return ToolExecutionResult.stamped(alloc, .{
         .status = .failure,
         .status_detail = @errorName(err),
         .model_output = try tool_result_errors.toolExecutionFailureJson(alloc, .{
@@ -1049,14 +1049,14 @@ fn visionPathFailure(alloc: Allocator, err: anyerror) Allocator.Error!ToolExecut
             .details = &details,
             .suggestion = "Use an existing supported image under 20 MiB, or choose another image.",
         }),
-    };
+    });
 }
 
 fn visionPathImagePreparationFailure(alloc: Allocator) Allocator.Error!ToolExecutionResult {
     const details = [_]tool_result_errors.Detail{
         .{ .name = "error", .value = .{ .string = "ImagePreparationFailed" } },
     };
-    return .{
+    return ToolExecutionResult.stamped(alloc, .{
         .status = .failure,
         .status_detail = "ImagePreparationFailed",
         .model_output = try tool_result_errors.toolExecutionFailureJson(alloc, .{
@@ -1065,7 +1065,7 @@ fn visionPathImagePreparationFailure(alloc: Allocator) Allocator.Error!ToolExecu
             .details = &details,
             .suggestion = image_attachments.image_preparation_failed_notice,
         }),
-    };
+    });
 }
 
 fn visionPathPreparationFailure(
@@ -1272,13 +1272,13 @@ fn toolRunCommand(
                 (ctx.command_replay_unavailable or callback.had_accepted_output),
             &transferred,
             null,
-            .{
+            ToolExecutionResult.stamped(arena, .{
                 .status = switch (compatibility) {
                     .success => .success,
                     .failure => .failure,
                 },
                 .model_output = output,
-            },
+            }),
         );
     }
 
@@ -1352,11 +1352,11 @@ fn toolRunCommand(
                     (ctx.command_replay_unavailable or replay_callback.had_accepted_output),
                 &replay_transferred,
                 null,
-                .{
+                ToolExecutionResult.stamped(arena, .{
                     .status = .failure,
                     .cancelled = true,
                     .model_output = "command cancelled\n",
-                },
+                }),
             );
         }
         return err;
@@ -1394,10 +1394,10 @@ fn toolRunCommand(
             (ctx.command_replay_unavailable or replay_callback.had_accepted_output),
         &replay_transferred,
         result,
-        .{
+        ToolExecutionResult.stamped(arena, .{
             .model_output = result.output,
             .command_result_json = if (result.command_result) |command_result| try command_result.toJson(arena) else null,
-        },
+        }),
     );
 }
 

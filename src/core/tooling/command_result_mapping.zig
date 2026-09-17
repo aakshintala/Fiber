@@ -22,12 +22,12 @@ pub const Command = struct {
             }
         else
             null;
-        return .{
+        return tool_contracts.ToolExecutionResult.stamped(arena, .{
             .status = .failure,
             .cancelled = true,
             .model_output = "command cancelled\n",
             .command_result_json = command_result_json,
-        };
+        });
     }
 
     pub fn nonZeroFailure(
@@ -42,7 +42,7 @@ pub const Command = struct {
                 .{ .name = "cwd", .value = .{ .string = command.cwd } },
                 .{ .name = "termination_indeterminate", .value = .{ .boolean = true } },
             };
-            return .{
+            return tool_contracts.ToolExecutionResult.stamped(arena, .{
                 .status = .failure,
                 .model_output = try tool_result_errors.toolExecutionFailureJson(arena, .{
                     .tool_name = "shell",
@@ -51,7 +51,7 @@ pub const Command = struct {
                     .suggestion = "Do not retry the command unchanged because its side effects may already exist. Inspect the resulting state first.",
                 }),
                 .command_result_json = try command_result.toJson(arena),
-            };
+            });
         }
         if ((command.exit_code == null or command.exit_code.? == 0) and
             command.signal == null and
@@ -77,7 +77,7 @@ pub const Command = struct {
             count += 1;
         }
 
-        return .{
+        return tool_contracts.ToolExecutionResult.stamped(arena, .{
             .status = .failure,
             .model_output = try tool_result_errors.toolExecutionFailureJson(arena, .{
                 .tool_name = "shell",
@@ -86,7 +86,7 @@ pub const Command = struct {
                 .suggestion = "Inspect stderr and the command context, then fix the command or explain the blocker rather than retrying unchanged.",
             }),
             .command_result_json = try command_result.toJson(arena),
-        };
+        });
     }
 
     pub fn timeoutFailure(
@@ -108,7 +108,7 @@ pub const Command = struct {
             )
         else
             try arena.dupe(u8, "timeout=true\n" ++ cleanup);
-        return .{
+        return tool_contracts.ToolExecutionResult.stamped(arena, .{
             .status = .failure,
             .model_output = output,
             .command_result_json = try (command_contract.CommandResult{
@@ -120,14 +120,14 @@ pub const Command = struct {
             .tool_result_memory = .{
                 .command_process_presentation = .timed_out,
             },
-        };
+        });
     }
 
     pub fn outputCaptureFailure(arena: Allocator) !ToolExecutionResult {
         const details = [_]tool_result_errors.Detail{
             .{ .name = "output_capture_failed", .value = .{ .boolean = true } },
         };
-        return .{
+        return tool_contracts.ToolExecutionResult.stamped(arena, .{
             .status = .failure,
             .model_output = try tool_result_errors.toolExecutionFailureJson(arena, .{
                 .tool_name = "shell",
@@ -138,7 +138,7 @@ pub const Command = struct {
             .tool_result_memory = .{
                 .command_process_presentation = .output_capture_failed,
             },
-        };
+        });
     }
 };
 

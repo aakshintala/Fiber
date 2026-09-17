@@ -77,14 +77,14 @@ pub fn execute(input: Input) Error!ToolExecutionResult {
 
     const prepared = authorization.prepared.?;
     if (file_mutation_contract.preparedMutationIsNoop(prepared)) {
-        return .{
+        return ToolExecutionResult.stamped(input.result_allocator, .{
             .status = .success,
             .model_output = try std.fmt.allocPrint(
                 input.result_allocator,
                 "No changes to {s}; it already contains the requested content",
                 .{prepared.display_path},
             ),
-        };
+        });
     }
 
     const prepared_result = try prepareFileMutationSuccessResult(
@@ -120,13 +120,13 @@ pub fn execute(input: Input) Error!ToolExecutionResult {
                 );
             }
             prepared_result_owned = false;
-            break :blk .{
+            break :blk ToolExecutionResult.stamped(input.result_allocator, .{
                 .status = .success,
                 .model_output = prepared_result.model_output,
                 .tool_result_memory = prepared_result.memory,
                 .tool_result_memory_prepared = true,
                 .committed_file_handoff = handoff,
-            };
+            });
         },
         .rejected => |rejection| fileMutationRejectionResult(
             input.result_allocator,
@@ -200,11 +200,11 @@ fn fileMutationFailure(
     message: []const u8,
     detail: []const u8,
 ) Allocator.Error!ToolExecutionResult {
-    return .{
+    return ToolExecutionResult.stamped(alloc, .{
         .status = .failure,
         .status_detail = detail,
         .model_output = try alloc.dupe(u8, message),
-    };
+    });
 }
 
 fn allocatorsEqual(a: Allocator, b: Allocator) bool {
@@ -278,7 +278,7 @@ fn fileMutationRejectionResult(
             }) catch return error.OutOfMemory;
         }
     }
-    return .{
+    return ToolExecutionResult.stamped(alloc, .{
         .status = .failure,
         .status_detail = switch (rejection.reason) {
             .stale_preimage => "stale preview",
@@ -286,7 +286,7 @@ fn fileMutationRejectionResult(
             else => "rejected",
         },
         .model_output = try out.toOwnedSlice(),
-    };
+    });
 }
 
 test "canonical file executor rejects aliased call and result owners before mutation" {
