@@ -43,12 +43,21 @@ PLATFORM_LINUX_AARCH64 = {
     "shard_count": 3,
     "lanes": 3,
 }
+# One shard, because three macOS jobs per pull request would put two concurrent
+# pull requests over GitHub's five-concurrent-macOS-job cap, which is what #329
+# fixed. Lanes are the only way to shorten this job without spending that back.
+# Measured on run 35288032364: 45 files, 2158 lane-seconds, 96% lane
+# utilization at 4 lanes, so there is no packing win left and no long-pole file.
+# Linux gets nine concurrent lanes across three shards and finishes in 205s;
+# macOS got four and took 561s. The runner is 3 vCPU, so 6 lanes is
+# oversubscribed on purpose: these tests wait on tmux polls and sleeps far more
+# than they compute.
 PLATFORM_MACOS_AARCH64 = {
     "name": "macos-aarch64",
     "runner": "macos-15",
     "target": "aarch64-macos",
     "shard_count": 1,
-    "lanes": 4,
+    "lanes": 6,
 }
 ALL_PLATFORMS = (
     PLATFORM_LINUX_X86_64,

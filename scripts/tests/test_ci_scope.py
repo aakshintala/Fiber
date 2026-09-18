@@ -55,7 +55,7 @@ def _e2e_matrix(*, linux_shards: int, macos_shards: int) -> list[dict[str, objec
         for index in range(linux_shards):
             entries.append(_entry(platform, index, linux_shards, 3))
     for index in range(macos_shards):
-        entries.append(_entry(MACOS_ARM, index, macos_shards, 4))
+        entries.append(_entry(MACOS_ARM, index, macos_shards, 6))
     return entries
 
 
@@ -324,7 +324,7 @@ class SelectJobsTests(unittest.TestCase):
         self.assertTrue(all(entry["lanes"] == 3 for entry in linux))
         self.assertTrue(all(entry["shard_count"] == 3 for entry in linux))
         self.assertEqual(1, len(macos))
-        self.assertEqual(4, macos[0]["lanes"])
+        self.assertEqual(6, macos[0]["lanes"])
         self.assertEqual(1, macos[0]["shard_count"])
         self.assertEqual("1/1", macos[0]["label"])
 
