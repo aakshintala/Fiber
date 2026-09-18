@@ -1374,6 +1374,15 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     defer if (owned_resumed_model) |model| alloc.free(model);
     var ctx = AskContext.init(alloc, cfg, options.deps, startup.workspace_root);
     defer ctx.deinit();
+    // The run closes even when startup fails after startAskRun: every
+    // return below runs this deferred finish, while the prompt-execution
+    // sites below mark it finished and close with their own result.
+    var ask_run_finished = false;
+    defer if (!ask_run_finished) finishAskRun(&ctx, &.{
+        .exit_code = 1,
+        .assistant_output = @constCast(&.{}),
+        .error_code = "AskStartupFailed",
+    });
     if (options.save_session) {
         _ = try ctx.session.initializeProfileUsage(alloc, io_mod.getenv("HOME"));
         ctx.session.attachProfileUsagePublisher(alloc);
@@ -1728,6 +1737,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
                 .output_tokens = run_usage.output_tokens,
             };
             finishAskRun(&ctx, &denied);
+            ask_run_finished = true;
             return denied;
         },
         else => {
@@ -1736,6 +1746,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
             failed_result.exit_code = 1;
             failed_result.error_code = @errorName(err);
             finishAskRun(&ctx, &failed_result);
+            ask_run_finished = true;
             return failed_result;
         },
     };
@@ -1744,6 +1755,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
 
     var result = try takePromptRunResult(&ctx, alloc);
     finishAskRun(&ctx, &result);
+    ask_run_finished = true;
     finalizeFreshAuthSession(&ctx, &result);
     return result;
 }
