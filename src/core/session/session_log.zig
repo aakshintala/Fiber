@@ -856,24 +856,10 @@ pub const LoadedWritableSession = struct {
         );
     }
 
-    fn dupeInterruptedDetail(
-        alloc: Allocator,
-        entry: session.InterruptedHistoryTurn,
-    ) !session_event.InterruptedDetail {
-        var detail = session_event.InterruptedDetail{};
-        errdefer detail.deinit(alloc);
-        if (entry.tool_call) |call| detail.tool_call = try types.dupeToolCall(alloc, call);
-        detail.completed_tool_names = try types.dupeCompletedToolNames(alloc, entry.completed_tool_names);
-        if (entry.cancelled_command) |presentation|
-            detail.cancelled_command = try types.dupeCancelledCommandPresentation(alloc, presentation);
-        return detail;
-    }
-
     /// Writes the turn's closing boundary. The turn's items were already
-    /// written as work happened; this carries only the outcome and the
-    /// transitional execution carrier (removed by #191). The finished turn
-    /// is borrowed. Compacted summaries persist via state replacement, so
-    /// they write no line here. Without a noted turn start (tests and
+    /// written as work happened; this carries only the outcome. The finished
+    /// turn is borrowed. Compacted summaries persist via state replacement,
+    /// so they write no line here. Without a noted turn start (tests and
     /// degraded paths with notes off), the finished turn expands into its
     /// item lines instead so projection still rebuilds it.
     pub fn commitTurnCompleted(
@@ -890,20 +876,9 @@ pub const LoadedWritableSession = struct {
             .interrupted, .paused => .interrupted,
             .failed => .failed,
         };
-        const execution_source: ?session.ExecutionMemory = switch (turn) {
-            .assistant => |entry| entry.execution,
-            .interrupted => |entry| entry.execution,
+        switch (turn) {
+            .assistant, .interrupted => {},
             .compacted_summary => return self.position,
-        };
-        var owned_execution: ?session.ExecutionMemory = null;
-        defer if (owned_execution) |execution| types.freeExecutionMemory(alloc, execution);
-        if (execution_source) |source| {
-            owned_execution = try types.dupeExecutionMemory(alloc, source);
-        }
-        var owned_interrupted: ?session_event.InterruptedDetail = null;
-        defer if (owned_interrupted) |*detail| detail.deinit(alloc);
-        if (turn == .interrupted) {
-            owned_interrupted = try dupeInterruptedDetail(alloc, turn.interrupted);
         }
         if (turn_id) |started| {
             var id_buf: [20]u8 = undefined;
@@ -912,17 +887,13 @@ pub const LoadedWritableSession = struct {
                 alloc,
                 turn_text,
                 null,
-                .{ .turn_completed = .{
-                    .outcome = spec_outcome,
-                    .execution = owned_execution,
-                    .interrupted = owned_interrupted,
-                } },
+                .{ .turn_completed = .{ .outcome = spec_outcome } },
                 timestamp_ms,
                 .retry_expected_tail,
                 options,
             );
         }
-        return self.expandTurnAsItems(alloc, turn, spec_outcome, owned_execution, owned_interrupted, timestamp_ms, options);
+        return self.expandTurnAsItems(alloc, turn, spec_outcome, timestamp_ms, options);
     }
 
     fn expandTurnAsItems(
@@ -930,8 +901,6 @@ pub const LoadedWritableSession = struct {
         alloc: Allocator,
         turn: session.HistoryTurn,
         outcome: session_event.TurnOutcome,
-        execution: ?session.ExecutionMemory,
-        interrupted: ?session_event.InterruptedDetail,
         timestamp_ms: i64,
         options: Options,
     ) !CommitPosition {
@@ -996,7 +965,7 @@ pub const LoadedWritableSession = struct {
             alloc,
             turn_string,
             null,
-            .{ .turn_completed = .{ .outcome = outcome, .execution = execution, .interrupted = interrupted } },
+            .{ .turn_completed = .{ .outcome = outcome } },
             timestamp_ms,
             .retry_expected_tail,
             options,
@@ -2646,8 +2615,11 @@ fn createNativeSession(
         state.usage = synthesized_usage;
         synthesized_usage = null;
     }
-    const active_id = try alloc.dupe(u8, writable.session_id);
-    errdefer alloc.free(active_id);
+    const active_id = blk: {
+        const owned = try alloc.dupe(u8, writable.session_id);
+        errdefer alloc.free(owned);
+        break :blk owned;
+    };
     var result = LoadedWritableSession{
         .active_id = active_id,
         .state = state,
@@ -2661,6 +2633,12 @@ fn createNativeSession(
         .projection_status = if (cleanup_pending) .stale else .current,
         .namespace_confirmation_required = cleanup_pending,
     };
+    errdefer result.deinit(alloc);
+    // The opening usage already contains every generation, so the first
+    // usage_recorded line adds onto it instead of replacing it.
+    if (result.state.usage) |usage| {
+        try result.fold.seedUsageBase(alloc, usage);
+    }
     if (result.state.usage) |usage| {
         session_usage_sidecar.write(
             alloc,
@@ -2753,8 +2731,11 @@ fn openWritableSession(
         try event_log.setLength(io_mod.getIo(), position.through_event_log_bytes);
         try event_log.sync(io_mod.getIo());
     }
-    const active_id = try alloc.dupe(u8, writable.session_id);
-    errdefer alloc.free(active_id);
+    const active_id = blk: {
+        const owned = try alloc.dupe(u8, writable.session_id);
+        errdefer alloc.free(owned);
+        break :blk owned;
+    };
 
     var result = LoadedWritableSession{
         .active_id = active_id,
@@ -2770,6 +2751,12 @@ fn openWritableSession(
         .usage_sidecar_reseal_pending = usage_sidecar_reseal_pending,
     };
     open_state.state = undefined;
+    errdefer result.deinit(alloc);
+    // The replayed usage already contains every folded generation, so the
+    // first post-resume usage_recorded line adds onto it.
+    if (result.state.usage) |usage| {
+        try result.fold.seedUsageBase(alloc, usage);
+    }
     if (result.projection_status == .stale) {
         writeManifestProjection(alloc, &result) catch {
             result.projection_status = .stale;
@@ -3742,6 +3729,19 @@ fn publishFrames(
     };
     loaded.position = proposed;
     if (replayed_state) |next_state| {
+        // The replacement state's usage already contains every folded
+        // generation, so the live map restarts on top of it. Reseed
+        // before swapping: a failed reseed unwinds to prior with the
+        // previous fold still intact.
+        loaded.fold.reseedUsageBase(alloc, next_state.usage) catch |err| return handlePublishedTailFailure(
+            loaded,
+            alloc,
+            log,
+            prior,
+            failed_tail,
+            err,
+            options,
+        );
         loaded.state.deinit(alloc);
         loaded.state = next_state;
     }
@@ -6612,6 +6612,71 @@ test "append after resume continues one contiguous seq run" {
         try std.testing.expectEqualStrings("session-resume-contiguity", frame.session_id());
     }
     try std.testing.expectEqual(@as(u64, 3), seq);
+}
+
+test "usage totals survive resume and accumulate across generations" {
+    const alloc = std.testing.allocator;
+    var temp = try TempRoot.init(alloc);
+    defer temp.deinit(alloc);
+    var initial = try testState(alloc, "session-usage-resume", 10);
+    defer initial.deinit(alloc);
+    const gen_a = session_usage.GenerationRecord{
+        .id = "gen-resume-a",
+        .model = "test/model",
+        .total_cost = 1.0,
+        .input_tokens = 10,
+        .output_tokens = 2,
+        .cache_read_tokens = 0,
+        .cache_write_tokens = 0,
+        .billable_web_search_calls = 0,
+    };
+    const gen_b = session_usage.GenerationRecord{
+        .id = "gen-resume-b",
+        .model = "test/model",
+        .total_cost = 2.0,
+        .input_tokens = 20,
+        .output_tokens = 4,
+        .cache_read_tokens = 0,
+        .cache_write_tokens = 0,
+        .billable_web_search_calls = 0,
+    };
+    var loaded = try temp.root.startWritableSession(alloc, initial, .{});
+    _ = try loaded.appendUsageRecorded(alloc, gen_a, null, null, 20, .retry_expected_tail, .{});
+    _ = try loaded.appendUsageRecorded(alloc, gen_b, null, null, 30, .retry_expected_tail, .{});
+    try std.testing.expectEqual(@as(u64, 30), loaded.state.usage.?.input_tokens);
+    try std.testing.expectEqual(@as(?u64, 2), loaded.state.usage.?.request_count);
+    loaded.deinit(alloc);
+
+    // Resume replays those totals; the next generation adds onto them
+    // instead of replacing them with its own line.
+    var resumed = try temp.root.resumeForWrite(alloc, "session-usage-resume", .{});
+    defer resumed.deinit(alloc);
+    try std.testing.expectEqual(@as(u64, 30), resumed.state.usage.?.input_tokens);
+    try std.testing.expectEqual(@as(u64, 6), resumed.state.usage.?.output_tokens);
+    try std.testing.expectEqual(@as(?f64, 3.0), resumed.state.usage.?.total_cost);
+    _ = try resumed.appendUsageRecorded(
+        alloc,
+        .{
+            .id = "gen-resume-c",
+            .model = "test/model",
+            .total_cost = 3.0,
+            .input_tokens = 40,
+            .output_tokens = 8,
+            .cache_read_tokens = 0,
+            .cache_write_tokens = 0,
+            .billable_web_search_calls = 0,
+        },
+        null,
+        null,
+        40,
+        .retry_expected_tail,
+        .{},
+    );
+    try std.testing.expectEqual(@as(u64, 70), resumed.state.usage.?.input_tokens);
+    try std.testing.expectEqual(@as(u64, 14), resumed.state.usage.?.output_tokens);
+    try std.testing.expectEqual(@as(?f64, 6.0), resumed.state.usage.?.total_cost);
+    try std.testing.expectEqual(@as(?u64, 3), resumed.state.usage.?.request_count);
+    try session_usage.validateSnapshot(resumed.state.usage.?);
 }
 
 test "oversized state commits through chunked replacement frames with contiguous sequence" {

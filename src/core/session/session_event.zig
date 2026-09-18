@@ -28,13 +28,16 @@ pub const Kind = enum {
     reasoning_started,
     reasoning_completed,
     usage_recorded,
-    retry_scheduled,
-    notice,
     recovery_checkpoint_set,
     recovery_checkpoint_cleared,
     state_replacement_started,
     state_replacement_chunk,
     state_replacement_committed,
+    /// Retired pre-inversion kinds. Decode-only: old logs project through
+    /// them, but no writer emits them. They stay last so the durable prefix
+    /// keeps its order.
+    history_turn_committed,
+    usage_checkpointed,
 };
 
 pub const ReplacementReason = enum {
@@ -173,38 +176,12 @@ pub const TurnOutcome = enum {
     failed,
 };
 
-/// Transitional carrier for an interrupted turn's in-flight extras until
-/// tool_call_* lines rebuild them with #191, which removes this struct.
-/// Additive and optional, so no schema bump per the spec's versioning rules.
-pub const InterruptedDetail = struct {
-    tool_call: ?types.ToolCall = null,
-    completed_tool_names: [][]u8 = &.{},
-    cancelled_command: ?types.CancelledCommandPresentation = null,
-
-    pub fn deinit(self: *InterruptedDetail, alloc: Allocator) void {
-        if (self.tool_call) |*call| types.freeToolCall(alloc, call.*);
-        types.freeCompletedToolNames(alloc, self.completed_tool_names);
-        if (self.cancelled_command) |*presentation|
-            types.freeCancelledCommandPresentation(alloc, presentation.*);
-        self.* = undefined;
-    }
-};
-
 pub const TurnCompleted = struct {
     outcome: TurnOutcome,
     @"error": ?EventError = null,
-    /// Transitional carrier for the turn's accumulated tool execution until
-    /// tool_call_* lines arrive with #191, which removes this field. Additive
-    /// and optional, so no schema bump per the spec's versioning rules.
-    execution: ?session.ExecutionMemory = null,
-    /// Transitional carrier for an interrupted turn's in-flight extras,
-    /// removed with #191 like execution above.
-    interrupted: ?InterruptedDetail = null,
 
     fn deinit(self: *TurnCompleted, alloc: Allocator) void {
         if (self.@"error") |*err| err.deinit(alloc);
-        if (self.execution) |*execution| session.freeExecutionMemory(alloc, execution.*);
-        if (self.interrupted) |*detail| detail.deinit(alloc);
         self.* = undefined;
     }
 };
@@ -259,10 +236,12 @@ pub const UsageRecorded = struct {
     }
 };
 
-/// Ephemeral per the spec: defined here for the taxonomy, with no log sink
-/// until the stdout stream that carries ephemeral lines lands with #195.
-/// A retry also writes its failed message and its new item as durable
-/// assistant_message_* lines, so no retry information is lost meanwhile.
+/// Ephemeral per the spec: kept as taxonomy only, with no log sink until
+/// the stdout stream that carries ephemeral lines lands with #195. It is
+/// deliberately outside the durable Event union below, so no code path can
+/// write or read one as a sequenced log line. A retry also writes its
+/// failed message and its new item as durable assistant_message_* lines,
+/// so no retry information is lost meanwhile.
 pub const RetryScheduled = struct {
     cause: []u8,
     attempt: u64,
@@ -274,8 +253,9 @@ pub const RetryScheduled = struct {
     }
 };
 
-/// Ephemeral per the spec: defined here for the taxonomy, with no log sink
-/// until #195. Failures outside any item keep reaching the UI directly.
+/// Ephemeral per the spec: kept as taxonomy only, with no log sink until
+/// #195, and deliberately outside the durable Event union for the same
+/// reason. Failures outside any item keep reaching the UI directly.
 pub const Notice = struct {
     code: []u8,
     message: []u8,
@@ -283,6 +263,34 @@ pub const Notice = struct {
     fn deinit(self: *Notice, alloc: Allocator) void {
         alloc.free(self.code);
         alloc.free(self.message);
+        self.* = undefined;
+    }
+};
+
+/// Retired pre-inversion turn commit. Decode-only: old logs project their
+/// turn through it; nothing writes it.
+pub const HistoryTurnCommitted = struct {
+    conversation_language: session.ConversationLanguage,
+    last_input_tokens: ?u64 = null,
+    last_output_tokens: ?u64 = null,
+    work_id: ?[]u8 = null,
+    turn: session.HistoryTurn,
+
+    fn deinit(self: *HistoryTurnCommitted, alloc: Allocator) void {
+        if (self.work_id) |id| alloc.free(id);
+        session.freeHistoryTurn(alloc, self.turn);
+        self.* = undefined;
+    }
+};
+
+/// Retired whole-ledger usage snapshot. Decode-only: old logs restore
+/// billing through it; per-call usage_recorded lines replaced it.
+pub const UsageCheckpointed = struct {
+    /// Full cumulative replacement; reducers must not add it to prior usage.
+    usage: session_usage.Snapshot,
+
+    fn deinit(self: *UsageCheckpointed, alloc: Allocator) void {
+        self.usage.deinit(alloc);
         self.* = undefined;
     }
 };
@@ -379,13 +387,13 @@ pub const Event = union(Kind) {
     reasoning_started: ReasoningStarted,
     reasoning_completed: ReasoningCompleted,
     usage_recorded: UsageRecorded,
-    retry_scheduled: RetryScheduled,
-    notice: Notice,
     recovery_checkpoint_set: RecoveryCheckpointSet,
     recovery_checkpoint_cleared: RecoveryCheckpointCleared,
     state_replacement_started: StateReplacementStarted,
     state_replacement_chunk: StateReplacementChunk,
     state_replacement_committed: StateReplacementCommitted,
+    history_turn_committed: HistoryTurnCommitted,
+    usage_checkpointed: UsageCheckpointed,
 
     fn deinit(self: *Event, alloc: Allocator) void {
         switch (self.*) {
@@ -402,8 +410,8 @@ pub const Event = union(Kind) {
             .reasoning_started => {},
             .reasoning_completed => |*payload| payload.deinit(alloc),
             .usage_recorded => |*payload| payload.deinit(alloc),
-            .retry_scheduled => |*payload| payload.deinit(alloc),
-            .notice => |*payload| payload.deinit(alloc),
+            .history_turn_committed => |*payload| payload.deinit(alloc),
+            .usage_checkpointed => |*payload| payload.deinit(alloc),
             .recovery_checkpoint_set => |*payload| payload.deinit(alloc),
             .recovery_checkpoint_cleared => {},
             .state_replacement_chunk => |*payload| payload.deinit(alloc),
@@ -553,7 +561,6 @@ pub fn encodeFrame(alloc: Allocator, envelope: Envelope) ![]u8 {
     try out.writer.print(",\"seq\":{d},\"payload\":", .{envelope.seq});
     try writePayload(&out.writer, envelope.event);
     try out.writer.writeAll("}\n");
-    if (envelope.kind() == .run_started) {}
     if (out.written().len > event_frame_max_bytes) return error.EventFrameTooLarge;
     return try out.toOwnedSlice();
 }
@@ -810,6 +817,11 @@ pub fn reduceJsonlFrom(
     };
     var fold = ItemFold{};
     defer fold.deinit(alloc);
+    // Resuming from owned state: its usage already contains every folded
+    // generation, so tail usage_recorded lines add onto it.
+    if (state) |*initial_state| {
+        if (initial_state.usage) |snapshot| try fold.seedUsageBase(alloc, snapshot);
+    }
     var byte_offset: u64 = 0;
     var through: ?ReductionBoundary = null;
 
@@ -1242,47 +1254,73 @@ const ReplacementStateReader = struct {
     }
 };
 
-const generation_usage = @import("generation_usage_provider.zig");
-
-const GenerationEntry = struct {
-    id: []u8,
-    model: []u8,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_tokens: u64,
-    cache_write_tokens: u64,
-    reasoning_tokens: ?u64,
-    total_cost: ?f64,
-    billable_web_search_calls: u64,
-    first_seq: u64,
-
-    fn deinit(self: *GenerationEntry, alloc: Allocator) void {
-        alloc.free(self.id);
-        alloc.free(self.model);
-        self.* = undefined;
-    }
-};
+/// Rebuilds the session usage from the fold through the single
+/// session-usage-owned entry point, so the reducer never reaches into
+/// ledger internals. Usage errors surface as invalid frames like before.
+fn rebuildUsageSnapshot(
+    alloc: Allocator,
+    current: *session_codec.DurableSessionState,
+    fold: *ItemFold,
+) !void {
+    var snapshot = session_usage.snapshotFromFold(
+        alloc,
+        fold.base_usage,
+        fold.generations.items,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.UsageOverflow => return error.InvalidEventFrame,
+    };
+    errdefer snapshot.deinit(alloc);
+    if (current.usage) |*old| old.deinit(alloc);
+    current.usage = snapshot;
+}
 
 /// Fold-scoped accumulation for per-item lines, owned by the refold loop or
 /// the live session and never snapshotted. The pending turn's history
 /// skeleton is appended to state.history at turn_started, so a torn log
 /// still folds to a well-formed trailing entry; this struct only tracks which
 /// entry is open, the message started but not yet completed, the current
-/// step's reasoning ids, per-turn token counters, and the per-generation
-/// usage map that lets a late-settled cost replace its first line.
+/// step's reasoning ids, per-turn token counters, the per-generation usage
+/// map that lets a late-settled cost replace its first line, and the
+/// resume-seeded usage base that earlier generations folded into.
 pub const ItemFold = struct {
     pending_turn_id: ?[]u8 = null,
     pending_history_index: usize = 0,
     open_message_id: ?[]u8 = null,
     step_reasoning_ids: std.ArrayList([]u8) = .empty,
     last_message_outcome: ?MessageOutcome = null,
-    generations: std.ArrayList(GenerationEntry) = .empty,
+    generations: std.ArrayList(session_usage.FoldGeneration) = .empty,
+    /// Billing already folded before this reduction (the resumed state's
+    /// usage). New usage_recorded lines add on top instead of replacing it.
+    base_usage: ?session_usage.Snapshot = null,
 
     pub fn deinit(self: *ItemFold, alloc: Allocator) void {
         self.closePending(alloc);
         for (self.generations.items) |*entry| entry.deinit(alloc);
         self.generations.deinit(alloc);
+        if (self.base_usage) |*usage| usage.deinit(alloc);
         self.* = undefined;
+    }
+
+    /// Seeds the billing base from resumed state. Later usage_recorded
+    /// lines rebuild onto it, so pre-resume generations survive.
+    pub fn seedUsageBase(self: *ItemFold, alloc: Allocator, usage: session_usage.Snapshot) !void {
+        if (self.base_usage) |*old| old.deinit(alloc);
+        self.base_usage = try session_usage.dupeSnapshotOwned(alloc, usage);
+    }
+
+    /// Reseeds the fold after a state replacement: the new state's usage
+    /// already contains every folded generation, so the map restarts.
+    /// Atomic: a failed reseed keeps the previous fold untouched.
+    pub fn reseedUsageBase(self: *ItemFold, alloc: Allocator, usage: ?session_usage.Snapshot) !void {
+        const fresh: ?session_usage.Snapshot = if (usage) |snapshot|
+            try session_usage.dupeSnapshotOwned(alloc, snapshot)
+        else
+            null;
+        for (self.generations.items) |*entry| entry.deinit(alloc);
+        self.generations.clearRetainingCapacity();
+        if (self.base_usage) |*old| old.deinit(alloc);
+        self.base_usage = fresh;
     }
 
     fn closePending(self: *ItemFold, alloc: Allocator) void {
@@ -1301,111 +1339,6 @@ pub const ItemFold = struct {
         if (!std.mem.eql(u8, pending, turn_id)) return error.InvalidEventFrame;
     }
 };
-
-/// Rebuilds the usage snapshot from the fold's per-generation map, mirroring
-/// the live ledger's math (fresh ledger, records applied in log order) so a
-/// refold reproduces the same aggregates. Internal ledger accounting the
-/// contract excludes (pending, publication backlog, incidents, durations)
-/// stays empty. Quadratic in the session's model-call count; folds run once
-/// per resume.
-fn rebuildUsageSnapshot(
-    alloc: Allocator,
-    current: *session_codec.DurableSessionState,
-    fold: *ItemFold,
-) !void {
-    var models: std.ArrayList(session_usage.ModelAggregate) = .empty;
-    errdefer {
-        for (models.items) |*model| model.deinit(alloc);
-        models.deinit(alloc);
-    }
-    var total_cost: ?f64 = 0;
-    var input_tokens: u64 = 0;
-    var output_tokens: u64 = 0;
-    var cache_read_tokens: u64 = 0;
-    var cache_write_tokens: u64 = 0;
-    var reasoning_tokens: ?u64 = 0;
-    var request_count: ?u64 = 0;
-    var billable_web_search_calls: u64 = 0;
-    for (fold.generations.items) |entry| {
-        const record = generation_usage.Record{
-            .id = entry.id,
-            .model = entry.model,
-            .total_cost = entry.total_cost,
-            .input_tokens = entry.input_tokens,
-            .output_tokens = entry.output_tokens,
-            .cache_read_tokens = entry.cache_read_tokens,
-            .cache_write_tokens = entry.cache_write_tokens,
-            .reasoning_tokens = entry.reasoning_tokens,
-            .billable_web_search_calls = entry.billable_web_search_calls,
-        };
-        const model_index = for (models.items, 0..) |model, index| {
-            if (std.mem.eql(u8, model.model, entry.model)) break index;
-        } else null;
-        if (model_index) |index| {
-            session_usage.addRecordToModel(&models.items[index], record, entry.first_seq) catch
-                return error.InvalidEventFrame;
-        } else {
-            var model = session_usage.ModelAggregate{
-                .model = try alloc.dupe(u8, entry.model),
-                .first_sequence = entry.first_seq,
-                .reasoning_tokens = 0,
-                .request_count = 0,
-            };
-            errdefer model.deinit(alloc);
-            session_usage.addRecordToModel(&model, record, entry.first_seq) catch
-                return error.InvalidEventFrame;
-            try models.append(alloc, model);
-        }
-        total_cost = session_usage.addOptionalCost(total_cost, entry.total_cost) catch
-            return error.InvalidEventFrame;
-        input_tokens = std.math.add(u64, input_tokens, entry.input_tokens) catch
-            return error.InvalidEventFrame;
-        output_tokens = std.math.add(u64, output_tokens, entry.output_tokens) catch
-            return error.InvalidEventFrame;
-        cache_read_tokens = std.math.add(u64, cache_read_tokens, entry.cache_read_tokens) catch
-            return error.InvalidEventFrame;
-        cache_write_tokens = std.math.add(u64, cache_write_tokens, entry.cache_write_tokens) catch
-            return error.InvalidEventFrame;
-        reasoning_tokens = session_usage.addOptionalCounter(reasoning_tokens, entry.reasoning_tokens) catch
-            return error.InvalidEventFrame;
-        request_count = if (request_count) |requests|
-            std.math.add(u64, requests, 1) catch return error.InvalidEventFrame
-        else
-            null;
-        billable_web_search_calls = std.math.add(
-            u64,
-            billable_web_search_calls,
-            entry.billable_web_search_calls,
-        ) catch return error.InvalidEventFrame;
-    }
-    var snapshot = session_usage.Snapshot{
-        .billing = .complete,
-        .api_duration_complete = true,
-        .wall_duration_complete = true,
-        .code_complete = true,
-        .next_sequence = @intCast(fold.generations.items.len + 1),
-        .settled_through_sequence = @intCast(fold.generations.items.len),
-        .api_duration_ms = 0,
-        .wall_duration_ms = 0,
-        .total_cost = total_cost,
-        .input_tokens = input_tokens,
-        .output_tokens = output_tokens,
-        .cache_read_tokens = cache_read_tokens,
-        .cache_write_tokens = cache_write_tokens,
-        .reasoning_tokens = reasoning_tokens,
-        .request_count = request_count,
-        .billable_web_search_calls = billable_web_search_calls,
-        .lines_added = 0,
-        .lines_removed = 0,
-        .models = try models.toOwnedSlice(alloc),
-        .pending = &.{},
-        .publication_backlog = &.{},
-        .incidents = &.{},
-    };
-    errdefer snapshot.deinit(alloc);
-    if (current.usage) |*old| old.deinit(alloc);
-    current.usage = snapshot;
-}
 
 fn applyDelta(
     alloc: Allocator,
@@ -1441,6 +1374,10 @@ fn applyDelta(
             else
                 null;
             errdefer if (next.usage) |*usage| usage.deinit(alloc);
+            // A synthesized opening usage already contains every generation,
+            // so the first usage_recorded line adds onto it instead of
+            // replacing it.
+            if (next.usage) |snapshot| try fold.seedUsageBase(alloc, snapshot);
             try session_codec.validateState(next);
             state.* = next;
         },
@@ -1504,6 +1441,16 @@ fn applyDelta(
         .turn_started => |payload| {
             var current = &(state.* orelse return error.MissingSessionStarted);
             const turn_id = envelope.turn_id orelse return error.InvalidEventFrame;
+            // A recovery re-note repeats the open turn's boundary: the log
+            // already holds it, so the fold holds its skeleton instead of
+            // appending a ghost. Started lines stay idempotent like the
+            // message_started repeat below.
+            if (fold.pending_turn_id) |pending| {
+                if (std.mem.eql(u8, pending, turn_id)) {
+                    current.updated_at_ms = envelope.ts;
+                    return;
+                }
+            }
             // A new turn closes whatever was open: a torn log's unterminated
             // skeleton already sits in history as the crash left it.
             fold.closePending(alloc);
@@ -1549,43 +1496,15 @@ fn applyDelta(
                 .assistant => |*assistant| assistant,
                 else => return error.InvalidEventFrame,
             };
-            // The transitional execution carrier lands here until tool_call_*
-            // lines rebuild it with #191.
-            if (payload.execution) |execution| {
-                const owned = try types.dupeExecutionMemory(alloc, execution);
-                errdefer types.freeExecutionMemory(alloc, owned);
-                types.freeExecutionMemory(alloc, entry.execution);
-                entry.execution = owned;
-            }
             // A failed turn keeps its assistant shape when its messages ran
             // clean (length limits, failure notices); only a failed or
             // interrupted message converts it, matching the old commit.
+            // In-flight tool extras are #191's tool_call_* lines, so the
+            // converted turn carries none: checkpoints keep them until then.
             const converts = payload.outcome == .interrupted or
                 (payload.outcome == .failed and fold.last_message_outcome != null and
                     fold.last_message_outcome.? != .completed);
             if (converts) {
-                // The transitional interrupted detail lands here until
-                // tool_call_* lines rebuild it with #191.
-                const owned_tool_call = if (payload.interrupted) |detail| detail: {
-                    if (detail.tool_call) |call| {
-                        break :detail try types.dupeToolCall(alloc, call);
-                    }
-                    break :detail null;
-                } else null;
-                errdefer if (owned_tool_call) |call| types.freeToolCall(alloc, call);
-                const owned_names = if (payload.interrupted) |detail|
-                    try types.dupeCompletedToolNames(alloc, detail.completed_tool_names)
-                else
-                    @as([][]u8, &.{});
-                errdefer types.freeCompletedToolNames(alloc, owned_names);
-                const owned_cancelled = if (payload.interrupted) |detail| detail: {
-                    if (detail.cancelled_command) |presentation| {
-                        break :detail try types.dupeCancelledCommandPresentation(alloc, presentation);
-                    }
-                    break :detail null;
-                } else null;
-                errdefer if (owned_cancelled) |presentation|
-                    types.freeCancelledCommandPresentation(alloc, presentation);
                 // Ownership moves field by field into the new variant; no
                 // fallible work remains, so no rollback is needed.
                 const user = entry.user;
@@ -1603,10 +1522,7 @@ fn applyDelta(
                     .assistant = partial,
                     .assistant_item_id = assistant_item_id,
                     .reasoning_item_ids = reasoning_item_ids,
-                    .tool_call = owned_tool_call,
-                    .completed_tool_names = owned_names,
                     .execution = execution,
-                    .cancelled_command = owned_cancelled,
                     .terminal_reason = if (payload.outcome == .failed) .failed else .cancelled,
                 } };
             }
@@ -1742,12 +1658,50 @@ fn applyDelta(
             }
             current.updated_at_ms = envelope.ts;
         },
-        .retry_scheduled => {
+        .history_turn_committed => |payload| {
             var current = &(state.* orelse return error.MissingSessionStarted);
+            const association = session.decideWorkIdAssociation(
+                payload.turn,
+                payload.work_id,
+            ) catch return error.InvalidEventFrame;
+            var turn = try session.dupeHistoryTurn(alloc, payload.turn);
+            errdefer session.freeHistoryTurn(alloc, turn);
+            if (association == .copy_event) {
+                session.copyWorkIdToTurn(alloc, &turn, payload.work_id.?) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.InvalidWorkId, error.ConflictingWorkId => return error.InvalidEventFrame,
+                };
+            }
+            const work_id = if (payload.work_id) |id| try alloc.dupe(u8, id) else null;
+            errdefer if (work_id) |id| alloc.free(id);
+            if (current.history.len == 0) {
+                current.history = try alloc.alloc(session.HistoryTurn, 1);
+            } else {
+                current.history = try alloc.realloc(current.history, current.history.len + 1);
+            }
+            current.history[current.history.len - 1] = turn;
+            current.conversation_language = payload.conversation_language;
+            current.last_input_tokens = payload.last_input_tokens;
+            current.last_output_tokens = payload.last_output_tokens;
+            if (work_id) |id| {
+                if (current.last_subagent_work_id) |old| alloc.free(old);
+                current.last_subagent_work_id = id;
+            }
+            // A session owns at most one active model turn. Clearing its
+            // checkpoint in the same reduction as the history commit closes
+            // the crash window between durable completion and a later clear.
+            if (current.recovery_checkpoint) |*checkpoint| checkpoint.deinit(alloc);
+            current.recovery_checkpoint = null;
             current.updated_at_ms = envelope.ts;
         },
-        .notice => {
+        .usage_checkpointed => |payload| {
             var current = &(state.* orelse return error.MissingSessionStarted);
+            const usage = try session_usage.dupeSnapshotOwned(alloc, payload.usage);
+            if (current.usage) |*old| old.deinit(alloc);
+            current.usage = usage;
+            // A restored whole-ledger snapshot already contains every
+            // generation, so the per-item map restarts on top of it.
+            try fold.reseedUsageBase(alloc, usage);
             current.updated_at_ms = envelope.ts;
         },
         .recovery_checkpoint_set => |payload| {
@@ -1853,14 +1807,6 @@ fn validateEnvelope(envelope: Envelope) !void {
             if (payload.outcome == .completed and payload.@"error" != null) {
                 return error.InvalidEventFrame;
             }
-            // A cancelled presentation closes an interrupted turn, never a
-            // failed one: failed turns keep their assistant shape.
-            if (payload.interrupted) |detail| {
-                if (payload.outcome != .interrupted) return error.InvalidEventFrame;
-                if (detail.cancelled_command != null and detail.tool_call == null) {
-                    return error.InvalidEventFrame;
-                }
-            }
         },
         .assistant_message_started => {
             if (envelope.turn_id == null or envelope.item_id == null) {
@@ -1889,8 +1835,11 @@ fn validateEnvelope(envelope: Envelope) !void {
             }
         },
         .usage_recorded => {},
-        .retry_scheduled => {},
-        .notice => {},
+        .history_turn_committed => |payload| _ = session.decideWorkIdAssociation(
+            payload.turn,
+            payload.work_id,
+        ) catch return error.InvalidEventFrame,
+        .usage_checkpointed => |payload| try session_usage.validateSnapshot(payload.usage),
         .recovery_checkpoint_set => |payload| {
             const state = session_codec.DurableSessionState{
                 .id = @constCast("validation"),
@@ -2038,14 +1987,6 @@ fn writePayload(writer: *std.Io.Writer, event: Event) !void {
                 try writer.writeAll(",\"error\":");
                 try writeEventError(writer, err);
             }
-            if (payload.execution) |execution| {
-                try writer.writeAll(",\"execution\":");
-                try session_codec.writeExecutionMemory(writer, execution);
-            }
-            if (payload.interrupted) |detail| {
-                try writer.writeAll(",\"interrupted\":");
-                try writeInterruptedDetail(writer, detail);
-            }
             try writer.writeByte('}');
         },
         .assistant_message_started => {
@@ -2098,16 +2039,24 @@ fn writePayload(writer: *std.Io.Writer, event: Event) !void {
             }
             try writer.print(",\"billable_web_search_calls\":{d}}}", .{payload.billable_web_search_calls});
         },
-        .retry_scheduled => |payload| {
-            try writer.writeAll("{\"cause\":");
-            try writeJsonString(writer, payload.cause);
-            try writer.print(",\"attempt\":{d},\"delay_ms\":{d}}}", .{ payload.attempt, payload.delay_ms });
+        .history_turn_committed => |payload| {
+            try writer.writeAll("{\"conversation_language\":");
+            try writeJsonString(writer, payload.conversation_language.view());
+            try writer.writeAll(",\"last_input_tokens\":");
+            try session_codec.writeOptionalU64(writer, payload.last_input_tokens);
+            try writer.writeAll(",\"last_output_tokens\":");
+            try session_codec.writeOptionalU64(writer, payload.last_output_tokens);
+            try writer.writeAll(",\"turn\":");
+            try session_codec.writeHistoryTurn(writer, payload.turn);
+            if (payload.work_id) |id| {
+                try writer.writeAll(",\"work_id\":");
+                try writeJsonString(writer, id);
+            }
+            try writer.writeByte('}');
         },
-        .notice => |payload| {
-            try writer.writeAll("{\"code\":");
-            try writeJsonString(writer, payload.code);
-            try writer.writeAll(",\"message\":");
-            try writeJsonString(writer, payload.message);
+        .usage_checkpointed => |payload| {
+            try writer.writeAll("{\"usage\":");
+            try session_usage.writeSnapshot(writer, payload.usage);
             try writer.writeByte('}');
         },
         .recovery_checkpoint_set => |payload| {
@@ -2316,6 +2265,8 @@ fn parsePayload(alloc: Allocator, kind: Kind, value: std.json.Value) !Event {
         .turn_completed => blk: {
             const object = try requireObject(value);
             if (object.count() < 1 or object.count() > 4) return error.InvalidEventFrame;
+            // Tolerance reader: inversion-era lines carried the retired
+            // #191 execution/interrupted carriers; they decode and drop.
             try rejectUnknownKeys(object, &.{ "outcome", "error", "execution", "interrupted" });
             const outcome = std.meta.stringToEnum(
                 TurnOutcome,
@@ -2326,24 +2277,9 @@ fn parsePayload(alloc: Allocator, kind: Kind, value: std.json.Value) !Event {
             else
                 null;
             errdefer if (turn_error) |*err| err.deinit(alloc);
-            var execution: ?session.ExecutionMemory = if (object.get("execution")) |raw|
-                session_codec.parseExecutionMemory(alloc, raw) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    else => return error.InvalidEventFrame,
-                }
-            else
-                null;
-            errdefer if (execution) |*memory| session.freeExecutionMemory(alloc, memory.*);
-            var interrupted: ?InterruptedDetail = if (object.get("interrupted")) |raw|
-                try parseInterruptedDetail(alloc, raw)
-            else
-                null;
-            errdefer if (interrupted) |*detail| detail.deinit(alloc);
             break :blk .{ .turn_completed = .{
                 .outcome = outcome,
                 .@"error" = turn_error,
-                .execution = execution,
-                .interrupted = interrupted,
             } };
         },
         .assistant_message_started => blk: {
@@ -2428,23 +2364,56 @@ fn parsePayload(alloc: Allocator, kind: Kind, value: std.json.Value) !Event {
                 .billable_web_search_calls = try requireU64(object, "billable_web_search_calls"),
             } };
         },
-        .retry_scheduled => blk: {
-            const object = try exactObject(value, &.{ "cause", "attempt", "delay_ms" });
-            break :blk .{ .retry_scheduled = .{
-                .cause = try dupeString(alloc, object, "cause"),
-                .attempt = try requireU64(object, "attempt"),
-                .delay_ms = try requireU64(object, "delay_ms"),
+        .history_turn_committed => blk: {
+            const source = try requireObject(value);
+            // Tolerance reader: pre-rename schema-1 events named the
+            // last-response counters total_*; map them onto last_*.
+            const legacy = source.get("total_input_tokens") != null;
+            const input_key: []const u8 = if (legacy) "total_input_tokens" else "last_input_tokens";
+            const output_key: []const u8 = if (legacy) "total_output_tokens" else "last_output_tokens";
+            const object = if (source.get("work_id") != null)
+                try exactObject(value, &.{
+                    "conversation_language",
+                    input_key,
+                    output_key,
+                    "turn",
+                    "work_id",
+                })
+            else
+                try exactObject(value, &.{
+                    "conversation_language",
+                    input_key,
+                    output_key,
+                    "turn",
+                });
+            const turn = try session_codec.parseHistoryTurn(
+                alloc,
+                object.get("turn") orelse return error.InvalidEventFrame,
+            );
+            errdefer session.freeHistoryTurn(alloc, turn);
+            const work_id = if (object.get("work_id")) |_| try dupeString(alloc, object, "work_id") else null;
+            errdefer if (work_id) |id| alloc.free(id);
+            break :blk .{ .history_turn_committed = .{
+                .conversation_language = parseLanguage(
+                    try requireString(object, "conversation_language"),
+                ) catch return error.InvalidEventFrame,
+                .last_input_tokens = try requireOptionalU64(object, input_key),
+                .last_output_tokens = try requireOptionalU64(object, output_key),
+                .work_id = work_id,
+                .turn = turn,
             } };
         },
-        .notice => blk: {
-            const object = try exactObject(value, &.{ "code", "message" });
-            const code = try dupeString(alloc, object, "code");
-            errdefer alloc.free(code);
-            if (code.len == 0) return error.InvalidEventFrame;
-            break :blk .{ .notice = .{
-                .code = code,
-                .message = try dupeString(alloc, object, "message"),
-            } };
+        .usage_checkpointed => blk: {
+            const object = try exactObject(value, &.{"usage"});
+            var usage = session_usage.parseSnapshotValue(
+                alloc,
+                object.get("usage") orelse return error.InvalidEventFrame,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.InvalidEventFrame,
+            };
+            errdefer usage.deinit(alloc);
+            break :blk .{ .usage_checkpointed = .{ .usage = usage } };
         },
         .recovery_checkpoint_set => blk: {
             const object = try exactObject(value, &.{"checkpoint"});
@@ -2743,69 +2712,6 @@ fn writeEventError(writer: *std.Io.Writer, err: EventError) !void {
     try writer.writeByte('}');
 }
 
-fn writeInterruptedDetail(writer: *std.Io.Writer, detail: InterruptedDetail) !void {
-    try writer.writeAll("{\"tool_call\":");
-    if (detail.tool_call) |tool_call| {
-        try session_codec.writeToolCall(writer, tool_call);
-    } else {
-        try writer.writeAll("null");
-    }
-    try writer.writeAll(",\"completed_tool_names\":[");
-    for (detail.completed_tool_names, 0..) |name, index| {
-        if (index > 0) try writer.writeByte(',');
-        try session_codec.writeDurableBytes(writer, name);
-    }
-    try writer.writeByte(']');
-    if (detail.cancelled_command) |presentation| {
-        try writer.writeAll(",\"cancelled_command\":");
-        try session_codec.writeCancelledCommandPresentation(writer, presentation);
-    }
-    try writer.writeByte('}');
-}
-
-fn parseInterruptedDetail(alloc: Allocator, value: std.json.Value) !InterruptedDetail {
-    const object = try requireObject(value);
-    if (object.count() < 2 or object.count() > 3) return error.InvalidEventFrame;
-    try rejectUnknownKeys(object, &.{ "tool_call", "completed_tool_names", "cancelled_command" });
-    const tool_call = session_codec.parseOptionalToolCall(
-        alloc,
-        object.get("tool_call") orelse return error.InvalidEventFrame,
-    ) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.InvalidEventFrame,
-    };
-    errdefer if (tool_call) |call| types.freeToolCall(alloc, call);
-    const names_value = object.get("completed_tool_names") orelse return error.InvalidEventFrame;
-    if (names_value != .array) return error.InvalidEventFrame;
-    const completed_tool_names = session_codec.parseDurableBytesArray(alloc, names_value) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.InvalidEventFrame,
-    };
-    errdefer types.freeCompletedToolNames(alloc, completed_tool_names);
-    const cancelled_command = if (object.get("cancelled_command")) |raw|
-        session_codec.parseCancelledCommandPresentation(alloc, raw) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.InvalidEventFrame,
-        }
-    else
-        null;
-    errdefer if (cancelled_command) |presentation|
-        types.freeCancelledCommandPresentation(alloc, presentation);
-    // Mirror the history-turn rule: a cancelled presentation rides a
-    // captured command call, never a bare turn.
-    if (cancelled_command != null and
-        (tool_call == null or
-            !(try session_codec.isCapturedCommandToolCall(alloc, tool_call.?))))
-    {
-        return error.InvalidEventFrame;
-    }
-    return .{
-        .tool_call = tool_call,
-        .completed_tool_names = completed_tool_names,
-        .cancelled_command = cancelled_command,
-    };
-}
-
 fn sha256(bytes: []const u8) Digest {
     var hash: Digest = undefined;
     Sha256.hash(bytes, &hash, .{});
@@ -2827,13 +2733,13 @@ test "session event kind contract contains exactly twenty stable variants" {
     try std.testing.expectEqualStrings("reasoning_started", @tagName(Kind.reasoning_started));
     try std.testing.expectEqualStrings("reasoning_completed", @tagName(Kind.reasoning_completed));
     try std.testing.expectEqualStrings("usage_recorded", @tagName(Kind.usage_recorded));
-    try std.testing.expectEqualStrings("retry_scheduled", @tagName(Kind.retry_scheduled));
-    try std.testing.expectEqualStrings("notice", @tagName(Kind.notice));
     try std.testing.expectEqualStrings("recovery_checkpoint_set", @tagName(Kind.recovery_checkpoint_set));
     try std.testing.expectEqualStrings("recovery_checkpoint_cleared", @tagName(Kind.recovery_checkpoint_cleared));
     try std.testing.expectEqualStrings("state_replacement_started", @tagName(Kind.state_replacement_started));
     try std.testing.expectEqualStrings("state_replacement_chunk", @tagName(Kind.state_replacement_chunk));
     try std.testing.expectEqualStrings("state_replacement_committed", @tagName(Kind.state_replacement_committed));
+    try std.testing.expectEqualStrings("history_turn_committed", @tagName(Kind.history_turn_committed));
+    try std.testing.expectEqualStrings("usage_checkpointed", @tagName(Kind.usage_checkpointed));
 }
 
 test "event frame codec is deterministic and validates contiguous sequence" {
@@ -2881,7 +2787,7 @@ test "event frame codec is deterministic and validates contiguous sequence" {
     try std.testing.expectError(error.NonContiguousSequence, validator.validate(gap.seq));
 }
 
-test "turn_completed execution decode repairs duplicate-key tool arguments" {
+test "history_turn_committed event decode repairs duplicate-key tool arguments" {
     const duplicate_arguments = "{\"depth\":1,\"depth\":2}";
     var calls = [_]session.ToolCall{.{
         .id = "call_bad",
@@ -2907,10 +2813,15 @@ test "turn_completed execution decode repairs duplicate-key tool arguments" {
         .session_id = @constCast("session-1"),
         .seq = 1,
         .ts = 50,
-        .turn_id = @constCast("7"),
-        .event = .{ .turn_completed = .{
-            .outcome = .completed,
-            .execution = .{ .tool_steps = steps[0..] },
+        .event = .{ .history_turn_committed = .{
+            .conversation_language = session.ConversationLanguage.literal("en"),
+            .last_input_tokens = 1,
+            .last_output_tokens = 2,
+            .turn = .{ .assistant = .{
+                .user = .{ .text = @constCast("inspect") },
+                .assistant = @constCast("failed"),
+                .execution = .{ .tool_steps = steps[0..] },
+            } },
         } },
     };
 
@@ -2920,7 +2831,7 @@ test "turn_completed execution decode repairs duplicate-key tool arguments" {
     defer decoded_frame_6.deinit(std.testing.allocator);
     const decoded = &decoded_frame_6.known;
 
-    const step = decoded.event.turn_completed.execution.?.tool_steps[0];
+    const step = decoded.event.history_turn_committed.turn.assistant.execution.tool_steps[0];
     try std.testing.expectEqualStrings("{}", step.tool_calls[0].arguments_json);
     try std.testing.expectEqual(types.ToolArgumentIntegrity.valid, step.tool_calls[0].argument_integrity);
     try std.testing.expectEqual(session.PersistedToolStatus.failure, step.tool_results[0].status);
@@ -3287,26 +3198,6 @@ test "per-item lines rebuild one history turn without replaying its prefix" {
     var fold = ItemFold{};
     defer fold.deinit(alloc);
 
-    var calls = [_]session.ToolCall{.{
-        .id = @constCast("call-1"),
-        .name = @constCast("read_file"),
-        .arguments_json = @constCast("{\"path\":\"README.md\"}"),
-    }};
-    var results = [_]session.PersistedToolResult{.{
-        .tool_call_id = @constCast("call-1"),
-        .tool_name = @constCast("read_file"),
-        .status = .success,
-        .output = @constCast("fixture output"),
-        .output_bytes = 14,
-        .stored_output_bytes = 14,
-        .truncated = false,
-        .provider_native = false,
-        .created_at_ms = 21,
-    }};
-    var steps = [_]session.ToolExecutionStep{.{
-        .tool_calls = calls[0..],
-        .tool_results = results[0..],
-    }};
     const lines = [_]Envelope{
         .{
             .session_id = @constCast("session-single-event"),
@@ -3352,10 +3243,7 @@ test "per-item lines rebuild one history turn without replaying its prefix" {
             .seq = 9,
             .ts = 30,
             .turn_id = @constCast("3"),
-            .event = .{ .turn_completed = .{
-                .outcome = .completed,
-                .execution = .{ .tool_steps = steps[0..] },
-            } },
+            .event = .{ .turn_completed = .{ .outcome = .completed } },
         },
     };
     var boundary: ReductionBoundary = .{ .seq = 0, .byte_offset = 0 };
@@ -3374,10 +3262,6 @@ test "per-item lines rebuild one history turn without replaying its prefix" {
     try std.testing.expectEqual(@as(u64, 9), boundary.seq);
     try std.testing.expectEqual(@as(usize, 1), state.history.len);
     try std.testing.expectEqualStrings("done", state.history[0].assistant.assistant);
-    try std.testing.expectEqualStrings(
-        "fixture output",
-        state.history[0].assistant.execution.tool_steps[0].tool_results[0].output,
-    );
     try std.testing.expectEqualStrings("fr", state.conversation_language.view());
     try std.testing.expectEqual(@as(?u64, 100), state.last_input_tokens);
     try std.testing.expectEqual(@as(?u64, 50), state.last_output_tokens);
@@ -3745,11 +3629,10 @@ test "item lines leave absent session usage until the first usage_recorded" {
     );
 }
 
-test "retired history_turn_committed lines decode unknown and fold skips them" {
+test "retired history_turn_committed projects its turn and usage_checkpointed restores billing" {
     const alloc = std.testing.allocator;
-    // Byte-faithful pre-inversion frame. The kind is gone, so resume must
-    // skip the line instead of failing: pre-release sessions lose that
-    // turn's history on upgrade, by the spec's no-migration rule.
+    // Byte-faithful pre-inversion frame with the pre-rename total_* counter
+    // keys. Old logs must project their turn, not drop it.
     const started_line =
         "{\"schema_version\":1,\"kind\":\"session_started\",\"session_id\":\"session-1\",\"ts\":100,\"seq\":1,\"payload\":{\"id\":\"session-1\",\"created_at_ms\":10,\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false}}}\n";
     const committed_line =
@@ -3757,19 +3640,89 @@ test "retired history_turn_committed lines decode unknown and fold skips them" {
 
     var committed_frame = try decodeFrame(alloc, committed_line);
     defer committed_frame.deinit(alloc);
-    try std.testing.expect(committed_frame == .unknown);
-    try std.testing.expectEqual(@as(u64, 2), committed_frame.unknown.seq);
+    try std.testing.expect(committed_frame == .known);
+    try std.testing.expectEqual(Kind.history_turn_committed, committed_frame.known.kind());
+    try std.testing.expectEqual(@as(u64, 2), committed_frame.seq());
+
+    const checkpoint_model = session_usage.ModelAggregate{
+        .model = @constCast("test/model"),
+        .first_sequence = 1,
+        .total_cost = 0.25,
+        .input_tokens = 128,
+        .output_tokens = 64,
+        .request_count = 1,
+    };
+    var checkpoint_models = [_]session_usage.ModelAggregate{checkpoint_model};
+    const checkpoint_usage = session_usage.Snapshot{
+        .billing = .complete,
+        .api_duration_complete = true,
+        .wall_duration_complete = true,
+        .code_complete = true,
+        .next_sequence = 2,
+        .settled_through_sequence = 1,
+        .api_duration_ms = 0,
+        .wall_duration_ms = 0,
+        .total_cost = 0.25,
+        .input_tokens = 128,
+        .output_tokens = 64,
+        .cache_read_tokens = 0,
+        .cache_write_tokens = 0,
+        .reasoning_tokens = null,
+        .request_count = 1,
+        .billable_web_search_calls = 0,
+        .lines_added = 0,
+        .lines_removed = 0,
+        .models = &checkpoint_models,
+        .pending = &.{},
+        .publication_backlog = &.{},
+        .incidents = &.{},
+    };
+    const checkpoint_line = try encodeFrame(alloc, .{
+        .session_id = @constCast("session-1"),
+        .seq = 3,
+        .ts = 120,
+        .event = .{ .usage_checkpointed = .{ .usage = checkpoint_usage } },
+    });
+    defer alloc.free(checkpoint_line);
+    const associated_line = try encodeFrame(alloc, .{
+        .session_id = @constCast("session-1"),
+        .seq = 4,
+        .ts = 130,
+        .event = .{ .history_turn_committed = .{
+            .conversation_language = session.ConversationLanguage.literal("en"),
+            .last_input_tokens = 7,
+            .last_output_tokens = 8,
+            .work_id = @constCast("work-9"),
+            .turn = .{ .assistant = .{
+                .user = .{ .text = @constCast("second") },
+                .assistant = @constCast("answer"),
+            } },
+        } },
+    });
+    defer alloc.free(associated_line);
 
     var jsonl: std.Io.Writer.Allocating = .init(alloc);
     defer jsonl.deinit();
     try jsonl.writer.writeAll(started_line);
     try jsonl.writer.writeAll(committed_line);
+    try jsonl.writer.writeAll(checkpoint_line);
+    try jsonl.writer.writeAll(associated_line);
     var source = std.Io.Reader.fixed(jsonl.written());
     var reduced = try reduceJsonl(alloc, &source, null);
     defer reduced.deinit(alloc);
-    try std.testing.expect(reduced.state.last_input_tokens == null);
-    try std.testing.expect(reduced.state.last_output_tokens == null);
-    try std.testing.expectEqual(@as(usize, 0), reduced.state.history.len);
+    // The retired turn projects with its text and last-response counters.
+    try std.testing.expectEqual(@as(usize, 2), reduced.state.history.len);
+    try std.testing.expectEqualStrings("hello", reduced.state.history[0].assistant.user.text);
+    try std.testing.expectEqualStrings("world", reduced.state.history[0].assistant.assistant);
+    try std.testing.expectEqual(@as(?u64, 7), reduced.state.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 8), reduced.state.last_output_tokens);
+    // The retired checkpoint restores billing instead of dropping it.
+    try std.testing.expectEqual(@as(u64, 128), reduced.state.usage.?.input_tokens);
+    try std.testing.expectEqual(@as(u64, 64), reduced.state.usage.?.output_tokens);
+    try std.testing.expectEqual(@as(?f64, 0.25), reduced.state.usage.?.total_cost);
+    // Event-side work ids still associate onto turns without one.
+    try std.testing.expectEqualStrings("work-9", reduced.state.history[1].assistant.user.work_id.?);
+    try std.testing.expectEqualStrings("work-9", reduced.state.last_subagent_work_id.?);
 }
 
 test "replay associates each turn_started work ID with its exact user turn" {
@@ -4181,6 +4134,80 @@ test "later usage_recorded lines replace the same generation id" {
     try std.testing.expectEqualStrings("test/model", state.?.usage.?.models[0].model);
     try std.testing.expectEqualStrings("test/other", state.?.usage.?.models[1].model);
     try session_usage.validateSnapshot(state.?.usage.?);
+}
+
+test "usage fold seeds from resumed state across checkpoint replay" {
+    const alloc = std.testing.allocator;
+    const started = Envelope{
+        .session_id = @constCast("session-usage-seed"),
+        .seq = 1,
+        .ts = 100,
+        .event = .{ .session_started = .{
+            .id = @constCast("session-usage-seed"),
+            .created_at_ms = 100,
+            .origin_workspace_root = @constCast("/tmp/origin"),
+            .workspace_root = @constCast("/tmp/current"),
+            .conversation_language = session.ConversationLanguage.literal("en"),
+            .preferences = .{
+                .model = @constCast("test/model"),
+                .effort = types.ReasoningEffort.literal("medium"),
+                .fast_mode = false,
+            },
+        } },
+    };
+    const usage_a = Envelope{
+        .session_id = @constCast("session-usage-seed"),
+        .seq = 2,
+        .ts = 110,
+        .event = .{ .usage_recorded = .{
+            .generation_id = @constCast("gen-a"),
+            .model = @constCast("test/model"),
+            .input_tokens = 10,
+            .output_tokens = 2,
+            .total_cost = 1.0,
+        } },
+    };
+    var prefix: std.Io.Writer.Allocating = .init(alloc);
+    defer prefix.deinit();
+    for ([_]Envelope{ started, usage_a }) |frame| {
+        const line = try encodeFrame(alloc, frame);
+        defer alloc.free(line);
+        try prefix.writer.writeAll(line);
+    }
+    var prefix_source = std.Io.Reader.fixed(prefix.written());
+    var first = try reduceJsonl(alloc, &prefix_source, null);
+    defer first.deinit(alloc);
+    try std.testing.expectEqual(@as(u64, 10), first.state.usage.?.input_tokens);
+
+    // The suffix replays from that owned state like a checkpoint tail: its
+    // generation adds onto the resumed totals instead of replacing them.
+    const tail_line = try encodeFrame(alloc, .{
+        .session_id = @constCast("session-usage-seed"),
+        .seq = 3,
+        .ts = 120,
+        .event = .{ .usage_recorded = .{
+            .generation_id = @constCast("gen-b"),
+            .model = @constCast("test/model"),
+            .input_tokens = 20,
+            .output_tokens = 4,
+            .total_cost = 2.0,
+        } },
+    });
+    defer alloc.free(tail_line);
+    var tail_source = std.Io.Reader.fixed(tail_line);
+    var second = try reduceJsonlFrom(
+        alloc,
+        &tail_source,
+        try first.state.dupe(alloc),
+        .{ .next_seq = 3 },
+    );
+    defer second.deinit(alloc);
+    try std.testing.expectEqual(@as(u64, 30), second.state.usage.?.input_tokens);
+    try std.testing.expectEqual(@as(u64, 6), second.state.usage.?.output_tokens);
+    try std.testing.expectEqual(@as(?f64, 3.0), second.state.usage.?.total_cost);
+    try std.testing.expectEqual(@as(?u64, 2), second.state.usage.?.request_count);
+    try std.testing.expectEqual(@as(u64, 3), second.state.usage.?.next_sequence);
+    try session_usage.validateSnapshot(second.state.usage.?);
 }
 
 test "recovery checkpoint events replace and clear deterministically" {

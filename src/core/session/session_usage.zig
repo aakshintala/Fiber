@@ -250,7 +250,7 @@ pub const ModelAggregate = struct {
     request_count: ?u64 = null,
     billable_web_search_calls: u64 = 0,
 
-    pub fn deinit(self: *ModelAggregate, alloc: Allocator) void {
+    fn deinit(self: *ModelAggregate, alloc: Allocator) void {
         alloc.free(self.model);
         self.* = undefined;
     }
@@ -2679,7 +2679,7 @@ fn writeOptionalCost(writer: *std.Io.Writer, value: ?f64) !void {
     }
 }
 
-pub fn addRecordToModel(model: *ModelAggregate, record: GenerationRecord, sequence: u64) !void {
+fn addRecordToModel(model: *ModelAggregate, record: GenerationRecord, sequence: u64) !void {
     const total_cost = try addOptionalCost(model.total_cost, record.total_cost);
     const input_tokens = std.math.add(u64, model.input_tokens, record.input_tokens) catch
         return error.UsageOverflow;
@@ -2751,14 +2751,14 @@ fn generationRecordBorrowed(
     };
 }
 
-pub fn addOptionalCounter(first: ?u64, second: ?u64) error{UsageOverflow}!?u64 {
+fn addOptionalCounter(first: ?u64, second: ?u64) error{UsageOverflow}!?u64 {
     if (first == null or second == null) return null;
     return std.math.add(u64, first.?, second.?) catch error.UsageOverflow;
 }
 
 /// Sums two optional costs. Unknown poisons the total instead of reading as
 /// free; overflow still fails so callers mark billing incomplete.
-pub fn addOptionalCost(first: ?f64, second: ?f64) error{UsageOverflow}!?f64 {
+fn addOptionalCost(first: ?f64, second: ?f64) error{UsageOverflow}!?f64 {
     const current = first orelse return null;
     const add = second orelse return null;
     const next = current + add;
