@@ -80,7 +80,8 @@ pub fn inspect(
         },
         request.usage,
         request.usage_allocator,
-        .{},
+        0,
+        null,
     );
     defer streamed.deinit(alloc);
 

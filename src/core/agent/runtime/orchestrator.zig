@@ -4524,11 +4524,10 @@ fn processQueuedPromptLoop(
         };
         defer stream_ctx.deinit();
         stream_ctx.turn_message_slot = &turn_message_item_id;
-        if (stream_ctx.message_item_id == null) {
-            if (turn_message_item_id) |turn_message| {
-                stream_ctx.message_item_id = try stream_ctx.alloc.dupe(u8, turn_message);
-            }
-        }
+        // No inheritance: a prior step's message id must never stand in
+        // as this attempt's. Each attempt mints its own on first chunk,
+        // so a later empty failure mints a distinct failed item instead
+        // of closing the earlier item.
 
         if (restore_recovery_source) {
             const checkpoint = job.recovery_checkpoint.?;
@@ -4543,8 +4542,9 @@ fn processQueuedPromptLoop(
             // of minting new ones.
             if (checkpoint.assistant_message_id) |item_id| {
                 stream_ctx.message_item_id = try stream_ctx.alloc.dupe(u8, item_id);
-                // Carry the restored id in the turn slot too, so later
-                // steps reuse it like a streamed mint.
+                // Carry the restored id in the turn slot too, so error
+                // terminals without a streamed completion close it
+                // instead of minting an overlapping message.
                 if (turn_message_item_id == null) {
                     turn_message_item_id = try std.heap.c_allocator.dupe(u8, item_id);
                 }
@@ -4557,24 +4557,9 @@ fn processQueuedPromptLoop(
                 stream_ctx.reasoning_item_output_index.appendAssumeCapacity(entry.output_index);
                 stream_ctx.reasoning_texts.appendAssumeCapacity(.empty);
             }
-            // The resumed process never streamed these ids, so note their
-            // started boundaries once here; the terminal below closes them.
-            // Started lines replay idempotently, so the pre-crash originals
-            // stay harmless.
-            if (deps.note_session_event) |note_fn| {
-                if (checkpoint.assistant_message_id) |item_id| {
-                    try note_fn(deps.ctx, .{ .message_started = .{
-                        .turn_id = stream_ctx.turn_id,
-                        .item_id = item_id,
-                    } });
-                }
-                for (checkpoint.assistant_reasoning_ids) |entry| {
-                    try note_fn(deps.ctx, .{ .reasoning_started = .{
-                        .turn_id = stream_ctx.turn_id,
-                        .item_id = entry.item_id,
-                    } });
-                }
-            }
+            // Never re-emit restored boundaries: the pre-crash originals
+            // are the single durable line and the terminal below closes
+            // them. A second started line would duplicate one boundary.
             restore_recovery_source = false;
         }
 
@@ -4925,10 +4910,8 @@ fn processQueuedPromptLoop(
                 model_request,
                 deps.usage,
                 deps.usage_allocator,
-                .{
-                    .turn_id = stream_ctx.turn_id,
-                    .message_item_id = &stream_ctx.message_item_id,
-                },
+                stream_ctx.turn_id,
+                &stream_ctx.message_item_id,
             ) catch |err| {
                 parent_turn_delivery.observeGatewayDelivery(
                     deps,
@@ -5157,61 +5140,27 @@ fn processQueuedPromptLoop(
                     std.debug.assert(pending_auto_retry_status == null);
                     // The failed attempt closes as its own item; the retry
                     // mints a new one below when its first chunk arrives.
-                    // An attempt that never streamed closes whatever message
-                    // is open first, so the fold never sees overlapping
-                    // started boundaries.
-                    const attempt_unidentified = stream_ctx.message_item_id == null;
+                    // Only this attempt's minted id may close here: with no
+                    // inheritance the context holds null unless this attempt
+                    // streamed, so an inherited prior-turn id never stands
+                    // in and the earlier item is never touched.
+                    try runtime_assistant_stream.noteRetryFailureItem(
+                        deps,
+                        stream_ctx.alloc,
+                        stream_ctx.turn_id,
+                        stream_ctx.message_item_id,
+                        stream_ctx.raw_text.items,
+                        @tagName(failure_cause),
+                        consumed_attempts,
+                    );
                     if (stream_ctx.message_item_id) |failed_id| {
-                        if (deps.note_session_event) |note_fn| {
-                            try note_fn(deps.ctx, .{ .message_completed = .{
-                                .turn_id = stream_ctx.turn_id,
-                                .item_id = failed_id,
-                                .text = stream_ctx.raw_text.items,
-                                .outcome = .failed,
-                                .cause = @tagName(failure_cause),
-                                .attempt = @intCast(consumed_attempts),
-                            } });
-                        }
                         stream_ctx.alloc.free(failed_id);
                         stream_ctx.message_item_id = null;
-                    } else if (turn_message_item_id) |open_id| {
-                        // Failed before the first chunk with an earlier
-                        // step's message still open: that step finished, so
-                        // it closes clean and the failed attempt mints below.
-                        if (deps.note_session_event) |note_fn| {
-                            try note_fn(deps.ctx, .{ .message_completed = .{
-                                .turn_id = stream_ctx.turn_id,
-                                .item_id = open_id,
-                                .text = "",
-                                .outcome = .completed,
-                            } });
-                        }
                     }
                     // The retry mints anew below: clear the turn slot.
                     if (turn_message_item_id) |open_id| {
                         std.heap.c_allocator.free(open_id);
                         turn_message_item_id = null;
-                    }
-                    // A failure before the first chunk minted no id, so the
-                    // terminal mints one: every failed call is a distinct
-                    // item, content or not.
-                    if (attempt_unidentified) {
-                        if (deps.note_session_event) |note_fn| {
-                            const minted = try types.generate_item_id(stream_ctx.alloc);
-                            defer stream_ctx.alloc.free(minted);
-                            try note_fn(deps.ctx, .{ .message_started = .{
-                                .turn_id = stream_ctx.turn_id,
-                                .item_id = minted,
-                            } });
-                            try note_fn(deps.ctx, .{ .message_completed = .{
-                                .turn_id = stream_ctx.turn_id,
-                                .item_id = minted,
-                                .text = stream_ctx.raw_text.items,
-                                .outcome = .failed,
-                                .cause = @tagName(failure_cause),
-                                .attempt = @intCast(consumed_attempts),
-                            } });
-                        }
                     }
                     pending_auto_retry_status = auto_retry_status(
                         consumed_attempts + 1,
@@ -5359,10 +5308,8 @@ fn processQueuedPromptLoop(
                         model_request,
                         deps.usage,
                         deps.usage_allocator,
-                        .{
-                            .turn_id = stream_ctx.turn_id,
-                            .message_item_id = &stream_ctx.message_item_id,
-                        },
+                        stream_ctx.turn_id,
+                        &stream_ctx.message_item_id,
                     );
                     parent_turn_delivery.observeGatewayDelivery(
                         deps,

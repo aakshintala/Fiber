@@ -91,16 +91,17 @@ pub const StreamChunkContext = struct {
     /// later lifecycle event share one id.
     tool_item_ids: std.StringHashMapUnmanaged([]u8) = .empty,
     /// Fiber-minted id of the step's streaming assistant message, first
-    /// arrival wins. Owned here. The context is rebuilt every step, so the
-    /// orchestrator carries one message id across the turn through
-    /// turn_message_slot below: later steps reuse it instead of opening
-    /// overlapping messages in the fold. A retried request clears the slot
-    /// and re-mints per output index.
+    /// arrival wins. Owned here. The context is rebuilt every step and
+    /// never inherits: each attempt mints its own, so a later empty
+    /// failure mints a distinct failed item instead of closing an earlier
+    /// one. A retried request clears the turn slot below and re-mints
+    /// per output index.
     message_item_id: ?[]u8 = null,
-    /// Turn-scoped message id slot owned by the orchestrator. Steps seed
-    /// message_item_id from it and publish a fresh mint back, so the turn
-    /// streams under one message while retries still mint anew. Null in
-    /// tests and hosts without a turn scope.
+    /// Turn-scoped message id slot owned by the orchestrator. Steps publish
+    /// a fresh mint back, so error terminals without a streamed completion
+    /// close the turn's message instead of minting an overlapping one.
+    /// Retries clear it and mint anew. Null in tests and hosts without a
+    /// turn scope.
     turn_message_slot: ?*?[]u8 = null,
     /// Fiber-minted ids of the step's reasoning blocks, one per provider
     /// output item in first-appearance order. Owned here; preserved across
@@ -248,9 +249,10 @@ pub fn onStreamContentChunk(ctx: *anyopaque, item_id: []const u8, chunk: []const
         return;
     };
     if (minted) {
-        // Publish a fresh mint to the turn slot so later steps reuse this
-        // message instead of opening an overlapping one. A failed publish
-        // unmints and suppresses the chunk like a mint failure.
+        // Publish a fresh mint to the turn slot so error terminals
+        // without a streamed completion close the turn's message instead
+        // of minting an overlapping one. A failed publish unmints and
+        // suppresses the chunk like a mint failure.
         if (stream_ctx.turn_message_slot) |slot| {
             if (slot.* == null) {
                 slot.* = std.heap.c_allocator.dupe(u8, stream_ctx.message_item_id.?) catch |err| {
@@ -555,6 +557,47 @@ pub fn noteTerminalStep(
         .turn_id = turn_id,
         .item_id = minted,
         .text = text,
+    } });
+}
+
+/// Emits one auto-retry failure item: closes this attempt's minted message
+/// as failed, or mints a distinct failed item when the attempt never minted
+/// one. `attempt_message_id` must be null unless the id minted on THIS
+/// attempt — an inherited prior-turn id never stands in, so the earlier
+/// item is never closed here; the caller clears the turn slot so the retry
+/// mints anew. Fallible like noteTerminalStep: retry sites propagate note
+/// failures so a broken log degrades loudly, never silently.
+pub fn noteRetryFailureItem(
+    deps: *const runtime_deps.AgentRuntimeDeps,
+    alloc: Allocator,
+    turn_id: u64,
+    attempt_message_id: ?[]const u8,
+    text: []const u8,
+    cause: []const u8,
+    attempt: usize,
+) !void {
+    const note_fn = deps.note_session_event orelse return;
+    if (attempt_message_id) |failed_id| {
+        try note_fn(deps.ctx, .{ .message_completed = .{
+            .turn_id = turn_id,
+            .item_id = failed_id,
+            .text = text,
+            .outcome = .failed,
+            .cause = cause,
+            .attempt = @intCast(attempt),
+        } });
+        return;
+    }
+    const minted = try types.generate_item_id(alloc);
+    defer alloc.free(minted);
+    try note_fn(deps.ctx, .{ .message_started = .{ .turn_id = turn_id, .item_id = minted } });
+    try note_fn(deps.ctx, .{ .message_completed = .{
+        .turn_id = turn_id,
+        .item_id = minted,
+        .text = text,
+        .outcome = .failed,
+        .cause = cause,
+        .attempt = @intCast(attempt),
     } });
 }
 
@@ -2897,6 +2940,73 @@ test "message item id minting fails closed on allocation failure" {
     try std.testing.expectEqual(@as(usize, 0), capture.phase_updates.items.len);
     onStreamReasoningChunk(&stream_ctx, "", "thinking", null);
     try std.testing.expectEqual(@as(usize, 0), stream_ctx.reasoning_item_ids.items.len);
+}
+
+test "retry failure mints a distinct item and never closes the earlier one" {
+    const RetryFailureLog = struct {
+        started: std.ArrayList([]u8) = .empty,
+        completed_ids: std.ArrayList([]u8) = .empty,
+        completed_outcomes: std.ArrayList(session_event.MessageOutcome) = .empty,
+        fn note(ctx: *anyopaque, n: session_event.SessionNote) !void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            const a = std.testing.allocator;
+            switch (n) {
+                .message_started => |s| try self.started.append(a, try a.dupe(u8, s.item_id)),
+                .message_completed => |m| {
+                    try self.completed_ids.append(a, try a.dupe(u8, m.item_id));
+                    try self.completed_outcomes.append(a, m.outcome);
+                },
+                else => {},
+            }
+        }
+        fn deinit(self: *@This()) void {
+            const a = std.testing.allocator;
+            for (self.started.items) |id| a.free(id);
+            self.started.deinit(a);
+            for (self.completed_ids.items) |id| a.free(id);
+            self.completed_ids.deinit(a);
+            self.completed_outcomes.deinit(a);
+        }
+    };
+    const alloc = std.testing.allocator;
+    var capture = StreamCapture{};
+    defer capture.deinit(alloc);
+    var hook_set = capture.hooks();
+    var log = RetryFailureLog{};
+    defer log.deinit();
+    hook_set.ctx = @ptrCast(&log);
+    hook_set.note_session_event = RetryFailureLog.note;
+    const deps = &hook_set;
+    const note_fn = hook_set.note_session_event.?;
+
+    // The earlier step's item started and closed clean.
+    const earlier = try types.generate_item_id(alloc);
+    defer alloc.free(earlier);
+    try note_fn(hook_set.ctx, .{ .message_started = .{ .turn_id = 7, .item_id = earlier } });
+    try note_fn(hook_set.ctx, .{ .message_completed = .{ .turn_id = 7, .item_id = earlier, .text = "done" } });
+
+    // An empty failure mints its own distinct failed item: the earlier
+    // completed close stands exactly once, never re-closed as failed.
+    try noteRetryFailureItem(deps, alloc, 7, null, "", "server_error", 1);
+    try std.testing.expectEqual(@as(usize, 2), log.started.items.len);
+    try std.testing.expectEqualStrings(earlier, log.started.items[0]);
+    const minted = log.started.items[1];
+    try std.testing.expect(!std.mem.eql(u8, minted, earlier));
+    try std.testing.expectEqual(@as(usize, 2), log.completed_ids.items.len);
+    try std.testing.expectEqualStrings(earlier, log.completed_ids.items[0]);
+    try std.testing.expectEqual(session_event.MessageOutcome.completed, log.completed_outcomes.items[0]);
+    try std.testing.expectEqualStrings(minted, log.completed_ids.items[1]);
+    try std.testing.expectEqual(session_event.MessageOutcome.failed, log.completed_outcomes.items[1]);
+
+    // An attempt that minted closes its own id as failed with no new start.
+    const attempt_id = try types.generate_item_id(alloc);
+    defer alloc.free(attempt_id);
+    try note_fn(hook_set.ctx, .{ .message_started = .{ .turn_id = 7, .item_id = attempt_id } });
+    try noteRetryFailureItem(deps, alloc, 7, attempt_id, "partial", "server_error", 2);
+    try std.testing.expectEqual(@as(usize, 3), log.started.items.len);
+    try std.testing.expectEqual(@as(usize, 3), log.completed_ids.items.len);
+    try std.testing.expectEqualStrings(attempt_id, log.completed_ids.items[2]);
+    try std.testing.expectEqual(session_event.MessageOutcome.failed, log.completed_outcomes.items[2]);
 }
 
 test "reasoning chunks from one output index share one id" {
