@@ -22,10 +22,7 @@ const ParsedQuery = struct {
 };
 
 pub fn queryMode(query: []const u8) QueryMode {
-    for (query) |byte| {
-        if (std.fs.path.isSep(byte)) return .explicit_path;
-    }
-    return .workspace_index;
+    return if (parseExplicitQuery(query) != null) .explicit_path else .workspace_index;
 }
 
 pub fn complete(
@@ -117,7 +114,31 @@ fn parseExplicitQuery(query: []const u8) ?ParsedQuery {
     for (query, 0..) |byte, index| {
         if (std.fs.path.isSep(byte)) separator_index = index;
     }
-    const separator = separator_index orelse return null;
+    if (separator_index == null) {
+        if (std.mem.eql(u8, query, "~")) {
+            return .{
+                .parent = "~",
+                .display_prefix = "~/",
+                .basename_prefix = "",
+            };
+        }
+        if (std.mem.eql(u8, query, ".")) {
+            return .{
+                .parent = ".",
+                .display_prefix = "./",
+                .basename_prefix = "",
+            };
+        }
+        if (std.mem.eql(u8, query, "..")) {
+            return .{
+                .parent = "..",
+                .display_prefix = "../",
+                .basename_prefix = "",
+            };
+        }
+        return null;
+    }
+    const separator = separator_index.?;
     const parent = if (separator == 0) query[0..1] else query[0..separator];
     return .{
         .parent = parent,
@@ -205,7 +226,11 @@ fn writeTestFile(dir: std.Io.Dir, path: []const u8) !void {
 
 test "path completion classifies and splits only path-shaped queries" {
     try std.testing.expectEqual(QueryMode.workspace_index, queryMode("main"));
-    try std.testing.expectEqual(QueryMode.workspace_index, queryMode("~"));
+    try std.testing.expectEqual(QueryMode.workspace_index, queryMode("~backup"));
+    try std.testing.expectEqual(QueryMode.workspace_index, queryMode("...."));
+    try std.testing.expectEqual(QueryMode.explicit_path, queryMode("~"));
+    try std.testing.expectEqual(QueryMode.explicit_path, queryMode("."));
+    try std.testing.expectEqual(QueryMode.explicit_path, queryMode(".."));
     try std.testing.expectEqual(QueryMode.explicit_path, queryMode("~/Dow"));
     try std.testing.expectEqual(QueryMode.explicit_path, queryMode("/tmp/fi"));
     try std.testing.expectEqual(QueryMode.explicit_path, queryMode("./src/"));
@@ -216,6 +241,54 @@ test "path completion classifies and splits only path-shaped queries" {
     try std.testing.expectEqualStrings("../shared", parsed.parent);
     try std.testing.expectEqualStrings("../shared/", parsed.display_prefix);
     try std.testing.expectEqualStrings("na", parsed.basename_prefix);
+
+    const expectSameParsed = struct {
+        fn f(short: []const u8, with_slash: []const u8) !void {
+            const parsed_short = parseExplicitQuery(short).?;
+            const parsed_with_slash = parseExplicitQuery(with_slash).?;
+            try std.testing.expectEqualStrings(parsed_with_slash.parent, parsed_short.parent);
+            try std.testing.expectEqualStrings(parsed_with_slash.display_prefix, parsed_short.display_prefix);
+            try std.testing.expectEqualStrings(parsed_with_slash.basename_prefix, parsed_short.basename_prefix);
+        }
+    }.f;
+    try expectSameParsed("~", "~/");
+    try expectSameParsed(".", "./");
+    try expectSameParsed("..", "../");
+}
+
+test "path completion browses directories for shortcuts with and without a trailing slash" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(std.testing.io, "workspace/src");
+    try writeTestFile(tmp.dir, "workspace/alpha.txt");
+
+    const root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(root);
+
+    // Two independent result buffers so both forms can be compared without copying.
+    var shortcut_results: [8]file_index.SearchResult = undefined;
+    var shortcut_spans: [8]file_index.MatchSpan = undefined;
+    var shortcut_paths: [8 * file_index.max_path_len]u8 = undefined;
+    var slash_results: [8]file_index.SearchResult = undefined;
+    var slash_spans: [8]file_index.MatchSpan = undefined;
+    var slash_paths: [8 * file_index.max_path_len]u8 = undefined;
+
+    for ([_][2][]const u8{
+        .{ ".", "./" },
+        .{ "..", "../" },
+    }) |pair| {
+        const shortcut_count = try complete(root, pair[0], &shortcut_results, &shortcut_spans, &shortcut_paths);
+        const slash_count = try complete(root, pair[1], &slash_results, &slash_spans, &slash_paths);
+
+        // The regression this guards: the shortcut used to parse as null and browse nothing.
+        try std.testing.expect(shortcut_count > 0);
+        try std.testing.expectEqual(slash_count, shortcut_count);
+        for (shortcut_results[0..shortcut_count], slash_results[0..slash_count]) |shortcut, slash| {
+            try std.testing.expectEqualStrings(slash.path, shortcut.path);
+            try std.testing.expectEqual(slash.kind, shortcut.kind);
+        }
+    }
 }
 
 test "path completion enumerates immediate entries with deterministic bounded order" {
