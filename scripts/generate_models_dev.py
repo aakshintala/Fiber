@@ -149,7 +149,9 @@ def generate_models(
     provider_catalog: Dict[str, Any], connection_base_url: Optional[str]
 ) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     """Generate entries for every model, sorted by id. Returns (entries, skipped)."""
-    models = provider_catalog.get("models") or {}
+    models = provider_catalog.get("models")
+    if models is None:
+        raise ValueError("provider models is missing")
     if not isinstance(models, dict):
         raise ValueError("provider models must be an object")
     provider_npm = provider_catalog.get("npm")

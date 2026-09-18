@@ -1,6 +1,6 @@
 # Model routing
 
-What is true as of #286. Later chain tickets (#287+) extend this file; nothing
+What is true as of #304. Later chain tickets (#287+) extend this file; nothing
 below describes behavior that does not exist yet.
 
 * The release binary routes through the Codex-only `provider_bundle` in
