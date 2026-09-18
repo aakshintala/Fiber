@@ -3874,8 +3874,21 @@ fn executeSessionShow(
             };
             defer summary.deinit(alloc);
 
-            const text = try (output_contracts.SessionSummarySnapshot{
-                .summary = summary,
+            // Render through the read-only detail like `show --id` so the
+            // last-response context survivor is carried in text and JSON.
+            var detail = subagent_resume_admission.loadVisibleReadOnlyDetail(
+                store,
+                alloc,
+                summary.id,
+                .{},
+            ) catch |err| {
+                try writeLookupFailure(alloc, deps, output_contracts.Kind.session_show.jsonName(), err, opts.format);
+                return .handled_failure;
+            };
+            defer detail.deinit(alloc);
+
+            const text = try (output_contracts.SessionDetailSnapshot{
+                .detail = detail,
             }).render(alloc, opts.format);
             defer alloc.free(text);
             try writeFormattedOutput(deps, text, opts.format);
@@ -4774,6 +4787,90 @@ test "usage session window failures exit without crashing" {
             failed_json.stdout.written(),
             "started before the 24h window",
         ) != null,
+    );
+}
+
+test "session show last renders the context survivor in text and json" {
+    const session_codec = @import("../session/session_codec.zig");
+    const session = @import("../session/session.zig");
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(home);
+    var environ = std.process.Environ.Map.init(alloc);
+    defer environ.deinit();
+    try environ.put("HOME", home);
+    try environ.put("PATH", "");
+    const stable_environ = try stableCliTestEnviron();
+    io_mod.setEnvironMap(&environ);
+    defer io_mod.setEnvironMap(stable_environ);
+
+    const workspace_root = try io_mod.realpathAlloc(alloc, ".");
+    defer alloc.free(workspace_root);
+    var store = try session_store.Store.initFromHome(alloc, home, workspace_root);
+    defer store.deinit(alloc);
+    var state: session_codec.DurableSessionState = .{
+        .id = try alloc.dupe(u8, "show-last-context"),
+        .origin_workspace_root = try alloc.dupe(u8, workspace_root),
+        .workspace_root = try alloc.dupe(u8, workspace_root),
+        .created_at_ms = 10,
+        .updated_at_ms = 10,
+        .conversation_language = session.ConversationLanguage.literal("en"),
+        .preferences = .{
+            .model = try alloc.dupe(u8, "test/model"),
+            .effort = types.ReasoningEffort.literal("high"),
+            .fast_mode = false,
+        },
+        .history = &.{},
+    };
+    defer state.deinit(alloc);
+    var writable = try store.startWritableSession(alloc, state);
+    defer writable.deinit(alloc);
+    _ = try writable.appendEvent(
+        alloc,
+        .{ .history_turn_committed = .{
+            .conversation_language = session.ConversationLanguage.literal("en"),
+            .last_input_tokens = 43_000,
+            .last_output_tokens = 2_000,
+            .turn = .{ .assistant = .{
+                .user = .{ .text = @constCast("hello") },
+                .assistant = @constCast("world"),
+            } },
+        } },
+        10,
+        .retry_expected_tail,
+        .{},
+    );
+
+    var text_capture = CaptureOutput.init(alloc);
+    defer text_capture.deinit();
+    try std.testing.expectEqual(
+        RunResult.handled_success,
+        try runIfRequestedWithDeps(
+            alloc,
+            &.{ @constCast("session"), @constCast("show"), @constCast("last") },
+            testConfig(),
+            text_capture.deps(),
+        ),
+    );
+    try std.testing.expect(
+        std.mem.find(u8, text_capture.stdout.written(), "Context: 45k tokens") != null,
+    );
+
+    var json_capture = CaptureOutput.init(alloc);
+    defer json_capture.deinit();
+    try std.testing.expectEqual(
+        RunResult.handled_success,
+        try runIfRequestedWithDeps(
+            alloc,
+            &.{ @constCast("session"), @constCast("show"), @constCast("last"), @constCast("--json") },
+            testConfig(),
+            json_capture.deps(),
+        ),
+    );
+    try std.testing.expect(
+        std.mem.find(u8, json_capture.stdout.written(), "\"context\":{\"used_tokens\":45000") != null,
     );
 }
 

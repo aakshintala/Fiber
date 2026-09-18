@@ -982,10 +982,8 @@ fn decodeStateImpl(alloc: Allocator, source: *std.Io.Reader, limits: DecodeLimit
     }
     try expectToken(try json_reader.next(), .array_end);
 
-    try expectKey(&json_reader, alloc, "last_input_tokens");
-    const last_input_tokens = try readNullableU64(&json_reader, alloc);
-    try expectKey(&json_reader, alloc, "last_output_tokens");
-    const last_output_tokens = try readNullableU64(&json_reader, alloc);
+    const last_input_tokens = try readLastResponseTokens(&json_reader, alloc, "last_input_tokens", "total_input_tokens");
+    const last_output_tokens = try readLastResponseTokens(&json_reader, alloc, "last_output_tokens", "total_output_tokens");
     var context_history_start: usize = 0;
     var context_seen = false;
     var permission_state: session_permission_state.State = .{};
@@ -2607,6 +2605,20 @@ fn expectKey(reader: *std.json.Reader, alloc: Allocator, expected: []const u8) !
     if (!std.mem.eql(u8, actual, expected)) return error.InvalidSessionFormat;
 }
 
+// Tolerance reader: pre-rename schema-3 states named the last-response
+// counters total_*; accept either name and map onto last_*.
+fn readLastResponseTokens(reader: *std.json.Reader, alloc: Allocator, modern: []const u8, legacy: []const u8) !?u64 {
+    const token = try reader.nextAllocMax(alloc, .alloc_if_needed, 64);
+    defer freeToken(alloc, token);
+    const actual = switch (token) {
+        .string => |value| value,
+        .allocated_string => |value| value,
+        else => return error.InvalidSessionFormat,
+    };
+    if (!std.mem.eql(u8, actual, modern) and !std.mem.eql(u8, actual, legacy)) return error.InvalidSessionFormat;
+    return try readNullableU64(reader, alloc);
+}
+
 fn readStringOwned(reader: *std.json.Reader, alloc: Allocator, max_len: usize) ![]u8 {
     const token = try reader.nextAllocMax(alloc, .alloc_always, max_len);
     return switch (token) {
@@ -3000,6 +3012,18 @@ test "durable state round trips live history while discarding legacy authority" 
     var decoded = try decodeState(alloc, &source, .{});
     defer decoded.deinit(alloc);
     try expectStateEqual(state, decoded);
+}
+
+test "pre-rename total_* durable state decodes onto last_*" {
+    const alloc = std.testing.allocator;
+    // Byte-faithful pre-rename schema-3 state: required total_* numbers
+    // where the current writer emits nullable last_*.
+    const raw = "{\"id\":\"session\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false,\"provider\":\"codex\"},\"history\":[],\"total_input_tokens\":128,\"total_output_tokens\":64,\"context_history_start\":0,\"permission_state\":{\"schema_version\":2,\"next_generation\":1,\"rules\":[]}}";
+    var source = std.Io.Reader.fixed(raw);
+    var state = try decodeState(alloc, &source, .{});
+    defer state.deinit(alloc);
+    try std.testing.expectEqual(@as(?u64, 128), state.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 64), state.last_output_tokens);
 }
 
 test "durable state repairs duplicate-key execution and interrupted tool arguments" {

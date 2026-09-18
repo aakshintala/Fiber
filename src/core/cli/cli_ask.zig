@@ -525,6 +525,8 @@ const AskContext = struct {
     subagent_explicit_skills_prompt: []u8 = &.{},
     store: ?session_store.Store = null,
     writable: ?session_store.LoadedWritableSession = null,
+    last_reported_input_tokens: ?u64 = null,
+    last_reported_output_tokens: ?u64 = null,
     session_write_mutex: std.Io.Mutex = .init,
     requested_resume: ?ResumeTarget = null,
     explicit_model: ?[]const u8 = null,
@@ -1784,14 +1786,23 @@ fn takePromptRunResult(ctx: *AskContext, alloc: Allocator) !PromptRunResult {
 fn takeContextSnapshot(ctx: *AskContext) output_contracts.ContextUsageSnapshot {
     ctx.session_write_mutex.lockUncancelable(io_mod.getIo());
     defer ctx.session_write_mutex.unlock(io_mod.getIo());
-    const writable = if (ctx.writable) |*value| value else return .{};
+    if (ctx.writable == null and ctx.last_reported_input_tokens == null and ctx.last_reported_output_tokens == null) return .{};
     const window = ctx.capability_resolver.available(
         ctx.model,
         ctx.cfg.provider_set.select(ctx.provider).fallbackModelCapabilities(ctx.model),
     ).context_window;
+    if (ctx.writable) |*value| {
+        return .fromLastResponse(
+            value.state.last_input_tokens,
+            value.state.last_output_tokens,
+            window,
+        );
+    }
+    // The no-save path never gets a writable; surface the just-computed
+    // completion usage stashed by reportUsage instead of reporting unknown.
     return .fromLastResponse(
-        writable.state.last_input_tokens,
-        writable.state.last_output_tokens,
+        ctx.last_reported_input_tokens,
+        ctx.last_reported_output_tokens,
         window,
     );
 }
@@ -1988,6 +1999,8 @@ fn reportUsage(raw_ctx: *anyopaque, usage: types.Usage) void {
     const ctx: *AskContext = @ptrCast(@alignCast(raw_ctx));
     ctx.session_write_mutex.lockUncancelable(io_mod.getIo());
     defer ctx.session_write_mutex.unlock(io_mod.getIo());
+    ctx.last_reported_input_tokens = usage.input_tokens;
+    ctx.last_reported_output_tokens = usage.output_tokens;
     const writable = if (ctx.writable) |*value| value else return;
     writable.state.last_input_tokens = usage.input_tokens;
     writable.state.last_output_tokens = usage.output_tokens;
@@ -7258,6 +7271,40 @@ test "headless ask overwrites session usage from latest completion" {
 
     try std.testing.expectEqual(@as(?u64, 107), ctx.writable.?.state.last_input_tokens);
     try std.testing.expectEqual(@as(?u64, 23), ctx.writable.?.state.last_output_tokens);
+}
+
+test "headless no-save ask surfaces just-computed usage in its context snapshot" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+
+    const home = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "home");
+    defer alloc.free(home);
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "workspace");
+    defer alloc.free(workspace);
+
+    const test_home = try TestAskHome.install(alloc, home);
+    defer test_home.deinit();
+
+    var stdout_capture: TestCapture = .{};
+    defer stdout_capture.deinit(alloc);
+    var stderr_capture: TestCapture = .{};
+    defer stderr_capture.deinit(alloc);
+    var ctx = AskContext.init(alloc, testConfig(), testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup), workspace);
+    defer ctx.deinit();
+
+    // No initializeSessionStores: the no-save path never gets a writable.
+    try std.testing.expect(ctx.writable == null);
+
+    const deps = agentRuntimeDeps(&ctx);
+    const report_fn = deps.report_usage orelse return error.TestExpectedEqual;
+    report_fn(deps.ctx, .{ .input_tokens = 100, .output_tokens = 20 });
+    report_fn(deps.ctx, .{ .input_tokens = 107, .output_tokens = 23 });
+
+    const snapshot = takeContextSnapshot(&ctx);
+    try std.testing.expectEqual(@as(?u64, 130), snapshot.used_tokens);
 }
 
 test "saved ask settles profile publication before persistence teardown" {

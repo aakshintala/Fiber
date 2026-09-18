@@ -1480,20 +1480,25 @@ fn parsePayload(alloc: Allocator, kind: Kind, value: std.json.Value) !Event {
         },
         .history_turn_committed => blk: {
             const source = try requireObject(value);
-            const object = if (source.count() == 4)
+            // Tolerance reader: pre-rename schema-1 events named the
+            // last-response counters total_*; map them onto last_*.
+            const legacy = source.get("total_input_tokens") != null;
+            const input_key: []const u8 = if (legacy) "total_input_tokens" else "last_input_tokens";
+            const output_key: []const u8 = if (legacy) "total_output_tokens" else "last_output_tokens";
+            const object = if (source.get("work_id") != null)
                 try exactObject(value, &.{
                     "conversation_language",
-                    "last_input_tokens",
-                    "last_output_tokens",
+                    input_key,
+                    output_key,
                     "turn",
+                    "work_id",
                 })
             else
                 try exactObject(value, &.{
                     "conversation_language",
-                    "last_input_tokens",
-                    "last_output_tokens",
+                    input_key,
+                    output_key,
                     "turn",
-                    "work_id",
                 });
             const turn = try session_codec.parseHistoryTurn(
                 alloc,
@@ -1506,8 +1511,8 @@ fn parsePayload(alloc: Allocator, kind: Kind, value: std.json.Value) !Event {
                 .conversation_language = parseLanguage(
                     try requireString(object, "conversation_language"),
                 ) catch return error.InvalidEventFrame,
-                .last_input_tokens = try requireOptionalU64(object, "last_input_tokens"),
-                .last_output_tokens = try requireOptionalU64(object, "last_output_tokens"),
+                .last_input_tokens = try requireOptionalU64(object, input_key),
+                .last_output_tokens = try requireOptionalU64(object, output_key),
                 .work_id = work_id,
                 .turn = turn,
             } };
@@ -2581,6 +2586,38 @@ test "history_turn_committed leaves absent session usage unchanged" {
         "world",
         reduced.state.history[0].assistant.assistant,
     );
+}
+
+test "pre-rename total_* history events resume onto last_*" {
+    const alloc = std.testing.allocator;
+    // Byte-faithful pre-rename schema-1 frames: the last-response counters
+    // were required total_* numbers. Resume must map them onto last_*.
+    const started_line =
+        "{\"schema_version\":1,\"kind\":\"session_started\",\"session_id\":\"session-1\",\"ts\":100,\"seq\":1,\"payload\":{\"id\":\"session-1\",\"created_at_ms\":10,\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false}}}\n";
+    const committed_line =
+        "{\"schema_version\":1,\"kind\":\"history_turn_committed\",\"session_id\":\"session-1\",\"ts\":110,\"seq\":2,\"payload\":{\"conversation_language\":\"en\",\"total_input_tokens\":128,\"total_output_tokens\":64,\"turn\":{\"kind\":\"assistant\",\"user\":{\"text\":\"hello\",\"images\":[]},\"assistant\":\"world\",\"execution\":{\"schema_version\":3,\"tool_steps\":[],\"files\":[]}}}}\n";
+
+    var committed_frame = try decodeFrame(alloc, committed_line);
+    defer committed_frame.deinit(alloc);
+    try std.testing.expectEqual(
+        @as(?u64, 128),
+        committed_frame.known.event.history_turn_committed.last_input_tokens,
+    );
+    try std.testing.expectEqual(
+        @as(?u64, 64),
+        committed_frame.known.event.history_turn_committed.last_output_tokens,
+    );
+
+    var jsonl: std.Io.Writer.Allocating = .init(alloc);
+    defer jsonl.deinit();
+    try jsonl.writer.writeAll(started_line);
+    try jsonl.writer.writeAll(committed_line);
+    var source = std.Io.Reader.fixed(jsonl.written());
+    var reduced = try reduceJsonl(alloc, &source, null);
+    defer reduced.deinit(alloc);
+    try std.testing.expectEqual(@as(?u64, 128), reduced.state.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 64), reduced.state.last_output_tokens);
+    try std.testing.expectEqual(@as(usize, 1), reduced.state.history.len);
 }
 
 test "replay associates each committed work ID with its exact user turn" {

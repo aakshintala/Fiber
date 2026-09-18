@@ -2259,58 +2259,6 @@ fn writeUtcTimestamp(writer: *std.Io.Writer, timestamp_ms: i64) !void {
     });
 }
 
-pub const SessionSummarySnapshot = struct {
-    summary: session_store.SessionSummary,
-
-    pub fn render(self: SessionSummarySnapshot, alloc: Allocator, format: OutputFormat) ![]u8 {
-        return switch (format) {
-            .text => self.renderText(alloc),
-            .json => self.renderJson(alloc),
-        };
-    }
-
-    pub fn renderText(self: SessionSummarySnapshot, alloc: Allocator) ![]u8 {
-        return std.fmt.allocPrint(
-            alloc,
-            "[session] {s}\ncreated_at_ms: {d}\nupdated_at_ms: {d}\nlanguage: {s}\nhistory_len: {d}\n",
-            .{
-                self.summary.id,
-                self.summary.created_at_ms,
-                self.summary.updated_at_ms,
-                self.summary.conversation_language.view(),
-                self.summary.history_len,
-            },
-        );
-    }
-
-    pub fn renderJson(self: SessionSummarySnapshot, alloc: Allocator) ![]u8 {
-        var out: std.Io.Writer.Allocating = .init(alloc);
-        defer out.deinit();
-
-        try out.writer.print(
-            "{{\"ok\":true,\"kind\":\"{s}\",\"data\":{{\"id\":",
-            .{Kind.session_show.jsonName()},
-        );
-        try std.json.Stringify.value(self.summary.id, .{}, &out.writer);
-        try writeSessionDisplayJsonFields(&out.writer, self.summary);
-        try out.writer.print(
-            ",\"created_at_ms\":{d},\"updated_at_ms\":{d},\"history_len\":{d},\"conversation_language\":",
-            .{
-                self.summary.created_at_ms,
-                self.summary.updated_at_ms,
-                self.summary.history_len,
-            },
-        );
-        try std.json.Stringify.value(
-            self.summary.conversation_language.view(),
-            .{},
-            &out.writer,
-        );
-        try out.writer.writeAll("}}");
-        return out.toOwnedSlice();
-    }
-};
-
 fn writeSessionDisplayJsonFields(writer: *std.Io.Writer, summary: session_store.SessionSummary) !void {
     try writer.writeAll(",\"title\":");
     try std.json.Stringify.value(
@@ -3697,59 +3645,6 @@ test "core session list text visibly escapes terminal controls in unknown langua
         "[sessions] 1 saved\n - Untitled session\n" ++
             "   id=hostile-language | 0 turns | \\x1b[2J | updated 1970-01-01 00:00:00.002 UTC\n",
         text,
-    );
-}
-
-test "core session summary snapshot text and json stay stable" {
-    const summary = session_store.SessionSummary{
-        .id = @constCast("abc"),
-        .workspace_root = @constCast("/tmp/workspace"),
-        .origin_workspace_root = @constCast("/tmp/origin"),
-        .title = @constCast("Session title"),
-        .preview = @constCast("Session preview"),
-        .display_metadata_present = true,
-        .created_at_ms = 1,
-        .updated_at_ms = 2,
-        .conversation_language = types.ConversationLanguage.literal("es"),
-        .history_len = 3,
-    };
-
-    const text = try (SessionSummarySnapshot{
-        .summary = summary,
-    }).renderText(std.testing.allocator);
-    defer std.testing.allocator.free(text);
-    try std.testing.expectEqualStrings(
-        "[session] abc\ncreated_at_ms: 1\nupdated_at_ms: 2\nlanguage: es\nhistory_len: 3\n",
-        text,
-    );
-
-    const json = try (SessionSummarySnapshot{
-        .summary = summary,
-    }).renderJson(std.testing.allocator);
-    defer std.testing.allocator.free(json);
-    try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"session.show\",\"data\":{\"id\":\"abc\",\"title\":\"Session title\",\"preview\":\"Session preview\",\"workspace_root\":\"/tmp/workspace\",\"origin_workspace_root\":\"/tmp/origin\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":3,\"conversation_language\":\"es\"}}",
-        json,
-    );
-}
-
-test "core session JSON uses fallback title for metadata-missing summaries" {
-    const summary = session_store.SessionSummary{
-        .id = @constCast("old-session"),
-        .workspace_root = null,
-        .created_at_ms = 1,
-        .updated_at_ms = 2,
-        .conversation_language = types.ConversationLanguage.literal("en"),
-        .history_len = 1,
-    };
-
-    const json = try (SessionSummarySnapshot{
-        .summary = summary,
-    }).renderJson(std.testing.allocator);
-    defer std.testing.allocator.free(json);
-    try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"session.show\",\"data\":{\"id\":\"old-session\",\"title\":\"Untitled session\",\"preview\":null,\"workspace_root\":null,\"origin_workspace_root\":null,\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":1,\"conversation_language\":\"en\"}}",
-        json,
     );
 }
 

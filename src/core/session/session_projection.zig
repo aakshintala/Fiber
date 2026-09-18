@@ -167,6 +167,11 @@ pub fn decodeManifest(alloc: Allocator, bytes: []const u8) !Manifest {
         else => return error.InvalidManifest,
     };
     defer parsed.deinit();
+    // Tolerance reader: pre-rename schema-3 manifests named the
+    // last-response counters total_*; map them onto last_*.
+    const legacy_tokens = parsed.value == .object and parsed.value.object.get("total_input_tokens") != null;
+    const input_key: []const u8 = if (legacy_tokens) "total_input_tokens" else "last_input_tokens";
+    const output_key: []const u8 = if (legacy_tokens) "total_output_tokens" else "last_output_tokens";
     const root = try exactObject(parsed.value, &.{
         "schema_version",
         "storage_format",
@@ -178,8 +183,8 @@ pub fn decodeManifest(alloc: Allocator, bytes: []const u8) !Manifest {
         "workspace_root",
         "conversation_language",
         "history_len",
-        "last_input_tokens",
-        "last_output_tokens",
+        input_key,
+        output_key,
         "last_event_seq",
         "event_log_bytes",
         "event_log_stat_fingerprint",
@@ -219,9 +224,9 @@ pub fn decodeManifest(alloc: Allocator, bytes: []const u8) !Manifest {
             try requireString(root, "conversation_language"),
         ) catch return error.InvalidManifest,
         .history_len = try requireU64(root, "history_len"),
-        .last_input_tokens = try optionalU64(root.get("last_input_tokens") orelse
+        .last_input_tokens = try optionalU64(root.get(input_key) orelse
             return error.InvalidManifest),
-        .last_output_tokens = try optionalU64(root.get("last_output_tokens") orelse
+        .last_output_tokens = try optionalU64(root.get(output_key) orelse
             return error.InvalidManifest),
         .last_event_seq = try requireU64(root, "last_event_seq"),
         .event_log_bytes = try requireU64(root, "event_log_bytes"),
@@ -627,6 +632,17 @@ test "manifest serialization is deterministic and capped" {
     var oversized = manifest;
     oversized.preferences.model = oversized_model;
     try std.testing.expectError(error.ManifestTooLarge, encodeManifest(alloc, oversized));
+}
+
+test "pre-rename total_* manifest resumes onto last_*" {
+    const alloc = std.testing.allocator;
+    // Byte-faithful pre-rename schema-3 manifest: required total_* numbers
+    // where the current writer emits nullable last_*.
+    const raw = "{\"schema_version\":3,\"storage_format\":\"event_log_v1\",\"id\":\"session-1\",\"authority_id\":\"000102030405060708090a0b0c0d0e0f\",\"created_at_ms\":100,\"updated_at_ms\":200,\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"conversation_language\":\"en\",\"history_len\":4,\"total_input_tokens\":10,\"total_output_tokens\":20,\"last_event_seq\":9,\"event_log_bytes\":4096,\"event_log_stat_fingerprint\":\"5555555555555555555555555555555555555555555555555555555555555555\",\"generation_base_seq\":1,\"generation_base_bytes\":512,\"checkpoint_seq\":null,\"checkpoint_sha256\":null,\"preferences\":{\"model\":\"model-a\",\"effort\":\"medium\",\"fast_mode\":true}}";
+    var manifest = try decodeManifest(alloc, raw);
+    defer manifest.deinit(alloc);
+    try std.testing.expectEqual(@as(?u64, 10), manifest.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 20), manifest.last_output_tokens);
 }
 
 test "manifest decode semantic validation failure frees owned fields once" {
