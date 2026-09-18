@@ -24,27 +24,27 @@ const McpTransport = mcp_contract.McpTransport;
 /// transport, environment, credential and authority identity, workspace
 /// admission, and protocol-affecting options: any difference needs a new
 /// connection owner, while equal separately allocated values do not.
-pub fn sameServerConfig(left: McpServerConfig, right: McpServerConfig) bool {
-    return sameConfigValue(McpServerConfig, left, right);
+pub fn same_server_config(left: McpServerConfig, right: McpServerConfig) bool {
+    return same_config_value(McpServerConfig, left, right);
 }
 
-fn sameConfigValue(comptime T: type, left: T, right: T) bool {
+fn same_config_value(comptime T: type, left: T, right: T) bool {
     return switch (@typeInfo(T)) {
         .@"struct" => result: {
             inline for (std.meta.fields(T)) |field| {
-                if (!sameConfigValue(field.type, @field(left, field.name), @field(right, field.name))) break :result false;
+                if (!same_config_value(field.type, @field(left, field.name), @field(right, field.name))) break :result false;
             }
             break :result true;
         },
         .optional => |optional| if (left) |value|
-            if (right) |other| sameConfigValue(optional.child, value, other) else false
+            if (right) |other| same_config_value(optional.child, value, other) else false
         else
             right == null,
         .pointer => |pointer| result: {
             if (pointer.size != .slice) @compileError("MCP configuration may only borrow slices");
             if (left.len != right.len) break :result false;
             for (left, right) |value, other| {
-                if (!sameConfigValue(pointer.child, value, other)) break :result false;
+                if (!same_config_value(pointer.child, value, other)) break :result false;
             }
             break :result true;
         },
@@ -60,33 +60,33 @@ test "server reuse compares owned configuration values and all authority fields"
         .args = &.{"server.js"},
     };
     var second = first;
-    try std.testing.expect(sameServerConfig(first, second));
+    try std.testing.expect(same_server_config(first, second));
     second.args = &.{"other.js"};
-    try std.testing.expect(!sameServerConfig(first, second));
+    try std.testing.expect(!same_server_config(first, second));
     second = first;
     second.allow_stored_credentials = true;
-    try std.testing.expect(!sameServerConfig(first, second));
+    try std.testing.expect(!same_server_config(first, second));
     second = first;
     second.transport = .http;
-    try std.testing.expect(!sameServerConfig(first, second));
+    try std.testing.expect(!same_server_config(first, second));
     second = first;
     second.operation_timeout_ms += 1;
-    try std.testing.expect(!sameServerConfig(first, second));
+    try std.testing.expect(!same_server_config(first, second));
     second = first;
     second.source = .workspace;
     second.scope = .workspace;
     second.workspace_admission = .approved;
-    try std.testing.expect(sameServerConfig(first, second) == false);
+    try std.testing.expect(same_server_config(first, second) == false);
     var admitted = second;
     admitted.workspace_admission = .rejected;
-    try std.testing.expect(!sameServerConfig(second, admitted));
+    try std.testing.expect(!same_server_config(second, admitted));
     var first_id = [_]u8{ 'c', 'l', 'i', 'e', 'n', 't' };
     var second_id = [_]u8{ 'o', 't', 'h', 'e', 'r' };
     var credentialed = first;
     credentialed.auth = .{ .client_id = &first_id };
     var rotated = credentialed;
     rotated.auth = .{ .client_id = &second_id };
-    try std.testing.expect(!sameServerConfig(credentialed, rotated));
+    try std.testing.expect(!same_server_config(credentialed, rotated));
 }
 
 pub const enabled_servers_key = "enabledMcpjsonServers";

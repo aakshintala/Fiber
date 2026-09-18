@@ -2360,7 +2360,7 @@ pub const State = struct {
         defer adopted.deinit(alloc);
         var adoption_committed = false;
         defer if (!adoption_committed) {
-            if (candidate) |runtime| runtime.rollbackAdoption(adopted.items);
+            if (candidate) |runtime| runtime.rollback_adoption(adopted.items);
         };
         const live: ?*mcp_runtime.McpRuntime = if (authority_reduced)
             null
@@ -2375,7 +2375,7 @@ pub const State = struct {
             break :live self.runtime;
         };
         if (candidate) |next| {
-            if (live) |previous| try next.adoptCompatibleServers(previous, &adopted);
+            if (live) |previous| try next.adopt_compatible_servers(previous, &adopted);
         }
 
         var published = if (candidate) |runtime| published: {
@@ -2389,7 +2389,7 @@ pub const State = struct {
                     try alloc.dupe(u8, "A required MCP server is unavailable.");
                 // Detach adopted aliases before destroying the candidate: the
                 // previous runtime stays published with its objects intact.
-                runtime.rollbackAdoption(adopted.items);
+                runtime.rollback_adoption(adopted.items);
                 adoption_committed = true;
                 destroyRuntime(alloc, runtime);
                 candidate_owned = false;
@@ -2412,7 +2412,7 @@ pub const State = struct {
             return error.Cancelled;
         }
         if (live) |previous| {
-            if (candidate) |next| previous.finalizeAdoption(adopted.items, next);
+            if (candidate) |next| previous.finalize_adoption(adopted.items, next);
         }
         adoption_committed = true;
         const previous = self.runtime;
