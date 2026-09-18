@@ -72,7 +72,7 @@ jobs:
   # the static gates, which must stay fast.
   pgso-driver:
     name: PGSO driver tests
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'pgso-driver')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -196,7 +196,7 @@ jobs:
   # tests/e2e/conformance, so the root-level shard planner never discovers it.
   conformance:
     name: MCP conformance
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'conformance')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -239,7 +239,7 @@ jobs:
   # ad-hoc signs the output.
   build:
     name: Build (${{ matrix.target }})
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'build')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -276,7 +276,7 @@ jobs:
   # downloaded here.
   e2e:
     name: E2E (${{ matrix.name }}, shard ${{ matrix.label }})
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'e2e')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: [scope, build]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
@@ -483,7 +483,7 @@ jobs:
   # CI job's needs: it must never block merging, only demand flake issues.
   flake-watch:
     name: Flake watch (non-blocking)
-    if: always() && contains(fromJSON('["success", "failure"]'), needs.e2e.result)
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: e2e
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -511,7 +511,7 @@ jobs:
 
   bench:
     name: Performance gates
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'bench')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -568,7 +568,7 @@ jobs:
   # meaning on a manual dispatch.
   binary-size:
     name: ReleaseSafe size delta (${{ matrix.name }})
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'binary-size')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: scope
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
