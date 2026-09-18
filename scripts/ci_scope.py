@@ -163,7 +163,7 @@ def classify_path(
         return "FULL"
     if path.endswith(".md") and not _under(path, "tests/e2e"):
         return "STATIC"
-    if _under(path, "docs"):
+    if _under(path, "docs") or _under(path, ".agents"):
         return "STATIC"
     e2e_file = _E2E_ROOT_TEST.match(path)
     if e2e_file is not None:

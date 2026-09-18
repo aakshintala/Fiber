@@ -106,6 +106,13 @@ class SelectJobsTests(unittest.TestCase):
         )
         self.assertEqual("no changed path selects it", selection.reasons["build"])
 
+    def test_agents_folder_is_static(self) -> None:
+        # Agent docs, skills and helper scripts never reach the binary.
+        self._write({".agents/skills/x/run.py": "print()\n"})
+        selection = self._select([".agents/skills/x/run.py", ".agents/skills/x/SKILL.md"])
+        self._assert_jobs(selection, [])
+        self.assertEqual("STATIC", self._class_for(selection, ".agents/skills/x/run.py"))
+
     def test_unreferenced_script_is_static(self) -> None:
         self._write({"scripts/orphan_ci_scope.sh": "#!/bin/sh\n"})
         selection = self._select(["scripts/orphan_ci_scope.sh"])

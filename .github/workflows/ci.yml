@@ -183,7 +183,8 @@ jobs:
       # The deadline sits well under the job timeout so a hang fails this step
       # with output instead of a silent job cancel (#352). Before killing the
       # run, the watchdog dumps every thread stack of each test binary: that is
-      # what named the deadlock in #352.
+      # what named the deadlock in #352. Stacks stop at `Thread.join` unless
+      # the tests were built with -Dframe-pointers; see .agents/ci-hang.md.
       - name: Run unit tests
         env:
           TEST_TIMEOUT_SECONDS: "600"

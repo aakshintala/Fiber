@@ -16,6 +16,14 @@ pub fn build(b: *std.Build) void {
         "pgso-artifact",
         "Emit ReleaseSafe LLVM bitcode for one PGO/PGSO artifact",
     );
+    // Off by default: the product binary trades unwindable stacks for size.
+    // Turn it on when a debugger has to name the frame a hang is stuck in;
+    // see .agents/ci-hang.md.
+    const frame_pointers = b.option(
+        bool,
+        "frame-pointers",
+        "Keep frame pointers and unwind tables so sample/lldb can unwind a hang",
+    ) orelse false;
     const git_commit = readGitCommit(b);
     const app_version = readAppVersion(b);
 
@@ -33,8 +41,8 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
             .stack_check = false,
             .stack_protector = false,
-            .omit_frame_pointer = true,
-            .unwind_tables = .none,
+            .omit_frame_pointer = !frame_pointers,
+            .unwind_tables = if (frame_pointers) .sync else .none,
             .error_tracing = false,
             .strip = optimize != .Debug,
         }),

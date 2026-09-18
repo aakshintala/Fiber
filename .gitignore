@@ -27,7 +27,6 @@ benchmarks/baseline.json
 
 # Local agent/editor/tooling directories from this workspace
 .adal/
-.agents/
 .augment/
 .bob/
 .claude/

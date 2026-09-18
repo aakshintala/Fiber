@@ -33,3 +33,7 @@ Rules a reviewer applies to every diff. `/code-review` reads this file. Implemen
 * Partial state is cleaned up on error paths with `errdefer`.
 
 * A bounded error set is named specifically rather than widened to `anyerror`.
+
+## Threads
+
+* Teardown releases every lease, lock, or event a thread may be waiting on before it joins that thread. Joins come last. A join sequenced ahead of the release the joined thread needs is a deadlock that only shows under load (#352).
