@@ -73,6 +73,10 @@ pub const State = struct {
     model_completion_anchor_current: bool = false,
     model_picker_stage: ModelPickerStage = .model,
     model_picker_pending_model: std.ArrayList(u8) = .empty,
+    /// Set by Ctrl+S at any picker step: finishing the flow then writes the
+    /// profile default too, instead of this session only. Cleared with the
+    /// flow, so Escape (or any cancel) after Ctrl+S writes nothing.
+    model_picker_save_default: bool = false,
     model_picker_effort_index: usize = 0,
     model_picker_effort_window_start: usize = 0,
     model_picker_fast_index: usize = 0,
@@ -243,6 +247,7 @@ pub const State = struct {
     pub fn clearModelPickerFlow(self: *State) void {
         self.model_picker_stage = .model;
         self.model_picker_pending_model.clearRetainingCapacity();
+        self.model_picker_save_default = false;
         self.model_picker_effort_index = 0;
         self.model_picker_effort_window_start = 0;
         self.model_picker_fast_index = 0;

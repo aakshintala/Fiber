@@ -185,6 +185,14 @@ pub const ResumeHandoff = struct {
     }
 };
 
+/// Where a preference change lands. Session-only choices let one session
+/// try a model without moving the profile default every new session uses.
+/// Threaded through the single commit path, never a second code path.
+pub const PreferenceScope = enum {
+    session,
+    session_and_default,
+};
+
 pub const SessionPreferencePatch = struct {
     provider: ?model_provider.ProviderId = null,
     model: ?[]const u8 = null,
@@ -2249,6 +2257,7 @@ pub fn Runtime(comptime App: type) type {
         pub fn commitRuntimePreferences(
             app: *App,
             patch: SessionPreferencePatch,
+            scope: PreferenceScope,
         ) PreferenceCommitResult {
             var result = PreferenceCommitResult{};
             applySessionPreferencePatch(app, patch) catch |err| {
@@ -2258,6 +2267,11 @@ pub fn Runtime(comptime App: type) type {
                 app.session_persistence.fast_mode_model_bound =
                     patch.model != null and patch.fast_mode != null;
             }
+
+            // Session-only commits skip the profile default write; the
+            // session side below still lands (decision: /model is
+            // session-only, /settings keeps writing the default).
+            if (scope == .session) return commitSessionPreferences(app, patch, result);
 
             var settings_attempt = config_runtime.attemptUserPreferences(
                 app.alloc,
@@ -2274,13 +2288,22 @@ pub fn Runtime(comptime App: type) type {
                     settings_attempt = undefined;
                 },
             }
-            if (result.settings_error == null) {
+            return commitSessionPreferences(app, patch, result);
+        }
+
+        fn commitSessionPreferences(
+            app: *App,
+            patch: SessionPreferencePatch,
+            result: PreferenceCommitResult,
+        ) PreferenceCommitResult {
+            var committed = result;
+            if (committed.settings_error == null) {
                 applyPreferencePatch(
                     app.alloc,
                     &app.session_persistence.workspace_preferences,
                     patch,
                 ) catch |err| {
-                    result.session_error = err;
+                    committed.session_error = err;
                 };
             }
 
@@ -2289,11 +2312,11 @@ pub fn Runtime(comptime App: type) type {
             const loaded = if (app.session_persistence.writable) |*value|
                 value
             else
-                return result;
-            if (result.session_error != null) return result;
+                return committed;
+            if (committed.session_error != null) return committed;
             convergeDegraded(app, loaded, session_test_controls.logOptions()) catch |err| {
-                result.session_error = err;
-                return result;
+                committed.session_error = err;
+                return committed;
             };
             _ = loaded.appendEvent(
                 app.alloc,
@@ -2310,10 +2333,10 @@ pub fn Runtime(comptime App: type) type {
                 .retry_expected_tail,
                 session_test_controls.logOptions(),
             ) catch |err| {
-                result.session_error = err;
+                committed.session_error = err;
                 warnDegraded(app, err) catch {};
             };
-            return result;
+            return committed;
         }
 
         pub fn activeSessionId(app: *App) ?[]const u8 {
@@ -8052,6 +8075,7 @@ test "runtime-first preference targets commit independently with one session eve
     var result = Runtime(TestApp).commitRuntimePreferences(
         &app,
         .{ .model = "configured/model" },
+        .session_and_default,
     );
     defer result.deinit(alloc);
     try std.testing.expect(result.settings_error == null);
@@ -8102,6 +8126,7 @@ test "combined preference patch writes user defaults cleans legacy fields and ap
             .effort = types.ReasoningEffort.literal("high"),
             .fast_mode = false,
         },
+        .session_and_default,
     );
     defer result.deinit(alloc);
 

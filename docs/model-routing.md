@@ -97,3 +97,15 @@ AI) and 4 Go models (Anthropic Messages) are skipped: their adapters have
 not landed (#38, #283), so the script leaves them out and prints each id.
 Their adapter tickets rerun the script to regain them; loopback and
 `model-routing.test.ts` coverage for the regained models lands in #393.
+
+## Session-only model choice (#14)
+
+* `/model` Enter and `/model <name>` apply the model, effort and fast mode
+  to the running session only; `settings.json` is untouched and a new
+  session starts on the previous default.
+* Ctrl+S at any picker step (model, effort, fast) behaves like Enter there
+  and marks the choice to be saved; finishing writes the session and the
+  profile default together. Escape at any step cancels and writes nothing.
+* The `/settings` effort row, `fiber models use`, `fiber ask --model` and
+  `FIBER_MODEL` are unchanged: the first writes the session and the
+  default, the rest keep setting the default new sessions start from.

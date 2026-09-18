@@ -80,8 +80,10 @@ Set the default without opening the shell:
 ./zig-out/bin/fiber models use <id>
 ```
 
-Or choose one with `/model` in the interactive shell. Either way Fiber
-remembers it. With no model set, the shell opens the picker for you.
+Or choose one with `/model` in the interactive shell. Enter applies the
+choice to that session only; Ctrl+S at any picker step also saves it as
+the profile default when the flow finishes. `/model <name>` is session
+only. With no model set, the shell opens the picker for you.
 
 For a single command, pass `--model <id>` or set `FIBER_MODEL`.
 

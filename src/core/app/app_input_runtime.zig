@@ -1134,6 +1134,14 @@ pub fn Runtime(comptime App: type) type {
 
         fn routePickerControlByte(app: *App, byte: u8) !bool {
             if (!composerPickerSurfaceVisible(app)) return false;
+            // Ctrl+S reaches Fiber (raw mode clears IXON). At any /model
+            // picker step it behaves like Enter there and marks the finish
+            // to also save the profile default. Elsewhere the byte falls
+            // through and stays ignored.
+            if (byte == 19 and try completion_rt.submitModelPickerSavingDefault(app)) {
+                app.shell.render_requests.request(.footer);
+                return true;
+            }
             const delta = pickerControlDelta(byte) orelse return false;
             if (!try routeVisiblePickerMove(app, delta)) return false;
             app.input_runtime.vertical_navigation.reset();
@@ -2298,11 +2306,14 @@ pub fn Runtime(comptime App: type) type {
         fn applyInlineSettingsModelSelection(app: *App) !void {
             const selected = (try app.model_cache.menu.selectedModelAlloc(app.alloc)) orelse return;
             defer app.alloc.free(selected);
+            // The /settings model row keeps writing the default: /settings
+            // is the screen for changing settings.
             try session_commands.Commands(App).selectModelFromPicker(
                 app,
                 selected,
                 app.effort,
                 app.fast_mode,
+                .session_and_default,
             );
             app.model_cache.closeMenu();
             app.shell.render_requests.request(.footer);
@@ -2651,11 +2662,14 @@ pub fn Runtime(comptime App: type) type {
                     }, true);
                 },
                 .selection => |selection| {
+                    // A typed /model command stays in this session, like
+                    // `/model <name>`; saving is the picker's Ctrl+S.
                     try session_commands.Commands(App).selectModelFromPicker(
                         app,
                         selection.model,
                         selection.effort,
                         selection.fast_mode,
+                        .session,
                     );
                     app.input_runtime.inputResetState().clearCurrent(app.alloc);
                 },
@@ -3525,6 +3539,7 @@ const RoutingFakeApp = struct {
     last_preference_model: std.ArrayList(u8) = .empty,
     last_preference_effort: ?types.ReasoningEffort = null,
     last_preference_fast_mode: ?bool = null,
+    last_preference_scope: ?app_session_runtime.PreferenceScope = null,
     permission_mode_preference_commit_count: usize = 0,
     last_preference_permission_mode: ?types.PermissionMode = null,
     model_completion_values: []const []const u8 = &.{},
@@ -3888,8 +3903,10 @@ const RoutingFakeApp = struct {
     pub fn persistRuntimePreferences(
         self: *RoutingFakeApp,
         patch: app_session_runtime.SessionPreferencePatch,
+        scope: app_session_runtime.PreferenceScope,
     ) app_session_runtime.PreferenceCommitResult {
         self.preference_commit_count += 1;
+        self.last_preference_scope = scope;
         self.last_preference_model.clearRetainingCapacity();
         if (patch.model) |model| {
             self.last_preference_model.appendSlice(self.alloc, model) catch
@@ -6116,10 +6133,78 @@ test "model picker enter commits selected fast option from fast stage" {
     try std.testing.expectEqual(false, app.last_preference_fast_mode.?);
     try std.testing.expectEqualStrings("", app.input_runtime.edit_state.input.items);
     try std.testing.expectEqualStrings(
-        "Switched to anthropic/claude-opus-4.7",
+        "Switched to anthropic/claude-opus-4.7 for this session",
         app.notice_body.items,
     );
     try std.testing.expect(std.mem.find(u8, app.transcript.items, "Invalid /model selection") == null);
+}
+
+test "model picker ctrl+s commits fast stage as session and default" {
+    const alloc = std.testing.allocator;
+    var app = try RoutingFakeApp.init(alloc);
+    defer app.deinit();
+    const efforts = [_]types.ReasoningEffort{types.ReasoningEffort.literal("high")};
+    app.setGatewayControls("anthropic/claude-opus-4.7", &efforts, true);
+
+    try app.input_runtime.textReplacementState().replace(
+        alloc,
+        "/model anthropic/claude-opus-4.7 auto ",
+    );
+    try app.input_runtime.picker.beginModelPickerFlow(
+        alloc,
+        "anthropic/claude-opus-4.7",
+        0,
+        false,
+        .fast,
+    );
+
+    try Runtime(RoutingFakeApp).handleByte(&app, 19, 4096, 100);
+
+    try std.testing.expectEqual(@as(usize, 1), app.preference_commit_count);
+    try std.testing.expectEqual(
+        app_session_runtime.PreferenceScope.session_and_default,
+        app.last_preference_scope.?,
+    );
+    try std.testing.expectEqualStrings(
+        "Switched to anthropic/claude-opus-4.7 for this session and default",
+        app.notice_body.items,
+    );
+    try std.testing.expect(!app.input_runtime.picker.model_picker_save_default);
+}
+
+test "model picker ctrl+s advances model step and saves at the effort finish" {
+    const alloc = std.testing.allocator;
+    const current_model = "anthropic/claude-opus-4.7";
+    const completions = [_][]const u8{current_model};
+    var app = try RoutingFakeApp.init(alloc);
+    defer app.deinit();
+    const efforts = [_]types.ReasoningEffort{types.ReasoningEffort.literal("high")};
+    app.setGatewayControls(current_model, &efforts, false);
+    app.model_completion_values = &completions;
+    app.selected_model.clearRetainingCapacity();
+    try app.selected_model.appendSlice(alloc, current_model);
+    try app.input_runtime.textReplacementState().replace(alloc, "/model");
+
+    try Runtime(RoutingFakeApp).handleByte(&app, '\t', 4096, 100);
+    try Runtime(RoutingFakeApp).handleByte(&app, 19, 4096, 100);
+
+    // Ctrl+S behaved like Enter at the model step and kept its mark for
+    // the remaining effort step.
+    try std.testing.expectEqual(ModelPickerStage.effort, app.input_runtime.picker.model_picker_stage);
+    try std.testing.expect(app.input_runtime.picker.model_picker_save_default);
+    try std.testing.expectEqual(@as(usize, 0), app.preference_commit_count);
+
+    try Runtime(RoutingFakeApp).handleByte(&app, '\r', 4096, 100);
+
+    try std.testing.expectEqual(@as(usize, 1), app.preference_commit_count);
+    try std.testing.expectEqual(
+        app_session_runtime.PreferenceScope.session_and_default,
+        app.last_preference_scope.?,
+    );
+    try std.testing.expectEqualStrings(
+        "Switched to anthropic/claude-opus-4.7 for this session and default",
+        app.notice_body.items,
+    );
 }
 
 test "active stream Enter commits a complete model choice for the next turn" {
@@ -6152,7 +6237,7 @@ test "active stream Enter commits a complete model choice for the next turn" {
     try std.testing.expectEqualStrings("", app.input_runtime.edit_state.input.items);
     try std.testing.expectEqual(@as(usize, 0), app.submitted_prompt_count);
     try std.testing.expectEqualStrings(
-        "Next turn will use " ++ model,
+        "Next turn will use " ++ model ++ " for this session",
         app.notice_body.items,
     );
 }
