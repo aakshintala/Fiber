@@ -22,12 +22,35 @@ const runner_threaded_io: Io = Io.Threaded.global_single_threaded.io();
 
 pub fn main(init: std.process.Init.Minimal) void {
     @disableInstrumentation();
+    // DIAG ONLY: FIBER_DIAG_QUIET=1 suppresses per-test lines (behaves like
+    // the default runner) to test whether print timing shifts a race window.
+    const quiet = std.c.getenv("FIBER_DIAG_QUIET") != null;
     const test_fn_list = builtin.test_functions;
+    // DIAG ONLY: FIBER_DIAG_ORDER="740,741,742" replays an exact execution
+    // order (1-based indices as printed) instead of declaration order.
+    var order_buf: [8192]usize = undefined;
+    var order_len: usize = 0;
+    var order_storage: [8192]usize = undefined;
+    if (std.c.getenv("FIBER_DIAG_ORDER")) |spec_z| {
+        const spec = std.mem.span(spec_z);
+        var it = std.mem.splitScalar(u8, spec, ',');
+        while (it.next()) |tok| {
+            if (tok.len == 0) continue;
+            const idx = std.fmt.parseUnsigned(usize, tok, 10) catch continue;
+            if (idx == 0 or idx > test_fn_list.len or order_len >= order_buf.len) continue;
+            order_buf[order_len] = idx - 1;
+            order_len += 1;
+        }
+        @memcpy(order_storage[0..order_len], order_buf[0..order_len]);
+    }
     var ok_count: usize = 0;
     var skip_count: usize = 0;
     var fail_count: usize = 0;
     var leaks: usize = 0;
-    for (test_fn_list, 0..) |test_fn, i| {
+    const total = if (order_len > 0) order_len else test_fn_list.len;
+    for (0..total) |k| {
+        const i = if (order_len > 0) order_storage[k] else k;
+        const test_fn = test_fn_list[i];
         testing.allocator_instance = .{};
         testing.io_instance = .init(testing.allocator, .{
             .argv0 = .init(init.args),
@@ -40,14 +63,14 @@ pub fn main(init: std.process.Init.Minimal) void {
         testing.log_level = .warn;
         testing.environ = init.environ;
 
-        std.debug.print("[DIAG-RUN] {d}/{d} {s}...", .{ i + 1, test_fn_list.len, test_fn.name });
+        if (!quiet) std.debug.print("[DIAG-RUN] {d}/{d} {s}...", .{ i + 1, test_fn_list.len, test_fn.name });
         if (test_fn.func()) |_| {
             ok_count += 1;
-            std.debug.print("OK\n", .{});
+            if (!quiet) std.debug.print("OK\n", .{});
         } else |err| switch (err) {
             error.SkipZigTest => {
                 skip_count += 1;
-                std.debug.print("SKIP\n", .{});
+                if (!quiet) std.debug.print("SKIP\n", .{});
             },
             else => {
                 fail_count += 1;
