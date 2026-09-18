@@ -212,8 +212,6 @@ pub fn streamPrepared(
     const request_endpoint = override orelse endpoint;
     const account_id = try chatgpt_oauth.extractAccountId(alloc, request.credential.secret);
     defer alloc.free(account_id);
-    const auth_header = try std.fmt.allocPrint(alloc, "Bearer {s}", .{request.credential.secret});
-    defer secret.zeroAndFree(alloc, auth_header);
     const uri = try std.Uri.parse(request_endpoint);
 
     var extra_headers_buf: [7]std.http.Header = undefined;
@@ -235,30 +233,43 @@ pub fn streamPrepared(
 
     var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
     defer client.deinit();
+    const connect_deadline = std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
+        .clock = .awake,
+        .raw = .fromMilliseconds(connect_timeout_ms),
+    });
+    try request.admission.admit();
+    // The credential send runs through the shared choke after admission on
+    // purpose: a `.failed` value returned before admission is masked
+    // upstream as ProviderAdmissionMissing, while admission itself is
+    // memory-only, so this refusal still precedes all network I/O with the
+    // connection named. The choke guards the resolved endpoint — the
+    // override when set, else the compiled `https://` default — and mints
+    // the only `Authorization` value this transport may attach, so no
+    // second send site can bypass the guard: `OpenRequestOperation` below
+    // is the sole `.authorization` attach site for model traffic, fed only
+    // from here. A keyed credential never crosses plain HTTP off loopback
+    // (decision 12).
+    const maybe_auth_header = connection_mod.checked_authorization(
+        alloc,
+        .oauth,
+        request.credential.secret,
+        request_endpoint,
+    ) catch |err| switch (err) {
+        error.InsecureCredentialTransport => return insecure_transport_refusal(alloc, request_endpoint),
+        // Unreachable on this path: the override pre-parse above rejects
+        // unparseable URLs, and the lease always carries a secret.
+        error.InvalidBaseUrl, error.MissingCredential => return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint),
+        error.OutOfMemory => return err,
+    };
+    const auth_header = maybe_auth_header orelse
+        return stream_provider.failResult(error.CodexSubscriptionCredentialRequired);
+    defer secret.zeroAndFree(alloc, auth_header);
     var open_operation = OpenRequestOperation{
         .client = &client,
         .uri = uri,
         .auth_header = auth_header,
         .extra_headers = extra_headers_buf[0..extra_count],
     };
-    const connect_deadline = std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
-        .clock = .awake,
-        .raw = .fromMilliseconds(connect_timeout_ms),
-    });
-    try request.admission.admit();
-    // The transport rule runs after admission on purpose: a `.failed` value
-    // returned before admission is masked upstream as
-    // ProviderAdmissionMissing, while admission itself is memory-only, so
-    // this refusal still precedes all network I/O with the connection
-    // named. A keyed credential never crosses plain HTTP off loopback
-    // (decision 12); the compiled default is `https://`, so only an
-    // override can refuse.
-    if (override) |candidate| {
-        connection_mod.check_credential_transport(.oauth, candidate) catch |err| switch (err) {
-            error.InsecureCredentialTransport => return insecure_transport_refusal(alloc, candidate),
-            error.InvalidBaseUrl => return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint),
-        };
-    }
     var opened = try gateway_client.runBoundedHttpOperation(
         OpenedRequest,
         alloc,
@@ -1154,9 +1165,61 @@ test "OpenAI Codex rejects a 129th streamed tool call" {
     }
 }
 
-test "codex insecure override refusal names the connection before any I/O" {
-    var result = try insecure_transport_refusal(std.testing.allocator, "http://192.0.2.1:11434/v1");
-    defer result.deinit(std.testing.allocator);
+test "codex refuses an insecure override before any network I/O" {
+    const alloc = std.testing.allocator;
+    // Point the resolved endpoint at unroutable TEST-NET-1: any attempted
+    // I/O would return an `error`, never a `.failed` result, so observing
+    // the refusal — with delivery still definitely unsent — proves the
+    // choke fired before connecting.
+    const override = "http://192.0.2.1:9/v1";
+    // Install a process-wide endpoint override, then restore exactly what
+    // was there. Both maps live on the C allocator and leak deliberately
+    // (the setTestHome precedent): a leaked empty map stands in for
+    // "unset" — observably identical, every lookup misses — and stays
+    // valid forever, so later tests never read freed memory.
+    const prev_environ = io_mod.environMap();
+    const empty_env = try std.heap.c_allocator.create(std.process.Environ.Map);
+    empty_env.* = std.process.Environ.Map.init(std.heap.c_allocator);
+    const injected_env = try std.heap.c_allocator.create(std.process.Environ.Map);
+    injected_env.* = std.process.Environ.Map.init(std.heap.c_allocator);
+    try injected_env.put(e2e_endpoint_env, override);
+    io_mod.setEnvironMap(injected_env);
+    defer io_mod.setEnvironMap(if (prev_environ) |map| map else empty_env);
+
+    const payload = "{\"https://api.openai.com/auth\":{\"chatgpt_account_id\":\"acct_test\"}}";
+    var encoded_buf: [256]u8 = undefined;
+    const encoded = std.base64.url_safe_no_pad.Encoder.encode(
+        encoded_buf[0..std.base64.url_safe_no_pad.Encoder.calcSize(payload.len)],
+        payload,
+    );
+    var token_buf: [512]u8 = undefined;
+    const token = try std.fmt.bufPrint(&token_buf, "h.{s}.s", .{encoded});
+
+    const Admit = struct {
+        fn admit(_: *anyopaque) anyerror!void {}
+    };
+    var callback_context: u8 = 0;
+    var cancelled = std.atomic.Value(bool).init(false);
+    var delivery = stream_provider.DeliveryCertainty.init();
+    var evidence: stream_provider.AttemptEvidence = .{};
+    var result = try agent_stream_provider.stream(alloc, .{
+        .credential = .{ .secret = token, .source = .chatgpt_subscription },
+        .model = "gpt-5.6-sol",
+        .retry_count = 1,
+        .messages = &.{},
+        .tool_choice = .none,
+        .provider_options = .{},
+        .trace_ctx = .{},
+        .content_capture_limit = null,
+        .delivery = &delivery,
+        .attempt_evidence = &evidence,
+        .events = .{ .context = &callback_context, .emit_fn = struct {
+            fn ignore(_: *anyopaque, _: stream_provider.Event) void {}
+        }.ignore },
+        .admission = .{ .context = &callback_context, .admit_fn = Admit.admit },
+        .cancel_flag = &cancelled,
+    });
+    defer result.deinit(alloc);
     const failure = switch (result) {
         .failed => |failure| failure,
         else => return error.TestExpectedRefusal,
@@ -1165,5 +1228,6 @@ test "codex insecure override refusal names the connection before any I/O" {
     try std.testing.expectEqual(stream_provider.ResultOwnership.owned, failure.ownership);
     const detail = failure.detail orelse return error.TestExpectedRefusalDetail;
     try std.testing.expect(std.mem.find(u8, detail, "'codex'") != null);
-    try std.testing.expect(std.mem.find(u8, detail, "http://192.0.2.1:11434/v1") != null);
+    try std.testing.expect(std.mem.find(u8, detail, override) != null);
+    try std.testing.expectEqual(stream_provider.DeliveryCertainty.State.definitely_unsent, delivery.load());
 }

@@ -293,11 +293,13 @@ pub const ConnectionSet = struct {
 };
 
 /// Resolves the base URL one request uses (decision 6): a model entry
-/// override wins, otherwise the connection default applies. The transport
-/// guard runs on this resolved URL, so an override cannot bypass it.
-/// Returns null when neither layer sets one. Borrowed; empty model names
-/// only match an entry literally named empty, which the parser rejects.
-fn resolve_base_url(connection: *const Connection, model_name: []const u8) ?[]const u8 {
+/// override wins, otherwise the connection default applies. Runtime API:
+/// request-time routing resolves each model through here, then sends the
+/// resolved URL through `checked_authorization` — resolution never
+/// bypasses the guard. Returns null when neither layer sets one.
+/// Borrowed; empty model names only match an entry literally named empty,
+/// which the parser rejects.
+pub fn resolve_base_url(connection: *const Connection, model_name: []const u8) ?[]const u8 {
     if (connection.models.getPtr(model_name)) |override| {
         if (override.base_url) |url| return url;
     }
@@ -349,8 +351,10 @@ fn is_loopback_ipv4(host: []const u8) bool {
 /// unparseable URL, `InsecureCredentialTransport` is plain HTTP to a host
 /// other than loopback (or a missing host) for a keyed credential.
 pub const TransportError = error{
+    MissingCredential,
     InvalidBaseUrl,
     InsecureCredentialTransport,
+    OutOfMemory,
 };
 
 /// Refuses, before any network I/O, to send a keyed credential over plain
@@ -358,7 +362,32 @@ pub const TransportError = error{
 /// connections may use `http://` anywhere, and `https://` is unaffected.
 /// Callers report the failure naming the connection; the error itself
 /// carries no strings.
-pub fn check_credential_transport(kind: CredentialKind, base_url: []const u8) TransportError!void {
+/// Single choke for every model credential send (decision 12): guards the
+/// RESOLVED per-model base URL, then mints the `Authorization` value — or
+/// returns null when the connection is keyless, so a `none` route has no
+/// header value to attach and the fake sees zero Authorization bytes. A
+/// transport cannot send what it cannot mint: the only way to turn a
+/// secret into a header value is through here, which keeps the next
+/// transport (#289, #295) inside the invariant by construction. Callers
+/// report failures naming the connection; the error itself carries no
+/// strings. The returned slice is owned by the caller, which zeroes and
+/// frees it; null needs no cleanup.
+pub fn checked_authorization(
+    alloc: Allocator,
+    kind: CredentialKind,
+    secret: ?[]const u8,
+    base_url: []const u8,
+) TransportError!?[]u8 {
+    if (kind == .none) {
+        if (secret != null) return error.MissingCredential;
+        return null;
+    }
+    const owned = secret orelse return error.MissingCredential;
+    try check_credential_transport(kind, base_url);
+    return try std.fmt.allocPrint(alloc, "Bearer {s}", .{owned});
+}
+
+fn check_credential_transport(kind: CredentialKind, base_url: []const u8) TransportError!void {
     if (kind == .none) return;
     const uri = std.Uri.parse(base_url) catch return error.InvalidBaseUrl;
     if (!std.ascii.eqlIgnoreCase(uri.scheme, "http")) return;
@@ -821,10 +850,10 @@ test "none needs no credential while keyed kinds do" {
     try std.testing.expect(requires_credential(.env));
 }
 
-test "resolved base URL prefers the model entry override" {
+test "model resolution routes each model through the guarded choke" {
     const alloc = std.testing.allocator;
     var parsed = try parseTestValue(alloc,
-        \\{"local":{"credential":"none","base_url":"http://127.0.0.1:11434/v1","models":{"qwen":{"base_url":"http://192.0.2.1:11434/v1"},"llama":{}}}}
+        \\{"local":{"credential":"api_key","base_url":"http://127.0.0.1:11434/v1","models":{"qwen":{"base_url":"http://192.0.2.1:11434/v1"},"llama":{}}},"keyless":{"credential":"none","base_url":"http://192.0.2.1:11434/v1"}}
     );
     defer parsed.deinit();
     var set = ConnectionSet{};
@@ -834,18 +863,45 @@ test "resolved base URL prefers the model entry override" {
     try parseSetInto(alloc, parsed.value, &set, &detail);
 
     const local = set.get("local") orelse return error.TestExpectedConnection;
-    try std.testing.expectEqualStrings("http://192.0.2.1:11434/v1", resolve_base_url(local, "qwen").?);
-    try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", resolve_base_url(local, "llama").?);
-    try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", resolve_base_url(local, "undescribed").?);
+    // The override resolves per model and cannot bypass the choke: qwen
+    // refuses, while llama and undescribed models mint a Bearer value.
+    try std.testing.expectError(
+        error.InsecureCredentialTransport,
+        checked_authorization(alloc, local.credential.?, "s3cret", resolve_base_url(local, "qwen").?),
+    );
+    for ([_]bool{ true, false }) |described| {
+        const name = if (described) "llama" else "undescribed";
+        const resolved = resolve_base_url(local, name) orelse return error.TestExpectedUrl;
+        try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", resolved);
+        const minted = (try checked_authorization(alloc, local.credential.?, "s3cret", resolved)) orelse
+            return error.TestExpectedHeader;
+        defer alloc.free(minted);
+        try std.testing.expectEqualStrings("Bearer s3cret", minted);
+    }
+
+    // A keyless route mints nothing, so no Authorization header can leave;
+    // a secret misrouted to it fails closed instead of sending.
+    const keyless = set.get("keyless") orelse return error.TestExpectedConnection;
+    const keyless_url = resolve_base_url(keyless, "any") orelse return error.TestExpectedUrl;
+    try std.testing.expect(try checked_authorization(alloc, keyless.credential.?, null, keyless_url) == null);
+    try std.testing.expectError(
+        error.MissingCredential,
+        checked_authorization(alloc, keyless.credential.?, "s3cret", keyless_url),
+    );
 
     var bare = Connection{};
     try std.testing.expect(resolve_base_url(&bare, "qwen") == null);
 }
 
 test "transport guard lets keyless connections use plain HTTP anywhere" {
-    try check_credential_transport(.none, "http://192.0.2.1:11434/v1");
-    try check_credential_transport(.none, "http://example.com/v1");
-    try check_credential_transport(.none, "https://example.com/v1");
+    const alloc = std.testing.allocator;
+    for ([_][]const u8{
+        "http://192.0.2.1:11434/v1",
+        "http://example.com/v1",
+        "https://example.com/v1",
+    }) |url| {
+        try std.testing.expect(try checked_authorization(alloc, .none, null, url) == null);
+    }
 }
 
 test "transport guard refuses keyed credentials over plain HTTP off loopback" {
@@ -856,11 +912,12 @@ test "transport guard refuses keyed credentials over plain HTTP off loopback" {
         "http://example.com/v1",
         "HTTP://192.0.2.1/v1",
     };
+    const alloc = std.testing.allocator;
     for (kinds) |kind| {
         for (urls) |url| {
             try std.testing.expectError(
                 error.InsecureCredentialTransport,
-                check_credential_transport(kind, url),
+                checked_authorization(alloc, kind, "s3cret", url),
             );
         }
     }
@@ -878,8 +935,12 @@ test "transport guard keeps https and loopback HTTP flowing with a key" {
         "http://127.0.0.1/v1",
         "http://[::1]:11434/v1",
     };
+    const alloc = std.testing.allocator;
     for (urls) |url| {
-        try check_credential_transport(.api_key, url);
+        const minted = (try checked_authorization(alloc, .api_key, "s3cret", url)) orelse
+            return error.TestExpectedHeader;
+        defer alloc.free(minted);
+        try std.testing.expectEqualStrings("Bearer s3cret", minted);
     }
 }
 
@@ -891,39 +952,26 @@ test "transport guard fails closed on exotic hosts" {
         "http://[::2]:11434/v1",
         "http:///v1",
     };
+    const alloc = std.testing.allocator;
     for (urls) |url| {
         try std.testing.expectError(
             error.InsecureCredentialTransport,
-            check_credential_transport(.api_key, url),
+            checked_authorization(alloc, .api_key, "s3cret", url),
         );
     }
+    // No secret means no send, and an unparseable URL fails closed too.
+    try std.testing.expectError(
+        error.MissingCredential,
+        checked_authorization(alloc, .api_key, null, "https://example.com/v1"),
+    );
+    try std.testing.expectError(
+        error.InvalidBaseUrl,
+        checked_authorization(alloc, .api_key, "s3cret", ":::not-a-url"),
+    );
     try std.testing.expect(is_loopback_host("::1"));
     try std.testing.expect(is_loopback_host("[::1]"));
     try std.testing.expect(!is_loopback_host(""));
     try std.testing.expect(!is_loopback_host("example.com"));
-}
-
-test "model entry override cannot bypass the transport guard" {
-    const alloc = std.testing.allocator;
-    var parsed = try parseTestValue(alloc,
-        \\{"local":{"credential":"api_key","base_url":"http://127.0.0.1:11434/v1","models":{"qwen":{"base_url":"http://192.0.2.1:11434/v1"}}},"keyless":{"credential":"none","base_url":"http://192.0.2.1:11434/v1"}}
-    );
-    defer parsed.deinit();
-    var set = ConnectionSet{};
-    defer set.deinit(alloc);
-    var detail = ParseDetail{};
-    defer detail.deinit(alloc);
-    try parseSetInto(alloc, parsed.value, &set, &detail);
-
-    const local = set.get("local") orelse return error.TestExpectedConnection;
-    try std.testing.expectError(
-        error.InsecureCredentialTransport,
-        check_credential_transport(local.credential.?, resolve_base_url(local, "qwen").?),
-    );
-    try check_credential_transport(local.credential.?, resolve_base_url(local, "undescribed").?);
-
-    const keyless = set.get("keyless") orelse return error.TestExpectedConnection;
-    try check_credential_transport(keyless.credential.?, resolve_base_url(keyless, "any").?);
 }
 
 test "strict standard compat matches pi with no vendor detected" {
