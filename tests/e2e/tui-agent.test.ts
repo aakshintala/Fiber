@@ -44,6 +44,7 @@ describe.skipIf(SKIP)("tui: agent prompt", () => {
         env: seededFakeCodexEnv(home, codex, {
           FIBER_PERMISSION_MODE: "auto",
         }),
+        startupWaitMs: 0,
       });
       await session.waitForComposer(10_000);
 

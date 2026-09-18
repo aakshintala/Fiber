@@ -127,6 +127,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
           FIBER_TRACE_SCOPES: TRACE_SCOPES,
           FIBER_TRACE_LOG: tracePath,
         }),
+        startupWaitMs: 0,
       });
       await session.waitForComposer(TIMEOUT);
 
@@ -235,6 +236,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
           FIBER_TRACE_SCOPES: TRACE_SCOPES,
           FIBER_TRACE_LOG: tracePath,
         }),
+        startupWaitMs: 0,
       });
       await session.waitForComposer(TIMEOUT);
 
@@ -403,6 +405,7 @@ while :; do sleep 1; done
           FIBER_TRACE_SCOPES: `${TRACE_SCOPES},core`,
           FIBER_TRACE_LOG: tracePath,
         }),
+        startupWaitMs: 0,
       });
       await session.waitForComposer(TIMEOUT);
 

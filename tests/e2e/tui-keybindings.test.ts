@@ -22,7 +22,7 @@ describe.skipIf(LIVE_SKIP)("tui: key bindings", () => {
   test(
     "Ctrl+C twice exits the app",
     async () => {
-      session = await TmuxSession.create();
+      session = await TmuxSession.create({ startupWaitMs: 0 });
       await session.waitForComposer(10_000);
 
       await session.sendKeys("C-c");
@@ -37,7 +37,7 @@ describe.skipIf(LIVE_SKIP)("tui: key bindings", () => {
   test(
     "Ctrl+C once during idle shows exit hint",
     async () => {
-      session = await TmuxSession.create();
+      session = await TmuxSession.create({ startupWaitMs: 0 });
       await session.waitForComposer(10_000);
 
       await session.sendKeys("C-c");
@@ -51,7 +51,7 @@ describe.skipIf(LIVE_SKIP)("tui: key bindings", () => {
   test(
     "Up arrow recalls previous input after clearing",
     async () => {
-      session = await TmuxSession.create();
+      session = await TmuxSession.create({ startupWaitMs: 0 });
       await session.waitForComposer(10_000);
 
       await session.sendKeys("-l 'test-history-recall'");

@@ -449,6 +449,7 @@ async function launchScenario(
     })),
     width: 120,
     height: 40,
+    startupWaitMs: 0,
   });
   await session.waitForComposer(TIMEOUT);
   return { root, codex: harness, tracePath, stderrPath, session };

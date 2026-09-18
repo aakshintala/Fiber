@@ -162,6 +162,7 @@ async function startFx(
     width: 112,
     height: 32,
     stderrPath,
+    startupWaitMs: 0,
   });
   await session.waitForComposer(TIMEOUT);
   return session;

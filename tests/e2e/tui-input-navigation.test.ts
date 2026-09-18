@@ -184,6 +184,7 @@ async function startFx(
     width,
     height,
     stderrPath,
+    startupWaitMs: 0,
   });
   session = active;
   await active.waitForComposer(READY_TIMEOUT);
@@ -1185,6 +1186,7 @@ tmuxTest(
       env: localCodex.env(),
       width: 80,
       height: 24,
+      startupWaitMs: 0,
     });
     session = active;
     await active.waitForComposer(READY_TIMEOUT);

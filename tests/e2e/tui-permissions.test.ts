@@ -163,6 +163,7 @@ async function launch(
     stderrPath,
     width: size.width ?? 120,
     height: size.height ?? 40,
+    startupWaitMs: 0,
   });
   await activeSession.waitForComposer(TIMEOUT);
   return { session: activeSession, stderrPath };
@@ -1321,6 +1322,7 @@ describe.skipIf(!tmuxAvailable())("tui: file permissions", () => {
         stderrPath,
         width: 180,
         height: 40,
+        startupWaitMs: 0,
       });
       const session = activeSession;
 
