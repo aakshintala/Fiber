@@ -183,10 +183,17 @@ jobs:
         run: |
           started_at=$SECONDS
           trap 'printf "Unit test run elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
+          # DIAG-ONLY round 4 (never merge): run the test binary directly so
+          # per-test "{i}/{total} name...OK" lines stream to the log.
+          # `zig build test` drives the binary via --listen and swallows
+          # progress, making hangs unidentifiable. Same binary, same env.
+          TESTBIN=$(find .zig-cache/o -name test -size +40M | head -n 1)
+          export FIBER_TEST_PRODUCT_EXE="$PWD/zig-out/bin/fiber"
+          SEED=$(printf '0x%x' $((RANDOM * 32768 + RANDOM)))
           if command -v timeout >/dev/null 2>&1; then
-            timeout "${TEST_TIMEOUT_SECONDS}s" zig build test -Doptimize=${{ matrix.platform.optimize }}
+            timeout "${TEST_TIMEOUT_SECONDS}s" "$TESTBIN" --seed="$SEED"
           else
-            zig build test -Doptimize=${{ matrix.platform.optimize }}
+            "$TESTBIN" --seed="$SEED"
           fi
 
       - name: Smoke test fresh binary
