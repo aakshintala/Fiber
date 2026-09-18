@@ -16,13 +16,6 @@ pub fn build(b: *std.Build) void {
         "pgso-artifact",
         "Emit ReleaseSafe LLVM bitcode for one PGO/PGSO artifact",
     );
-    const test_filter = b.option(
-        []const u8,
-        "test-filter",
-        "Only run named unit tests with names containing this substring (unnamed test blocks always run; empty runs everything)",
-    );
-    // addTest dupes filters at graph-construction time, so the stack slice is safe.
-    const test_filters: []const []const u8 = if (test_filter) |filter| &.{filter} else &.{};
     const git_commit = readGitCommit(b);
     const app_version = readAppVersion(b);
 
@@ -61,7 +54,6 @@ pub fn build(b: *std.Build) void {
 
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
-        .filters = test_filters,
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
     run_exe_tests.step.dependOn(b.getInstallStep());
@@ -200,7 +192,6 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         }),
-        .filters = test_filters,
     });
     ui_activity_bench_tests.root_module.addImport(
         "benchmark_exports",
@@ -254,7 +245,6 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         }),
-        .filters = test_filters,
     });
     approval_review_bench_tests.root_module.addImport(
         "benchmark_exports",
