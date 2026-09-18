@@ -25,6 +25,7 @@ const session_catalog = @import("../session/session_catalog.zig");
 const session_codec = @import("../session/session_codec.zig");
 const session_event = @import("../session/session_event.zig");
 const session_usage = @import("../session/session_usage.zig");
+const generation_usage = @import("../session/generation_usage_provider.zig");
 const session_child_store = @import("../session/session_child_store.zig");
 const result_store = @import("../session/result_store.zig");
 const command_replay_store = @import("../session/command_replay_store.zig");
@@ -1924,9 +1925,11 @@ pub fn Runtime(comptime App: type) type {
         pub fn persistUsageCheckpoint(
             app: *App,
             snapshot: session_usage.Snapshot,
-            settled: ?session_usage.SettledRecord,
+            record: ?generation_usage.Record,
+            turn_id: ?u64,
+            item_id: ?[]const u8,
         ) !void {
-            const line = settled orelse return;
+            const settled_record = record orelse return;
             if (comptime !@hasField(App, "session_persistence")) {
                 return error.SessionPersistenceUnavailable;
             }
@@ -1952,15 +1955,15 @@ pub fn Runtime(comptime App: type) type {
                 recovery_checkpoint.timestamp_ms,
             );
             var turn_buf: [20]u8 = undefined;
-            const turn_id: ?[]const u8 = if (line.attribution.turn_id) |id|
+            const turn_id_text: ?[]const u8 = if (turn_id) |id|
                 try std.fmt.bufPrint(&turn_buf, "{d}", .{id})
             else
                 null;
             _ = try loaded.appendUsageRecorded(
                 app.alloc,
-                line.record,
-                turn_id,
-                line.attribution.item_id,
+                settled_record,
+                turn_id_text,
+                item_id,
                 recovery_checkpoint.timestamp_ms,
                 .retry_expected_tail,
                 .{ .checkpoint_interval = 0, .test_controls = session_test_controls.logOptions().test_controls },

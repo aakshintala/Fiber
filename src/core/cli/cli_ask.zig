@@ -45,6 +45,7 @@ const command_replay_store = @import("../session/command_replay_store.zig");
 const session_codec = @import("../session/session_codec.zig");
 const session_event = @import("../session/session_event.zig");
 const session_usage = @import("../session/session_usage.zig");
+const generation_usage = @import("../session/generation_usage_provider.zig");
 const usage_report = @import("../session/usage_report.zig");
 const session_store = @import("../session/session_store.zig");
 const session_test_controls = @import("../session/session_test_controls.zig");
@@ -2027,10 +2028,12 @@ fn refreshGatewayCredential(
 fn persistUsageCheckpoint(
     raw_ctx: *anyopaque,
     snapshot: session_usage.Snapshot,
-    settled: ?session_usage.SettledRecord,
+    record: ?generation_usage.Record,
+    turn_id: ?u64,
+    item_id: ?[]const u8,
 ) !void {
     const ctx: *AskContext = @ptrCast(@alignCast(raw_ctx));
-    const line = settled orelse return;
+    const settled_record = record orelse return;
     ctx.session_write_mutex.lockUncancelable(io_mod.getIo());
     defer ctx.session_write_mutex.unlock(io_mod.getIo());
     const writable = if (ctx.writable) |*value|
@@ -2057,15 +2060,15 @@ fn persistUsageCheckpoint(
         );
     }
     var turn_buf: [20]u8 = undefined;
-    const turn_id: ?[]const u8 = if (line.attribution.turn_id) |id|
+    const turn_id_text: ?[]const u8 = if (turn_id) |id|
         try std.fmt.bufPrint(&turn_buf, "{d}", .{id})
     else
         null;
     try writable.appendUsageRecorded(
         ctx.alloc,
-        line.record,
-        turn_id,
-        line.attribution.item_id,
+        settled_record,
+        turn_id_text,
+        item_id,
         recovery_checkpoint.timestamp_ms,
         .retry_expected_tail,
         .{ .checkpoint_interval = 0 },

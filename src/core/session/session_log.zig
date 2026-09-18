@@ -15,6 +15,7 @@ const session_replay = @import("session_replay.zig");
 const session_display_metadata = @import("session_display_metadata.zig");
 const session_resume_view = @import("session_resume_view.zig");
 const session_usage = @import("session_usage.zig");
+const generation_usage = @import("generation_usage_provider.zig");
 const session_usage_sidecar = @import("session_usage_sidecar.zig");
 
 const Allocator = std.mem.Allocator;
@@ -828,7 +829,7 @@ pub const LoadedWritableSession = struct {
     pub fn appendUsageRecorded(
         self: *LoadedWritableSession,
         alloc: Allocator,
-        record: session_usage.GenerationRecord,
+        record: generation_usage.Record,
         turn_id: ?[]const u8,
         item_id: ?[]const u8,
         timestamp_ms: i64,
@@ -5018,7 +5019,7 @@ test "usage sidecar publication stays inside the canonical commit boundary" {
 
 test "torn exact settlement restores stale sidecar backlog over settled rollback" {
     const Checkpoint = struct {
-        fn persist(_: *anyopaque, _: session_usage.Snapshot, _: ?session_usage.SettledRecord) !void {}
+        fn persist(_: *anyopaque, _: session_usage.Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {}
     };
     const RejectPublication = struct {
         fn publish(_: *anyopaque, event: session_usage.usage_report.ProfileEvent) !void {
@@ -6620,7 +6621,7 @@ test "usage totals survive resume and accumulate across generations" {
     defer temp.deinit(alloc);
     var initial = try testState(alloc, "session-usage-resume", 10);
     defer initial.deinit(alloc);
-    const gen_a = session_usage.GenerationRecord{
+    const gen_a = generation_usage.Record{
         .id = "gen-resume-a",
         .model = "test/model",
         .total_cost = 1.0,
@@ -6630,7 +6631,7 @@ test "usage totals survive resume and accumulate across generations" {
         .cache_write_tokens = 0,
         .billable_web_search_calls = 0,
     };
-    const gen_b = session_usage.GenerationRecord{
+    const gen_b = generation_usage.Record{
         .id = "gen-resume-b",
         .model = "test/model",
         .total_cost = 2.0,

@@ -6,6 +6,7 @@ const session_codec = @import("session_codec.zig");
 const types = @import("../shared/types.zig");
 const session_store = @import("session_store.zig");
 const session_usage = @import("session_usage.zig");
+const generation_usage = @import("generation_usage_provider.zig");
 const usage_report = @import("usage_report.zig");
 
 const Allocator = std.mem.Allocator;
@@ -298,7 +299,7 @@ test "recovery markers are idempotent and clear durably" {
 test "recovery registry reads only marked durable session state" {
     const alloc = std.testing.allocator;
     const Checkpoint = struct {
-        fn persist(_: *anyopaque, _: session_usage.Snapshot, _: ?session_usage.SettledRecord) !void {}
+        fn persist(_: *anyopaque, _: session_usage.Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {}
     };
 
     var tmp = std.testing.tmpDir(.{});

@@ -51,16 +51,18 @@ pub const DeliveryOutcome = enum {
 /// the sink is unset; `persist` must not retain the snapshot, checkpoint, or
 /// reconfigure the sink.
 /// Which log item a settled model call belongs to. Borrowed: the sink must
-/// copy anything it keeps past the persist call.
-pub const CallAttribution = struct {
+/// copy anything it keeps past the persist call. Private: external hosts
+/// pass the settled line as plain record plus ids, never naming this type.
+const CallAttribution = struct {
     item_id: ?[]const u8 = null,
     turn_id: ?u64 = null,
 };
 
 /// One settled model call offered to the session log. The snapshot carries
 /// the ledger; the record carries the per-call line. Borrowed like the
-/// snapshot: persist serializes synchronously.
-pub const SettledRecord = struct {
+/// snapshot: persist serializes synchronously. Private: the checkpoint sink
+/// below carries the same fields as plain parameters.
+const SettledRecord = struct {
     record: GenerationRecord,
     attribution: CallAttribution = .{},
 };
@@ -71,7 +73,9 @@ pub const UsageCheckpointSink = struct {
     persist: *const fn (
         context: *anyopaque,
         snapshot: Snapshot,
-        settled: ?SettledRecord,
+        record: ?generation_usage.Record,
+        turn_id: ?u64,
+        item_id: ?[]const u8,
     ) anyerror!void,
 };
 
@@ -104,13 +108,6 @@ const ProfilePublicationBatch = struct {
 
 /// One admitted provider invocation. `begin` durably reserves it before network I/O;
 /// every successful reservation must terminate through `fail` or `complete`.
-/// Links a model call to its log turn and message. The message id mints
-/// mid-stream, so callers pass a pointer the settle reads at completion.
-pub const UsageAttributionSource = struct {
-    turn_id: u64 = 0,
-    message_item_id: ?*const ?[]u8 = null,
-};
-
 pub const InvocationObservation = struct {
     usage: ?*Usage,
     sequence: u64 = 0,
@@ -236,7 +233,7 @@ pub const InvocationObservation = struct {
     }
 };
 
-pub const GenerationRecord = generation_usage.Record;
+const GenerationRecord = generation_usage.Record;
 
 pub const ModelAggregate = struct {
     model: []u8,
@@ -691,7 +688,13 @@ pub const Usage = struct {
         const sink = self.checkpoint_sink orelse return;
         var persisted = try self.snapshotCurrent(sink.allocator);
         defer persisted.deinit(sink.allocator);
-        try sink.persist(sink.context, persisted, settled);
+        try sink.persist(
+            sink.context,
+            persisted,
+            if (settled) |line| line.record else null,
+            if (settled) |line| line.attribution.turn_id else null,
+            if (settled) |line| line.attribution.item_id else null,
+        );
         self.markClean(persisted);
     }
 
@@ -707,7 +710,13 @@ pub const Usage = struct {
             return false;
         };
         defer persisted.deinit(sink.allocator);
-        sink.persist(sink.context, persisted, settled) catch |err| {
+        sink.persist(
+            sink.context,
+            persisted,
+            if (settled) |line| line.record else null,
+            if (settled) |line| line.attribution.turn_id else null,
+            if (settled) |line| line.attribution.item_id else null,
+        ) catch |err| {
             self.markBillingIncomplete();
             debug_trace.logf(
                 "session",
@@ -3255,7 +3264,7 @@ test "durable incident publication retires profile recovery" {
         calls: usize = 0,
         recovery_pending: bool = true,
 
-        fn persist(raw: *anyopaque, snapshot: Snapshot, _: ?SettledRecord) !void {
+        fn persist(raw: *anyopaque, snapshot: Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
             self.recovery_pending = needsProfileRecovery(snapshot);
@@ -3388,7 +3397,7 @@ test "profile publication failure preserves session totals and retries backlog" 
 test "restored publication backlog settles the pending generation exactly" {
     const alloc = std.testing.allocator;
     const Checkpoint = struct {
-        fn persist(_: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {}
+        fn persist(_: *anyopaque, _: Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {}
     };
     const PublicationProbe = struct {
         fail_generation: bool = true,
@@ -3548,7 +3557,7 @@ test "missing profile publication sink keeps the durable pending bridge" {
     const Checkpoint = struct {
         calls: usize = 0,
 
-        fn persist(raw: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {
+        fn persist(raw: *anyopaque, _: Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
         }
@@ -4038,7 +4047,7 @@ test "active invocation does not render partial usage as complete" {
 test "active invocation dominates separate pending and publication state" {
     const alloc = std.testing.allocator;
     const Checkpoint = struct {
-        fn persist(_: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {}
+        fn persist(_: *anyopaque, _: Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {}
     };
     var checkpoint_context: u8 = 0;
     var usage = Usage.initFresh();
@@ -4384,7 +4393,7 @@ test "terminal Gateway billing settles the durable observation immediately" {
 test "duplicate Gateway terminal callback does not republish inline billing" {
     const alloc = std.testing.allocator;
     const CheckpointProbe = struct {
-        fn persist(_: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {}
+        fn persist(_: *anyopaque, _: Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {}
     };
     const PublicationProbe = struct {
         generations: usize = 0,
@@ -5294,7 +5303,7 @@ test "gateway observation checkpoints active and terminal usage states" {
         api_duration_complete: [2]bool = undefined,
         pending_count: [2]usize = undefined,
 
-        fn persist(raw: *anyopaque, snapshot: Snapshot, _: ?SettledRecord) !void {
+        fn persist(raw: *anyopaque, snapshot: Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             const index = self.calls;
             self.billing[index] = snapshot.billing;
@@ -5348,7 +5357,7 @@ test "gateway observation does not proceed when active checkpoint fails" {
     const Reject = struct {
         calls: usize = 0,
 
-        fn persist(raw: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {
+        fn persist(raw: *anyopaque, _: Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
             return error.CheckpointRejected;
@@ -5381,7 +5390,7 @@ test "terminal checkpoint failure preserves request progress as incomplete" {
     const Reject = struct {
         calls: usize = 0,
 
-        fn persist(raw: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {
+        fn persist(raw: *anyopaque, _: Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
             if (self.calls == 2) return error.CheckpointRejected;

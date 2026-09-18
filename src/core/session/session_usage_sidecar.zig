@@ -2,6 +2,7 @@ const std = @import("std");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 const session_usage = @import("session_usage.zig");
+const generation_usage = @import("generation_usage_provider.zig");
 const stream_provider = @import("../agent/stream_provider.zig");
 const types = @import("../shared/types.zig");
 
@@ -592,7 +593,7 @@ test "future usage sidecar schema stays invalid without rewriting the file" {
 
 test "torn exact settlement republishes stale backlog without reapplying totals" {
     const Checkpoint = struct {
-        fn persist(_: *anyopaque, _: session_usage.Snapshot, _: ?session_usage.SettledRecord) !void {}
+        fn persist(_: *anyopaque, _: session_usage.Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {}
     };
     const RejectPublication = struct {
         fn publish(_: *anyopaque, event: session_usage.usage_report.ProfileEvent) !void {

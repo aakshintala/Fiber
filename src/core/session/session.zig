@@ -11,6 +11,7 @@ const image_attachments = @import("../images/image_attachments.zig");
 const web_fetch_artifacts = @import("web_fetch_artifacts.zig");
 const command_replay_store = @import("command_replay_store.zig");
 pub const session_usage = @import("session_usage.zig");
+const generation_usage = @import("generation_usage_provider.zig");
 pub const profile_usage_runtime = @import("profile_usage_runtime.zig");
 const sort_utils = @import("../shared/sort_utils.zig");
 const Allocator = std.mem.Allocator;
@@ -2181,7 +2182,7 @@ test "unavailable profile usage keeps reconciled generation pending in host runt
     const Checkpoint = struct {
         calls: usize = 0,
 
-        fn persist(raw: *anyopaque, _: session_usage.Snapshot, _: ?session_usage.SettledRecord) !void {
+        fn persist(raw: *anyopaque, _: session_usage.Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
         }
@@ -2237,7 +2238,7 @@ test "readable profile usage does not attach publishers or flush recovery" {
     const Checkpoint = struct {
         calls: usize = 0,
 
-        fn persist(raw: *anyopaque, _: session_usage.Snapshot, _: ?session_usage.SettledRecord) !void {
+        fn persist(raw: *anyopaque, _: session_usage.Snapshot, _: ?generation_usage.Record, _: ?u64, _: ?[]const u8) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
         }

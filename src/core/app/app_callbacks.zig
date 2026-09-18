@@ -26,6 +26,7 @@ const session_runtime = @import("../session/session.zig");
 const session_codec = @import("../session/session_codec.zig");
 const session_event = @import("../session/session_event.zig");
 const session_usage = @import("../session/session_usage.zig");
+const generation_usage = @import("../session/generation_usage_provider.zig");
 const session_test_controls = @import("../session/session_test_controls.zig");
 const types = @import("../shared/types.zig");
 const worker_runtime = @import("../agent/worker_runtime.zig");
@@ -780,10 +781,12 @@ pub fn Bindings(comptime App: type) type {
         fn agentPersistUsageCheckpoint(
             ctx: *anyopaque,
             snapshot: session_usage.Snapshot,
-            settled: ?session_usage.SettledRecord,
+            record: ?generation_usage.Record,
+            turn_id: ?u64,
+            item_id: ?[]const u8,
         ) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
-            try app_session_runtime.Runtime(App).persistUsageCheckpoint(app, snapshot, settled);
+            try app_session_runtime.Runtime(App).persistUsageCheckpoint(app, snapshot, record, turn_id, item_id);
         }
 
         fn agentPropagateGrant(ctx: *anyopaque, tool_name: []const u8, target_path: []const u8) !void {
