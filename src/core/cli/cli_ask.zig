@@ -261,6 +261,8 @@ pub const PromptRunResult = struct {
     recovery: ?types.RouteRecoveryStatus = null,
     recovery_durable: bool = false,
     context: output_contracts.ContextUsageSnapshot = .{},
+    input_tokens: ?u64 = null,
+    output_tokens: ?u64 = null,
 
     pub fn deinit(self: PromptRunResult, alloc: Allocator) void {
         alloc.free(self.assistant_output);
@@ -1720,12 +1722,15 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
             const assistant_output = try alloc.dupe(u8, ctx.assistant_output.items);
             errdefer alloc.free(assistant_output);
             const tool_calls = try takeToolCallRecords(&ctx, alloc);
+            const run_usage = takeRunReportedTokenUsage(&ctx);
             return .{
                 .exit_code = 1,
                 .assistant_output = assistant_output,
                 .interrupted = ctx.processInterruptRequested(),
                 .tool_calls = tool_calls,
                 .error_code = "NonInteractivePermissionRequired",
+                .input_tokens = run_usage.input_tokens,
+                .output_tokens = run_usage.output_tokens,
             };
         },
         else => {
@@ -1762,6 +1767,7 @@ fn takePromptRunResult(ctx: *AskContext, alloc: Allocator) !PromptRunResult {
 
     const tool_calls = try takeToolCallRecords(ctx, alloc);
     const context = takeContextSnapshot(ctx);
+    const run_usage = takeRunReportedTokenUsage(ctx);
 
     return .{
         .exit_code = if (ctx.failed) 1 else 0,
@@ -1777,6 +1783,22 @@ fn takePromptRunResult(ctx: *AskContext, alloc: Allocator) !PromptRunResult {
         .recovery = ctx.last_recovery_status,
         .recovery_durable = ctx.writable != null,
         .context = context,
+        .input_tokens = run_usage.input_tokens,
+        .output_tokens = run_usage.output_tokens,
+    };
+}
+
+/// Reads this run's accumulated main-agent token usage for `--json` output.
+/// `Agent.startTurn` zeroes `turn_usage` at the start of the turn and
+/// `Agent.observeUsage` adds each completion into it, so this is the total
+/// across a tool loop rather than the final completion alone, and a resumed
+/// session cannot leak the previous run's counts into it.
+fn takeRunReportedTokenUsage(ctx: *AskContext) struct { input_tokens: ?u64, output_tokens: ?u64 } {
+    ctx.session_write_mutex.lockUncancelable(io_mod.getIo());
+    defer ctx.session_write_mutex.unlock(io_mod.getIo());
+    return .{
+        .input_tokens = ctx.session.agent.turn_usage.input_tokens,
+        .output_tokens = ctx.session.agent.turn_usage.output_tokens,
     };
 }
 
@@ -3580,7 +3602,11 @@ fn renderFinalJsonResult(alloc: Allocator, result: PromptRunResult) ![]u8 {
         }
         try out.writer.writeAll("}");
     }
-    try out.writer.writeAll("],");
+    try out.writer.writeAll("],\"input_tokens\":");
+    try std.json.Stringify.value(result.input_tokens, .{}, &out.writer);
+    try out.writer.writeAll(",\"output_tokens\":");
+    try std.json.Stringify.value(result.output_tokens, .{}, &out.writer);
+    try out.writer.writeAll(",");
     try result.context.writeJsonField(&out.writer);
     if (result.error_code) |error_code| {
         try out.writer.writeAll(",\"error\":");
@@ -7589,7 +7615,7 @@ test "render final JSON preserves shape escaping order and newline" {
     defer alloc.free(json);
 
     try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"hello \\\"zig\\\"\\n\",\"final_output\":\"\",\"exit_code\":0,\"model\":\"model-x\",\"session_id\":\"123\",\"steps\":2,\"tool_calls\":[{\"name\":\"read_file\",\"status\":\"success\"}],\"context\":{\"used_tokens\":null,\"window_tokens\":null}}}\n",
+        "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"hello \\\"zig\\\"\\n\",\"final_output\":\"\",\"exit_code\":0,\"model\":\"model-x\",\"session_id\":\"123\",\"steps\":2,\"tool_calls\":[{\"name\":\"read_file\",\"status\":\"success\"}],\"input_tokens\":null,\"output_tokens\":null,\"context\":{\"used_tokens\":null,\"window_tokens\":null}}}\n",
         json,
     );
 }
@@ -7606,9 +7632,63 @@ test "render final JSON emits empty tool call array" {
     defer alloc.free(json);
 
     try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"context\":{\"used_tokens\":null,\"window_tokens\":null}}}\n",
+        "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"input_tokens\":null,\"output_tokens\":null,\"context\":{\"used_tokens\":null,\"window_tokens\":null}}}\n",
         json,
     );
+}
+
+test "render final JSON emits null token counts when usage is absent" {
+    const alloc = std.testing.allocator;
+    const result = PromptRunResult{
+        .exit_code = 0,
+        .assistant_output = try alloc.dupe(u8, "done"),
+    };
+    defer result.deinit(alloc);
+
+    const json = try renderFinalJsonResult(alloc, result);
+    defer alloc.free(json);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, json, .{});
+    defer parsed.deinit();
+    const data = askJsonData(parsed.value);
+    try std.testing.expect(data.get("input_tokens").? == .null);
+    try std.testing.expect(data.get("output_tokens").? == .null);
+}
+
+test "render final JSON emits input_tokens and output_tokens from run result" {
+    const alloc = std.testing.allocator;
+    const result = PromptRunResult{
+        .exit_code = 0,
+        .assistant_output = try alloc.dupe(u8, "done"),
+        .input_tokens = 12_345,
+        .output_tokens = 678,
+    };
+    defer result.deinit(alloc);
+
+    const json = try renderFinalJsonResult(alloc, result);
+    defer alloc.free(json);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, json, .{});
+    defer parsed.deinit();
+    const data = askJsonData(parsed.value);
+    try std.testing.expectEqual(@as(i64, 12_345), data.get("input_tokens").?.integer);
+    try std.testing.expectEqual(@as(i64, 678), data.get("output_tokens").?.integer);
+}
+
+test "render final JSON emits input_tokens when only input usage is known" {
+    const alloc = std.testing.allocator;
+    const result = PromptRunResult{
+        .exit_code = 0,
+        .assistant_output = try alloc.dupe(u8, "done"),
+        .input_tokens = 9_001,
+    };
+    defer result.deinit(alloc);
+
+    const json = try renderFinalJsonResult(alloc, result);
+    defer alloc.free(json);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, json, .{});
+    defer parsed.deinit();
+    const data = askJsonData(parsed.value);
+    try std.testing.expectEqual(@as(i64, 9_001), data.get("input_tokens").?.integer);
+    try std.testing.expect(data.get("output_tokens").? == .null);
 }
 
 test "render final JSON reports the successful recovery attempt" {
@@ -8387,7 +8467,7 @@ test "json run with missing API key prints diagnostic then final object" {
     try std.testing.expectEqual(@as(u8, 1), exit_code);
     try std.testing.expectEqualStrings("fiber ask: " ++ credentials.missing_credential_message ++ "\n", stderr_capture.bytes.items);
     try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"context\":{\"used_tokens\":null,\"window_tokens\":null},\"error\":\"MissingCredentials\"}}\n",
+        "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"\",\"final_output\":\"\",\"exit_code\":1,\"model\":\"\",\"session_id\":\"\",\"steps\":0,\"tool_calls\":[],\"input_tokens\":null,\"output_tokens\":null,\"context\":{\"used_tokens\":null,\"window_tokens\":null},\"error\":\"MissingCredentials\"}}\n",
         stdout_capture.bytes.items,
     );
 }
@@ -8649,7 +8729,7 @@ test "quiet suppresses streaming while quiet json captures final output" {
     const json_exit = try runWithDeps(alloc, &.{ "--quiet", "--json", "hello" }, testConfig(), testPromptRunDeps(&stdout_capture, &stderr_capture, testPresentKeyStartup));
     try std.testing.expectEqual(@as(u8, 0), json_exit);
     try std.testing.expect(std.mem.startsWith(u8, stdout_capture.bytes.items, "{\"ok\":true,\"kind\":\"ask\",\"data\":{\"output\":\"assistant text\",\"final_output\":\"\",\"exit_code\":0,\"model\":\"model\",\"session_id\":\""));
-    try std.testing.expect(std.mem.endsWith(u8, stdout_capture.bytes.items, "\",\"steps\":0,\"tool_calls\":[],\"context\":{\"used_tokens\":null,\"window_tokens\":null}}}\n"));
+    try std.testing.expect(std.mem.endsWith(u8, stdout_capture.bytes.items, "\",\"steps\":0,\"tool_calls\":[],\"input_tokens\":null,\"output_tokens\":null,\"context\":{\"used_tokens\":null,\"window_tokens\":null}}}\n"));
     try std.testing.expectEqualStrings("", stderr_capture.bytes.items);
 }
 
