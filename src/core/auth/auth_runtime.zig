@@ -1044,3 +1044,150 @@ test "closePicker during sign-in cancels a mid-poll worker without crashing" {
     try std.testing.expect(runtime.sign_in_flow.flow == null);
     try std.testing.expectEqual(login_flow.SignInTransition.cancelled, runtime.pollSignInTransition(alloc));
 }
+
+test "escape during a production sign-in returns through connections to the composer" {
+    const alloc = std.testing.allocator;
+    var runtime: Runtime = undefined;
+    Runtime.initInto(&runtime, oauth_transport.unavailable_provider);
+    defer runtime.deinit(alloc);
+    var poll_state = CancelMidPollState{};
+
+    try std.testing.expect(try runtime.sign_in_flow.startPrepared(
+        alloc,
+        try makeCancelTestPreparedLogin(alloc),
+        poll_state.deps(),
+    ));
+    try std.testing.expect(waitForCancelTestPoll(&poll_state));
+    // Production opens sign-in from the root picker, so one Escape lands on
+    // the connections stage — not straight back at the composer.
+    runtime.picker_active = true;
+    runtime.picker_stage = .sign_in;
+    runtime.sign_in_returns_to_root = true;
+
+    try std.testing.expect(runtime.popPickerStage());
+    try std.testing.expect(runtime.picker_active);
+    try std.testing.expectEqual(PickerStage.connections, runtime.picker_stage);
+    try std.testing.expect(runtime.picker_selection.?.eql(.{ .action = .chatgpt_login }));
+    try std.testing.expect(runtime.sign_in_flow.thread == null);
+    try std.testing.expect(runtime.sign_in_flow.flow == null);
+    try std.testing.expect(runtime.sign_in_flow.poll_state == null);
+    try std.testing.expect(runtime.sign_in_flow.flow_alloc == null);
+
+    try std.testing.expect(runtime.popPickerStage());
+    try std.testing.expect(runtime.picker_active);
+    try std.testing.expectEqual(PickerStage.root, runtime.picker_stage);
+    try std.testing.expect(runtime.picker_selection.?.eql(.{ .action = .connections }));
+
+    try std.testing.expect(runtime.popPickerStage());
+    try std.testing.expect(!runtime.picker_active);
+    try std.testing.expectEqual(PickerStage.root, runtime.picker_stage);
+    try std.testing.expect(runtime.takePickerChoice() == null);
+    try std.testing.expectEqual(login_flow.SignInTransition.cancelled, runtime.pollSignInTransition(alloc));
+}
+
+/// Join-order surrogate: stands in for the browser login context (listener
+/// plus secrets) whose teardown must run only after the poll worker exits.
+/// The gated poll cannot exit until the test releases it, so any teardown
+/// observed while gated is a deterministic free-before-join.
+const JoinOrderState = struct {
+    poll_started: std.atomic.Value(bool) = .init(false),
+    poll_saw_cancel: std.atomic.Value(bool) = .init(false),
+    release_poll: std.atomic.Value(bool) = .init(false),
+    poll_exited: std.atomic.Value(bool) = .init(false),
+    cleanup_count: std.atomic.Value(usize) = .init(0),
+    teardown_saw_poll_exit: bool = false,
+
+    fn deps(self: *@This()) login_flow.SignInRuntimeDeps {
+        return .{
+            .ctx = self,
+            .deinit_ctx = deinit,
+            .poll = .{
+                .ctx = self,
+                .poll_device_token = poll,
+            },
+        };
+    }
+
+    fn poll(
+        raw: ?*anyopaque,
+        _: Allocator,
+        _: oauth_transport.Provider,
+        _: oauth.Metadata,
+        _: []const u8,
+        _: []const u8,
+        cancel_flag: *std.atomic.Value(bool),
+        _: std.Io.Clock.Timestamp,
+    ) !oauth.PollResult {
+        const self: *@This() = @ptrCast(@alignCast(raw.?));
+        self.poll_started.store(true, .seq_cst);
+        while (!cancel_flag.load(.seq_cst)) testSleepMs(1);
+        self.poll_saw_cancel.store(true, .seq_cst);
+        while (!self.release_poll.load(.seq_cst)) testSleepMs(1);
+        self.poll_exited.store(true, .seq_cst);
+        return error.Cancelled;
+    }
+
+    fn deinit(raw: ?*anyopaque, _: Allocator) void {
+        const self: *@This() = @ptrCast(@alignCast(raw.?));
+        self.teardown_saw_poll_exit = self.poll_exited.load(.seq_cst);
+        _ = self.cleanup_count.fetchAdd(1, .seq_cst);
+    }
+};
+
+const EscapeCancel = struct {
+    runtime: *Runtime,
+    cancelled: std.atomic.Value(bool) = .init(false),
+
+    fn run(self: *@This()) void {
+        self.cancelled.store(self.runtime.popPickerStage(), .seq_cst);
+    }
+};
+
+fn waitForAtomicFlag(flag: *std.atomic.Value(bool)) bool {
+    var remaining_ms: u64 = 2000;
+    while (remaining_ms > 0) : (remaining_ms -= 1) {
+        if (flag.load(.seq_cst)) return true;
+        testSleepMs(1);
+    }
+    return flag.load(.seq_cst);
+}
+
+test "sign-in context teardown waits for the poll worker to exit" {
+    const alloc = std.testing.allocator;
+    var runtime: Runtime = undefined;
+    Runtime.initInto(&runtime, oauth_transport.unavailable_provider);
+    defer runtime.deinit(alloc);
+    var order_state = JoinOrderState{};
+
+    if (!(try runtime.sign_in_flow.startPrepared(
+        alloc,
+        try makeCancelTestPreparedLogin(alloc),
+        order_state.deps(),
+    ))) return error.TestExpectedSignInStart;
+    if (!waitForAtomicFlag(&order_state.poll_started)) {
+        order_state.release_poll.store(true, .seq_cst);
+        _ = runtime.sign_in_flow.cancel();
+        return error.TestExpectedPollStart;
+    }
+    runtime.picker_active = true;
+    runtime.picker_stage = .sign_in;
+    runtime.sign_in_returns_to_root = false;
+
+    var escape = EscapeCancel{ .runtime = &runtime };
+    var cancel_thread = try std.Thread.spawn(.{}, EscapeCancel.run, .{&escape});
+    const saw_cancel = waitForAtomicFlag(&order_state.poll_saw_cancel);
+    // The worker is gated inside its poll and cannot have exited: any
+    // teardown observed here ran before the join.
+    const premature_teardown = order_state.cleanup_count.load(.seq_cst);
+    order_state.release_poll.store(true, .seq_cst);
+    cancel_thread.join();
+
+    if (!saw_cancel) return error.TestExpectedCancelObserved;
+    try std.testing.expect(escape.cancelled.load(.seq_cst));
+    try std.testing.expectEqual(@as(usize, 0), premature_teardown);
+    try std.testing.expectEqual(@as(usize, 1), order_state.cleanup_count.load(.seq_cst));
+    try std.testing.expect(order_state.teardown_saw_poll_exit);
+    try std.testing.expect(runtime.sign_in_flow.thread == null);
+    try std.testing.expect(runtime.sign_in_flow.flow == null);
+    try std.testing.expectEqual(login_flow.SignInTransition.cancelled, runtime.pollSignInTransition(alloc));
+}

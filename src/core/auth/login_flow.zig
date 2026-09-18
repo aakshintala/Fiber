@@ -226,7 +226,7 @@ pub const SignInRuntime = struct {
         return try alloc.dupe(u8, url);
     }
 
-    pub fn pollTransition(self: *Self, alloc: Allocator) SignInTransition {
+    pub fn pollTransition(self: *Self, _: Allocator) SignInTransition {
         self.mutex.lockUncancelable(io_mod.getIo());
         const terminal = switch (self.state) {
             .succeeded, .failed, .cancelled => true,
@@ -244,26 +244,32 @@ pub const SignInRuntime = struct {
         switch (self.state) {
             .succeeded => {
                 self.state = .idle;
-                var flow = self.flow;
-                self.flow = null;
-                self.deps = .{};
-                if (flow) |*prepared| prepared.deinit(alloc);
+                const cleared = self.takeClearedFlowLocked();
+                var flow = cleared.flow;
+                // The flow was allocated with the stored start allocator, which
+                // may differ from any allocator in scope here.
+                if (flow) |*prepared| prepared.deinit(cleared.flow_alloc.?);
                 var completion = self.completion.?;
                 self.completion = null;
                 return .{ .succeeded = completion.take() };
             },
             .failed => {
                 self.state = .idle;
-                var flow = self.flow;
-                self.flow = null;
-                self.deps = .{};
+                const cleared = self.takeClearedFlowLocked();
+                var flow = cleared.flow;
                 const failure = self.failure.?;
                 self.failure = null;
-                if (flow) |*prepared| prepared.deinit(alloc);
+                if (flow) |*prepared| prepared.deinit(cleared.flow_alloc.?);
                 return .{ .failed = failure };
             },
             .cancelled => {
                 self.state = .idle;
+                // Usually cancel already cleared the flow; teardown here covers a
+                // worker-published cancel so no clear path leaves stored state.
+                const cleared = self.takeClearedFlowLocked();
+                var flow = cleared.flow;
+                if (flow) |*prepared| prepared.deinit(cleared.flow_alloc.?);
+                if (cleared.deps.deinit_ctx) |deinit_ctx| deinit_ctx(cleared.deps.ctx, cleared.flow_alloc.?);
                 return .cancelled;
             },
             .idle, .polling => unreachable,
@@ -378,20 +384,38 @@ pub const SignInRuntime = struct {
         self.state = .failed;
     }
 
-    fn clearFlow(self: *Self) void {
-        self.mutex.lockUncancelable(io_mod.getIo());
-        var flow = self.flow;
-        const deps = self.deps;
-        const flow_alloc = self.flow_alloc;
+    const ClearedFlow = struct {
+        flow: ?PreparedLogin,
+        deps: SignInRuntimeDeps,
+        flow_alloc: ?Allocator,
+    };
+
+    /// Removes the active flow with the allocator it was started with. Every
+    /// clear path (cancel, success, failure) routes through here so teardown
+    /// always uses the stored start allocator and no stored state goes stale.
+    /// The caller must hold the mutex.
+    fn takeClearedFlowLocked(self: *Self) ClearedFlow {
+        const cleared: ClearedFlow = .{
+            .flow = self.flow,
+            .deps = self.deps,
+            .flow_alloc = self.flow_alloc,
+        };
         self.flow = null;
         self.poll_state = null;
         self.deps = .{};
         self.flow_alloc = null;
+        return cleared;
+    }
+
+    fn clearFlow(self: *Self) void {
+        self.mutex.lockUncancelable(io_mod.getIo());
+        const cleared = self.takeClearedFlowLocked();
         self.mutex.unlock(io_mod.getIo());
+        var flow = cleared.flow;
         // flow and flow_alloc are installed and cleared together, so a live
         // flow always has its start allocator available here.
-        if (flow) |*prepared| prepared.deinit(flow_alloc.?);
-        if (deps.deinit_ctx) |deinit_ctx| deinit_ctx(deps.ctx, flow_alloc.?);
+        if (flow) |*prepared| prepared.deinit(cleared.flow_alloc.?);
+        if (cleared.deps.deinit_ctx) |deinit_ctx| deinit_ctx(cleared.deps.ctx, cleared.flow_alloc.?);
     }
 };
 
@@ -975,6 +999,34 @@ test "cooperative sign-in cancellation publishes no session" {
     try std.testing.expectEqual(SignInTransition.cancelled, runtime.pollTransition(alloc));
     try std.testing.expectEqual(@as(usize, 0), state.complete_count);
     try std.testing.expectEqual(@as(usize, 0), state.save_count);
+    try std.testing.expect(runtime.poll_state == null);
+    try std.testing.expect(runtime.flow_alloc == null);
+}
+
+test "success teardown frees the flow with the start allocator and clears stored state" {
+    const alloc = std.testing.allocator;
+    var runtime: SignInRuntime = .{};
+    defer runtime.deinit(alloc);
+    var state = CooperativeSignInTestState.init(alloc, &.{.success});
+    defer state.deinit();
+    try std.testing.expect(try runtime.startPreparedCooperative(
+        alloc,
+        try makeTestPreparedLogin(alloc),
+        state.deps(),
+    ));
+    runtime.pulseCooperative(alloc);
+
+    // The caller reaping the transition may use an unrelated allocator; the
+    // flow must still be released with the allocator that started it, so a
+    // failing reaper cannot break teardown or leak the flow.
+    var transition = runtime.pollTransition(std.testing.failing_allocator);
+    switch (transition) {
+        .succeeded => |*selection| selection.deinit(alloc),
+        else => return error.TestExpectedSuccessfulSignIn,
+    }
+    try std.testing.expect(runtime.flow == null);
+    try std.testing.expect(runtime.poll_state == null);
+    try std.testing.expect(runtime.flow_alloc == null);
 }
 
 test "cooperative sign-in reports device-code expiry without another poll" {
@@ -995,6 +1047,9 @@ test "cooperative sign-in reports device-code expiry without another poll" {
     }
     try std.testing.expectEqual(@as(usize, 0), state.poll.poll_index);
     try std.testing.expectEqual(@as(usize, 0), state.save_count);
+    try std.testing.expect(runtime.flow == null);
+    try std.testing.expect(runtime.poll_state == null);
+    try std.testing.expect(runtime.flow_alloc == null);
 }
 
 test "cooperative sign-in store failure is traced and becomes a recoverable transition" {
