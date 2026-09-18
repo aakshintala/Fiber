@@ -182,16 +182,16 @@ jobs:
         run: |
           started_at=$SECONDS
           trap 'printf "Unit test run elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
-          # DIAG ONLY: run the unit-test binary directly instead of through
-          # `zig build test`, so the default runner streams `i/n name...OK`.
-          FIBER_TEST_PRODUCT_EXE="$PWD/zig-out/bin/fiber" ./zig-out/bin/fiber-unit-tests --cache-dir=.zig-cache 2>&1 &
+          # DIAG ONLY: the stock runner copy in scripts/diag prints each test
+          # name under --listen, so the last [TEST] line names the hang.
+          zig build test -Doptimize=${{ matrix.platform.optimize }} &
           build_pid=$!
           while kill -0 "$build_pid" 2>/dev/null; do
             if [ $((SECONDS - started_at)) -ge "$TEST_TIMEOUT_SECONDS" ]; then
               echo "::group::HANG after ${TEST_TIMEOUT_SECONDS}s: process tree"
               ps -axo pid,ppid,stat,etime,wchan,command | grep -E 'zig|/test' | grep -v grep || true
               echo "::endgroup::"
-              for pid in $(pgrep -x fiber-unit-tests); do
+              for pid in $(pgrep -x test); do
                 echo "::group::HANG: open files of pid $pid"
                 lsof -p "$pid" 2>&1 || true
                 echo "::endgroup::"
@@ -204,7 +204,7 @@ jobs:
                 fi
                 echo "::endgroup::"
               done
-              pkill -x fiber-unit-tests || true
+              pkill -x test || true
               kill "$build_pid" 2>/dev/null || true
               exit 1
             fi

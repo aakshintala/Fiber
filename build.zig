@@ -54,6 +54,8 @@ pub fn build(b: *std.Build) void {
 
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
+        // DIAG ONLY (#352): stock runner plus a per-test name print.
+        .test_runner = .{ .path = b.path("scripts/diag/test_runner.zig"), .mode = .server },
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
     run_exe_tests.step.dependOn(b.getInstallStep());
