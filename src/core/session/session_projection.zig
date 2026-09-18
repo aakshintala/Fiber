@@ -21,8 +21,8 @@ pub const Manifest = struct {
     workspace_root: []u8,
     conversation_language: session.ConversationLanguage,
     history_len: u64,
-    total_input_tokens: u64,
-    total_output_tokens: u64,
+    last_input_tokens: ?u64,
+    last_output_tokens: ?u64,
     last_event_seq: u64,
     event_log_bytes: u64,
     event_log_stat_fingerprint: Digest,
@@ -120,11 +120,15 @@ pub fn encodeManifest(alloc: Allocator, manifest: Manifest) ![]u8 {
     try out.writer.writeAll(",\"conversation_language\":");
     try writeJsonString(&out.writer, manifest.conversation_language.view());
     try out.writer.print(
-        ",\"history_len\":{d},\"total_input_tokens\":{d},\"total_output_tokens\":{d},\"last_event_seq\":{d},\"event_log_bytes\":{d},\"event_log_stat_fingerprint\":",
+        ",\"history_len\":{d},\"last_input_tokens\":",
+        .{manifest.history_len},
+    );
+    try session_codec.writeOptionalU64(&out.writer, manifest.last_input_tokens);
+    try out.writer.writeAll(",\"last_output_tokens\":");
+    try session_codec.writeOptionalU64(&out.writer, manifest.last_output_tokens);
+    try out.writer.print(
+        ",\"last_event_seq\":{d},\"event_log_bytes\":{d},\"event_log_stat_fingerprint\":",
         .{
-            manifest.history_len,
-            manifest.total_input_tokens,
-            manifest.total_output_tokens,
             manifest.last_event_seq,
             manifest.event_log_bytes,
         },
@@ -174,8 +178,8 @@ pub fn decodeManifest(alloc: Allocator, bytes: []const u8) !Manifest {
         "workspace_root",
         "conversation_language",
         "history_len",
-        "total_input_tokens",
-        "total_output_tokens",
+        "last_input_tokens",
+        "last_output_tokens",
         "last_event_seq",
         "event_log_bytes",
         "event_log_stat_fingerprint",
@@ -215,8 +219,10 @@ pub fn decodeManifest(alloc: Allocator, bytes: []const u8) !Manifest {
             try requireString(root, "conversation_language"),
         ) catch return error.InvalidManifest,
         .history_len = try requireU64(root, "history_len"),
-        .total_input_tokens = try requireU64(root, "total_input_tokens"),
-        .total_output_tokens = try requireU64(root, "total_output_tokens"),
+        .last_input_tokens = try optionalU64(root.get("last_input_tokens") orelse
+            return error.InvalidManifest),
+        .last_output_tokens = try optionalU64(root.get("last_output_tokens") orelse
+            return error.InvalidManifest),
         .last_event_seq = try requireU64(root, "last_event_seq"),
         .event_log_bytes = try requireU64(root, "event_log_bytes"),
         .event_log_stat_fingerprint = try parseDigest(
@@ -286,8 +292,8 @@ pub fn stateMatchesManifest(
             manifest.conversation_language.view(),
         ) and
         state.history.len == manifest.history_len and
-        state.total_input_tokens == manifest.total_input_tokens and
-        state.total_output_tokens == manifest.total_output_tokens and
+        state.last_input_tokens == manifest.last_input_tokens and
+        state.last_output_tokens == manifest.last_output_tokens and
         durablePreferencesEqual(state.preferences, manifest.preferences);
 }
 
@@ -424,8 +430,8 @@ fn validateManifest(manifest: Manifest) !void {
         .conversation_language = manifest.conversation_language,
         .preferences = manifest.preferences,
         .history = &.{},
-        .total_input_tokens = manifest.total_input_tokens,
-        .total_output_tokens = manifest.total_output_tokens,
+        .last_input_tokens = manifest.last_input_tokens,
+        .last_output_tokens = manifest.last_output_tokens,
     };
     session_codec.validateState(state) catch return error.InvalidManifest;
     if (manifest.last_event_seq == 0 or manifest.event_log_bytes == 0 or
@@ -654,8 +660,8 @@ test "checkpoint decode semantic validation failure frees owned fields once" {
             .fast_mode = false,
         },
         .history = @constCast(&.{}),
-        .total_input_tokens = 3,
-        .total_output_tokens = 4,
+        .last_input_tokens = 3,
+        .last_output_tokens = 4,
     };
     const checkpoint = Checkpoint{
         .session_id = state.id,
@@ -723,8 +729,8 @@ test "checkpoint validation rejects stale corrupt and non-semantic boundaries" {
             .fast_mode = false,
         },
         .history = @constCast(&.{}),
-        .total_input_tokens = 3,
-        .total_output_tokens = 4,
+        .last_input_tokens = 3,
+        .last_output_tokens = 4,
     };
     const checkpoint = Checkpoint{
         .session_id = state.id,
@@ -817,8 +823,8 @@ fn testManifest() Manifest {
         .workspace_root = @constCast("/tmp/current"),
         .conversation_language = session.ConversationLanguage.literal("en"),
         .history_len = 4,
-        .total_input_tokens = 10,
-        .total_output_tokens = 20,
+        .last_input_tokens = 10,
+        .last_output_tokens = 20,
         .last_event_seq = 9,
         .event_log_bytes = 4096,
         .event_log_stat_fingerprint = [_]u8{0x55} ** 32,

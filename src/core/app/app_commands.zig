@@ -2246,8 +2246,8 @@ fn writeCurrentStateSummary(writer: *std.Io.Writer, app: anytype, alloc: std.mem
     }
     if (comptime @hasField(App, "agent_step_limit")) try writer.print("agent_step_limit: {d}\n", .{app.agent_step_limit});
     if (comptime @hasField(App, "effort")) try writer.print("effort: {s}\n", .{app.effort.label()});
-    if (comptime @hasField(App, "total_input_tokens") and @hasField(App, "total_output_tokens")) {
-        try writer.print("tokens_total: {d}->{d}\n", .{ app.total_input_tokens, app.total_output_tokens });
+    if (comptime @hasField(App, "last_input_tokens") and @hasField(App, "last_output_tokens")) {
+        try writer.print("tokens_last: {?d}->{?d}\n", .{ app.last_input_tokens, app.last_output_tokens });
     }
     if (comptime @hasField(App, "total_web_search_requests")) {
         var usage = try app.session.usage.snapshot(alloc);
@@ -3437,29 +3437,15 @@ fn stripAnsiEscapes(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
     return out.toOwnedSlice(alloc);
 }
 
-fn formatContextUsageBody(
-    alloc: std.mem.Allocator,
-    used_tokens: u64,
-    context_window: ?u32,
-) ![]u8 {
-    if (used_tokens == 0) {
-        return alloc.dupe(u8, "No context used in this session yet.");
-    }
-    const used_k = used_tokens / 1000;
-    if (context_window) |total| {
-        const total_k: u64 = @as(u64, total) / 1000;
-        const pct = if (total > 0) (used_tokens * 100) / @as(u64, total) else 0;
-        return std.fmt.allocPrint(alloc, "Context: {d}k/{d}k tokens used ({d}%).", .{ used_k, total_k, pct });
-    }
-    return std.fmt.allocPrint(alloc, "Context: {d}k tokens used.", .{used_k});
-}
-
 fn handleContextUsage(app: anytype) !void {
     const App = @TypeOf(app.*);
-    const used_tokens = app.total_input_tokens;
     const visible_model = provider_runtime.model(app);
     const context_window = model_capabilities.resolveForApp(App, app, visible_model).context_window;
-    const body = try formatContextUsageBody(app.alloc, used_tokens, context_window);
+    const body = try (output_contracts.ContextUsageSnapshot.fromLastResponse(
+        app.last_input_tokens,
+        app.last_output_tokens,
+        context_window,
+    )).renderText(app.alloc);
     defer app.alloc.free(body);
     try app.writeDomainNotice(.{
         .topic = "context",
@@ -4065,7 +4051,8 @@ const ChangeCommandFakeApp = struct {
 
 const ContextCommandFakeApp = struct {
     alloc: std.mem.Allocator,
-    total_input_tokens: u64 = 0,
+    last_input_tokens: ?u64 = null,
+    last_output_tokens: ?u64 = null,
     selected_model: std.ArrayList(u8) = .empty,
     gateway_metadata_model: ?[]const u8 = null,
     gateway_metadata: model_capabilities.GatewayMetadata = .{},
@@ -4098,29 +4085,12 @@ const ContextCommandFakeApp = struct {
     }
 };
 
-test "formatContextUsageBody reports used, window, and percent" {
-    const body = try formatContextUsageBody(std.testing.allocator, 43_000, 1_000_000);
-    defer std.testing.allocator.free(body);
-    try std.testing.expectEqualStrings("Context: 43k/1000k tokens used (4%).", body);
-}
-
-test "formatContextUsageBody degrades when context window is unknown" {
-    const body = try formatContextUsageBody(std.testing.allocator, 5_000, null);
-    defer std.testing.allocator.free(body);
-    try std.testing.expectEqualStrings("Context: 5k tokens used.", body);
-}
-
-test "formatContextUsageBody reports no usage when session has no tokens" {
-    const body = try formatContextUsageBody(std.testing.allocator, 0, 1_000_000);
-    defer std.testing.allocator.free(body);
-    try std.testing.expectEqualStrings("No context used in this session yet.", body);
-}
-
-test "context command writes usage notice from app totals" {
+test "context command writes usage notice from the last response" {
     const alloc = std.testing.allocator;
     var app = ContextCommandFakeApp{ .alloc = alloc };
     defer app.deinit();
-    app.total_input_tokens = 43_000;
+    app.last_input_tokens = 40_000;
+    app.last_output_tokens = 3_000;
     try app.selected_model.appendSlice(alloc, "anthropic/claude-opus-4.8");
 
     try Handlers(ContextCommandFakeApp).commandShowContext(@ptrCast(&app));
@@ -4128,14 +4098,15 @@ test "context command writes usage notice from app totals" {
     const notice = app.last_notice orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("context", notice.topic);
     try std.testing.expectEqual(types.NoticeTone.neutral, notice.tone);
-    try std.testing.expectEqualStrings("Context: 43k/1000k tokens used (4%).", notice.body);
+    try std.testing.expectEqualStrings("Context: 43k/1000k tokens (4%)", notice.body);
 }
 
 test "context command uses gateway context window when available" {
     const alloc = std.testing.allocator;
     var app = ContextCommandFakeApp{
         .alloc = alloc,
-        .total_input_tokens = 12_000,
+        .last_input_tokens = 10_000,
+        .last_output_tokens = 2_000,
         .gateway_metadata_model = "provider/new-long-context",
         .gateway_metadata = .{ .context_window = 750_000 },
     };
@@ -4145,19 +4116,20 @@ test "context command uses gateway context window when available" {
     try Handlers(ContextCommandFakeApp).commandShowContext(@ptrCast(&app));
 
     const notice = app.last_notice orelse return error.TestExpectedEqual;
-    try std.testing.expectEqualStrings("Context: 12k/750k tokens used (1%).", notice.body);
+    try std.testing.expectEqualStrings("Context: 12k/750k tokens (1%)", notice.body);
 }
 
-test "context command reports no usage when tokens are zero" {
+test "context command reports unknown when the last response is partial" {
     const alloc = std.testing.allocator;
     var app = ContextCommandFakeApp{ .alloc = alloc };
     defer app.deinit();
+    app.last_input_tokens = 43_000;
     try app.selected_model.appendSlice(alloc, "test-model");
 
     try Handlers(ContextCommandFakeApp).commandShowContext(@ptrCast(&app));
 
     const notice = app.last_notice orelse return error.TestExpectedEqual;
-    try std.testing.expectEqualStrings("No context used in this session yet.", notice.body);
+    try std.testing.expectEqualStrings("Context: unknown", notice.body);
 }
 
 fn writeTempSkillFile(tmp: *std.testing.TmpDir, sub_path: []const u8, content: []const u8) !void {

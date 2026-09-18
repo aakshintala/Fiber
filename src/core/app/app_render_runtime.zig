@@ -17,6 +17,7 @@ const model_cache_runtime = @import("model_cache_runtime.zig");
 const provider_runtime = @import("provider_runtime.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const diff_mod = @import("../output/diff.zig");
+const output_contracts = @import("../output/output_contracts.zig");
 const io_mod = @import("../shared/io.zig");
 const permission_request = @import("../permissions/permission_request.zig");
 const skill_runtime = @import("../skills/skill_runtime.zig");
@@ -790,7 +791,11 @@ pub fn Runtime(comptime App: type) type {
                 items.git_branch = identity.git_branch;
             }
             if (app.statusline_context) {
-                items.context_used = app.total_input_tokens;
+                items.context_used = output_contracts.ContextUsageSnapshot.fromLastResponse(
+                    app.last_input_tokens,
+                    app.last_output_tokens,
+                    null,
+                ).used_tokens orelse 0;
                 items.context_total = model_capabilities.resolveForApp(App, app, visible_model).context_window;
             }
             if (comptime @hasField(App, "statusline_session")) {
@@ -3136,7 +3141,8 @@ const CoordinatorTestApp = struct {
     fast_mode: bool = false,
     effort: types.ReasoningEffort = .auto,
     statusline_context: bool = false,
-    total_input_tokens: u64 = 0,
+    last_input_tokens: ?u64 = null,
+    last_output_tokens: ?u64 = null,
     intrinsic_fast_model: ?[]const u8 = null,
     gateway_metadata_model: ?[]const u8 = null,
     gateway_metadata: model_capabilities.GatewayMetadata = .{},
@@ -3465,7 +3471,8 @@ test "core.app_render_runtime projects Opus 4.8 one million token context to foo
         .alloc = alloc,
         .shell = .{},
         .statusline_context = true,
-        .total_input_tokens = 43_000,
+        .last_input_tokens = 40_000,
+        .last_output_tokens = 3_000,
     };
     defer app.deinit();
 
@@ -3501,7 +3508,8 @@ test "core.app_render_runtime uses Gateway context window from resolved capabili
         .alloc = alloc,
         .shell = .{},
         .statusline_context = true,
-        .total_input_tokens = 12_000,
+        .last_input_tokens = 10_000,
+        .last_output_tokens = 2_000,
         .gateway_metadata_model = "provider/new-long-context",
         .gateway_metadata = .{ .context_window = 750_000 },
     };

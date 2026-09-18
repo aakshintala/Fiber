@@ -3879,8 +3879,8 @@ fn writeManifestProjection(
         .workspace_root = loaded.state.workspace_root,
         .conversation_language = loaded.state.conversation_language,
         .history_len = loaded.state.history.len,
-        .total_input_tokens = loaded.state.total_input_tokens,
-        .total_output_tokens = loaded.state.total_output_tokens,
+        .last_input_tokens = loaded.state.last_input_tokens,
+        .last_output_tokens = loaded.state.last_output_tokens,
         .last_event_seq = loaded.position.through_seq,
         .event_log_bytes = loaded.position.through_event_log_bytes,
         .event_log_stat_fingerprint = fingerprint,
@@ -4294,8 +4294,6 @@ fn testState(alloc: Allocator, id: []const u8, updated_at_ms: i64) !session_code
             .fast_mode = false,
         },
         .history = &.{},
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
 }
 
@@ -4322,8 +4320,8 @@ fn stateWithPrompt(
     session.freeHistoryTurnSlice(alloc, next.history);
     next.history = history;
     next.updated_at_ms = updated_at_ms;
-    next.total_input_tokens = 11;
-    next.total_output_tokens = 7;
+    next.last_input_tokens = 11;
+    next.last_output_tokens = 7;
     return next;
 }
 
@@ -5347,8 +5345,8 @@ test "state replacement preserves subagent child identity" {
 fn historyEvent(state: session_codec.DurableSessionState) session_event.Event {
     return .{ .history_turn_committed = .{
         .conversation_language = state.conversation_language,
-        .total_input_tokens = state.total_input_tokens,
-        .total_output_tokens = state.total_output_tokens,
+        .last_input_tokens = state.last_input_tokens,
+        .last_output_tokens = state.last_output_tokens,
         .turn = state.history[state.history.len - 1],
     } };
 }
@@ -6268,8 +6266,6 @@ test "oversized state commits through chunked replacement frames with contiguous
     defer session.freeHistoryTurn(alloc, big_turn);
     const oversized = session_event.Event{ .history_turn_committed = .{
         .conversation_language = loaded.state.conversation_language,
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
         .turn = big_turn,
     } };
     const before = loaded.position;

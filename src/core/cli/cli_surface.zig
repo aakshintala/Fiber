@@ -4718,8 +4718,6 @@ test "usage session window failures exit without crashing" {
             .fast_mode = false,
         },
         .history = &.{},
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
     defer state.deinit(alloc);
     var writable = try store.startWritableSession(alloc, state);

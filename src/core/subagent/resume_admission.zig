@@ -411,8 +411,6 @@ test "managed child marker is hidden from external access" {
         .updated_at_ms = 1,
         .conversation_language = session.ConversationLanguage.literal("en"),
         .history = try alloc.alloc(session.HistoryTurn, 0),
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
         .preferences = .{
             .model = try alloc.dupe(u8, "test"),
             .effort = .auto,
@@ -459,8 +457,6 @@ test "subagent work identity hides a partial child without owner sidecar" {
         .updated_at_ms = 1,
         .conversation_language = session.ConversationLanguage.literal("en"),
         .history = try alloc.alloc(session.HistoryTurn, 0),
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
         .preferences = .{
             .model = try alloc.dupe(u8, "test"),
             .effort = .auto,
@@ -513,8 +509,6 @@ test "exact id detail lookup stays global across workspaces" {
         .updated_at_ms = 1,
         .conversation_language = session.ConversationLanguage.literal("en"),
         .history = try alloc.alloc(session.HistoryTurn, 0),
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
         .preferences = .{
             .model = try alloc.dupe(u8, "test"),
             .effort = .auto,

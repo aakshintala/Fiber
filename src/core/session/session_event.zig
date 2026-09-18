@@ -89,8 +89,8 @@ pub const WorkspaceRebound = struct {
 
 pub const HistoryTurnCommitted = struct {
     conversation_language: session.ConversationLanguage,
-    total_input_tokens: u64,
-    total_output_tokens: u64,
+    last_input_tokens: ?u64 = null,
+    last_output_tokens: ?u64 = null,
     work_id: ?[]u8 = null,
     turn: session.HistoryTurn,
 
@@ -1022,8 +1022,6 @@ fn applyDelta(
                 .conversation_language = payload.conversation_language,
                 .preferences = undefined,
                 .history = &.{},
-                .total_input_tokens = 0,
-                .total_output_tokens = 0,
                 .subagent_child = payload.subagent_child,
             };
             errdefer alloc.free(next.id);
@@ -1113,8 +1111,8 @@ fn applyDelta(
             }
             current.history[current.history.len - 1] = turn;
             current.conversation_language = payload.conversation_language;
-            current.total_input_tokens = payload.total_input_tokens;
-            current.total_output_tokens = payload.total_output_tokens;
+            current.last_input_tokens = payload.last_input_tokens;
+            current.last_output_tokens = payload.last_output_tokens;
             if (work_id) |id| {
                 if (current.last_subagent_work_id) |old| alloc.free(old);
                 current.last_subagent_work_id = id;
@@ -1175,8 +1173,6 @@ fn validateEnvelope(envelope: Envelope) !void {
                 .conversation_language = payload.conversation_language,
                 .preferences = payload.preferences,
                 .history = &.{},
-                .total_input_tokens = 0,
-                .total_output_tokens = 0,
                 .usage = payload.usage,
                 .subagent_child = payload.subagent_child,
             };
@@ -1200,8 +1196,6 @@ fn validateEnvelope(envelope: Envelope) !void {
                         .fast_mode = false,
                     },
                     .history = &.{},
-                    .total_input_tokens = 0,
-                    .total_output_tokens = 0,
                 };
                 try session_codec.validateState(state);
             }
@@ -1233,8 +1227,6 @@ fn validateEnvelope(envelope: Envelope) !void {
                     .fast_mode = false,
                 },
                 .history = &.{},
-                .total_input_tokens = 0,
-                .total_output_tokens = 0,
                 .recovery_checkpoint = payload.checkpoint,
             };
             try session_codec.validateState(state);
@@ -1324,10 +1316,11 @@ fn writePayload(writer: *std.Io.Writer, event: Event) !void {
         .history_turn_committed => |payload| {
             try writer.writeAll("{\"conversation_language\":");
             try writeJsonString(writer, payload.conversation_language.view());
-            try writer.print(",\"total_input_tokens\":{d},\"total_output_tokens\":{d},\"turn\":", .{
-                payload.total_input_tokens,
-                payload.total_output_tokens,
-            });
+            try writer.writeAll(",\"last_input_tokens\":");
+            try session_codec.writeOptionalU64(writer, payload.last_input_tokens);
+            try writer.writeAll(",\"last_output_tokens\":");
+            try session_codec.writeOptionalU64(writer, payload.last_output_tokens);
+            try writer.writeAll(",\"turn\":");
             try session_codec.writeHistoryTurn(writer, payload.turn);
             if (payload.work_id) |id| {
                 try writer.writeAll(",\"work_id\":");
@@ -1490,15 +1483,15 @@ fn parsePayload(alloc: Allocator, kind: Kind, value: std.json.Value) !Event {
             const object = if (source.count() == 4)
                 try exactObject(value, &.{
                     "conversation_language",
-                    "total_input_tokens",
-                    "total_output_tokens",
+                    "last_input_tokens",
+                    "last_output_tokens",
                     "turn",
                 })
             else
                 try exactObject(value, &.{
                     "conversation_language",
-                    "total_input_tokens",
-                    "total_output_tokens",
+                    "last_input_tokens",
+                    "last_output_tokens",
                     "turn",
                     "work_id",
                 });
@@ -1513,8 +1506,8 @@ fn parsePayload(alloc: Allocator, kind: Kind, value: std.json.Value) !Event {
                 .conversation_language = parseLanguage(
                     try requireString(object, "conversation_language"),
                 ) catch return error.InvalidEventFrame,
-                .total_input_tokens = try requireU64(object, "total_input_tokens"),
-                .total_output_tokens = try requireU64(object, "total_output_tokens"),
+                .last_input_tokens = try requireOptionalU64(object, "last_input_tokens"),
+                .last_output_tokens = try requireOptionalU64(object, "last_output_tokens"),
                 .work_id = work_id,
                 .turn = turn,
             } };
@@ -1720,6 +1713,17 @@ fn requireI64(object: std.json.ObjectMap, key: []const u8) !i64 {
     };
 }
 
+fn requireOptionalU64(object: std.json.ObjectMap, key: []const u8) !?u64 {
+    const value = object.get(key) orelse return error.InvalidEventFrame;
+    return switch (value) {
+        .null => null,
+        .integer => |number| if (number >= 0) @intCast(number) else error.InvalidEventFrame,
+        .number_string => |raw| std.fmt.parseUnsigned(u64, raw, 10) catch
+            error.InvalidEventFrame,
+        else => error.InvalidEventFrame,
+    };
+}
+
 fn requireU64(object: std.json.ObjectMap, key: []const u8) !u64 {
     const value = object.get(key) orelse return error.InvalidEventFrame;
     return switch (value) {
@@ -1857,8 +1861,8 @@ test "history_turn_committed event decode repairs duplicate-key tool arguments" 
         .ts = 50,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
-            .total_input_tokens = 1,
-            .total_output_tokens = 2,
+            .last_input_tokens = 1,
+            .last_output_tokens = 2,
             .turn = .{ .assistant = .{
                 .user = .{ .text = @constCast("inspect") },
                 .assistant = @constCast("failed"),
@@ -1890,8 +1894,8 @@ test "event frames preserve message and reasoning item ids through the log" {
         .ts = 50,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
-            .total_input_tokens = 1,
-            .total_output_tokens = 2,
+            .last_input_tokens = 1,
+            .last_output_tokens = 2,
             .turn = .{ .assistant = .{
                 .user = .{ .text = @constCast("hi") },
                 .assistant = @constCast("hello"),
@@ -1957,8 +1961,8 @@ test "replacement writer uses four MiB chunks and reducer commits only complete 
             .fast_mode = false,
         },
         .history = @constCast(&.{}),
-        .total_input_tokens = 1,
-        .total_output_tokens = 2,
+        .last_input_tokens = 1,
+        .last_output_tokens = 2,
     };
     var large_history = [_]session.HistoryTurn{.{ .assistant = .{
         .user = .{ .text = @constCast("large") },
@@ -1977,8 +1981,8 @@ test "replacement writer uses four MiB chunks and reducer commits only complete 
             .fast_mode = true,
         },
         .history = large_history[0..],
-        .total_input_tokens = 9,
-        .total_output_tokens = 8,
+        .last_input_tokens = 9,
+        .last_output_tokens = 8,
     };
 
     var complete: std.Io.Writer.Allocating = .init(alloc);
@@ -2189,8 +2193,8 @@ test "semantic reducer resumes a contiguous suffix from owned state" {
             .fast_mode = false,
         },
         .history = @constCast(&.{}),
-        .total_input_tokens = 1,
-        .total_output_tokens = 2,
+        .last_input_tokens = 1,
+        .last_output_tokens = 2,
     };
     const envelope = Envelope{
         .session_id = @constCast("session-tail"),
@@ -2261,8 +2265,8 @@ test "single event application updates caller-owned state without replaying its 
         .ts = 30,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("fr"),
-            .total_input_tokens = 100,
-            .total_output_tokens = 50,
+            .last_input_tokens = 100,
+            .last_output_tokens = 50,
             .turn = .{ .assistant = .{
                 .user = .{ .text = @constCast("inspect") },
                 .assistant = @constCast("done"),
@@ -2287,8 +2291,8 @@ test "single event application updates caller-owned state without replaying its 
         state.history[0].assistant.execution.tool_steps[0].tool_results[0].output,
     );
     try std.testing.expectEqualStrings("fr", state.conversation_language.view());
-    try std.testing.expectEqual(@as(u64, 100), state.total_input_tokens);
-    try std.testing.expectEqual(@as(u64, 50), state.total_output_tokens);
+    try std.testing.expectEqual(@as(?u64, 100), state.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 50), state.last_output_tokens);
     try std.testing.expectEqual(@as(i64, 30), state.updated_at_ms);
 }
 
@@ -2300,8 +2304,8 @@ test "single event application preserves caller-owned state on allocation failur
         .ts = 30,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("fr"),
-            .total_input_tokens = 10,
-            .total_output_tokens = 5,
+            .last_input_tokens = 10,
+            .last_output_tokens = 5,
             .turn = .{ .assistant = .{
                 .user = .{ .text = @constCast("new prompt") },
                 .assistant = @constCast("new response"),
@@ -2460,8 +2464,8 @@ fn singleEventTestState(id: []const u8) session_codec.DurableSessionState {
             .fast_mode = false,
         },
         .history = @constCast(&.{}),
-        .total_input_tokens = 1,
-        .total_output_tokens = 2,
+        .last_input_tokens = 1,
+        .last_output_tokens = 2,
     };
 }
 
@@ -2480,8 +2484,8 @@ test "semantic reducer releases owned state when the reduction start is invalid"
             .fast_mode = false,
         },
         .history = @constCast(&.{}),
-        .total_input_tokens = 1,
-        .total_output_tokens = 2,
+        .last_input_tokens = 1,
+        .last_output_tokens = 2,
     };
     var source = std.Io.Reader.fixed("");
     try std.testing.expectError(
@@ -2521,8 +2525,8 @@ test "history_turn_committed leaves absent session usage unchanged" {
         .ts = 110,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("fr"),
-            .total_input_tokens = 128,
-            .total_output_tokens = 64,
+            .last_input_tokens = 128,
+            .last_output_tokens = 64,
             .work_id = @constCast("work-17"),
             .turn = .{ .assistant = .{
                 .user = .{ .text = @constCast("hello") },
@@ -2538,12 +2542,12 @@ test "history_turn_committed leaves absent session usage unchanged" {
     defer decoded_frame_3.deinit(alloc);
     const decoded = &decoded_frame_3.known;
     try std.testing.expectEqual(
-        @as(u64, 128),
-        decoded.event.history_turn_committed.total_input_tokens,
+        @as(?u64, 128),
+        decoded.event.history_turn_committed.last_input_tokens,
     );
     try std.testing.expectEqual(
-        @as(u64, 64),
-        decoded.event.history_turn_committed.total_output_tokens,
+        @as(?u64, 64),
+        decoded.event.history_turn_committed.last_output_tokens,
     );
     try std.testing.expectEqualStrings(
         "world",
@@ -2565,8 +2569,8 @@ test "history_turn_committed leaves absent session usage unchanged" {
     var reduced = try reduceJsonl(alloc, &source, null);
     defer reduced.deinit(alloc);
     try std.testing.expect(reduced.state.usage == null);
-    try std.testing.expectEqual(@as(u64, 128), reduced.state.total_input_tokens);
-    try std.testing.expectEqual(@as(u64, 64), reduced.state.total_output_tokens);
+    try std.testing.expectEqual(@as(?u64, 128), reduced.state.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 64), reduced.state.last_output_tokens);
     try std.testing.expectEqual(@as(usize, 1), reduced.state.history.len);
     try std.testing.expectEqualStrings("work-17", reduced.state.last_subagent_work_id.?);
     try std.testing.expectEqualStrings(
@@ -2606,8 +2610,8 @@ test "replay associates each committed work ID with its exact user turn" {
         .ts = 2,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
-            .total_input_tokens = 1,
-            .total_output_tokens = 1,
+            .last_input_tokens = 1,
+            .last_output_tokens = 1,
             .work_id = @constCast("work-first"),
             .turn = .{ .assistant = .{
                 .user = .{ .text = @constCast("first") },
@@ -2621,8 +2625,8 @@ test "replay associates each committed work ID with its exact user turn" {
         .ts = 3,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
-            .total_input_tokens = 2,
-            .total_output_tokens = 2,
+            .last_input_tokens = 2,
+            .last_output_tokens = 2,
             .work_id = @constCast("work-second"),
             .turn = .{ .assistant = .{
                 .user = .{
@@ -2639,8 +2643,8 @@ test "replay associates each committed work ID with its exact user turn" {
         .ts = 4,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
-            .total_input_tokens = 3,
-            .total_output_tokens = 3,
+            .last_input_tokens = 3,
+            .last_output_tokens = 3,
             .turn = .{ .assistant = .{
                 .user = .{ .text = @constCast("ordinary") },
                 .assistant = @constCast("three"),
@@ -2672,8 +2676,8 @@ test "history event provenance rejects conflicts and malformed IDs" {
         .ts = 1,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
-            .total_input_tokens = 1,
-            .total_output_tokens = 1,
+            .last_input_tokens = 1,
+            .last_output_tokens = 1,
             .work_id = @constCast("event-work"),
             .turn = .{ .assistant = .{
                 .user = .{
@@ -2744,8 +2748,8 @@ fn checkHistoryProvenanceReplayAllocationFailures(alloc: Allocator) !void {
         .ts = 2,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
-            .total_input_tokens = 1,
-            .total_output_tokens = 1,
+            .last_input_tokens = 1,
+            .last_output_tokens = 1,
             .work_id = @constCast("allocation-work"),
             .turn = .{ .assistant = .{
                 .user = .{ .text = @constCast("prompt") },
@@ -2941,8 +2945,8 @@ test "later usage events replace snapshots while legacy turns preserve them" {
         .ts = 120,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
-            .total_input_tokens = 5,
-            .total_output_tokens = 3,
+            .last_input_tokens = 5,
+            .last_output_tokens = 3,
             .turn = .{ .assistant = .{
                 .user = .{ .text = @constCast("hello") },
                 .assistant = @constCast("world"),
@@ -3023,8 +3027,8 @@ test "recovery checkpoint events replace and clear deterministically" {
         .ts = 130,
         .event = .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
-            .total_input_tokens = 4,
-            .total_output_tokens = 2,
+            .last_input_tokens = 4,
+            .last_output_tokens = 2,
             .turn = .{ .assistant = .{
                 .user = .{ .text = @constCast("prompt") },
                 .assistant = @constCast("partial plus more"),
@@ -3076,8 +3080,8 @@ fn foreignSessionTestState() session_codec.DurableSessionState {
             .fast_mode = false,
         },
         .history = @constCast(&.{}),
-        .total_input_tokens = 1,
-        .total_output_tokens = 2,
+        .last_input_tokens = 1,
+        .last_output_tokens = 2,
     };
 }
 

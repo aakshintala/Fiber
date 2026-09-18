@@ -2338,6 +2338,63 @@ fn writeSessionDisplayJsonFields(writer: *std.Io.Writer, summary: session_store.
     }
 }
 
+/// Last-response context occupancy shared by `/context`, the status line,
+/// `fiber ask --json` and `fiber session show`. The number is the last
+/// successful conversation response's input plus output tokens; it is known
+/// only when that single response reported both. It is never stored.
+pub const ContextUsageSnapshot = struct {
+    used_tokens: ?u64 = null,
+    window_tokens: ?u32 = null,
+
+    pub fn fromLastResponse(
+        last_input_tokens: ?u64,
+        last_output_tokens: ?u64,
+        window_tokens: ?u32,
+    ) ContextUsageSnapshot {
+        const used: ?u64 = if (last_input_tokens) |input|
+            if (last_output_tokens) |output|
+                std.math.add(u64, input, output) catch null
+            else
+                null
+        else
+            null;
+        return .{ .used_tokens = used, .window_tokens = window_tokens };
+    }
+
+    pub fn renderText(self: ContextUsageSnapshot, alloc: Allocator) ![]u8 {
+        const used = self.used_tokens orelse
+            return alloc.dupe(u8, "Context: unknown");
+        const used_k = used / 1000;
+        if (self.window_tokens) |total| {
+            const total_k: u64 = @as(u64, total) / 1000;
+            const pct = if (total > 0) (used * 100) / @as(u64, total) else 0;
+            return std.fmt.allocPrint(
+                alloc,
+                "Context: {d}k/{d}k tokens ({d}%)",
+                .{ used_k, total_k, pct },
+            );
+        }
+        return std.fmt.allocPrint(alloc, "Context: {d}k tokens", .{used_k});
+    }
+
+    /// Writes `"context":{"used_tokens":N|null,"window_tokens":N|null}`.
+    pub fn writeJsonField(self: ContextUsageSnapshot, writer: *std.Io.Writer) !void {
+        try writer.writeAll("\"context\":{\"used_tokens\":");
+        if (self.used_tokens) |used| {
+            try writer.print("{d}", .{used});
+        } else {
+            try writer.writeAll("null");
+        }
+        try writer.writeAll(",\"window_tokens\":");
+        if (self.window_tokens) |window| {
+            try writer.print("{d}", .{window});
+        } else {
+            try writer.writeAll("null");
+        }
+        try writer.writeByte('}');
+    }
+};
+
 pub const SessionDetailSnapshot = struct {
     detail: session_store.ReadOnlyDetail,
 
@@ -2358,6 +2415,13 @@ pub const SessionDetailSnapshot = struct {
         try out.writer.print("updated_at_ms: {d}\n", .{state.updated_at_ms});
         try out.writer.print("language: {s}\n", .{state.conversation_language.view()});
         try out.writer.print("history_len: {d}\n", .{state.history.len});
+        const context_text = try (ContextUsageSnapshot.fromLastResponse(
+            state.last_input_tokens,
+            state.last_output_tokens,
+            null,
+        )).renderText(alloc);
+        defer alloc.free(context_text);
+        try out.writer.print("{s}\n", .{context_text});
 
         if (state.history.len == 0) {
             try out.writer.writeAll("\n(no history yet)\n");
@@ -2392,7 +2456,13 @@ pub const SessionDetailSnapshot = struct {
             try writeSessionHistoryTurnJson(&out.writer, turn);
         }
 
-        try out.writer.writeAll("]}}");
+        try out.writer.writeAll("],");
+        try (ContextUsageSnapshot.fromLastResponse(
+            state.last_input_tokens,
+            state.last_output_tokens,
+            null,
+        )).writeJsonField(&out.writer);
+        try out.writer.writeAll("}}");
         return try out.toOwnedSlice();
     }
 };
@@ -3706,8 +3776,6 @@ test "core empty session detail snapshot text and json stay stable" {
                 .fast_mode = false,
             },
             .history = &.{},
-            .total_input_tokens = 0,
-            .total_output_tokens = 0,
         },
         .storage_format = .schema_v3,
     };
@@ -3715,15 +3783,59 @@ test "core empty session detail snapshot text and json stay stable" {
     const text = try (SessionDetailSnapshot{ .detail = detail }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings(
-        "[session] sess-empty\ncreated_at_ms: 1\nupdated_at_ms: 2\nlanguage: en\nhistory_len: 0\n\n(no history yet)\n",
+        "[session] sess-empty\ncreated_at_ms: 1\nupdated_at_ms: 2\nlanguage: en\nhistory_len: 0\nContext: unknown\n\n(no history yet)\n",
         text,
     );
 
     const json = try (SessionDetailSnapshot{ .detail = detail }).renderJson(std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expectEqualStrings(
-        "{\"ok\":true,\"kind\":\"session.show\",\"data\":{\"id\":\"sess-empty\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":0,\"conversation_language\":\"en\",\"history\":[]}}",
+        "{\"ok\":true,\"kind\":\"session.show\",\"data\":{\"id\":\"sess-empty\",\"created_at_ms\":1,\"updated_at_ms\":2,\"history_len\":0,\"conversation_language\":\"en\",\"history\":[],\"context\":{\"used_tokens\":null,\"window_tokens\":null}}}",
         json,
+    );
+}
+
+test "core context usage snapshot reports the last response only" {
+    const known = ContextUsageSnapshot.fromLastResponse(30, 7, 272_000);
+    try std.testing.expectEqual(@as(?u64, 37), known.used_tokens);
+    try std.testing.expectEqual(@as(?u32, 272_000), known.window_tokens);
+    const known_text = try known.renderText(std.testing.allocator);
+    defer std.testing.allocator.free(known_text);
+    try std.testing.expectEqualStrings("Context: 0k/272k tokens (0%)", known_text);
+
+    const windowed = ContextUsageSnapshot.fromLastResponse(40_000, 3_000, 272_000);
+    const windowed_text = try windowed.renderText(std.testing.allocator);
+    defer std.testing.allocator.free(windowed_text);
+    try std.testing.expectEqualStrings("Context: 43k/272k tokens (15%)", windowed_text);
+
+    const unwindowed = ContextUsageSnapshot.fromLastResponse(40_000, 3_000, null);
+    const unwindowed_text = try unwindowed.renderText(std.testing.allocator);
+    defer std.testing.allocator.free(unwindowed_text);
+    try std.testing.expectEqualStrings("Context: 43k tokens", unwindowed_text);
+
+    // A partial report leaves the number unknown instead of mixing responses.
+    const partial = ContextUsageSnapshot.fromLastResponse(40, null, 272_000);
+    try std.testing.expect(partial.used_tokens == null);
+    const partial_text = try partial.renderText(std.testing.allocator);
+    defer std.testing.allocator.free(partial_text);
+    try std.testing.expectEqualStrings("Context: unknown", partial_text);
+
+    const overflow = ContextUsageSnapshot.fromLastResponse(std.math.maxInt(u64), 1, null);
+    try std.testing.expect(overflow.used_tokens == null);
+
+    var json: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer json.deinit();
+    try windowed.writeJsonField(&json.writer);
+    try std.testing.expectEqualStrings(
+        "\"context\":{\"used_tokens\":43000,\"window_tokens\":272000}",
+        json.written(),
+    );
+    var unknown_json: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer unknown_json.deinit();
+    try partial.writeJsonField(&unknown_json.writer);
+    try std.testing.expectEqualStrings(
+        "\"context\":{\"used_tokens\":null,\"window_tokens\":272000}",
+        unknown_json.written(),
     );
 }
 
@@ -3781,14 +3893,15 @@ test "core session detail snapshot preserves history variant shapes" {
                 .fast_mode = false,
             },
             .history = @constCast(&history),
-            .total_input_tokens = 0,
-            .total_output_tokens = 0,
+            .last_input_tokens = 40_000,
+            .last_output_tokens = 3_000,
         },
         .storage_format = .schema_v3,
     };
 
     const text = try (SessionDetailSnapshot{ .detail = detail }).renderText(std.testing.allocator);
     defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.find(u8, text, "Context: 43k tokens") != null);
     try std.testing.expect(std.mem.find(u8, text, "[compacted] removed_turns=3 compactions=1") != null);
     try std.testing.expect(std.mem.find(u8, text, "[user]\nhola\n[images] 1\n - /tmp/a.png (image/png)\n[assistant]\nque tal\n") != null);
     try std.testing.expect(std.mem.find(u8, text, "[execution]\nfile: read success src/main.zig\n[assistant]\nThe historical command is no longer owned.\n") != null);
@@ -3804,6 +3917,7 @@ test "core session detail snapshot preserves history variant shapes" {
     try std.testing.expect(std.mem.find(u8, json, "{\"path\":\"/tmp/a.png\",\"media_type\":\"image/png\"}") != null);
     try std.testing.expect(std.mem.find(u8, json, "\"assistant\":\"The historical command is no longer owned.\"") != null);
     try std.testing.expect(std.mem.count(u8, json, "\"execution\"") >= 2);
+    try std.testing.expect(std.mem.find(u8, json, "\"context\":{\"used_tokens\":43000,\"window_tokens\":null}") != null);
 }
 
 test "core session detail JSON includes assistant execution memory" {
@@ -3866,8 +3980,6 @@ test "core session detail JSON includes assistant execution memory" {
                 .fast_mode = false,
             },
             .history = @constCast(&history),
-            .total_input_tokens = 0,
-            .total_output_tokens = 0,
         },
         .storage_format = .schema_v3,
     };

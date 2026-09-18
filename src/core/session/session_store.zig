@@ -3784,8 +3784,6 @@ fn recoveryInitialState(
         .conversation_language = recovered.conversation_language,
         .preferences = try recovered.preferences.dupe(alloc),
         .history = &.{},
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
 }
 
@@ -4452,8 +4450,8 @@ pub fn isPristineStartedSession(loaded: *const LoadedWritableSession) bool {
         std.mem.eql(u8, loaded.log.session_id, loaded.state.id) and
         loaded.state.history.len == 0 and
         loaded.state.context_history_start == 0 and
-        loaded.state.total_input_tokens == 0 and
-        loaded.state.total_output_tokens == 0 and
+        loaded.state.last_input_tokens == null and
+        loaded.state.last_output_tokens == null and
         loaded.state.recovery_checkpoint == null and
         !loaded.namespace_confirmation_required and
         loaded.degraded_tail == null;
@@ -4637,8 +4635,6 @@ fn testDurableState(
             .fast_mode = false,
         },
         .history = &.{},
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
 }
 
@@ -4857,8 +4853,6 @@ fn writeWritableHistoryResponseFixture(
         .conversation_language = writable.state.conversation_language,
         .preferences = writable.state.preferences,
         .history = history,
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
     _ = try writable.commitStateReplacement(
         alloc,
@@ -4928,8 +4922,8 @@ fn writeStaleWritableHistoryFixture(
         alloc,
         .{ .history_turn_committed = .{
             .conversation_language = session.ConversationLanguage.literal("en"),
-            .total_input_tokens = 3,
-            .total_output_tokens = 4,
+            .last_input_tokens = 3,
+            .last_output_tokens = 4,
             .turn = turn,
         } },
         updated_at_ms,
@@ -5012,8 +5006,6 @@ fn writeWritableIncompleteAuthorityFixture(
         .conversation_language = writable.state.conversation_language,
         .preferences = writable.state.preferences,
         .history = history,
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
     _ = try writable.commitStateReplacement(
         alloc,
@@ -5169,8 +5161,6 @@ fn writeWritableManagedHistoryFixture(
         .conversation_language = writable.state.conversation_language,
         .preferences = writable.state.preferences,
         .history = history,
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
     _ = try writable.commitStateReplacement(
         alloc,
@@ -5265,8 +5255,6 @@ fn replaceHistoryPageFixture(
         .conversation_language = writable.state.conversation_language,
         .preferences = writable.state.preferences,
         .history = history,
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
     _ = try writable.commitStateReplacement(
         alloc,
@@ -5316,8 +5304,6 @@ fn replaceHistoryPageTurnsFixture(
         .conversation_language = writable.state.conversation_language,
         .preferences = writable.state.preferences,
         .history = @constCast(history),
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
     _ = try writable.commitStateReplacement(
         alloc,
@@ -7961,8 +7947,8 @@ test "session store delegates schema v3 authority operations" {
         .conversation_language = writable.state.conversation_language,
         .preferences = writable.state.preferences,
         .history = history,
-        .total_input_tokens = 11,
-        .total_output_tokens = 7,
+        .last_input_tokens = 11,
+        .last_output_tokens = 7,
     };
     _ = try writable.commitStateReplacement(
         alloc,
@@ -7976,8 +7962,8 @@ test "session store delegates schema v3 authority operations" {
     defer loaded.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 1), loaded.history.len);
     try std.testing.expectEqualStrings("world", loaded.history[0].assistant.assistant);
-    try std.testing.expectEqual(@as(u64, 11), loaded.total_input_tokens);
-    try std.testing.expectEqual(@as(u64, 7), loaded.total_output_tokens);
+    try std.testing.expectEqual(@as(?u64, 11), loaded.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 7), loaded.last_output_tokens);
 }
 
 test "schema v3 load repairs duplicate-key tool arguments before gateway projection" {
@@ -8038,8 +8024,8 @@ test "schema v3 load repairs duplicate-key tool arguments before gateway project
         .conversation_language = writable.state.conversation_language,
         .preferences = writable.state.preferences,
         .history = history,
-        .total_input_tokens = 1,
-        .total_output_tokens = 1,
+        .last_input_tokens = 1,
+        .last_output_tokens = 1,
     };
     _ = try writable.commitStateReplacement(
         alloc,
@@ -9403,8 +9389,6 @@ test "recovery verifies and copies persisted image snapshots into the new sessio
         .conversation_language = source.state.conversation_language,
         .preferences = source.state.preferences,
         .history = history,
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
     _ = try source.commitStateReplacement(
         alloc,
@@ -10592,8 +10576,6 @@ test "writable resumable backfill refreshes missing display metadata" {
         .conversation_language = writable.state.conversation_language,
         .preferences = writable.state.preferences,
         .history = history,
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
     _ = try writable.commitStateReplacement(
         alloc,
@@ -11154,8 +11136,8 @@ test "workspace latest ranks stale projection by canonical time" {
         .conversation_language = canonical.state.conversation_language,
         .preferences = canonical.state.preferences,
         .history = canonical.state.history,
-        .total_input_tokens = canonical.state.total_input_tokens,
-        .total_output_tokens = canonical.state.total_output_tokens,
+        .last_input_tokens = canonical.state.last_input_tokens,
+        .last_output_tokens = canonical.state.last_output_tokens,
     };
     _ = try canonical.commitStateReplacement(
         alloc,
@@ -11767,8 +11749,6 @@ test "history pages expose per-turn provenance through replacement checkpoint an
             .conversation_language = writable.state.conversation_language,
             .preferences = writable.state.preferences,
             .history = history,
-            .total_input_tokens = 0,
-            .total_output_tokens = 0,
             .last_subagent_work_id = @constCast("work-4"),
         };
         _ = try writable.commitStateReplacement(
@@ -11869,8 +11849,8 @@ test "history pages expose per-turn provenance through replacement checkpoint an
             .preferences = direct.state.preferences,
             .history = direct_history,
             .context_history_start = direct.state.context_history_start,
-            .total_input_tokens = direct.state.total_input_tokens,
-            .total_output_tokens = direct.state.total_output_tokens,
+            .last_input_tokens = direct.state.last_input_tokens,
+            .last_output_tokens = direct.state.last_output_tokens,
             .last_subagent_work_id = direct.state.last_subagent_work_id,
             .usage = direct.state.usage,
         };
