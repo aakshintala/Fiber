@@ -4536,6 +4536,24 @@ fn processQueuedPromptLoop(
                 stream_ctx.reasoning_item_output_index.appendAssumeCapacity(entry.output_index);
                 stream_ctx.reasoning_texts.appendAssumeCapacity(.empty);
             }
+            // The resumed process never streamed these ids, so note their
+            // started boundaries once here; the terminal below closes them.
+            // Started lines replay idempotently, so the pre-crash originals
+            // stay harmless.
+            if (deps.note_session_event) |note_fn| {
+                if (checkpoint.assistant_message_id) |item_id| {
+                    try note_fn(deps.ctx, .{ .message_started = .{
+                        .turn_id = stream_ctx.turn_id,
+                        .item_id = item_id,
+                    } });
+                }
+                for (checkpoint.assistant_reasoning_ids) |entry| {
+                    try note_fn(deps.ctx, .{ .reasoning_started = .{
+                        .turn_id = stream_ctx.turn_id,
+                        .item_id = entry.item_id,
+                    } });
+                }
+            }
             restore_recovery_source = false;
         }
 
@@ -5118,6 +5136,9 @@ fn processQueuedPromptLoop(
                     std.debug.assert(pending_auto_retry_status == null);
                     // The failed attempt closes as its own item; the retry
                     // mints a new one below when its first chunk arrives.
+                    // A failure before the first chunk minted no id, so the
+                    // terminal mints one: every failed call is a distinct
+                    // item, content or not.
                     if (stream_ctx.message_item_id) |failed_id| {
                         if (deps.note_session_event) |note_fn| {
                             try note_fn(deps.ctx, .{ .message_completed = .{
@@ -5131,6 +5152,21 @@ fn processQueuedPromptLoop(
                         }
                         stream_ctx.alloc.free(failed_id);
                         stream_ctx.message_item_id = null;
+                    } else if (deps.note_session_event) |note_fn| {
+                        const minted = try types.generate_item_id(stream_ctx.alloc);
+                        defer stream_ctx.alloc.free(minted);
+                        try note_fn(deps.ctx, .{ .message_started = .{
+                            .turn_id = stream_ctx.turn_id,
+                            .item_id = minted,
+                        } });
+                        try note_fn(deps.ctx, .{ .message_completed = .{
+                            .turn_id = stream_ctx.turn_id,
+                            .item_id = minted,
+                            .text = stream_ctx.raw_text.items,
+                            .outcome = .failed,
+                            .cause = @tagName(failure_cause),
+                            .attempt = @intCast(consumed_attempts),
+                        } });
                     }
                     pending_auto_retry_status = auto_retry_status(
                         consumed_attempts + 1,
@@ -5223,23 +5259,23 @@ fn processQueuedPromptLoop(
                         &.{},
                     );
                 }
-                if (std.mem.trim(u8, failed_assistant_source, " \t\r\n").len > 0) {
-                    if (stop_state.retained_candidate == null) {
-                        try runtime_interruption.persistFailedPartialTurnOnce(
-                            deps,
-                            finalization,
-                            job,
-                            failed_assistant_source,
-                            &interrupted_persisted,
-                            step_ctx,
-                            within_turn_suffix.items,
-                            &stop_state.terminal_materializing,
-                            stream_ctx.interruptedItemIds(),
-                            stream_ctx.reasoning_texts.items,
-                            failure_cause,
-                            consumed_attempts,
-                        );
-                    }
+                // Terminal failures persist even when empty: every failed
+                // call is a distinct item, content or not.
+                if (stop_state.retained_candidate == null) {
+                    try runtime_interruption.persistFailedPartialTurnOnce(
+                        deps,
+                        finalization,
+                        job,
+                        failed_assistant_source,
+                        &interrupted_persisted,
+                        step_ctx,
+                        within_turn_suffix.items,
+                        &stop_state.terminal_materializing,
+                        stream_ctx.interruptedItemIds(),
+                        stream_ctx.reasoning_texts.items,
+                        failure_cause,
+                        consumed_attempts,
+                    );
                 }
                 return err;
             };

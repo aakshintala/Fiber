@@ -88,9 +88,9 @@ pub fn persistInterruptedCommandTurnOnce(
 }
 
 /// Emits closing item lines for an interrupted or failed stream: its
-/// reasoning blocks then its message. Started repeats are idempotent in the
-/// fold, so re-emission here stays correct when the stream already noted
-/// them as work happened.
+/// reasoning blocks then its message. The stream owns every started
+/// boundary, so the terminal closes them only; a caller-minted message id
+/// arrives with its started line already noted by its minter.
 fn noteInterruptedItems(
     hooks: *const AgentRuntimeDeps,
     turn_id: u64,
@@ -104,7 +104,6 @@ fn noteInterruptedItems(
     const note_fn = hooks.note_session_event orelse return;
     for (item_ids.reasoning, 0..) |item_id, index| {
         const text = if (index < reasoning_texts.len) reasoning_texts[index].items else "";
-        try note_fn(hooks.ctx, .{ .reasoning_started = .{ .turn_id = turn_id, .item_id = item_id } });
         try note_fn(hooks.ctx, .{ .reasoning_completed = .{
             .turn_id = turn_id,
             .item_id = item_id,
@@ -112,7 +111,6 @@ fn noteInterruptedItems(
         } });
     }
     if (item_ids.message) |item_id| {
-        try note_fn(hooks.ctx, .{ .message_started = .{ .turn_id = turn_id, .item_id = item_id } });
         try note_fn(hooks.ctx, .{ .message_completed = .{
             .turn_id = turn_id,
             .item_id = item_id,
@@ -272,18 +270,41 @@ pub fn persistFailedPartialTurnOnce(
     attempt: usize,
 ) !void {
     if (persisted.*) return;
-    if (partial_assistant.len == 0) return;
+    // Every failed call is a distinct item, content or not: a failure
+    // before the first chunk minted no message id, so mint one here and
+    // persist the empty text under it.
+    var owned_minted: ?[]u8 = null;
+    defer if (owned_minted) |id| std.heap.c_allocator.free(id);
+    var effective_ids = item_ids;
+    if (item_ids.message == null) {
+        owned_minted = try types.generate_item_id(std.heap.c_allocator);
+        effective_ids.message = owned_minted;
+    }
+    // The mint is this item's single writer: its started line has never
+    // reached the log, so note it before the closer below.
+    if (owned_minted) |minted| {
+        if (hooks.note_session_event) |note_fn| {
+            try note_fn(hooks.ctx, .{ .message_started = .{
+                .turn_id = job.turn_id,
+                .item_id = minted,
+            } });
+        }
+    }
 
     try noteInterruptedItems(
         hooks,
         job.turn_id,
-        item_ids,
+        effective_ids,
         reasoning_texts,
         partial_assistant,
         .failed,
         @tagName(cause),
         @intCast(attempt),
     );
+
+    // The failed item is logged above, content or not. An empty failure
+    // keeps its historical turn shape: only a partial persists here.
+    if (partial_assistant.len == 0) return;
 
     const execution = try runtime_execution_memory.buildInterruptedExecutionMemory(
         std.heap.c_allocator,
@@ -293,7 +314,7 @@ pub fn persistFailedPartialTurnOnce(
     defer types.freeExecutionMemory(std.heap.c_allocator, execution);
     terminal_materializing.* = true;
 
-    const assistant_item_id = if (item_ids.message) |id| try std.heap.c_allocator.dupe(u8, id) else null;
+    const assistant_item_id = if (effective_ids.message) |id| try std.heap.c_allocator.dupe(u8, id) else null;
     defer if (assistant_item_id) |id| std.heap.c_allocator.free(id);
     const reasoning_item_ids = try types.dupeItemIdSlice(std.heap.c_allocator, item_ids.reasoning);
     defer types.freeItemIdSlice(std.heap.c_allocator, reasoning_item_ids);

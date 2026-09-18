@@ -488,12 +488,14 @@ fn noteSessionItem(stream_ctx: *const StreamChunkContext, note: session_event.Se
     };
 }
 
-/// Emits one step's closing item lines: its reasoning blocks (started and
-/// completed, texts lockstepped by attach_stream_message_ids) and its
-/// message (started and completed with the turn's exact text). Terminal
-/// steps without a streamed completion mint a message id so failure
-/// notices still persist as items. Fallible: terminal sites propagate
-/// note failures so a broken log degrades loudly, never silently.
+/// Emits one step's closing item lines: its reasoning blocks and its
+/// message with the turn's exact text. The stream owns every started
+/// boundary (it noted each id as work happened), so the terminal closes
+/// them only; freshly minted ids are the exception, with the terminal as
+/// their single writer. Terminal steps without a streamed completion mint
+/// a message id so failure notices still persist as items. Fallible:
+/// terminal sites propagate note failures so a broken log degrades loudly,
+/// never silently.
 pub fn noteTerminalStep(
     deps: *const runtime_deps.AgentRuntimeDeps,
     alloc: Allocator,
@@ -506,7 +508,6 @@ pub fn noteTerminalStep(
     const reasoning_texts = if (completion) |known| known.reasoning_texts orelse &.{} else &.{};
     for (reasoning_ids, 0..) |item_id, index| {
         const block_text = if (index < reasoning_texts.len) reasoning_texts[index] else "";
-        try note_fn(deps.ctx, .{ .reasoning_started = .{ .turn_id = turn_id, .item_id = item_id } });
         try note_fn(deps.ctx, .{ .reasoning_completed = .{
             .turn_id = turn_id,
             .item_id = item_id,
@@ -515,7 +516,6 @@ pub fn noteTerminalStep(
     }
     if (completion) |known| {
         if (known.message_item_id) |item_id| {
-            try note_fn(deps.ctx, .{ .message_started = .{ .turn_id = turn_id, .item_id = item_id } });
             try note_fn(deps.ctx, .{ .message_completed = .{
                 .turn_id = turn_id,
                 .item_id = item_id,
