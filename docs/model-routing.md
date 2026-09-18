@@ -106,6 +106,8 @@ Their adapter tickets rerun the script to regain them; loopback and
 * Ctrl+S at any picker step (model, effort, fast) behaves like Enter there
   and marks the choice to be saved; finishing writes the session and the
   profile default together. Escape at any step cancels and writes nothing.
-* The `/settings` effort row, `fiber models use`, `fiber ask --model` and
-  `FIBER_MODEL` are unchanged: the first writes the session and the
-  default, the rest keep setting the default new sessions start from.
+* The `/settings` effort row and `fiber models use` are unchanged: the
+  first writes the session and the default, the second sets the profile
+  default new sessions start from. `fiber ask --model` and `FIBER_MODEL`
+  are request and process overrides for one run only; they never change
+  the profile default.
