@@ -587,6 +587,7 @@ async function launchPermissionResumeHarness(initialResponses: CodexResponse[]) 
     stderrPath: initialStderrPath,
     width: 120,
     height: 40,
+    startupWaitMs: 0,
   });
   activeSession = initialSession;
 
@@ -614,6 +615,7 @@ async function launchPermissionResumeHarness(initialResponses: CodexResponse[]) 
         stderrPath: resumedStderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       activeSession = session;
       return { codex, session };
@@ -751,6 +753,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 100,
         height: 28,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the prepared two-command history fixture.");
@@ -831,6 +834,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 100,
         height: 28,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("/resume");
@@ -889,6 +893,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 100,
         height: 28,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the prepared two-command control fixture.");
@@ -931,6 +936,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run pwd once.");
@@ -983,6 +989,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run pwd once in auto mode.");
@@ -1086,6 +1093,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 36,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the prepared command matrix.");
@@ -1150,6 +1158,7 @@ describe("effect-aware command permissions", () => {
         stderrPath: resumedStderrPath,
         width: 88,
         height: 32,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.waitForText("3 tool calls", TIMEOUT);
@@ -1237,6 +1246,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 72,
         height: 30,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the lossless direct printf fixture.");
@@ -1354,6 +1364,7 @@ describe("effect-aware command permissions", () => {
         stderrPath: resumedStderrPath,
         width: 72,
         height: 30,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.waitForText("Ran printf", TIMEOUT);
@@ -1418,6 +1429,7 @@ describe("effect-aware command permissions", () => {
         width: 90,
         height: 30,
         minimumHistoryLines: 1_000,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("/output quiet");
@@ -1495,6 +1507,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run pwd until you can answer.");
@@ -1543,6 +1556,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("/trace");
@@ -1604,6 +1618,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the classifier approval fixture.");
@@ -1682,6 +1697,7 @@ describe("effect-aware command permissions", () => {
         width: 120,
         height: 36,
         minimumHistoryLines: 1_000,
+        startupWaitMs: 0,
       });
       expect(activeSession.paneSize()).toEqual({ cols: 120, rows: 36 });
       await activeSession.waitForPane(hasComposer, TIMEOUT);
@@ -1815,6 +1831,7 @@ describe("effect-aware command permissions", () => {
           width: 120,
           height: 40,
           minimumHistoryLines: 1_000,
+          startupWaitMs: 0,
         });
         await activeSession.sendText(
           "export PS1='FIBER_OUTER_PROMPT> '; printf 'FIBER_OUTER_SHELL_READY\\n'",
@@ -1996,6 +2013,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the classifier ask fixture.");
@@ -2037,6 +2055,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       const resumedPane = await activeSession.waitForPane(
@@ -2093,6 +2112,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the reviewer fallback fixture.");
@@ -2145,6 +2165,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run pwd until you can answer.");
@@ -2195,6 +2216,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the held automatic review fixture.");
@@ -2350,6 +2372,7 @@ describe("effect-aware command permissions", () => {
         width: 120,
         height: 36,
         minimumHistoryLines: 1_000,
+        startupWaitMs: 0,
       });
 
       await activeSession.waitForText("auto · gpt-5.6-luna", TIMEOUT);
@@ -2494,6 +2517,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText(rootPrompt);
@@ -2584,6 +2608,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Create the marker.");
@@ -2628,6 +2653,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Create the one-time marker.");
@@ -2668,6 +2694,7 @@ describe("effect-aware command permissions", () => {
         stderrPath: foregroundStderr,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Run the large foreground fixture.");
@@ -2724,6 +2751,7 @@ describe("effect-aware command permissions", () => {
         stderrPath,
         width: 120,
         height: 40,
+        startupWaitMs: 0,
       });
       await activeSession.waitForComposer(TIMEOUT);
       await activeSession.sendText("Create the reusable marker.");
@@ -3111,6 +3139,7 @@ describe("effect-aware command permissions", () => {
         width: 120,
         height: 40,
         remainOnExit: true,
+        startupWaitMs: 0,
       });
       const finalPane = await activeSession.waitForText("fiber ask prompt complete", TIMEOUT);
       expect(finalPane).not.toContain("Approve? [y/N]");

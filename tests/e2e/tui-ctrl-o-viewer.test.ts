@@ -96,6 +96,7 @@ test.skipIf(!tmuxAvailable())(
           stderrPath,
           width: 100,
           height: 32,
+          startupWaitMs: 0,
         });
         await active.waitForComposer(TIMEOUT);
         await active.waitForText(answer, TIMEOUT);
@@ -150,6 +151,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath: seedStderrPath,
         width: 100,
         height: 30,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText(title);
@@ -178,6 +180,7 @@ test.skipIf(!tmuxAvailable())(
           stderrPath: resumeCase.stderrPath,
           width: 100,
           height: 30,
+          startupWaitMs: 0,
         });
         const resumed = await waitForScrollbackMarkers(
           active,
@@ -286,6 +289,7 @@ printf '${trailingMarker}   '
         stderrPath,
         width: 72,
         height: 24,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared command.");
@@ -403,6 +407,7 @@ printf '${trailingMarker}   '
         stderrPath: resumedStderrPath,
         width: 72,
         height: 24,
+        startupWaitMs: 0,
       });
       await active.waitForText(doneMarker, TIMEOUT);
       await active.sendKeys("C-o");
@@ -478,6 +483,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 32,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared command.");
@@ -635,6 +641,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 160,
         height: 200,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared cap-crossing command.");
@@ -772,6 +779,7 @@ printf '${tailMarker}\\n'
         stderrPath,
         width: 80,
         height: 28,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Seed the prepared historical transcript.");
@@ -973,6 +981,7 @@ while :; do :; done
         stderrPath,
         width: 120,
         height: 36,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared cancellable cap-crossing command.");
@@ -1204,6 +1213,7 @@ while :; do :; done
         stderrPath,
         width: 120,
         height: 36,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared cancellable below-cap command.");
@@ -1358,6 +1368,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 28,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText(prompt);
@@ -1463,6 +1474,7 @@ test.skipIf(!tmuxAvailable())(
             stderrPath,
             width: 48,
             height: 12,
+            startupWaitMs: 0,
           });
           await active.waitForComposer(TIMEOUT);
           await active.sendText("Return the prepared TypeScript block.");
@@ -1526,6 +1538,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 30,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       const before = await active.captureFullScrollback();
@@ -1594,6 +1607,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 30,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Save a session before testing Cmd+R.");
@@ -1670,6 +1684,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 32,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Start the prepared Ctrl-O input check.");
@@ -1753,6 +1768,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 32,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared Ctrl-O cancellation check.");
@@ -1820,6 +1836,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 32,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared command.");
@@ -1892,6 +1909,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 32,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared streaming command.");
@@ -2059,6 +2077,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 32,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared streaming command.");
@@ -2149,6 +2168,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 32,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared command and ask the prepared question.");
@@ -2227,6 +2247,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 40,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared command.");
@@ -2342,6 +2363,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 12,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Return the prepared Markdown response.");
@@ -2404,6 +2426,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 32,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Read the prepared file.");
@@ -2467,6 +2490,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 32,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared read-only tools.");
@@ -2568,6 +2592,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 30,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared folded output command.");
@@ -2671,6 +2696,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 32,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
       await active.sendText("Run the prepared shell command.");
@@ -2813,6 +2839,7 @@ test.skipIf(!tmuxAvailable())(
         stderrPath,
         width: 100,
         height: 30,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(actionTimeout);
       await active.sendText("Return the prepared Markdown response.");
@@ -3002,6 +3029,7 @@ test.skipIf(!tmuxAvailable())(
         width: 104,
         height: 28,
         remainOnExit: true,
+        startupWaitMs: 0,
       });
       await active.waitForComposer(TIMEOUT);
 
