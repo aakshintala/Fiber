@@ -180,6 +180,7 @@ jobs:
       - name: Run unit tests
         env:
           TEST_TIMEOUT_SECONDS: "1200"
+          FIBER_DIAG_QUIET: "1"  # DIAG ONLY: observer-effect experiment
         run: |
           started_at=$SECONDS
           trap 'printf "Unit test run elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
