@@ -127,6 +127,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
           FIBER_TRACE_SCOPES: TRACE_SCOPES,
           FIBER_TRACE_LOG: tracePath,
         }),
+        startupWaitMs: 0,
       });
       await session.waitForComposer(TIMEOUT);
 
@@ -235,6 +236,7 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
           FIBER_TRACE_SCOPES: TRACE_SCOPES,
           FIBER_TRACE_LOG: tracePath,
         }),
+        startupWaitMs: 0,
       });
       await session.waitForComposer(TIMEOUT);
 
@@ -403,8 +405,10 @@ while :; do sleep 1; done
           FIBER_TRACE_SCOPES: `${TRACE_SCOPES},core`,
           FIBER_TRACE_LOG: tracePath,
         }),
+        startupWaitMs: 0,
       });
       await session.waitForComposer(TIMEOUT);
+      await waitForTrace(tracePath, "file index generation started", TIMEOUT);
 
       await session.sendText("Run the prepared workspace cancellation command.");
       await waitForCondition(
@@ -451,6 +455,12 @@ while :; do sleep 1; done
       );
       await session.sendText("/workspace list");
       await session.waitForText("available=false active=false", TIMEOUT);
+      await waitForCondition(
+        () =>
+          countOccurrences(readTrace(tracePath), "file index generation started") ===
+          generationStartsBeforeList + 1,
+        "replacement file index generation started",
+      );
       expect(countOccurrences(readTrace(tracePath), "file index generation started")).toBe(
         generationStartsBeforeList + 1,
       );

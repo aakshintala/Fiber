@@ -140,6 +140,7 @@ describe.skipIf(SKIP)("tui: logical-line deletion", () => {
           cwd: workDir,
           width: 120,
           height: 40,
+          startupWaitMs: 0,
         });
         await session.waitForComposer(10_000);
 

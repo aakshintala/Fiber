@@ -326,6 +326,7 @@ describe.skipIf(!tmuxAvailable())("tui: durable session usage", () => {
           cwd: workspace,
           env: codexEnvironment(home),
           stderrPath,
+          startupWaitMs: 0,
         });
         await session.waitForComposer(TIMEOUT);
         if (resumeMode === "picker") {
@@ -390,6 +391,7 @@ describe.skipIf(!tmuxAvailable())("tui: durable session usage", () => {
       session = await TmuxSession.create({
         cwd: workspace,
         env: codexEnvironment(home),
+        startupWaitMs: 0,
       });
       await session.waitForComposer(TIMEOUT);
       await session.sendText("Reply with the cost accounting sentinel.");
@@ -419,6 +421,7 @@ describe.skipIf(!tmuxAvailable())("tui: durable session usage", () => {
         cmd: `${FIBER_BIN} continue`,
         cwd: workspace,
         env: codexEnvironment(home),
+        startupWaitMs: 0,
       });
       await session.waitForComposer(TIMEOUT);
       await session.sendText("/usage");

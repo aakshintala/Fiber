@@ -100,6 +100,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
         session = await TmuxSession.create({
           cwd: workspaceRoot,
           env: rejectedCodexEnv(home, codex),
+          startupWaitMs: 0,
         });
         await session.waitForText("Run /help", TIMEOUT);
         await session.sendText("PLAN10_PROMPT_HISTORY_SENTINEL");
@@ -121,6 +122,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
         session = await TmuxSession.create({
           cwd: workspaceRoot,
           env: rejectedCodexEnv(home, codex),
+          startupWaitMs: 0,
         });
         await session.waitForText("Run /help", TIMEOUT);
 
@@ -197,6 +199,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
               NO_COLOR: "1",
               HOME: realpathSync(home),
             },
+            startupWaitMs: 0,
           });
           await session.waitForText("Run /help", TIMEOUT);
           expect(existsSync(join(home, ".fiber"))).toBe(false);
@@ -230,6 +233,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
           session = await TmuxSession.create({
             cwd: realpathSync(workspace),
             env: rejectedCodexEnv(home, codex),
+            startupWaitMs: 0,
           });
           await session.waitForText("Run /help", TIMEOUT);
           await session.sendText(prompt);
@@ -250,6 +254,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
         session = await TmuxSession.create({
           cwd: realpathSync(workspaceA),
           env: rejectedCodexEnv(home, codex),
+          startupWaitMs: 0,
         });
         await session.waitForText("Run /help", TIMEOUT);
         await disablePromptHistory(session, join(home, ".fiber", "settings.json"));
@@ -364,6 +369,7 @@ describe.skipIf(!tmuxAvailable())("prompt history", () => {
             NO_COLOR: "1",
             HOME: home,
           },
+          startupWaitMs: 0,
         });
         await session.waitForText("Run /help", TIMEOUT);
         await session.sendKeys("Up");

@@ -137,6 +137,7 @@ test.skipIf(!tmuxAvailable())(
         cwd: fixture.workspace,
         env: notificationEnv(fixture.home, codex, tracePath),
         stderrPath,
+        startupWaitMs: 0,
       });
       await session.waitForComposer(TIMEOUT);
       await session.sendText("Finish this notification fixture.");
@@ -219,6 +220,7 @@ test.skipIf(!tmuxAvailable())(
         cwd: fixture.workspace,
         env: notificationEnv(fixture.home, codex, tracePath),
         remainOnExit: true,
+        startupWaitMs: 0,
       });
       await session.waitForText("Approve? [y/N]", TIMEOUT);
       expect(existsSync(marker)).toBe(false);
@@ -282,6 +284,7 @@ test.skipIf(!tmuxAvailable())(
         cwd: fixture.workspace,
         env: notificationEnv(fixture.home, codex, tracePath),
         stderrPath,
+        startupWaitMs: 0,
       });
       await session.waitForComposer(TIMEOUT);
       session.startPaneOutputCapture(paneOutputPath);

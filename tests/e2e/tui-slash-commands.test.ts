@@ -40,6 +40,7 @@ async function launchAndWait(): Promise<TmuxSession> {
   const s = await TmuxSession.create({
     cwd: workspace,
     env: { HOME: home },
+    startupWaitMs: 0,
   });
   await s.waitForComposer(10_000);
   return s;
@@ -67,6 +68,7 @@ async function launchNoKeyAndWait(): Promise<{
       FIBER_SKIP_ONBOARDING: "1",
       VERCEL_OIDC_TOKEN: undefined,
     },
+    startupWaitMs: 0,
   });
   await terminal.waitForComposer(10_000);
   return { terminal, stderrPath };
@@ -136,6 +138,7 @@ describe.skipIf(TMUX_SKIP)("tui: no-key slash commands", () => {
           VERCEL_OIDC_TOKEN: undefined,
           NO_COLOR: "1",
         },
+        startupWaitMs: 0,
       });
       await session.waitForComposer(10_000);
       expect((await session.captureFullScrollback()).split("Run /help for commands")).toHaveLength(2);
