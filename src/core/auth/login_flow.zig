@@ -117,6 +117,10 @@ pub const SignInRuntime = struct {
     failure: ?anyerror = null,
     poll_state: ?LoginPollState = null,
     deps: SignInRuntimeDeps = .{},
+    /// Allocator the active flow was started with. Cancel paths run where no
+    /// allocator is in scope (Escape key handling), so teardown frees the
+    /// flow with the stored allocator instead of a caller-provided one.
+    flow_alloc: ?Allocator = null,
 
     pub fn startPrepared(
         self: *Self,
@@ -162,6 +166,7 @@ pub const SignInRuntime = struct {
         self.flow = prepared;
         self.poll_state = poll_state;
         self.deps = deps;
+        self.flow_alloc = alloc;
         self.deps.poll.cancel_flag = &self.cancel_requested;
         self.cancel_requested.store(false, .seq_cst);
         self.mutex.unlock(io_mod.getIo());
@@ -171,13 +176,13 @@ pub const SignInRuntime = struct {
             self.mutex.lockUncancelable(io_mod.getIo());
             self.state = .idle;
             self.mutex.unlock(io_mod.getIo());
-            self.clearFlow(alloc);
+            self.clearFlow();
             return err;
         };
         return true;
     }
 
-    pub fn cancel(self: *Self, alloc: Allocator) bool {
+    pub fn cancel(self: *Self) bool {
         self.cancel_requested.store(true, .seq_cst);
         self.mutex.lockUncancelable(io_mod.getIo());
         const cancelled = self.state == .polling;
@@ -187,12 +192,12 @@ pub const SignInRuntime = struct {
         self.mutex.unlock(io_mod.getIo());
 
         if (thread) |handle| handle.join();
-        self.clearFlow(alloc);
+        self.clearFlow();
         return cancelled;
     }
 
     pub fn deinit(self: *Self, alloc: Allocator) void {
-        _ = self.cancel(alloc);
+        _ = self.cancel();
         if (self.completion) |*selection| selection.deinit(alloc);
         self.completion = null;
         self.failure = null;
@@ -373,16 +378,20 @@ pub const SignInRuntime = struct {
         self.state = .failed;
     }
 
-    fn clearFlow(self: *Self, alloc: Allocator) void {
+    fn clearFlow(self: *Self) void {
         self.mutex.lockUncancelable(io_mod.getIo());
         var flow = self.flow;
         const deps = self.deps;
+        const flow_alloc = self.flow_alloc;
         self.flow = null;
         self.poll_state = null;
         self.deps = .{};
+        self.flow_alloc = null;
         self.mutex.unlock(io_mod.getIo());
-        if (flow) |*prepared| prepared.deinit(alloc);
-        if (deps.deinit_ctx) |deinit_ctx| deinit_ctx(deps.ctx, alloc);
+        // flow and flow_alloc are installed and cleared together, so a live
+        // flow always has its start allocator available here.
+        if (flow) |*prepared| prepared.deinit(flow_alloc.?);
+        if (deps.deinit_ctx) |deinit_ctx| deinit_ctx(deps.ctx, flow_alloc.?);
     }
 };
 
@@ -906,7 +915,7 @@ test "sign-in runtime releases an owned provider context exactly once" {
             .deinit_ctx = Cleanup.run,
         },
     ));
-    try std.testing.expect(runtime.cancel(alloc));
+    try std.testing.expect(runtime.cancel());
     runtime.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 1), cleanup_count);
 }
@@ -962,7 +971,7 @@ test "cooperative sign-in cancellation publishes no session" {
     ));
     runtime.pulseCooperative(alloc);
 
-    try std.testing.expect(runtime.cancel(alloc));
+    try std.testing.expect(runtime.cancel());
     try std.testing.expectEqual(SignInTransition.cancelled, runtime.pollTransition(alloc));
     try std.testing.expectEqual(@as(usize, 0), state.complete_count);
     try std.testing.expectEqual(@as(usize, 0), state.save_count);
@@ -1038,7 +1047,7 @@ test "VT-8(b) cancelling sign-in during the inter-poll wait publishes and saves 
         state.deps(),
     ));
     try std.testing.expect(waitForAtomic(&state.poll_started, 500));
-    try std.testing.expect(runtime.cancel(alloc));
+    try std.testing.expect(runtime.cancel());
 
     try std.testing.expectEqual(SignInTransition.cancelled, runtime.pollTransition(alloc));
     try std.testing.expectEqual(@as(usize, 0), state.complete_count.load(.seq_cst));
@@ -1059,7 +1068,7 @@ test "VT-8(b) cancelling sign-in during an in-flight poll publishes and saves no
         state.deps(),
     ));
     try std.testing.expect(waitForAtomic(&state.poll_started, 500));
-    try std.testing.expect(runtime.cancel(alloc));
+    try std.testing.expect(runtime.cancel());
 
     try std.testing.expectEqual(SignInTransition.cancelled, runtime.pollTransition(alloc));
     try std.testing.expectEqual(@as(usize, 0), state.complete_count.load(.seq_cst));
@@ -1080,7 +1089,7 @@ test "VT-8(c) cancelled sign-in is reaped before a second flow completes" {
         state.deps(),
     ));
     try std.testing.expect(waitForAtomic(&state.poll_started, 500));
-    try std.testing.expect(runtime.cancel(alloc));
+    try std.testing.expect(runtime.cancel());
     try std.testing.expectEqual(SignInTransition.cancelled, runtime.pollTransition(alloc));
     try std.testing.expect(runtime.thread == null);
 

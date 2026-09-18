@@ -2,6 +2,7 @@ const std = @import("std");
 const credentials = @import("credentials.zig");
 const chatgpt_oauth = @import("chatgpt_oauth.zig");
 const login_flow = @import("login_flow.zig");
+const oauth = @import("oauth.zig");
 const model_provider = @import("../config/model_provider.zig");
 const oauth_transport = @import("oauth_transport.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
@@ -649,7 +650,7 @@ pub const Runtime = struct {
 
         if (stage == .sign_in) {
             const returns_to_root = self.sign_in_returns_to_root;
-            _ = self.sign_in_flow.cancel(undefined);
+            _ = self.sign_in_flow.cancel();
             self.sign_in_returns_to_root = false;
             if (!returns_to_root) {
                 self.picker_active = false;
@@ -702,7 +703,7 @@ pub const Runtime = struct {
 
     fn exitSignInStage(self: *Self) void {
         if (self.picker_stage != .sign_in) return;
-        _ = self.sign_in_flow.cancel(undefined);
+        _ = self.sign_in_flow.cancel();
         self.sign_in_returns_to_root = false;
     }
 
@@ -934,4 +935,112 @@ test "credential refresh failure is surfaced through catalog access" {
 
     runtime.credential_refresh_failure_source = .chatgpt_subscription;
     try std.testing.expectEqual(credentials.CatalogPublicOnlyReason.credential_refresh_failed, runtime.modelCatalogAccess().publicOnlyReason().?);
+}
+
+const CancelMidPollState = struct {
+    poll_started: std.atomic.Value(bool) = .init(false),
+
+    fn deps(self: *@This()) login_flow.SignInRuntimeDeps {
+        return .{ .poll = .{
+            .ctx = self,
+            .poll_device_token = poll,
+        } };
+    }
+
+    fn poll(
+        raw: ?*anyopaque,
+        _: Allocator,
+        _: oauth_transport.Provider,
+        _: oauth.Metadata,
+        _: []const u8,
+        _: []const u8,
+        cancel_flag: *std.atomic.Value(bool),
+        _: std.Io.Clock.Timestamp,
+    ) !oauth.PollResult {
+        const self: *@This() = @ptrCast(@alignCast(raw.?));
+        self.poll_started.store(true, .seq_cst);
+        while (!cancel_flag.load(.seq_cst)) testSleepMs(1);
+        return error.Cancelled;
+    }
+};
+
+fn makeCancelTestPreparedLogin(alloc: Allocator) !login_flow.PreparedLogin {
+    var metadata = try oauth.parseMetadata(
+        alloc,
+        "{\"issuer\":\"https://vercel.test\",\"device_authorization_endpoint\":\"https://vercel.test/device\",\"token_endpoint\":\"https://vercel.test/token\"}",
+    );
+    errdefer metadata.deinit(alloc);
+    var device = try oauth.parseDeviceAuthorization(
+        alloc,
+        "{\"device_code\":\"device\",\"user_code\":\"USER-CODE\",\"verification_uri\":\"https://vercel.test/oauth/device\",\"verification_uri_complete\":\"https://vercel.test/oauth/device?code=USER-CODE\",\"expires_in\":60,\"interval\":1}",
+    );
+    errdefer device.deinit(alloc);
+    return .{
+        .metadata = metadata,
+        .device = device,
+        .client_id = try alloc.dupe(u8, "client"),
+    };
+}
+
+fn testSleepMs(milliseconds: u64) void {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    threaded.io().sleep(.fromMilliseconds(@intCast(milliseconds)), .real) catch {};
+}
+
+fn waitForCancelTestPoll(state: *CancelMidPollState) bool {
+    var remaining_ms: u64 = 500;
+    while (remaining_ms > 0) : (remaining_ms -= 1) {
+        if (state.poll_started.load(.seq_cst)) return true;
+        testSleepMs(1);
+    }
+    return state.poll_started.load(.seq_cst);
+}
+
+test "escape during sign-in cancels a mid-poll worker and returns to the composer" {
+    const alloc = std.testing.allocator;
+    var runtime: Runtime = undefined;
+    Runtime.initInto(&runtime, oauth_transport.unavailable_provider);
+    defer runtime.deinit(alloc);
+    var poll_state = CancelMidPollState{};
+
+    try std.testing.expect(try runtime.sign_in_flow.startPrepared(
+        alloc,
+        try makeCancelTestPreparedLogin(alloc),
+        poll_state.deps(),
+    ));
+    try std.testing.expect(waitForCancelTestPoll(&poll_state));
+    runtime.picker_active = true;
+    runtime.picker_stage = .sign_in;
+    runtime.sign_in_returns_to_root = false;
+
+    try std.testing.expect(runtime.popPickerStage());
+    try std.testing.expect(!runtime.picker_active);
+    try std.testing.expectEqual(PickerStage.root, runtime.picker_stage);
+    try std.testing.expect(runtime.sign_in_flow.thread == null);
+    try std.testing.expect(runtime.sign_in_flow.flow == null);
+    try std.testing.expectEqual(login_flow.SignInTransition.cancelled, runtime.pollSignInTransition(alloc));
+}
+
+test "closePicker during sign-in cancels a mid-poll worker without crashing" {
+    const alloc = std.testing.allocator;
+    var runtime: Runtime = undefined;
+    Runtime.initInto(&runtime, oauth_transport.unavailable_provider);
+    defer runtime.deinit(alloc);
+    var poll_state = CancelMidPollState{};
+
+    try std.testing.expect(try runtime.sign_in_flow.startPrepared(
+        alloc,
+        try makeCancelTestPreparedLogin(alloc),
+        poll_state.deps(),
+    ));
+    try std.testing.expect(waitForCancelTestPoll(&poll_state));
+    runtime.picker_active = true;
+    runtime.picker_stage = .sign_in;
+
+    runtime.closePicker();
+    try std.testing.expect(!runtime.picker_active);
+    try std.testing.expectEqual(PickerStage.root, runtime.picker_stage);
+    try std.testing.expect(runtime.sign_in_flow.thread == null);
+    try std.testing.expect(runtime.sign_in_flow.flow == null);
+    try std.testing.expectEqual(login_flow.SignInTransition.cancelled, runtime.pollSignInTransition(alloc));
 }
