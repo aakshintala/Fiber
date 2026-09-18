@@ -449,6 +449,7 @@ pub fn bootstrapInteractiveApp(cfg: BootstrapConfig) !StartupState {
         io_mod.getenv("COLORTERM"),
         io_mod.getenv("TERM_PROGRAM"),
     ));
+    ui_render.setColorEnabled(ui_render.colorEnabledFromEnv());
     const theme = ui_render.detectTheme(cfg.alloc, cfg.terminal);
     ui_render.initTheme(theme.light, theme.rgb);
     state.theme_monitor_enabled = ui_render.explicitThemeOverride() == null;
@@ -929,6 +930,24 @@ fn emitShutdownCleanupAndResume(shell: *TranscriptRuntime, metrics: *Metrics) vo
 }
 
 pub fn writeLifecycleTerminalBytes(shell: *TranscriptRuntime, metrics: *Metrics, bytes: []const u8) !void {
+    // The NO_COLOR choke point for bytes that bypass the frame sink, such as
+    // the approval screen. Tape and metrics record the stripped bytes; the
+    // shadow grid still tracks the painted state, which can only differ in
+    // colour that the terminal never shows.
+    if (!ui_render.colorEnabled()) {
+        switch (ui_render.writeWithoutColor(shell.stdout_file, metrics, bytes)) {
+            .complete => {},
+            .partial => |partial| return partial.err,
+        }
+        if (shell.shadow_vt) |grid| {
+            grid.feed(bytes) catch |err| debug_trace.logf(
+                "render",
+                "lifecycle_shadow_feed_drop bytes={d} err={s}",
+                .{ bytes.len, @errorName(err) },
+            );
+        }
+        return;
+    }
     try shell.stdout_file.writeStreamingAll(io_mod.getIo(), bytes);
     if (shell.shadow_vt) |grid| {
         grid.feed(bytes) catch |err| debug_trace.logf(
@@ -1165,6 +1184,44 @@ test "lifecycle terminal writer updates bytes metrics and shadow" {
     try std.testing.expectEqualStrings("x", bytes);
     try std.testing.expectEqual(@as(usize, 1), metrics.ansi_bytes);
     try std.testing.expectEqual(@as(u21, 'x'), shell.shadow_vt.?.cellAt(1, 1).?.codepoint);
+}
+
+test "lifecycle terminal writer strips colour without colour support" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const out_path = "lifecycle-nocolor.out";
+    const out_file = try tmp.dir.createFile(io_mod.getIo(), out_path, .{ .truncate = true });
+    var shell = TranscriptRuntime{
+        .stdout_file = out_file,
+        .layout = .{
+            .rows = 4,
+            .cols = 40,
+            .content_bottom = 1,
+            .divider_top_row = 1,
+            .input_row = 2,
+            .divider_bottom_row = 3,
+            .hint_row = 4,
+        },
+    };
+    defer shell.deinit(alloc);
+    try shell.enableShadowVt(alloc);
+    ui_render.setColorEnabled(false);
+    defer ui_render.setColorEnabled(true);
+
+    var metrics = Metrics{};
+    // A notice hue, an approval choice with reverse video, and code output.
+    try writeLifecycleTerminalBytes(&shell, &metrics, "\x1b[38;5;203merror\x1b[0m \x1b[7m❯ \x1b[27m1. Allow once\x1b[0m \x1b[38;5;250m\"ready\"\x1b[39m");
+    shell.stdout_file.close(io_mod.getIo());
+
+    var read_file = try tmp.dir.openFile(io_mod.getIo(), out_path, .{});
+    defer read_file.close(io_mod.getIo());
+    const bytes = try io_mod.readFileToEnd(alloc, &read_file, 128);
+    defer alloc.free(bytes);
+
+    try std.testing.expectEqualStrings("error\x1b[0m \x1b[7m❯ \x1b[27m1. Allow once\x1b[0m \"ready\"", bytes);
+    try std.testing.expect(std.mem.find(u8, bytes, "38;") == null);
 }
 
 test "approval alternate screen lifecycle restores the shadow terminal once" {

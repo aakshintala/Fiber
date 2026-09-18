@@ -1100,12 +1100,16 @@ fn composeFileApprovalChoiceRowWithBlocked(
     if (row_style.len > 0) try row.appendSlice(alloc, row_style);
 
     const marker = if (selected) "❯ " else "  ";
+    // Reverse video keeps the active choice distinguishable without colour;
+    // the escapes bypass width accounting like row_style above.
+    if (selected) try row.appendSlice(alloc, "\x1b[7m");
     _ = try appendTerminalSafeClipped(
         alloc,
         &row,
         marker,
         remaining,
     );
+    if (selected) try row.appendSlice(alloc, "\x1b[27m");
     remaining -|= display_width.visibleWidth(marker);
     if (blocked) {
         _ = try appendTerminalSafeClipped(
@@ -1762,9 +1766,12 @@ pub fn composeInlineApprovalHintRow(
 
 fn approvalChoiceLine(buf: []u8, selected: bool, label: []const u8) []const u8 {
     const marker: []const u8 = if (selected) "❯ " else "  ";
+    // Reverse video keeps the active choice distinguishable without colour.
+    const reverse_on: []const u8 = if (selected) "\x1b[7m" else "";
+    const reverse_off: []const u8 = if (selected) "\x1b[27m" else "";
     const label_style = if (selected) ui_render.tag_style else "";
     const suffix_style = if (selected) ui_render.reset_style else "";
-    return std.fmt.bufPrint(buf, "  {s}{s}{s}{s}", .{ marker, label_style, label, suffix_style }) catch label;
+    return std.fmt.bufPrint(buf, "  {s}{s}{s}{s}{s}{s}", .{ reverse_on, marker, reverse_off, label_style, label, suffix_style }) catch label;
 }
 
 fn composeApprovalHeaderRow(
@@ -2800,6 +2807,37 @@ test "generic approval uses compact permission header and pointer marker" {
     try std.testing.expect(std.mem.find(u8, choice.items, "›") == null);
 }
 
+test "active approval choice carries reverse video without colour" {
+    const alloc = std.testing.allocator;
+    var prompt = ApprovalPrompt{};
+    defer prompt.deinit(alloc);
+    try std.testing.expect(try prompt.syncRequest(alloc, .{
+        .label = "shell.run touch marker",
+    }));
+
+    var selected = try composeApprovalPanelRow(
+        alloc,
+        prompt.projection().?,
+        80,
+        6,
+        interaction_state.approval_panel_rows_spacious,
+    );
+    defer selected.deinit(alloc);
+    // Reverse video survives the NO_COLOR choke point, so the active button
+    // stays distinguishable when every colour sequence is stripped.
+    try std.testing.expect(std.mem.find(u8, selected.items, "\x1b[7m❯ \x1b[27m") != null);
+
+    var unselected = try composeApprovalPanelRow(
+        alloc,
+        prompt.projection().?,
+        80,
+        7,
+        interaction_state.approval_panel_rows_spacious,
+    );
+    defer unselected.deinit(alloc);
+    try std.testing.expect(std.mem.find(u8, unselected.items, "\x1b[7m") == null);
+}
+
 test "subagent approval header identifies requester and preserves command kind" {
     const alloc = std.testing.allocator;
     var prompt = ApprovalPrompt{};
@@ -2936,6 +2974,7 @@ test "file approval uses compact review header path question and pointer marker"
     );
     defer choice.text.deinit(alloc);
     try std.testing.expect(std.mem.find(u8, choice.text.items, "❯ ") != null);
+    try std.testing.expect(std.mem.find(u8, choice.text.items, "\x1b[7m❯ \x1b[27m") != null);
     try std.testing.expect(std.mem.find(
         u8,
         choice.text.items,

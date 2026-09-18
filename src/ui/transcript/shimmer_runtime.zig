@@ -266,7 +266,7 @@ fn writeThinkingBlinkText(out: []u8, label: []const u8, marker_visible: bool) []
     }
     var w: std.Io.Writer = .fixed(out);
     if (marker_visible) {
-        w.print("{s}{s}{s}", .{ ui_render.permission_auto_style, marker, ui_render.reset_style }) catch return label;
+        w.print("{s}{s}{s}", .{ ui_render.thinking_marker_style, marker, ui_render.reset_style }) catch return label;
     } else {
         w.writeAll(" ") catch return label;
     }
@@ -275,7 +275,7 @@ fn writeThinkingBlinkText(out: []u8, label: []const u8, marker_visible: bool) []
     // counter keep the brighter label gray.
     if (std.mem.find(u8, rest, " (↑")) |token_suffix| {
         w.print("{s}{s}{s}{s}{s}", .{
-            ui_render.permission_auto_style,
+            ui_render.thinking_marker_style,
             rest[0..token_suffix],
             ui_render.dim_style,
             rest[token_suffix..],
@@ -283,7 +283,7 @@ fn writeThinkingBlinkText(out: []u8, label: []const u8, marker_visible: bool) []
         }) catch return label;
     } else {
         w.print("{s}{s}{s}", .{
-            ui_render.permission_auto_style,
+            ui_render.thinking_marker_style,
             rest,
             ui_render.reset_style,
         }) catch return label;
@@ -358,7 +358,7 @@ fn writeToolMarkerBlinkText(out: []u8, label: []const u8, shimmer_pos: i16) []co
     var marker_writer: std.Io.Writer = .fixed(&marker_buf);
     if (markerBlinkVisible(shimmer_pos)) {
         marker_writer.print("{s}{s}{s}", .{
-            ui_render.permission_auto_style,
+            ui_render.thinking_marker_style,
             label[marker_start..marker_end],
             ui_render.reset_style,
         }) catch return label;
@@ -839,4 +839,15 @@ test "activity paint trace formats omit label payload" {
     );
     try std.testing.expect(std.mem.find(u8, surface_line, "label=\"") == null);
     try std.testing.expect(std.mem.find(u8, surface_line, label) == null);
+}
+
+test "thinking marker paints its own role instead of the permission auto style" {
+    ui_render.initTheme(false, null);
+    defer ui_render.initTheme(false, null);
+
+    var out: [256]u8 = undefined;
+    const result = writeThinkingBlinkText(&out, "• Thinking (5s)", true);
+    try std.testing.expect(std.mem.find(u8, result, ui_render.thinking_marker_style) != null);
+    try std.testing.expect(!std.mem.eql(u8, ui_render.thinking_marker_style, ui_render.permission_auto_style));
+    try std.testing.expect(std.mem.find(u8, result, ui_render.permission_auto_style) == null);
 }

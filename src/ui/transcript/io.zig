@@ -8,6 +8,7 @@
 const std = @import("std");
 const io_mod = @import("../../core/shared/io.zig");
 const record_tape = @import("../../core/workspace/record_tape.zig");
+const ui_render = @import("../render.zig");
 const types = @import("../../core/shared/types.zig");
 const terminal_diff = @import("../render_engine/terminal_diff.zig");
 const vt_emulator = @import("../../core/terminal/engine.zig");
@@ -39,6 +40,17 @@ pub fn disableShadowVt(shell: anytype) void {
 }
 
 pub fn writeFrameBytes(shell: anytype, metrics: *Metrics, bytes: []const u8) terminal_diff.FrameSinkWriteResult {
+    // The NO_COLOR choke point: every painted byte bound for the terminal
+    // flows through writeWithoutColor when colour is disabled.
+    if (!ui_render.colorEnabled()) {
+        switch (ui_render.writeWithoutColor(shell.stdout_file, metrics, bytes)) {
+            .complete => return .complete,
+            .partial => |partial| return .{ .partial = .{
+                .accepted_bytes = partial.source_accepted,
+                .err = partial.err,
+            } },
+        }
+    }
     var accepted_bytes: usize = 0;
     while (accepted_bytes < bytes.len) {
         const written = shell.stdout_file.writeStreaming(
@@ -141,4 +153,29 @@ test "enableShadowVt matches fiber's no-autowrap terminal mode" {
     try enableShadowVt(&shell, std.testing.allocator);
 
     try std.testing.expect(!shell.shadow_vt.?.autowrap);
+}
+
+test "writeFrameBytes strips colour when disabled" {
+    const FakeShell = struct {
+        stdout_file: std.Io.File,
+        shadow_vt: ?*vt_emulator.Grid = null,
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile(std.testing.io, "stripped-frame.log", .{ .read = true });
+    defer file.close(io_mod.getIo());
+
+    var shell = FakeShell{ .stdout_file = file };
+    var metrics: Metrics = .{};
+    ui_render.setColorEnabled(false);
+    defer ui_render.setColorEnabled(true);
+
+    const result = writeFrameBytes(&shell, &metrics, "\x1b[38;5;203merror\x1b[0m \x1b[1mok\x1b[22m");
+    try std.testing.expect(result == .complete);
+
+    var out: [32]u8 = undefined;
+    const n = try file.readPositionalAll(io_mod.getIo(), &out, 0);
+    try std.testing.expectEqualStrings("error\x1b[0m \x1b[1mok\x1b[22m", out[0..n]);
+    try std.testing.expectEqual(n, metrics.ansi_bytes);
 }
