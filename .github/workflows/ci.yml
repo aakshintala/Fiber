@@ -177,17 +177,40 @@ jobs:
           trap 'printf "Unit test compile elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
           zig build test-compile -Doptimize=${{ matrix.platform.optimize }}
 
+      # The deadline sits well under the job timeout so a hang fails this step
+      # with output instead of a silent job cancel (#352). Before killing the
+      # run, the watchdog dumps every thread stack of each test binary: that is
+      # what named the deadlock in #352.
       - name: Run unit tests
         env:
-          TEST_TIMEOUT_SECONDS: "1200"
+          TEST_TIMEOUT_SECONDS: "600"
         run: |
           started_at=$SECONDS
           trap 'printf "Unit test run elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
-          if command -v timeout >/dev/null 2>&1; then
-            timeout "${TEST_TIMEOUT_SECONDS}s" zig build test -Doptimize=${{ matrix.platform.optimize }}
-          else
-            zig build test -Doptimize=${{ matrix.platform.optimize }}
-          fi
+          zig build test -Doptimize=${{ matrix.platform.optimize }} &
+          build_pid=$!
+          while kill -0 "$build_pid" 2>/dev/null; do
+            if [ $((SECONDS - started_at)) -ge "$TEST_TIMEOUT_SECONDS" ]; then
+              echo "::group::HANG after ${TEST_TIMEOUT_SECONDS}s: process tree"
+              ps -axo pid,ppid,stat,etime,command | grep -E 'zig|/test' | grep -v grep || true
+              echo "::endgroup::"
+              for pid in $(pgrep -x test); do
+                echo "::group::HANG: thread stacks of test pid $pid"
+                if command -v sample >/dev/null 2>&1; then
+                  sample "$pid" 2 -mayDie 2>&1 || true
+                  sudo -n lldb -p "$pid" --batch -o 'thread backtrace all' -o 'detach' 2>&1 || true
+                elif command -v gdb >/dev/null 2>&1; then
+                  sudo -n gdb -p "$pid" --batch -ex 'thread apply all bt' 2>&1 || true
+                fi
+                echo "::endgroup::"
+              done
+              pkill -x test || true
+              kill "$build_pid" 2>/dev/null || true
+              exit 1
+            fi
+            sleep 5
+          done
+          wait "$build_pid"
 
       - name: Smoke test fresh binary
         run: ./scripts/smoke.sh

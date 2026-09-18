@@ -178,13 +178,14 @@ const PendingReload = struct {
     }
 
     fn quiesceDetachedAuthority(self: *PendingReload) void {
-        if (self.superseded_reload) |task| {
-            self.superseded_reload = null;
-            task.deinit();
-        }
+        // Authentication can hold the lease that a retiring reload is waiting for.
         if (self.superseded_authentication) |task| {
             self.superseded_authentication = null;
             cancelAndDeinitAuthentication(task, "authority_reduction");
+        }
+        if (self.superseded_reload) |task| {
+            self.superseded_reload = null;
+            task.deinit();
         }
         if (self.detached_runtime) |runtime| {
             self.detached_runtime = null;
@@ -2035,6 +2036,7 @@ pub const State = struct {
         presentation_origin: PresentationOrigin,
         spawn_reload: SpawnPendingReloadFn,
     ) !void {
+        self.cancelPendingAuthentication("reload");
         self.cancelPendingReload();
 
         const pending = try alloc.create(PendingReload);
@@ -2210,10 +2212,10 @@ pub const State = struct {
         self.runtime = null;
         self.lock.unlock(io_mod.getIo());
 
-        if (pending_reload) |task| task.deinit();
         if (pending_authentication) |task| {
             cancelAndDeinitAuthentication(task, "authority_reduction_sync");
         }
+        if (pending_reload) |task| task.deinit();
         if (runtime) |value| destroyRuntime(alloc, value);
     }
 
@@ -2991,6 +2993,9 @@ test "authority reduction quiesces superseded tasks before detached runtime reti
     var active_lease = state.acquire() orelse return error.TestUnexpectedResult;
     var active_lease_owned = true;
     defer if (active_lease_owned) active_lease.deinit();
+    var authentication_lease = state.acquire() orelse return error.TestUnexpectedResult;
+    var authentication_lease_owned = true;
+    defer if (authentication_lease_owned) authentication_lease.deinit();
 
     test_reload_mode = .delayed_empty;
     defer test_reload_mode = .empty;
@@ -3004,11 +3009,23 @@ test "authority reduction quiesces superseded tasks before detached runtime reti
         50,
     );
 
-    const authentication = try alloc.create(PendingAuthentication);
+    const retirement_deadline = io_mod.milliTimestamp() + 2_000;
+    while (!runtime.retiring.load(.acquire) and
+        io_mod.milliTimestamp() < retirement_deadline)
+    {
+        io_mod.sleep(std.time.ns_per_ms);
+    }
+    try std.testing.expect(runtime.retiring.load(.acquire));
+
+    const authentication_name = try alloc.dupe(u8, "workspace");
+    const authentication = alloc.create(PendingAuthentication) catch |err| {
+        alloc.free(authentication_name);
+        return err;
+    };
     authentication.* = .{
         .alloc = alloc,
-        .server_name = try alloc.dupe(u8, "workspace"),
-        .lease = state.acquire() orelse return error.TestUnexpectedResult,
+        .server_name = authentication_name,
+        .lease = authentication_lease,
         .opener = host.unavailable_url_opener,
         .done = .init(true),
         .result = error.Cancelled,
@@ -3016,6 +3033,7 @@ test "authority reduction quiesces superseded tasks before detached runtime reti
     state.lock.lockUncancelable(io_mod.getIo());
     state.pending_authentication = authentication;
     state.lock.unlock(io_mod.getIo());
+    authentication_lease_owned = false;
 
     try state.beginAuthorityReduction(
         alloc,
@@ -3028,13 +3046,6 @@ test "authority reduction quiesces superseded tasks before detached runtime reti
     );
     try std.testing.expect(state.acquire() == null);
 
-    const retirement_deadline = io_mod.milliTimestamp() + 2_000;
-    while (!runtime.retiring.load(.acquire) and
-        io_mod.milliTimestamp() < retirement_deadline)
-    {
-        io_mod.sleep(std.time.ns_per_ms);
-    }
-    try std.testing.expect(runtime.retiring.load(.acquire));
     try std.testing.expect(state.takeReloadCompletion() == null);
 
     active_lease.deinit();
