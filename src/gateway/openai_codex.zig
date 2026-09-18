@@ -12,6 +12,7 @@ const model_tool_schema = @import("../core/tooling/model_tool_schema.zig");
 
 const Allocator = std.mem.Allocator;
 const endpoint = "https://chatgpt.com/backend-api/codex/responses";
+const codex_connection_name = "codex";
 const e2e_endpoint_env = "FIBER_E2E_OPENAI_CODEX_RESPONSES_URL";
 const max_error_body_bytes: usize = 1024 * 1024;
 const max_sse_line_bytes: usize = 32 * 1024 * 1024;
@@ -184,14 +185,11 @@ const OpenRequestOperation = struct {
     }
 };
 
-/// Names the refused connection for an insecure override. Built separately
-/// so tests pin the message without touching the network.
-fn insecure_transport_refusal(alloc: Allocator, override: []const u8) !stream_provider.Result {
-    const detail = try std.fmt.allocPrint(
-        alloc,
-        "connection 'codex' refuses to send its credential over plain HTTP to '{s}'; use https:// or loopback http://",
-        .{override},
-    );
+/// Refusal for an insecure endpoint, naming the actual connection via the
+/// shared helper — never a hardcoded vendor. Built separately so tests pin
+/// the message without touching the network.
+fn insecure_transport_refusal(alloc: Allocator, send: connection_mod.CredentialSend) !stream_provider.Result {
+    const detail = try connection_mod.insecure_transport_detail(alloc, send);
     return .{ .failed = .{
         .kind = .invalid_request,
         .detail = detail,
@@ -242,21 +240,25 @@ pub fn streamPrepared(
     // purpose: a `.failed` value returned before admission is masked
     // upstream as ProviderAdmissionMissing, while admission itself is
     // memory-only, so this refusal still precedes all network I/O with the
-    // connection named. The choke guards the resolved endpoint — the
-    // override when set, else the compiled `https://` default — and mints
-    // the only `Authorization` value this transport may attach, so this
-    // send site cannot bypass the guard: `OpenRequestOperation` below is
-    // fed only from here. The catalog fetch (openai_codex_models.zig)
-    // keeps its own loopback-only override check until it mints through
-    // the choke (#405). A keyed credential never crosses plain HTTP off
-    // loopback (decision 12).
+    // connection named. The send carries the connection identity and the
+    // resolved endpoint — the override when set, else the compiled
+    // `https://` default — and the choke mints the only `Authorization`
+    // value this transport may attach, so this send site cannot bypass the
+    // guard: `OpenRequestOperation` below is fed only from here. The
+    // catalog fetch (openai_codex_models.zig) keeps its own loopback-only
+    // override check until it mints through the choke (#405). A keyed
+    // credential never crosses plain HTTP off loopback (decision 12).
+    const send = connection_mod.CredentialSend{
+        .connection_name = codex_connection_name,
+        .kind = .oauth,
+        .base_url = request_endpoint,
+    };
     const maybe_auth_header = connection_mod.checked_authorization(
         alloc,
-        .oauth,
+        send,
         request.credential.secret,
-        request_endpoint,
     ) catch |err| switch (err) {
-        error.InsecureCredentialTransport => return insecure_transport_refusal(alloc, request_endpoint),
+        error.InsecureCredentialTransport => return insecure_transport_refusal(alloc, send),
         // Unreachable on this path: the override pre-parse above rejects
         // unparseable URLs, and the lease always carries a secret.
         error.InvalidBaseUrl, error.MissingCredential => return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint),
