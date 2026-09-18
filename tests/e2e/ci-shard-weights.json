@@ -51,6 +51,7 @@
   { "file": "tui-slash-menu.test.ts", "weight": 91 },
   { "file": "tui-startup.test.ts", "weight": 15 },
   { "file": "tui-terminal-tool.test.ts", "weight": 25 },
+  { "file": "user-connection.test.ts", "weight": 2 },
   { "file": "vision-route-fake-codex.test.ts", "weight": 6 },
   { "file": "web-fetch-fake-network.test.ts", "weight": 2 },
   { "file": "web-fetch-live.test.ts", "weight": 1 },
