@@ -57,10 +57,11 @@ billing, `https://opencode.ai/zen/go/v1`) and the `opencode-zen` preset
 (`src/protocols/presets/opencode-zen.json`, metered billing,
 `https://opencode.ai/zen/v1`). Both default to a stored `api_key`
 credential; an environment reference to `OPENCODE_API_KEY` stays available
-as the `env` credential kind, not the default. Per-connection login, Go's
-subscription and rate-limit errors, and routing a turn through either
-connection land in their own tickets; connections still exist and validate
-while routing reaches Codex through today's Codex-only path.
+as the `env` credential kind, not the default. Per-connection login lands in
+#291, Go's 403/429 errors in #392 (blocked by #289), and preset loopback
+turns with `model-routing.test.ts` coverage in #393; connections still
+exist and validate while routing reaches Codex through today's Codex-only
+path.
 
 ## Regenerating presets (#304)
 
@@ -93,4 +94,5 @@ checked-in catalog excerpt.
 As of this run, 28 Zen models (20 Anthropic Messages, 8 Google Generative
 AI) and 4 Go models (Anthropic Messages) are skipped: their adapters have
 not landed (#38, #283), so the script leaves them out and prints each id.
-Their adapter tickets rerun the script to regain them.
+Their adapter tickets rerun the script to regain them; loopback and
+`model-routing.test.ts` coverage for the regained models lands in #393.
