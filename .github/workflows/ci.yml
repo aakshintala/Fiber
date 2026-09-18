@@ -133,12 +133,7 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - name: linux-x86_64
-            runner: ubuntu-24.04
-            optimize: ReleaseSafe
-          - name: linux-aarch64
-            runner: ubuntu-24.04-arm
-            optimize: ReleaseSafe
+          # DIAG ONLY: Linux legs removed; only the macOS leg hangs.
           # Debug on the 3-vCPU macOS runner (#312): the ReleaseSafe test
           # compile alone took 452s there. Linux keeps ReleaseSafe unit tests,
           # and the macOS E2E job still drives a ReleaseSafe binary, now
