@@ -244,11 +244,12 @@ pub fn streamPrepared(
     // memory-only, so this refusal still precedes all network I/O with the
     // connection named. The choke guards the resolved endpoint — the
     // override when set, else the compiled `https://` default — and mints
-    // the only `Authorization` value this transport may attach, so no
-    // second send site can bypass the guard: `OpenRequestOperation` below
-    // is the sole `.authorization` attach site for model traffic, fed only
-    // from here. A keyed credential never crosses plain HTTP off loopback
-    // (decision 12).
+    // the only `Authorization` value this transport may attach, so this
+    // send site cannot bypass the guard: `OpenRequestOperation` below is
+    // fed only from here. The catalog fetch (openai_codex_models.zig)
+    // keeps its own loopback-only override check until it mints through
+    // the choke (#405). A keyed credential never crosses plain HTTP off
+    // loopback (decision 12).
     const maybe_auth_header = connection_mod.checked_authorization(
         alloc,
         .oauth,
