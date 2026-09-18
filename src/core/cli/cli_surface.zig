@@ -1871,7 +1871,7 @@ fn resolveAuthLoginProvider(
 /// and for an unreadable startup, so a broken settings file never masks
 /// the argument error. Reads only; per-connection login for keyed kinds
 /// belongs to slice 1 (#95) and is not anticipated here.
-fn reportKeylessConnectionLogin(
+fn report_keyless_connection_login(
     alloc: Allocator,
     cfg: Config,
     deps: RunDeps,
@@ -1886,7 +1886,7 @@ fn reportKeylessConnectionLogin(
     defer startup.deinit(alloc);
     const connection = startup.connections.get(args[0]) orelse return false;
     const kind = connection.credential orelse return false;
-    if (connection_mod.requiresCredential(kind)) return false;
+    if (connection_mod.requires_credential(kind)) return false;
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.print(
@@ -2038,7 +2038,7 @@ fn runTopLevelAuth(
             return .handled_usage_error;
         }
         const maybe_provider = parseLoginProvider(rest[1..]) catch {
-            if (try reportKeylessConnectionLogin(alloc, cfg, deps, rest[1..])) return .handled_success;
+            if (try report_keyless_connection_login(alloc, cfg, deps, rest[1..])) return .handled_success;
             try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
             return .handled_usage_error;
         };
@@ -6728,7 +6728,7 @@ test "auth login rejects --json" {
     try std.testing.expectEqual(RunResult.handled_usage_error, result);
 }
 
-fn keylessConnectionStartupForTest(
+fn keyless_connection_startup_for_test(
     alloc: Allocator,
     _: []const u8,
     default_agent_step_limit: usize,
@@ -6747,7 +6747,7 @@ test "auth login on a keyless connection needs no credential" {
     var capture = CaptureOutput.init(std.testing.allocator);
     defer capture.deinit();
     var deps = capture.deps();
-    deps.load_startup_state_without_credentials = keylessConnectionStartupForTest;
+    deps.load_startup_state_without_credentials = keyless_connection_startup_for_test;
 
     const result = try runIfRequestedWithDeps(
         std.testing.allocator,
@@ -6767,7 +6767,7 @@ test "auth login keeps usage errors for keyed and unknown connections" {
         var capture = CaptureOutput.init(std.testing.allocator);
         defer capture.deinit();
         var deps = capture.deps();
-        deps.load_startup_state_without_credentials = keylessConnectionStartupForTest;
+        deps.load_startup_state_without_credentials = keyless_connection_startup_for_test;
         const owned = try std.testing.allocator.dupeZ(u8, name);
         defer std.testing.allocator.free(owned);
 

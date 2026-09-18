@@ -29,7 +29,6 @@ pub const Error = error{
     TooManyConnections,
     TooManyModels,
     TooManyCompatEntries,
-    InsecureCredentialTransport,
     OutOfMemory,
 };
 
@@ -55,7 +54,7 @@ pub const CredentialKind = enum {
 /// report keyless connections; the transport guard below exempts `none`
 /// from the plain-HTTP refusal. Per-connection header selection lands
 /// with routing (#289).
-pub fn requiresCredential(kind: CredentialKind) bool {
+pub fn requires_credential(kind: CredentialKind) bool {
     return kind != .none;
 }
 
@@ -298,7 +297,7 @@ pub const ConnectionSet = struct {
 /// guard runs on this resolved URL, so an override cannot bypass it.
 /// Returns null when neither layer sets one. Borrowed; empty model names
 /// only match an entry literally named empty, which the parser rejects.
-fn resolveBaseUrl(connection: *const Connection, model_name: []const u8) ?[]const u8 {
+fn resolve_base_url(connection: *const Connection, model_name: []const u8) ?[]const u8 {
     if (connection.models.getPtr(model_name)) |override| {
         if (override.base_url) |url| return url;
     }
@@ -308,7 +307,7 @@ fn resolveBaseUrl(connection: *const Connection, model_name: []const u8) ?[]cons
 /// Loopback for the transport guard (decision 12, amended on #303):
 /// `localhost`, `127.0.0.0/8` and `::1`. Anything else, including an empty
 /// or unparseable host, is not loopback: the guard fails closed.
-fn isLoopbackHost(host: []const u8) bool {
+fn is_loopback_host(host: []const u8) bool {
     if (host.len == 0) return false;
     const bare = if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']')
         host[1 .. host.len - 1]
@@ -317,10 +316,10 @@ fn isLoopbackHost(host: []const u8) bool {
     if (bare.len == 0) return false;
     if (std.ascii.eqlIgnoreCase(bare, "localhost")) return true;
     if (std.mem.eql(u8, bare, "::1")) return true;
-    return isLoopbackIpv4(bare);
+    return is_loopback_ipv4(bare);
 }
 
-fn isLoopbackIpv4(host: []const u8) bool {
+fn is_loopback_ipv4(host: []const u8) bool {
     var parts: [4][]const u8 = undefined;
     var count: usize = 0;
     var iterator = std.mem.splitScalar(u8, host, '.');
@@ -343,19 +342,30 @@ fn isLoopbackIpv4(host: []const u8) bool {
     return true;
 }
 
+/// Transport validation for one credential send (decision 12). A dedicated
+/// bounded set: transport failures never widen the parser `Error` set and
+/// never travel as an inferred set. Both variants fail closed — no secret
+/// is sent — but they mean different things: `InvalidBaseUrl` is an
+/// unparseable URL, `InsecureCredentialTransport` is plain HTTP to a host
+/// other than loopback (or a missing host) for a keyed credential.
+pub const TransportError = error{
+    InvalidBaseUrl,
+    InsecureCredentialTransport,
+};
+
 /// Refuses, before any network I/O, to send a keyed credential over plain
 /// HTTP to a host other than loopback (decision 12). Keyless (`none`)
 /// connections may use `http://` anywhere, and `https://` is unaffected.
 /// Callers report the failure naming the connection; the error itself
-/// carries no strings. An unparsable URL or a missing host fails closed.
-pub fn checkCredentialTransport(kind: CredentialKind, base_url: []const u8) !void {
+/// carries no strings.
+pub fn check_credential_transport(kind: CredentialKind, base_url: []const u8) TransportError!void {
     if (kind == .none) return;
-    const uri = try std.Uri.parse(base_url);
+    const uri = std.Uri.parse(base_url) catch return error.InvalidBaseUrl;
     if (!std.ascii.eqlIgnoreCase(uri.scheme, "http")) return;
     const host_component = uri.host orelse return error.InsecureCredentialTransport;
     var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
-    const host = host_component.toRaw(&host_buf) catch return error.InsecureCredentialTransport;
-    if (isLoopbackHost(host)) return;
+    const host = host_component.toRaw(&host_buf) catch return error.InvalidBaseUrl;
+    if (is_loopback_host(host)) return;
     return error.InsecureCredentialTransport;
 }
 
@@ -805,10 +815,10 @@ test "malformed connection shapes fail" {
 }
 
 test "none needs no credential while keyed kinds do" {
-    try std.testing.expect(!requiresCredential(.none));
-    try std.testing.expect(requiresCredential(.oauth));
-    try std.testing.expect(requiresCredential(.api_key));
-    try std.testing.expect(requiresCredential(.env));
+    try std.testing.expect(!requires_credential(.none));
+    try std.testing.expect(requires_credential(.oauth));
+    try std.testing.expect(requires_credential(.api_key));
+    try std.testing.expect(requires_credential(.env));
 }
 
 test "resolved base URL prefers the model entry override" {
@@ -824,18 +834,18 @@ test "resolved base URL prefers the model entry override" {
     try parseSetInto(alloc, parsed.value, &set, &detail);
 
     const local = set.get("local") orelse return error.TestExpectedConnection;
-    try std.testing.expectEqualStrings("http://192.0.2.1:11434/v1", resolveBaseUrl(local, "qwen").?);
-    try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", resolveBaseUrl(local, "llama").?);
-    try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", resolveBaseUrl(local, "undescribed").?);
+    try std.testing.expectEqualStrings("http://192.0.2.1:11434/v1", resolve_base_url(local, "qwen").?);
+    try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", resolve_base_url(local, "llama").?);
+    try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", resolve_base_url(local, "undescribed").?);
 
     var bare = Connection{};
-    try std.testing.expect(resolveBaseUrl(&bare, "qwen") == null);
+    try std.testing.expect(resolve_base_url(&bare, "qwen") == null);
 }
 
 test "transport guard lets keyless connections use plain HTTP anywhere" {
-    try checkCredentialTransport(.none, "http://192.0.2.1:11434/v1");
-    try checkCredentialTransport(.none, "http://example.com/v1");
-    try checkCredentialTransport(.none, "https://example.com/v1");
+    try check_credential_transport(.none, "http://192.0.2.1:11434/v1");
+    try check_credential_transport(.none, "http://example.com/v1");
+    try check_credential_transport(.none, "https://example.com/v1");
 }
 
 test "transport guard refuses keyed credentials over plain HTTP off loopback" {
@@ -850,7 +860,7 @@ test "transport guard refuses keyed credentials over plain HTTP off loopback" {
         for (urls) |url| {
             try std.testing.expectError(
                 error.InsecureCredentialTransport,
-                checkCredentialTransport(kind, url),
+                check_credential_transport(kind, url),
             );
         }
     }
@@ -869,7 +879,7 @@ test "transport guard keeps https and loopback HTTP flowing with a key" {
         "http://[::1]:11434/v1",
     };
     for (urls) |url| {
-        try checkCredentialTransport(.api_key, url);
+        try check_credential_transport(.api_key, url);
     }
 }
 
@@ -884,13 +894,13 @@ test "transport guard fails closed on exotic hosts" {
     for (urls) |url| {
         try std.testing.expectError(
             error.InsecureCredentialTransport,
-            checkCredentialTransport(.api_key, url),
+            check_credential_transport(.api_key, url),
         );
     }
-    try std.testing.expect(isLoopbackHost("::1"));
-    try std.testing.expect(isLoopbackHost("[::1]"));
-    try std.testing.expect(!isLoopbackHost(""));
-    try std.testing.expect(!isLoopbackHost("example.com"));
+    try std.testing.expect(is_loopback_host("::1"));
+    try std.testing.expect(is_loopback_host("[::1]"));
+    try std.testing.expect(!is_loopback_host(""));
+    try std.testing.expect(!is_loopback_host("example.com"));
 }
 
 test "model entry override cannot bypass the transport guard" {
@@ -908,12 +918,12 @@ test "model entry override cannot bypass the transport guard" {
     const local = set.get("local") orelse return error.TestExpectedConnection;
     try std.testing.expectError(
         error.InsecureCredentialTransport,
-        checkCredentialTransport(local.credential.?, resolveBaseUrl(local, "qwen").?),
+        check_credential_transport(local.credential.?, resolve_base_url(local, "qwen").?),
     );
-    try checkCredentialTransport(local.credential.?, resolveBaseUrl(local, "undescribed").?);
+    try check_credential_transport(local.credential.?, resolve_base_url(local, "undescribed").?);
 
     const keyless = set.get("keyless") orelse return error.TestExpectedConnection;
-    try checkCredentialTransport(keyless.credential.?, resolveBaseUrl(keyless, "any").?);
+    try check_credential_transport(keyless.credential.?, resolve_base_url(keyless, "any").?);
 }
 
 test "strict standard compat matches pi with no vendor detected" {

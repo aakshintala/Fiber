@@ -186,7 +186,7 @@ const OpenRequestOperation = struct {
 
 /// Names the refused connection for an insecure override. Built separately
 /// so tests pin the message without touching the network.
-fn insecureTransportRefusal(alloc: Allocator, override: []const u8) !stream_provider.Result {
+fn insecure_transport_refusal(alloc: Allocator, override: []const u8) !stream_provider.Result {
     const detail = try std.fmt.allocPrint(
         alloc,
         "connection 'codex' refuses to send its credential over plain HTTP to '{s}'; use https:// or loopback http://",
@@ -254,9 +254,9 @@ pub fn streamPrepared(
     // (decision 12); the compiled default is `https://`, so only an
     // override can refuse.
     if (override) |candidate| {
-        connection_mod.checkCredentialTransport(.oauth, candidate) catch |err| {
-            if (err == error.InsecureCredentialTransport) return insecureTransportRefusal(alloc, candidate);
-            return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint);
+        connection_mod.check_credential_transport(.oauth, candidate) catch |err| switch (err) {
+            error.InsecureCredentialTransport => return insecure_transport_refusal(alloc, candidate),
+            error.InvalidBaseUrl => return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint),
         };
     }
     var opened = try gateway_client.runBoundedHttpOperation(
@@ -1155,7 +1155,7 @@ test "OpenAI Codex rejects a 129th streamed tool call" {
 }
 
 test "codex insecure override refusal names the connection before any I/O" {
-    var result = try insecureTransportRefusal(std.testing.allocator, "http://192.0.2.1:11434/v1");
+    var result = try insecure_transport_refusal(std.testing.allocator, "http://192.0.2.1:11434/v1");
     defer result.deinit(std.testing.allocator);
     const failure = switch (result) {
         .failed => |failure| failure,
