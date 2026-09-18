@@ -1715,6 +1715,7 @@ fn monotonicMillis() i64 {
 }
 
 test "web_fetch response parser decodes chunked transfer encoding" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch response parser decodes chunked transfer encoding START\n", .{});
     const alloc = std.testing.allocator;
 
     var reader: std.Io.Reader = .fixed(
@@ -1736,6 +1737,7 @@ test "web_fetch response parser decodes chunked transfer encoding" {
 }
 
 test "web_fetch response parser caps chunked bodies" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch response parser caps chunked bodies START\n", .{});
     const alloc = std.testing.allocator;
 
     var reader: std.Io.Reader = .fixed(
@@ -1771,6 +1773,7 @@ fn expectResponseBody(payload: []const u8, expected_status: u16, expected_body: 
 }
 
 test "web_fetch final response head accepts exact versions statuses and identical lengths" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch final response head accepts exact versions statuses and identical lengths START\n", .{});
     const accepted = [_]struct {
         payload: []const u8,
         status: u16 = 200,
@@ -1802,6 +1805,7 @@ test "web_fetch final response head accepts exact versions statuses and identica
 }
 
 test "web_fetch final response head rejects invalid status and field syntax" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch final response head rejects invalid status and field syntax START\n", .{});
     const invalid = [_][]const u8{
         "HTTP/1.2 200 OK\r\nContent-Length: 0\r\n\r\n",
         "http/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
@@ -1824,6 +1828,7 @@ test "web_fetch final response head rejects invalid status and field syntax" {
 }
 
 test "web_fetch final response head normalizes obs fold values" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch final response head normalizes obs fold values START\n", .{});
     const alloc = std.testing.allocator;
     var reader: std.Io.Reader = .fixed(
         "HTTP/1.1 200 OK\r\n" ++
@@ -1839,6 +1844,7 @@ test "web_fetch final response head normalizes obs fold values" {
 }
 
 test "web_fetch content length list validation rejects empty overflow and conflicts" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch content length list validation rejects empty overflow and conflicts START\n", .{});
     const invalid = [_][]const u8{
         "HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n",
         "HTTP/1.1 200 OK\r\nContent-Length: ,\r\n\r\n",
@@ -1859,6 +1865,7 @@ test "web_fetch content length list validation rejects empty overflow and confli
 }
 
 test "web_fetch transfer encoding parser validates ordered coding members" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch transfer encoding parser validates ordered coding members START\n", .{});
     const accepted = [_][]const u8{
         "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
         "HTTP/1.1 200 OK\r\nTransfer-Encoding: CHUNKED\r\n\r\n0\r\n\r\n",
@@ -1891,6 +1898,7 @@ test "web_fetch transfer encoding parser validates ordered coding members" {
 }
 
 test "web_fetch bodyless response framing ignores fields and rejects pending body" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch bodyless response framing ignores fields and rejects pending body START\n", .{});
     try expectResponseBody(
         "HTTP/1.1 204 No Content\r\nTransfer-Encoding: gzip\r\nContent-Length: 99\r\n\r\n",
         204,
@@ -1908,6 +1916,7 @@ test "web_fetch bodyless response framing ignores fields and rejects pending bod
 }
 
 test "web_fetch response parser consumes informational heads before final response" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch response parser consumes informational heads before final response START\n", .{});
     const informational = [_][]const u8{
         "100 Continue",
         "102 Processing",
@@ -1931,6 +1940,7 @@ test "web_fetch response parser consumes informational heads before final respon
 }
 
 test "web_fetch response parser caps informational response count" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch response parser caps informational response count START\n", .{});
     const alloc = std.testing.allocator;
     var payload: std.ArrayList(u8) = .empty;
     defer payload.deinit(alloc);
@@ -1967,6 +1977,7 @@ fn appendBudgetedInterimResponse(
 }
 
 test "web_fetch response parser enforces exact cumulative head budget" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch response parser enforces exact cumulative head budget START\n", .{});
     const alloc = std.testing.allocator;
     const final_head = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
 
@@ -1994,6 +2005,7 @@ test "web_fetch response parser enforces exact cumulative head budget" {
 }
 
 test "web_fetch chunked framing accepts exact hexadecimal sizes and valid extensions" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch chunked framing accepts exact hexadecimal sizes and valid extensions START\n", .{});
     const accepted = [_]struct {
         payload: []const u8,
         body: []const u8,
@@ -2028,6 +2040,7 @@ test "web_fetch chunked framing accepts exact hexadecimal sizes and valid extens
 }
 
 test "web_fetch chunked framing rejects malformed size extensions and delimiters" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch chunked framing rejects malformed size extensions and delimiters START\n", .{});
     const invalid = [_][]const u8{
         "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n A\r\n0123456789\r\n0\r\n\r\n",
         "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nA \r\n0123456789\r\n0\r\n\r\n",
@@ -2050,6 +2063,7 @@ test "web_fetch chunked framing rejects malformed size extensions and delimiters
 }
 
 test "web_fetch chunked trailers normalize folds and validate every field" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch chunked trailers normalize folds and validate every field START\n", .{});
     try expectResponseBody(
         "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" ++
             "4\r\ntest\r\n" ++
@@ -2070,6 +2084,7 @@ test "web_fetch chunked trailers normalize folds and validate every field" {
 }
 
 test "web_fetch chunked trailers enforce line and cumulative limits" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch chunked trailers enforce line and cumulative limits START\n", .{});
     const alloc = std.testing.allocator;
 
     var long_line: std.ArrayList(u8) = .empty;
@@ -2103,6 +2118,7 @@ fn appendTrailerLine(
 }
 
 test "web_fetch chunk size lines accept the exact limit and reject one byte beyond it" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch chunk size lines accept the exact limit and reject one byte beyond it START\n", .{});
     const alloc = std.testing.allocator;
 
     var exact: std.ArrayList(u8) = .empty;
@@ -2121,6 +2137,7 @@ test "web_fetch chunk size lines accept the exact limit and reject one byte beyo
 }
 
 test "web_fetch trailer section accepts the exact cumulative limit and rejects one byte beyond it" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch trailer section accepts the exact cumulative limit and rejects one byte beyond it START\n", .{});
     const alloc = std.testing.allocator;
 
     var exact: std.ArrayList(u8) = .empty;
@@ -2141,6 +2158,7 @@ test "web_fetch trailer section accepts the exact cumulative limit and rejects o
 }
 
 test "web_fetch self delimited chunked response returns without eof read" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch self delimited chunked response returns without eof read START\n", .{});
     const alloc = std.testing.allocator;
     var short = ShortCompleteResponseReader{};
     short.init(
@@ -2161,6 +2179,7 @@ test "web_fetch self delimited chunked response returns without eof read" {
 }
 
 test "web_fetch short content length response fails before accepting partial body" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch short content length response fails before accepting partial body START\n", .{});
     try expectResponseError(
         error.UnexpectedClose,
         "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfour",
@@ -2222,6 +2241,7 @@ const FragmentedResponseReader = struct {
 };
 
 test "web_fetch response parsing is invariant across hostile fragmentation and zero progress" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch response parsing is invariant across hostile fragmentation and zero progress START\n", .{});
     const alloc = std.testing.allocator;
     const payload =
         "HTTP/1.1 103 Early Hints\r\n" ++
@@ -2261,6 +2281,7 @@ test "web_fetch response parsing is invariant across hostile fragmentation and z
 }
 
 test "web_fetch malformed responses fail consistently across fragmentation" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch malformed responses fail consistently across fragmentation START\n", .{});
     const cases = [_]struct {
         expected: anyerror,
         payload: []const u8,
@@ -2304,6 +2325,7 @@ test "web_fetch malformed responses fail consistently across fragmentation" {
 }
 
 test "web_fetch content length and close delimited bodies enforce exact caps" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch content length and close delimited bodies enforce exact caps START\n", .{});
     const alloc = std.testing.allocator;
     const cap: usize = 4;
 
@@ -2333,6 +2355,7 @@ test "web_fetch content length and close delimited bodies enforce exact caps" {
 }
 
 test "web_fetch chunked body rejects cumulative announced size before reading payload" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch chunked body rejects cumulative announced size before reading payload START\n", .{});
     const alloc = std.testing.allocator;
     const payloads = [_][]const u8{
         "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\n",
@@ -2518,6 +2541,7 @@ fn pipeBackedTlsBoundaryReader(
 }
 
 test "web_fetch TLS boundary completes self delimited response without reading eof" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch TLS boundary completes self delimited response without reading eof START\n", .{});
     const alloc = std.testing.allocator;
     var transport_reader: PlainDeadlineReader = undefined;
     var boundary_reader: ScriptedTlsBoundaryReader = undefined;
@@ -2542,6 +2566,7 @@ test "web_fetch TLS boundary completes self delimited response without reading e
 }
 
 test "web_fetch TLS boundary accepts clean close delimited eof" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch TLS boundary accepts clean close delimited eof START\n", .{});
     const alloc = std.testing.allocator;
     var transport_reader: PlainDeadlineReader = undefined;
     var boundary_reader: ScriptedTlsBoundaryReader = undefined;
@@ -2563,6 +2588,7 @@ test "web_fetch TLS boundary accepts clean close delimited eof" {
 }
 
 test "web_fetch TLS boundary unwraps truncated close delimited eof" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch TLS boundary unwraps truncated close delimited eof START\n", .{});
     const alloc = std.testing.allocator;
     var transport_reader: PlainDeadlineReader = undefined;
     var boundary_reader: ScriptedTlsBoundaryReader = undefined;
@@ -2593,6 +2619,7 @@ test "web_fetch TLS boundary unwraps truncated close delimited eof" {
 }
 
 test "web_fetch response parser checks deadline before transport reads" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch response parser checks deadline before transport reads START\n", .{});
     const alloc = std.testing.allocator;
 
     var zero = ZeroProgressReader{};
@@ -2606,6 +2633,7 @@ test "web_fetch response parser checks deadline before transport reads" {
 }
 
 test "web_fetch response parser returns complete short bodies without EOF" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch response parser returns complete short bodies without EOF START\n", .{});
     const alloc = std.testing.allocator;
 
     var short = ShortCompleteResponseReader{};
@@ -2627,6 +2655,7 @@ test "web_fetch response parser returns complete short bodies without EOF" {
 }
 
 test "web_fetch response parser ignores pending bytes beyond content length" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch response parser ignores pending bytes beyond content length START\n", .{});
     const alloc = std.testing.allocator;
 
     var reader: std.Io.Reader = .fixed(
@@ -2643,6 +2672,7 @@ test "web_fetch response parser ignores pending bytes beyond content length" {
 }
 
 test "web_fetch TLS encrypted transport buffers satisfy stdlib minimums" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch TLS encrypted transport buffers satisfy stdlib minimums START\n", .{});
     var reader: TlsDeadlineReader = undefined;
     reader.init(-1, .{});
     try std.testing.expect(reader.interface.buffer.len >= std.crypto.tls.Client.min_buffer_len);
@@ -2653,6 +2683,7 @@ test "web_fetch TLS encrypted transport buffers satisfy stdlib minimums" {
 }
 
 test "web_fetch TLS deadline reader fills internal buffer for zero length readVec" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch TLS deadline reader fills internal buffer for zero length readVec START\n", .{});
     var fds: [2]std.c.fd_t = undefined;
     if (std.c.pipe(&fds) != 0) return error.PipeFailed;
     defer closeFd(fds[0]);
@@ -2796,6 +2827,7 @@ fn compressFlateForTest(alloc: Allocator, plain: []const u8, container: std.comp
 }
 
 test "web_fetch advertises supported content codings" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch advertises supported content codings START\n", .{});
     const alloc = std.testing.allocator;
     var url = try url_policy.normalize(alloc, "https://example.com/docs?q=1");
     defer url.deinit(alloc);
@@ -2822,6 +2854,7 @@ test "web_fetch advertises supported content codings" {
 }
 
 test "web_fetch decodes each supported content coding" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch decodes each supported content coding START\n", .{});
     const alloc = std.testing.allocator;
     const cases = [_]struct { encoding: []const u8, body: []const u8 }{
         .{ .encoding = "gzip", .body = "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\xcb\x48\xcd\xc9\xc9\x07\x00\x86\xa6\x10\x36\x05\x00\x00\x00" },
@@ -2849,6 +2882,7 @@ test "web_fetch decodes each supported content coding" {
 }
 
 test "web_fetch rejects repeated or chained content encodings" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch rejects repeated or chained content encodings START\n", .{});
     const alloc = std.testing.allocator;
     const cases = [_][]const u8{
         "HTTP/1.1 200 OK\r\n" ++
@@ -2882,6 +2916,7 @@ test "web_fetch rejects repeated or chained content encodings" {
 }
 
 test "web_fetch decoded body cap is inclusive" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch decoded body cap is inclusive START\n", .{});
     const alloc = std.testing.allocator;
     var target = try url_policy.normalize(alloc, "https://example.com/capped");
     defer target.deinit(alloc);
@@ -2916,6 +2951,7 @@ test "web_fetch decoded body cap is inclusive" {
 }
 
 test "web_fetch leaves redirects ahead of content encoding and rejects encoded error statuses" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch leaves redirects ahead of content encoding and rejects encoded error statuses START\n", .{});
     const alloc = std.testing.allocator;
     var target = try url_policy.normalize(alloc, "https://example.com/start");
     defer target.deinit(alloc);
@@ -2964,6 +3000,7 @@ fn ip(text: []const u8, port: u16) !IpAddress {
 }
 
 test "web_fetch rejects mixed public private dns answers without dialing" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch rejects mixed public private dns answers without dialing START\n", .{});
     const alloc = std.testing.allocator;
 
     var resolver = FakeResolver{ .addresses = &.{
@@ -2986,6 +3023,7 @@ test "web_fetch rejects mixed public private dns answers without dialing" {
 }
 
 test "web_fetch pinned connector never performs a second hostname lookup" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch pinned connector never performs a second hostname lookup START\n", .{});
     const alloc = std.testing.allocator;
 
     var resolver = FakeResolver{ .addresses = &.{try ip("93.184.216.34", 443)} };
@@ -3009,6 +3047,7 @@ test "web_fetch pinned connector never performs a second hostname lookup" {
 }
 
 test "web_fetch default call shares one hop deadline across resolver and connector" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch default call shares one hop deadline across resolver and connector START\n", .{});
     const alloc = std.testing.allocator;
 
     var resolver = FakeResolver{ .addresses = &.{try ip("93.184.216.34", 443)} };
@@ -3032,6 +3071,7 @@ test "web_fetch default call shares one hop deadline across resolver and connect
 }
 
 test "web_fetch followed redirects get fresh hop deadline while sharing deadlines within each hop" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch followed redirects get fresh hop deadline while sharing deadlines within each hop START\n", .{});
     const alloc = std.testing.allocator;
 
     var resolver = FakeResolver{ .addresses = &.{try ip("93.184.216.34", 443)} };
@@ -3068,6 +3108,7 @@ test "web_fetch followed redirects get fresh hop deadline while sharing deadline
 }
 
 test "web_fetch preserves canonical tls and host identity while dialing admitted address" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch preserves canonical tls and host identity while dialing admitted address START\n", .{});
     const alloc = std.testing.allocator;
 
     var resolver = FakeResolver{ .addresses = &.{try ip("93.184.216.34", 443)} };
@@ -3093,6 +3134,7 @@ test "web_fetch preserves canonical tls and host identity while dialing admitted
 }
 
 test "web_fetch safe redirect repeats hostname policy dns admission and pinned dialing" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch safe redirect repeats hostname policy dns admission and pinned dialing START\n", .{});
     const alloc = std.testing.allocator;
 
     var resolver = FakeResolver{ .addresses = &.{try ip("93.184.216.34", 443)} };
@@ -3120,6 +3162,7 @@ test "web_fetch safe redirect repeats hostname policy dns admission and pinned d
 }
 
 test "web_fetch follows HTTP 303 See Other redirects" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch follows HTTP 303 See Other redirects START\n", .{});
     const alloc = std.testing.allocator;
 
     var resolver = FakeResolver{ .addresses = &.{try ip("93.184.216.34", 443)} };
@@ -3148,6 +3191,7 @@ test "web_fetch follows HTTP 303 See Other redirects" {
 }
 
 test "web_fetch cross host redirect returns reinvocation result without following" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch cross host redirect returns reinvocation result without following START\n", .{});
     const alloc = std.testing.allocator;
 
     var resolver = FakeResolver{ .addresses = &.{try ip("93.184.216.34", 443)} };
@@ -3173,6 +3217,7 @@ test "web_fetch cross host redirect returns reinvocation result without followin
 }
 
 test "web_fetch ordinary non success and unexpected content encoding never convert cache or extract" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch ordinary non success and unexpected content encoding never convert cache or extract START\n", .{});
     const alloc = std.testing.allocator;
 
     var resolver = FakeResolver{ .addresses = &.{try ip("93.184.216.34", 443)} };
@@ -3202,6 +3247,7 @@ test "web_fetch ordinary non success and unexpected content encoding never conve
 }
 
 test "web_fetch body timeout cancellation and ten mebibyte cap are bounded" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch body timeout cancellation and ten mebibyte cap are bounded START\n", .{});
     const alloc = std.testing.allocator;
 
     var resolver = FakeResolver{ .addresses = &.{try ip("93.184.216.34", 443)} };
@@ -3224,6 +3270,7 @@ test "web_fetch body timeout cancellation and ten mebibyte cap are bounded" {
 }
 
 test "web_fetch deadline helpers fail before io when expired or canceled" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch deadline helpers fail before io when expired or canceled START\n", .{});
     try std.testing.expectError(error.Timeout, checkControl(.{
         .deadline = .{ .deadline_ms = monotonicMillis() - 1 },
     }));
@@ -3241,6 +3288,7 @@ test "web_fetch deadline helpers fail before io when expired or canceled" {
 }
 
 test "web_fetch wrapper failures preserve the most specific matching cause" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch wrapper failures preserve the most specific matching cause START\n", .{});
     const ReadCase = struct {
         err: anyerror,
         tls_err: ?anyerror,
@@ -3318,6 +3366,7 @@ test "web_fetch wrapper failures preserve the most specific matching cause" {
 }
 
 test "web_fetch private framing contract represents every completion mode" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch private framing contract represents every completion mode START\n", .{});
     const cases = [_]BodyFraming{
         .no_body,
         .{ .content_length = 42 },
@@ -3371,6 +3420,7 @@ fn expectAndTraceTlsTruncation(
 }
 
 test "web_fetch transport traces stable stages and redact sensitive values" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch transport traces stable stages and redact sensitive values START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3482,6 +3532,7 @@ const ScriptedDialer = struct {
 };
 
 test "web_fetch admitted dialing preserves order and one shared deadline" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch admitted dialing preserves order and one shared deadline START\n", .{});
     var fds: [2]std.c.fd_t = undefined;
     if (std.c.pipe(&fds) != 0) return error.PipeFailed;
     defer closeFd(fds[1]);
@@ -3509,6 +3560,7 @@ test "web_fetch admitted dialing preserves order and one shared deadline" {
 }
 
 test "web_fetch admitted dialing stops on control and local resource failures" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch admitted dialing stops on control and local resource failures START\n", .{});
     const addresses = [_]IpAddress{
         try ip("93.184.216.34", 443),
         try ip("93.184.216.35", 443),
@@ -3565,6 +3617,7 @@ test "web_fetch admitted dialing stops on control and local resource failures" {
 }
 
 test "web_fetch connect errno classification keeps terminal local failures out of fallback" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch connect errno classification keeps terminal local failures out of fallback START\n", .{});
     const cases = [_]struct {
         errno: posix.E,
         expected: anyerror,
@@ -3624,6 +3677,7 @@ const ScriptedPoller = struct {
 };
 
 test "web_fetch poll events preserve requested readiness and hangup semantics" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch poll events preserve requested readiness and hangup semantics START\n", .{});
     try classifyPollEvents(-1, posix.POLL.IN, posix.POLL.IN | posix.POLL.HUP);
     try classifyPollEvents(-1, posix.POLL.IN, posix.POLL.IN | posix.POLL.ERR);
     try classifyPollEvents(-1, posix.POLL.OUT, posix.POLL.OUT | posix.POLL.HUP);
@@ -3649,6 +3703,7 @@ test "web_fetch poll events preserve requested readiness and hangup semantics" {
 }
 
 test "web_fetch injected poll failures and arguments remain exact" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch injected poll failures and arguments remain exact START\n", .{});
     var interrupted = ScriptedPoller{
         .result = .interrupted_once,
         .revents = posix.POLL.IN,
@@ -3700,6 +3755,7 @@ const PollSignalStorm = struct {
 };
 
 test "web_fetch poll deadline is not extended by interrupted syscalls" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch poll deadline is not extended by interrupted syscalls START\n", .{});
     const action: posix.Sigaction = .{
         .handler = .{ .handler = noOpSignalHandler },
         .mask = posix.sigemptyset(),
@@ -3747,6 +3803,7 @@ fn expectSyscallFailure(action: SyscallErrorAction, expected: anyerror) !void {
 }
 
 test "web_fetch socket errno classifiers preserve named causes" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch socket errno classifiers preserve named causes START\n", .{});
     const Case = struct {
         errno: posix.E,
         read_error: anyerror,
@@ -3793,6 +3850,7 @@ const InterruptingRead = struct {
 };
 
 test "web_fetch interrupted socket read rechecks cancellation before retry" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch interrupted socket read rechecks cancellation before retry START\n", .{});
     var cancel_flag: std.atomic.Value(bool) = .init(false);
     var poller = ScriptedPoller{ .revents = posix.POLL.IN };
     var read = InterruptingRead{ .cancel_flag = &cancel_flag };
@@ -3810,6 +3868,7 @@ test "web_fetch interrupted socket read rechecks cancellation before retry" {
 }
 
 test "web_fetch deadline reader drains bytes after hangup and then returns eof" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch deadline reader drains bytes after hangup and then returns eof START\n", .{});
     var fds: [2]std.c.fd_t = undefined;
     if (std.c.pipe(&fds) != 0) return error.PipeFailed;
     defer closeFd(fds[0]);
@@ -3835,6 +3894,7 @@ test "web_fetch deadline reader drains bytes after hangup and then returns eof" 
 }
 
 test "web_fetch deadline adapters retain invalid descriptor causes" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch deadline adapters retain invalid descriptor causes START\n", .{});
     var fds: [2]std.c.fd_t = undefined;
     if (std.c.pipe(&fds) != 0) return error.PipeFailed;
     closeFd(fds[0]);
@@ -3861,6 +3921,7 @@ test "web_fetch deadline adapters retain invalid descriptor causes" {
 }
 
 test "web_fetch closed peer write returns a cause without terminating process" {
+    std.debug.print("[DIAG-HANG] file=src/tools/web/http_fetch.zig test=web_fetch closed peer write returns a cause without terminating process START\n", .{});
     var sockets: [2]std.c.fd_t = undefined;
     if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &sockets) != 0)
         return error.SocketPairFailed;

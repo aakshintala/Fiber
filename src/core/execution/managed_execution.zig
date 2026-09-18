@@ -1494,6 +1494,7 @@ fn stop_wait_expired(started_ms: i64, now_ms: i64, settle_timeout_ms: i64) bool 
 }
 
 test "stop wait expires only at its deterministic bound" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=stop wait expires only at its deterministic bound START\n", .{});
     try std.testing.expect(!stop_wait_expired(1_000, 999, 100));
     try std.testing.expect(!stop_wait_expired(1_000, 1_099, 100));
     try std.testing.expect(stop_wait_expired(1_000, 1_100, 100));
@@ -1522,6 +1523,7 @@ fn testAuthority(input: StartCapturedInput) command_admission.CommandExecutionAu
 }
 
 test "captured managed execution yields one handle and delivers ordered output once" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=captured managed execution yields one handle and delivers ordered output once START\n", .{});
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1560,6 +1562,7 @@ test "captured managed execution yields one handle and delivers ordered output o
 }
 
 test "captured stop returns lost when its worker cannot settle" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=captured stop returns lost when its worker cannot settle START\n", .{});
     if (comptime builtin.os.tag == .wasi) return;
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
@@ -1653,6 +1656,7 @@ test "captured stop returns lost when its worker cannot settle" {
 }
 
 test "generated captured execution identities do not depend on provider call ids" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=generated captured execution identities do not depend on provider call ids START\n", .{});
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1688,6 +1692,7 @@ test "generated captured execution identities do not depend on provider call ids
 }
 
 test "captured managed execution capacity rejects before spawn" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=captured managed execution capacity rejects before spawn START\n", .{});
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1719,6 +1724,7 @@ test "captured managed execution capacity rejects before spawn" {
 }
 
 test "captured managed execution exposes full output only by opaque replay handle" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=captured managed execution exposes full output only by opaque replay handle START\n", .{});
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1760,6 +1766,7 @@ test "captured managed execution exposes full output only by opaque replay handl
 }
 
 test "managed execution retains thirty two authority free terminal snapshots" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=managed execution retains thirty two authority free terminal snapshots START\n", .{});
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1798,6 +1805,7 @@ test "managed execution retains thirty two authority free terminal snapshots" {
 }
 
 test "delivery reservation pins a tombstone across capacity eviction" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=delivery reservation pins a tombstone across capacity eviction START\n", .{});
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1869,6 +1877,7 @@ test "delivery reservation pins a tombstone across capacity eviction" {
 }
 
 test "terminal tombstone retains raw output behind an opaque replay handle" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=terminal tombstone retains raw output behind an opaque replay handle START\n", .{});
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();
@@ -1904,6 +1913,7 @@ test "terminal tombstone retains raw output behind an opaque replay handle" {
 }
 
 test "terminal tombstone releases consumed replay authority" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=terminal tombstone releases consumed replay authority START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1967,6 +1977,7 @@ test "terminal tombstone releases consumed replay authority" {
 }
 
 test "TTY cursor advances monotonically and delivers each delta once" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/managed_execution.zig test=TTY cursor advances monotonically and delivers each delta once START\n", .{});
     const alloc = std.testing.allocator;
     var runtime = Runtime.init(alloc);
     defer runtime.deinit();

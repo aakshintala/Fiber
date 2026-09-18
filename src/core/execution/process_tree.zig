@@ -663,6 +663,7 @@ fn openLinuxProcFile(path: []const u8) !?std.Io.File {
 }
 
 test "Linux proc helpers treat missing process data as vanished" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/process_tree.zig test=Linux proc helpers treat missing process data as vanished START\n", .{});
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     try std.testing.expect(
         (try openLinuxProcDir("/proc/self/fiber-process-tree-missing")) == null,
@@ -673,6 +674,7 @@ test "Linux proc helpers treat missing process data as vanished" {
 }
 
 test "process-group exclusion preserves the captured command grace" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/process_tree.zig test=process-group exclusion preserves the captured command grace START\n", .{});
     try std.testing.expect(shouldSignalProcess(41, null));
     try std.testing.expect(!shouldSignalProcess(41, 41));
     try std.testing.expect(shouldSignalProcess(42, 41));
@@ -680,6 +682,7 @@ test "process-group exclusion preserves the captured command grace" {
 }
 
 test "stale process identities cannot become traversal roots" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/process_tree.zig test=stale process identities cannot become traversal roots START\n", .{});
     try std.testing.expect(shouldTraverseParent(
         .{ .linux_start_ticks = 41 },
         .{ .linux_start_ticks = 41 },
@@ -695,6 +698,7 @@ test "stale process identities cannot become traversal roots" {
 }
 
 test "child admission binds the observed process to its expected parent" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/process_tree.zig test=child admission binds the observed process to its expected parent START\n", .{});
     const snapshot = ProcessSnapshot{
         .identity = .{ .linux_start_ticks = 42 },
         .parent_pid = 17,
@@ -704,6 +708,7 @@ test "child admission binds the observed process to its expected parent" {
 }
 
 test "macOS lineage identity matches only the same unique process" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/process_tree.zig test=macOS lineage identity matches only the same unique process START\n", .{});
     try std.testing.expect(identityHasMacOSUniqueId(
         .{ .macos_unique_id = 42 },
         42,
@@ -719,6 +724,7 @@ test "macOS lineage identity matches only the same unique process" {
 }
 
 test "checked signal delivery distinguishes vanished stale and failed targets" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/process_tree.zig test=checked signal delivery distinguishes vanished stale and failed targets START\n", .{});
     const FakeEffects = struct {
         fn capture(_: Allocator, pid: std.posix.pid_t) !ProcessSnapshot {
             return switch (pid) {
@@ -772,6 +778,7 @@ test "checked signal delivery distinguishes vanished stale and failed targets" {
 }
 
 test "checked signal delivery keeps vanished stale and excluded targets complete" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/process_tree.zig test=checked signal delivery keeps vanished stale and excluded targets complete START\n", .{});
     const FakeEffects = struct {
         fn capture(_: Allocator, pid: std.posix.pid_t) !ProcessSnapshot {
             if (pid == 21) return error.ProcessNotFound;
@@ -1037,6 +1044,7 @@ const Darwin = struct {
 };
 
 test "tracked identity distinguishes process instances" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/process_tree.zig test=tracked identity distinguishes process instances START\n", .{});
     const linux = Identity{ .linux_start_ticks = 42 };
     try std.testing.expect(linux.eql(.{ .linux_start_ticks = 42 }));
     try std.testing.expect(!linux.eql(.{ .linux_start_ticks = 43 }));
@@ -1044,6 +1052,7 @@ test "tracked identity distinguishes process instances" {
 }
 
 test "zombie snapshots are terminal process state" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/process_tree.zig test=zombie snapshots are terminal process state START\n", .{});
     const live = ProcessSnapshot{
         .identity = .{ .linux_start_ticks = 1 },
         .parent_pid = 1,
@@ -1055,6 +1064,7 @@ test "zombie snapshots are terminal process state" {
 }
 
 test "Darwin witness scan excludes processes older than command root" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/process_tree.zig test=Darwin witness scan excludes processes older than command root START\n", .{});
     try std.testing.expect(couldBelongByStart(null, null));
     try std.testing.expect(!couldBelongByStart(100, null));
     try std.testing.expect(!couldBelongByStart(100, 99));

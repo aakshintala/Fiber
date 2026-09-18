@@ -1552,6 +1552,7 @@ fn executeRawInvocation(
 }
 
 test "explicit captured profiles execute exact shells without synthetic stderr" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=explicit captured profiles execute exact shells without synthetic stderr START\n", .{});
     std.Io.Dir.accessAbsolute(io_mod.getIo(), "/bin/bash", .{}) catch
         return error.SkipZigTest;
     const shell_path = "/bin/bash";
@@ -1601,6 +1602,7 @@ test "explicit captured profiles execute exact shells without synthetic stderr" 
 }
 
 test "zsh user profile reports natural SIGTERM after alias-safe startup" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=zsh user profile reports natural SIGTERM after alias-safe startup START\n", .{});
     std.Io.Dir.accessAbsolute(io_mod.getIo(), "/bin/zsh", .{}) catch
         return error.SkipZigTest;
 
@@ -2659,6 +2661,7 @@ fn shellQuote(arena: Allocator, input: []const u8) ![]const u8 {
 }
 
 test "format output covers stdout stderr empty signal and unknown statuses" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=format output covers stdout stderr empty signal and unknown statuses START\n", .{});
     const result = try formatOutput(std.testing.allocator, "printf hello", "/tmp", .{ .exited = 0 }, " hello\n", "", 3);
     defer std.testing.allocator.free(result.output);
     try std.testing.expectEqualStrings("exit_code=0\n<stdout>\nhello\n</stdout>\n", result.output);
@@ -2684,6 +2687,7 @@ test "format output covers stdout stderr empty signal and unknown statuses" {
 }
 
 test "raw process execution returns foreground output" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=raw process execution returns foreground output START\n", .{});
     const result = try executeCommand(.{
         .max_command_output_bytes = 4096,
     }, std.testing.allocator, "printf 'hello'", "/tmp");
@@ -2703,6 +2707,7 @@ test "raw process execution returns foreground output" {
 }
 
 test "authorized command executes exactly once" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=authorized command executes exactly once START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -2831,6 +2836,7 @@ fn expectProcessGoneWithinForTest(pid: std.posix.pid_t, timeout_ms: i64) !void {
 }
 
 test "captured foreground command runs beneath a detached session supervisor" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=captured foreground command runs beneath a detached session supervisor START\n", .{});
     const command =
         "exec python3 -c 'import os,sys; " ++
         "pid=os.getpid(); pgid=os.getpgid(0); sid=os.getsid(0); " ++
@@ -2845,6 +2851,7 @@ test "captured foreground command runs beneath a detached session supervisor" {
 }
 
 test "foreground session bootstrap waits for release before executing target" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=foreground session bootstrap waits for release before executing target START\n", .{});
     if (comptime !supports_foreground_session) return;
 
     const alloc = std.testing.allocator;
@@ -2886,6 +2893,7 @@ test "foreground session bootstrap waits for release before executing target" {
 const owner_loss_deadline_ms = 5_000;
 
 test "foreground session owner loss kills the target and descendant before delayed effects" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=foreground session owner loss kills the target and descendant before delayed effects START\n", .{});
     if (comptime !supports_foreground_session) return;
 
     const alloc = std.testing.allocator;
@@ -2948,16 +2956,19 @@ test "foreground session owner loss kills the target and descendant before delay
 }
 
 test "foreground session bootstrap EOF executes no target" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=foreground session bootstrap EOF executes no target START\n", .{});
     if (comptime !supports_foreground_session) return;
     try expectRejectedForegroundSessionReleaseForTest(null);
 }
 
 test "foreground session bootstrap invalid release executes no target" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=foreground session bootstrap invalid release executes no target START\n", .{});
     if (comptime !supports_foreground_session) return;
     try expectRejectedForegroundSessionReleaseForTest(0xff);
 }
 
 test "foreground session protocol bytes do not enter captured output" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=foreground session protocol bytes do not enter captured output START\n", .{});
     if (comptime !supports_foreground_session) return;
 
     const stdout_text = "stdout-bytes";
@@ -2978,6 +2989,7 @@ test "foreground session protocol bytes do not enter captured output" {
 }
 
 test "target replacement marker prefix remains ordinary stderr" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=target replacement marker prefix remains ordinary stderr START\n", .{});
     if (comptime !supports_foreground_session) return;
 
     const stderr_text = foreground_session_replace_failure_prefix ++ "target-data\n";
@@ -2994,6 +3006,7 @@ test "target replacement marker prefix remains ordinary stderr" {
 }
 
 test "target cannot recover replacement nonce from supervisor" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=target cannot recover replacement nonce from supervisor START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const token_probe = if (builtin.os.tag == .linux)
@@ -3022,6 +3035,7 @@ test "target cannot recover replacement nonce from supervisor" {
 }
 
 test "invalid readiness directly kills and reaps helper pid" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=invalid readiness directly kills and reaps helper pid START\n", .{});
     if (comptime !supports_foreground_session) return;
 
     const argv = [_][]const u8{
@@ -3046,6 +3060,7 @@ test "invalid readiness directly kills and reaps helper pid" {
 }
 
 test "readiness EOF directly kills and reaps helper pid" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=readiness EOF directly kills and reaps helper pid START\n", .{});
     if (comptime !supports_foreground_session) return;
 
     const argv = [_][]const u8{
@@ -3070,6 +3085,7 @@ test "readiness EOF directly kills and reaps helper pid" {
 }
 
 test "pre-ready cancellation directly kills and reaps helper pid" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=pre-ready cancellation directly kills and reaps helper pid START\n", .{});
     if (comptime !supports_foreground_session) return;
 
     const argv = [_][]const u8{ "/bin/sleep", "2" };
@@ -3092,6 +3108,7 @@ test "pre-ready cancellation directly kills and reaps helper pid" {
 }
 
 test "pre-ready configured timeout directly kills and reaps helper pid" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=pre-ready configured timeout directly kills and reaps helper pid START\n", .{});
     if (comptime !supports_foreground_session) return;
 
     const argv = [_][]const u8{ "/bin/sleep", "2" };
@@ -3114,6 +3131,7 @@ test "pre-ready configured timeout directly kills and reaps helper pid" {
 }
 
 test "foreground session setup has a bounded internal ceiling" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=foreground session setup has a bounded internal ceiling START\n", .{});
     if (comptime !supports_foreground_session) return;
 
     const argv = [_][]const u8{ "/bin/sleep", "7" };
@@ -3137,6 +3155,7 @@ test "foreground session setup has a bounded internal ceiling" {
 }
 
 test "detached session preserves replacement failure with a zero output budget" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=detached session preserves replacement failure with a zero output budget START\n", .{});
     if (comptime !supports_foreground_session) return;
 
     var scratch_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -3158,6 +3177,7 @@ test "detached session preserves replacement failure with a zero output budget" 
 }
 
 test "raw process execution transports long scripts without exposing stdin" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=raw process execution transports long scripts without exposing stdin START\n", .{});
     const alloc = std.testing.allocator;
     var script: std.ArrayList(u8) = .empty;
     defer script.deinit(alloc);
@@ -3184,6 +3204,7 @@ test "raw process execution transports long scripts without exposing stdin" {
 }
 
 test "large stdout writes command artifact and returns bounded preview" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=large stdout writes command artifact and returns bounded preview START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3215,6 +3236,7 @@ test "large stdout writes command artifact and returns bounded preview" {
 }
 
 test "large stderr writes command artifact and returns bounded preview" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=large stderr writes command artifact and returns bounded preview START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3268,6 +3290,7 @@ const FailCommandArtifactSync = struct {
 };
 
 test "managed command artifact confirms an indeterminate rename target" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=managed command artifact confirms an indeterminate rename target START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3348,6 +3371,7 @@ test "managed command artifact confirms an indeterminate rename target" {
 }
 
 test "managed command artifact rejects an unconfirmed rename target" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=managed command artifact rejects an unconfirmed rename target START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3502,6 +3526,7 @@ const DelayAfterOutput = struct {
 };
 
 test "line buffered streaming emits lines and tail" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=line buffered streaming emits lines and tail START\n", .{});
     var capture = StreamCapture{ .alloc = std.testing.allocator };
     defer capture.deinit();
 
@@ -3519,6 +3544,7 @@ test "line buffered streaming emits lines and tail" {
 }
 
 test "line buffered streaming preserves stderr stream and tail" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=line buffered streaming preserves stderr stream and tail START\n", .{});
     var capture = StreamCapture{ .alloc = std.testing.allocator };
     defer capture.deinit();
 
@@ -3536,6 +3562,7 @@ test "line buffered streaming preserves stderr stream and tail" {
 }
 
 test "raw callback projection preserves bytes without changing command result" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=raw callback projection preserves bytes without changing command result START\n", .{});
     var safe_capture = StreamCapture{ .alloc = std.testing.allocator };
     defer safe_capture.deinit();
     const safe_result = try executeCommand(.{
@@ -3566,6 +3593,7 @@ test "raw callback projection preserves bytes without changing command result" {
 }
 
 test "accepted callbacks preserve repeated newline-free stream order" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=accepted callbacks preserve repeated newline-free stream order START\n", .{});
     var capture = StreamCapture{ .alloc = std.testing.allocator };
     defer capture.deinit();
     const cfg = Config{
@@ -3596,6 +3624,7 @@ test "accepted callbacks preserve repeated newline-free stream order" {
 }
 
 test "cancellation requested by a failing output callback dominates its error" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=cancellation requested by a failing output callback dominates its error START\n", .{});
     var cancel = std.atomic.Value(bool).init(false);
     var trigger = FailOutput{ .cancel_flag = &cancel };
 
@@ -3609,6 +3638,7 @@ test "cancellation requested by a failing output callback dominates its error" {
 }
 
 test "cancellation preserves the termination grace beneath the session supervisor" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=cancellation preserves the termination grace beneath the session supervisor START\n", .{});
     var cancel = std.atomic.Value(bool).init(false);
     var trigger = CancelAfterOutput{
         .flag = &cancel,
@@ -3629,6 +3659,7 @@ test "cancellation preserves the termination grace beneath the session superviso
 }
 
 test "cancellation preserves the termination grace in an invoked script" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=cancellation preserves the termination grace in an invoked script START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3675,6 +3706,7 @@ test "cancellation preserves the termination grace in an invoked script" {
 }
 
 test "cap-crossing cancellation returns a synchronized bounded result" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=cap-crossing cancellation returns a synchronized bounded result START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3716,6 +3748,7 @@ test "cap-crossing cancellation returns a synchronized bounded result" {
 }
 
 test "cancelled managed command confirms an indeterminate artifact target" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=cancelled managed command confirms an indeterminate artifact target START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3811,6 +3844,7 @@ test "cancelled managed command confirms an indeterminate artifact target" {
 }
 
 test "below-cap cancellation retains complete artifact and non-truncated metadata" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=below-cap cancellation retains complete artifact and non-truncated metadata START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3858,6 +3892,7 @@ test "below-cap cancellation retains complete artifact and non-truncated metadat
 }
 
 test "zero-output cancellation remains a bare error" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=zero-output cancellation remains a bare error START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3909,6 +3944,7 @@ test "zero-output cancellation remains a bare error" {
 }
 
 test "artifact write failure after cancellation remains a bare error" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=artifact write failure after cancellation remains a bare error START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3988,6 +4024,7 @@ test "artifact write failure after cancellation remains a bare error" {
 }
 
 test "timeout source is distinct from cancellation" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=timeout source is distinct from cancellation START\n", .{});
     try std.testing.expectError(error.TimeoutExpired, executeCommand(.{
         .max_command_output_bytes = 1024,
         .timeout_ms = 120,
@@ -3995,6 +4032,7 @@ test "timeout source is distinct from cancellation" {
 }
 
 test "foreground force cleanup preserves the supervisor" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=foreground force cleanup preserves the supervisor START\n", .{});
     const mask = foregroundSupervisorSignalMask();
     try std.testing.expect(std.posix.sigismember(&mask, std.posix.SIG.TERM));
     try std.testing.expect(std.posix.sigismember(&mask, foreground_session_force_signal));
@@ -4022,6 +4060,7 @@ test "foreground force cleanup preserves the supervisor" {
 }
 
 test "foreground force request dominates graceful termination" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=foreground force request dominates graceful termination START\n", .{});
     try std.testing.expectEqual(
         ForegroundTerminationAction.none,
         decideForegroundTerminationAction(.none, null, false, 1000),
@@ -4070,6 +4109,7 @@ test "foreground force request dominates graceful termination" {
 }
 
 test "termination result follows the delivered signal source" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=termination result follows the delivered signal source START\n", .{});
     try std.testing.expectEqual(
         TerminationSource.natural,
         reconcileForegroundTerminationSource(.natural, 1700, 1699),
@@ -4085,6 +4125,7 @@ test "termination result follows the delivered signal source" {
 }
 
 test "forced termination settlement expires only after its deadline" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=forced termination settlement expires only after its deadline START\n", .{});
     try std.testing.expect(!termination_settle_expired_with_ceiling(null, true, 10_000, 100));
     try std.testing.expect(!termination_settle_expired_with_ceiling(5_000, false, 10_000, 100));
     try std.testing.expect(!termination_settle_expired_with_ceiling(5_000, true, 5_099, 100));
@@ -4095,6 +4136,7 @@ test "forced termination settlement expires only after its deadline" {
 }
 
 test "nonterminal child terms remain indeterminate" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=nonterminal child terms remain indeterminate START\n", .{});
     try std.testing.expectEqual(
         command_contract.CommandStatus.indeterminate,
         commandStatusFromTerm(.{ .unknown = 0 }),
@@ -4110,6 +4152,7 @@ test "nonterminal child terms remain indeterminate" {
 }
 
 test "post-force-kill keeps polling when pipes close but the waiter stalls" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=post-force-kill keeps polling when pipes close but the waiter stalls START\n", .{});
     // Closed pipes with a stalled waiter must not end collection: the loop
     // keeps polling until the waiter settles or the deadline cancels it.
     try std.testing.expect(!pipeDrainComplete(.cancelled, true, true, false, true));
@@ -4128,6 +4171,7 @@ test "post-force-kill keeps polling when pipes close but the waiter stalls" {
 }
 
 test "pending termination source makes supervisor fallback timeout dominant" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=pending termination source makes supervisor fallback timeout dominant START\n", .{});
     const deadline_ms: i64 = 1000;
     const fallback_deadline_ms = deadline_ms + foreground_supervisor_handoff_ms;
 
@@ -4154,6 +4198,7 @@ test "pending termination source makes supervisor fallback timeout dominant" {
 }
 
 test "timeout prevents captured user shell from evaluating trailing statements" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=timeout prevents captured user shell from evaluating trailing statements START\n", .{});
     std.Io.Dir.accessAbsolute(io_mod.getIo(), "/bin/zsh", .{}) catch
         return error.SkipZigTest;
 
@@ -4187,6 +4232,7 @@ test "timeout prevents captured user shell from evaluating trailing statements" 
 }
 
 test "timeout remains dominant when its output callback fails" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=timeout remains dominant when its output callback fails START\n", .{});
     var trigger = FailOutput{};
     try std.testing.expectError(
         error.TestOutputCallbackFailure,
@@ -4204,6 +4250,7 @@ test "timeout remains dominant when its output callback fails" {
 }
 
 test "timeout terminates foreground process group descendants" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=timeout terminates foreground process group descendants START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4249,6 +4296,7 @@ test "timeout terminates foreground process group descendants" {
 }
 
 test "timeout terminates redirected descendant after setsid" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=timeout terminates redirected descendant after setsid START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4288,6 +4336,7 @@ test "timeout terminates redirected descendant after setsid" {
 }
 
 test "timeout terminates double-forked descendant after setsid" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=timeout terminates double-forked descendant after setsid START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4329,6 +4378,7 @@ test "timeout terminates double-forked descendant after setsid" {
 }
 
 test "timeout terminates environment-sanitized double-fork descendants" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=timeout terminates environment-sanitized double-fork descendants START\n", .{});
     if (builtin.os.tag != .macos) return error.SkipZigTest;
 
     const alloc = std.testing.allocator;
@@ -4389,6 +4439,7 @@ fn expectProcessGone(pid: std.posix.pid_t) !void {
 }
 
 test "natural command completion terminates background child inheriting pipes" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=natural command completion terminates background child inheriting pipes START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4423,6 +4474,7 @@ test "natural command completion terminates background child inheriting pipes" {
 }
 
 test "natural command completion terminates background child with redirected streams" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=natural command completion terminates background child with redirected streams START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4457,6 +4509,7 @@ test "natural command completion terminates background child with redirected str
 }
 
 test "natural command completion terminates redirected descendant after setsid" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=natural command completion terminates redirected descendant after setsid START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4498,6 +4551,7 @@ test "natural command completion terminates redirected descendant after setsid" 
 }
 
 test "cancellation preserves grace and removes an escaped descendant" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=cancellation preserves grace and removes an escaped descendant START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4559,6 +4613,7 @@ test "cancellation preserves grace and removes an escaped descendant" {
 }
 
 test "execution control reuses configured timeout start time" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=execution control reuses configured timeout start time START\n", .{});
     const started_ms = io_mod.milliTimestamp() - 50;
     const control = ExecutionControl.init(.{
         .max_command_output_bytes = 1024,
@@ -4569,6 +4624,7 @@ test "execution control reuses configured timeout start time" {
 }
 
 test "foreground supervisor fallback leaves the parent two termination polls" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=foreground supervisor fallback leaves the parent two termination polls START\n", .{});
     try std.testing.expectEqual(
         @as(?i64, null),
         foreground_supervisor_fallback_deadline_ms(null),
@@ -4584,6 +4640,7 @@ test "foreground supervisor fallback leaves the parent two termination polls" {
 }
 
 test "cancel and timeout tie chooses cancellation" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=cancel and timeout tie chooses cancellation START\n", .{});
     var cancel = std.atomic.Value(bool).init(true);
     try std.testing.expectError(error.CancelledBeforeExecution, executeCommand(.{
         .max_command_output_bytes = 1024,
@@ -4593,6 +4650,7 @@ test "cancel and timeout tie chooses cancellation" {
 }
 
 test "runtime cancellation observed at the timeout deadline stays graceful" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=runtime cancellation observed at the timeout deadline stays graceful START\n", .{});
     for (0..10) |_| {
         const alloc = std.testing.allocator;
         var tmp = std.testing.tmpDir(.{});
@@ -4658,6 +4716,7 @@ test "runtime cancellation observed at the timeout deadline stays graceful" {
 }
 
 test "accepted short timeout matrix returns timeout errors" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=accepted short timeout matrix returns timeout errors START\n", .{});
     for ([_]usize{ 1, 2, 5, 10, 25, 50 }) |timeout_ms| {
         try std.testing.expectError(error.TimeoutExpired, executeCommand(.{
             .max_command_output_bytes = 1024,
@@ -4667,6 +4726,7 @@ test "accepted short timeout matrix returns timeout errors" {
 }
 
 test "supervisor handoff does not extend the parent timeout deadline" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=supervisor handoff does not extend the parent timeout deadline START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4691,6 +4751,7 @@ test "supervisor handoff does not extend the parent timeout deadline" {
 }
 
 test "supervisor fallback force remains timeout dominant" {
+    std.debug.print("[DIAG-HANG] file=src/core/execution/command_runner.zig test=supervisor fallback force remains timeout dominant START\n", .{});
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

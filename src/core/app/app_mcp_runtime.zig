@@ -2503,6 +2503,7 @@ fn destroyRuntime(alloc: Allocator, runtime: *mcp_runtime.McpRuntime) void {
 }
 
 test "MCP menu expands every resource template argument" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=MCP menu expands every resource template argument START\n", .{});
     const alloc = std.testing.allocator;
     var fields: std.ArrayList(MenuArgumentField) = .empty;
     defer {
@@ -2539,6 +2540,7 @@ test "MCP menu expands every resource template argument" {
 }
 
 test "MCP menu failures preserve exact menu-owned feedback" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=MCP menu failures preserve exact menu-owned feedback START\n", .{});
     const alloc = std.testing.allocator;
 
     var effect_state = State{
@@ -2660,6 +2662,7 @@ test "MCP menu failures preserve exact menu-owned feedback" {
 }
 
 test "MCP menu repeated lifecycle releases drafts and feedback" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=MCP menu repeated lifecycle releases drafts and feedback START\n", .{});
     const alloc = std.testing.allocator;
     var state: State = .{};
     defer state.deinit(alloc);
@@ -2756,6 +2759,7 @@ fn failPendingReloadSpawn(_: *PendingReload) !std.Thread {
 }
 
 test "transactional reload retains old runtime and publishes only accepted candidates" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=transactional reload retains old runtime and publishes only accepted candidates START\n", .{});
     const alloc = std.testing.allocator;
     var state: State = .{};
     defer state.deinit(alloc);
@@ -2831,6 +2835,7 @@ test "transactional reload retains old runtime and publishes only accepted candi
 }
 
 test "reducing preflight retires workspace authority before strict loader failure" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=reducing preflight retires workspace authority before strict loader failure START\n", .{});
     const alloc = std.testing.allocator;
     var state: State = .{};
     defer state.deinit(alloc);
@@ -2863,6 +2868,7 @@ test "reducing preflight retires workspace authority before strict loader failur
 }
 
 test "project prompt display escapes repository control bytes" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=project prompt display escapes repository control bytes START\n", .{});
     const alloc = std.testing.allocator;
     var state: State = .{};
     defer state.deinit(alloc);
@@ -2884,6 +2890,7 @@ test "project prompt display escapes repository control bytes" {
 }
 
 test "project prompt allocation failure releases the runtime lease" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=project prompt allocation failure releases the runtime lease START\n", .{});
     const alloc = std.testing.allocator;
     var state: State = .{};
     const runtime = try alloc.create(mcp_runtime.McpRuntime);
@@ -2908,6 +2915,7 @@ test "project prompt allocation failure releases the runtime lease" {
 }
 
 test "pending reload returns immediately and publishes one completion" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=pending reload returns immediately and publishes one completion START\n", .{});
     const alloc = std.testing.allocator;
     var state: State = .{};
     defer state.deinit(alloc);
@@ -2952,6 +2960,7 @@ test "pending reload returns immediately and publishes one completion" {
 }
 
 test "reload thread start failure frees the task and copied workspace root once" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=reload thread start failure frees the task and copied workspace root once START\n", .{});
     if (comptime builtin.single_threaded) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var state: State = .{};
@@ -2973,6 +2982,7 @@ test "reload thread start failure frees the task and copied workspace root once"
 }
 
 test "authority reduction quiesces superseded tasks before detached runtime retirement" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=authority reduction quiesces superseded tasks before detached runtime retirement START\n", .{});
     if (comptime builtin.single_threaded) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var state: State = .{};
@@ -3060,6 +3070,7 @@ test "authority reduction quiesces superseded tasks before detached runtime reti
 }
 
 test "authority reduction thread start failure falls back synchronously" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=authority reduction thread start failure falls back synchronously START\n", .{});
     if (comptime builtin.single_threaded) return error.SkipZigTest;
     const alloc = std.testing.allocator;
     var state: State = .{};
@@ -3102,6 +3113,7 @@ test "authority reduction thread start failure falls back synchronously" {
 }
 
 test "authentication admission is busy while reload is pending" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=authentication admission is busy while reload is pending START\n", .{});
     const alloc = std.testing.allocator;
     var state: State = .{};
     defer state.deinit(alloc);
@@ -3128,6 +3140,7 @@ test "authentication admission is busy while reload is pending" {
 }
 
 test "authentication completion releases its lease and is taken once" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=authentication completion releases its lease and is taken once START\n", .{});
     const alloc = std.testing.allocator;
     var state: State = .{};
     defer state.deinit(alloc);
@@ -3158,6 +3171,7 @@ test "authentication completion releases its lease and is taken once" {
 }
 
 test "superseding and deinitializing a stalled pending reload cancel before join" {
+    std.debug.print("[DIAG-HANG] file=src/core/app/app_mcp_runtime.zig test=superseding and deinitializing a stalled pending reload cancel before join START\n", .{});
     const alloc = std.testing.allocator;
     var state: State = .{};
     const original = try alloc.create(mcp_runtime.McpRuntime);

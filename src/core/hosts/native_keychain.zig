@@ -514,6 +514,7 @@ fn deleteMcpValueMac(
 }
 
 test "account name resolves from the operating system when USER is unset" {
+    std.debug.print("[DIAG-HANG] file=src/core/hosts/native_keychain.zig test=account name resolves from the operating system when USER is unset START\n", .{});
     if (comptime builtin.os.tag != .macos) return error.SkipZigTest;
     try std.testing.expect(io_mod.getenv("USER") == null);
 
@@ -524,6 +525,7 @@ test "account name resolves from the operating system when USER is unset" {
 }
 
 test "MCP Keychain storage round-trips values beyond the security prompt limit" {
+    std.debug.print("[DIAG-HANG] file=src/core/hosts/native_keychain.zig test=MCP Keychain storage round-trips values beyond the security prompt limit START\n", .{});
     if (comptime builtin.os.tag != .macos) return error.SkipZigTest;
     if (isDisabled()) return error.SkipZigTest;
     std.debug.print("[DIAG-HANG] keychain round-trip START\n", .{});

@@ -431,6 +431,7 @@ fn versionLabel(v: []const u8) []const u8 {
 }
 
 test "versionLabel strips lowercase v prefix" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=versionLabel strips lowercase v prefix START\n", .{});
     try std.testing.expectEqualStrings("0.1.0", versionLabel("v0.1.0"));
     try std.testing.expectEqualStrings("0.1.0", versionLabel("0.1.0"));
     try std.testing.expectEqualStrings("v", versionLabel("v"));
@@ -438,6 +439,7 @@ test "versionLabel strips lowercase v prefix" {
 }
 
 test "completeRunResult reports up to date when normalized versions match" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=completeRunResult reports up to date when normalized versions match START\n", .{});
     const alloc = std.testing.allocator;
     const target = try update_target.Target.initStable(alloc, "v0.2.10");
 
@@ -453,6 +455,7 @@ test "completeRunResult reports up to date when normalized versions match" {
 }
 
 test "completeRunResult reports upgraded when latest differs" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=completeRunResult reports upgraded when latest differs START\n", .{});
     const alloc = std.testing.allocator;
     const target = try update_target.Target.initStable(alloc, "0.2.11");
 
@@ -468,6 +471,7 @@ test "completeRunResult reports upgraded when latest differs" {
 }
 
 test "completeRunResult reports no update for an older stable target" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=completeRunResult reports no update for an older stable target START\n", .{});
     const alloc = std.testing.allocator;
     const target = try update_target.Target.initStable(alloc, "v0.0.1");
 
@@ -483,6 +487,7 @@ test "completeRunResult reports no update for an older stable target" {
 }
 
 test "completeRunResult reports up to date when no release is published" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=completeRunResult reports up to date when no release is published START\n", .{});
     const alloc = std.testing.allocator;
 
     var result = try completeRunResult(alloc, .{
@@ -497,6 +502,7 @@ test "completeRunResult reports up to date when no release is published" {
 }
 
 test "completeRunResult maps worker errors and frees latest version" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=completeRunResult maps worker errors and frees latest version START\n", .{});
     const alloc = std.testing.allocator;
     const target = try update_target.Target.initStable(alloc, "0.2.11");
 
@@ -513,6 +519,7 @@ test "completeRunResult maps worker errors and frees latest version" {
 }
 
 test "failureResult preserves active error messages" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=failureResult preserves active error messages START\n", .{});
     const result = failureResult(.{
         .version = "v0.2.10",
         .revision = "0123456789ab",
@@ -525,6 +532,7 @@ test "failureResult preserves active error messages" {
 }
 
 test "progressPercent clamps download progress to 100" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=progressPercent clamps download progress to 100 START\n", .{});
     try std.testing.expectEqual(@as(u8, 0), progressPercent(0, 100).?);
     try std.testing.expectEqual(@as(u8, 48), progressPercent(48, 100).?);
     try std.testing.expectEqual(@as(u8, 100), progressPercent(120, 100).?);
@@ -532,6 +540,7 @@ test "progressPercent clamps download progress to 100" {
 }
 
 test "formatProgressLine renders percent only" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=formatProgressLine renders percent only START\n", .{});
     var buf: [128]u8 = undefined;
 
     try std.testing.expectEqualStrings(
@@ -549,6 +558,7 @@ test "formatProgressLine renders percent only" {
 }
 
 test "formatProgressStatusLine renders plain status for unknown download length" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=formatProgressStatusLine renders plain status for unknown download length START\n", .{});
     var buf: [128]u8 = undefined;
 
     try std.testing.expectEqualStrings(
@@ -562,6 +572,7 @@ test "formatProgressStatusLine renders plain status for unknown download length"
 }
 
 test "formatProgressStatusLine keeps checking silent" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=formatProgressStatusLine keeps checking silent START\n", .{});
     var buf: [128]u8 = undefined;
 
     try std.testing.expect(formatProgressStatusLine(&buf, .{
@@ -572,6 +583,7 @@ test "formatProgressStatusLine keeps checking silent" {
 }
 
 test "formatProgressStatusLine renders found update before download starts" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=formatProgressStatusLine renders found update before download starts START\n", .{});
     var buf: [128]u8 = undefined;
 
     try std.testing.expectEqualStrings(
@@ -585,6 +597,7 @@ test "formatProgressStatusLine renders found update before download starts" {
 }
 
 test "progress target is read only after the publishing phase snapshot" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=progress target is read only after the publishing phase snapshot START\n", .{});
     const alloc = std.testing.allocator;
     var target = try update_target.Target.initStable(alloc, "v0.3.40");
     defer target.deinit(alloc);
@@ -607,6 +620,7 @@ test "progress target is read only after the publishing phase snapshot" {
 }
 
 test "formatProgressStatusLine renders percent only with known progress" {
+    std.debug.print("[DIAG-HANG] file=src/core/upgrade/upgrade_runtime.zig test=formatProgressStatusLine renders percent only with known progress START\n", .{});
     var buf: [128]u8 = undefined;
 
     try std.testing.expectEqualStrings(

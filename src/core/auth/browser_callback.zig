@@ -491,6 +491,7 @@ const HeldPreconnectProbe = struct {
 };
 
 test "browser callback outruns an idle preconnect held open" {
+    std.debug.print("[DIAG-HANG] file=src/core/auth/browser_callback.zig test=browser callback outruns an idle preconnect held open START\n", .{});
     var listener = try bindTestListener();
     defer listener.deinit(io_mod.getIo());
 
@@ -520,6 +521,7 @@ test "browser callback outruns an idle preconnect held open" {
 }
 
 test "browser callback cancels while an idle preconnect is open" {
+    std.debug.print("[DIAG-HANG] file=src/core/auth/browser_callback.zig test=browser callback cancels while an idle preconnect is open START\n", .{});
     var listener = try bindTestListener();
     defer listener.deinit(io_mod.getIo());
 
@@ -556,6 +558,7 @@ test "browser callback cancels while an idle preconnect is open" {
 }
 
 test "browser callback survives unrelated requests before the redirect" {
+    std.debug.print("[DIAG-HANG] file=src/core/auth/browser_callback.zig test=browser callback survives unrelated requests before the redirect START\n", .{});
     var listener = try bindTestListener();
     defer listener.deinit(io_mod.getIo());
     const port = listener.socket.address.getPort();
@@ -613,10 +616,12 @@ fn expectResetPreconnectSurvives(hold_ms: u64) !void {
 }
 
 test "browser callback survives a reset preconnect before the redirect" {
+    std.debug.print("[DIAG-HANG] file=src/core/auth/browser_callback.zig test=browser callback survives a reset preconnect before the redirect START\n", .{});
     try expectResetPreconnectSurvives(100);
 }
 
 test "browser callback survives a reset queued before accept" {
+    std.debug.print("[DIAG-HANG] file=src/core/auth/browser_callback.zig test=browser callback survives a reset queued before accept START\n", .{});
     try expectResetPreconnectSurvives(0);
 }
 
@@ -672,6 +677,7 @@ const CorsCallbackProbe = struct {
 };
 
 test "browser callback permits the xAI CORS private-network preflight" {
+    std.debug.print("[DIAG-HANG] file=src/core/auth/browser_callback.zig test=browser callback permits the xAI CORS private-network preflight START\n", .{});
     var listener = try bindTestListener();
     defer listener.deinit(io_mod.getIo());
 

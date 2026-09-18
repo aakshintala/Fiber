@@ -40,6 +40,7 @@ pub fn preparedWindowRequest(
 }
 
 test "prepared window always covers one complete visible viewport" {
+    std.debug.print("[DIAG-HANG] file=src/ui/transcript/full_transcript_worker.zig test=prepared window always covers one complete visible viewport START\n", .{});
     const request = preparedWindowRequest(
         .{ .content_revision = 1, .cols = 80, .anchor = .tail },
         1_000,

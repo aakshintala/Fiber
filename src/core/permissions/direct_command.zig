@@ -1189,6 +1189,7 @@ fn projectForTest(alloc: std.mem.Allocator, chunks: []const []const u8) ![]u8 {
 }
 
 test "direct projector renders terminal controls invalid bytes and split utf8 visibly" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct projector renders terminal controls invalid bytes and split utf8 visibly START\n", .{});
     const chunks = [_][]const u8{
         "ok\n\x00\x07\x08\x09\x0d\x1b\x7f",
         "\xc2",
@@ -1208,6 +1209,7 @@ test "direct projector renders terminal controls invalid bytes and split utf8 vi
 }
 
 test "direct projector covers every c0 byte del and preserves non-control utf8" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct projector covers every c0 byte del and preserves non-control utf8 START\n", .{});
     var raw: [128]u8 = undefined;
     var len: usize = 0;
     for (0..32) |byte| {
@@ -1230,6 +1232,7 @@ test "direct projector covers every c0 byte del and preserves non-control utf8" 
 }
 
 test "direct output budget admits whole chunks and trips exactly once" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct output budget admits whole chunks and trips exactly once START\n", .{});
     var budget: DirectOutputBudget = .{ .limit = 8 };
     try std.testing.expectEqual(
         DirectOutputBudget.Charge{ .admit_chunk = true, .trip_owner = false },
@@ -1253,6 +1256,7 @@ test "direct output budget admits whole chunks and trips exactly once" {
 }
 
 test "direct output budget synchronizes concurrent producers and has one trip owner" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct output budget synchronizes concurrent producers and has one trip owner START\n", .{});
     var budget: DirectOutputBudget = .{ .limit = 16 };
     var trip_owners = std.atomic.Value(usize).init(0);
     const Producer = struct {
@@ -1273,6 +1277,7 @@ test "direct output budget synchronizes concurrent producers and has one trip ow
 }
 
 test "direct termination arbiter gives cancellation and timeout precedence" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct termination arbiter gives cancellation and timeout precedence START\n", .{});
     var output = DirectOutput.init(std.testing.allocator, .{
         .max_command_output_bytes = 1,
     });
@@ -1315,6 +1320,7 @@ test "direct termination arbiter gives cancellation and timeout precedence" {
 }
 
 test "direct executor runs fixed argv with sanitized environment and no artifact" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor runs fixed argv with sanitized environment and no artifact START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const argv = [_][]const u8{"/usr/bin/env"};
@@ -1343,6 +1349,7 @@ test "direct executor runs fixed argv with sanitized environment and no artifact
 }
 
 test "git direct profile removes ambient authority and disables optional mutation" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=git direct profile removes ambient authority and disables optional mutation START\n", .{});
     var environment = try environmentForProfile(std.testing.allocator, .git_read_only);
     defer environment.deinit();
 
@@ -1356,6 +1363,7 @@ test "git direct profile removes ambient authority and disables optional mutatio
 }
 
 test "direct executor runs a supported pipeline and reports final output" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor runs a supported pipeline and reports final output START\n", .{});
     var admission = try command_effect.plan(
         std.testing.allocator,
         "printf x | wc -c",
@@ -1386,6 +1394,7 @@ test "direct executor runs a supported pipeline and reports final output" {
 }
 
 test "direct executor rejects plans above the pipeline stage limit" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor rejects plans above the pipeline stage limit START\n", .{});
     const argv = [_][]const u8{ "/usr/bin/wc", "-c" };
     var stages: [command_effect.max_direct_pipeline_stages + 1]command_effect.DirectStage = undefined;
     for (&stages) |*stage| {
@@ -1404,6 +1413,7 @@ test "direct executor rejects plans above the pipeline stage limit" {
 }
 
 test "direct executor uses the canonical production output limit" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor uses the canonical production output limit START\n", .{});
     try std.testing.expectEqual(@as(usize, 65_536), direct_output_limit_bytes);
     try std.testing.expectEqual(@as(usize, 4096), direct_output_read_chunk_bytes);
 }
@@ -1434,6 +1444,7 @@ fn createListingFiles(
 }
 
 test "direct executor enforces canonical capacity with native large ls output" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor enforces canonical capacity with native large ls output START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const alloc = std.testing.allocator;
@@ -1516,6 +1527,7 @@ fn injectedPlan(
 }
 
 test "direct executor admits exact output limit and rejects limit plus one without artifacts" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor admits exact output limit and rejects limit plus one without artifacts START\n", .{});
     const exact_argv = [_][]const u8{ "/usr/bin/printf", "12345678" };
     const exact_stages = [_]command_effect.DirectStage{.{
         .executable = "/usr/bin/printf",
@@ -1544,6 +1556,7 @@ test "direct executor admits exact output limit and rejects limit plus one witho
 }
 
 test "direct executor canonical limit covers stderr and counted pipeline relays" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor canonical limit covers stderr and counted pipeline relays START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const exact_stderr_argv = [_][]const u8{
@@ -1636,6 +1649,7 @@ test "direct executor canonical limit covers stderr and counted pipeline relays"
 }
 
 test "direct executor charges non-final pipeline bytes before relay" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor charges non-final pipeline bytes before relay START\n", .{});
     const producer_argv = [_][]const u8{ "/usr/bin/printf", "123456789" };
     const consumer_argv = [_][]const u8{ "/usr/bin/wc", "-c" };
     const stages = [_]command_effect.DirectStage{
@@ -1659,6 +1673,7 @@ test "direct executor charges non-final pipeline bytes before relay" {
 }
 
 test "direct executor enforces one budget across concurrent stdout and stderr" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor enforces one budget across concurrent stdout and stderr START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const exact_argv = [_][]const u8{
@@ -1697,6 +1712,7 @@ test "direct executor enforces one budget across concurrent stdout and stderr" {
 }
 
 test "direct executor reaps partial spawn and output-limit process groups" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor reaps partial spawn and output-limit process groups START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const PidCapture = struct {
@@ -1777,6 +1793,7 @@ test "direct executor reaps partial spawn and output-limit process groups" {
 }
 
 test "direct executor cleans up cancellation after the first pipeline spawn" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor cleans up cancellation after the first pipeline spawn START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     var cancel = std.atomic.Value(bool).init(false);
@@ -1833,6 +1850,7 @@ test "direct executor cleans up cancellation after the first pipeline spawn" {
 }
 
 test "direct executor projects hostile final stdout and stderr" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor projects hostile final stdout and stderr START\n", .{});
     const hostile_stdout = "\x1b]52;c;secret\x07\xff";
     const stdout_argv = [_][]const u8{ "/usr/bin/printf", "%s", hostile_stdout };
     const stdout_stages = [_]command_effect.DirectStage{.{
@@ -1900,6 +1918,7 @@ const CallbackCapture = struct {
 };
 
 test "direct executor callbacks receive only bounded projected output" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor callbacks receive only bounded projected output START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const argv = [_][]const u8{
@@ -1934,6 +1953,7 @@ test "direct executor callbacks receive only bounded projected output" {
 }
 
 test "direct executor raw callback projection keeps projected result isolated" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor raw callback projection keeps projected result isolated START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const argv = [_][]const u8{
@@ -1964,6 +1984,7 @@ test "direct executor raw callback projection keeps projected result isolated" {
 }
 
 test "direct executor accepted callbacks preserve repeated newline-free stream order" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor accepted callbacks preserve repeated newline-free stream order START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const argv = [_][]const u8{
@@ -1994,6 +2015,7 @@ test "direct executor accepted callbacks preserve repeated newline-free stream o
 }
 
 test "direct executor keeps stderr projector state independent per child" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor keeps stderr projector state independent per child START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const producer_argv = [_][]const u8{
@@ -2032,6 +2054,7 @@ test "direct executor keeps stderr projector state independent per child" {
 }
 
 test "direct executor reports final stage status without pipefail" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor reports final stage status without pipefail START\n", .{});
     const argv = [_][]const u8{"/usr/bin/false"};
     const stages = [_]command_effect.DirectStage{.{
         .executable = "/usr/bin/false",
@@ -2046,6 +2069,7 @@ test "direct executor reports final stage status without pipefail" {
 }
 
 test "direct workerReady moves one bounded quantum per direction" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct workerReady moves one bounded quantum per direction START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
     const io = io_mod.getIo();
 
@@ -2090,6 +2114,7 @@ test "direct workerReady moves one bounded quantum per direction" {
 }
 
 test "direct workerReady reports EOF on a closed write end" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct workerReady reports EOF on a closed write end START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
     const io = io_mod.getIo();
 
@@ -2106,6 +2131,7 @@ test "direct workerReady reports EOF on a closed write end" {
 }
 
 test "direct executor treats downstream pipe closure as normal pipeline completion" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor treats downstream pipe closure as normal pipeline completion START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const producer_argv = [_][]const u8{
@@ -2144,6 +2170,7 @@ test "direct executor treats downstream pipe closure as normal pipeline completi
 }
 
 test "direct executor fails closed for missing executable" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor fails closed for missing executable START\n", .{});
     const missing_argv = [_][]const u8{"/definitely/missing/fiber-direct-command"};
     const missing_stages = [_]command_effect.DirectStage{.{
         .executable = "/definitely/missing/fiber-direct-command",
@@ -2159,6 +2186,7 @@ test "direct executor fails closed for missing executable" {
 }
 
 test "direct executor cancellation and timeout terminate and reap the process group" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor cancellation and timeout terminate and reap the process group START\n", .{});
     const argv = [_][]const u8{ "/bin/sleep", "10" };
     const stages = [_]command_effect.DirectStage{.{
         .executable = "/bin/sleep",
@@ -2194,6 +2222,7 @@ test "direct executor cancellation and timeout terminate and reap the process gr
 }
 
 test "direct executor flushes partial callback output before timeout" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor flushes partial callback output before timeout START\n", .{});
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const argv = [_][]const u8{
@@ -2222,6 +2251,7 @@ test "direct executor flushes partial callback output before timeout" {
 }
 
 test "direct termination settlement expires only after its shared bound" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct termination settlement expires only after its shared bound START\n", .{});
     try std.testing.expect(!direct_termination_settle_expired_with_ceiling(null, true, 10_000, 100));
     try std.testing.expect(!direct_termination_settle_expired_with_ceiling(5_000, false, 10_000, 100));
     try std.testing.expect(!direct_termination_settle_expired_with_ceiling(5_000, true, 5_099, 100));
@@ -2236,6 +2266,7 @@ test "direct termination settlement expires only after its shared bound" {
 }
 
 test "nonterminal direct terms remain indeterminate" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=nonterminal direct terms remain indeterminate START\n", .{});
     try std.testing.expectEqual(
         command_contract.CommandStatus.indeterminate,
         commandStatusFromTerm(.{ .unknown = 0 }),
@@ -2251,6 +2282,7 @@ test "nonterminal direct terms remain indeterminate" {
 }
 
 test "direct executor termination settles while a detached descendant holds the pipe" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor termination settles while a detached descendant holds the pipe START\n", .{});
     if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
 
     // A detached grandchild inherits the pipeline stdout and survives the
@@ -2280,6 +2312,7 @@ test "direct executor termination settles while a detached descendant holds the 
 }
 
 test "direct wait status decoder projects exits signals and unknown" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct wait status decoder projects exits signals and unknown START\n", .{});
     try std.testing.expectEqual(
         std.process.Child.Term{ .exited = 3 },
         termFromWaitStatus(3 << 8),
@@ -2313,6 +2346,7 @@ const BlockedWorkerControl = struct {
 };
 
 test "direct executor detaches a callback-blocked worker at the join bound" {
+    std.debug.print("[DIAG-HANG] file=src/core/permissions/direct_command.zig test=direct executor detaches a callback-blocked worker at the join bound START\n", .{});
     if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
 
     // A worker stuck in a user callback that never returns (30s) must not
