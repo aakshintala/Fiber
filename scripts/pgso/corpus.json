@@ -119,6 +119,7 @@
     {"name": "verify-web-fetch-permission-progress", "argv": ["bun", "test", "--max-concurrency", "1", "./web-fetch-permission-progress.test.ts"], "test_file": "web-fetch-permission-progress.test.ts", "requires_tmux": false},
     {"name": "verify-web-search-permission-progress", "argv": ["bun", "test", "--max-concurrency", "1", "./web-search-permission-progress.test.ts"], "test_file": "web-search-permission-progress.test.ts", "requires_tmux": false},
     {"name": "verify-yolo-permission-mode", "argv": ["bun", "test", "--max-concurrency", "1", "./yolo-permission-mode.test.ts"], "test_file": "yolo-permission-mode.test.ts"},
-    {"name": "verify-ask-system", "argv": ["bun", "test", "--max-concurrency", "1", "./ask-system.test.ts"], "test_file": "ask-system.test.ts", "requires_tmux": false}
+    {"name": "verify-ask-system", "argv": ["bun", "test", "--max-concurrency", "1", "./ask-system.test.ts"], "test_file": "ask-system.test.ts", "requires_tmux": false},
+    {"name": "verify-crash-resume-durability", "argv": ["bun", "test", "--max-concurrency", "1", "./crash-resume-durability.test.ts"], "test_file": "crash-resume-durability.test.ts", "requires_tmux": false}
   ]
 }

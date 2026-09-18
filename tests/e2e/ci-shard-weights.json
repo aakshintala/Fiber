@@ -7,6 +7,7 @@
   { "file": "cli.test.ts", "weight": 25 },
   { "file": "config-persistence.test.ts", "weight": 50 },
   { "file": "context-limits-live.test.ts", "weight": 1 },
+  { "file": "crash-resume-durability.test.ts", "weight": 5 },
   { "file": "file-tool-paths.test.ts", "weight": 6 },
   { "file": "file-tool-permissions.test.ts", "weight": 1 },
   { "file": "gateway-stream-lifecycle.test.ts", "weight": 78 },
