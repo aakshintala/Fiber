@@ -5,6 +5,7 @@ const debug_trace = @import("../../shared/debug_trace.zig");
 const deps_mod = @import("deps.zig");
 const execution_memory = @import("execution_memory.zig");
 const lifecycle_runtime = @import("lifecycle.zig");
+const runtime_assistant_stream = @import("assistant_stream.zig");
 const telemetry = @import("telemetry.zig");
 const worker_runtime = @import("../worker_runtime.zig");
 
@@ -198,6 +199,10 @@ pub fn finishExecutionOnlyFailureIfNeeded(
     finish_trace: *PromptFinishTrace,
     terminal_materializing: *bool,
     trace_outcome: []const u8,
+    /// The turn's open message, when the terminal has no completion of its
+    /// own. Borrowed; carried on a synthetic completion so the execution
+    /// turn closes it instead of orphaning it beside the turn boundary.
+    open_message_id: ?[]const u8,
 ) !bool {
     const execution = try execution_memory.buildExecutionMemory(
         arena,
@@ -206,6 +211,13 @@ pub fn finishExecutionOnlyFailureIfNeeded(
     if (execution.isEmpty()) return false;
 
     terminal_materializing.* = true;
+    var open_completion_storage: ?types.ModelCompletion = null;
+    if (open_message_id) |item_id| {
+        open_completion_storage = .{ .message_item_id = item_id };
+    }
+    const open_completion: ?*const types.ModelCompletion = if (open_completion_storage) |*stored| stored else null;
+    // Close the stream's open message before the turn boundary below.
+    try runtime_assistant_stream.noteTerminalStep(deps, arena, job.turn_id, open_completion, "");
     try finishAssistantTerminalWithExecution(
         deps,
         finalization,
@@ -213,7 +225,7 @@ pub fn finishExecutionOnlyFailureIfNeeded(
         execution,
         summary,
         "",
-        null,
+        open_completion,
         .failed,
         null,
         finish_trace,
@@ -233,6 +245,9 @@ pub fn finalizeRetainedCandidateFailure(
     retained_candidate: ?[]const u8,
     latest_partial: ?[]const u8,
     terminal_materializing: *bool,
+    /// The turn's open message, when the terminal has no completion of its
+    /// own. Borrowed; carried on a synthetic completion like above.
+    open_message_id: ?[]const u8,
 ) !void {
     terminal_materializing.* = true;
     const assistant_text = try hooks.prompt.joinVisibleSegments(
@@ -244,6 +259,13 @@ pub fn finalizeRetainedCandidateFailure(
         arena,
         current_turn_messages,
     );
+    var retained_completion_storage: ?types.ModelCompletion = null;
+    if (open_message_id) |item_id| {
+        retained_completion_storage = .{ .message_item_id = item_id };
+    }
+    const retained_completion: ?*const types.ModelCompletion = if (retained_completion_storage) |*stored| stored else null;
+    // Close the stream's open message before the turn boundary below.
+    try runtime_assistant_stream.noteTerminalStep(deps, arena, job.turn_id, retained_completion, assistant_text);
     try finishAssistantTerminalWithExecution(
         deps,
         finalization,
@@ -251,7 +273,7 @@ pub fn finalizeRetainedCandidateFailure(
         execution,
         summary,
         assistant_text,
-        null,
+        retained_completion,
         .failed,
         null,
         finish_trace,

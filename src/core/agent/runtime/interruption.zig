@@ -34,6 +34,7 @@ pub fn persistInterruptedTurnOnce(
     terminal_materializing: *bool,
     item_ids: types.InterruptedItemIds,
     reasoning_texts: []const std.ArrayList(u8),
+    turn_message_slot: ?*?[]u8,
 ) !void {
     return persistInterruptedTurnWithPresentation(
         hooks,
@@ -50,6 +51,7 @@ pub fn persistInterruptedTurnOnce(
         null,
         item_ids,
         reasoning_texts,
+        turn_message_slot,
     );
 }
 
@@ -68,6 +70,7 @@ pub fn persistInterruptedCommandTurnOnce(
     cancelled_command: ?types.CancelledCommandPresentation,
     item_ids: types.InterruptedItemIds,
     reasoning_texts: []const std.ArrayList(u8),
+    turn_message_slot: ?*?[]u8,
 ) !void {
     return persistInterruptedTurnWithPresentation(
         hooks,
@@ -84,13 +87,16 @@ pub fn persistInterruptedCommandTurnOnce(
         cancelled_command,
         item_ids,
         reasoning_texts,
+        turn_message_slot,
     );
 }
 
 /// Emits closing item lines for an interrupted or failed stream: its
 /// reasoning blocks then its message. The stream owns every started
 /// boundary, so the terminal closes them only; a caller-minted message id
-/// arrives with its started line already noted by its minter.
+/// arrives with its started line already noted by its minter. Closing the
+/// message clears the turn slot when it names the slot's id, so later steps
+/// mint anew instead of reusing (and re-closing) it.
 fn noteInterruptedItems(
     hooks: *const AgentRuntimeDeps,
     turn_id: u64,
@@ -100,6 +106,7 @@ fn noteInterruptedItems(
     outcome: session_event.MessageOutcome,
     cause: ?[]const u8,
     attempt: ?u64,
+    turn_message_slot: ?*?[]u8,
 ) !void {
     const note_fn = hooks.note_session_event orelse return;
     for (item_ids.reasoning, 0..) |item_id, index| {
@@ -119,6 +126,14 @@ fn noteInterruptedItems(
             .cause = cause,
             .attempt = attempt,
         } });
+        if (turn_message_slot) |slot| {
+            if (slot.*) |open_id| {
+                if (std.mem.eql(u8, open_id, item_id)) {
+                    std.heap.c_allocator.free(open_id);
+                    slot.* = null;
+                }
+            }
+        }
     }
 }
 
@@ -137,6 +152,7 @@ fn persistInterruptedTurnWithPresentation(
     cancelled_command: ?types.CancelledCommandPresentation,
     item_ids: types.InterruptedItemIds,
     reasoning_texts: []const std.ArrayList(u8),
+    turn_message_slot: ?*?[]u8,
 ) !void {
     if (persisted.*) return;
 
@@ -149,6 +165,7 @@ fn persistInterruptedTurnWithPresentation(
         .interrupted,
         null,
         null,
+        turn_message_slot,
     );
 
     const durable_active_tool_call = if (active_tool_call) |call|
@@ -268,8 +285,28 @@ pub fn persistFailedPartialTurnOnce(
     reasoning_texts: []const std.ArrayList(u8),
     cause: model_response_recovery.FailureCause,
     attempt: usize,
+    turn_message_slot: ?*?[]u8,
 ) !void {
     if (persisted.*) return;
+    // An earlier step's message may still be open when this step never
+    // streamed: that step finished, so it closes clean before this
+    // failure mints its own item below.
+    if (item_ids.message == null) {
+        if (turn_message_slot) |slot| {
+            if (slot.*) |open_id| {
+                if (hooks.note_session_event) |note_fn| {
+                    try note_fn(hooks.ctx, .{ .message_completed = .{
+                        .turn_id = job.turn_id,
+                        .item_id = open_id,
+                        .text = "",
+                        .outcome = .completed,
+                    } });
+                }
+                std.heap.c_allocator.free(open_id);
+                slot.* = null;
+            }
+        }
+    }
     // Every failed call is a distinct item, content or not: a failure
     // before the first chunk minted no message id, so mint one here and
     // persist the empty text under it.
@@ -300,6 +337,7 @@ pub fn persistFailedPartialTurnOnce(
         .failed,
         @tagName(cause),
         @intCast(attempt),
+        turn_message_slot,
     );
 
     // The failed item is logged above, content or not. An empty failure

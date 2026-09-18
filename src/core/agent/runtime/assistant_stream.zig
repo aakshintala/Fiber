@@ -91,9 +91,17 @@ pub const StreamChunkContext = struct {
     /// later lifecycle event share one id.
     tool_item_ids: std.StringHashMapUnmanaged([]u8) = .empty,
     /// Fiber-minted id of the step's streaming assistant message, first
-    /// arrival wins. Owned here; reset on every recovery attempt because a
-    /// retried request re-mints per output index.
+    /// arrival wins. Owned here. The context is rebuilt every step, so the
+    /// orchestrator carries one message id across the turn through
+    /// turn_message_slot below: later steps reuse it instead of opening
+    /// overlapping messages in the fold. A retried request clears the slot
+    /// and re-mints per output index.
     message_item_id: ?[]u8 = null,
+    /// Turn-scoped message id slot owned by the orchestrator. Steps seed
+    /// message_item_id from it and publish a fresh mint back, so the turn
+    /// streams under one message while retries still mint anew. Null in
+    /// tests and hosts without a turn scope.
+    turn_message_slot: ?*?[]u8 = null,
     /// Fiber-minted ids of the step's reasoning blocks, one per provider
     /// output item in first-appearance order. Owned here; preserved across
     /// recovery attempts so an interrupted block resumes under the same id.
@@ -239,10 +247,25 @@ pub fn onStreamContentChunk(ctx: *anyopaque, item_id: []const u8, chunk: []const
         debug_trace.logf("agent", "message item id minting failed err={s}", .{@errorName(err)});
         return;
     };
-    if (minted) noteSessionItem(stream_ctx, .{ .message_started = .{
-        .turn_id = stream_ctx.turn_id,
-        .item_id = stream_ctx.message_item_id.?,
-    } });
+    if (minted) {
+        // Publish a fresh mint to the turn slot so later steps reuse this
+        // message instead of opening an overlapping one. A failed publish
+        // unmints and suppresses the chunk like a mint failure.
+        if (stream_ctx.turn_message_slot) |slot| {
+            if (slot.* == null) {
+                slot.* = std.heap.c_allocator.dupe(u8, stream_ctx.message_item_id.?) catch |err| {
+                    debug_trace.logf("agent", "turn message slot publish failed err={s}", .{@errorName(err)});
+                    stream_ctx.alloc.free(stream_ctx.message_item_id.?);
+                    stream_ctx.message_item_id = null;
+                    return;
+                };
+            }
+        }
+        noteSessionItem(stream_ctx, .{ .message_started = .{
+            .turn_id = stream_ctx.turn_id,
+            .item_id = stream_ctx.message_item_id.?,
+        } });
+    }
     stream_ctx.markModelOutput();
     publishTurnPhase(stream_ctx, .generating);
     if (stream_ctx.token_progress) |progress| {

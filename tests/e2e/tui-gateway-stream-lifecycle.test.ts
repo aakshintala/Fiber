@@ -3618,7 +3618,7 @@ describe.skipIf(!tmuxAvailable())("TUI gateway stream lifecycle", () => {
             FIBER_RECORD: tapePath,
             FIBER_RECORD_INPUT: "1",
             FIBER_TRACE_LOG: tracePath,
-            FIBER_TRACE_SCOPES: "agent,gateway,stream,worker,input,prompt,interrupt,scroll",
+            FIBER_TRACE_SCOPES: "session,agent,gateway,stream,worker,input,prompt,interrupt,scroll",
           }),
         });
 
