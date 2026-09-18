@@ -250,9 +250,28 @@ function expectInferredTypeScriptCodeBlock(scrollback: string): void {
   expect(scrollback).toContain("nupSignal)");
 }
 
+function scrollbackColorSgrs(scrollback: string): string[] {
+  // Colour SGRs only: resets (\x1b[0m) and styles (bold/dim/reverse) pass
+  // through stripping and are fine under NO_COLOR.
+  const found: string[] = [];
+  for (const match of scrollback.matchAll(/\x1b\[([0-9;:]*?)m/g)) {
+    for (const param of match[1]!.split(";")) {
+      if (
+        /^(3[0-9]|4[0-9]|9[0-7]|10[0-7]|38|48|58|59)$/.test(param) ||
+        /^(38|48|58|59):/.test(param)
+      ) {
+        found.push(match[0]!);
+      }
+    }
+  }
+  return found;
+}
+
 function expectInferredTypeScriptColors(scrollback: string): void {
-  expect(scrollback).toContain("\x1b[38;5;252mconst\x1b[39m");
-  expect(scrollback).toContain("\x1b[38;5;252mawait\x1b[39m");
+  // NO_COLOR strips code-highlight colours; the code keeps its text.
+  const line = scrollback.split("\n").find((row) => row.includes("const inferredHook = await"));
+  expect(line).toBeDefined();
+  expect(scrollbackColorSgrs(line!)).toEqual([]);
 }
 
 function expectExpandedCodeProfiles(scrollback: string): void {
@@ -263,8 +282,13 @@ function expectExpandedCodeProfiles(scrollback: string): void {
 }
 
 function expectExpandedCodeColors(scrollback: string): void {
-  expect(scrollback).toContain("\x1b[38;5;252mdef\x1b[39m");
-  expect(scrollback).toContain("\x1b[38;5;250m\"json_ready\"\x1b[39m");
+  // NO_COLOR strips code-highlight colours; the code keeps its text.
+  const defLine = scrollback.split("\n").find((row) => row.includes("def render_ready"));
+  expect(defLine).toBeDefined();
+  expect(scrollbackColorSgrs(defLine!)).toEqual([]);
+  const jsonLine = scrollback.split("\n").find((row) => row.includes('"json_ready"'));
+  expect(jsonLine).toBeDefined();
+  expect(scrollbackColorSgrs(jsonLine!)).toEqual([]);
 }
 
 function expectNoRawToolReplay(scrollback: string): void {
@@ -468,7 +492,7 @@ test.skipIf(!tmuxAvailable())(
       );
       expect(contendedPicker).not.toContain("SessionBusy");
       const contendedEntries = visibleSessionPickerEntries(
-        await contender.capturePaneEscapes(),
+        await contender.capturePaneEscapesNoJoin(),
       );
       expect(contendedEntries).toHaveLength(1);
       expect(contendedEntries[0]!.selected).toBe(true);
@@ -2335,7 +2359,7 @@ test.skipIf(!tmuxAvailable())(
       await active.sendHexBytes(["1b", "5b", "31", "31", "34", "3b", "39", "75"]);
       await waitForSessionPicker(active);
 
-      let sessionEntries = visibleSessionPickerEntries(await active.capturePaneEscapes());
+      let sessionEntries = visibleSessionPickerEntries(await active.capturePaneEscapesNoJoin());
       expect(sessionEntries).toHaveLength(2);
       expect(sessionEntries.findIndex((entry) => entry.selected)).toBe(0);
       const firstVisibleRow = sessionEntries[0]!.row;
@@ -2344,7 +2368,7 @@ test.skipIf(!tmuxAvailable())(
 
       for (let index = 0; index < visibleCount - 1; index += 1) {
         await active.sendKeys("Down");
-        sessionEntries = visibleSessionPickerEntries(await active.capturePaneEscapes());
+        sessionEntries = visibleSessionPickerEntries(await active.capturePaneEscapesNoJoin());
         expect(sessionEntries).toHaveLength(visibleCount);
         expect(sessionEntries[0]!.row).toBe(firstVisibleRow);
         expect(sessionEntries.findIndex((entry) => entry.selected)).toBe(index + 1);
@@ -2352,7 +2376,7 @@ test.skipIf(!tmuxAvailable())(
       }
 
       await active.sendKeys("Down");
-      const scrolledEntries = visibleSessionPickerEntries(await active.capturePaneEscapes());
+      const scrolledEntries = visibleSessionPickerEntries(await active.capturePaneEscapesNoJoin());
       expect(scrolledEntries).toHaveLength(visibleCount);
       expect(scrolledEntries[0]!.row).toBe(firstVisibleRow);
       expect(scrolledEntries[0]!.title).not.toBe(firstVisibleTitle);
@@ -2361,7 +2385,7 @@ test.skipIf(!tmuxAvailable())(
 
       await active.sendKeys("Up");
 
-      const reversedEntries = visibleSessionPickerEntries(await active.capturePaneEscapes());
+      const reversedEntries = visibleSessionPickerEntries(await active.capturePaneEscapesNoJoin());
       expect(reversedEntries).toHaveLength(visibleCount);
       expect(reversedEntries[0]!.row).toBe(firstVisibleRow);
       expect(reversedEntries.findIndex((entry) => entry.selected)).toBe(visibleCount - 2);
@@ -2374,7 +2398,7 @@ test.skipIf(!tmuxAvailable())(
       expect(headerRow).toBeGreaterThanOrEqual(0);
       expect(loadMoreRow).toBeGreaterThan(headerRow);
       expect(hintRow).toBeGreaterThan(loadMoreRow);
-      const firstEntryRow = visibleSessionPickerEntries(await active.capturePaneEscapes())[0]!.row;
+      const firstEntryRow = visibleSessionPickerEntries(await active.capturePaneEscapesNoJoin())[0]!.row;
 
       for (let index = 0; index < 10 - visibleCount; index += 1) {
         await active.sendKeys("Down");
@@ -2387,7 +2411,7 @@ test.skipIf(!tmuxAvailable())(
       expect(afterFurtherScroll.findIndex((line) => /Sessions 1[12]\b/.test(line))).toBe(headerRow);
       expect(afterFurtherScroll.findIndex((line) => line.includes("↓ Load more"))).toBe(-1);
       expect(afterFurtherScroll.findIndex((line) => line.includes("Tab Scope"))).toBe(hintRow);
-      expect(visibleSessionPickerEntries(await active.capturePaneEscapes())[0]!.row).toBe(firstEntryRow);
+      expect(visibleSessionPickerEntries(await active.capturePaneEscapesNoJoin())[0]!.row).toBe(firstEntryRow);
 
       expect(active.isAlive()).toBe(true);
       expect(readFileSync(stderrPath, "utf8")).toBe("");

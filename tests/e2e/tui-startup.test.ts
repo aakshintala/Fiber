@@ -67,6 +67,32 @@ describe.skipIf(SKIP)("tui: startup and exit", () => {
     },
     TIMEOUT,
   );
+
+  test(
+    "NO_COLOR startup paints no foreground or background colour",
+    async () => {
+      session = await TmuxSession.create({ env: { NO_COLOR: "1" } });
+      const pane = await session.waitForComposer(10_000);
+      expect(hasEmptyComposer(pane)).toBe(true);
+      // Live-PTY capture: the initial paint reaches the terminal with
+      // colour runs stripped but styles (bold/dim/underline/reverse) kept.
+      const escapes = await session.capturePaneEscapes();
+      expect(escapes).toContain("Run /help for commands");
+      const colorSgrs: string[] = [];
+      for (const match of escapes.matchAll(/\x1b\[([0-9;:]*?)m/g)) {
+        for (const param of match[1]!.split(";")) {
+          if (
+            /^(3[0-9]|4[0-9]|9[0-7]|10[0-7]|38|48|58|59)$/.test(param) ||
+            /^(38|48|58|59):/.test(param)
+          ) {
+            colorSgrs.push(match[0]!);
+          }
+        }
+      }
+      expect(colorSgrs).toEqual([]);
+    },
+    TIMEOUT,
+  );
 });
 
 describe.skipIf(SKIP_TMUX)("tui: fresh-session commands", () => {

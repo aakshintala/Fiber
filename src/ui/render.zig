@@ -62,7 +62,8 @@ const thinking_light = ColorDef{ .truecolor = "\x1b[38;2;68;68;68m", .fallback_2
 const thinking_dark = ColorDef{ .truecolor = "\x1b[38;2;208;208;208m", .fallback_256 = "\x1b[38;5;252m", .r = 208, .g = 208, .b = 208 };
 // Categorical roles for the /context breakdown (#310): setup in cool shades,
 // built-in and MCP tools in one indigo hue in two shades, conversation in
-// warm earth shades, the compacted summary in magenta. Free space has no
+// olive earth shades (kept off the warning hue family), the compacted
+// summary in magenta. Free space has no
 // colour. Dark values are tints of the light hues, so each family reads as
 // one family on both themes. None equals a status hue.
 const ctx_system_prompt_light = ColorDef{ .truecolor = "\x1b[38;2;14;116;144m", .fallback_256 = "\x1b[38;5;30m", .r = 14, .g = 116, .b = 144 };
@@ -77,23 +78,29 @@ const ctx_builtin_tools_light = ColorDef{ .truecolor = "\x1b[38;2;67;56;202m", .
 const ctx_builtin_tools_dark = ColorDef{ .truecolor = "\x1b[38;2;170;165;231m", .fallback_256 = "\x1b[38;5;146m", .r = 170, .g = 165, .b = 231 };
 const ctx_mcp_tools_light = ColorDef{ .truecolor = "\x1b[38;2;99;102;241m", .fallback_256 = "\x1b[38;5;63m", .r = 99, .g = 102, .b = 241 };
 const ctx_mcp_tools_dark = ColorDef{ .truecolor = "\x1b[38;2;184;186;248m", .fallback_256 = "\x1b[38;5;147m", .r = 184, .g = 186, .b = 248 };
-const ctx_user_messages_light = ColorDef{ .truecolor = "\x1b[38;2;154;52;18m", .fallback_256 = "\x1b[38;5;94m", .r = 154, .g = 52, .b = 18 };
-const ctx_user_messages_dark = ColorDef{ .truecolor = "\x1b[38;2;199;143;124m", .fallback_256 = "\x1b[38;5;174m", .r = 199, .g = 143, .b = 124 };
-const ctx_assistant_messages_light = ColorDef{ .truecolor = "\x1b[38;2;124;45;18m", .fallback_256 = "\x1b[38;5;88m", .r = 124, .g = 45, .b = 18 };
-const ctx_assistant_messages_dark = ColorDef{ .truecolor = "\x1b[38;2;189;150;136m", .fallback_256 = "\x1b[38;5;138m", .r = 189, .g = 150, .b = 136 };
+const ctx_user_messages_light = ColorDef{ .truecolor = "\x1b[38;2;96;102;24m", .fallback_256 = "\x1b[38;5;58m", .r = 96, .g = 102, .b = 24 };
+const ctx_user_messages_dark = ColorDef{ .truecolor = "\x1b[38;2;182;190;130m", .fallback_256 = "\x1b[38;5;144m", .r = 182, .g = 190, .b = 130 };
+const ctx_assistant_messages_light = ColorDef{ .truecolor = "\x1b[38;2;70;80;18m", .fallback_256 = "\x1b[38;5;58m", .r = 70, .g = 80, .b = 18 };
+const ctx_assistant_messages_dark = ColorDef{ .truecolor = "\x1b[38;2;168;178;124m", .fallback_256 = "\x1b[38;5;144m", .r = 168, .g = 178, .b = 124 };
 const ctx_reasoning_light = ColorDef{ .truecolor = "\x1b[38;2;120;113;108m", .fallback_256 = "\x1b[38;5;243m", .r = 120, .g = 113, .b = 108 };
 const ctx_reasoning_dark = ColorDef{ .truecolor = "\x1b[38;2;194;191;188m", .fallback_256 = "\x1b[38;5;250m", .r = 194, .g = 191, .b = 188 };
-const ctx_tool_calls_light = ColorDef{ .truecolor = "\x1b[38;2;133;77;14m", .fallback_256 = "\x1b[38;5;94m", .r = 133, .g = 77, .b = 14 };
-const ctx_tool_calls_dark = ColorDef{ .truecolor = "\x1b[38;2;187;157;122m", .fallback_256 = "\x1b[38;5;144m", .r = 187, .g = 157, .b = 122 };
-const ctx_tool_output_light = ColorDef{ .truecolor = "\x1b[38;2;107;68;35m", .fallback_256 = "\x1b[38;5;58m", .r = 107, .g = 68, .b = 35 };
-const ctx_tool_output_dark = ColorDef{ .truecolor = "\x1b[38;2;195;180;167m", .fallback_256 = "\x1b[38;5;249m", .r = 195, .g = 180, .b = 167 };
+const ctx_tool_calls_light = ColorDef{ .truecolor = "\x1b[38;2;84;92;20m", .fallback_256 = "\x1b[38;5;58m", .r = 84, .g = 92, .b = 20 };
+const ctx_tool_calls_dark = ColorDef{ .truecolor = "\x1b[38;2;178;186;118m", .fallback_256 = "\x1b[38;5;144m", .r = 178, .g = 186, .b = 118 };
+const ctx_tool_output_light = ColorDef{ .truecolor = "\x1b[38;2;68;76;36m", .fallback_256 = "\x1b[38;5;58m", .r = 68, .g = 76, .b = 36 };
+const ctx_tool_output_dark = ColorDef{ .truecolor = "\x1b[38;2;170;178;138m", .fallback_256 = "\x1b[38;5;144m", .r = 170, .g = 178, .b = 138 };
 const ctx_compacted_summary_light = ColorDef{ .truecolor = "\x1b[38;2;162;28;175m", .fallback_256 = "\x1b[38;5;127m", .r = 162, .g = 28, .b = 175 };
 const ctx_compacted_summary_dark = ColorDef{ .truecolor = "\x1b[38;2;240;171;252m", .fallback_256 = "\x1b[38;5;219m", .r = 240, .g = 171, .b = 252 };
-// user_messages and tool_calls share the coarse 256-cube brown; the
-// truecolor values stay distinct and the fallback remains a warm brown.
+// The conversation roles share the coarse 256-cube olive; the truecolor
+// values stay distinct.
+// Status hues reach status notices only (#314). warning_style, green_style
+// and red_style stay grey for every other use: tool states, MCP failures,
+// input warnings, questions and resume menus.
 pub var warning_style: []const u8 = "\x1b[38;5;252m";
 pub var green_style: []const u8 = "\x1b[38;5;252m";
 pub var red_style: []const u8 = "\x1b[38;5;252m";
+pub var notice_warning_style: []const u8 = "\x1b[38;5;252m";
+pub var notice_success_style: []const u8 = "\x1b[38;5;252m";
+pub var notice_error_style: []const u8 = "\x1b[38;5;252m";
 pub var permission_ask_style: []const u8 = "\x1b[38;5;245m";
 // Statusbar permissions "auto": warning amber. The thinking-activity marker
 // used to borrow this style; it now has thinking_marker_style below.
@@ -101,19 +108,21 @@ pub var permission_auto_style: []const u8 = "\x1b[38;5;252m";
 pub var permission_yolo_style: []const u8 = "\x1b[38;5;252m";
 pub var thinking_marker_style: []const u8 = "\x1b[38;5;252m";
 // One role per /context category (#310 renders them; free space is unstyled).
-pub var ctx_system_prompt_style: []const u8 = "";
-pub var ctx_project_instructions_style: []const u8 = "";
-pub var ctx_skills_style: []const u8 = "";
-pub var ctx_builtin_tools_style: []const u8 = "";
-pub var ctx_mcp_tools_style: []const u8 = "";
-pub var ctx_environment_style: []const u8 = "";
-pub var ctx_user_messages_style: []const u8 = "";
-pub var ctx_assistant_messages_style: []const u8 = "";
-pub var ctx_reasoning_style: []const u8 = "";
-pub var ctx_tool_calls_style: []const u8 = "";
-pub var ctx_tool_output_style: []const u8 = "";
-pub var ctx_compacted_summary_style: []const u8 = "";
-pub const ctx_free_space_style: []const u8 = "";
+// #310 reads them through contextCategoryStyle; nothing outside this file
+// touches the vars directly.
+var ctx_system_prompt_style: []const u8 = "";
+var ctx_project_instructions_style: []const u8 = "";
+var ctx_skills_style: []const u8 = "";
+var ctx_builtin_tools_style: []const u8 = "";
+var ctx_mcp_tools_style: []const u8 = "";
+var ctx_environment_style: []const u8 = "";
+var ctx_user_messages_style: []const u8 = "";
+var ctx_assistant_messages_style: []const u8 = "";
+var ctx_reasoning_style: []const u8 = "";
+var ctx_tool_calls_style: []const u8 = "";
+var ctx_tool_output_style: []const u8 = "";
+var ctx_compacted_summary_style: []const u8 = "";
+const ctx_free_space_style: []const u8 = "";
 pub var diff_added_style: []const u8 = "\x1b[38;5;252m";
 pub var diff_removed_style: []const u8 = "\x1b[38;5;252m";
 // The line number and +/- sign carry the only color in an otherwise
@@ -150,9 +159,9 @@ pub fn initTheme(light: bool, terminal_bg: ?TerminalRgb) void {
         system_notice_label_style = "\x1b[1;38;5;238m";
         system_notice_text_style = "\x1b[38;5;241m";
         dim_style = "\x1b[38;5;247m";
-        warning_style = pickShade(warning_light);
-        green_style = pickShade(success_light);
-        red_style = pickShade(error_light);
+        notice_warning_style = pickShade(warning_light);
+        notice_success_style = pickShade(success_light);
+        notice_error_style = pickShade(error_light);
         permission_ask_style = pickShade(ask_light);
         permission_auto_style = pickShade(warning_light);
         permission_yolo_style = pickShade(error_light);
@@ -183,9 +192,9 @@ pub fn initTheme(light: bool, terminal_bg: ?TerminalRgb) void {
         system_notice_label_style = "\x1b[1;38;5;252m";
         system_notice_text_style = "\x1b[38;5;250m";
         dim_style = "\x1b[38;5;245m";
-        warning_style = pickShade(warning_dark);
-        green_style = pickShade(success_dark);
-        red_style = pickShade(error_dark);
+        notice_warning_style = pickShade(warning_dark);
+        notice_success_style = pickShade(success_dark);
+        notice_error_style = pickShade(error_dark);
         permission_ask_style = pickShade(ask_dark);
         permission_auto_style = pickShade(warning_dark);
         permission_yolo_style = pickShade(error_dark);
@@ -240,8 +249,9 @@ pub const truecolorSupportedForValues = theme_protocol.truecolorSupportedForValu
 // foreground or background colour, greys included; bold, dim, italic,
 // underline and reverse pass through. Every painted byte bound for the
 // terminal flows through writeWithoutColor, so hardcoded colour sequences
-// spread across the UI need no per-site edits.
-pub var color_enabled: bool = true;
+// spread across the UI need no per-site edits. External users go through
+// colorEnabled/setColorEnabled; nothing touches the var directly.
+var color_enabled: bool = true;
 
 pub fn setColorEnabled(enabled: bool) void {
     color_enabled = enabled;
@@ -263,12 +273,16 @@ pub fn colorEnabledFromEnv() bool {
     return colorEnabledForEnv(io_mod.getenv("NO_COLOR") != null, io_mod.getenv("TERM"));
 }
 
+// Stripping only drops colour runs, so a partial write carries the file
+// streaming error plus NoProgress when zero bytes move.
+pub const PlainWriteError = std.Io.File.Writer.Error || error{NoProgress};
+
 pub const PlainWriteResult = union(enum) {
     complete: usize,
     partial: struct {
         source_accepted: usize,
         stripped_written: usize,
-        err: anyerror,
+        err: PlainWriteError,
     },
 };
 
@@ -296,10 +310,13 @@ fn sgrParamIsColor(param: []const u8) bool {
 }
 
 // 38/48 open an extended colour run (38;5;N, 38;2;R;G;B, or the colon
-// forms); the bare opener is dropped along with its arguments.
+// forms); 58/59 do the same for underline colour. The bare opener is
+// dropped along with its arguments.
 fn sgrParamIsExtendedOpen(param: []const u8) bool {
     return std.mem.eql(u8, param, "38") or std.mem.eql(u8, param, "48") or
-        std.mem.startsWith(u8, param, "38:") or std.mem.startsWith(u8, param, "48:");
+        std.mem.eql(u8, param, "58") or std.mem.eql(u8, param, "59") or
+        std.mem.startsWith(u8, param, "38:") or std.mem.startsWith(u8, param, "48:") or
+        std.mem.startsWith(u8, param, "58:") or std.mem.startsWith(u8, param, "59:");
 }
 
 const SgrParamAction = union(enum) {
@@ -310,10 +327,14 @@ const SgrParamAction = union(enum) {
 
 fn classifySgrParam(param: []const u8, rest: *std.mem.SplitIterator(u8, .scalar)) SgrParamAction {
     if (sgrParamIsExtendedOpen(param)) {
-        if (std.mem.eql(u8, param, "38") or std.mem.eql(u8, param, "48")) {
+        if (std.mem.eql(u8, param, "38") or std.mem.eql(u8, param, "48") or
+            std.mem.eql(u8, param, "58") or std.mem.eql(u8, param, "59"))
+        {
             const mode = rest.next() orelse "";
             if (std.mem.eql(u8, mode, "5")) return .{ .drop_with_skip = 1 };
-            if (std.mem.eql(u8, mode, "2")) return .{ .drop_with_skip = 4 };
+            // Truecolor mode 2 takes three params (R;G;B); skipping four
+            // would eat the trailing style of a combined sequence.
+            if (std.mem.eql(u8, mode, "2")) return .{ .drop_with_skip = 3 };
         }
         return .drop;
     }
@@ -1491,17 +1512,46 @@ test "categorical roles meet non-text contrast on their theme background" {
     }
 }
 
+// Hue families slice the colour wheel into twelve 30-degree buckets so the
+// collision check compares families, not exact equality. Near-grey shades
+// carry no hue claim and are skipped.
+fn testHueFamily(r: u8, g: u8, b: u8) ?u4 {
+    const max = @max(r, @max(g, b));
+    const min = @min(r, @min(g, b));
+    if (max == 0) return null;
+    const saturation = @as(f64, @floatFromInt(max - min)) / @as(f64, @floatFromInt(max));
+    if (saturation < 0.12) return null;
+    const rf: f64 = @floatFromInt(r);
+    const gf: f64 = @floatFromInt(g);
+    const bf: f64 = @floatFromInt(b);
+    const delta: f64 = @floatFromInt(max - min);
+    var h: f64 = undefined;
+    if (max == r) {
+        h = @mod((gf - bf) / delta, 6.0);
+    } else if (max == g) {
+        h = (bf - rf) / delta + 2.0;
+    } else {
+        h = (rf - gf) / delta + 4.0;
+    }
+    return @intCast(@as(u64, @intFromFloat(@floor(h * 2.0))) % 12);
+}
+
 test "categorical roles cover every context category and avoid status hues" {
     const status_shades = [_]ColorDef{
         error_light, error_dark, warning_light, warning_dark, success_light, success_dark,
     };
+    var status_families = [_]bool{false} ** 12;
+    for (status_shades) |status| {
+        if (testHueFamily(status.r, status.g, status.b)) |family| status_families[family] = true;
+    }
     // Every category resolves to a role, and free space stays unstyled.
     for (categorical_role_shades) |role| {
         try std.testing.expect(contextCategoryStyle(role.category).len > 0);
     }
     try std.testing.expectEqualStrings("", contextCategoryStyle(.free_space));
     try std.testing.expectEqualStrings("", ctx_free_space_style);
-    // No categorical value equals a status hue, in truecolor or 256-color.
+    // No categorical value equals a status hue, in truecolor or 256-color,
+    // and no saturated categorical value shares a status hue family.
     for (categorical_role_shades) |role| {
         for ([_]ColorDef{ role.light, role.dark }) |shade| {
             for (status_shades) |status| {
@@ -1509,16 +1559,24 @@ test "categorical roles cover every context category and avoid status hues" {
                 try std.testing.expect(!std.mem.eql(u8, shade.truecolor, status.truecolor));
                 try std.testing.expect(!std.mem.eql(u8, shade.fallback_256, status.fallback_256));
             }
+            if (testHueFamily(shade.r, shade.g, shade.b)) |family| {
+                try std.testing.expect(!status_families[family]);
+            }
         }
     }
 }
 
-test "initTheme paints status and permission hues on both themes" {
+test "initTheme paints notice, status and permission hues on both themes" {
     setTruecolorSupport(true);
     initTheme(false, null);
-    try std.testing.expectEqualStrings(error_dark.truecolor, red_style);
-    try std.testing.expectEqualStrings(warning_dark.truecolor, warning_style);
-    try std.testing.expectEqualStrings(success_dark.truecolor, green_style);
+    try std.testing.expectEqualStrings(error_dark.truecolor, notice_error_style);
+    try std.testing.expectEqualStrings(warning_dark.truecolor, notice_warning_style);
+    try std.testing.expectEqualStrings(success_dark.truecolor, notice_success_style);
+    // The shared styles stay grey: tool states, MCP failures, input
+    // warnings, questions and resume menus never take a status hue.
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", red_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", warning_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", green_style);
     try std.testing.expectEqualStrings(ask_dark.truecolor, permission_ask_style);
     try std.testing.expectEqualStrings(warning_dark.truecolor, permission_auto_style);
     try std.testing.expectEqualStrings(error_dark.truecolor, permission_yolo_style);
@@ -1526,7 +1584,12 @@ test "initTheme paints status and permission hues on both themes" {
     try std.testing.expectEqualStrings(ctx_user_messages_dark.truecolor, contextCategoryStyle(.user_messages));
 
     initTheme(true, null);
-    try std.testing.expectEqualStrings(error_light.truecolor, red_style);
+    try std.testing.expectEqualStrings(error_light.truecolor, notice_error_style);
+    try std.testing.expectEqualStrings(warning_light.truecolor, notice_warning_style);
+    try std.testing.expectEqualStrings(success_light.truecolor, notice_success_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", red_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", warning_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", green_style);
     try std.testing.expectEqualStrings(warning_light.truecolor, permission_auto_style);
     try std.testing.expectEqualStrings(error_light.truecolor, permission_yolo_style);
     try std.testing.expectEqualStrings(thinking_light.truecolor, thinking_marker_style);
@@ -1537,7 +1600,8 @@ test "initTheme paints status and permission hues on both themes" {
         setTruecolorSupport(true);
         initTheme(false, null);
     }
-    try std.testing.expectEqualStrings(error_dark.fallback_256, red_style);
+    try std.testing.expectEqualStrings(error_dark.fallback_256, notice_error_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", red_style);
     try std.testing.expectEqualStrings(warning_dark.fallback_256, permission_auto_style);
     try std.testing.expectEqualStrings(error_dark.fallback_256, permission_yolo_style);
     try std.testing.expectEqualStrings(ctx_compacted_summary_dark.fallback_256, contextCategoryStyle(.compacted_summary));
@@ -1584,6 +1648,20 @@ test "writeWithoutColor drops truecolor and background runs" {
     const result = try writeWithoutColorToTmp(input);
     defer std.testing.allocator.free(result.bytes);
     try std.testing.expectEqualStrings("a+\x1b[0m\x1b[1mbutton\x1b[0m", result.bytes);
+}
+
+test "writeWithoutColor keeps trailing styles after a truecolor run" {
+    const input = "\x1b[1;38;2;48;164;108;4mok\x1b[0m";
+    const result = try writeWithoutColorToTmp(input);
+    defer std.testing.allocator.free(result.bytes);
+    try std.testing.expectEqualStrings("\x1b[1;4mok\x1b[0m", result.bytes);
+}
+
+test "writeWithoutColor drops colon-form colours but keeps colon styles" {
+    const input = "\x1b[38:5:203mcolon\x1b[0m \x1b[4:3mcurly\x1b[0m \x1b[58:2::200:30:30munder\x1b[59m \x1b[58;5;9msemi\x1b[0m";
+    const result = try writeWithoutColorToTmp(input);
+    defer std.testing.allocator.free(result.bytes);
+    try std.testing.expectEqualStrings("colon\x1b[0m \x1b[4:3mcurly\x1b[0m under semi\x1b[0m", result.bytes);
 }
 
 test "writeWithoutColor leaves movement and erase sequences alone" {

@@ -1052,6 +1052,26 @@ export class TmuxSession {
   }
 
   /**
+   * Pane escapes without joined wrapped lines. `capturePaneEscapes` joins
+   * wrapped rows, which drops a style opener when the styled span starts
+   * where tmux joins; style-sensitive matchers (selected rows) use this.
+   */
+  async capturePaneEscapesNoJoin(): Promise<string> {
+    try {
+      const pane = execSync(`${this.tmuxCommand()} capture-pane -t ${this.name} -e -p`, {
+        stdio: "pipe",
+        encoding: "utf-8",
+        maxBuffer: TMUX_CAPTURE_MAX_BUFFER,
+      });
+      this.lastCaptureError = null;
+      return pane;
+    } catch (err) {
+      this.lastCaptureError = err;
+      return "";
+    }
+  }
+
+  /**
    * Copy subsequent raw pane output to a file. Unlike capture-pane, this
    * preserves control bytes such as BEL before tmux applies them to its grid.
    */

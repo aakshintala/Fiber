@@ -150,10 +150,9 @@ path to the binary you built instead.
 ## Terminal colours
 
 The interactive shell uses colour for the few things worth noticing:
-error, warning, and success notices, the permission mode in the status bar
-(`ask` grey, `auto` amber, `YOLO` red), and one hue family per `/context`
-category. Every other element stays grey, and colour never carries meaning
-on its own.
+error, warning, and success notices and the permission mode in the status bar
+(`ask` grey, `auto` amber, `YOLO` red). Every other element stays grey,
+and colour never carries meaning on its own.
 
 When background detection guesses wrong, force the theme:
 

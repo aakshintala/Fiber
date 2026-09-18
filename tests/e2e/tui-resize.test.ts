@@ -43,6 +43,9 @@ const SKIP = !tmuxAvailable();
 const TIMEOUT = 30_000;
 const TEST_TEARDOWN_HEADROOM_MS = 1_000;
 const SELECTED_COMPLETION_SGR = "\x1b[1m\x1b[38;5;255m";
+// Under NO_COLOR the shell strips colour runs but keeps styles, so the
+// selected row carries bold alone instead of bold+white.
+const SELECTED_COMPLETION_BOLD_SGR = "\x1b[1m";
 const FILE_APPROVAL_QUESTION = "Apply this change?";
 const LARGE_SKILL_COUNT = 85;
 const LARGE_SKILL_TIMEOUT = 180_000;
@@ -391,7 +394,7 @@ function selectedSlashRow(escapes: string): string | null {
     .filter(isSlashCommandRow);
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const line = rows[index]!;
-    if (line.includes(SELECTED_COMPLETION_SGR)) {
+    if (line.includes(SELECTED_COMPLETION_SGR) || line.includes(SELECTED_COMPLETION_BOLD_SGR)) {
       return line;
     }
   }
@@ -413,7 +416,7 @@ async function waitForSelectedSlashLabel(
   const deadline = Date.now() + timeoutMs;
   let last: string | null = null;
   while (Date.now() < deadline) {
-    last = selectedSlashRow(await active.capturePaneEscapes());
+    last = selectedSlashRow(await active.capturePaneEscapesNoJoin());
     if (last?.includes(label)) return last;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
