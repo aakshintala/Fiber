@@ -111,3 +111,74 @@ Their adapter tickets rerun the script to regain them; loopback and
   default new sessions start from. `fiber ask --model` and `FIBER_MODEL`
   are request and process overrides for one run only; they never change
   the profile default.
+## Local servers: Ollama and llama.cpp (#45)
+
+A local OpenAI-compatible server is a user connection with
+`"credential": "none"`. `connections` is profile-only, so this lives in
+`~/.fiber/settings.json`, never in a project `.fiber.json`:
+
+```json
+{
+  "connections": {
+    "local": {
+      "credential": "none",
+      "protocol": "chat_completions",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "billing": "metered",
+      "models": {
+        "qwen2.5:7b": { "context_window": 32768 },
+        "llama3.1:8b": { "context_window": 131072 }
+      }
+    }
+  }
+}
+```
+
+llama.cpp's server speaks the same protocol at its own port; only
+`base_url` changes (for example `http://127.0.0.1:8080/v1`). A model entry
+needs a `context_window` when the server is the only source of truth;
+compaction runs against it. A per-model `base_url` override wins over the
+connection default for that model only.
+
+What exists today: connections parse, validate, and merge over presets;
+`fiber auth login <connection>` on a keyless connection reports that no
+credential is needed; and request time refuses, before any network I/O,
+to send a keyed credential over plain HTTP to a host other than loopback.
+Routing a turn through these connections arrives with the Chat
+Completions adapter (#295) and the Route redesign (#289).
+
+### Keyless means keyless
+
+A `none` connection carries no secret: by contract its requests send no
+`Authorization` header, wired up when routing reaches user connections
+(#289). `fiber auth login` on it succeeds at once today:
+`fiber auth login: connection 'local' needs no credential.` A connection
+that omits `credential` is not affirmatively keyless and keeps the usage
+error.
+
+### Credentials never cross plain HTTP off loopback
+
+Remote endpoints require HTTPS while loopback HTTP is allowed. A route
+whose resolved base URL is `http://` on a host other than `localhost`,
+`127.0.0.0/8` or `::1` fails before connecting with an error naming the
+connection; `https://` and loopback HTTP are unaffected. The check runs on
+the resolved per-model base URL, so a model-entry override cannot bypass
+it. Keyless connections may use `http://` anywhere, so a LAN Ollama box
+works without a key while a stored key to the same box is refused.
+
+### Strict-standard compat defaults
+
+A connection that sets no compat flags starts from the strict standard:
+the Chat Completions defaults pi applies to an endpoint it does not
+recognize (`openai-completions.js` `detectCompat` with no vendor matched).
+Fiber never sniffs the URL to guess quirks. Concretely, a flagless
+connection assumes the standard `max_completion_tokens` field, store and
+developer-role support, strict tool schemas, the `openai` thinking format,
+and long cache retention — with every quirk flag off. Declared `compat`
+entries layer over these once the adapter honors them (#295).
+
+When a server rejects a standard field, the flags to try are the pi names
+for that behavior: `max_tokens_field` (`"max_tokens"` for servers that
+predate `max_completion_tokens`), `supports_store` (false for servers
+without persistent responses), and `supports_strict_mode` (false for
+servers that reject the `strict` tool-schema marker).

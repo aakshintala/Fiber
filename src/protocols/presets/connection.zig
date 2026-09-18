@@ -29,6 +29,7 @@ pub const Error = error{
     TooManyConnections,
     TooManyModels,
     TooManyCompatEntries,
+    InsecureCredentialTransport,
     OutOfMemory,
 };
 
@@ -48,6 +49,15 @@ pub const CredentialKind = enum {
         return error.UnknownCredentialKind;
     }
 };
+
+/// Classifies the four credential kinds (decision 12; issue #45): only
+/// `none` travels without a secret. `fiber auth login` reads this to
+/// report keyless connections; the transport guard below exempts `none`
+/// from the plain-HTTP refusal. Per-connection header selection lands
+/// with routing (#289).
+pub fn requiresCredential(kind: CredentialKind) bool {
+    return kind != .none;
+}
 
 /// Wire format. Anthropic Messages and other adapters extend this enum in
 /// their own tickets; unknown values fail here rather than at request time.
@@ -282,6 +292,106 @@ pub const ConnectionSet = struct {
         try target.value_ptr.mergeFrom(alloc, incoming);
     }
 };
+
+/// Resolves the base URL one request uses (decision 6): a model entry
+/// override wins, otherwise the connection default applies. The transport
+/// guard runs on this resolved URL, so an override cannot bypass it.
+/// Returns null when neither layer sets one. Borrowed; empty model names
+/// only match an entry literally named empty, which the parser rejects.
+fn resolveBaseUrl(connection: *const Connection, model_name: []const u8) ?[]const u8 {
+    if (connection.models.getPtr(model_name)) |override| {
+        if (override.base_url) |url| return url;
+    }
+    return connection.base_url;
+}
+
+/// Loopback for the transport guard (decision 12, amended on #303):
+/// `localhost`, `127.0.0.0/8` and `::1`. Anything else, including an empty
+/// or unparseable host, is not loopback: the guard fails closed.
+fn isLoopbackHost(host: []const u8) bool {
+    if (host.len == 0) return false;
+    const bare = if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']')
+        host[1 .. host.len - 1]
+    else
+        host;
+    if (bare.len == 0) return false;
+    if (std.ascii.eqlIgnoreCase(bare, "localhost")) return true;
+    if (std.mem.eql(u8, bare, "::1")) return true;
+    return isLoopbackIpv4(bare);
+}
+
+fn isLoopbackIpv4(host: []const u8) bool {
+    var parts: [4][]const u8 = undefined;
+    var count: usize = 0;
+    var iterator = std.mem.splitScalar(u8, host, '.');
+    while (iterator.next()) |part| {
+        if (count >= parts.len) return false;
+        parts[count] = part;
+        count += 1;
+    }
+    if (count != parts.len) return false;
+    if (!std.mem.eql(u8, parts[0], "127")) return false;
+    for (parts[1..]) |part| {
+        if (part.len == 0 or part.len > 3) return false;
+        var value: u16 = 0;
+        for (part) |byte| {
+            if (byte < '0' or byte > '9') return false;
+            value = value * 10 + (byte - '0');
+        }
+        if (value > 255) return false;
+    }
+    return true;
+}
+
+/// Refuses, before any network I/O, to send a keyed credential over plain
+/// HTTP to a host other than loopback (decision 12). Keyless (`none`)
+/// connections may use `http://` anywhere, and `https://` is unaffected.
+/// Callers report the failure naming the connection; the error itself
+/// carries no strings. An unparsable URL or a missing host fails closed.
+pub fn checkCredentialTransport(kind: CredentialKind, base_url: []const u8) !void {
+    if (kind == .none) return;
+    const uri = try std.Uri.parse(base_url);
+    if (!std.ascii.eqlIgnoreCase(uri.scheme, "http")) return;
+    const host_component = uri.host orelse return error.InsecureCredentialTransport;
+    var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
+    const host = host_component.toRaw(&host_buf) catch return error.InsecureCredentialTransport;
+    if (isLoopbackHost(host)) return;
+    return error.InsecureCredentialTransport;
+}
+
+/// Strict-standard Chat Completions compat for a connection that sets no
+/// compat flags (decision 7): exactly what pi's `openai-completions.js`
+/// `detectCompat` returns with no vendor matched (pi-ai 0.85.1), so Fiber
+/// never sniffs the URL to guess quirks. Declared flags layer over these
+/// in the adapter ticket (#295), which owns the flag vocabulary. pi's
+/// vendor-routing objects (`openRouterRouting`, `vercelGatewayRouting`,
+/// `chatTemplateKwargs`, `chatTemplateArgs`) are omitted here: Fiber's
+/// generic escape hatch for those knobs is `extra_body` (decision data).
+const StrictStandardCompat = struct {
+    supports_store: bool = true,
+    supports_developer_role: bool = true,
+    supports_reasoning_effort: bool = true,
+    supports_usage_in_streaming: bool = true,
+    supports_finish_reason: bool = true,
+    max_tokens_field: []const u8 = "max_completion_tokens",
+    requires_tool_result_name: bool = false,
+    requires_assistant_after_tool_result: bool = false,
+    requires_thinking_as_text: bool = false,
+    requires_reasoning_content_on_assistant_messages: bool = false,
+    thinking_format: []const u8 = "openai",
+    supports_strict_mode: bool = true,
+    supports_openai_grammar_tools: bool = false,
+    supports_thinking_token_budget: bool = false,
+    thinking_token_budget_field: ?[]const u8 = null,
+    cache_control_format: ?[]const u8 = null,
+    send_session_affinity_headers: bool = false,
+    deferred_tools_mode: ?[]const u8 = null,
+    session_affinity_format: []const u8 = "openai",
+    supports_long_cache_retention: bool = true,
+    zai_tool_stream: bool = false,
+};
+
+const strict_standard_compat: StrictStandardCompat = .{};
 
 /// Names the connection and key behind an `UnknownConnectionKey` failure, so
 /// settings load can report both. Owned strings; empty unless set.
@@ -692,4 +802,141 @@ test "malformed connection shapes fail" {
             return error.TestExpectedParseFailure;
         } else |_| {}
     }
+}
+
+test "none needs no credential while keyed kinds do" {
+    try std.testing.expect(!requiresCredential(.none));
+    try std.testing.expect(requiresCredential(.oauth));
+    try std.testing.expect(requiresCredential(.api_key));
+    try std.testing.expect(requiresCredential(.env));
+}
+
+test "resolved base URL prefers the model entry override" {
+    const alloc = std.testing.allocator;
+    var parsed = try parseTestValue(alloc,
+        \\{"local":{"credential":"none","base_url":"http://127.0.0.1:11434/v1","models":{"qwen":{"base_url":"http://192.0.2.1:11434/v1"},"llama":{}}}}
+    );
+    defer parsed.deinit();
+    var set = ConnectionSet{};
+    defer set.deinit(alloc);
+    var detail = ParseDetail{};
+    defer detail.deinit(alloc);
+    try parseSetInto(alloc, parsed.value, &set, &detail);
+
+    const local = set.get("local") orelse return error.TestExpectedConnection;
+    try std.testing.expectEqualStrings("http://192.0.2.1:11434/v1", resolveBaseUrl(local, "qwen").?);
+    try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", resolveBaseUrl(local, "llama").?);
+    try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", resolveBaseUrl(local, "undescribed").?);
+
+    var bare = Connection{};
+    try std.testing.expect(resolveBaseUrl(&bare, "qwen") == null);
+}
+
+test "transport guard lets keyless connections use plain HTTP anywhere" {
+    try checkCredentialTransport(.none, "http://192.0.2.1:11434/v1");
+    try checkCredentialTransport(.none, "http://example.com/v1");
+    try checkCredentialTransport(.none, "https://example.com/v1");
+}
+
+test "transport guard refuses keyed credentials over plain HTTP off loopback" {
+    const kinds = [_]CredentialKind{ .oauth, .api_key, .env };
+    const urls = [_][]const u8{
+        "http://192.0.2.1:11434/v1",
+        "http://lan-box:11434/v1",
+        "http://example.com/v1",
+        "HTTP://192.0.2.1/v1",
+    };
+    for (kinds) |kind| {
+        for (urls) |url| {
+            try std.testing.expectError(
+                error.InsecureCredentialTransport,
+                checkCredentialTransport(kind, url),
+            );
+        }
+    }
+}
+
+test "transport guard keeps https and loopback HTTP flowing with a key" {
+    const urls = [_][]const u8{
+        "https://192.0.2.1/v1",
+        "https://example.com/v1",
+        "http://localhost:11434/v1",
+        "http://LOCALHOST:11434/v1",
+        "http://127.0.0.1:11434/v1",
+        "http://127.0.0.2:11434/v1",
+        "http://127.1.2.3:11434/v1",
+        "http://127.0.0.1/v1",
+        "http://[::1]:11434/v1",
+    };
+    for (urls) |url| {
+        try checkCredentialTransport(.api_key, url);
+    }
+}
+
+test "transport guard fails closed on exotic hosts" {
+    const urls = [_][]const u8{
+        "http://0.0.0.0:11434/v1",
+        "http://localhost.:11434/v1",
+        "http://127.1:11434/v1",
+        "http://[::2]:11434/v1",
+        "http:///v1",
+    };
+    for (urls) |url| {
+        try std.testing.expectError(
+            error.InsecureCredentialTransport,
+            checkCredentialTransport(.api_key, url),
+        );
+    }
+    try std.testing.expect(isLoopbackHost("::1"));
+    try std.testing.expect(isLoopbackHost("[::1]"));
+    try std.testing.expect(!isLoopbackHost(""));
+    try std.testing.expect(!isLoopbackHost("example.com"));
+}
+
+test "model entry override cannot bypass the transport guard" {
+    const alloc = std.testing.allocator;
+    var parsed = try parseTestValue(alloc,
+        \\{"local":{"credential":"api_key","base_url":"http://127.0.0.1:11434/v1","models":{"qwen":{"base_url":"http://192.0.2.1:11434/v1"}}},"keyless":{"credential":"none","base_url":"http://192.0.2.1:11434/v1"}}
+    );
+    defer parsed.deinit();
+    var set = ConnectionSet{};
+    defer set.deinit(alloc);
+    var detail = ParseDetail{};
+    defer detail.deinit(alloc);
+    try parseSetInto(alloc, parsed.value, &set, &detail);
+
+    const local = set.get("local") orelse return error.TestExpectedConnection;
+    try std.testing.expectError(
+        error.InsecureCredentialTransport,
+        checkCredentialTransport(local.credential.?, resolveBaseUrl(local, "qwen").?),
+    );
+    try checkCredentialTransport(local.credential.?, resolveBaseUrl(local, "undescribed").?);
+
+    const keyless = set.get("keyless") orelse return error.TestExpectedConnection;
+    try checkCredentialTransport(keyless.credential.?, resolveBaseUrl(keyless, "any").?);
+}
+
+test "strict standard compat matches pi with no vendor detected" {
+    const compat = strict_standard_compat;
+    try std.testing.expect(compat.supports_store);
+    try std.testing.expect(compat.supports_developer_role);
+    try std.testing.expect(compat.supports_reasoning_effort);
+    try std.testing.expect(compat.supports_usage_in_streaming);
+    try std.testing.expect(compat.supports_finish_reason);
+    try std.testing.expectEqualStrings("max_completion_tokens", compat.max_tokens_field);
+    try std.testing.expect(!compat.requires_tool_result_name);
+    try std.testing.expect(!compat.requires_assistant_after_tool_result);
+    try std.testing.expect(!compat.requires_thinking_as_text);
+    try std.testing.expect(!compat.requires_reasoning_content_on_assistant_messages);
+    try std.testing.expectEqualStrings("openai", compat.thinking_format);
+    try std.testing.expect(compat.supports_strict_mode);
+    try std.testing.expect(!compat.supports_openai_grammar_tools);
+    try std.testing.expect(!compat.supports_thinking_token_budget);
+    try std.testing.expect(compat.thinking_token_budget_field == null);
+    try std.testing.expect(compat.cache_control_format == null);
+    try std.testing.expect(!compat.send_session_affinity_headers);
+    try std.testing.expect(compat.deferred_tools_mode == null);
+    try std.testing.expectEqualStrings("openai", compat.session_affinity_format);
+    try std.testing.expect(compat.supports_long_cache_retention);
+    try std.testing.expect(!compat.zai_tool_stream);
 }

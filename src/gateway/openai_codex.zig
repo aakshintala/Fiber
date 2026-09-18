@@ -1,5 +1,6 @@
 const std = @import("std");
 const chatgpt_oauth = @import("../core/auth/chatgpt_oauth.zig");
+const connection_mod = @import("../protocols/presets/connection.zig");
 const image_attachments = @import("../core/images/image_attachments.zig");
 const secret = @import("../core/auth/secret.zig");
 const stream_provider = @import("../core/agent/stream_provider.zig");
@@ -183,22 +184,36 @@ const OpenRequestOperation = struct {
     }
 };
 
+/// Names the refused connection for an insecure override. Built separately
+/// so tests pin the message without touching the network.
+fn insecureTransportRefusal(alloc: Allocator, override: []const u8) !stream_provider.Result {
+    const detail = try std.fmt.allocPrint(
+        alloc,
+        "connection 'codex' refuses to send its credential over plain HTTP to '{s}'; use https:// or loopback http://",
+        .{override},
+    );
+    return .{ .failed = .{
+        .kind = .invalid_request,
+        .detail = detail,
+        .ownership = .owned,
+    } };
+}
+
 pub fn streamPrepared(
     alloc: Allocator,
     request: stream_provider.ModelRequest,
     payload: []const u8,
 ) !stream_provider.Result {
     if (request.cancel_flag.load(.seq_cst)) return stream_provider.failResult(error.Cancelled);
+    const override = io_mod.getenv(e2e_endpoint_env);
+    if (override) |candidate| {
+        _ = std.Uri.parse(candidate) catch return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint);
+    }
+    const request_endpoint = override orelse endpoint;
     const account_id = try chatgpt_oauth.extractAccountId(alloc, request.credential.secret);
     defer alloc.free(account_id);
     const auth_header = try std.fmt.allocPrint(alloc, "Bearer {s}", .{request.credential.secret});
     defer secret.zeroAndFree(alloc, auth_header);
-    const request_endpoint = if (io_mod.getenv(e2e_endpoint_env)) |override| endpoint: {
-        if (!gateway_client.isLoopbackHttpUrl(override)) {
-            return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint);
-        }
-        break :endpoint override;
-    } else endpoint;
     const uri = try std.Uri.parse(request_endpoint);
 
     var extra_headers_buf: [7]std.http.Header = undefined;
@@ -231,6 +246,19 @@ pub fn streamPrepared(
         .raw = .fromMilliseconds(connect_timeout_ms),
     });
     try request.admission.admit();
+    // The transport rule runs after admission on purpose: a `.failed` value
+    // returned before admission is masked upstream as
+    // ProviderAdmissionMissing, while admission itself is memory-only, so
+    // this refusal still precedes all network I/O with the connection
+    // named. A keyed credential never crosses plain HTTP off loopback
+    // (decision 12); the compiled default is `https://`, so only an
+    // override can refuse.
+    if (override) |candidate| {
+        connection_mod.checkCredentialTransport(.oauth, candidate) catch |err| {
+            if (err == error.InsecureCredentialTransport) return insecureTransportRefusal(alloc, candidate);
+            return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint);
+        };
+    }
     var opened = try gateway_client.runBoundedHttpOperation(
         OpenedRequest,
         alloc,
@@ -1124,4 +1152,18 @@ test "OpenAI Codex rejects a 129th streamed tool call" {
     } else |err| {
         try std.testing.expectEqual(error.OpenAICodexToolCallLimitExceeded, err);
     }
+}
+
+test "codex insecure override refusal names the connection before any I/O" {
+    var result = try insecureTransportRefusal(std.testing.allocator, "http://192.0.2.1:11434/v1");
+    defer result.deinit(std.testing.allocator);
+    const failure = switch (result) {
+        .failed => |failure| failure,
+        else => return error.TestExpectedRefusal,
+    };
+    try std.testing.expectEqual(stream_provider.FailureKind.invalid_request, failure.kind);
+    try std.testing.expectEqual(stream_provider.ResultOwnership.owned, failure.ownership);
+    const detail = failure.detail orelse return error.TestExpectedRefusalDetail;
+    try std.testing.expect(std.mem.find(u8, detail, "'codex'") != null);
+    try std.testing.expect(std.mem.find(u8, detail, "http://192.0.2.1:11434/v1") != null);
 }

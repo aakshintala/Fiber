@@ -64,8 +64,12 @@ pub const top_level_specs = [_]TopLevelSpec{
             "Commands:",
             "  fiber auth list [--json]",
             "  fiber auth status [<provider>] [--json]",
-            "  fiber auth login [<provider>]",
+            "  fiber auth login [<provider|connection>]",
             "  fiber auth logout [<provider>] [--json]",
+            "",
+            "Keyless local connections (\"credential\": \"none\") need no login.",
+            "A keyed credential is never sent over plain HTTP except to loopback.",
+            "See docs/model-routing.md for local servers.",
         },
     },
     .{
