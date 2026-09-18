@@ -2037,8 +2037,14 @@ fn runTopLevelAuth(
             try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
             return .handled_usage_error;
         }
+        // Connection lookup precedes provider parsing: a keyless
+        // connection keeps its messaging even when its name collides with
+        // a provider slug (a user `codex` connection shadows the Codex
+        // provider here). Anything else — unknown names, keyed
+        // connections, undeclared credentials — falls through to provider
+        // parsing unchanged.
+        if (try report_keyless_connection_login(alloc, cfg, deps, rest[1..])) return .handled_success;
         const maybe_provider = parseLoginProvider(rest[1..]) catch {
-            if (try report_keyless_connection_login(alloc, cfg, deps, rest[1..])) return .handled_success;
             try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
             return .handled_usage_error;
         };
@@ -6736,7 +6742,7 @@ fn keyless_connection_startup_for_test(
     var state = app_lifecycle.StartupState{ .agent_step_limit = default_agent_step_limit };
     errdefer state.deinit(alloc);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc,
-        \\{"local":{"credential":"none","base_url":"http://127.0.0.1:11434/v1"},"keyed":{"credential":"api_key","base_url":"https://example.com/v1"}}
+        \\{"local":{"credential":"none","base_url":"http://127.0.0.1:11434/v1"},"keyed":{"credential":"api_key","base_url":"https://example.com/v1"},"codex":{"credential":"none","base_url":"http://127.0.0.1:11434/v1"}}
     , .{});
     defer parsed.deinit();
     try connection_mod.parseSetInto(alloc, parsed.value, &state.connections, null);
@@ -6758,6 +6764,25 @@ test "auth login on a keyless connection needs no credential" {
     try std.testing.expectEqual(RunResult.handled_success, result);
     try std.testing.expectEqualStrings(
         "fiber auth login: connection 'local' needs no credential.\n",
+        capture.stdout.written(),
+    );
+}
+
+test "auth login on a keyless connection named like a provider keeps the messaging" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+    var deps = capture.deps();
+    deps.load_startup_state_without_credentials = keyless_connection_startup_for_test;
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("auth"), @constCast("login"), @constCast("codex") },
+        testConfig(),
+        deps,
+    );
+    try std.testing.expectEqual(RunResult.handled_success, result);
+    try std.testing.expectEqualStrings(
+        "fiber auth login: connection 'codex' needs no credential.\n",
         capture.stdout.written(),
     );
 }
