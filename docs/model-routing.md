@@ -175,7 +175,9 @@ Fiber never sniffs the URL to guess quirks. Concretely, a flagless
 connection assumes the standard `max_completion_tokens` field, store and
 developer-role support, strict tool schemas, the `openai` thinking format,
 and long cache retention — with every quirk flag off. Declared `compat`
-entries layer over these once the adapter honors them (#295).
+entries layer over these through the connection's effective-compat lookup
+(a model entry wins, then the connection, then the strict standard); the
+adapter reads the layered values in #295.
 
 When a server rejects a standard field, the flags to try are the pi names
 for that behavior: `max_tokens_field` (`"max_tokens"` for servers that

@@ -432,6 +432,69 @@ const StrictStandardCompat = struct {
 
 const strict_standard_compat: StrictStandardCompat = .{};
 
+/// One effective compat value. Declared entries layer over the strict
+/// standard, and everything here is borrowed — the caller never frees.
+pub const EffectiveCompat = union(enum) {
+    string: []const u8,
+    boolean: bool,
+    integer: i64,
+};
+
+/// Strict-standard default for one compat key (decision 7), or null when
+/// the key has no standard default and the adapter falls back on its own.
+/// Reads the single `strict_standard_compat` source above, so the table
+/// cannot drift from it.
+fn strict_compat_default(key: []const u8) ?EffectiveCompat {
+    const strict = strict_standard_compat;
+    if (std.mem.eql(u8, key, "supports_store")) return .{ .boolean = strict.supports_store };
+    if (std.mem.eql(u8, key, "supports_developer_role")) return .{ .boolean = strict.supports_developer_role };
+    if (std.mem.eql(u8, key, "supports_reasoning_effort")) return .{ .boolean = strict.supports_reasoning_effort };
+    if (std.mem.eql(u8, key, "supports_usage_in_streaming")) return .{ .boolean = strict.supports_usage_in_streaming };
+    if (std.mem.eql(u8, key, "supports_finish_reason")) return .{ .boolean = strict.supports_finish_reason };
+    if (std.mem.eql(u8, key, "max_tokens_field")) return .{ .string = strict.max_tokens_field };
+    if (std.mem.eql(u8, key, "requires_tool_result_name")) return .{ .boolean = strict.requires_tool_result_name };
+    if (std.mem.eql(u8, key, "requires_assistant_after_tool_result")) return .{ .boolean = strict.requires_assistant_after_tool_result };
+    if (std.mem.eql(u8, key, "requires_thinking_as_text")) return .{ .boolean = strict.requires_thinking_as_text };
+    if (std.mem.eql(u8, key, "requires_reasoning_content_on_assistant_messages")) return .{ .boolean = strict.requires_reasoning_content_on_assistant_messages };
+    if (std.mem.eql(u8, key, "thinking_format")) return .{ .string = strict.thinking_format };
+    if (std.mem.eql(u8, key, "supports_strict_mode")) return .{ .boolean = strict.supports_strict_mode };
+    if (std.mem.eql(u8, key, "supports_openai_grammar_tools")) return .{ .boolean = strict.supports_openai_grammar_tools };
+    if (std.mem.eql(u8, key, "supports_thinking_token_budget")) return .{ .boolean = strict.supports_thinking_token_budget };
+    if (std.mem.eql(u8, key, "thinking_token_budget_field")) return if (strict.thinking_token_budget_field) |value| .{ .string = value } else null;
+    if (std.mem.eql(u8, key, "cache_control_format")) return if (strict.cache_control_format) |value| .{ .string = value } else null;
+    if (std.mem.eql(u8, key, "send_session_affinity_headers")) return .{ .boolean = strict.send_session_affinity_headers };
+    if (std.mem.eql(u8, key, "deferred_tools_mode")) return if (strict.deferred_tools_mode) |value| .{ .string = value } else null;
+    if (std.mem.eql(u8, key, "session_affinity_format")) return .{ .string = strict.session_affinity_format };
+    if (std.mem.eql(u8, key, "supports_long_cache_retention")) return .{ .boolean = strict.supports_long_cache_retention };
+    if (std.mem.eql(u8, key, "zai_tool_stream")) return .{ .boolean = strict.zai_tool_stream };
+    return null;
+}
+
+fn declared_compat_value(declared: CompatValue) EffectiveCompat {
+    return switch (declared) {
+        .string => |text| .{ .string = text },
+        .boolean => |flag| .{ .boolean = flag },
+        .integer => |number| .{ .integer = number },
+    };
+}
+
+/// Effective compat for one model on a connection (decision 7): the model
+/// entry's declared value wins, then the connection's, then the strict
+/// standard — so a flagless connection ACTUALLY gets the defaults. Null
+/// means neither layer nor the standard says anything, and the adapter
+/// (#295) falls back on its own. Runtime API; borrowed.
+pub fn effective_compat(
+    connection: *const Connection,
+    model_name: []const u8,
+    key: []const u8,
+) ?EffectiveCompat {
+    if (connection.models.getPtr(model_name)) |override| {
+        if (override.compat.entries.get(key)) |declared| return declared_compat_value(declared);
+    }
+    if (connection.compat.entries.get(key)) |declared| return declared_compat_value(declared);
+    return strict_compat_default(key);
+}
+
 /// Names the connection and key behind an `UnknownConnectionKey` failure, so
 /// settings load can report both. Owned strings; empty unless set.
 pub const ParseDetail = struct {
@@ -974,27 +1037,65 @@ test "transport guard fails closed on exotic hosts" {
     try std.testing.expect(!is_loopback_host("example.com"));
 }
 
-test "strict standard compat matches pi with no vendor detected" {
-    const compat = strict_standard_compat;
-    try std.testing.expect(compat.supports_store);
-    try std.testing.expect(compat.supports_developer_role);
-    try std.testing.expect(compat.supports_reasoning_effort);
-    try std.testing.expect(compat.supports_usage_in_streaming);
-    try std.testing.expect(compat.supports_finish_reason);
-    try std.testing.expectEqualStrings("max_completion_tokens", compat.max_tokens_field);
-    try std.testing.expect(!compat.requires_tool_result_name);
-    try std.testing.expect(!compat.requires_assistant_after_tool_result);
-    try std.testing.expect(!compat.requires_thinking_as_text);
-    try std.testing.expect(!compat.requires_reasoning_content_on_assistant_messages);
-    try std.testing.expectEqualStrings("openai", compat.thinking_format);
-    try std.testing.expect(compat.supports_strict_mode);
-    try std.testing.expect(!compat.supports_openai_grammar_tools);
-    try std.testing.expect(!compat.supports_thinking_token_budget);
-    try std.testing.expect(compat.thinking_token_budget_field == null);
-    try std.testing.expect(compat.cache_control_format == null);
-    try std.testing.expect(!compat.send_session_affinity_headers);
-    try std.testing.expect(compat.deferred_tools_mode == null);
-    try std.testing.expectEqualStrings("openai", compat.session_affinity_format);
-    try std.testing.expect(compat.supports_long_cache_retention);
-    try std.testing.expect(!compat.zai_tool_stream);
+test "flagless connections get the strict standard, declared flags win" {
+    const alloc = std.testing.allocator;
+    var parsed = try parseTestValue(alloc,
+        \\{"plain":{"credential":"none","base_url":"http://127.0.0.1:11434/v1"},"flagged":{"credential":"none","base_url":"http://127.0.0.1:11434/v1","compat":{"supports_store":false,"max_tokens_field":"max_tokens"}},"layered":{"credential":"none","base_url":"http://127.0.0.1:11434/v1","compat":{"supports_store":false},"models":{"qwen":{"compat":{"supports_store":true,"supports_strict_mode":false}}}}}
+    );
+    defer parsed.deinit();
+    var set = ConnectionSet{};
+    defer set.deinit(alloc);
+    var detail = ParseDetail{};
+    defer detail.deinit(alloc);
+    try parseSetInto(alloc, parsed.value, &set, &detail);
+
+    const plain = set.get("plain") orelse return error.TestExpectedConnection;
+    const strict_bool: []const struct { key: []const u8, want: bool } = &.{
+        .{ .key = "supports_store", .want = true },
+        .{ .key = "supports_developer_role", .want = true },
+        .{ .key = "supports_strict_mode", .want = true },
+        .{ .key = "supports_long_cache_retention", .want = true },
+        .{ .key = "requires_tool_result_name", .want = false },
+        .{ .key = "supports_thinking_token_budget", .want = false },
+        .{ .key = "send_session_affinity_headers", .want = false },
+    };
+    for (strict_bool) |case| {
+        const got = effective_compat(plain, "any", case.key) orelse return error.TestExpectedCompat;
+        try std.testing.expect(got == .boolean and got.boolean == case.want);
+    }
+    const strict_string: []const struct { key: []const u8, want: []const u8 } = &.{
+        .{ .key = "max_tokens_field", .want = "max_completion_tokens" },
+        .{ .key = "thinking_format", .want = "openai" },
+        .{ .key = "session_affinity_format", .want = "openai" },
+    };
+    for (strict_string) |case| {
+        const got = effective_compat(plain, "any", case.key) orelse return error.TestExpectedCompat;
+        try std.testing.expect(got == .string);
+        try std.testing.expectEqualStrings(case.want, got.string);
+    }
+    // Null-valued strict fields and unknown keys have no default: the
+    // adapter falls back on its own.
+    try std.testing.expect(effective_compat(plain, "any", "thinking_token_budget_field") == null);
+    try std.testing.expect(effective_compat(plain, "any", "bogus_flag") == null);
+
+    // Declared connection flags layer over the strict standard.
+    const flagged = set.get("flagged") orelse return error.TestExpectedConnection;
+    const stored = effective_compat(flagged, "any", "supports_store") orelse return error.TestExpectedCompat;
+    try std.testing.expect(stored == .boolean and !stored.boolean);
+    const field = effective_compat(flagged, "any", "max_tokens_field") orelse return error.TestExpectedCompat;
+    try std.testing.expect(field == .string);
+    try std.testing.expectEqualStrings("max_tokens", field.string);
+
+    // A model entry override wins over the connection, which wins over
+    // the strict standard.
+    const layered = set.get("layered") orelse return error.TestExpectedConnection;
+    const qwen_store = effective_compat(layered, "qwen", "supports_store") orelse return error.TestExpectedCompat;
+    try std.testing.expect(qwen_store == .boolean and qwen_store.boolean);
+    const default_store = effective_compat(layered, "undescribed", "supports_store") orelse return error.TestExpectedCompat;
+    try std.testing.expect(default_store == .boolean and !default_store.boolean);
+    const qwen_strict = effective_compat(layered, "qwen", "supports_strict_mode") orelse return error.TestExpectedCompat;
+    try std.testing.expect(qwen_strict == .boolean and !qwen_strict.boolean);
+    const qwen_field = effective_compat(layered, "qwen", "max_tokens_field") orelse return error.TestExpectedCompat;
+    try std.testing.expect(qwen_field == .string);
+    try std.testing.expectEqualStrings("max_completion_tokens", qwen_field.string);
 }
