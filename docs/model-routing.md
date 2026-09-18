@@ -1,6 +1,6 @@
 # Model routing
 
-What is true as of #286. Later chain tickets (#287+) extend this file; nothing
+What is true as of #304. Later chain tickets (#287+) extend this file; nothing
 below describes behavior that does not exist yet.
 
 * The release binary routes through the Codex-only `provider_bundle` in
@@ -48,3 +48,27 @@ ChatGPT Responses endpoint, subscription billing.
   string, boolean and integer values) and merges entries field by field.
 * Routing still reaches Codex through today's Codex-only path. Connections
   exist and validate; later tickets route through them.
+
+## Regenerating presets (#304)
+
+The `opencode-go` preset's model entries are generated from models.dev at
+development time by `scripts/generate_models_dev.py`, which reads
+`https://models.dev/catalog.json` (or a local snapshot via `--catalog`) and
+rewrites only the `models` object of `src/protocols/presets/opencode-go.json`.
+Each entry carries the id, protocol, per-model base-URL override, context and
+output limits, input modalities, reasoning, and prices. Rerunning against the
+same catalog is a fixpoint: run it twice and expect no diff.
+
+Protocol comes from the model's `[provider].npm`, falling back to the
+provider's: `@ai-sdk/openai` becomes Responses, `@ai-sdk/anthropic` Anthropic
+Messages, `@ai-sdk/google` Google Generative AI, and anything else Chat
+Completions. A model whose protocol has no adapter in the binary yet is left
+out and printed as skipped; its adapter ticket reruns the script to regain it.
+
+The connection shell (credential, default protocol, base URL, billing) and
+every per-model `compat` object are hand-set and survive reruns: the script
+replaces only its own generated keys. `codex.json` stays hand-written:
+models.dev does not describe the ChatGPT subscription, so the script never
+touches it. Later presets gain their own row in the script with their own
+ticket. `scripts/tests/test_generate_models_dev.py` covers the mapping over a
+checked-in catalog excerpt.

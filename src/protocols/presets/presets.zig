@@ -10,7 +10,9 @@ const Allocator = std.mem.Allocator;
 /// constants; the core ships only the generic mechanism.
 const codex_source: []const u8 = @embedFile("codex.json");
 
-const embedded_sources: []const []const u8 = &.{codex_source};
+const opencode_go_source: []const u8 = @embedFile("opencode-go.json");
+
+const embedded_sources: []const []const u8 = &.{ codex_source, opencode_go_source };
 
 /// Parses every embedded preset into the set. Called at startup before user
 /// layers merge over it, so user `connections.<preset>` entries override
@@ -51,6 +53,35 @@ test "embedded codex preset parses with the user-config parser" {
     try std.testing.expectEqual(connection_mod.Protocol.responses, codex.protocol.?);
     try std.testing.expectEqualStrings("https://chatgpt.com/backend-api/codex/responses", codex.base_url.?);
     try std.testing.expectEqual(connection_mod.BillingKind.subscription, codex.billing.?);
+}
+
+test "embedded opencode-go preset parses with the user-config parser" {
+    const alloc = std.testing.allocator;
+    var set = connection_mod.ConnectionSet{};
+    defer set.deinit(alloc);
+    var detail = connection_mod.ParseDetail{};
+    defer detail.deinit(alloc);
+    try loadInto(alloc, &set, &detail);
+
+    const go = set.get("opencode-go") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqual(connection_mod.CredentialKind.api_key, go.credential.?);
+    try std.testing.expectEqual(connection_mod.Protocol.chat_completions, go.protocol.?);
+    try std.testing.expectEqualStrings("https://opencode.ai/zen/go/v1", go.base_url.?);
+    try std.testing.expectEqual(connection_mod.BillingKind.subscription, go.billing.?);
+
+    const glm = go.models.get("glm-5.3-flash") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqual(connection_mod.Protocol.chat_completions, glm.protocol.?);
+    const deepseek = go.models.get("deepseek-v4.1-flash") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqual(connection_mod.Protocol.chat_completions, deepseek.protocol.?);
+    const muse_spark = go.models.get("muse-spark-1.3-contributor") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqual(connection_mod.Protocol.responses, muse_spark.protocol.?);
+    for ([_]connection_mod.ModelOverride{ glm, deepseek, muse_spark }) |model| {
+        if (model.context_window orelse 0 <= 0) return error.TestExpectedPreset;
+        if (model.output_limit orelse 0 <= 0) return error.TestExpectedPreset;
+        if (model.price_input == null or model.price_output == null) return error.TestExpectedPreset;
+    }
+    const replay = deepseek.compat.entries.get("reasoning_replay") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqual(true, replay.boolean);
 }
 
 test "malformed preset source fails to load" {

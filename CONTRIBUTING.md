@@ -128,7 +128,9 @@ both fail the corpus check.
 - `src/tools/`: built-in tool implementations
 - `src/ui/`: terminal rendering, event loop, input, transcript
 - `src/gateway/`: model transport
-- `scripts/`: build, release, and PGSO tooling
+- `scripts/`: build, release, and PGSO tooling. `scripts/generate_models_dev.py`
+  regenerates preset model entries from models.dev; see
+  [`docs/model-routing.md`](docs/model-routing.md) for when and how to run it
 - `benchmarks/`: startup latency benchmarks
 
 ## Before you add a feature

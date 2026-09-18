@@ -1,0 +1,55 @@
+{
+  "providers": {
+    "opencode-go": {
+      "id": "opencode-go",
+      "name": "OpenCode Go",
+      "api": "https://opencode.ai/zen/go/v1",
+      "env": ["OPENCODE_API_KEY"],
+      "npm": "@ai-sdk/openai-compatible",
+      "models": {
+        "keep-chat": {
+          "id": "keep-chat",
+          "name": "Keep Chat",
+          "tool_call": true,
+          "reasoning": true,
+          "modalities": {"input": ["text", "image"], "output": ["text"]},
+          "limit": {"context": 1000000, "output": 131072},
+          "cost": {"input": 0.15, "output": 0.6, "cache_read": 0.003}
+        },
+        "keep-responses": {
+          "id": "keep-responses",
+          "name": "Keep Responses",
+          "tool_call": true,
+          "provider": {"npm": "@ai-sdk/openai"},
+          "limit": {"context": 272000, "output": 64000},
+          "cost": {"input": 1.0, "output": 2.0}
+        },
+        "minimal": {
+          "id": "minimal",
+          "name": "Minimal"
+        },
+        "per-model-api": {
+          "id": "per-model-api",
+          "name": "Per Model Api",
+          "tool_call": true,
+          "provider": {"api": "https://other.test/v1"},
+          "limit": {"context": 64000, "output": 8000}
+        },
+        "skip-anthropic": {
+          "id": "skip-anthropic",
+          "name": "Skip Anthropic",
+          "tool_call": true,
+          "provider": {"npm": "@ai-sdk/anthropic"},
+          "limit": {"context": 200000, "output": 32000}
+        },
+        "skip-google": {
+          "id": "skip-google",
+          "name": "Skip Google",
+          "tool_call": true,
+          "provider": {"npm": "@ai-sdk/google"},
+          "limit": {"context": 1000000, "output": 64000}
+        }
+      }
+    }
+  }
+}
