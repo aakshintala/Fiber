@@ -7393,6 +7393,10 @@ test "cancelled command presentation survives a persisted session restart" {
                 .output_replay = .{ .available = descriptor },
             },
         } });
+        // Same-process presentation still links the replay descriptor.
+        const pre_history = try app.session.snapshotHistory(alloc);
+        defer session_runtime.freeHistoryTurnSlice(alloc, pre_history);
+        try std.testing.expect(pre_history[0].interrupted.cancelled_command != null);
         session_id = try alloc.dupe(u8, app.session_persistence.writable.?.active_id);
         Runtime(TestApp).finalizePersistence(&app);
     }
@@ -7404,25 +7408,25 @@ test "cancelled command presentation survives a persisted session restart" {
     resumed.requested_resume = .{ .id = try alloc.dupe(u8, session_id.?) };
     try Runtime(TestApp).resumeRequestedSession(&resumed);
 
-    try std.testing.expectEqualStrings("INTERRUPT_START\n", resumed.command_stdout.items);
-    try std.testing.expectEqualStrings("warning\n", resumed.command_stderr.items);
-    try std.testing.expectEqual(@as(usize, 1), resumed.command_output_flush_count);
-    try std.testing.expectEqual(@as(usize, 1), resumed.cancelled_command_detail_count);
-    try std.testing.expect(resumed.cancelled_command_replayed_output);
-    try std.testing.expectEqualStrings(
-        "fiber-command-cancelled.log",
-        resumed.cancelled_command_artifact_handle.?,
-    );
-    try std.testing.expectEqualSlices(
-        ReplayEvent,
-        &.{
-            .completed_tool_status,
-            .command_output_chunk,
-            .command_output_chunk,
-            .command_output_summary_flush,
-        },
-        resumed.replay_events.items,
-    );
+    // The turn's text survives the restart through its item lines. Its
+    // cancelled presentation link does not: turn_completed no longer
+    // carries in-flight tool extras, which return with #191's tool_call_*
+    // lines.
+    const history = try resumed.session.snapshotHistory(alloc);
+    defer session_runtime.freeHistoryTurnSlice(alloc, history);
+    try std.testing.expectEqual(@as(usize, 1), history.len);
+    try std.testing.expectEqualStrings("run the slow command", history[0].interrupted.user.text);
+    try std.testing.expectEqualStrings("I started it.", history[0].interrupted.assistant.?);
+    try std.testing.expect(history[0].interrupted.tool_call == null);
+    try std.testing.expect(history[0].interrupted.cancelled_command == null);
+
+    try std.testing.expectEqualStrings("", resumed.command_stdout.items);
+    try std.testing.expectEqualStrings("", resumed.command_stderr.items);
+    try std.testing.expectEqual(@as(usize, 0), resumed.command_output_flush_count);
+    try std.testing.expectEqual(@as(usize, 0), resumed.cancelled_command_detail_count);
+    try std.testing.expect(!resumed.cancelled_command_replayed_output);
+    try std.testing.expect(resumed.cancelled_command_artifact_handle == null);
+    try std.testing.expectEqual(@as(usize, 0), resumed.replay_events.items.len);
 }
 
 test "cancelled command metadata allocation failure preserves core presentation" {
