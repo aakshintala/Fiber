@@ -70,6 +70,10 @@ pub fn build(b: *std.Build) void {
     const test_compile_step = b.step("test-compile", "Build the unit tests without running them");
     test_compile_step.dependOn(b.getInstallStep());
     test_compile_step.dependOn(&exe_tests.step);
+    // DIAG ONLY (#352): install the unit-test binary so CI can run it
+    // directly and stream per-test progress.
+    const install_exe_tests = b.addInstallArtifact(exe_tests, .{ .dest_sub_path = "fiber-unit-tests" });
+    test_compile_step.dependOn(&install_exe_tests.step);
 
     const mcp_test_exports = b.createModule(.{
         .root_source_file = b.path("src/mcp_test_exports.zig"),
