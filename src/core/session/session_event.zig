@@ -2264,10 +2264,8 @@ fn parsePayload(alloc: Allocator, kind: Kind, value: std.json.Value) !Event {
         },
         .turn_completed => blk: {
             const object = try requireObject(value);
-            if (object.count() < 1 or object.count() > 4) return error.InvalidEventFrame;
-            // Tolerance reader: inversion-era lines carried the retired
-            // #191 execution/interrupted carriers; they decode and drop.
-            try rejectUnknownKeys(object, &.{ "outcome", "error", "execution", "interrupted" });
+            if (object.count() < 1 or object.count() > 2) return error.InvalidEventFrame;
+            try rejectUnknownKeys(object, &.{ "outcome", "error" });
             const outcome = std.meta.stringToEnum(
                 TurnOutcome,
                 try requireString(object, "outcome"),
@@ -4550,6 +4548,38 @@ test "decoder rejects the pre-v1 envelope and missing required keys" {
         defer alloc.free(robbed_line);
         try std.testing.expectError(error.InvalidEventFrame, decodeFrame(alloc, robbed_line));
     }
+}
+
+test "turn_completed rejects retired execution and interrupted carriers" {
+    const alloc = std.testing.allocator;
+    // #191 owns those fields: no tolerance reader for another slice's
+    // carriers lives here, so inversion-era lines fail instead of
+    // decoding and dropping them.
+    const retired =
+        "{\"schema_version\":1," ++
+        "\"kind\":\"turn_completed\"," ++
+        "\"session_id\":\"session-191\"," ++
+        "\"ts\":100," ++
+        "\"turn_id\":\"4\"," ++
+        "\"seq\":2," ++
+        "\"payload\":{\"outcome\":\"completed\",\"execution\":{},\"interrupted\":{}}}\n";
+    try std.testing.expectError(error.InvalidEventFrame, decodeFrame(alloc, retired));
+    const clean =
+        "{\"schema_version\":1," ++
+        "\"kind\":\"turn_completed\"," ++
+        "\"session_id\":\"session-191\"," ++
+        "\"ts\":100," ++
+        "\"turn_id\":\"4\"," ++
+        "\"seq\":2," ++
+        "\"payload\":{\"outcome\":\"completed\"}}\n";
+    var frame = try decodeFrame(alloc, clean);
+    defer frame.deinit(alloc);
+    const decoded = switch (frame) {
+        .known => |*envelope| envelope,
+        .unknown => return error.TestExpectedEqual,
+    };
+    try std.testing.expectEqual(Kind.turn_completed, decoded.kind());
+    try std.testing.expectEqual(TurnOutcome.completed, decoded.event.turn_completed.outcome);
 }
 
 fn duplicateJsonObject(alloc: std.mem.Allocator, object: std.json.ObjectMap) !std.json.Parsed(std.json.Value) {
