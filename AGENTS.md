@@ -168,7 +168,7 @@ entrypoint. Draft is allowed as a signal to humans, but CI ignores it.
   gates (formatting, public-surface audit, PGSO corpus validation,
   release-decision tests, and CI-scope tests).
 * Scope classifies the pull request diff. Static-only paths (markdown outside
-  `src/`, anything under `docs/`, and unreferenced scripts) run only those
+  `src/`, anything under `docs/` or `.agents/`, and unreferenced scripts) run only those
   gates. Root `tests/e2e/*.test.ts` files add those files. Shared E2E inputs
   (helpers, fixtures, shard weights, package or TypeScript configuration, the
   conformance package) run all E2E files and conformance. Everything else,
