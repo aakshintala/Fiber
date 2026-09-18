@@ -23,6 +23,7 @@ const InvocationAdmission = struct {
     trace_ctx: TraceContext,
     model: []const u8,
     caller_admission: agent_stream_provider.Admission,
+    attribution: session_usage.UsageAttributionSource,
     observation: ?session_usage.InvocationObservation = null,
 
     fn admit(raw: *anyopaque) !void {
@@ -49,6 +50,7 @@ pub fn streamModelCompletion(
     request_value: agent_stream_provider.ModelRequest,
     usage: ?*session_usage.Usage,
     usage_allocator: Allocator,
+    attribution: session_usage.UsageAttributionSource,
 ) !StreamResult {
     if (request_value.cancel_flag.load(.seq_cst)) {
         return agent_stream_provider.failResult(error.Cancelled);
@@ -60,6 +62,7 @@ pub fn streamModelCompletion(
         .trace_ctx = request_value.trace_ctx,
         .model = request_value.model,
         .caller_admission = request_value.admission,
+        .attribution = attribution,
     };
     var request = request_value;
     request.admission = .{ .context = &admission, .admit_fn = InvocationAdmission.admit };
@@ -75,10 +78,22 @@ pub fn streamModelCompletion(
         return agent_stream_provider.failResult(error.ProviderAdmissionMissing);
 
     recordProviderResultMetric(request.model, started_at_ms, result, request.trace_ctx);
+    // The message id minted mid-stream; read it now that the stream settled.
+    var settled = observation;
+    settled.attribution = .{
+        .turn_id = if (admission.attribution.turn_id != 0)
+            admission.attribution.turn_id
+        else
+            null,
+        .item_id = if (admission.attribution.message_item_id) |source|
+            source.*
+        else
+            null,
+    };
     switch (result) {
-        .failed => try observation.fail(.unbilled),
+        .failed => try settled.fail(.unbilled),
         .completed => |completed| {
-            try observation.complete(
+            try settled.complete(
                 usage_allocator,
                 completed.completion,
                 completed.usage,
@@ -275,6 +290,7 @@ test "provider preflight failure does not reserve usage" {
         },
         &usage,
         alloc,
+        .{},
     );
     if (result) |_| return error.TestExpectedGatewayFailure else |_| {}
 
@@ -344,6 +360,7 @@ test "caller admission publishes before provider attempt is admitted" {
         },
         &usage,
         alloc,
+        .{},
     );
     defer result.deinit(alloc);
 
@@ -412,6 +429,7 @@ test "caller admission failure settles usage and prevents request open" {
             },
             &usage,
             alloc,
+            .{},
         ),
     );
 
@@ -468,6 +486,7 @@ test "possibly sent gateway failure marks billing incomplete" {
         },
         &usage,
         alloc,
+        .{},
     );
     if (result) |_| return error.TestExpectedGatewayFailure else |_| {}
 
@@ -554,6 +573,7 @@ test "provider-local exact usage reaches session accounting" {
         },
         &usage,
         alloc,
+        .{},
     );
     defer result.deinit(alloc);
     try std.testing.expect(std.meta.activeTag(result) == .completed);

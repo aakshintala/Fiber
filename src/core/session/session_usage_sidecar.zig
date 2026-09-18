@@ -592,7 +592,7 @@ test "future usage sidecar schema stays invalid without rewriting the file" {
 
 test "torn exact settlement republishes stale backlog without reapplying totals" {
     const Checkpoint = struct {
-        fn persist(_: *anyopaque, _: session_usage.Snapshot) !void {}
+        fn persist(_: *anyopaque, _: session_usage.Snapshot, _: ?session_usage.SettledRecord) !void {}
     };
     const RejectPublication = struct {
         fn publish(_: *anyopaque, event: session_usage.usage_report.ProfileEvent) !void {

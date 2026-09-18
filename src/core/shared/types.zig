@@ -1287,6 +1287,9 @@ pub const ModelCompletion = struct {
     /// output item, in first-appearance order. Internal-only like the
     /// message id.
     reasoning_item_ids: []const []const u8 = &.{},
+    /// Reasoning block texts in lockstep with reasoning_item_ids, borrowed
+    /// from the streaming step. Present only to feed per-item log lines.
+    reasoning_texts: ?[]const []const u8 = null,
     generation_id: ?[]const u8 = null,
     billing: ?ProviderBilling = null,
     /// Gateway generation or resolved-model metadata was malformed or conflicting.

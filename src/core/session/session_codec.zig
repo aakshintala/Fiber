@@ -633,7 +633,7 @@ pub fn parseHistoryTurn(alloc: Allocator, value: std.json.Value) !session.Histor
     return error.InvalidSessionFormat;
 }
 
-fn isCapturedCommandToolCall(alloc: Allocator, call: types.ToolCall) !bool {
+pub fn isCapturedCommandToolCall(alloc: Allocator, call: types.ToolCall) !bool {
     return captured_command.isToolCall(alloc, call.name, call.arguments_json);
 }
 
@@ -1248,7 +1248,7 @@ fn parseTurnAuthority(alloc: Allocator, value: std.json.Value) !TurnAuthority {
     };
 }
 
-fn writeUserTurn(writer: *std.Io.Writer, user: session.UserTurn) !void {
+pub fn writeUserTurn(writer: *std.Io.Writer, user: session.UserTurn) !void {
     try writer.writeAll("{\"text\":");
     try writeDurableBytes(writer, user.text);
     try writer.writeAll(",\"images\":[");
@@ -1283,7 +1283,7 @@ fn writeSnapshotLocator(writer: *std.Io.Writer, value: ?[]const u8) !void {
     try writeDurableBytes(writer, locator);
 }
 
-fn writeExecutionMemory(writer: *std.Io.Writer, execution: session.ExecutionMemory) !void {
+pub fn writeExecutionMemory(writer: *std.Io.Writer, execution: session.ExecutionMemory) !void {
     try writer.writeAll("{\"schema_version\":5,\"tool_steps\":[");
     for (execution.tool_steps, 0..) |step, i| {
         if (i > 0) try writer.writeByte(',');
@@ -1335,7 +1335,7 @@ fn writeTurnSummary(writer: *std.Io.Writer, summary: types.TurnSummary) !void {
     );
 }
 
-fn writeToolCall(writer: *std.Io.Writer, tool_call: session.ToolCall) !void {
+pub fn writeToolCall(writer: *std.Io.Writer, tool_call: session.ToolCall) !void {
     try writer.writeAll("{\"id\":");
     try writeDurableBytes(writer, tool_call.id);
     try writer.writeAll(",\"name\":");
@@ -1400,7 +1400,7 @@ fn writePersistedToolResult(writer: *std.Io.Writer, result: session.PersistedToo
     try writer.writeByte('}');
 }
 
-fn writeCancelledCommandPresentation(
+pub fn writeCancelledCommandPresentation(
     writer: *std.Io.Writer,
     presentation: session.CancelledCommandPresentation,
 ) !void {
@@ -1411,7 +1411,7 @@ fn writeCancelledCommandPresentation(
     try writer.writeByte('}');
 }
 
-fn parseCancelledCommandPresentation(
+pub fn parseCancelledCommandPresentation(
     alloc: Allocator,
     value: std.json.Value,
 ) !session.CancelledCommandPresentation {
@@ -1590,7 +1590,7 @@ fn writeFileEvidence(writer: *std.Io.Writer, file: session.FileEvidence) !void {
     try writer.writeByte('}');
 }
 
-fn parseUserTurn(alloc: Allocator, value: std.json.Value) !session.UserTurn {
+pub fn parseUserTurn(alloc: Allocator, value: std.json.Value) !session.UserTurn {
     const source = try requireObject(value);
     const object = if (source.count() == 2)
         try exactObject(value, &.{ "text", "images" })
@@ -1683,7 +1683,7 @@ fn imageAttachmentObject(value: std.json.Value) !std.json.ObjectMap {
     return value.object;
 }
 
-fn parseExecutionMemory(alloc: Allocator, value: std.json.Value) !session.ExecutionMemory {
+pub fn parseExecutionMemory(alloc: Allocator, value: std.json.Value) !session.ExecutionMemory {
     const source = try requireObject(value);
     const has_turn_summary = source.get("turn_summary") != null;
     const object = if (has_turn_summary)
@@ -1852,7 +1852,7 @@ fn parseToolCall(alloc: Allocator, value: std.json.Value) !session.ToolCall {
     };
 }
 
-fn parseOptionalToolCall(alloc: Allocator, value: std.json.Value) !?session.ToolCall {
+pub fn parseOptionalToolCall(alloc: Allocator, value: std.json.Value) !?session.ToolCall {
     return switch (value) {
         .null => null,
         .object => blk: {
@@ -2454,7 +2454,7 @@ fn parseFile(alloc: Allocator, value: std.json.Value) !session.FileEvidence {
     };
 }
 
-fn parseDurableBytesArray(alloc: Allocator, value: std.json.Value) ![][]u8 {
+pub fn parseDurableBytesArray(alloc: Allocator, value: std.json.Value) ![][]u8 {
     if (value != .array) return error.InvalidSessionFormat;
     if (value.array.items.len == 0) return &.{};
     const items = try alloc.alloc([]u8, value.array.items.len);

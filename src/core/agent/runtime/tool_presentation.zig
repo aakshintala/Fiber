@@ -1440,7 +1440,7 @@ const ProvisionalStatusTestCapture = struct {
     fn noopPublishCommittedFileHandoff(_: *anyopaque, _: @import("../../tooling/file_mutation.zig").CommittedFileHandoff) runtime_tool_contracts.SecondaryPublicationReport {
         return .{ .diff = .skipped, .tracker = .skipped };
     }
-    fn noopPropagateHistoryTurn(_: *anyopaque, _: types.HistoryTurn) !void {}
+    fn noopPropagateHistoryTurn(_: *anyopaque, _: types.HistoryTurn, _: types.TurnPresentationOutcome) !void {}
     fn noopPropagateGrant(_: *anyopaque, _: []const u8, _: []const u8) !void {}
     fn noopPushEvent(_: *anyopaque, _: @import("../worker_runtime.zig").WorkerEvent) !void {}
     fn noopPushText(_: *anyopaque, _: runtime_deps.TextEmission) !void {}

@@ -3,6 +3,7 @@ const agent_stream_provider = @import("../stream_provider.zig");
 const auth_runtime = @import("../../auth/auth_runtime.zig");
 const session_usage = @import("../../session/session_usage.zig");
 const session_codec = @import("../../session/session_codec.zig");
+const session_event = @import("../../session/session_event.zig");
 const command_admission = @import("../../permissions/command_admission.zig");
 const permission_auto_classifier = @import("../../permissions/auto_classifier.zig");
 const model_capabilities = @import("../../config/model_capabilities.zig");
@@ -193,7 +194,14 @@ pub const AgentRuntimeDeps = struct {
     permission_target_for_call: *const fn (ctx: *anyopaque, arena: Allocator, call: ToolCall, advertised_dynamic_tool_names: []const []const u8) anyerror![]const u8,
     execute_tool_call: *const fn (ctx: *anyopaque, request: ToolExecutionRequest) anyerror!ToolExecutionResult,
     publish_committed_file_handoff: *const fn (ctx: *anyopaque, handoff: file_mutation.CommittedFileHandoff) tool_contracts.SecondaryPublicationReport,
-    propagate_history_turn: *const fn (ctx: *anyopaque, turn: HistoryTurn) anyerror!void,
+    propagate_history_turn: *const fn (
+        ctx: *anyopaque,
+        turn: HistoryTurn,
+        outcome: types.TurnPresentationOutcome,
+    ) anyerror!void,
+    /// Per-item log notes emitted as work happens. Null hosts (no-save runs,
+    /// unit tests) get turn-end propagation only.
+    note_session_event: ?*const fn (ctx: *anyopaque, note: session_event.SessionNote) anyerror!void = null,
     recovery_checkpoint: ?RecoveryCheckpointEffect = null,
     propagate_grant: *const fn (ctx: *anyopaque, tool_name: []const u8, target_path: []const u8) anyerror!void,
     push_event: *const fn (ctx: *anyopaque, event: WorkerEvent) anyerror!void,

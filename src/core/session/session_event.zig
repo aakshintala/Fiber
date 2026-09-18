@@ -19,8 +19,17 @@ pub const Kind = enum {
     preferences_changed,
     permission_state_changed,
     workspace_rebound,
-    history_turn_committed,
-    usage_checkpointed,
+    run_started,
+    run_completed,
+    turn_started,
+    turn_completed,
+    assistant_message_started,
+    assistant_message_completed,
+    reasoning_started,
+    reasoning_completed,
+    usage_recorded,
+    retry_scheduled,
+    notice,
     recovery_checkpoint_set,
     recovery_checkpoint_cleared,
     state_replacement_started,
@@ -87,28 +96,234 @@ pub const WorkspaceRebound = struct {
     }
 };
 
-pub const HistoryTurnCommitted = struct {
-    conversation_language: session.ConversationLanguage,
-    last_input_tokens: ?u64 = null,
-    last_output_tokens: ?u64 = null,
-    work_id: ?[]u8 = null,
-    turn: session.HistoryTurn,
+pub const RunMode = enum {
+    new,
+    resumed,
+};
 
-    fn deinit(self: *HistoryTurnCommitted, alloc: Allocator) void {
-        if (self.work_id) |id| alloc.free(id);
-        session.freeHistoryTurn(alloc, self.turn);
+pub const RunStarted = struct {
+    run_id: []u8,
+    fiber_version: []u8,
+    schema_version: u64 = 1,
+    mode: RunMode,
+
+    fn deinit(self: *RunStarted, alloc: Allocator) void {
+        alloc.free(self.run_id);
+        alloc.free(self.fiber_version);
         self.* = undefined;
     }
 };
 
-pub const UsageCheckpointed = struct {
-    /// Full cumulative replacement; reducers must not add it to prior usage.
-    usage: session_usage.Snapshot,
+pub const EventError = struct {
+    code: []u8,
+    message: []u8,
 
-    fn deinit(self: *UsageCheckpointed, alloc: Allocator) void {
-        self.usage.deinit(alloc);
+    fn deinit(self: *EventError, alloc: Allocator) void {
+        alloc.free(self.code);
+        alloc.free(self.message);
         self.* = undefined;
     }
+};
+
+pub const RunCompleted = struct {
+    run_id: []u8,
+    exit_code: i64,
+    final_text: ?[]u8 = null,
+    model: ?[]u8 = null,
+    @"error": ?EventError = null,
+
+    fn deinit(self: *RunCompleted, alloc: Allocator) void {
+        alloc.free(self.run_id);
+        if (self.final_text) |text| alloc.free(text);
+        if (self.model) |model| alloc.free(model);
+        if (self.@"error") |*err| err.deinit(alloc);
+        self.* = undefined;
+    }
+};
+
+/// Single-variant today: every turn starts from user input. A wakeup shape
+/// for job-driven turns arrives with the jobs work, not this slice.
+pub const TurnInput = union(enum) {
+    user: session.UserTurn,
+
+    fn deinit(self: *TurnInput, alloc: Allocator) void {
+        switch (self.*) {
+            .user => |*user| session.freeUserTurn(alloc, user.*),
+        }
+        self.* = undefined;
+    }
+};
+
+pub const TurnStarted = struct {
+    input: TurnInput,
+    /// Host's language snapshot after prompt admission. Additive and
+    /// optional per the spec's versioning rules; the fold keeps prior
+    /// state when absent.
+    language: ?session.ConversationLanguage = null,
+
+    fn deinit(self: *TurnStarted, alloc: Allocator) void {
+        self.input.deinit(alloc);
+        self.* = undefined;
+    }
+};
+
+pub const TurnOutcome = enum {
+    completed,
+    interrupted,
+    failed,
+};
+
+/// Transitional carrier for an interrupted turn's in-flight extras until
+/// tool_call_* lines rebuild them with #191, which removes this struct.
+/// Additive and optional, so no schema bump per the spec's versioning rules.
+pub const InterruptedDetail = struct {
+    tool_call: ?types.ToolCall = null,
+    completed_tool_names: [][]u8 = &.{},
+    cancelled_command: ?types.CancelledCommandPresentation = null,
+
+    pub fn deinit(self: *InterruptedDetail, alloc: Allocator) void {
+        if (self.tool_call) |*call| types.freeToolCall(alloc, call.*);
+        types.freeCompletedToolNames(alloc, self.completed_tool_names);
+        if (self.cancelled_command) |*presentation|
+            types.freeCancelledCommandPresentation(alloc, presentation.*);
+        self.* = undefined;
+    }
+};
+
+pub const TurnCompleted = struct {
+    outcome: TurnOutcome,
+    @"error": ?EventError = null,
+    /// Transitional carrier for the turn's accumulated tool execution until
+    /// tool_call_* lines arrive with #191, which removes this field. Additive
+    /// and optional, so no schema bump per the spec's versioning rules.
+    execution: ?session.ExecutionMemory = null,
+    /// Transitional carrier for an interrupted turn's in-flight extras,
+    /// removed with #191 like execution above.
+    interrupted: ?InterruptedDetail = null,
+
+    fn deinit(self: *TurnCompleted, alloc: Allocator) void {
+        if (self.@"error") |*err| err.deinit(alloc);
+        if (self.execution) |*execution| session.freeExecutionMemory(alloc, execution.*);
+        if (self.interrupted) |*detail| detail.deinit(alloc);
+        self.* = undefined;
+    }
+};
+
+pub const AssistantMessageStarted = struct {};
+
+pub const MessageOutcome = enum {
+    completed,
+    failed,
+    interrupted,
+};
+
+pub const AssistantMessageCompleted = struct {
+    text: []u8,
+    outcome: MessageOutcome = .completed,
+    cause: ?[]u8 = null,
+    attempt: ?u64 = null,
+
+    fn deinit(self: *AssistantMessageCompleted, alloc: Allocator) void {
+        alloc.free(self.text);
+        if (self.cause) |cause| alloc.free(cause);
+        self.* = undefined;
+    }
+};
+
+pub const ReasoningStarted = struct {};
+
+pub const ReasoningCompleted = struct {
+    text: []u8,
+
+    fn deinit(self: *ReasoningCompleted, alloc: Allocator) void {
+        alloc.free(self.text);
+        self.* = undefined;
+    }
+};
+
+pub const UsageRecorded = struct {
+    generation_id: []u8,
+    model: []u8,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64 = 0,
+    cache_write_tokens: u64 = 0,
+    reasoning_tokens: ?u64 = null,
+    total_cost: ?f64 = null,
+    billable_web_search_calls: u64 = 0,
+
+    fn deinit(self: *UsageRecorded, alloc: Allocator) void {
+        alloc.free(self.generation_id);
+        alloc.free(self.model);
+        self.* = undefined;
+    }
+};
+
+/// Ephemeral per the spec: defined here for the taxonomy, with no log sink
+/// until the stdout stream that carries ephemeral lines lands with #195.
+/// A retry also writes its failed message and its new item as durable
+/// assistant_message_* lines, so no retry information is lost meanwhile.
+pub const RetryScheduled = struct {
+    cause: []u8,
+    attempt: u64,
+    delay_ms: u64,
+
+    fn deinit(self: *RetryScheduled, alloc: Allocator) void {
+        alloc.free(self.cause);
+        self.* = undefined;
+    }
+};
+
+/// Ephemeral per the spec: defined here for the taxonomy, with no log sink
+/// until #195. Failures outside any item keep reaching the UI directly.
+pub const Notice = struct {
+    code: []u8,
+    message: []u8,
+
+    fn deinit(self: *Notice, alloc: Allocator) void {
+        alloc.free(self.code);
+        alloc.free(self.message);
+        self.* = undefined;
+    }
+};
+
+/// Borrowed runtime-to-host notes emitted as work happens. Hosts copy what
+/// the log keeps via LoadedWritableSession.appendSessionNote.
+pub const SessionNoteTurn = struct {
+    turn_id: u64,
+    prompt: []const u8,
+    images: []const types.ImageAttachment = &.{},
+    work_id: ?[]const u8 = null,
+    /// Filled by the host from its language snapshot at admission.
+    language: ?session.ConversationLanguage = null,
+};
+
+pub const SessionNoteItem = struct {
+    turn_id: u64,
+    item_id: []const u8,
+};
+
+pub const SessionNoteMessage = struct {
+    turn_id: u64,
+    item_id: []const u8,
+    text: []const u8,
+    outcome: MessageOutcome = .completed,
+    cause: ?[]const u8 = null,
+    attempt: ?u64 = null,
+};
+
+pub const SessionNoteReasoning = struct {
+    turn_id: u64,
+    item_id: []const u8,
+    text: []const u8,
+};
+
+pub const SessionNote = union(enum) {
+    turn_started: SessionNoteTurn,
+    message_started: SessionNoteItem,
+    message_completed: SessionNoteMessage,
+    reasoning_started: SessionNoteItem,
+    reasoning_completed: SessionNoteReasoning,
 };
 
 pub const RecoveryCheckpointSet = struct {
@@ -155,8 +370,17 @@ pub const Event = union(Kind) {
     preferences_changed: PreferencesChanged,
     permission_state_changed: PermissionStateChanged,
     workspace_rebound: WorkspaceRebound,
-    history_turn_committed: HistoryTurnCommitted,
-    usage_checkpointed: UsageCheckpointed,
+    run_started: RunStarted,
+    run_completed: RunCompleted,
+    turn_started: TurnStarted,
+    turn_completed: TurnCompleted,
+    assistant_message_started: AssistantMessageStarted,
+    assistant_message_completed: AssistantMessageCompleted,
+    reasoning_started: ReasoningStarted,
+    reasoning_completed: ReasoningCompleted,
+    usage_recorded: UsageRecorded,
+    retry_scheduled: RetryScheduled,
+    notice: Notice,
     recovery_checkpoint_set: RecoveryCheckpointSet,
     recovery_checkpoint_cleared: RecoveryCheckpointCleared,
     state_replacement_started: StateReplacementStarted,
@@ -169,8 +393,17 @@ pub const Event = union(Kind) {
             .preferences_changed => |*payload| payload.deinit(alloc),
             .permission_state_changed => |*payload| payload.deinit(alloc),
             .workspace_rebound => |*payload| payload.deinit(alloc),
-            .history_turn_committed => |*payload| payload.deinit(alloc),
-            .usage_checkpointed => |*payload| payload.deinit(alloc),
+            .run_started => |*payload| payload.deinit(alloc),
+            .run_completed => |*payload| payload.deinit(alloc),
+            .turn_started => |*payload| payload.deinit(alloc),
+            .turn_completed => |*payload| payload.deinit(alloc),
+            .assistant_message_started => {},
+            .assistant_message_completed => |*payload| payload.deinit(alloc),
+            .reasoning_started => {},
+            .reasoning_completed => |*payload| payload.deinit(alloc),
+            .usage_recorded => |*payload| payload.deinit(alloc),
+            .retry_scheduled => |*payload| payload.deinit(alloc),
+            .notice => |*payload| payload.deinit(alloc),
             .recovery_checkpoint_set => |*payload| payload.deinit(alloc),
             .recovery_checkpoint_cleared => {},
             .state_replacement_chunk => |*payload| payload.deinit(alloc),
@@ -320,6 +553,7 @@ pub fn encodeFrame(alloc: Allocator, envelope: Envelope) ![]u8 {
     try out.writer.print(",\"seq\":{d},\"payload\":", .{envelope.seq});
     try writePayload(&out.writer, envelope.event);
     try out.writer.writeAll("}\n");
+    if (envelope.kind() == .run_started) {}
     if (out.written().len > event_frame_max_bytes) return error.EventFrameTooLarge;
     return try out.toOwnedSlice();
 }
@@ -368,7 +602,9 @@ pub fn decodeFrame(alloc: Allocator, line: []const u8) !Frame {
         "seq",
         "payload",
     }) |key| {
-        if (root.get(key) == null) return error.InvalidEventFrame;
+        if (root.get(key) == null) {
+            return error.InvalidEventFrame;
+        }
     }
     if (try requireU64(root, "schema_version") != 1) return error.UnsupportedEventSchema;
     const kind_raw = try requireString(root, "kind");
@@ -500,6 +736,7 @@ pub fn applyEventFrame(
     state: *session_codec.DurableSessionState,
     line: []const u8,
     start: ReductionStart,
+    fold: *ItemFold,
 ) !ReductionBoundary {
     if (start.next_seq == 0) {
         return error.InvalidReductionStart;
@@ -525,7 +762,7 @@ pub fn applyEventFrame(
                 return error.InvalidEventFrame;
             }
             var current: ?session_codec.DurableSessionState = state.*;
-            try applyDelta(alloc, &current, envelope);
+            try applyDelta(alloc, &current, envelope, fold);
             state.* = current.?;
         },
         .unknown => {},
@@ -571,6 +808,8 @@ pub fn reduceJsonlFrom(
     var validator = SequenceValidator{
         .next_seq = start.next_seq,
     };
+    var fold = ItemFold{};
+    defer fold.deinit(alloc);
     var byte_offset: u64 = 0;
     var through: ?ReductionBoundary = null;
 
@@ -630,7 +869,7 @@ pub fn reduceJsonlFrom(
         {
             return failReduction(error.InvalidReplacement);
         }
-        try applyDelta(alloc, &state, envelope);
+        try applyDelta(alloc, &state, envelope, &fold);
         through = reductionBoundary(envelope, byte_offset);
     }
 
@@ -1003,10 +1242,176 @@ const ReplacementStateReader = struct {
     }
 };
 
+const generation_usage = @import("generation_usage_provider.zig");
+
+const GenerationEntry = struct {
+    id: []u8,
+    model: []u8,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_write_tokens: u64,
+    reasoning_tokens: ?u64,
+    total_cost: ?f64,
+    billable_web_search_calls: u64,
+    first_seq: u64,
+
+    fn deinit(self: *GenerationEntry, alloc: Allocator) void {
+        alloc.free(self.id);
+        alloc.free(self.model);
+        self.* = undefined;
+    }
+};
+
+/// Fold-scoped accumulation for per-item lines, owned by the refold loop or
+/// the live session and never snapshotted. The pending turn's history
+/// skeleton is appended to state.history at turn_started, so a torn log
+/// still folds to a well-formed trailing entry; this struct only tracks which
+/// entry is open, the message started but not yet completed, the current
+/// step's reasoning ids, per-turn token counters, and the per-generation
+/// usage map that lets a late-settled cost replace its first line.
+pub const ItemFold = struct {
+    pending_turn_id: ?[]u8 = null,
+    pending_history_index: usize = 0,
+    open_message_id: ?[]u8 = null,
+    step_reasoning_ids: std.ArrayList([]u8) = .empty,
+    last_message_outcome: ?MessageOutcome = null,
+    generations: std.ArrayList(GenerationEntry) = .empty,
+
+    pub fn deinit(self: *ItemFold, alloc: Allocator) void {
+        self.closePending(alloc);
+        for (self.generations.items) |*entry| entry.deinit(alloc);
+        self.generations.deinit(alloc);
+        self.* = undefined;
+    }
+
+    fn closePending(self: *ItemFold, alloc: Allocator) void {
+        if (self.pending_turn_id) |id| alloc.free(id);
+        self.pending_turn_id = null;
+        if (self.open_message_id) |id| alloc.free(id);
+        self.open_message_id = null;
+        for (self.step_reasoning_ids.items) |id| alloc.free(id);
+        self.step_reasoning_ids.clearRetainingCapacity();
+        self.last_message_outcome = null;
+    }
+
+    fn requireOpenTurn(self: *const ItemFold, envelope: Envelope) !void {
+        const turn_id = envelope.turn_id orelse return error.InvalidEventFrame;
+        const pending = self.pending_turn_id orelse return error.InvalidEventFrame;
+        if (!std.mem.eql(u8, pending, turn_id)) return error.InvalidEventFrame;
+    }
+};
+
+/// Rebuilds the usage snapshot from the fold's per-generation map, mirroring
+/// the live ledger's math (fresh ledger, records applied in log order) so a
+/// refold reproduces the same aggregates. Internal ledger accounting the
+/// contract excludes (pending, publication backlog, incidents, durations)
+/// stays empty. Quadratic in the session's model-call count; folds run once
+/// per resume.
+fn rebuildUsageSnapshot(
+    alloc: Allocator,
+    current: *session_codec.DurableSessionState,
+    fold: *ItemFold,
+) !void {
+    var models: std.ArrayList(session_usage.ModelAggregate) = .empty;
+    errdefer {
+        for (models.items) |*model| model.deinit(alloc);
+        models.deinit(alloc);
+    }
+    var total_cost: ?f64 = 0;
+    var input_tokens: u64 = 0;
+    var output_tokens: u64 = 0;
+    var cache_read_tokens: u64 = 0;
+    var cache_write_tokens: u64 = 0;
+    var reasoning_tokens: ?u64 = 0;
+    var request_count: ?u64 = 0;
+    var billable_web_search_calls: u64 = 0;
+    for (fold.generations.items) |entry| {
+        const record = generation_usage.Record{
+            .id = entry.id,
+            .model = entry.model,
+            .total_cost = entry.total_cost,
+            .input_tokens = entry.input_tokens,
+            .output_tokens = entry.output_tokens,
+            .cache_read_tokens = entry.cache_read_tokens,
+            .cache_write_tokens = entry.cache_write_tokens,
+            .reasoning_tokens = entry.reasoning_tokens,
+            .billable_web_search_calls = entry.billable_web_search_calls,
+        };
+        const model_index = for (models.items, 0..) |model, index| {
+            if (std.mem.eql(u8, model.model, entry.model)) break index;
+        } else null;
+        if (model_index) |index| {
+            session_usage.addRecordToModel(&models.items[index], record, entry.first_seq) catch
+                return error.InvalidEventFrame;
+        } else {
+            var model = session_usage.ModelAggregate{
+                .model = try alloc.dupe(u8, entry.model),
+                .first_sequence = entry.first_seq,
+                .reasoning_tokens = 0,
+                .request_count = 0,
+            };
+            errdefer model.deinit(alloc);
+            session_usage.addRecordToModel(&model, record, entry.first_seq) catch
+                return error.InvalidEventFrame;
+            try models.append(alloc, model);
+        }
+        total_cost = session_usage.addOptionalCost(total_cost, entry.total_cost) catch
+            return error.InvalidEventFrame;
+        input_tokens = std.math.add(u64, input_tokens, entry.input_tokens) catch
+            return error.InvalidEventFrame;
+        output_tokens = std.math.add(u64, output_tokens, entry.output_tokens) catch
+            return error.InvalidEventFrame;
+        cache_read_tokens = std.math.add(u64, cache_read_tokens, entry.cache_read_tokens) catch
+            return error.InvalidEventFrame;
+        cache_write_tokens = std.math.add(u64, cache_write_tokens, entry.cache_write_tokens) catch
+            return error.InvalidEventFrame;
+        reasoning_tokens = session_usage.addOptionalCounter(reasoning_tokens, entry.reasoning_tokens) catch
+            return error.InvalidEventFrame;
+        request_count = if (request_count) |requests|
+            std.math.add(u64, requests, 1) catch return error.InvalidEventFrame
+        else
+            null;
+        billable_web_search_calls = std.math.add(
+            u64,
+            billable_web_search_calls,
+            entry.billable_web_search_calls,
+        ) catch return error.InvalidEventFrame;
+    }
+    var snapshot = session_usage.Snapshot{
+        .billing = .complete,
+        .api_duration_complete = true,
+        .wall_duration_complete = true,
+        .code_complete = true,
+        .next_sequence = @intCast(fold.generations.items.len + 1),
+        .settled_through_sequence = @intCast(fold.generations.items.len),
+        .api_duration_ms = 0,
+        .wall_duration_ms = 0,
+        .total_cost = total_cost,
+        .input_tokens = input_tokens,
+        .output_tokens = output_tokens,
+        .cache_read_tokens = cache_read_tokens,
+        .cache_write_tokens = cache_write_tokens,
+        .reasoning_tokens = reasoning_tokens,
+        .request_count = request_count,
+        .billable_web_search_calls = billable_web_search_calls,
+        .lines_added = 0,
+        .lines_removed = 0,
+        .models = try models.toOwnedSlice(alloc),
+        .pending = &.{},
+        .publication_backlog = &.{},
+        .incidents = &.{},
+    };
+    errdefer snapshot.deinit(alloc);
+    if (current.usage) |*old| old.deinit(alloc);
+    current.usage = snapshot;
+}
+
 fn applyDelta(
     alloc: Allocator,
     state: *?session_codec.DurableSessionState,
     envelope: Envelope,
+    fold: *ItemFold,
 ) !void {
     switch (envelope.event) {
         .session_started => |payload| {
@@ -1088,47 +1493,261 @@ fn applyDelta(
             current.workspace_root = copy;
             current.updated_at_ms = envelope.ts;
         },
-        .history_turn_committed => |payload| {
+        .run_started => {
             var current = &(state.* orelse return error.MissingSessionStarted);
-            const association = session.decideWorkIdAssociation(
-                payload.turn,
-                payload.work_id,
-            ) catch return error.InvalidEventFrame;
-            var turn = try session.dupeHistoryTurn(alloc, payload.turn);
-            errdefer session.freeHistoryTurn(alloc, turn);
-            if (association == .copy_event) {
-                session.copyWorkIdToTurn(alloc, &turn, payload.work_id.?) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    error.InvalidWorkId, error.ConflictingWorkId => return error.InvalidEventFrame,
-                };
-            }
-            const work_id = if (payload.work_id) |id| try alloc.dupe(u8, id) else null;
-            errdefer if (work_id) |id| alloc.free(id);
+            current.updated_at_ms = envelope.ts;
+        },
+        .run_completed => {
+            var current = &(state.* orelse return error.MissingSessionStarted);
+            current.updated_at_ms = envelope.ts;
+        },
+        .turn_started => |payload| {
+            var current = &(state.* orelse return error.MissingSessionStarted);
+            const turn_id = envelope.turn_id orelse return error.InvalidEventFrame;
+            // A new turn closes whatever was open: a torn log's unterminated
+            // skeleton already sits in history as the crash left it.
+            fold.closePending(alloc);
+            const user_turn = switch (payload.input) {
+                .user => |user| try session.dupeUserTurn(alloc, user),
+            };
+            errdefer session.freeUserTurn(alloc, user_turn);
+            const assistant_text = try alloc.dupe(u8, "");
+            errdefer alloc.free(assistant_text);
+            const owned_turn_id = try alloc.dupe(u8, turn_id);
+            errdefer alloc.free(owned_turn_id);
+            const turn_work_id = switch (payload.input) {
+                .user => |user| user.work_id,
+            };
+            const owned_work_id = if (turn_work_id) |id| try alloc.dupe(u8, id) else null;
+            errdefer if (owned_work_id) |id| alloc.free(id);
+            const skeleton: session.HistoryTurn = .{ .assistant = .{
+                .user = user_turn,
+                .assistant = assistant_text,
+            } };
             if (current.history.len == 0) {
                 current.history = try alloc.alloc(session.HistoryTurn, 1);
             } else {
                 current.history = try alloc.realloc(current.history, current.history.len + 1);
             }
-            current.history[current.history.len - 1] = turn;
-            current.conversation_language = payload.conversation_language;
-            current.last_input_tokens = payload.last_input_tokens;
-            current.last_output_tokens = payload.last_output_tokens;
-            if (work_id) |id| {
+            current.history[current.history.len - 1] = skeleton;
+            fold.pending_turn_id = owned_turn_id;
+            fold.pending_history_index = current.history.len - 1;
+            if (owned_work_id) |id| {
                 if (current.last_subagent_work_id) |old| alloc.free(old);
                 current.last_subagent_work_id = id;
             }
+            if (payload.language) |language| current.conversation_language = language;
+            current.updated_at_ms = envelope.ts;
+        },
+        .turn_completed => |payload| {
+            var current = &(state.* orelse return error.MissingSessionStarted);
+            try fold.requireOpenTurn(envelope);
+            if (fold.open_message_id != null) return error.InvalidEventFrame;
+            if (fold.pending_history_index >= current.history.len) return error.InvalidEventFrame;
+            const skeleton = &current.history[fold.pending_history_index];
+            const entry = switch (skeleton.*) {
+                .assistant => |*assistant| assistant,
+                else => return error.InvalidEventFrame,
+            };
+            // The transitional execution carrier lands here until tool_call_*
+            // lines rebuild it with #191.
+            if (payload.execution) |execution| {
+                const owned = try types.dupeExecutionMemory(alloc, execution);
+                errdefer types.freeExecutionMemory(alloc, owned);
+                types.freeExecutionMemory(alloc, entry.execution);
+                entry.execution = owned;
+            }
+            // A failed turn keeps its assistant shape when its messages ran
+            // clean (length limits, failure notices); only a failed or
+            // interrupted message converts it, matching the old commit.
+            const converts = payload.outcome == .interrupted or
+                (payload.outcome == .failed and fold.last_message_outcome != null and
+                    fold.last_message_outcome.? != .completed);
+            if (converts) {
+                // The transitional interrupted detail lands here until
+                // tool_call_* lines rebuild it with #191.
+                const owned_tool_call = if (payload.interrupted) |detail| detail: {
+                    if (detail.tool_call) |call| {
+                        break :detail try types.dupeToolCall(alloc, call);
+                    }
+                    break :detail null;
+                } else null;
+                errdefer if (owned_tool_call) |call| types.freeToolCall(alloc, call);
+                const owned_names = if (payload.interrupted) |detail|
+                    try types.dupeCompletedToolNames(alloc, detail.completed_tool_names)
+                else
+                    @as([][]u8, &.{});
+                errdefer types.freeCompletedToolNames(alloc, owned_names);
+                const owned_cancelled = if (payload.interrupted) |detail| detail: {
+                    if (detail.cancelled_command) |presentation| {
+                        break :detail try types.dupeCancelledCommandPresentation(alloc, presentation);
+                    }
+                    break :detail null;
+                } else null;
+                errdefer if (owned_cancelled) |presentation|
+                    types.freeCancelledCommandPresentation(alloc, presentation);
+                // Ownership moves field by field into the new variant; no
+                // fallible work remains, so no rollback is needed.
+                const user = entry.user;
+                const text = entry.assistant;
+                const assistant_item_id = entry.assistant_item_id;
+                const reasoning_item_ids = entry.reasoning_item_ids;
+                const execution = entry.execution;
+                entry.* = undefined;
+                const partial: ?[]u8 = if (text.len == 0) blk: {
+                    alloc.free(text);
+                    break :blk null;
+                } else text;
+                skeleton.* = .{ .interrupted = .{
+                    .user = user,
+                    .assistant = partial,
+                    .assistant_item_id = assistant_item_id,
+                    .reasoning_item_ids = reasoning_item_ids,
+                    .tool_call = owned_tool_call,
+                    .completed_tool_names = owned_names,
+                    .execution = execution,
+                    .cancelled_command = owned_cancelled,
+                    .terminal_reason = if (payload.outcome == .failed) .failed else .cancelled,
+                } };
+            }
             // A session owns at most one active model turn. Clearing its
-            // checkpoint in the same reduction as the history commit closes
+            // checkpoint in the same reduction as the turn completion closes
             // the crash window between durable completion and a later clear.
             if (current.recovery_checkpoint) |*checkpoint| checkpoint.deinit(alloc);
             current.recovery_checkpoint = null;
+            fold.closePending(alloc);
             current.updated_at_ms = envelope.ts;
         },
-        .usage_checkpointed => |payload| {
+        .assistant_message_started => {
+            _ = &(state.* orelse return error.MissingSessionStarted);
+            const item_id = envelope.item_id orelse return error.InvalidEventFrame;
+            try fold.requireOpenTurn(envelope);
+            // Started lines are idempotent: the stream emits one as work
+            // happens and the terminal repeats it, so a repeat of the open
+            // id is a no-op while a different id means overlap.
+            if (fold.open_message_id) |open| {
+                if (!std.mem.eql(u8, open, item_id)) return error.InvalidEventFrame;
+            } else {
+                fold.open_message_id = try alloc.dupe(u8, item_id);
+            }
+        },
+        .assistant_message_completed => |payload| {
             var current = &(state.* orelse return error.MissingSessionStarted);
-            const usage = try session_usage.dupeSnapshotOwned(alloc, payload.usage);
-            if (current.usage) |*old| old.deinit(alloc);
-            current.usage = usage;
+            const item_id = envelope.item_id orelse return error.InvalidEventFrame;
+            try fold.requireOpenTurn(envelope);
+            const open = fold.open_message_id orelse return error.InvalidEventFrame;
+            if (!std.mem.eql(u8, open, item_id)) return error.InvalidEventFrame;
+            if (fold.pending_history_index >= current.history.len) return error.InvalidEventFrame;
+            const skeleton = &current.history[fold.pending_history_index];
+            const entry = switch (skeleton.*) {
+                .assistant => |*assistant| assistant,
+                else => return error.InvalidEventFrame,
+            };
+            // Last completed message wins, matching the old commit which
+            // persisted only the turn's final text.
+            const owned_text = try alloc.dupe(u8, payload.text);
+            errdefer alloc.free(owned_text);
+            const owned_item_id = try alloc.dupe(u8, item_id);
+            errdefer alloc.free(owned_item_id);
+            const owned_reasoning = try fold.step_reasoning_ids.toOwnedSlice(alloc);
+            errdefer {
+                for (owned_reasoning) |id| alloc.free(id);
+                alloc.free(owned_reasoning);
+            }
+            alloc.free(entry.assistant);
+            entry.assistant = owned_text;
+            if (entry.assistant_item_id) |old| alloc.free(old);
+            entry.assistant_item_id = owned_item_id;
+            types.freeItemIdSlice(alloc, entry.reasoning_item_ids);
+            entry.reasoning_item_ids = owned_reasoning;
+            alloc.free(fold.open_message_id.?);
+            fold.open_message_id = null;
+            fold.last_message_outcome = payload.outcome;
+            current.updated_at_ms = envelope.ts;
+        },
+        .reasoning_started => {
+            _ = &(state.* orelse return error.MissingSessionStarted);
+            _ = envelope.item_id orelse return error.InvalidEventFrame;
+            try fold.requireOpenTurn(envelope);
+        },
+        .reasoning_completed => |payload| {
+            _ = payload;
+            var current = &(state.* orelse return error.MissingSessionStarted);
+            const item_id = envelope.item_id orelse return error.InvalidEventFrame;
+            try fold.requireOpenTurn(envelope);
+            // Reasoning text is retained durably in the log for #298's
+            // exact-match replay; the projected turn keeps only the block
+            // ids, which land on the turn with its message. A retried block
+            // resumes under its id, so dedupe repeats.
+            const known = for (fold.step_reasoning_ids.items) |known| {
+                if (std.mem.eql(u8, known, item_id)) break true;
+            } else false;
+            if (!known) {
+                const owned = try alloc.dupe(u8, item_id);
+                errdefer alloc.free(owned);
+                try fold.step_reasoning_ids.append(alloc, owned);
+            }
+            current.updated_at_ms = envelope.ts;
+        },
+        .usage_recorded => |payload| {
+            var current = &(state.* orelse return error.MissingSessionStarted);
+            const existing = for (fold.generations.items) |*entry| {
+                if (std.mem.eql(u8, entry.id, payload.generation_id)) break entry;
+            } else null;
+            if (existing) |entry| {
+                // A late-settled cost replaces its first line.
+                if (!std.mem.eql(u8, entry.model, payload.model)) {
+                    const owned_model = try alloc.dupe(u8, payload.model);
+                    errdefer alloc.free(owned_model);
+                    alloc.free(entry.model);
+                    entry.model = owned_model;
+                }
+                entry.input_tokens = payload.input_tokens;
+                entry.output_tokens = payload.output_tokens;
+                entry.cache_read_tokens = payload.cache_read_tokens;
+                entry.cache_write_tokens = payload.cache_write_tokens;
+                entry.reasoning_tokens = payload.reasoning_tokens;
+                entry.total_cost = payload.total_cost;
+                entry.billable_web_search_calls = payload.billable_web_search_calls;
+            } else {
+                const owned_id = try alloc.dupe(u8, payload.generation_id);
+                errdefer alloc.free(owned_id);
+                const owned_model = try alloc.dupe(u8, payload.model);
+                errdefer alloc.free(owned_model);
+                // Generation order, not log position: the ledger's own
+                // counters sit outside the contract, so the fold numbers
+                // generations in first-seen order like a fresh ledger.
+                const generation_seq: u64 = @intCast(fold.generations.items.len + 1);
+                try fold.generations.append(alloc, .{
+                    .id = owned_id,
+                    .model = owned_model,
+                    .input_tokens = payload.input_tokens,
+                    .output_tokens = payload.output_tokens,
+                    .cache_read_tokens = payload.cache_read_tokens,
+                    .cache_write_tokens = payload.cache_write_tokens,
+                    .reasoning_tokens = payload.reasoning_tokens,
+                    .total_cost = payload.total_cost,
+                    .billable_web_search_calls = payload.billable_web_search_calls,
+                    .first_seq = generation_seq,
+                });
+            }
+            try rebuildUsageSnapshot(alloc, current, fold);
+            // Last-response counters track the latest call in the open turn,
+            // overwriting like the old per-completion report: gateway input
+            // tokens bill full prompt occupancy, not a delta, so summing
+            // would over-count. Usage outside a turn leaves them alone.
+            if (fold.pending_turn_id != null) {
+                current.last_input_tokens = payload.input_tokens;
+                current.last_output_tokens = payload.output_tokens;
+            }
+            current.updated_at_ms = envelope.ts;
+        },
+        .retry_scheduled => {
+            var current = &(state.* orelse return error.MissingSessionStarted);
+            current.updated_at_ms = envelope.ts;
+        },
+        .notice => {
+            var current = &(state.* orelse return error.MissingSessionStarted);
             current.updated_at_ms = envelope.ts;
         },
         .recovery_checkpoint_set => |payload| {
@@ -1208,11 +1827,70 @@ fn validateEnvelope(envelope: Envelope) !void {
         .permission_state_changed => |payload| {
             try session_permission_state.validate(payload.permission_state);
         },
-        .history_turn_committed => |payload| _ = session.decideWorkIdAssociation(
-            payload.turn,
-            payload.work_id,
-        ) catch return error.InvalidEventFrame,
-        .usage_checkpointed => |payload| try session_usage.validateSnapshot(payload.usage),
+        .run_started => {
+            if (envelope.turn_id != null or envelope.item_id != null) {
+                return error.InvalidEventFrame;
+            }
+        },
+        .run_completed => {
+            if (envelope.turn_id != null or envelope.item_id != null) {
+                return error.InvalidEventFrame;
+            }
+        },
+        .turn_started => |payload| {
+            if (envelope.turn_id == null or envelope.item_id != null) {
+                return error.InvalidEventFrame;
+            }
+            switch (payload.input) {
+                .user => |user| if (user.work_id) |id| session.validateWorkId(id) catch
+                    return error.InvalidEventFrame,
+            }
+        },
+        .turn_completed => |payload| {
+            if (envelope.turn_id == null or envelope.item_id != null) {
+                return error.InvalidEventFrame;
+            }
+            if (payload.outcome == .completed and payload.@"error" != null) {
+                return error.InvalidEventFrame;
+            }
+            // A cancelled presentation closes an interrupted turn, never a
+            // failed one: failed turns keep their assistant shape.
+            if (payload.interrupted) |detail| {
+                if (payload.outcome != .interrupted) return error.InvalidEventFrame;
+                if (detail.cancelled_command != null and detail.tool_call == null) {
+                    return error.InvalidEventFrame;
+                }
+            }
+        },
+        .assistant_message_started => {
+            if (envelope.turn_id == null or envelope.item_id == null) {
+                return error.InvalidEventFrame;
+            }
+        },
+        .assistant_message_completed => |payload| {
+            if (envelope.turn_id == null or envelope.item_id == null) {
+                return error.InvalidEventFrame;
+            }
+            // A failed model call carries its cause and attempt number.
+            if (payload.outcome == .failed and
+                (payload.cause == null or payload.attempt == null))
+            {
+                return error.InvalidEventFrame;
+            }
+        },
+        .reasoning_started => {
+            if (envelope.turn_id == null or envelope.item_id == null) {
+                return error.InvalidEventFrame;
+            }
+        },
+        .reasoning_completed => {
+            if (envelope.turn_id == null or envelope.item_id == null) {
+                return error.InvalidEventFrame;
+            }
+        },
+        .usage_recorded => {},
+        .retry_scheduled => {},
+        .notice => {},
         .recovery_checkpoint_set => |payload| {
             const state = session_codec.DurableSessionState{
                 .id = @constCast("validation"),
@@ -1313,24 +1991,123 @@ fn writePayload(writer: *std.Io.Writer, event: Event) !void {
             try session_codec.writePermissionState(writer, payload.permission_state);
             try writer.writeByte('}');
         },
-        .history_turn_committed => |payload| {
-            try writer.writeAll("{\"conversation_language\":");
-            try writeJsonString(writer, payload.conversation_language.view());
-            try writer.writeAll(",\"last_input_tokens\":");
-            try session_codec.writeOptionalU64(writer, payload.last_input_tokens);
-            try writer.writeAll(",\"last_output_tokens\":");
-            try session_codec.writeOptionalU64(writer, payload.last_output_tokens);
-            try writer.writeAll(",\"turn\":");
-            try session_codec.writeHistoryTurn(writer, payload.turn);
-            if (payload.work_id) |id| {
-                try writer.writeAll(",\"work_id\":");
-                try writeJsonString(writer, id);
+        .run_started => |payload| {
+            try writer.writeAll("{\"run_id\":");
+            try writeJsonString(writer, payload.run_id);
+            try writer.writeAll(",\"fiber_version\":");
+            try writeJsonString(writer, payload.fiber_version);
+            try writer.print(",\"schema_version\":{d},\"mode\":\"", .{payload.schema_version});
+            try writer.writeAll(@tagName(payload.mode));
+            try writer.writeAll("\"}");
+        },
+        .run_completed => |payload| {
+            try writer.writeAll("{\"run_id\":");
+            try writeJsonString(writer, payload.run_id);
+            try writer.print(",\"exit_code\":{d}", .{payload.exit_code});
+            if (payload.final_text) |text| {
+                try writer.writeAll(",\"final_text\":");
+                try writeJsonString(writer, text);
+            }
+            if (payload.model) |model| {
+                try writer.writeAll(",\"model\":");
+                try writeJsonString(writer, model);
+            }
+            if (payload.@"error") |err| {
+                try writer.writeAll(",\"error\":");
+                try writeEventError(writer, err);
             }
             try writer.writeByte('}');
         },
-        .usage_checkpointed => |payload| {
-            try writer.writeAll("{\"usage\":");
-            try session_usage.writeSnapshot(writer, payload.usage);
+        .turn_started => |payload| {
+            try writer.writeAll("{\"input\":{\"user\":");
+            switch (payload.input) {
+                .user => |user| try session_codec.writeUserTurn(writer, user),
+            }
+            try writer.writeByte('}');
+            if (payload.language) |language| {
+                try writer.writeAll(",\"language\":");
+                try writeJsonString(writer, language.view());
+            }
+            try writer.writeByte('}');
+        },
+        .turn_completed => |payload| {
+            try writer.writeAll("{\"outcome\":\"");
+            try writer.writeAll(@tagName(payload.outcome));
+            try writer.writeByte('"');
+            if (payload.@"error") |err| {
+                try writer.writeAll(",\"error\":");
+                try writeEventError(writer, err);
+            }
+            if (payload.execution) |execution| {
+                try writer.writeAll(",\"execution\":");
+                try session_codec.writeExecutionMemory(writer, execution);
+            }
+            if (payload.interrupted) |detail| {
+                try writer.writeAll(",\"interrupted\":");
+                try writeInterruptedDetail(writer, detail);
+            }
+            try writer.writeByte('}');
+        },
+        .assistant_message_started => {
+            try writer.writeAll("{}");
+        },
+        .assistant_message_completed => |payload| {
+            try writer.writeAll("{\"text\":");
+            try writeJsonString(writer, payload.text);
+            try writer.writeAll(",\"outcome\":\"");
+            try writer.writeAll(@tagName(payload.outcome));
+            try writer.writeByte('"');
+            if (payload.cause) |cause| {
+                try writer.writeAll(",\"cause\":");
+                try writeJsonString(writer, cause);
+            }
+            if (payload.attempt) |attempt| {
+                try writer.print(",\"attempt\":{d}", .{attempt});
+            }
+            try writer.writeByte('}');
+        },
+        .reasoning_started => {
+            try writer.writeAll("{}");
+        },
+        .reasoning_completed => |payload| {
+            try writer.writeAll("{\"text\":");
+            try writeJsonString(writer, payload.text);
+            try writer.writeByte('}');
+        },
+        .usage_recorded => |payload| {
+            try writer.writeAll("{\"generation_id\":");
+            try writeJsonString(writer, payload.generation_id);
+            try writer.writeAll(",\"model\":");
+            try writeJsonString(writer, payload.model);
+            try writer.print(",\"input_tokens\":{d},\"output_tokens\":{d},\"cache_read_tokens\":{d},\"cache_write_tokens\":{d},\"reasoning_tokens\":", .{
+                payload.input_tokens,
+                payload.output_tokens,
+                payload.cache_read_tokens,
+                payload.cache_write_tokens,
+            });
+            if (payload.reasoning_tokens) |tokens| {
+                try writer.print("{d}", .{tokens});
+            } else {
+                try writer.writeAll("null");
+            }
+            try writer.writeAll(",\"total_cost\":");
+            if (payload.total_cost) |cost| {
+                try writer.print("{d}", .{cost});
+            } else {
+                try writer.writeAll("null");
+            }
+            try writer.print(",\"billable_web_search_calls\":{d}}}", .{payload.billable_web_search_calls});
+        },
+        .retry_scheduled => |payload| {
+            try writer.writeAll("{\"cause\":");
+            try writeJsonString(writer, payload.cause);
+            try writer.print(",\"attempt\":{d},\"delay_ms\":{d}}}", .{ payload.attempt, payload.delay_ms });
+        },
+        .notice => |payload| {
+            try writer.writeAll("{\"code\":");
+            try writeJsonString(writer, payload.code);
+            try writer.writeAll(",\"message\":");
+            try writeJsonString(writer, payload.message);
             try writer.writeByte('}');
         },
         .recovery_checkpoint_set => |payload| {
@@ -1478,56 +2255,196 @@ fn parsePayload(alloc: Allocator, kind: Kind, value: std.json.Value) !Event {
                 .permission_state = permission_state,
             } };
         },
-        .history_turn_committed => blk: {
-            const source = try requireObject(value);
-            // Tolerance reader: pre-rename schema-1 events named the
-            // last-response counters total_*; map them onto last_*.
-            const legacy = source.get("total_input_tokens") != null;
-            const input_key: []const u8 = if (legacy) "total_input_tokens" else "last_input_tokens";
-            const output_key: []const u8 = if (legacy) "total_output_tokens" else "last_output_tokens";
-            const object = if (source.get("work_id") != null)
-                try exactObject(value, &.{
-                    "conversation_language",
-                    input_key,
-                    output_key,
-                    "turn",
-                    "work_id",
-                })
-            else
-                try exactObject(value, &.{
-                    "conversation_language",
-                    input_key,
-                    output_key,
-                    "turn",
-                });
-            const turn = try session_codec.parseHistoryTurn(
-                alloc,
-                object.get("turn") orelse return error.InvalidEventFrame,
-            );
-            errdefer session.freeHistoryTurn(alloc, turn);
-            const work_id = if (object.get("work_id")) |_| try dupeString(alloc, object, "work_id") else null;
-            errdefer if (work_id) |id| alloc.free(id);
-            break :blk .{ .history_turn_committed = .{
-                .conversation_language = parseLanguage(
-                    try requireString(object, "conversation_language"),
-                ) catch return error.InvalidEventFrame,
-                .last_input_tokens = try requireOptionalU64(object, input_key),
-                .last_output_tokens = try requireOptionalU64(object, output_key),
-                .work_id = work_id,
-                .turn = turn,
+        .run_started => blk: {
+            const object = try exactObject(value, &.{ "run_id", "fiber_version", "schema_version", "mode" });
+            const run_id = try dupeString(alloc, object, "run_id");
+            errdefer alloc.free(run_id);
+            if (run_id.len == 0) return error.InvalidEventFrame;
+            const fiber_version = try dupeString(alloc, object, "fiber_version");
+            errdefer alloc.free(fiber_version);
+            if (fiber_version.len == 0) return error.InvalidEventFrame;
+            if (try requireU64(object, "schema_version") != 1) return error.InvalidEventFrame;
+            const mode = std.meta.stringToEnum(RunMode, try requireString(object, "mode")) orelse
+                return error.InvalidEventFrame;
+            break :blk .{ .run_started = .{
+                .run_id = run_id,
+                .fiber_version = fiber_version,
+                .mode = mode,
             } };
         },
-        .usage_checkpointed => blk: {
-            const object = try exactObject(value, &.{"usage"});
-            var usage = session_usage.parseSnapshotValue(
+        .run_completed => blk: {
+            const object = try requireObject(value);
+            if (object.count() < 2 or object.count() > 5) return error.InvalidEventFrame;
+            try rejectUnknownKeys(object, &.{ "run_id", "exit_code", "final_text", "model", "error" });
+            const run_id = try dupeString(alloc, object, "run_id");
+            errdefer alloc.free(run_id);
+            if (run_id.len == 0) return error.InvalidEventFrame;
+            const exit_code = try requireI64(object, "exit_code");
+            const final_text = if (object.get("final_text")) |_| try dupeString(alloc, object, "final_text") else null;
+            errdefer if (final_text) |text| alloc.free(text);
+            const model = if (object.get("model")) |_| try dupeString(alloc, object, "model") else null;
+            errdefer if (model) |name| alloc.free(name);
+            var run_error: ?EventError = if (object.get("error")) |raw|
+                try parseEventError(alloc, raw)
+            else
+                null;
+            errdefer if (run_error) |*err| err.deinit(alloc);
+            break :blk .{ .run_completed = .{
+                .run_id = run_id,
+                .exit_code = exit_code,
+                .final_text = final_text,
+                .model = model,
+                .@"error" = run_error,
+            } };
+        },
+        .turn_started => blk: {
+            const object = try requireObject(value);
+            if (object.count() < 1 or object.count() > 2) return error.InvalidEventFrame;
+            try rejectUnknownKeys(object, &.{ "input", "language" });
+            var input = try parseTurnInput(
                 alloc,
-                object.get("usage") orelse return error.InvalidEventFrame,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => return error.InvalidEventFrame,
-            };
-            errdefer usage.deinit(alloc);
-            break :blk .{ .usage_checkpointed = .{ .usage = usage } };
+                object.get("input") orelse return error.InvalidEventFrame,
+            );
+            errdefer input.deinit(alloc);
+            const language = if (object.get("language")) |_| language_blk: {
+                break :language_blk parseLanguage(
+                    try requireString(object, "language"),
+                ) catch return error.InvalidEventFrame;
+            } else null;
+            break :blk .{ .turn_started = .{ .input = input, .language = language } };
+        },
+        .turn_completed => blk: {
+            const object = try requireObject(value);
+            if (object.count() < 1 or object.count() > 4) return error.InvalidEventFrame;
+            try rejectUnknownKeys(object, &.{ "outcome", "error", "execution", "interrupted" });
+            const outcome = std.meta.stringToEnum(
+                TurnOutcome,
+                try requireString(object, "outcome"),
+            ) orelse return error.InvalidEventFrame;
+            var turn_error: ?EventError = if (object.get("error")) |raw|
+                try parseEventError(alloc, raw)
+            else
+                null;
+            errdefer if (turn_error) |*err| err.deinit(alloc);
+            var execution: ?session.ExecutionMemory = if (object.get("execution")) |raw|
+                session_codec.parseExecutionMemory(alloc, raw) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return error.InvalidEventFrame,
+                }
+            else
+                null;
+            errdefer if (execution) |*memory| session.freeExecutionMemory(alloc, memory.*);
+            var interrupted: ?InterruptedDetail = if (object.get("interrupted")) |raw|
+                try parseInterruptedDetail(alloc, raw)
+            else
+                null;
+            errdefer if (interrupted) |*detail| detail.deinit(alloc);
+            break :blk .{ .turn_completed = .{
+                .outcome = outcome,
+                .@"error" = turn_error,
+                .execution = execution,
+                .interrupted = interrupted,
+            } };
+        },
+        .assistant_message_started => blk: {
+            _ = try exactObject(value, &.{});
+            break :blk .{ .assistant_message_started = .{} };
+        },
+        .assistant_message_completed => blk: {
+            const object = try requireObject(value);
+            if (object.count() < 1 or object.count() > 4) return error.InvalidEventFrame;
+            try rejectUnknownKeys(object, &.{ "text", "outcome", "cause", "attempt" });
+            const text = try dupeString(alloc, object, "text");
+            errdefer alloc.free(text);
+            const outcome = if (object.get("outcome")) |_| outcome_blk: {
+                break :outcome_blk std.meta.stringToEnum(
+                    MessageOutcome,
+                    try requireString(object, "outcome"),
+                ) orelse return error.InvalidEventFrame;
+            } else .completed;
+            const cause = if (object.get("cause")) |_| try dupeString(alloc, object, "cause") else null;
+            errdefer if (cause) |owned| alloc.free(owned);
+            const attempt = if (object.get("attempt")) |_| try requireU64(object, "attempt") else null;
+            if (outcome == .failed and (cause == null or attempt == null)) {
+                return error.InvalidEventFrame;
+            }
+            break :blk .{ .assistant_message_completed = .{
+                .text = text,
+                .outcome = outcome,
+                .cause = cause,
+                .attempt = attempt,
+            } };
+        },
+        .reasoning_started => blk: {
+            _ = try exactObject(value, &.{});
+            break :blk .{ .reasoning_started = .{} };
+        },
+        .reasoning_completed => blk: {
+            const object = try exactObject(value, &.{"text"});
+            break :blk .{ .reasoning_completed = .{
+                .text = try dupeString(alloc, object, "text"),
+            } };
+        },
+        .usage_recorded => blk: {
+            const object = try exactObject(value, &.{
+                "generation_id",
+                "model",
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_write_tokens",
+                "reasoning_tokens",
+                "total_cost",
+                "billable_web_search_calls",
+            });
+            const generation_id = try dupeString(alloc, object, "generation_id");
+            errdefer alloc.free(generation_id);
+            if (generation_id.len == 0) return error.InvalidEventFrame;
+            const model = try dupeString(alloc, object, "model");
+            errdefer alloc.free(model);
+            if (model.len == 0) return error.InvalidEventFrame;
+            const input_tokens = try requireU64(object, "input_tokens");
+            const output_tokens = try requireU64(object, "output_tokens");
+            const cache_read_tokens = try requireU64(object, "cache_read_tokens");
+            const cache_write_tokens = try requireU64(object, "cache_write_tokens");
+            // Mirror the snapshot rules so a folded ledger always validates.
+            if (cache_read_tokens > input_tokens or cache_write_tokens > input_tokens) {
+                return error.InvalidEventFrame;
+            }
+            const reasoning_tokens = try requireOptionalU64(object, "reasoning_tokens");
+            if (reasoning_tokens) |tokens| {
+                if (tokens > output_tokens) return error.InvalidEventFrame;
+            }
+            const total_cost = try requireOptionalCost(object, "total_cost");
+            break :blk .{ .usage_recorded = .{
+                .generation_id = generation_id,
+                .model = model,
+                .input_tokens = input_tokens,
+                .output_tokens = output_tokens,
+                .cache_read_tokens = cache_read_tokens,
+                .cache_write_tokens = cache_write_tokens,
+                .reasoning_tokens = reasoning_tokens,
+                .total_cost = total_cost,
+                .billable_web_search_calls = try requireU64(object, "billable_web_search_calls"),
+            } };
+        },
+        .retry_scheduled => blk: {
+            const object = try exactObject(value, &.{ "cause", "attempt", "delay_ms" });
+            break :blk .{ .retry_scheduled = .{
+                .cause = try dupeString(alloc, object, "cause"),
+                .attempt = try requireU64(object, "attempt"),
+                .delay_ms = try requireU64(object, "delay_ms"),
+            } };
+        },
+        .notice => blk: {
+            const object = try exactObject(value, &.{ "code", "message" });
+            const code = try dupeString(alloc, object, "code");
+            errdefer alloc.free(code);
+            if (code.len == 0) return error.InvalidEventFrame;
+            break :blk .{ .notice = .{
+                .code = code,
+                .message = try dupeString(alloc, object, "message"),
+            } };
         },
         .recovery_checkpoint_set => blk: {
             const object = try exactObject(value, &.{"checkpoint"});
@@ -1739,6 +2656,50 @@ fn requireU64(object: std.json.ObjectMap, key: []const u8) !u64 {
     };
 }
 
+fn requireOptionalCost(object: std.json.ObjectMap, key: []const u8) !?f64 {
+    const value = object.get(key) orelse return error.InvalidEventFrame;
+    return switch (value) {
+        .null => null,
+        .integer => |number| cost: {
+            const cost: f64 = @floatFromInt(number);
+            if (!std.math.isFinite(cost) or cost < 0) return error.InvalidEventFrame;
+            break :cost cost;
+        },
+        .float => |number| if (std.math.isFinite(number) and number >= 0)
+            number
+        else
+            error.InvalidEventFrame,
+        .number_string => |raw| cost: {
+            const cost = std.fmt.parseFloat(f64, raw) catch return error.InvalidEventFrame;
+            if (!std.math.isFinite(cost) or cost < 0) return error.InvalidEventFrame;
+            break :cost cost;
+        },
+        else => error.InvalidEventFrame,
+    };
+}
+
+fn parseEventError(alloc: Allocator, value: std.json.Value) !EventError {
+    const object = try exactObject(value, &.{ "code", "message" });
+    const code = try dupeString(alloc, object, "code");
+    errdefer alloc.free(code);
+    if (code.len == 0) return error.InvalidEventFrame;
+    const message = try dupeString(alloc, object, "message");
+    errdefer alloc.free(message);
+    return .{ .code = code, .message = message };
+}
+
+fn parseTurnInput(alloc: Allocator, value: std.json.Value) !TurnInput {
+    const object = try exactObject(value, &.{"user"});
+    const user = session_codec.parseUserTurn(
+        alloc,
+        object.get("user") orelse return error.InvalidEventFrame,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidEventFrame,
+    };
+    return .{ .user = user };
+}
+
 fn parseLanguage(raw: []const u8) !session.ConversationLanguage {
     return session_codec.parseConversationLanguage(raw);
 }
@@ -1774,20 +2735,102 @@ fn writeJsonString(writer: *std.Io.Writer, bytes: []const u8) !void {
     try std.json.Stringify.value(bytes, .{}, writer);
 }
 
+fn writeEventError(writer: *std.Io.Writer, err: EventError) !void {
+    try writer.writeAll("{\"code\":");
+    try writeJsonString(writer, err.code);
+    try writer.writeAll(",\"message\":");
+    try writeJsonString(writer, err.message);
+    try writer.writeByte('}');
+}
+
+fn writeInterruptedDetail(writer: *std.Io.Writer, detail: InterruptedDetail) !void {
+    try writer.writeAll("{\"tool_call\":");
+    if (detail.tool_call) |tool_call| {
+        try session_codec.writeToolCall(writer, tool_call);
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"completed_tool_names\":[");
+    for (detail.completed_tool_names, 0..) |name, index| {
+        if (index > 0) try writer.writeByte(',');
+        try session_codec.writeDurableBytes(writer, name);
+    }
+    try writer.writeByte(']');
+    if (detail.cancelled_command) |presentation| {
+        try writer.writeAll(",\"cancelled_command\":");
+        try session_codec.writeCancelledCommandPresentation(writer, presentation);
+    }
+    try writer.writeByte('}');
+}
+
+fn parseInterruptedDetail(alloc: Allocator, value: std.json.Value) !InterruptedDetail {
+    const object = try requireObject(value);
+    if (object.count() < 2 or object.count() > 3) return error.InvalidEventFrame;
+    try rejectUnknownKeys(object, &.{ "tool_call", "completed_tool_names", "cancelled_command" });
+    const tool_call = session_codec.parseOptionalToolCall(
+        alloc,
+        object.get("tool_call") orelse return error.InvalidEventFrame,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidEventFrame,
+    };
+    errdefer if (tool_call) |call| types.freeToolCall(alloc, call);
+    const names_value = object.get("completed_tool_names") orelse return error.InvalidEventFrame;
+    if (names_value != .array) return error.InvalidEventFrame;
+    const completed_tool_names = session_codec.parseDurableBytesArray(alloc, names_value) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidEventFrame,
+    };
+    errdefer types.freeCompletedToolNames(alloc, completed_tool_names);
+    const cancelled_command = if (object.get("cancelled_command")) |raw|
+        session_codec.parseCancelledCommandPresentation(alloc, raw) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidEventFrame,
+        }
+    else
+        null;
+    errdefer if (cancelled_command) |presentation|
+        types.freeCancelledCommandPresentation(alloc, presentation);
+    // Mirror the history-turn rule: a cancelled presentation rides a
+    // captured command call, never a bare turn.
+    if (cancelled_command != null and
+        (tool_call == null or
+            !(try session_codec.isCapturedCommandToolCall(alloc, tool_call.?))))
+    {
+        return error.InvalidEventFrame;
+    }
+    return .{
+        .tool_call = tool_call,
+        .completed_tool_names = completed_tool_names,
+        .cancelled_command = cancelled_command,
+    };
+}
+
 fn sha256(bytes: []const u8) Digest {
     var hash: Digest = undefined;
     Sha256.hash(bytes, &hash, .{});
     return hash;
 }
 
-test "session event kind contract contains exactly eleven stable variants" {
-    try std.testing.expectEqual(@as(usize, 11), @typeInfo(Kind).@"enum".fields.len);
+test "session event kind contract contains exactly twenty stable variants" {
+    try std.testing.expectEqual(@as(usize, 20), @typeInfo(Kind).@"enum".fields.len);
     try std.testing.expectEqualStrings("session_started", @tagName(Kind.session_started));
     try std.testing.expectEqualStrings("preferences_changed", @tagName(Kind.preferences_changed));
     try std.testing.expectEqualStrings("permission_state_changed", @tagName(Kind.permission_state_changed));
     try std.testing.expectEqualStrings("workspace_rebound", @tagName(Kind.workspace_rebound));
-    try std.testing.expectEqualStrings("history_turn_committed", @tagName(Kind.history_turn_committed));
-    try std.testing.expectEqualStrings("usage_checkpointed", @tagName(Kind.usage_checkpointed));
+    try std.testing.expectEqualStrings("run_started", @tagName(Kind.run_started));
+    try std.testing.expectEqualStrings("run_completed", @tagName(Kind.run_completed));
+    try std.testing.expectEqualStrings("turn_started", @tagName(Kind.turn_started));
+    try std.testing.expectEqualStrings("turn_completed", @tagName(Kind.turn_completed));
+    try std.testing.expectEqualStrings("assistant_message_started", @tagName(Kind.assistant_message_started));
+    try std.testing.expectEqualStrings("assistant_message_completed", @tagName(Kind.assistant_message_completed));
+    try std.testing.expectEqualStrings("reasoning_started", @tagName(Kind.reasoning_started));
+    try std.testing.expectEqualStrings("reasoning_completed", @tagName(Kind.reasoning_completed));
+    try std.testing.expectEqualStrings("usage_recorded", @tagName(Kind.usage_recorded));
+    try std.testing.expectEqualStrings("retry_scheduled", @tagName(Kind.retry_scheduled));
+    try std.testing.expectEqualStrings("notice", @tagName(Kind.notice));
+    try std.testing.expectEqualStrings("recovery_checkpoint_set", @tagName(Kind.recovery_checkpoint_set));
+    try std.testing.expectEqualStrings("recovery_checkpoint_cleared", @tagName(Kind.recovery_checkpoint_cleared));
     try std.testing.expectEqualStrings("state_replacement_started", @tagName(Kind.state_replacement_started));
     try std.testing.expectEqualStrings("state_replacement_chunk", @tagName(Kind.state_replacement_chunk));
     try std.testing.expectEqualStrings("state_replacement_committed", @tagName(Kind.state_replacement_committed));
@@ -1838,7 +2881,7 @@ test "event frame codec is deterministic and validates contiguous sequence" {
     try std.testing.expectError(error.NonContiguousSequence, validator.validate(gap.seq));
 }
 
-test "history_turn_committed event decode repairs duplicate-key tool arguments" {
+test "turn_completed execution decode repairs duplicate-key tool arguments" {
     const duplicate_arguments = "{\"depth\":1,\"depth\":2}";
     var calls = [_]session.ToolCall{.{
         .id = "call_bad",
@@ -1864,15 +2907,10 @@ test "history_turn_committed event decode repairs duplicate-key tool arguments" 
         .session_id = @constCast("session-1"),
         .seq = 1,
         .ts = 50,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("en"),
-            .last_input_tokens = 1,
-            .last_output_tokens = 2,
-            .turn = .{ .assistant = .{
-                .user = .{ .text = @constCast("inspect") },
-                .assistant = @constCast("failed"),
-                .execution = .{ .tool_steps = steps[0..] },
-            } },
+        .turn_id = @constCast("7"),
+        .event = .{ .turn_completed = .{
+            .outcome = .completed,
+            .execution = .{ .tool_steps = steps[0..] },
         } },
     };
 
@@ -1882,7 +2920,7 @@ test "history_turn_committed event decode repairs duplicate-key tool arguments" 
     defer decoded_frame_6.deinit(std.testing.allocator);
     const decoded = &decoded_frame_6.known;
 
-    const step = decoded.event.history_turn_committed.turn.assistant.execution.tool_steps[0];
+    const step = decoded.event.turn_completed.execution.?.tool_steps[0];
     try std.testing.expectEqualStrings("{}", step.tool_calls[0].arguments_json);
     try std.testing.expectEqual(types.ToolArgumentIntegrity.valid, step.tool_calls[0].argument_integrity);
     try std.testing.expectEqual(session.PersistedToolStatus.failure, step.tool_results[0].status);
@@ -1890,34 +2928,37 @@ test "history_turn_committed event decode repairs duplicate-key tool arguments" 
     try std.testing.expect(std.mem.find(u8, step.tool_results[0].output, duplicate_arguments) == null);
 }
 
-test "event frames preserve message and reasoning item ids through the log" {
+test "event frames carry message and reasoning item ids on the envelope" {
     const alloc = std.testing.allocator;
-    const reasoning_ids: []const []const u8 = &.{"reason_a"};
-    const frame = Envelope{
+    const started = Envelope{
         .session_id = @constCast("session-1"),
         .seq = 1,
         .ts = 50,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("en"),
-            .last_input_tokens = 1,
-            .last_output_tokens = 2,
-            .turn = .{ .assistant = .{
-                .user = .{ .text = @constCast("hi") },
-                .assistant = @constCast("hello"),
-                .assistant_item_id = @constCast("item_msg"),
-                .reasoning_item_ids = reasoning_ids,
-            } },
-        } },
+        .turn_id = @constCast("7"),
+        .item_id = @constCast("item_msg"),
+        .event = .{ .assistant_message_started = .{} },
     };
-    const encoded = try encodeFrame(alloc, frame);
-    defer alloc.free(encoded);
-    var decoded_frame = try decodeFrame(alloc, encoded);
-    defer decoded_frame.deinit(alloc);
-    const decoded = &decoded_frame.known;
-    const persisted = decoded.event.history_turn_committed.turn.assistant;
-    try std.testing.expectEqualStrings("item_msg", persisted.assistant_item_id.?);
-    try std.testing.expectEqual(@as(usize, 1), persisted.reasoning_item_ids.len);
-    try std.testing.expectEqualStrings("reason_a", persisted.reasoning_item_ids[0]);
+    const started_line = try encodeFrame(alloc, started);
+    defer alloc.free(started_line);
+    var decoded_started = try decodeFrame(alloc, started_line);
+    defer decoded_started.deinit(alloc);
+    try std.testing.expectEqualStrings("item_msg", decoded_started.known.item_id.?);
+    try std.testing.expectEqualStrings("7", decoded_started.known.turn_id.?);
+
+    const completed = Envelope{
+        .session_id = @constCast("session-1"),
+        .seq = 2,
+        .ts = 51,
+        .turn_id = @constCast("7"),
+        .item_id = @constCast("reason_a"),
+        .event = .{ .reasoning_completed = .{ .text = @constCast("because") } },
+    };
+    const completed_line = try encodeFrame(alloc, completed);
+    defer alloc.free(completed_line);
+    var decoded_completed = try decodeFrame(alloc, completed_line);
+    defer decoded_completed.deinit(alloc);
+    try std.testing.expectEqualStrings("reason_a", decoded_completed.known.item_id.?);
+    try std.testing.expectEqualStrings("because", decoded_completed.known.event.reasoning_completed.text);
 }
 
 test "event frame cap is inclusive of the required newline" {
@@ -2238,11 +3279,13 @@ test "semantic reducer resumes a contiguous suffix from owned state" {
     );
 }
 
-test "single event application updates caller-owned state without replaying its prefix" {
+test "per-item lines rebuild one history turn without replaying its prefix" {
     const alloc = std.testing.allocator;
     const initial = singleEventTestState("session-single-event");
     var state = try initial.dupe(alloc);
     defer state.deinit(alloc);
+    var fold = ItemFold{};
+    defer fold.deinit(alloc);
 
     var calls = [_]session.ToolCall{.{
         .id = @constCast("call-1"),
@@ -2264,33 +3307,73 @@ test "single event application updates caller-owned state without replaying its 
         .tool_calls = calls[0..],
         .tool_results = results[0..],
     }};
-    const history = Envelope{
-        .session_id = @constCast("session-single-event"),
-        .seq = 5,
-        .ts = 30,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("fr"),
-            .last_input_tokens = 100,
-            .last_output_tokens = 50,
-            .turn = .{ .assistant = .{
-                .user = .{ .text = @constCast("inspect") },
-                .assistant = @constCast("done"),
+    const lines = [_]Envelope{
+        .{
+            .session_id = @constCast("session-single-event"),
+            .seq = 5,
+            .ts = 25,
+            .turn_id = @constCast("3"),
+            .event = .{ .turn_started = .{
+                .input = .{ .user = .{ .text = @constCast("inspect") } },
+                .language = session.ConversationLanguage.literal("fr"),
+            } },
+        },
+        .{
+            .session_id = @constCast("session-single-event"),
+            .seq = 6,
+            .ts = 26,
+            .turn_id = @constCast("3"),
+            .item_id = @constCast("item-1"),
+            .event = .{ .assistant_message_started = .{} },
+        },
+        .{
+            .session_id = @constCast("session-single-event"),
+            .seq = 7,
+            .ts = 27,
+            .turn_id = @constCast("3"),
+            .item_id = @constCast("item-1"),
+            .event = .{ .assistant_message_completed = .{ .text = @constCast("done") } },
+        },
+        .{
+            .session_id = @constCast("session-single-event"),
+            .seq = 8,
+            .ts = 28,
+            .turn_id = @constCast("3"),
+            .item_id = @constCast("item-1"),
+            .event = .{ .usage_recorded = .{
+                .generation_id = @constCast("gen-1"),
+                .model = @constCast("test/model"),
+                .input_tokens = 100,
+                .output_tokens = 50,
+            } },
+        },
+        .{
+            .session_id = @constCast("session-single-event"),
+            .seq = 9,
+            .ts = 30,
+            .turn_id = @constCast("3"),
+            .event = .{ .turn_completed = .{
+                .outcome = .completed,
                 .execution = .{ .tool_steps = steps[0..] },
             } },
-        } },
+        },
     };
-    const line = try encodeFrame(alloc, history);
-    defer alloc.free(line);
-    const boundary = try applyEventFrame(
-        alloc,
-        &state,
-        line,
-        .{ .next_seq = 5 },
-    );
+    var boundary: ReductionBoundary = .{ .seq = 0, .byte_offset = 0 };
+    for (lines) |frame| {
+        const line = try encodeFrame(alloc, frame);
+        defer alloc.free(line);
+        boundary = try applyEventFrame(
+            alloc,
+            &state,
+            line,
+            .{ .next_seq = frame.seq },
+            &fold,
+        );
+    }
 
-    try std.testing.expectEqual(@as(u64, 5), boundary.seq);
-    try std.testing.expectEqual(@as(u64, line.len), boundary.byte_offset);
+    try std.testing.expectEqual(@as(u64, 9), boundary.seq);
     try std.testing.expectEqual(@as(usize, 1), state.history.len);
+    try std.testing.expectEqualStrings("done", state.history[0].assistant.assistant);
     try std.testing.expectEqualStrings(
         "fixture output",
         state.history[0].assistant.execution.tool_steps[0].tool_results[0].output,
@@ -2303,56 +3386,92 @@ test "single event application updates caller-owned state without replaying its 
 
 test "single event application preserves caller-owned state on allocation failure" {
     const alloc = std.testing.allocator;
-    const event = Envelope{
-        .session_id = @constCast("session-single-event-oom"),
-        .seq = 7,
-        .ts = 30,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("fr"),
-            .last_input_tokens = 10,
-            .last_output_tokens = 5,
-            .turn = .{ .assistant = .{
-                .user = .{ .text = @constCast("new prompt") },
-                .assistant = @constCast("new response"),
+    const frames = [_]Envelope{
+        .{
+            .session_id = @constCast("session-single-event-oom"),
+            .seq = 7,
+            .ts = 30,
+            .turn_id = @constCast("3"),
+            .event = .{ .turn_started = .{
+                .input = .{ .user = .{ .text = @constCast("new prompt") } },
+                .language = session.ConversationLanguage.literal("fr"),
             } },
-        } },
+        },
+        .{
+            .session_id = @constCast("session-single-event-oom"),
+            .seq = 8,
+            .ts = 31,
+            .turn_id = @constCast("3"),
+            .item_id = @constCast("item-9"),
+            .event = .{ .assistant_message_started = .{} },
+        },
+        .{
+            .session_id = @constCast("session-single-event-oom"),
+            .seq = 9,
+            .ts = 32,
+            .turn_id = @constCast("3"),
+            .item_id = @constCast("item-9"),
+            .event = .{ .assistant_message_completed = .{ .text = @constCast("new response") } },
+        },
+        .{
+            .session_id = @constCast("session-single-event-oom"),
+            .seq = 10,
+            .ts = 33,
+            .turn_id = @constCast("3"),
+            .event = .{ .turn_completed = .{ .outcome = .completed } },
+        },
     };
-    const line = try encodeFrame(alloc, event);
-    defer alloc.free(line);
+    var log: std.Io.Writer.Allocating = .init(alloc);
+    defer log.deinit();
+    for (frames) |frame| {
+        const line = try encodeFrame(alloc, frame);
+        defer alloc.free(line);
+        try log.writer.writeAll(line);
+    }
+    const log_bytes = log.written();
 
     const AllocationCheck = struct {
-        fn run(
-            failing_alloc: Allocator,
-            frame: []const u8,
-        ) !void {
+        fn run(failing_alloc: Allocator, bytes: []const u8) !void {
             const initial = singleEventTestState("session-single-event-oom");
             var state = try initial.dupe(failing_alloc);
             defer state.deinit(failing_alloc);
-
-            const boundary = applyEventFrame(
-                failing_alloc,
-                &state,
-                frame,
-                .{ .next_seq = 7 },
-            ) catch |err| {
-                try std.testing.expectEqualStrings("model-a", state.preferences.model);
-                try std.testing.expectEqualStrings("/tmp/current", state.workspace_root);
-                try std.testing.expectEqual(@as(usize, 0), state.history.len);
-                try std.testing.expectEqual(@as(i64, 20), state.updated_at_ms);
-                return err;
-            };
-            try std.testing.expectEqual(@as(u64, 7), boundary.seq);
+            var fold = ItemFold{};
+            defer fold.deinit(failing_alloc);
+            var reader = std.Io.Reader.fixed(bytes);
+            var seq: u64 = 7;
+            while (true) {
+                const line = readFrameLine(failing_alloc, &reader) catch |err| switch (err) {
+                    error.EndOfStream => break,
+                    else => return err,
+                };
+                defer failing_alloc.free(line);
+                _ = applyEventFrame(
+                    failing_alloc,
+                    &state,
+                    line,
+                    .{ .next_seq = seq },
+                    &fold,
+                ) catch |err| {
+                    // Earlier lines of the sequence may already have applied
+                    // (per-item durability); only untouched fields are asserted.
+                    try std.testing.expectEqualStrings("model-a", state.preferences.model);
+                    try std.testing.expectEqualStrings("/tmp/current", state.workspace_root);
+                    return err;
+                };
+                seq += 1;
+            }
             try std.testing.expectEqual(@as(usize, 1), state.history.len);
             try std.testing.expectEqualStrings(
                 "new response",
                 state.history[0].assistant.assistant,
             );
+            try std.testing.expectEqualStrings("fr", state.conversation_language.view());
         }
     };
     try std.testing.checkAllAllocationFailures(
         alloc,
         AllocationCheck.run,
-        .{line},
+        .{log_bytes},
     );
 }
 
@@ -2361,11 +3480,8 @@ test "single event application validates boundaries for every semantic event kin
     const initial = singleEventTestState("session-single-event-kinds");
     var state = try initial.dupe(alloc);
     defer state.deinit(alloc);
-    var usage = session_usage.Usage.initFresh();
-    defer usage.deinit(alloc);
-    try usage.recordCommittedLines(7, 3);
-    var snapshot = try usage.snapshot(alloc);
-    defer snapshot.deinit(alloc);
+    var fold = ItemFold{};
+    defer fold.deinit(alloc);
 
     const events = [_]Envelope{
         .{
@@ -2391,7 +3507,12 @@ test "single event application validates boundaries for every semantic event kin
             .session_id = @constCast("session-single-event-kinds"),
             .seq = 7,
             .ts = 23,
-            .event = .{ .usage_checkpointed = .{ .usage = snapshot } },
+            .event = .{ .usage_recorded = .{
+                .generation_id = @constCast("gen-boundary"),
+                .model = @constCast("model-b"),
+                .input_tokens = 10,
+                .output_tokens = 4,
+            } },
         },
     };
 
@@ -2420,6 +3541,7 @@ test "single event application validates boundaries for every semantic event kin
             &state,
             started_line,
             .{ .next_seq = 5 },
+            &fold,
         ),
     );
     try std.testing.expectEqualStrings("model-a", state.preferences.model);
@@ -2435,6 +3557,7 @@ test "single event application validates boundaries for every semantic event kin
                     &state,
                     line,
                     .{ .next_seq = event.seq - 1 },
+                    &fold,
                 ),
             );
             try std.testing.expectEqualStrings("/tmp/current", state.workspace_root);
@@ -2444,6 +3567,7 @@ test "single event application validates boundaries for every semantic event kin
             &state,
             line,
             .{ .next_seq = event.seq },
+            &fold,
         );
     }
 
@@ -2451,8 +3575,10 @@ test "single event application validates boundaries for every semantic event kin
     try std.testing.expectEqual(types.ReasoningEffort.literal("high"), state.preferences.effort);
     try std.testing.expect(state.preferences.fast_mode);
     try std.testing.expectEqualStrings("/tmp/next", state.workspace_root);
-    try std.testing.expectEqual(@as(u64, 7), state.usage.?.lines_added);
-    try std.testing.expectEqual(@as(u64, 3), state.usage.?.lines_removed);
+    try std.testing.expectEqual(@as(u64, 10), state.usage.?.input_tokens);
+    try std.testing.expectEqual(@as(u64, 4), state.usage.?.output_tokens);
+    try std.testing.expectEqual(@as(usize, 1), state.usage.?.models.len);
+    try std.testing.expectEqualStrings("model-b", state.usage.?.models[0].model);
 }
 
 fn singleEventTestState(id: []const u8) session_codec.DurableSessionState {
@@ -2504,7 +3630,7 @@ test "semantic reducer releases owned state when the reduction start is invalid"
     );
 }
 
-test "history_turn_committed leaves absent session usage unchanged" {
+test "item lines leave absent session usage until the first usage_recorded" {
     const alloc = std.testing.allocator;
 
     const started = Envelope{
@@ -2524,60 +3650,91 @@ test "history_turn_committed leaves absent session usage unchanged" {
             },
         } },
     };
-    const committed = Envelope{
-        .session_id = @constCast("session-1"),
-        .seq = 2,
-        .ts = 110,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("fr"),
-            .last_input_tokens = 128,
-            .last_output_tokens = 64,
-            .work_id = @constCast("work-17"),
-            .turn = .{ .assistant = .{
-                .user = .{ .text = @constCast("hello") },
-                .assistant = @constCast("world"),
+    const turn_lines = [_]Envelope{
+        .{
+            .session_id = @constCast("session-1"),
+            .seq = 2,
+            .ts = 105,
+            .turn_id = @constCast("1"),
+            .event = .{ .turn_started = .{
+                .input = .{ .user = .{
+                    .text = @constCast("hello"),
+                    .work_id = @constCast("work-17"),
+                } },
+                .language = session.ConversationLanguage.literal("fr"),
             } },
-        } },
+        },
+        .{
+            .session_id = @constCast("session-1"),
+            .seq = 3,
+            .ts = 106,
+            .turn_id = @constCast("1"),
+            .item_id = @constCast("item-1"),
+            .event = .{ .assistant_message_started = .{} },
+        },
+        .{
+            .session_id = @constCast("session-1"),
+            .seq = 4,
+            .ts = 107,
+            .turn_id = @constCast("1"),
+            .item_id = @constCast("item-1"),
+            .event = .{ .assistant_message_completed = .{ .text = @constCast("world") } },
+        },
+        .{
+            .session_id = @constCast("session-1"),
+            .seq = 5,
+            .ts = 108,
+            .turn_id = @constCast("1"),
+            .item_id = @constCast("item-1"),
+            .event = .{ .usage_recorded = .{
+                .generation_id = @constCast("gen-17"),
+                .model = @constCast("openai/gpt-test"),
+                .input_tokens = 128,
+                .output_tokens = 64,
+            } },
+        },
+        .{
+            .session_id = @constCast("session-1"),
+            .seq = 6,
+            .ts = 110,
+            .turn_id = @constCast("1"),
+            .event = .{ .turn_completed = .{ .outcome = .completed } },
+        },
     };
-
-    const committed_line = try encodeFrame(alloc, committed);
-    defer alloc.free(committed_line);
-
-    var decoded_frame_3 = try decodeFrame(alloc, committed_line);
-    defer decoded_frame_3.deinit(alloc);
-    const decoded = &decoded_frame_3.known;
-    try std.testing.expectEqual(
-        @as(?u64, 128),
-        decoded.event.history_turn_committed.last_input_tokens,
-    );
-    try std.testing.expectEqual(
-        @as(?u64, 64),
-        decoded.event.history_turn_committed.last_output_tokens,
-    );
-    try std.testing.expectEqualStrings(
-        "world",
-        decoded.event.history_turn_committed.turn.assistant.assistant,
-    );
-    try std.testing.expectEqualStrings(
-        "work-17",
-        decoded.event.history_turn_committed.work_id.?,
-    );
 
     var jsonl: std.Io.Writer.Allocating = .init(alloc);
     defer jsonl.deinit();
     const started_line = try encodeFrame(alloc, started);
     defer alloc.free(started_line);
     try jsonl.writer.writeAll(started_line);
-    try jsonl.writer.writeAll(committed_line);
+    // Fold the turn without its usage line first: usage stays absent and
+    // last-response counters stay unknown.
+    for (turn_lines[0..3]) |frame| {
+        const line = try encodeFrame(alloc, frame);
+        defer alloc.free(line);
+        try jsonl.writer.writeAll(line);
+    }
+    var partial_source = std.Io.Reader.fixed(jsonl.written());
+    var partial = try reduceJsonl(alloc, &partial_source, null);
+    defer partial.deinit(alloc);
+    try std.testing.expect(partial.state.usage == null);
+    try std.testing.expect(partial.state.last_input_tokens == null);
+    try std.testing.expect(partial.state.last_output_tokens == null);
+    try std.testing.expectEqualStrings("fr", partial.state.conversation_language.view());
+    try std.testing.expectEqualStrings("work-17", partial.state.last_subagent_work_id.?);
 
+    for (turn_lines[3..]) |frame| {
+        const line = try encodeFrame(alloc, frame);
+        defer alloc.free(line);
+        try jsonl.writer.writeAll(line);
+    }
     var source = std.Io.Reader.fixed(jsonl.written());
     var reduced = try reduceJsonl(alloc, &source, null);
     defer reduced.deinit(alloc);
-    try std.testing.expect(reduced.state.usage == null);
+    try std.testing.expectEqual(@as(u64, 128), reduced.state.usage.?.input_tokens);
     try std.testing.expectEqual(@as(?u64, 128), reduced.state.last_input_tokens);
     try std.testing.expectEqual(@as(?u64, 64), reduced.state.last_output_tokens);
     try std.testing.expectEqual(@as(usize, 1), reduced.state.history.len);
-    try std.testing.expectEqualStrings("work-17", reduced.state.last_subagent_work_id.?);
     try std.testing.expectEqualStrings(
         "work-17",
         reduced.state.history[0].assistant.user.work_id.?,
@@ -2588,10 +3745,11 @@ test "history_turn_committed leaves absent session usage unchanged" {
     );
 }
 
-test "pre-rename total_* history events resume onto last_*" {
+test "retired history_turn_committed lines decode unknown and fold skips them" {
     const alloc = std.testing.allocator;
-    // Byte-faithful pre-rename schema-1 frames: the last-response counters
-    // were required total_* numbers. Resume must map them onto last_*.
+    // Byte-faithful pre-inversion frame. The kind is gone, so resume must
+    // skip the line instead of failing: pre-release sessions lose that
+    // turn's history on upgrade, by the spec's no-migration rule.
     const started_line =
         "{\"schema_version\":1,\"kind\":\"session_started\",\"session_id\":\"session-1\",\"ts\":100,\"seq\":1,\"payload\":{\"id\":\"session-1\",\"created_at_ms\":10,\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false}}}\n";
     const committed_line =
@@ -2599,14 +3757,8 @@ test "pre-rename total_* history events resume onto last_*" {
 
     var committed_frame = try decodeFrame(alloc, committed_line);
     defer committed_frame.deinit(alloc);
-    try std.testing.expectEqual(
-        @as(?u64, 128),
-        committed_frame.known.event.history_turn_committed.last_input_tokens,
-    );
-    try std.testing.expectEqual(
-        @as(?u64, 64),
-        committed_frame.known.event.history_turn_committed.last_output_tokens,
-    );
+    try std.testing.expect(committed_frame == .unknown);
+    try std.testing.expectEqual(@as(u64, 2), committed_frame.unknown.seq);
 
     var jsonl: std.Io.Writer.Allocating = .init(alloc);
     defer jsonl.deinit();
@@ -2615,13 +3767,15 @@ test "pre-rename total_* history events resume onto last_*" {
     var source = std.Io.Reader.fixed(jsonl.written());
     var reduced = try reduceJsonl(alloc, &source, null);
     defer reduced.deinit(alloc);
-    try std.testing.expectEqual(@as(?u64, 128), reduced.state.last_input_tokens);
-    try std.testing.expectEqual(@as(?u64, 64), reduced.state.last_output_tokens);
-    try std.testing.expectEqual(@as(usize, 1), reduced.state.history.len);
+    try std.testing.expect(reduced.state.last_input_tokens == null);
+    try std.testing.expect(reduced.state.last_output_tokens == null);
+    try std.testing.expectEqual(@as(usize, 0), reduced.state.history.len);
 }
 
-test "replay associates each committed work ID with its exact user turn" {
+test "replay associates each turn_started work ID with its exact user turn" {
     const alloc = std.testing.allocator;
+    var fold = ItemFold{};
+    defer fold.deinit(alloc);
     var state: ?session_codec.DurableSessionState = null;
     defer if (state) |*current| current.deinit(alloc);
     try applyDelta(alloc, &state, .{
@@ -2640,54 +3794,36 @@ test "replay associates each committed work ID with its exact user turn" {
                 .fast_mode = false,
             },
         } },
-    });
-    try applyDelta(alloc, &state, .{
-        .session_id = @constCast("provenance-replay"),
-        .seq = 2,
-        .ts = 2,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("en"),
-            .last_input_tokens = 1,
-            .last_output_tokens = 1,
-            .work_id = @constCast("work-first"),
-            .turn = .{ .assistant = .{
-                .user = .{ .text = @constCast("first") },
-                .assistant = @constCast("one"),
+    }, &fold);
+    const prompts = [_]struct { text: []const u8, work_id: ?[]const u8 }{
+        .{ .text = "first", .work_id = "work-first" },
+        .{ .text = "second", .work_id = "work-second" },
+        .{ .text = "ordinary", .work_id = null },
+    };
+    for (prompts, 0..) |prompt, index| {
+        const seq: u64 = @intCast(2 + index * 2);
+        var turn_id_buf: [8]u8 = undefined;
+        const turn_id = try std.fmt.bufPrint(&turn_id_buf, "{d}", .{index + 1});
+        try applyDelta(alloc, &state, .{
+            .session_id = @constCast("provenance-replay"),
+            .seq = seq,
+            .ts = 2,
+            .turn_id = @constCast(turn_id),
+            .event = .{ .turn_started = .{
+                .input = .{ .user = .{
+                    .text = @constCast(prompt.text),
+                    .work_id = if (prompt.work_id) |id| @constCast(id) else null,
+                } },
             } },
-        } },
-    });
-    try applyDelta(alloc, &state, .{
-        .session_id = @constCast("provenance-replay"),
-        .seq = 3,
-        .ts = 3,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("en"),
-            .last_input_tokens = 2,
-            .last_output_tokens = 2,
-            .work_id = @constCast("work-second"),
-            .turn = .{ .assistant = .{
-                .user = .{
-                    .text = @constCast("second"),
-                    .work_id = @constCast("work-second"),
-                },
-                .assistant = @constCast("two"),
-            } },
-        } },
-    });
-    try applyDelta(alloc, &state, .{
-        .session_id = @constCast("provenance-replay"),
-        .seq = 4,
-        .ts = 4,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("en"),
-            .last_input_tokens = 3,
-            .last_output_tokens = 3,
-            .turn = .{ .assistant = .{
-                .user = .{ .text = @constCast("ordinary") },
-                .assistant = @constCast("three"),
-            } },
-        } },
-    });
+        }, &fold);
+        try applyDelta(alloc, &state, .{
+            .session_id = @constCast("provenance-replay"),
+            .seq = seq + 1,
+            .ts = 3,
+            .turn_id = @constCast(turn_id),
+            .event = .{ .turn_completed = .{ .outcome = .completed } },
+        }, &fold);
+    }
 
     try std.testing.expectEqual(@as(usize, 3), state.?.history.len);
     try std.testing.expectEqualStrings(
@@ -2706,60 +3842,89 @@ test "replay associates each committed work ID with its exact user turn" {
     );
 }
 
-test "history event provenance rejects conflicts and malformed IDs" {
+test "per-item envelope rules reject missing ids and malformed work IDs" {
+    const user = session.UserTurn{ .text = @constCast("prompt") };
     const base = Envelope{
         .session_id = @constCast("session-1"),
         .seq = 1,
         .ts = 1,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("en"),
-            .last_input_tokens = 1,
-            .last_output_tokens = 1,
-            .work_id = @constCast("event-work"),
-            .turn = .{ .assistant = .{
-                .user = .{
-                    .text = @constCast("prompt"),
-                    .work_id = @constCast("turn-work"),
-                },
-                .assistant = @constCast("reply"),
-            } },
+        .turn_id = @constCast("4"),
+        .event = .{ .turn_started = .{ .input = .{ .user = user } } },
+    };
+    try validateEnvelope(base);
+
+    // Turn and item lines require their envelope correlation.
+    var missing_turn = base;
+    missing_turn.turn_id = null;
+    try std.testing.expectError(error.InvalidEventFrame, validateEnvelope(missing_turn));
+
+    var stray_item = base;
+    stray_item.item_id = @constCast("item-1");
+    try std.testing.expectError(error.InvalidEventFrame, validateEnvelope(stray_item));
+
+    const message = Envelope{
+        .session_id = @constCast("session-1"),
+        .seq = 2,
+        .ts = 2,
+        .turn_id = @constCast("4"),
+        .event = .{ .assistant_message_started = .{} },
+    };
+    try std.testing.expectError(error.InvalidEventFrame, validateEnvelope(message));
+
+    // A failed model call carries its cause and attempt number.
+    const failed_bare = Envelope{
+        .session_id = @constCast("session-1"),
+        .seq = 2,
+        .ts = 2,
+        .turn_id = @constCast("4"),
+        .item_id = @constCast("item-1"),
+        .event = .{ .assistant_message_completed = .{
+            .text = @constCast("partial"),
+            .outcome = .failed,
         } },
     };
-    try std.testing.expectError(error.InvalidEventFrame, validateEnvelope(base));
-
-    var persisted_conflict = base;
-    persisted_conflict.event.history_turn_committed.work_id = @constCast("work-a");
-    persisted_conflict.event.history_turn_committed.turn.assistant.user.work_id = @constCast("work-a");
-    const encoded = try encodeFrame(std.testing.allocator, persisted_conflict);
-    defer std.testing.allocator.free(encoded);
-    const final_id = std.mem.lastIndexOf(u8, encoded, "work-a") orelse
-        return error.TestExpectedEqual;
-    encoded[final_id + "work-".len] = 'b';
     try std.testing.expectError(
         error.InvalidEventFrame,
-        decodeFrame(std.testing.allocator, encoded),
+        encodeFrame(std.testing.allocator, failed_bare),
     );
+    const failed = Envelope{
+        .session_id = @constCast("session-1"),
+        .seq = 2,
+        .ts = 2,
+        .turn_id = @constCast("4"),
+        .item_id = @constCast("item-1"),
+        .event = .{ .assistant_message_completed = .{
+            .text = @constCast("partial"),
+            .outcome = .failed,
+            .cause = @constCast("transport_interrupted"),
+            .attempt = 1,
+        } },
+    };
+    try validateEnvelope(failed);
 
-    var absent_event = base;
-    absent_event.event.history_turn_committed.work_id = null;
-    try std.testing.expectError(error.InvalidEventFrame, validateEnvelope(absent_event));
-
+    // Malformed work IDs fail on the turn that carries them.
     var malformed = base;
-    malformed.event.history_turn_committed.work_id = @constCast("bad\x00id");
-    malformed.event.history_turn_committed.turn.assistant.user.work_id = null;
+    malformed.event.turn_started.input.user.work_id = @constCast("bad\x00id");
     try std.testing.expectError(error.InvalidEventFrame, validateEnvelope(malformed));
 
-    var summary = base;
-    summary.event.history_turn_committed.work_id = @constCast("event-work");
-    summary.event.history_turn_committed.turn = .{ .compacted_summary = .{
-        .summary = @constCast("summary"),
-        .removed_turn_count = 1,
-        .compaction_count = 1,
-    } };
-    try std.testing.expectError(error.InvalidEventFrame, validateEnvelope(summary));
+    // Run boundaries carry no turn or item correlation.
+    const run = Envelope{
+        .session_id = @constCast("session-1"),
+        .seq = 3,
+        .ts = 3,
+        .turn_id = @constCast("4"),
+        .event = .{ .run_started = .{
+            .run_id = @constCast("run-1"),
+            .fiber_version = @constCast("0.0.0"),
+            .mode = .new,
+        } },
+    };
+    try std.testing.expectError(error.InvalidEventFrame, validateEnvelope(run));
 }
 
 fn checkHistoryProvenanceReplayAllocationFailures(alloc: Allocator) !void {
+    var fold = ItemFold{};
+    defer fold.deinit(alloc);
     var state: ?session_codec.DurableSessionState = null;
     defer if (state) |*current| current.deinit(alloc);
     try applyDelta(alloc, &state, .{
@@ -2778,22 +3943,19 @@ fn checkHistoryProvenanceReplayAllocationFailures(alloc: Allocator) !void {
                 .fast_mode = false,
             },
         } },
-    });
+    }, &fold);
     try applyDelta(alloc, &state, .{
         .session_id = @constCast("allocation-provenance"),
         .seq = 2,
         .ts = 2,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("en"),
-            .last_input_tokens = 1,
-            .last_output_tokens = 1,
-            .work_id = @constCast("allocation-work"),
-            .turn = .{ .assistant = .{
-                .user = .{ .text = @constCast("prompt") },
-                .assistant = @constCast("reply"),
+        .turn_id = @constCast("1"),
+        .event = .{ .turn_started = .{
+            .input = .{ .user = .{
+                .text = @constCast("prompt"),
+                .work_id = @constCast("allocation-work"),
             } },
         } },
-    });
+    }, &fold);
     try std.testing.expectEqualStrings(
         "allocation-work",
         state.?.history[0].assistant.user.work_id.?,
@@ -2808,31 +3970,32 @@ test "history provenance replay frees every partial allocation" {
     );
 }
 
-test "usage checkpoint event decodes a cumulative snapshot" {
+test "usage_recorded event decodes one model call and folds its totals" {
     const alloc = std.testing.allocator;
-    var usage = session_usage.Usage.initFresh();
-    defer usage.deinit(alloc);
-    try usage.recordCommittedLines(7, 3);
-    var snapshot = try usage.snapshot(alloc);
-    defer snapshot.deinit(alloc);
 
-    var frame: std.Io.Writer.Allocating = .init(alloc);
-    defer frame.deinit();
-    try frame.writer.writeAll(
+    const line =
         "{\"schema_version\":1," ++
-            "\"kind\":\"usage_checkpointed\"," ++
-            "\"session_id\":\"session-checkpoint\"," ++
-            "\"ts\":200," ++
-            "\"seq\":2," ++
-            "\"payload\":{\"usage\":",
-    );
-    try session_usage.writeSnapshot(&frame.writer, snapshot);
-    try frame.writer.writeAll("}}\n");
+        "\"kind\":\"usage_recorded\"," ++
+        "\"session_id\":\"session-checkpoint\"," ++
+        "\"ts\":200," ++
+        "\"turn_id\":\"2\"," ++
+        "\"item_id\":\"item-7\"," ++
+        "\"seq\":2," ++
+        "\"payload\":{" ++
+        "\"generation_id\":\"gen-7\"," ++
+        "\"model\":\"test/model\"," ++
+        "\"input_tokens\":10,\"output_tokens\":2," ++
+        "\"cache_read_tokens\":1,\"cache_write_tokens\":0," ++
+        "\"reasoning_tokens\":1,\"total_cost\":0.25," ++
+        "\"billable_web_search_calls\":0}}\n";
 
-    var decoded_frame_4 = try decodeFrame(alloc, frame.written());
+    var decoded_frame_4 = try decodeFrame(alloc, line);
     defer decoded_frame_4.deinit(alloc);
     const decoded = &decoded_frame_4.known;
-    try std.testing.expectEqualStrings("usage_checkpointed", @tagName(decoded.kind()));
+    try std.testing.expectEqualStrings("usage_recorded", @tagName(decoded.kind()));
+    try std.testing.expectEqualStrings("gen-7", decoded.event.usage_recorded.generation_id);
+    try std.testing.expectEqualStrings("item-7", decoded.item_id.?);
+    try std.testing.expectEqual(@as(?f64, 0.25), decoded.event.usage_recorded.total_cost);
 
     const started = Envelope{
         .session_id = @constCast("session-checkpoint"),
@@ -2856,17 +4019,23 @@ test "usage checkpoint event decodes a cumulative snapshot" {
     var jsonl: std.Io.Writer.Allocating = .init(alloc);
     defer jsonl.deinit();
     try jsonl.writer.writeAll(started_line);
-    try jsonl.writer.writeAll(frame.written());
+    try jsonl.writer.writeAll(line);
     var source = std.Io.Reader.fixed(jsonl.written());
     var reduced = try reduceJsonl(alloc, &source, null);
     defer reduced.deinit(alloc);
-    try std.testing.expectEqual(@as(u64, 7), reduced.state.usage.?.lines_added);
-    try std.testing.expectEqual(@as(u64, 3), reduced.state.usage.?.lines_removed);
+    try std.testing.expectEqual(@as(u64, 10), reduced.state.usage.?.input_tokens);
+    try std.testing.expectEqual(@as(u64, 2), reduced.state.usage.?.output_tokens);
+    try std.testing.expectEqual(@as(?f64, 0.25), reduced.state.usage.?.total_cost);
+    try std.testing.expectEqual(@as(?u64, 1), reduced.state.usage.?.request_count);
+    try std.testing.expectEqual(@as(usize, 1), reduced.state.usage.?.models.len);
+    try session_usage.validateSnapshot(reduced.state.usage.?);
     try std.testing.expectEqual(@as(i64, 200), reduced.state.updated_at_ms);
 }
 
 test "permission state change event round-trips without history" {
     const alloc = std.testing.allocator;
+    var fold = ItemFold{};
+    defer fold.deinit(alloc);
     var state: ?session_codec.DurableSessionState = null;
     defer if (state) |*current| current.deinit(alloc);
     try applyDelta(alloc, &state, .{
@@ -2885,7 +4054,7 @@ test "permission state change event round-trips without history" {
                 .fast_mode = false,
             },
         } },
-    });
+    }, &fold);
     try std.testing.expectEqual(@as(u64, 1), state.?.permission_state.next_generation);
 
     var changed = session_permission_state.State{ .next_generation = 3 };
@@ -2923,6 +4092,7 @@ test "permission state change event round-trips without history" {
         &state.?,
         line,
         .{ .next_seq = 2 },
+        &fold,
     );
     try std.testing.expectEqual(@as(u64, 2), boundary.seq);
     try std.testing.expectEqual(@as(u64, 3), state.?.permission_state.next_generation);
@@ -2932,20 +4102,10 @@ test "permission state change event round-trips without history" {
     try std.testing.expectEqual(@as(i64, 150), state.?.updated_at_ms);
 }
 
-test "later usage events replace snapshots while legacy turns preserve them" {
+test "later usage_recorded lines replace the same generation id" {
     const alloc = std.testing.allocator;
-    var usage = session_usage.Usage.initFresh();
-    defer usage.deinit(alloc);
-    try usage.recordCommittedLines(1, 0);
-    var started_usage = try usage.snapshot(alloc);
-    defer started_usage.deinit(alloc);
-    try usage.recordCommittedLines(6, 0);
-    var first_checkpoint = try usage.snapshot(alloc);
-    defer first_checkpoint.deinit(alloc);
-    try usage.recordCommittedLines(2, 0);
-    var second_checkpoint = try usage.snapshot(alloc);
-    defer second_checkpoint.deinit(alloc);
-
+    var fold = ItemFold{};
+    defer fold.deinit(alloc);
     var state: ?session_codec.DurableSessionState = null;
     defer if (state) |*current| current.deinit(alloc);
     try applyDelta(alloc, &state, .{
@@ -2963,46 +4123,70 @@ test "later usage events replace snapshots while legacy turns preserve them" {
                 .effort = types.ReasoningEffort.literal("medium"),
                 .fast_mode = false,
             },
-            .usage = started_usage,
         } },
-    });
-    try std.testing.expectEqual(@as(u64, 1), state.?.usage.?.lines_added);
+    }, &fold);
+    try std.testing.expect(state.?.usage == null);
 
-    try applyDelta(alloc, &state, .{
-        .session_id = @constCast("session-usage-order"),
-        .seq = 2,
-        .ts = 110,
-        .event = .{ .usage_checkpointed = .{ .usage = first_checkpoint } },
-    });
-    try std.testing.expectEqual(@as(u64, 7), state.?.usage.?.lines_added);
-
-    try applyDelta(alloc, &state, .{
-        .session_id = @constCast("session-usage-order"),
-        .seq = 3,
-        .ts = 120,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("en"),
-            .last_input_tokens = 5,
-            .last_output_tokens = 3,
-            .turn = .{ .assistant = .{
-                .user = .{ .text = @constCast("hello") },
-                .assistant = @constCast("world"),
+    const records = [_]Envelope{
+        .{
+            .session_id = @constCast("session-usage-order"),
+            .seq = 2,
+            .ts = 110,
+            .event = .{ .usage_recorded = .{
+                .generation_id = @constCast("gen-a"),
+                .model = @constCast("test/model"),
+                .input_tokens = 10,
+                .output_tokens = 2,
+                .total_cost = 0.25,
             } },
-        } },
-    });
-    try std.testing.expectEqual(@as(u64, 7), state.?.usage.?.lines_added);
-
-    try applyDelta(alloc, &state, .{
-        .session_id = @constCast("session-usage-order"),
-        .seq = 4,
-        .ts = 130,
-        .event = .{ .usage_checkpointed = .{ .usage = second_checkpoint } },
-    });
-    try std.testing.expectEqual(@as(u64, 9), state.?.usage.?.lines_added);
+        },
+        .{
+            .session_id = @constCast("session-usage-order"),
+            .seq = 3,
+            .ts = 120,
+            .event = .{ .usage_recorded = .{
+                .generation_id = @constCast("gen-b"),
+                .model = @constCast("test/other"),
+                .input_tokens = 4,
+                .output_tokens = 1,
+                .total_cost = 0.125,
+            } },
+        },
+        // Late-settled cost for gen-a replaces its first line.
+        .{
+            .session_id = @constCast("session-usage-order"),
+            .seq = 4,
+            .ts = 130,
+            .event = .{ .usage_recorded = .{
+                .generation_id = @constCast("gen-a"),
+                .model = @constCast("test/model"),
+                .input_tokens = 10,
+                .output_tokens = 2,
+                .total_cost = 0.5,
+            } },
+        },
+    };
+    for (records) |frame| {
+        const line = try encodeFrame(alloc, frame);
+        defer alloc.free(line);
+        var decoded_frame = try decodeFrame(alloc, line);
+        defer decoded_frame.deinit(alloc);
+        try applyDelta(alloc, &state, decoded_frame.known, &fold);
+    }
+    try std.testing.expectEqual(@as(u64, 14), state.?.usage.?.input_tokens);
+    try std.testing.expectEqual(@as(u64, 3), state.?.usage.?.output_tokens);
+    try std.testing.expectEqual(@as(?f64, 0.625), state.?.usage.?.total_cost);
+    try std.testing.expectEqual(@as(?u64, 2), state.?.usage.?.request_count);
+    try std.testing.expectEqual(@as(usize, 2), state.?.usage.?.models.len);
+    try std.testing.expectEqualStrings("test/model", state.?.usage.?.models[0].model);
+    try std.testing.expectEqualStrings("test/other", state.?.usage.?.models[1].model);
+    try session_usage.validateSnapshot(state.?.usage.?);
 }
 
 test "recovery checkpoint events replace and clear deterministically" {
     const alloc = std.testing.allocator;
+    var fold = ItemFold{};
+    defer fold.deinit(alloc);
     var state: ?session_codec.DurableSessionState = null;
     defer if (state) |*current| current.deinit(alloc);
     try applyDelta(alloc, &state, .{
@@ -3021,7 +4205,7 @@ test "recovery checkpoint events replace and clear deterministically" {
                 .fast_mode = false,
             },
         } },
-    });
+    }, &fold);
 
     const first = session_codec.RecoveryCheckpoint{
         .turn_id = 11,
@@ -3040,7 +4224,7 @@ test "recovery checkpoint events replace and clear deterministically" {
         .seq = 2,
         .ts = 110,
         .event = .{ .recovery_checkpoint_set = .{ .checkpoint = first } },
-    });
+    }, &fold);
     try std.testing.expectEqualStrings("partial", state.?.recovery_checkpoint.?.assistant_source);
 
     var replacement = first;
@@ -3051,7 +4235,7 @@ test "recovery checkpoint events replace and clear deterministically" {
         .seq = 3,
         .ts = 120,
         .event = .{ .recovery_checkpoint_set = .{ .checkpoint = replacement } },
-    });
+    }, &fold);
     try std.testing.expectEqualStrings(
         "partial plus more",
         state.?.recovery_checkpoint.?.assistant_source,
@@ -3062,38 +4246,40 @@ test "recovery checkpoint events replace and clear deterministically" {
         .session_id = @constCast("session-recovery-events"),
         .seq = 4,
         .ts = 130,
-        .event = .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("en"),
-            .last_input_tokens = 4,
-            .last_output_tokens = 2,
-            .turn = .{ .assistant = .{
-                .user = .{ .text = @constCast("prompt") },
-                .assistant = @constCast("partial plus more"),
-            } },
+        .turn_id = @constCast("9"),
+        .event = .{ .turn_started = .{
+            .input = .{ .user = .{ .text = @constCast("prompt") } },
         } },
-    });
-    try std.testing.expect(state.?.recovery_checkpoint == null);
-
+    }, &fold);
     try applyDelta(alloc, &state, .{
         .session_id = @constCast("session-recovery-events"),
         .seq = 5,
-        .ts = 140,
-        .event = .{ .recovery_checkpoint_set = .{ .checkpoint = replacement } },
-    });
-    try applyDelta(alloc, &state, .{
-        .session_id = @constCast("session-recovery-events"),
-        .seq = 6,
-        .ts = 150,
-        .event = .{ .recovery_checkpoint_cleared = .{} },
-    });
+        .ts = 131,
+        .turn_id = @constCast("9"),
+        .event = .{ .turn_completed = .{ .outcome = .completed } },
+    }, &fold);
     try std.testing.expect(state.?.recovery_checkpoint == null);
 
     try applyDelta(alloc, &state, .{
         .session_id = @constCast("session-recovery-events"),
+        .seq = 6,
+        .ts = 140,
+        .event = .{ .recovery_checkpoint_set = .{ .checkpoint = replacement } },
+    }, &fold);
+    try applyDelta(alloc, &state, .{
+        .session_id = @constCast("session-recovery-events"),
         .seq = 7,
+        .ts = 150,
+        .event = .{ .recovery_checkpoint_cleared = .{} },
+    }, &fold);
+    try std.testing.expect(state.?.recovery_checkpoint == null);
+
+    try applyDelta(alloc, &state, .{
+        .session_id = @constCast("session-recovery-events"),
+        .seq = 8,
         .ts = 160,
         .event = .{ .recovery_checkpoint_cleared = .{} },
-    });
+    }, &fold);
     try std.testing.expect(state.?.recovery_checkpoint == null);
 }
 
@@ -3173,9 +4359,11 @@ test "reducer rejects a foreign-session line without mutating state" {
     defer state.deinit(alloc);
     const foreign_line = try encodeFrame(alloc, frames[2]);
     defer alloc.free(foreign_line);
+    var foreign_fold = ItemFold{};
+    defer foreign_fold.deinit(alloc);
     try std.testing.expectError(
         error.SessionMismatch,
-        applyEventFrame(alloc, &state, foreign_line, .{ .next_seq = 3 }),
+        applyEventFrame(alloc, &state, foreign_line, .{ .next_seq = 3 }, &foreign_fold),
     );
     try std.testing.expectEqualStrings("model-a", state.preferences.model);
     try std.testing.expect(!state.preferences.fast_mode);

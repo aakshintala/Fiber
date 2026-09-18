@@ -24,6 +24,7 @@ else
     struct {};
 
 const runtime_deps = @import("deps.zig");
+const session_event = @import("../../session/session_event.zig");
 const runtime_telemetry = @import("telemetry.zig");
 const runtime_tool_contracts = @import("tool_contracts.zig");
 const runtime_tool_presentation = @import("tool_presentation.zig");
@@ -101,6 +102,9 @@ pub const StreamChunkContext = struct {
     /// reasoning_item_ids. A null entry means the block arrived without an
     /// index; indexed arrivals match their slot instead of minting anew.
     reasoning_item_output_index: std.ArrayList(?i64) = .empty,
+    /// Accumulated reasoning text per block, in lockstep with
+    /// reasoning_item_ids. Owned here; freed at step end.
+    reasoning_texts: std.ArrayList(std.ArrayList(u8)) = .empty,
 
     fn markModelOutput(self: *StreamChunkContext) void {
         if (self.first_model_output_at_ms == null) self.first_model_output_at_ms = io_mod.milliTimestamp();
@@ -150,6 +154,8 @@ pub const StreamChunkContext = struct {
         for (self.reasoning_item_ids.items) |item_id| self.alloc.free(item_id);
         self.reasoning_item_ids.deinit(self.alloc);
         self.reasoning_item_output_index.deinit(self.alloc);
+        for (self.reasoning_texts.items) |*text| text.deinit(self.alloc);
+        self.reasoning_texts.deinit(self.alloc);
     }
 
     pub fn beginRecoveryAttempt(self: *StreamChunkContext) void {
@@ -228,10 +234,15 @@ pub fn onStreamContentChunk(ctx: *anyopaque, item_id: []const u8, chunk: []const
     _ = output_index;
     // Fail closed like tool starts below: an unidentified chunk stays
     // suppressed until its item id mints, never delivered under no id.
+    const minted = stream_ctx.message_item_id == null;
     stream_message_item_id(stream_ctx, item_id) catch |err| {
         debug_trace.logf("agent", "message item id minting failed err={s}", .{@errorName(err)});
         return;
     };
+    if (minted) noteSessionItem(stream_ctx, .{ .message_started = .{
+        .turn_id = stream_ctx.turn_id,
+        .item_id = stream_ctx.message_item_id.?,
+    } });
     stream_ctx.markModelOutput();
     publishTurnPhase(stream_ctx, .generating);
     if (stream_ctx.token_progress) |progress| {
@@ -246,10 +257,29 @@ pub fn onStreamReasoningChunk(ctx: *anyopaque, item_id: []const u8, chunk: []con
     const stream_ctx: *StreamChunkContext = @ptrCast(@alignCast(ctx));
     // Fail closed like content above: no chunk is delivered until the
     // block's id is recorded.
-    stream_reasoning_item_id(stream_ctx, item_id, output_index) catch |err| {
+    const known_before = stream_ctx.reasoning_item_ids.items.len;
+    const slot = stream_reasoning_item_id(stream_ctx, item_id, output_index) catch |err| {
         debug_trace.logf("agent", "reasoning item id minting failed err={s}", .{@errorName(err)});
         return;
     };
+    // Every in-repo id path keeps a text slot in lockstep; a desynced
+    // restore drops the chunk instead of panicking.
+    if (slot < stream_ctx.reasoning_texts.items.len) {
+        stream_ctx.reasoning_texts.items[slot].appendSlice(stream_ctx.alloc, chunk) catch |err| {
+            debug_trace.logf("agent", "reasoning text retention failed err={s}", .{@errorName(err)});
+        };
+    } else {
+        debug_trace.logf("agent", "reasoning text slot desynced slot={d} blocks={d}", .{
+            slot,
+            stream_ctx.reasoning_texts.items.len,
+        });
+    }
+    if (stream_ctx.reasoning_item_ids.items.len != known_before) {
+        noteSessionItem(stream_ctx, .{ .reasoning_started = .{
+            .turn_id = stream_ctx.turn_id,
+            .item_id = stream_ctx.reasoning_item_ids.items[slot],
+        } });
+    }
     stream_ctx.markModelOutput();
     publishTurnPhase(stream_ctx, .thinking);
     if (stream_ctx.token_progress) |progress| {
@@ -403,37 +433,43 @@ fn stream_message_item_id(stream_ctx: *StreamChunkContext, item_id: []const u8) 
 /// resumed stream replaying the same items keeps their identities instead
 /// of minting new ones; the fresh id is dropped like a rekeyed tool call.
 /// Index-less empty chunks share the latest id, keeping one block under
-/// one id without a provider key. The context owns every stored id.
-fn stream_reasoning_item_id(stream_ctx: *StreamChunkContext, item_id: []const u8, output_index: ?i64) Allocator.Error!void {
+/// one id without a provider key. Returns the block's slot, which also
+/// indexes reasoning_texts. The context owns every stored id.
+fn stream_reasoning_item_id(stream_ctx: *StreamChunkContext, item_id: []const u8, output_index: ?i64) Allocator.Error!usize {
     if (item_id.len != 0) {
         for (stream_ctx.reasoning_item_ids.items, 0..) |known, slot| {
             if (std.mem.eql(u8, known, item_id)) {
                 if (stream_ctx.reasoning_item_output_index.items[slot] == null) {
                     stream_ctx.reasoning_item_output_index.items[slot] = output_index;
                 }
-                return;
+                return slot;
             }
         }
         if (output_index) |index| {
-            if (findReasoningSlot(stream_ctx.reasoning_item_output_index.items, index)) |_| return;
+            if (findReasoningSlot(stream_ctx.reasoning_item_output_index.items, index)) |slot| return slot;
         }
-        // Reserve both slots before duping: a later failure appends
-        // nothing, so nothing leaks.
-        try stream_ctx.reasoning_item_ids.ensureUnusedCapacity(stream_ctx.alloc, 1);
-        try stream_ctx.reasoning_item_output_index.ensureUnusedCapacity(stream_ctx.alloc, 1);
-        stream_ctx.reasoning_item_ids.appendAssumeCapacity(try stream_ctx.alloc.dupe(u8, item_id));
-        stream_ctx.reasoning_item_output_index.appendAssumeCapacity(output_index);
-        return;
+        return appendReasoningSlot(stream_ctx, try stream_ctx.alloc.dupe(u8, item_id), output_index);
     }
     if (output_index) |index| {
-        if (findReasoningSlot(stream_ctx.reasoning_item_output_index.items, index)) |_| return;
+        if (findReasoningSlot(stream_ctx.reasoning_item_output_index.items, index)) |slot| return slot;
     } else if (stream_ctx.reasoning_item_ids.items.len > 0) {
-        return;
+        return stream_ctx.reasoning_item_ids.items.len - 1;
     }
+    return appendReasoningSlot(stream_ctx, try types.generate_item_id(stream_ctx.alloc), output_index);
+}
+
+/// Appends a fresh reasoning slot with an already-owned id. Reserves every
+/// list before appending, so a later failure appends nothing and the id
+/// (owned by the caller on failure) never leaks into a half-built slot.
+fn appendReasoningSlot(stream_ctx: *StreamChunkContext, owned_id: []u8, output_index: ?i64) Allocator.Error!usize {
+    errdefer stream_ctx.alloc.free(owned_id);
     try stream_ctx.reasoning_item_ids.ensureUnusedCapacity(stream_ctx.alloc, 1);
     try stream_ctx.reasoning_item_output_index.ensureUnusedCapacity(stream_ctx.alloc, 1);
-    stream_ctx.reasoning_item_ids.appendAssumeCapacity(try types.generate_item_id(stream_ctx.alloc));
+    try stream_ctx.reasoning_texts.ensureUnusedCapacity(stream_ctx.alloc, 1);
+    stream_ctx.reasoning_item_ids.appendAssumeCapacity(owned_id);
     stream_ctx.reasoning_item_output_index.appendAssumeCapacity(output_index);
+    stream_ctx.reasoning_texts.appendAssumeCapacity(.empty);
+    return stream_ctx.reasoning_item_ids.items.len - 1;
 }
 
 fn findReasoningSlot(indices: []const ?i64, output_index: i64) ?usize {
@@ -441,6 +477,62 @@ fn findReasoningSlot(indices: []const ?i64, output_index: i64) ?usize {
         if (candidate) |index| if (index == output_index) return slot;
     }
     return null;
+}
+
+/// Best-effort per-item log note. A degraded log must never break the
+/// stream, so failures are traced and swallowed like other display faults.
+fn noteSessionItem(stream_ctx: *const StreamChunkContext, note: session_event.SessionNote) void {
+    const note_fn = stream_ctx.hooks.note_session_event orelse return;
+    note_fn(stream_ctx.hooks.ctx, note) catch |err| {
+        debug_trace.logf("agent", "session item note failed err={s}", .{@errorName(err)});
+    };
+}
+
+/// Emits one step's closing item lines: its reasoning blocks (started and
+/// completed, texts lockstepped by attach_stream_message_ids) and its
+/// message (started and completed with the turn's exact text). Terminal
+/// steps without a streamed completion mint a message id so failure
+/// notices still persist as items. Fallible: terminal sites propagate
+/// note failures so a broken log degrades loudly, never silently.
+pub fn noteTerminalStep(
+    deps: *const runtime_deps.AgentRuntimeDeps,
+    alloc: Allocator,
+    turn_id: u64,
+    completion: ?*const types.ModelCompletion,
+    text: []const u8,
+) !void {
+    const note_fn = deps.note_session_event orelse return;
+    const reasoning_ids = if (completion) |known| known.reasoning_item_ids else &.{};
+    const reasoning_texts = if (completion) |known| known.reasoning_texts orelse &.{} else &.{};
+    for (reasoning_ids, 0..) |item_id, index| {
+        const block_text = if (index < reasoning_texts.len) reasoning_texts[index] else "";
+        try note_fn(deps.ctx, .{ .reasoning_started = .{ .turn_id = turn_id, .item_id = item_id } });
+        try note_fn(deps.ctx, .{ .reasoning_completed = .{
+            .turn_id = turn_id,
+            .item_id = item_id,
+            .text = block_text,
+        } });
+    }
+    if (completion) |known| {
+        if (known.message_item_id) |item_id| {
+            try note_fn(deps.ctx, .{ .message_started = .{ .turn_id = turn_id, .item_id = item_id } });
+            try note_fn(deps.ctx, .{ .message_completed = .{
+                .turn_id = turn_id,
+                .item_id = item_id,
+                .text = text,
+            } });
+            return;
+        }
+    }
+    if (text.len == 0) return;
+    const minted = try types.generate_item_id(alloc);
+    defer alloc.free(minted);
+    try note_fn(deps.ctx, .{ .message_started = .{ .turn_id = turn_id, .item_id = minted } });
+    try note_fn(deps.ctx, .{ .message_completed = .{
+        .turn_id = turn_id,
+        .item_id = minted,
+        .text = text,
+    } });
 }
 
 /// Attaches the stream-minted message and reasoning ids to a completion,
@@ -467,6 +559,15 @@ pub fn attach_stream_message_ids(
             attached += 1;
         }
         completion.reasoning_item_ids = owned;
+        const texts = try alloc.alloc([]const u8, stream_ctx.reasoning_texts.items.len);
+        errdefer alloc.free(texts);
+        var copied: usize = 0;
+        errdefer alloc.free(texts[0..copied]);
+        for (stream_ctx.reasoning_texts.items, 0..) |*text, index| {
+            texts[index] = try alloc.dupe(u8, text.items);
+            copied += 1;
+        }
+        completion.reasoning_texts = texts;
     }
 }
 
@@ -906,7 +1007,7 @@ const NoticeCapture = struct {
         return .{ .diff = .skipped, .tracker = .skipped };
     }
 
-    fn propagateHistory(_: *anyopaque, _: HistoryTurn) !void {}
+    fn propagateHistory(_: *anyopaque, _: HistoryTurn, _: types.TurnPresentationOutcome) !void {}
     fn propagateGrant(_: *anyopaque, _: []const u8, _: []const u8) !void {}
     fn pushEvent(_: *anyopaque, _: WorkerEvent) !void {}
     fn pushText(_: *anyopaque, _: runtime_deps.TextEmission) !void {}
@@ -1015,7 +1116,7 @@ const StreamCapture = struct {
     fn noopPublishCommittedFileHandoff(_: *anyopaque, _: file_mutation.CommittedFileHandoff) SecondaryPublicationReport {
         return .{ .diff = .skipped, .tracker = .skipped };
     }
-    fn noopPropagateHistory(_: *anyopaque, _: HistoryTurn) !void {}
+    fn noopPropagateHistory(_: *anyopaque, _: HistoryTurn, _: types.TurnPresentationOutcome) !void {}
     fn noopPropagateGrant(_: *anyopaque, _: []const u8, _: []const u8) !void {}
     fn noopPushDiff(_: *anyopaque, _: DiffEntryPayload) !void {}
     fn noopSystemNotice(_: *anyopaque, _: []const u8) !void {}
@@ -2730,9 +2831,11 @@ test "message item id survives stream start, completion, persistence, and resume
     }
     try resumed.reasoning_item_ids.ensureUnusedCapacity(alloc, reopened_checkpoint.assistant_reasoning_ids.len);
     try resumed.reasoning_item_output_index.ensureUnusedCapacity(alloc, reopened_checkpoint.assistant_reasoning_ids.len);
+    try resumed.reasoning_texts.ensureUnusedCapacity(alloc, reopened_checkpoint.assistant_reasoning_ids.len);
     for (reopened_checkpoint.assistant_reasoning_ids) |entry| {
         resumed.reasoning_item_ids.appendAssumeCapacity(try alloc.dupe(u8, entry.item_id));
         resumed.reasoning_item_output_index.appendAssumeCapacity(entry.output_index);
+        resumed.reasoning_texts.appendAssumeCapacity(.empty);
     }
     const replay_reasoning = try types.generate_item_id(alloc);
     defer alloc.free(replay_reasoning);
@@ -2811,9 +2914,9 @@ fn checkReasoningItemRecordingAllocationFailures(alloc: Allocator) !void {
     defer stream_ctx.deinit();
     // Known-id dupe plus slot append, empty-index mint plus slot append,
     // repeat arrivals, then completion attach dupes.
-    try stream_reasoning_item_id(&stream_ctx, "reason_a", 0);
-    try stream_reasoning_item_id(&stream_ctx, "", 1);
-    try stream_reasoning_item_id(&stream_ctx, "reason_a", 0);
+    _ = try stream_reasoning_item_id(&stream_ctx, "reason_a", 0);
+    _ = try stream_reasoning_item_id(&stream_ctx, "", 1);
+    _ = try stream_reasoning_item_id(&stream_ctx, "reason_a", 0);
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     var completion = types.ModelCompletion{};

@@ -298,7 +298,7 @@ test "recovery markers are idempotent and clear durably" {
 test "recovery registry reads only marked durable session state" {
     const alloc = std.testing.allocator;
     const Checkpoint = struct {
-        fn persist(_: *anyopaque, _: session_usage.Snapshot) !void {}
+        fn persist(_: *anyopaque, _: session_usage.Snapshot, _: ?session_usage.SettledRecord) !void {}
     };
 
     var tmp = std.testing.tmpDir(.{});
@@ -469,9 +469,20 @@ test "recovery marker distinguishes checkpoints around a crash boundary" {
     try std.testing.expect(before_unresolved_checkpoint.unknown_pending);
 
     const seq_before = writable.position.through_seq;
-    _ = try writable.appendEvent(
+    _ = try writable.appendUsageRecorded(
         alloc,
-        .{ .usage_checkpointed = .{ .usage = unresolved } },
+        .{
+            .id = "gen-recovery-marker",
+            .model = "provider/model",
+            .total_cost = null,
+            .input_tokens = 1,
+            .output_tokens = 1,
+            .cache_read_tokens = 0,
+            .cache_write_tokens = 0,
+            .billable_web_search_calls = 0,
+        },
+        null,
+        null,
         unresolved_checkpoint.timestamp_ms,
         .retry_expected_tail,
         .{ .checkpoint_interval = 0 },
@@ -488,9 +499,20 @@ test "recovery marker distinguishes checkpoints around a crash boundary" {
         settled,
     );
     try std.testing.expect(!settled_checkpoint.recovery_pending);
-    _ = try writable.appendEvent(
+    _ = try writable.appendUsageRecorded(
         alloc,
-        .{ .usage_checkpointed = .{ .usage = settled } },
+        .{
+            .id = "gen-recovery-settled",
+            .model = "provider/model",
+            .total_cost = null,
+            .input_tokens = 0,
+            .output_tokens = 0,
+            .cache_read_tokens = 0,
+            .cache_write_tokens = 0,
+            .billable_web_search_calls = 0,
+        },
+        null,
+        null,
         settled_checkpoint.timestamp_ms,
         .retry_expected_tail,
         .{ .checkpoint_interval = 0 },

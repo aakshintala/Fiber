@@ -50,10 +50,29 @@ pub const DeliveryOutcome = enum {
 /// Host-owned durable sink. Its context and allocator remain borrowed until
 /// the sink is unset; `persist` must not retain the snapshot, checkpoint, or
 /// reconfigure the sink.
+/// Which log item a settled model call belongs to. Borrowed: the sink must
+/// copy anything it keeps past the persist call.
+pub const CallAttribution = struct {
+    item_id: ?[]const u8 = null,
+    turn_id: ?u64 = null,
+};
+
+/// One settled model call offered to the session log. The snapshot carries
+/// the ledger; the record carries the per-call line. Borrowed like the
+/// snapshot: persist serializes synchronously.
+pub const SettledRecord = struct {
+    record: GenerationRecord,
+    attribution: CallAttribution = .{},
+};
+
 pub const UsageCheckpointSink = struct {
     context: *anyopaque,
     allocator: Allocator,
-    persist: *const fn (context: *anyopaque, snapshot: Snapshot) anyerror!void,
+    persist: *const fn (
+        context: *anyopaque,
+        snapshot: Snapshot,
+        settled: ?SettledRecord,
+    ) anyerror!void,
 };
 
 /// Host-owned local-profile publication sink. The callback receives a borrowed
@@ -85,10 +104,18 @@ const ProfilePublicationBatch = struct {
 
 /// One admitted provider invocation. `begin` durably reserves it before network I/O;
 /// every successful reservation must terminate through `fail` or `complete`.
+/// Links a model call to its log turn and message. The message id mints
+/// mid-stream, so callers pass a pointer the settle reads at completion.
+pub const UsageAttributionSource = struct {
+    turn_id: u64 = 0,
+    message_item_id: ?*const ?[]u8 = null,
+};
+
 pub const InvocationObservation = struct {
     usage: ?*Usage,
     sequence: u64 = 0,
     started_at_ms: i64,
+    attribution: CallAttribution = .{},
 
     pub fn begin(usage: ?*Usage) !InvocationObservation {
         return .{
@@ -188,6 +215,7 @@ pub const InvocationObservation = struct {
                     provider,
                     generation_id,
                     billing,
+                    self.attribution,
                 );
                 if (!accepted) return;
                 debug_trace.logf(
@@ -208,7 +236,7 @@ pub const InvocationObservation = struct {
     }
 };
 
-const GenerationRecord = generation_usage.Record;
+pub const GenerationRecord = generation_usage.Record;
 
 pub const ModelAggregate = struct {
     model: []u8,
@@ -222,7 +250,7 @@ pub const ModelAggregate = struct {
     request_count: ?u64 = null,
     billable_web_search_calls: u64 = 0,
 
-    fn deinit(self: *ModelAggregate, alloc: Allocator) void {
+    pub fn deinit(self: *ModelAggregate, alloc: Allocator) void {
         alloc.free(self.model);
         self.* = undefined;
     }
@@ -459,14 +487,14 @@ pub const Usage = struct {
     pub fn persistCheckpoint(self: *Usage) bool {
         self.checkpoint_mutex.lockUncancelable(io_mod.getIo());
         defer self.checkpoint_mutex.unlock(io_mod.getIo());
-        return self.persistCheckpointBestEffortLocked();
+        return self.persistCheckpointBestEffortLocked(null);
     }
 
     fn reserveInvocationDurably(self: *Usage) !u64 {
         self.checkpoint_mutex.lockUncancelable(io_mod.getIo());
         defer self.checkpoint_mutex.unlock(io_mod.getIo());
         const sequence = try self.reserveInvocation();
-        self.persistCheckpointRequiredLocked() catch |err| {
+        self.persistCheckpointRequiredLocked(null) catch |err| {
             self.finishInvocation(sequence, 0, .unbilled);
             return err;
         };
@@ -481,7 +509,7 @@ pub const Usage = struct {
     ) !void {
         self.checkpoint_mutex.lockUncancelable(io_mod.getIo());
         self.finishInvocation(sequence, duration_ms, outcome);
-        _ = self.persistCheckpointBestEffortLocked();
+        _ = self.persistCheckpointBestEffortLocked(null);
         self.checkpoint_mutex.unlock(io_mod.getIo());
         self.flushProfilePublications();
     }
@@ -507,7 +535,7 @@ pub const Usage = struct {
             team,
         ) catch |err| {
             self.markBillingIncomplete();
-            _ = self.persistCheckpointBestEffortLocked();
+            _ = self.persistCheckpointBestEffortLocked(null);
             debug_trace.logf(
                 "session",
                 "usage generation checkpointed incomplete reason={s}",
@@ -517,7 +545,7 @@ pub const Usage = struct {
             self.flushProfilePublications();
             return false;
         };
-        _ = self.persistCheckpointBestEffortLocked();
+        _ = self.persistCheckpointBestEffortLocked(null);
         self.checkpoint_mutex.unlock(io_mod.getIo());
         return accepted;
     }
@@ -531,6 +559,7 @@ pub const Usage = struct {
         provider: model_provider.ProviderId,
         external_id: []const u8,
         billing: types.ProviderBilling,
+        attribution: CallAttribution,
     ) !bool {
         var canonical_buffer: [30]u8 = undefined;
         const canonical_id = canonicalExactGenerationId(
@@ -595,7 +624,7 @@ pub const Usage = struct {
             durable_bridge,
         ) catch |err| {
             self.markBillingIncomplete();
-            _ = self.persistCheckpointBestEffortLocked();
+            _ = self.persistCheckpointBestEffortLocked(null);
             self.checkpoint_mutex.unlock(io_mod.getIo());
             debug_trace.logf(
                 "session",
@@ -605,11 +634,15 @@ pub const Usage = struct {
             return false;
         };
         if (!accepted) {
-            _ = self.persistCheckpointBestEffortLocked();
+            _ = self.persistCheckpointBestEffortLocked(null);
             self.checkpoint_mutex.unlock(io_mod.getIo());
             return false;
         }
-        if (durable_bridge and !self.persistCheckpointBestEffortLocked()) {
+        const settled: ?SettledRecord = if (durable_bridge) .{
+            .record = record,
+            .attribution = attribution,
+        } else null;
+        if (durable_bridge and !self.persistCheckpointBestEffortLocked(settled)) {
             self.checkpoint_mutex.unlock(io_mod.getIo());
             return false;
         }
@@ -654,15 +687,15 @@ pub const Usage = struct {
         return true;
     }
 
-    fn persistCheckpointRequiredLocked(self: *Usage) !void {
+    fn persistCheckpointRequiredLocked(self: *Usage, settled: ?SettledRecord) !void {
         const sink = self.checkpoint_sink orelse return;
         var persisted = try self.snapshotCurrent(sink.allocator);
         defer persisted.deinit(sink.allocator);
-        try sink.persist(sink.context, persisted);
+        try sink.persist(sink.context, persisted, settled);
         self.markClean(persisted);
     }
 
-    fn persistCheckpointBestEffortLocked(self: *Usage) bool {
+    fn persistCheckpointBestEffortLocked(self: *Usage, settled: ?SettledRecord) bool {
         const sink = self.checkpoint_sink orelse return true;
         var persisted = self.snapshotCurrent(sink.allocator) catch |err| {
             self.markBillingIncomplete();
@@ -674,7 +707,7 @@ pub const Usage = struct {
             return false;
         };
         defer persisted.deinit(sink.allocator);
-        sink.persist(sink.context, persisted) catch |err| {
+        sink.persist(sink.context, persisted, settled) catch |err| {
             self.markBillingIncomplete();
             debug_trace.logf(
                 "session",
@@ -901,7 +934,7 @@ pub const Usage = struct {
                 self.flushProfilePublications();
                 return err;
             };
-            if (!self.persistCheckpointBestEffortLocked()) {
+            if (!self.persistCheckpointBestEffortLocked(.{ .record = record })) {
                 self.checkpoint_mutex.unlock(io_mod.getIo());
                 self.flushProfilePublications();
                 return error.ProfilePublicationRecoveryUnavailable;
@@ -933,7 +966,7 @@ pub const Usage = struct {
             return err;
         };
         self.mutex.unlock(io_mod.getIo());
-        _ = self.persistCheckpointBestEffortLocked();
+        _ = self.persistCheckpointBestEffortLocked(.{ .record = record });
         self.checkpoint_mutex.unlock(io_mod.getIo());
         if (publication == .failed) self.flushProfilePublications();
     }
@@ -1209,6 +1242,10 @@ pub const Usage = struct {
             published_any = true;
         }
 
+        // Late-settled records borrow their batch facts; every persist below
+        // runs before batch.deinit at the end of this function.
+        var settled_records: std.ArrayList(GenerationRecord) = .empty;
+        defer settled_records.deinit(sink.allocator);
         for (batch.facts) |fact| {
             sink.publish(sink.context, .{ .generation = fact }) catch |err| {
                 debug_trace.logf(
@@ -1219,29 +1256,50 @@ pub const Usage = struct {
                 continue;
             };
             self.mutex.lockUncancelable(io_mod.getIo());
-            self.applyGenerationUnlocked(
-                sink.allocator,
-                generationRecordBorrowed(fact),
-                true,
-            ) catch |err| {
-                self.billing = .incomplete;
-                self.recordIncidentUnlocked(.incomplete, fact.created_at_ms);
-                self.removePublicationBacklogUnlocked(sink.allocator, fact.id);
-                self.dirty = true;
-                debug_trace.logf(
-                    "session",
-                    "usage profile backlog settlement failed id={s} reason={s}",
-                    .{ fact.id, @errorName(err) },
-                );
+            const applied = blk: {
+                self.applyGenerationUnlocked(
+                    sink.allocator,
+                    generationRecordBorrowed(fact),
+                    true,
+                ) catch |err| {
+                    self.billing = .incomplete;
+                    self.recordIncidentUnlocked(.incomplete, fact.created_at_ms);
+                    self.removePublicationBacklogUnlocked(sink.allocator, fact.id);
+                    self.dirty = true;
+                    debug_trace.logf(
+                        "session",
+                        "usage profile backlog settlement failed id={s} reason={s}",
+                        .{ fact.id, @errorName(err) },
+                    );
+                    break :blk false;
+                };
+                break :blk true;
             };
             self.mutex.unlock(io_mod.getIo());
             published_any = true;
+            if (applied) {
+                settled_records.append(sink.allocator, generationRecordBorrowed(fact)) catch |err| {
+                    debug_trace.logf(
+                        "session",
+                        "usage late settlement line dropped id={s} reason={s}",
+                        .{ fact.id, @errorName(err) },
+                    );
+                };
+            }
         }
         self.publication_mutex.unlock(io_mod.getIo());
 
         if (batch.checkpoint_changed or published_any) {
             self.checkpoint_mutex.lockUncancelable(io_mod.getIo());
-            _ = self.persistCheckpointBestEffortLocked();
+            if (settled_records.items.len == 0) {
+                _ = self.persistCheckpointBestEffortLocked(null);
+            } else {
+                // One line per late-settled record; a repeated id replaces
+                // its first line when the log folds.
+                for (settled_records.items) |record| {
+                    _ = self.persistCheckpointBestEffortLocked(.{ .record = record });
+                }
+            }
             self.checkpoint_mutex.unlock(io_mod.getIo());
         }
     }
@@ -2621,7 +2679,7 @@ fn writeOptionalCost(writer: *std.Io.Writer, value: ?f64) !void {
     }
 }
 
-fn addRecordToModel(model: *ModelAggregate, record: GenerationRecord, sequence: u64) !void {
+pub fn addRecordToModel(model: *ModelAggregate, record: GenerationRecord, sequence: u64) !void {
     const total_cost = try addOptionalCost(model.total_cost, record.total_cost);
     const input_tokens = std.math.add(u64, model.input_tokens, record.input_tokens) catch
         return error.UsageOverflow;
@@ -2693,14 +2751,14 @@ fn generationRecordBorrowed(
     };
 }
 
-fn addOptionalCounter(first: ?u64, second: ?u64) error{UsageOverflow}!?u64 {
+pub fn addOptionalCounter(first: ?u64, second: ?u64) error{UsageOverflow}!?u64 {
     if (first == null or second == null) return null;
     return std.math.add(u64, first.?, second.?) catch error.UsageOverflow;
 }
 
 /// Sums two optional costs. Unknown poisons the total instead of reading as
 /// free; overflow still fails so callers mark billing incomplete.
-fn addOptionalCost(first: ?f64, second: ?f64) error{UsageOverflow}!?f64 {
+pub fn addOptionalCost(first: ?f64, second: ?f64) error{UsageOverflow}!?f64 {
     const current = first orelse return null;
     const add = second orelse return null;
     const next = current + add;
@@ -3018,7 +3076,7 @@ test "durable incident publication retires profile recovery" {
         calls: usize = 0,
         recovery_pending: bool = true,
 
-        fn persist(raw: *anyopaque, snapshot: Snapshot) !void {
+        fn persist(raw: *anyopaque, snapshot: Snapshot, _: ?SettledRecord) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
             self.recovery_pending = needsProfileRecovery(snapshot);
@@ -3151,7 +3209,7 @@ test "profile publication failure preserves session totals and retries backlog" 
 test "restored publication backlog settles the pending generation exactly" {
     const alloc = std.testing.allocator;
     const Checkpoint = struct {
-        fn persist(_: *anyopaque, _: Snapshot) !void {}
+        fn persist(_: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {}
     };
     const PublicationProbe = struct {
         fail_generation: bool = true,
@@ -3311,7 +3369,7 @@ test "missing profile publication sink keeps the durable pending bridge" {
     const Checkpoint = struct {
         calls: usize = 0,
 
-        fn persist(raw: *anyopaque, _: Snapshot) !void {
+        fn persist(raw: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
         }
@@ -3801,7 +3859,7 @@ test "active invocation does not render partial usage as complete" {
 test "active invocation dominates separate pending and publication state" {
     const alloc = std.testing.allocator;
     const Checkpoint = struct {
-        fn persist(_: *anyopaque, _: Snapshot) !void {}
+        fn persist(_: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {}
     };
     var checkpoint_context: u8 = 0;
     var usage = Usage.initFresh();
@@ -4147,7 +4205,7 @@ test "terminal Gateway billing settles the durable observation immediately" {
 test "duplicate Gateway terminal callback does not republish inline billing" {
     const alloc = std.testing.allocator;
     const CheckpointProbe = struct {
-        fn persist(_: *anyopaque, _: Snapshot) !void {}
+        fn persist(_: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {}
     };
     const PublicationProbe = struct {
         generations: usize = 0,
@@ -5057,7 +5115,7 @@ test "gateway observation checkpoints active and terminal usage states" {
         api_duration_complete: [2]bool = undefined,
         pending_count: [2]usize = undefined,
 
-        fn persist(raw: *anyopaque, snapshot: Snapshot) !void {
+        fn persist(raw: *anyopaque, snapshot: Snapshot, _: ?SettledRecord) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             const index = self.calls;
             self.billing[index] = snapshot.billing;
@@ -5111,7 +5169,7 @@ test "gateway observation does not proceed when active checkpoint fails" {
     const Reject = struct {
         calls: usize = 0,
 
-        fn persist(raw: *anyopaque, _: Snapshot) !void {
+        fn persist(raw: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
             return error.CheckpointRejected;
@@ -5144,7 +5202,7 @@ test "terminal checkpoint failure preserves request progress as incomplete" {
     const Reject = struct {
         calls: usize = 0,
 
-        fn persist(raw: *anyopaque, _: Snapshot) !void {
+        fn persist(raw: *anyopaque, _: Snapshot, _: ?SettledRecord) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
             if (self.calls == 2) return error.CheckpointRejected;

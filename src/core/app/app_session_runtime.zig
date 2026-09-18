@@ -880,12 +880,13 @@ pub const Persistence = struct {
     image_snapshot_temp_dir: ?[]u8 = null,
     resume_view_admission: ?session_store.ResumeViewAdmission = null,
     resume_handoff_intent: ResumeHandoffIntent = .none,
+    noted_turn_id: ?u64 = null,
 
     /// Fieldwise initialization avoids retaining undefined optional payloads
     /// in a static release-binary template.
     pub fn initInto(storage: *Persistence) void {
         comptime {
-            if (std.meta.fields(Persistence).len != 17) {
+            if (std.meta.fields(Persistence).len != 18) {
                 @compileError("update Persistence.initInto for the changed field set");
             }
         }
@@ -907,6 +908,7 @@ pub const Persistence = struct {
         storage.image_snapshot_temp_dir = null;
         storage.resume_view_admission = null;
         storage.resume_handoff_intent = .none;
+        storage.noted_turn_id = null;
     }
 
     pub fn deinit(self: *Persistence, alloc: Allocator) void {
@@ -1899,7 +1901,7 @@ pub fn Runtime(comptime App: type) type {
         }
 
         pub fn appendHistoryTurn(app: *App, turn: types.HistoryTurn) !void {
-            _ = try appendHistoryTurnWithPendingPresentation(app, turn, .strict, null);
+            _ = try appendHistoryTurnWithPendingPresentation(app, turn, .strict, null, null);
         }
 
         pub fn appendFinishedPrompt(
@@ -1915,13 +1917,16 @@ pub fn Runtime(comptime App: type) type {
                 turn,
                 .strict,
                 finished.snapshot_file_ownership,
+                finished.terminal_outcome,
             );
         }
 
         pub fn persistUsageCheckpoint(
             app: *App,
             snapshot: session_usage.Snapshot,
+            settled: ?session_usage.SettledRecord,
         ) !void {
+            const line = settled orelse return;
             if (comptime !@hasField(App, "session_persistence")) {
                 return error.SessionPersistenceUnavailable;
             }
@@ -1946,9 +1951,16 @@ pub fn Runtime(comptime App: type) type {
                 .{},
                 recovery_checkpoint.timestamp_ms,
             );
-            _ = try loaded.appendEvent(
+            var turn_buf: [20]u8 = undefined;
+            const turn_id: ?[]const u8 = if (line.attribution.turn_id) |id|
+                try std.fmt.bufPrint(&turn_buf, "{d}", .{id})
+            else
+                null;
+            _ = try loaded.appendUsageRecorded(
                 app.alloc,
-                .{ .usage_checkpointed = .{ .usage = snapshot } },
+                line.record,
+                turn_id,
+                line.attribution.item_id,
                 recovery_checkpoint.timestamp_ms,
                 .retry_expected_tail,
                 .{ .checkpoint_interval = 0, .test_controls = session_test_controls.logOptions().test_controls },
@@ -2030,6 +2042,7 @@ pub fn Runtime(comptime App: type) type {
                 turn,
                 .visual_epoch,
                 null,
+                null,
             );
         }
 
@@ -2042,6 +2055,7 @@ pub fn Runtime(comptime App: type) type {
                 finished.turn,
                 .visual_epoch,
                 finished.snapshot_file_ownership,
+                finished.terminal_outcome,
             );
         }
 
@@ -2055,21 +2069,22 @@ pub fn Runtime(comptime App: type) type {
             turn: types.HistoryTurn,
             mode: AppendHistoryMode,
             snapshot_file_ownership: ?types.SnapshotFileOwnership,
+            outcome: ?types.TurnPresentationOutcome,
         ) !HistoryAppendOutcome {
             if (comptime !@hasField(App, "session_persistence")) {
-                return appendHistoryTurnWithOutcome(app, turn, mode, snapshot_file_ownership);
+                return appendHistoryTurnWithOutcome(app, turn, mode, snapshot_file_ownership, outcome);
             }
             const interrupted = switch (turn) {
                 .interrupted => |entry| entry,
-                else => return appendHistoryTurnWithOutcome(app, turn, mode, snapshot_file_ownership),
+                else => return appendHistoryTurnWithOutcome(app, turn, mode, snapshot_file_ownership, outcome),
             };
             var pending = app.session_persistence.pending_cancelled_command orelse {
-                return appendHistoryTurnWithOutcome(app, turn, mode, snapshot_file_ownership);
+                return appendHistoryTurnWithOutcome(app, turn, mode, snapshot_file_ownership, outcome);
             };
             app.session_persistence.pending_cancelled_command = null;
             const call = interrupted.tool_call orelse {
                 pending.discard(app.alloc);
-                return appendHistoryTurnWithOutcome(app, turn, mode, snapshot_file_ownership);
+                return appendHistoryTurnWithOutcome(app, turn, mode, snapshot_file_ownership, outcome);
             };
             const is_command = try captured_command.isToolCall(
                 app.alloc,
@@ -2080,7 +2095,7 @@ pub fn Runtime(comptime App: type) type {
                 !std.mem.eql(u8, call.id, pending.lifecycle_id.call_id))
             {
                 pending.discard(app.alloc);
-                return appendHistoryTurnWithOutcome(app, turn, mode, snapshot_file_ownership);
+                return appendHistoryTurnWithOutcome(app, turn, mode, snapshot_file_ownership, outcome);
             }
             defer pending.discard(app.alloc);
 
@@ -2097,6 +2112,7 @@ pub fn Runtime(comptime App: type) type {
                     .{ .interrupted = enriched_interrupted },
                     mode,
                     snapshot_file_ownership,
+                    outcome,
                 );
             }
 
@@ -2105,7 +2121,7 @@ pub fn Runtime(comptime App: type) type {
                 .command_artifact_handle = pending.command_artifact_handle,
             };
             const enriched: types.HistoryTurn = .{ .interrupted = enriched_interrupted };
-            return appendHistoryTurnWithOutcome(app, enriched, mode, snapshot_file_ownership);
+            return appendHistoryTurnWithOutcome(app, enriched, mode, snapshot_file_ownership, outcome);
         }
 
         fn ensurePendingCancelledCommand(
@@ -2166,6 +2182,7 @@ pub fn Runtime(comptime App: type) type {
             turn: types.HistoryTurn,
             mode: AppendHistoryMode,
             snapshot_file_ownership: ?types.SnapshotFileOwnership,
+            outcome: ?types.TurnPresentationOutcome,
         ) !HistoryAppendOutcome {
             app.session.appendHistoryEntry(app.alloc, turn) catch |err| {
                 return switch (mode) {
@@ -2205,16 +2222,25 @@ pub fn Runtime(comptime App: type) type {
                 };
             };
 
-            _ = loaded.appendEvent(
+            // The turn's items already reached the log as work happened;
+            // only the closing boundary is left. A turn without a noted
+            // start persists in memory only.
+            const resolved_outcome: types.TurnPresentationOutcome = outcome orelse switch (turn) {
+                .assistant => .completed,
+                .interrupted => |entry| switch (entry.terminal_reason) {
+                    .cancelled => .interrupted,
+                    .failed => .failed,
+                },
+                .compacted_summary => .completed,
+            };
+            const noted_turn_id = app.session_persistence.noted_turn_id;
+            app.session_persistence.noted_turn_id = null;
+            _ = loaded.commitTurnCompleted(
                 app.alloc,
-                .{ .history_turn_committed = .{
-                    .conversation_language = app.session.languageSnapshot(),
-                    .last_input_tokens = app.last_input_tokens,
-                    .last_output_tokens = app.last_output_tokens,
-                    .turn = turn,
-                } },
+                turn,
+                noted_turn_id,
+                resolved_outcome,
                 io_mod.milliTimestamp(),
-                .retry_expected_tail,
                 session_test_controls.logOptions(),
             ) catch |err| switch (err) {
                 error.EventFrameTooLarge => {
@@ -4071,16 +4097,6 @@ pub fn Runtime(comptime App: type) type {
             log_options: session_log.Options,
         ) !void {
             try convergeDegraded(app, loaded, log_options);
-            if (comptime @hasField(@TypeOf(app.session), "usage")) {
-                if (app.session.usage.isDirty()) {
-                    try loaded.appendUsageCheckpoint(
-                        app.alloc,
-                        &app.session.usage,
-                        io_mod.milliTimestamp(),
-                        log_options,
-                    );
-                }
-            }
         }
 
         fn commitCurrentStateReplacement(
@@ -7865,13 +7881,56 @@ test "appendHistoryTurn commits canonical history event and totals" {
     defer session_runtime.freeHistoryTurn(alloc, turn);
 
     try Runtime(TestApp).appendHistoryTurn(&app, turn);
+    {
+        // Last-response totals fold from usage lines in the turn's own
+        // lines, so a second turn carries them here.
+        var writable = &app.session_persistence.writable.?;
+        _ = try writable.appendItemEvent(
+            alloc,
+            "9",
+            null,
+            .{ .turn_started = .{ .input = .{ .user = .{
+                .text = @constCast("second"),
+            } } } },
+            20,
+            .retry_expected_tail,
+            .{},
+        );
+        _ = try writable.appendUsageRecorded(
+            alloc,
+            .{
+                .id = "gen-canonical",
+                .model = "test/model",
+                .total_cost = null,
+                .input_tokens = 7,
+                .output_tokens = 11,
+                .cache_read_tokens = 0,
+                .cache_write_tokens = 0,
+                .billable_web_search_calls = 0,
+            },
+            "9",
+            null,
+            21,
+            .retry_expected_tail,
+            .{},
+        );
+        _ = try writable.appendItemEvent(
+            alloc,
+            "9",
+            null,
+            .{ .turn_completed = .{ .outcome = .completed } },
+            22,
+            .retry_expected_tail,
+            .{},
+        );
+    }
 
     var loaded = try app.session_persistence.store.?.loadReadOnly(
         alloc,
         app.session_persistence.writable.?.active_id,
     );
     defer loaded.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 1), loaded.history.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.history.len);
     try std.testing.expectEqualStrings("question", loaded.history[0].assistant.user.text);
     try std.testing.expectEqualStrings("answer", loaded.history[0].assistant.assistant);
     try std.testing.expectEqual(@as(?u64, 7), loaded.last_input_tokens);

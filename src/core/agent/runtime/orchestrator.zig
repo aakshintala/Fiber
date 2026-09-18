@@ -3573,6 +3573,13 @@ pub fn processAgentPrompt(
         effective_lifecycle.scope.subagent_id = effective_config.subagent_id;
     }
     agent.startTurn();
+    if (deps.note_session_event) |note_fn| {
+        try note_fn(deps.ctx, .{ .turn_started = .{
+            .turn_id = effective_job.turn_id,
+            .prompt = effective_job.prompt,
+            .images = effective_job.images,
+        } });
+    }
     var finalization = TurnFinalizationGuard.init(
         deps,
         effective_job.turn_id,
@@ -3945,6 +3952,7 @@ fn processQueuedPromptInner(
                 null,
                 &terminal_materializing,
                 .{},
+                &.{},
             );
             finish_trace.finish("interrupted");
             return;
@@ -3966,6 +3974,7 @@ fn processQueuedPromptInner(
             null,
             &terminal_materializing,
             .{},
+            &.{},
         );
         finish_trace.finish("interrupted");
         return;
@@ -4449,7 +4458,7 @@ fn processQueuedPromptLoop(
         last_step_ctx = step_ctx;
         if (config.cancel_flag.load(.seq_cst)) {
             runtime_telemetry.traceCancelObserved(step_ctx, false);
-            try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, null, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, .{});
+            try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, null, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, .{}, &.{});
             finish_trace.finish("interrupted");
             return;
         }
@@ -4458,7 +4467,7 @@ fn processQueuedPromptLoop(
         _ = refreshProjectContextStep(arena, deps, config, refresh_state, &stable_prefix, &context_delivery_state) catch |err| {
             if (err == error.Cancelled and config.cancel_flag.load(.seq_cst)) {
                 runtime_telemetry.traceCancelObserved(step_ctx, false);
-                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, null, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, .{});
+                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, null, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, .{}, &.{});
                 finish_trace.finish("interrupted");
                 return;
             }
@@ -4521,9 +4530,11 @@ fn processQueuedPromptLoop(
             }
             try stream_ctx.reasoning_item_ids.ensureUnusedCapacity(stream_ctx.alloc, checkpoint.assistant_reasoning_ids.len);
             try stream_ctx.reasoning_item_output_index.ensureUnusedCapacity(stream_ctx.alloc, checkpoint.assistant_reasoning_ids.len);
+            try stream_ctx.reasoning_texts.ensureUnusedCapacity(stream_ctx.alloc, checkpoint.assistant_reasoning_ids.len);
             for (checkpoint.assistant_reasoning_ids) |entry| {
                 stream_ctx.reasoning_item_ids.appendAssumeCapacity(try stream_ctx.alloc.dupe(u8, entry.item_id));
                 stream_ctx.reasoning_item_output_index.appendAssumeCapacity(entry.output_index);
+                stream_ctx.reasoning_texts.appendAssumeCapacity(.empty);
             }
             restore_recovery_source = false;
         }
@@ -4875,6 +4886,10 @@ fn processQueuedPromptLoop(
                 model_request,
                 deps.usage,
                 deps.usage_allocator,
+                .{
+                    .turn_id = stream_ctx.turn_id,
+                    .message_item_id = &stream_ctx.message_item_id,
+                },
             ) catch |err| {
                 parent_turn_delivery.observeGatewayDelivery(
                     deps,
@@ -5095,12 +5110,28 @@ fn processQueuedPromptLoop(
                         arena,
                         turn_id,
                     );
-                    try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, stream_ctx.raw_text.items, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                    try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, stream_ctx.raw_text.items, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                     finish_trace.finish("interrupted");
                     return;
                 }
                 if (will_auto_retry) {
                     std.debug.assert(pending_auto_retry_status == null);
+                    // The failed attempt closes as its own item; the retry
+                    // mints a new one below when its first chunk arrives.
+                    if (stream_ctx.message_item_id) |failed_id| {
+                        if (deps.note_session_event) |note_fn| {
+                            try note_fn(deps.ctx, .{ .message_completed = .{
+                                .turn_id = stream_ctx.turn_id,
+                                .item_id = failed_id,
+                                .text = stream_ctx.raw_text.items,
+                                .outcome = .failed,
+                                .cause = @tagName(failure_cause),
+                                .attempt = @intCast(consumed_attempts),
+                            } });
+                        }
+                        stream_ctx.alloc.free(failed_id);
+                        stream_ctx.message_item_id = null;
+                    }
                     pending_auto_retry_status = auto_retry_status(
                         consumed_attempts + 1,
                         semantic_limit,
@@ -5204,6 +5235,9 @@ fn processQueuedPromptLoop(
                             within_turn_suffix.items,
                             &stop_state.terminal_materializing,
                             stream_ctx.interruptedItemIds(),
+                            stream_ctx.reasoning_texts.items,
+                            failure_cause,
+                            consumed_attempts,
                         );
                     }
                 }
@@ -5243,6 +5277,10 @@ fn processQueuedPromptLoop(
                         model_request,
                         deps.usage,
                         deps.usage_allocator,
+                        .{
+                            .turn_id = stream_ctx.turn_id,
+                            .message_item_id = &stream_ctx.message_item_id,
+                        },
                     );
                     parent_turn_delivery.observeGatewayDelivery(
                         deps,
@@ -5590,7 +5628,7 @@ fn processQueuedPromptLoop(
                             response_completion.tool_calls,
                             advertised_dynamic_tool_names,
                         );
-                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, stream_ctx.raw_text.items, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, stream_ctx.raw_text.items, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                         finish_trace.finish("interrupted");
                         return;
                     }
@@ -5624,7 +5662,7 @@ fn processQueuedPromptLoop(
                     attempt_completion.tool_calls,
                     advertised_dynamic_tool_names,
                 );
-                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                 finish_trace.finish("interrupted");
                 return;
             }
@@ -5798,7 +5836,7 @@ fn processQueuedPromptLoop(
                             attempt_completion.tool_calls,
                             advertised_dynamic_tool_names,
                         );
-                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, null, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                         finish_trace.finish("interrupted");
                         return;
                     }
@@ -6219,6 +6257,13 @@ fn processQueuedPromptLoop(
                 return;
             }
             const finish_execution = try runtime_execution_memory.buildExecutionMemory(arena, within_turn_suffix.items);
+            try runtime_assistant_stream.noteTerminalStep(
+                deps,
+                arena,
+                job.turn_id,
+                &completion,
+                assistant_text,
+            );
             const completed_summary = summary_accumulator.finish();
             var turn: HistoryTurn = .{ .assistant = .{
                 .user = .{ .text = job.prompt, .images = job.images },
@@ -6228,7 +6273,7 @@ fn processQueuedPromptLoop(
                 .reasoning_item_ids = completion.reasoning_item_ids,
             } };
             types.setHistoryTurnSummary(&turn, completed_summary);
-            try deps.propagate_history_turn(deps.ctx, turn);
+            try deps.propagate_history_turn(deps.ctx, turn, .failed);
             try finalization.finish(.failed, .length_limited, .{
                 .turn = try types.dupeHistoryTurn(std.heap.c_allocator, turn),
                 .summary = completed_summary,
@@ -6329,6 +6374,7 @@ fn processQueuedPromptLoop(
                         stop_state.retained_candidate,
                         &stop_state.terminal_materializing,
                         stream_ctx.interruptedItemIds(),
+                        stream_ctx.reasoning_texts.items,
                     );
                     finish_trace.finish("interrupted");
                     return;
@@ -6468,6 +6514,7 @@ fn processQueuedPromptLoop(
                         stop_state.retained_candidate,
                         &stop_state.terminal_materializing,
                         stream_ctx.interruptedItemIds(),
+                        stream_ctx.reasoning_texts.items,
                     );
                     finish_trace.finish("interrupted");
                     return;
@@ -6557,6 +6604,7 @@ fn processQueuedPromptLoop(
                             stop_state.retained_candidate,
                             &stop_state.terminal_materializing,
                             stream_ctx.interruptedItemIds(),
+                            stream_ctx.reasoning_texts.items,
                         );
                         finish_trace.finish("interrupted");
                         return;
@@ -6695,6 +6743,7 @@ fn processQueuedPromptLoop(
                     stop_state.retained_candidate,
                     &stop_state.terminal_materializing,
                     stream_ctx.interruptedItemIds(),
+                    stream_ctx.reasoning_texts.items,
                 );
                 finish_trace.finish("interrupted");
                 return;
@@ -6835,7 +6884,7 @@ fn processQueuedPromptLoop(
                             advertised_dynamic_tool_names,
                         );
                         try runtime_tool_batch.drainPendingUserSuffix(arena, &step_batch, &within_turn_suffix);
-                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, parallel_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, parallel_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                         finish_trace.finish("interrupted");
                         return;
                     }
@@ -6904,7 +6953,7 @@ fn processQueuedPromptLoop(
                             advertised_dynamic_tool_names,
                         );
                         try runtime_tool_batch.drainPendingUserSuffix(arena, &step_batch, &within_turn_suffix);
-                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, parallel_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, parallel_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                         finish_trace.finish("interrupted");
                         return;
                     }
@@ -6940,7 +6989,7 @@ fn processQueuedPromptLoop(
                             advertised_dynamic_tool_names,
                         );
                         try runtime_tool_batch.drainPendingUserSuffix(arena, &step_batch, &within_turn_suffix);
-                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, parallel_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, parallel_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                         finish_trace.finish("interrupted");
                         return;
                     }
@@ -7025,7 +7074,7 @@ fn processQueuedPromptLoop(
                             advertised_dynamic_tool_names,
                         );
                         try runtime_tool_batch.drainPendingUserSuffix(arena, &step_batch, &within_turn_suffix);
-                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, executable_calls.items[0], completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                        try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, executable_calls.items[0], completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                         finish_trace.finish("interrupted");
                         return;
                     }
@@ -7146,7 +7195,7 @@ fn processQueuedPromptLoop(
                 if (config.cancel_flag.load(.seq_cst)) {
                     runtime_telemetry.traceCancelObserved(step_ctx, true);
                     try runtime_tool_batch.drainPendingUserSuffix(arena, &step_batch, &within_turn_suffix);
-                    try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, cancelled_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                    try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, cancelled_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                     finish_trace.finish("interrupted");
                     return;
                 }
@@ -7284,7 +7333,7 @@ fn processQueuedPromptLoop(
                     advertised_dynamic_tool_names,
                 );
                 try runtime_tool_batch.drainPendingUserSuffix(arena, &step_batch, &within_turn_suffix);
-                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, tool_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, tool_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                 finish_trace.finish("interrupted");
                 return;
             }
@@ -7999,7 +8048,7 @@ fn processQueuedPromptLoop(
                     advertised_dynamic_tool_names,
                 );
                 try runtime_tool_batch.drainPendingUserSuffix(arena, &step_batch, &within_turn_suffix);
-                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, tool_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, tool_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                 finish_trace.finish("interrupted");
                 return;
             }
@@ -8079,7 +8128,7 @@ fn processQueuedPromptLoop(
                         advertised_dynamic_tool_names,
                     );
                     try runtime_tool_batch.drainPendingUserSuffix(arena, &step_batch, &within_turn_suffix);
-                    try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, tool_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                    try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, tool_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                     finish_trace.finish("interrupted");
                     return;
                 }
@@ -8389,7 +8438,7 @@ fn processQueuedPromptLoop(
                     advertised_dynamic_tool_names,
                 );
                 try runtime_tool_batch.drainPendingUserSuffix(arena, &step_batch, &within_turn_suffix);
-                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, tool_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds());
+                try runtime_interruption.persistInterruptedTurnOnce(deps, finalization, job, partial_assistant, tool_call, completed_tool_names.items, &interrupted_persisted, step_ctx, within_turn_suffix.items, stop_state.retained_candidate, &stop_state.terminal_materializing, stream_ctx.interruptedItemIds(), stream_ctx.reasoning_texts.items);
                 finish_trace.finish("interrupted");
                 return;
             }
@@ -8525,6 +8574,7 @@ fn processQueuedPromptLoop(
                         &stop_state.terminal_materializing,
                         cancelled_command,
                         stream_ctx.interruptedItemIds(),
+                        stream_ctx.reasoning_texts.items,
                     )
                 else
                     runtime_interruption.persistInterruptedTurnOnce(
@@ -8540,6 +8590,7 @@ fn processQueuedPromptLoop(
                         stop_state.retained_candidate,
                         &stop_state.terminal_materializing,
                         stream_ctx.interruptedItemIds(),
+                        stream_ctx.reasoning_texts.items,
                     );
                 persist_error catch |err| {
                     replay_handed_off = interrupted_persisted;
@@ -8987,6 +9038,7 @@ fn processQueuedPromptLoop(
                         stop_state.retained_candidate,
                         &stop_state.terminal_materializing,
                         stream_ctx.interruptedItemIds(),
+                        stream_ctx.reasoning_texts.items,
                     );
                     finish_trace.finish("interrupted");
                     return;
@@ -9097,6 +9149,13 @@ fn finishFailedTurnWithNotice(
         arena,
         current_turn_messages,
     );
+    try runtime_assistant_stream.noteTerminalStep(
+        deps,
+        arena,
+        job.turn_id,
+        null,
+        notice,
+    );
     const completed_summary = summary_accumulator.finish();
     var turn: HistoryTurn = .{ .assistant = .{
         .user = .{ .text = job.prompt, .images = job.images },
@@ -9104,7 +9163,7 @@ fn finishFailedTurnWithNotice(
         .execution = execution_memory,
     } };
     types.setHistoryTurnSummary(&turn, completed_summary);
-    try deps.propagate_history_turn(deps.ctx, turn);
+    try deps.propagate_history_turn(deps.ctx, turn, .failed);
     try finalization.finish(.failed, null, .{
         .turn = try types.dupeHistoryTurn(std.heap.c_allocator, turn),
         .summary = completed_summary,
@@ -9131,6 +9190,13 @@ pub fn finishCommonAssistantTerminal(
     const execution_memory = try runtime_execution_memory.buildExecutionMemory(
         arena,
         current_turn_messages,
+    );
+    try runtime_assistant_stream.noteTerminalStep(
+        deps,
+        arena,
+        job.turn_id,
+        source_completion,
+        assistant_text,
     );
     try finishCommonAssistantTerminalWithExecution(
         deps,

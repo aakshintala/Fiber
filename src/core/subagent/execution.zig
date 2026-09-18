@@ -380,8 +380,8 @@ pub const TurnContext = struct {
         self: *TurnContext,
         work_id: []const u8,
         turn: types.HistoryTurn,
-        last_input_tokens: ?u64,
-        last_output_tokens: ?u64,
+        outcome: types.TurnPresentationOutcome,
+        turn_id: ?u64,
         timestamp_ms: i64,
     ) CommitError!void {
         if (self.committed) return error.TurnAlreadyCommitted;
@@ -396,17 +396,15 @@ pub const TurnContext = struct {
         };
         self.runtime.appendHistoryEntry(self.alloc, committed_turn) catch
             return error.OutOfMemory;
-        _ = self.loaded.appendEvent(
+        // The turn's items already reached the log as work happened; only
+        // the closing boundary is left. Without a noted start the finished
+        // turn expands into its item lines instead.
+        _ = self.loaded.commitTurnCompleted(
             self.alloc,
-            .{ .history_turn_committed = .{
-                .conversation_language = self.runtime.languageSnapshot(),
-                .last_input_tokens = last_input_tokens,
-                .last_output_tokens = last_output_tokens,
-                .work_id = @constCast(work_id),
-                .turn = committed_turn,
-            } },
+            committed_turn,
+            turn_id,
+            outcome,
             timestamp_ms,
-            .retry_expected_tail,
             session_test_controls.logOptions(),
         ) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,

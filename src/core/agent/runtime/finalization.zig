@@ -180,7 +180,7 @@ pub fn finishAssistantTerminalWithExecution(
     );
 
     var propagation_error: ?anyerror = null;
-    deps.propagate_history_turn(deps.ctx, turn) catch |err| {
+    deps.propagate_history_turn(deps.ctx, turn, outcome) catch |err| {
         propagation_error = err;
     };
     try finalization.finish(outcome, disposition, finished);

@@ -2181,7 +2181,7 @@ test "unavailable profile usage keeps reconciled generation pending in host runt
     const Checkpoint = struct {
         calls: usize = 0,
 
-        fn persist(raw: *anyopaque, _: session_usage.Snapshot) !void {
+        fn persist(raw: *anyopaque, _: session_usage.Snapshot, _: ?session_usage.SettledRecord) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
         }
@@ -2237,7 +2237,7 @@ test "readable profile usage does not attach publishers or flush recovery" {
     const Checkpoint = struct {
         calls: usize = 0,
 
-        fn persist(raw: *anyopaque, _: session_usage.Snapshot) !void {
+        fn persist(raw: *anyopaque, _: session_usage.Snapshot, _: ?session_usage.SettledRecord) !void {
             const self: *@This() = @ptrCast(@alignCast(raw));
             self.calls += 1;
         }

@@ -176,46 +176,12 @@ const SessionProbe = struct {
     fn publish(_: *anyopaque, _: usage_report.ProfileEvent) !void {}
 };
 
-fn settle_test_ledger(alloc: Allocator, total_cost: ?f64) !session_usage.Snapshot {
-    var probe = SessionProbe{};
-    var usage = session_usage.Usage.initFresh();
-    defer usage.deinit(alloc);
-    usage.configurePublicationSink(.{
-        .context = &probe,
-        .allocator = alloc,
-        .publish = SessionProbe.publish,
-    });
-    const sequence = try usage.reserveInvocation();
-    try usage.finishObservedInvocation(
-        alloc,
-        sequence,
-        1,
-        .observed_generation,
-        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
-        null,
-    );
-    try usage.applyGeneration(alloc, .{
-        .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        .created_at_ms = 1000,
-        .model = "provider/model",
-        .total_cost = total_cost,
-        .input_tokens = 10,
-        .output_tokens = 2,
-        .cache_read_tokens = 1,
-        .cache_write_tokens = 0,
-        .reasoning_tokens = 1,
-        .billable_web_search_calls = 0,
-    });
-    return usage.snapshot(alloc);
-}
-
 fn seed_usage_session(
     alloc: Allocator,
     store: session_store.Store,
     id: []const u8,
     created_at_ms: i64,
-    ledger: session_usage.Snapshot,
+    total_cost: ?f64,
 ) !void {
     var state: session_codec.DurableSessionState = .{
         .id = try alloc.dupe(u8, id),
@@ -234,9 +200,21 @@ fn seed_usage_session(
     defer state.deinit(alloc);
     var writable = try store.startWritableSession(alloc, state);
     defer writable.deinit(alloc);
-    _ = try writable.appendEvent(
+    _ = try writable.appendUsageRecorded(
         alloc,
-        .{ .usage_checkpointed = .{ .usage = ledger } },
+        .{
+            .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            .model = "provider/model",
+            .total_cost = total_cost,
+            .input_tokens = 10,
+            .output_tokens = 2,
+            .cache_read_tokens = 1,
+            .cache_write_tokens = 0,
+            .reasoning_tokens = 1,
+            .billable_web_search_calls = 0,
+        },
+        null,
+        null,
         created_at_ms,
         .retry_expected_tail,
         .{},
@@ -269,10 +247,8 @@ test "usage session collection reports known spend from the durable checkpoint" 
         paths.workspace,
     );
     defer store.deinit(alloc);
-    var ledger = try settle_test_ledger(alloc, 0.25);
-    defer ledger.deinit(alloc);
     const now_ms = std.time.ms_per_day * 40;
-    try seed_usage_session(alloc, store, "usage-known", now_ms - 1000, ledger);
+    try seed_usage_session(alloc, store, "usage-known", now_ms - 1000, 0.25);
 
     var report = try collect_session(
         alloc,
@@ -321,10 +297,8 @@ test "usage session collection keeps unknown spend honest in text and JSON" {
         paths.workspace,
     );
     defer store.deinit(alloc);
-    var ledger = try settle_test_ledger(alloc, null);
-    defer ledger.deinit(alloc);
     const now_ms = std.time.ms_per_day * 40;
-    try seed_usage_session(alloc, store, "usage-unknown", now_ms - 1000, ledger);
+    try seed_usage_session(alloc, store, "usage-unknown", now_ms - 1000, null);
 
     var report = try collect_session(
         alloc,
@@ -383,11 +357,9 @@ test "usage session collection composes with an explicit period window" {
         paths.workspace,
     );
     defer store.deinit(alloc);
-    var ledger = try settle_test_ledger(alloc, 0.25);
-    defer ledger.deinit(alloc);
     const now_ms = std.time.ms_per_day * 40;
-    try seed_usage_session(alloc, store, "usage-recent", now_ms - std.time.ms_per_hour, ledger);
-    try seed_usage_session(alloc, store, "usage-old", 10, ledger);
+    try seed_usage_session(alloc, store, "usage-recent", now_ms - std.time.ms_per_hour, 0.25);
+    try seed_usage_session(alloc, store, "usage-old", 10, 0.25);
 
     var recent = try collect_session(
         alloc,
@@ -430,10 +402,8 @@ test "usage session collection keeps the explicit period and session identity" {
         paths.workspace,
     );
     defer store.deinit(alloc);
-    var ledger = try settle_test_ledger(alloc, 0.25);
-    defer ledger.deinit(alloc);
     const now_ms = std.time.ms_per_day * 40;
-    try seed_usage_session(alloc, store, "usage-windowed", now_ms - std.time.ms_per_hour, ledger);
+    try seed_usage_session(alloc, store, "usage-windowed", now_ms - std.time.ms_per_hour, 0.25);
 
     var report = try collect_session(
         alloc,
@@ -481,10 +451,8 @@ test "usage session collection hides exact ids from other workspaces" {
         paths.workspace,
     );
     defer store.deinit(alloc);
-    var ledger = try settle_test_ledger(alloc, 0.25);
-    defer ledger.deinit(alloc);
     const now_ms = std.time.ms_per_day * 40;
-    try seed_usage_session(alloc, store, "usage-private", now_ms - 1000, ledger);
+    try seed_usage_session(alloc, store, "usage-private", now_ms - 1000, 0.25);
 
     try std.testing.expectError(
         error.SessionNotFound,

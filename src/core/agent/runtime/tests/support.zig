@@ -1512,7 +1512,7 @@ pub const FakeAgentRuntimeDeps = struct {
         try self.record("rejected:{s}", .{call.name});
     }
 
-    fn propagateHistory(raw: *anyopaque, turn: HistoryTurn) !void {
+    fn propagateHistory(raw: *anyopaque, turn: HistoryTurn, _: types.TurnPresentationOutcome) !void {
         const self: *FakeAgentRuntimeDeps = @ptrCast(@alignCast(raw));
         self.history_propagation_count += 1;
         if (self.history_propagation_error) |err| return err;

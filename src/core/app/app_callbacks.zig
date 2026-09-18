@@ -24,7 +24,9 @@ const gateway_error_format = @import("../shared/gateway_error_format.zig");
 const io_mod = @import("../shared/io.zig");
 const session_runtime = @import("../session/session.zig");
 const session_codec = @import("../session/session_codec.zig");
+const session_event = @import("../session/session_event.zig");
 const session_usage = @import("../session/session_usage.zig");
+const session_test_controls = @import("../session/session_test_controls.zig");
 const types = @import("../shared/types.zig");
 const worker_runtime = @import("../agent/worker_runtime.zig");
 const assistant_presentation = @import("../agent/assistant_presentation.zig");
@@ -295,6 +297,7 @@ pub fn Bindings(comptime App: type) type {
                 .execute_tool_call = agentExecuteToolCall,
                 .publish_committed_file_handoff = agentPublishCommittedFileHandoff,
                 .propagate_history_turn = agentPropagateHistoryTurn,
+                .note_session_event = agentNoteSessionEvent,
                 .recovery_checkpoint = if (comptime @hasField(App, "session_persistence"))
                     if (app.session_persistence.writable != null)
                         .{
@@ -737,9 +740,33 @@ pub fn Bindings(comptime App: type) type {
             return .published;
         }
 
-        fn agentPropagateHistoryTurn(ctx: *anyopaque, turn: HistoryTurn) !void {
+        fn agentPropagateHistoryTurn(
+            ctx: *anyopaque,
+            turn: HistoryTurn,
+            outcome: types.TurnPresentationOutcome,
+        ) !void {
+            _ = outcome;
             const app: *App = @ptrCast(@alignCast(ctx));
             try app_worker_runtime.Runtime(App).propagateHistoryTurn(app, turn, app.session.max_history_turns);
+        }
+
+        fn agentNoteSessionEvent(ctx: *anyopaque, note: session_event.SessionNote) !void {
+            const app: *App = @ptrCast(@alignCast(ctx));
+            if (comptime !@hasField(App, "session_persistence")) return;
+            app.session_persistence.write_mutex.lockUncancelable(io_mod.getIo());
+            defer app.session_persistence.write_mutex.unlock(io_mod.getIo());
+            const loaded = if (app.session_persistence.writable) |*value| value else return;
+            var owned_note = note;
+            if (owned_note == .turn_started) {
+                owned_note.turn_started.language = app.session.languageSnapshot();
+                app.session_persistence.noted_turn_id = owned_note.turn_started.turn_id;
+            }
+            _ = try loaded.appendSessionNote(
+                app.alloc,
+                owned_note,
+                io_mod.milliTimestamp(),
+                session_test_controls.logOptions(),
+            );
         }
 
         fn agentSetRecoveryCheckpoint(
@@ -753,9 +780,10 @@ pub fn Bindings(comptime App: type) type {
         fn agentPersistUsageCheckpoint(
             ctx: *anyopaque,
             snapshot: session_usage.Snapshot,
+            settled: ?session_usage.SettledRecord,
         ) !void {
             const app: *App = @ptrCast(@alignCast(ctx));
-            try app_session_runtime.Runtime(App).persistUsageCheckpoint(app, snapshot);
+            try app_session_runtime.Runtime(App).persistUsageCheckpoint(app, snapshot, settled);
         }
 
         fn agentPropagateGrant(ctx: *anyopaque, tool_name: []const u8, target_path: []const u8) !void {
@@ -1691,7 +1719,7 @@ test "agent deps forward app callbacks through core types" {
         .summary = @constCast("summary"),
         .removed_turn_count = 1,
         .compaction_count = 1,
-    } });
+    } }, .completed);
     try deps.propagate_grant(deps.ctx, "read_file", "/tmp/a");
     const finished = try types.dupeFinishedPrompt(std.heap.c_allocator, .{ .turn = .{
         .compacted_summary = .{

@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 const profile_paths = @import("../shared/profile_paths.zig");
@@ -536,8 +537,12 @@ pub const LoadedWritableSession = struct {
     external_prompt_origin: ExternalPromptOrigin = .root,
     external_root_user_messages: [][]u8 = &.{},
     external_root_user_evidence_complete: bool = false,
+    /// Fold-scoped per-item accumulation (open turn, generation map). Tracks
+    /// the live state's own appends; each refold owns a fresh one.
+    fold: session_event.ItemFold = .{},
 
     pub fn deinit(self: *LoadedWritableSession, alloc: Allocator) void {
+        self.fold.deinit(alloc);
         if (self.degraded_tail) |*tail| tail.deinit(alloc);
         if (self.commit_lifecycle) |*lifecycle| lifecycle.deinit(alloc);
         if (self.child_capability) |capability| {
@@ -596,38 +601,40 @@ pub const LoadedWritableSession = struct {
         failed_tail: FailedTailDisposition,
         options: Options,
     ) !CommitPosition {
+        return self.appendItemEvent(alloc, null, null, event, timestamp_ms, failed_tail, options);
+    }
+
+    /// Appends one event with envelope correlation for per-item lines.
+    /// Borrowed ids ride the envelope; the caller keeps them.
+    pub fn appendItemEvent(
+        self: *LoadedWritableSession,
+        alloc: Allocator,
+        turn_id: ?[]const u8,
+        item_id: ?[]const u8,
+        event: session_event.Event,
+        timestamp_ms: i64,
+        failed_tail: FailedTailDisposition,
+        options: Options,
+    ) !CommitPosition {
         const preserves_pristine_start = switch (event) {
-            .usage_checkpointed,
+            // Run boundaries are not work, and usage lines alone never
+            // retain a session: an empty run stays discardable.
+            .run_started,
+            .run_completed,
+            .usage_recorded,
             .recovery_checkpoint_set,
             .recovery_checkpoint_cleared,
             => true,
             else => false,
         };
+        // A usage line always refreshes the rich-metrics sidecar, which the
+        // checkpoint omits and resume merges back.
+        if (event == .usage_recorded) self.usage_sidecar_reseal_pending = true;
         const replacement_was_pending = self.state_replacement_pending;
         const next_workspace_root = switch (event) {
             .workspace_rebound => |payload| payload.workspace_root,
             else => self.state.workspace_root,
         };
-        const usage_sidecar_bytes = switch (event) {
-            .usage_checkpointed => |payload| encodeUsageSidecarBestEffort(
-                alloc,
-                self.state.id,
-                payload.usage,
-            ),
-            else => if (self.state.usage) |usage|
-                encodeUsageSidecarBestEffort(
-                    alloc,
-                    self.state.id,
-                    usage,
-                )
-            else
-                null,
-        };
-        const write_usage_sidecar = switch (event) {
-            .usage_checkpointed => true,
-            else => self.usage_sidecar_reseal_pending,
-        };
-        defer if (usage_sidecar_bytes) |bytes| alloc.free(bytes);
         self.state_replacement_pending = true;
         const cache_deferred = switch (event) {
             .workspace_rebound => blk: {
@@ -639,12 +646,12 @@ pub const LoadedWritableSession = struct {
         _ = appendEventImpl(
             self,
             alloc,
+            turn_id,
+            item_id,
             event,
             timestamp_ms,
             failed_tail,
             options,
-            usage_sidecar_bytes,
-            write_usage_sidecar,
             cache_deferred,
         ) catch |err| {
             self.abortCommitLifecycle();
@@ -671,7 +678,9 @@ pub const LoadedWritableSession = struct {
     ) !CommitPosition {
         var replacement = state;
         replacement.subagent_child = self.state.subagent_child;
-        const usage_sidecar_bytes = if (replacement.usage) |usage|
+        // Replacements carry the richest-known usage, which the compact
+        // replacement frames omit; the sidecar preserves it for resume.
+        const replacement_sidecar_bytes = if (replacement.usage) |usage|
             encodeUsageSidecarBestEffort(
                 alloc,
                 replacement.id,
@@ -679,7 +688,7 @@ pub const LoadedWritableSession = struct {
             )
         else
             null;
-        defer if (usage_sidecar_bytes) |bytes| alloc.free(bytes);
+        defer if (replacement_sidecar_bytes) |bytes| alloc.free(bytes);
         self.state_replacement_pending = true;
         const same_workspace = std.mem.eql(
             u8,
@@ -703,8 +712,7 @@ pub const LoadedWritableSession = struct {
             reason,
             failed_tail,
             options,
-            usage_sidecar_bytes,
-            true,
+            replacement_sidecar_bytes,
             cache_deferred,
         ) catch |err| {
             self.abortCommitLifecycle();
@@ -720,27 +728,326 @@ pub const LoadedWritableSession = struct {
         return if (self.degraded_tail) |*tail| tail else null;
     }
 
-    /// Appends the caller's current usage snapshot as one small
-    /// usage_checkpointed event and marks the runtime ledger clean when
-    /// the commit lands. Every runtime shutdown flush goes through here
-    /// so the interactive and ask paths cannot drift apart.
-    pub fn appendUsageCheckpoint(
+    /// Persists one borrowed runtime note as its durable line, copying what
+    /// the log keeps. Turn ids render as decimal strings.
+    pub fn appendSessionNote(
         self: *LoadedWritableSession,
         alloc: Allocator,
-        usage: *session_usage.Usage,
+        note: session_event.SessionNote,
         timestamp_ms: i64,
         options: Options,
+    ) !CommitPosition {
+        var turn_buf: [20]u8 = undefined;
+        switch (note) {
+            .turn_started => |started| {
+                const turn_text = std.fmt.bufPrint(&turn_buf, "{d}", .{started.turn_id}) catch unreachable;
+                const borrowed = session.UserTurn{
+                    .text = @constCast(started.prompt),
+                    .images = @constCast(started.images),
+                    .work_id = if (started.work_id) |id| @constCast(id) else null,
+                };
+                const owned = try session.dupeUserTurn(alloc, borrowed);
+                defer session.freeUserTurn(alloc, owned);
+                return self.appendItemEvent(
+                    alloc,
+                    turn_text,
+                    null,
+                    .{ .turn_started = .{ .input = .{ .user = owned }, .language = started.language } },
+                    timestamp_ms,
+                    .retry_expected_tail,
+                    options,
+                );
+            },
+            .message_started => |item| {
+                const turn_text = std.fmt.bufPrint(&turn_buf, "{d}", .{item.turn_id}) catch unreachable;
+                return self.appendItemEvent(
+                    alloc,
+                    turn_text,
+                    item.item_id,
+                    .{ .assistant_message_started = .{} },
+                    timestamp_ms,
+                    .retry_expected_tail,
+                    options,
+                );
+            },
+            .message_completed => |message| {
+                const turn_text = std.fmt.bufPrint(&turn_buf, "{d}", .{message.turn_id}) catch unreachable;
+                const owned_text = try alloc.dupe(u8, message.text);
+                defer alloc.free(owned_text);
+                const owned_cause = if (message.cause) |cause| try alloc.dupe(u8, cause) else null;
+                defer if (owned_cause) |cause| alloc.free(cause);
+                return self.appendItemEvent(
+                    alloc,
+                    turn_text,
+                    message.item_id,
+                    .{ .assistant_message_completed = .{
+                        .text = owned_text,
+                        .outcome = message.outcome,
+                        .cause = owned_cause,
+                        .attempt = message.attempt,
+                    } },
+                    timestamp_ms,
+                    .retry_expected_tail,
+                    options,
+                );
+            },
+            .reasoning_started => |item| {
+                const turn_text = std.fmt.bufPrint(&turn_buf, "{d}", .{item.turn_id}) catch unreachable;
+                return self.appendItemEvent(
+                    alloc,
+                    turn_text,
+                    item.item_id,
+                    .{ .reasoning_started = .{} },
+                    timestamp_ms,
+                    .retry_expected_tail,
+                    options,
+                );
+            },
+            .reasoning_completed => |reasoning| {
+                const turn_text = std.fmt.bufPrint(&turn_buf, "{d}", .{reasoning.turn_id}) catch unreachable;
+                const owned_text = try alloc.dupe(u8, reasoning.text);
+                defer alloc.free(owned_text);
+                return self.appendItemEvent(
+                    alloc,
+                    turn_text,
+                    reasoning.item_id,
+                    .{ .reasoning_completed = .{ .text = owned_text } },
+                    timestamp_ms,
+                    .retry_expected_tail,
+                    options,
+                );
+            },
+        }
+    }
+
+    /// Appends one usage_recorded line for a settled model call. The per-call
+    /// line replaces the old whole-ledger usage_checkpointed snapshot;
+    /// folding the log rebuilds the generation-derived ledger. Borrowed
+    /// record and ids ride the line; the caller keeps them. Never marks the
+    /// live ledger clean: its internal accounting sits outside the contract.
+    pub fn appendUsageRecorded(
+        self: *LoadedWritableSession,
+        alloc: Allocator,
+        record: session_usage.GenerationRecord,
+        turn_id: ?[]const u8,
+        item_id: ?[]const u8,
+        timestamp_ms: i64,
+        failed_tail: FailedTailDisposition,
+        options: Options,
     ) !void {
-        var snapshot = try usage.snapshot(alloc);
-        defer snapshot.deinit(alloc);
-        _ = try self.appendEvent(
+        _ = try self.appendItemEvent(
             alloc,
-            .{ .usage_checkpointed = .{ .usage = snapshot } },
+            turn_id,
+            item_id,
+            .{ .usage_recorded = .{
+                .generation_id = @constCast(record.id),
+                .model = @constCast(record.model),
+                .input_tokens = record.input_tokens,
+                .output_tokens = record.output_tokens,
+                .cache_read_tokens = record.cache_read_tokens,
+                .cache_write_tokens = record.cache_write_tokens,
+                .reasoning_tokens = record.reasoning_tokens,
+                .total_cost = record.total_cost,
+                .billable_web_search_calls = record.billable_web_search_calls,
+            } },
+            timestamp_ms,
+            failed_tail,
+            options,
+        );
+    }
+
+    fn dupeInterruptedDetail(
+        alloc: Allocator,
+        entry: session.InterruptedHistoryTurn,
+    ) !session_event.InterruptedDetail {
+        var detail = session_event.InterruptedDetail{};
+        errdefer detail.deinit(alloc);
+        if (entry.tool_call) |call| detail.tool_call = try types.dupeToolCall(alloc, call);
+        detail.completed_tool_names = try types.dupeCompletedToolNames(alloc, entry.completed_tool_names);
+        if (entry.cancelled_command) |presentation|
+            detail.cancelled_command = try types.dupeCancelledCommandPresentation(alloc, presentation);
+        return detail;
+    }
+
+    /// Writes the turn's closing boundary. The turn's items were already
+    /// written as work happened; this carries only the outcome and the
+    /// transitional execution carrier (removed by #191). The finished turn
+    /// is borrowed. Compacted summaries persist via state replacement, so
+    /// they write no line here. Without a noted turn start (tests and
+    /// degraded paths with notes off), the finished turn expands into its
+    /// item lines instead so projection still rebuilds it.
+    pub fn commitTurnCompleted(
+        self: *LoadedWritableSession,
+        alloc: Allocator,
+        turn: session.HistoryTurn,
+        turn_id: ?u64,
+        outcome: types.TurnPresentationOutcome,
+        timestamp_ms: i64,
+        options: Options,
+    ) !CommitPosition {
+        const spec_outcome: session_event.TurnOutcome = switch (outcome) {
+            .completed => .completed,
+            .interrupted, .paused => .interrupted,
+            .failed => .failed,
+        };
+        const execution_source: ?session.ExecutionMemory = switch (turn) {
+            .assistant => |entry| entry.execution,
+            .interrupted => |entry| entry.execution,
+            .compacted_summary => return self.position,
+        };
+        var owned_execution: ?session.ExecutionMemory = null;
+        defer if (owned_execution) |execution| types.freeExecutionMemory(alloc, execution);
+        if (execution_source) |source| {
+            owned_execution = try types.dupeExecutionMemory(alloc, source);
+        }
+        var owned_interrupted: ?session_event.InterruptedDetail = null;
+        defer if (owned_interrupted) |*detail| detail.deinit(alloc);
+        if (turn == .interrupted) {
+            owned_interrupted = try dupeInterruptedDetail(alloc, turn.interrupted);
+        }
+        if (turn_id) |started| {
+            var id_buf: [20]u8 = undefined;
+            const turn_text = std.fmt.bufPrint(&id_buf, "{d}", .{started}) catch unreachable;
+            return self.appendItemEvent(
+                alloc,
+                turn_text,
+                null,
+                .{ .turn_completed = .{
+                    .outcome = spec_outcome,
+                    .execution = owned_execution,
+                    .interrupted = owned_interrupted,
+                } },
+                timestamp_ms,
+                .retry_expected_tail,
+                options,
+            );
+        }
+        return self.expandTurnAsItems(alloc, turn, spec_outcome, owned_execution, owned_interrupted, timestamp_ms, options);
+    }
+
+    fn expandTurnAsItems(
+        self: *LoadedWritableSession,
+        alloc: Allocator,
+        turn: session.HistoryTurn,
+        outcome: session_event.TurnOutcome,
+        execution: ?session.ExecutionMemory,
+        interrupted: ?session_event.InterruptedDetail,
+        timestamp_ms: i64,
+        options: Options,
+    ) !CommitPosition {
+        const user: session.UserTurn, const text: []const u8, const item_id: ?[]const u8 = switch (turn) {
+            .assistant => |entry| .{ entry.user, entry.assistant, entry.assistant_item_id },
+            .interrupted => |entry| .{
+                entry.user,
+                entry.assistant orelse "",
+                entry.assistant_item_id,
+            },
+            .compacted_summary => return self.position,
+        };
+        const turn_string = try types.generate_item_id(alloc);
+        defer alloc.free(turn_string);
+        _ = try self.appendItemEvent(
+            alloc,
+            turn_string,
+            null,
+            .{ .turn_started = .{
+                .input = .{ .user = user },
+                .language = self.state.conversation_language,
+            } },
             timestamp_ms,
             .retry_expected_tail,
             options,
         );
-        if (self.state.usage) |persisted| usage.markClean(persisted);
+        if (text.len > 0 or item_id != null) {
+            const message_id = item_id orelse try types.generate_item_id(alloc);
+            defer if (item_id == null) alloc.free(@constCast(message_id));
+            _ = try self.appendItemEvent(
+                alloc,
+                turn_string,
+                message_id,
+                .{ .assistant_message_started = .{} },
+                timestamp_ms,
+                .retry_expected_tail,
+                options,
+            );
+            // Failed turns keep their assistant shape unless the message
+            // itself failed; without live notes there is no call verdict,
+            // so interrupted turns mark their message interrupted and the
+            // turn outcome still drives the fold conversion.
+            const message_outcome: session_event.MessageOutcome = switch (turn) {
+                .assistant => .completed,
+                .interrupted => .interrupted,
+                .compacted_summary => unreachable,
+            };
+            _ = try self.appendItemEvent(
+                alloc,
+                turn_string,
+                message_id,
+                .{ .assistant_message_completed = .{
+                    .text = @constCast(text),
+                    .outcome = message_outcome,
+                } },
+                timestamp_ms,
+                .retry_expected_tail,
+                options,
+            );
+        }
+        return self.appendItemEvent(
+            alloc,
+            turn_string,
+            null,
+            .{ .turn_completed = .{ .outcome = outcome, .execution = execution, .interrupted = interrupted } },
+            timestamp_ms,
+            .retry_expected_tail,
+            options,
+        );
+    }
+
+    pub fn appendRunStarted(
+        self: *LoadedWritableSession,
+        alloc: Allocator,
+        run_id: []const u8,
+        mode: session_event.RunMode,
+        timestamp_ms: i64,
+        options: Options,
+    ) !CommitPosition {
+        return self.appendEvent(
+            alloc,
+            .{ .run_started = .{
+                .run_id = @constCast(run_id),
+                .fiber_version = @constCast(build_options.app_version),
+                .mode = mode,
+            } },
+            timestamp_ms,
+            .retry_expected_tail,
+            options,
+        );
+    }
+
+    pub fn appendRunCompleted(
+        self: *LoadedWritableSession,
+        alloc: Allocator,
+        run_id: []const u8,
+        exit_code: i64,
+        final_text: ?[]const u8,
+        model: ?[]const u8,
+        run_error: ?session_event.EventError,
+        timestamp_ms: i64,
+        options: Options,
+    ) !CommitPosition {
+        return self.appendEvent(
+            alloc,
+            .{ .run_completed = .{
+                .run_id = @constCast(run_id),
+                .exit_code = exit_code,
+                .final_text = if (final_text) |text| @constCast(text) else null,
+                .model = if (model) |name| @constCast(name) else null,
+                .@"error" = run_error,
+            } },
+            timestamp_ms,
+            .retry_expected_tail,
+            options,
+        );
     }
 
     fn prepareCommitLifecycle(
@@ -3003,12 +3310,12 @@ fn validateCommitPosition(
 fn appendEventImpl(
     loaded: *LoadedWritableSession,
     alloc: Allocator,
+    turn_id: ?[]const u8,
+    item_id: ?[]const u8,
     event: session_event.Event,
     timestamp_ms: i64,
     failed_tail: FailedTailDisposition,
     options: Options,
-    usage_sidecar_bytes: ?[]const u8,
-    write_usage_sidecar: bool,
     cache_deferred: bool,
 ) !CommitPosition {
     try prepareCanonicalWrite(loaded, alloc, options);
@@ -3017,6 +3324,8 @@ fn appendEventImpl(
         .seq = std.math.add(u64, loaded.position.through_seq, 1) catch
             return error.InvalidSessionFormat,
         .ts = timestamp_ms,
+        .turn_id = @constCast(turn_id),
+        .item_id = @constCast(item_id),
         .event = event,
     };
     const frame = try session_event.encodeFrame(alloc, envelope);
@@ -3042,8 +3351,7 @@ fn appendEventImpl(
         &prepared,
         failed_tail,
         options,
-        usage_sidecar_bytes,
-        write_usage_sidecar,
+        null,
     );
 }
 
@@ -3054,8 +3362,7 @@ fn commitStateReplacementImpl(
     reason: session_event.ReplacementReason,
     failed_tail: FailedTailDisposition,
     options: Options,
-    usage_sidecar_bytes: ?[]const u8,
-    write_usage_sidecar: bool,
+    replacement_sidecar_bytes: ?[]const u8,
     cache_deferred: bool,
 ) !CommitPosition {
     try prepareCanonicalWrite(loaded, alloc, options);
@@ -3098,8 +3405,7 @@ fn commitStateReplacementImpl(
         &prepared,
         failed_tail,
         options,
-        usage_sidecar_bytes,
-        write_usage_sidecar,
+        replacement_sidecar_bytes,
     );
 }
 
@@ -3143,8 +3449,7 @@ fn publishPreparedTail(
     prepared: *FailedTail,
     failed_tail: FailedTailDisposition,
     options: Options,
-    usage_sidecar_bytes: ?[]const u8,
-    write_usage_sidecar: bool,
+    replacement_sidecar_bytes: ?[]const u8,
 ) !CommitPosition {
     const result = publishFrames(
         loaded,
@@ -3152,8 +3457,7 @@ fn publishPreparedTail(
         prepared,
         failed_tail,
         options,
-        usage_sidecar_bytes,
-        write_usage_sidecar,
+        replacement_sidecar_bytes,
     ) catch |err| {
         if (failed_tail == .retry_expected_tail and
             (err == error.SessionPersistenceDegraded or
@@ -3181,8 +3485,7 @@ fn publishFrames(
     prepared: *const FailedTail,
     failed_tail: FailedTailDisposition,
     options: Options,
-    usage_sidecar_bytes: ?[]const u8,
-    write_usage_sidecar: bool,
+    replacement_sidecar_bytes: ?[]const u8,
 ) !CommitPosition {
     const prior = prepared.prior;
     const proposed = prepared.proposed;
@@ -3400,6 +3703,7 @@ fn publishFrames(
                             options,
                         ),
                 },
+                &loaded.fold,
             ) catch |err| return handlePublishedTailFailure(
                 loaded,
                 alloc,
@@ -3441,6 +3745,25 @@ fn publishFrames(
         loaded.state.deinit(alloc);
         loaded.state = next_state;
     }
+    // An explicit replacement payload carries the richest-known usage,
+    // which the compact replacement frames omit. Otherwise the sidecar
+    // encodes post-commit state, so a usage line's own record lands in the
+    // cache on the same write. Best-effort only.
+    const computed_sidecar_bytes = if (replacement_sidecar_bytes == null)
+        if (loaded.state.usage) |usage|
+            encodeUsageSidecarBestEffort(
+                alloc,
+                loaded.state.id,
+                usage,
+            )
+        else
+            null
+    else
+        null;
+    defer if (computed_sidecar_bytes) |bytes| alloc.free(bytes);
+    const usage_sidecar_bytes = replacement_sidecar_bytes orelse computed_sidecar_bytes;
+    const write_usage_sidecar = replacement_sidecar_bytes != null or
+        loaded.usage_sidecar_reseal_pending;
     if (usage_sidecar_bytes) |bytes| {
         if (write_usage_sidecar) {
             options.test_controls.boundary(.before_usage_sidecar_write) catch |err| {
@@ -3523,15 +3846,6 @@ fn retryDegradedWithStateReplacementImpl(
     };
     if (exact) {
         owns_failed = false;
-        const usage_sidecar_bytes = if (current_state.usage) |usage|
-            encodeUsageSidecarBestEffort(
-                alloc,
-                current_state.id,
-                usage,
-            )
-        else
-            null;
-        defer if (usage_sidecar_bytes) |bytes| alloc.free(bytes);
         try loaded.prepareCommitLifecycle(
             alloc,
             loaded.state.workspace_root,
@@ -3543,8 +3857,7 @@ fn retryDegradedWithStateReplacementImpl(
             &failed,
             .retry_expected_tail,
             options,
-            usage_sidecar_bytes,
-            true,
+            null,
         ) catch |err| {
             loaded.abortCommitLifecycle();
             return err;
@@ -4534,34 +4847,21 @@ test "usage sidecar restores exact optional metrics after read-only and writable
     defer initial.deinit(alloc);
     var loaded = try temp.root.startWritableSession(alloc, initial, .{});
 
-    var usage = session_usage.Usage.initFresh();
-    defer usage.deinit(alloc);
-    const sequence = try usage.reserveInvocation();
-    try usage.finishObservedInvocation(
+    _ = try loaded.appendUsageRecorded(
         alloc,
-        sequence,
-        7,
-        .observed_generation,
-        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        .{
+            .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            .model = "provider/model",
+            .total_cost = 0.02,
+            .input_tokens = 20,
+            .output_tokens = 5,
+            .cache_read_tokens = 4,
+            .cache_write_tokens = 1,
+            .reasoning_tokens = 3,
+            .billable_web_search_calls = 0,
+        },
         null,
-    );
-    try usage.applyGeneration(alloc, .{
-        .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        .model = "provider/model",
-        .total_cost = 0.02,
-        .input_tokens = 20,
-        .output_tokens = 5,
-        .cache_read_tokens = 4,
-        .cache_write_tokens = 1,
-        .reasoning_tokens = 3,
-        .billable_web_search_calls = 0,
-    });
-    var snapshot = try usage.snapshot(alloc);
-    defer snapshot.deinit(alloc);
-    _ = try loaded.appendEvent(
-        alloc,
-        .{ .usage_checkpointed = .{ .usage = snapshot } },
+        null,
         20,
         .retry_expected_tail,
         .{},
@@ -4614,18 +4914,24 @@ test "failed canonical append leaves the previous usage sidecar unchanged" {
     );
     defer alloc.free(before);
 
-    var usage = session_usage.Usage.initFresh();
-    defer usage.deinit(alloc);
-    const sequence = try usage.reserveInvocation();
-    usage.finishInvocation(sequence, 1, .unbilled);
-    var snapshot = try usage.snapshot(alloc);
-    defer snapshot.deinit(alloc);
     var failure = BoundaryFailure{ .target = .after_event_append };
     try std.testing.expectError(
         error.SessionPersistenceDegraded,
-        loaded.appendEvent(
+        loaded.appendUsageRecorded(
             alloc,
-            .{ .usage_checkpointed = .{ .usage = snapshot } },
+            .{
+                .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                .model = "provider/model",
+                .total_cost = 0.02,
+                .input_tokens = 20,
+                .output_tokens = 5,
+                .cache_read_tokens = 4,
+                .cache_write_tokens = 1,
+                .reasoning_tokens = 3,
+                .billable_web_search_calls = 0,
+            },
+            null,
+            null,
             20,
             .rollback_before_adapter_continue,
             .{ .test_controls = failure.test_controls() },
@@ -4679,15 +4985,21 @@ test "usage sidecar publication stays inside the canonical commit boundary" {
         .alloc = alloc,
         .session_id = initial.id,
     };
-    var usage = session_usage.Usage.initFresh();
-    defer usage.deinit(alloc);
-    const sequence = try usage.reserveInvocation();
-    usage.finishInvocation(sequence, 1, .unbilled);
-    var snapshot = try usage.snapshot(alloc);
-    defer snapshot.deinit(alloc);
-    _ = try loaded.appendEvent(
+    _ = try loaded.appendUsageRecorded(
         alloc,
-        .{ .usage_checkpointed = .{ .usage = snapshot } },
+        .{
+            .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            .model = "provider/model",
+            .total_cost = 0.02,
+            .input_tokens = 20,
+            .output_tokens = 5,
+            .cache_read_tokens = 4,
+            .cache_write_tokens = 1,
+            .reasoning_tokens = 3,
+            .billable_web_search_calls = 0,
+        },
+        null,
+        null,
         20,
         .retry_expected_tail,
         .{ .test_controls = .{
@@ -4706,7 +5018,7 @@ test "usage sidecar publication stays inside the canonical commit boundary" {
 
 test "torn exact settlement restores stale sidecar backlog over settled rollback" {
     const Checkpoint = struct {
-        fn persist(_: *anyopaque, _: session_usage.Snapshot) !void {}
+        fn persist(_: *anyopaque, _: session_usage.Snapshot, _: ?session_usage.SettledRecord) !void {}
     };
     const RejectPublication = struct {
         fn publish(_: *anyopaque, event: session_usage.usage_report.ProfileEvent) !void {
@@ -4729,6 +5041,7 @@ test "torn exact settlement restores stale sidecar backlog over settled rollback
         fn boundary(raw: ?*anyopaque, point: Boundary) !void {
             if (point != .before_usage_sidecar_write) return;
             const self: *@This() = @ptrCast(@alignCast(raw.?));
+            if (self.torn) return;
             try self.dir.dir.rename(
                 session_usage_sidecar.sidecar_file,
                 self.dir.dir,
@@ -4800,9 +5113,21 @@ test "torn exact settlement restores stale sidecar backlog over settled rollback
         defer bridge_snapshot.deinit(alloc);
         try std.testing.expectEqual(@as(usize, 1), bridge_snapshot.pending.len);
         try std.testing.expectEqual(@as(usize, 1), bridge_snapshot.publication_backlog.len);
-        _ = try loaded.appendEvent(
+        _ = try loaded.appendUsageRecorded(
             alloc,
-            .{ .usage_checkpointed = .{ .usage = bridge_snapshot } },
+            .{
+                .id = "response-torn-log",
+                .model = "codex/gpt-test",
+                .total_cost = 0,
+                .input_tokens = 17,
+                .output_tokens = 7,
+                .cache_read_tokens = 2,
+                .cache_write_tokens = 0,
+                .reasoning_tokens = 1,
+                .billable_web_search_calls = 0,
+            },
+            null,
+            null,
             20,
             .retry_expected_tail,
             .{},
@@ -4818,9 +5143,21 @@ test "torn exact settlement restores stale sidecar backlog over settled rollback
         try std.testing.expectEqual(@as(usize, 0), settled_snapshot.pending.len);
 
         var tear = TearSidecar{ .dir = &loaded.log.dir };
-        _ = try loaded.appendEvent(
+        _ = try loaded.appendUsageRecorded(
             alloc,
-            .{ .usage_checkpointed = .{ .usage = settled_snapshot } },
+            .{
+                .id = "response-torn-log",
+                .model = "codex/gpt-test",
+                .total_cost = 0,
+                .input_tokens = 17,
+                .output_tokens = 7,
+                .cache_read_tokens = 2,
+                .cache_write_tokens = 0,
+                .reasoning_tokens = 1,
+                .billable_web_search_calls = 0,
+            },
+            null,
+            null,
             30,
             .retry_expected_tail,
             .{ .test_controls = .{
@@ -4837,10 +5174,12 @@ test "torn exact settlement restores stale sidecar backlog over settled rollback
     const recovered = read_only.usage.?;
     try std.testing.expectEqual(@as(u64, 17), recovered.input_tokens);
     try std.testing.expectEqual(@as(u64, 7), recovered.output_tokens);
-    try std.testing.expectEqual(@as(?u64, null), recovered.request_count);
+    try std.testing.expectEqual(@as(?u64, 1), recovered.request_count);
     try std.testing.expectEqual(@as(usize, 0), recovered.pending.len);
-    try std.testing.expectEqual(@as(usize, 1), recovered.publication_backlog.len);
-    try std.testing.expectEqual(@as(usize, 1), recovered.incidents.len);
+    // Internal ledger accounting stays outside the log contract: the folded
+    // snapshot carries no publication backlog or incidents.
+    try std.testing.expectEqual(@as(usize, 0), recovered.publication_backlog.len);
+    try std.testing.expectEqual(@as(usize, 0), recovered.incidents.len);
 
     var publication = PublicationProbe{};
     var resumed = session_usage.Usage.initFresh();
@@ -4853,10 +5192,10 @@ test "torn exact settlement restores stale sidecar backlog over settled rollback
     try resumed.restore(alloc, recovered, 1);
     var final = try resumed.snapshot(alloc);
     defer final.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 1), publication.generations);
+    try std.testing.expectEqual(@as(usize, 0), publication.generations);
     try std.testing.expectEqual(@as(u64, 17), final.input_tokens);
     try std.testing.expectEqual(@as(u64, 7), final.output_tokens);
-    try std.testing.expectEqual(@as(?u64, null), final.request_count);
+    try std.testing.expectEqual(@as(?u64, 1), final.request_count);
     try std.testing.expectEqual(@as(usize, 0), final.pending.len);
     try std.testing.expectEqual(@as(usize, 0), final.publication_backlog.len);
 }
@@ -4903,9 +5242,21 @@ test "indeterminate canonical usage retry repairs the rich sidecar" {
     var failure = BoundaryFailure{ .target = .after_target_namespace_sync };
     try std.testing.expectError(
         error.SessionCommitIndeterminate,
-        loaded.appendEvent(
+        loaded.appendUsageRecorded(
             alloc,
-            .{ .usage_checkpointed = .{ .usage = snapshot } },
+            .{
+                .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                .model = "provider/model",
+                .total_cost = 0.02,
+                .input_tokens = 20,
+                .output_tokens = 5,
+                .cache_read_tokens = 4,
+                .cache_write_tokens = 1,
+                .reasoning_tokens = 3,
+                .billable_web_search_calls = 0,
+            },
+            null,
+            null,
             20,
             .retry_expected_tail,
             .{ .test_controls = failure.test_controls() },
@@ -4923,7 +5274,7 @@ test "indeterminate canonical usage retry repairs the rich sidecar" {
     try std.testing.expectEqual(@as(usize, 0), read_only.usage.?.incidents.len);
 }
 
-test "unwritable usage sidecar keeps canonical usage resumable and incomplete" {
+test "unwritable usage sidecar keeps canonical usage resumable from the log" {
     const alloc = std.testing.allocator;
     var temp = try TempRoot.init(alloc);
     defer temp.deinit(alloc);
@@ -4941,34 +5292,21 @@ test "unwritable usage sidecar keeps canonical usage resumable and incomplete" {
         std.Io.File.Permissions.fromMode(0o700),
     );
 
-    var usage = session_usage.Usage.initFresh();
-    defer usage.deinit(alloc);
-    const sequence = try usage.reserveInvocation();
-    try usage.finishObservedInvocation(
+    _ = try loaded.appendUsageRecorded(
         alloc,
-        sequence,
-        7,
-        .observed_generation,
-        "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "https://ai-gateway.vercel.sh",
+        .{
+            .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            .model = "provider/model",
+            .total_cost = 0.02,
+            .input_tokens = 20,
+            .output_tokens = 5,
+            .cache_read_tokens = 4,
+            .cache_write_tokens = 1,
+            .reasoning_tokens = 3,
+            .billable_web_search_calls = 0,
+        },
         null,
-    );
-    try usage.applyGeneration(alloc, .{
-        .id = "gen_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        .model = "provider/model",
-        .total_cost = 0.02,
-        .input_tokens = 20,
-        .output_tokens = 5,
-        .cache_read_tokens = 4,
-        .cache_write_tokens = 1,
-        .reasoning_tokens = 3,
-        .billable_web_search_calls = 0,
-    });
-    var snapshot = try usage.snapshot(alloc);
-    defer snapshot.deinit(alloc);
-    _ = try loaded.appendEvent(
-        alloc,
-        .{ .usage_checkpointed = .{ .usage = snapshot } },
+        null,
         20,
         .retry_expected_tail,
         .{},
@@ -5343,11 +5681,15 @@ test "state replacement preserves subagent child identity" {
 }
 
 fn historyEvent(state: session_codec.DurableSessionState) session_event.Event {
-    return .{ .history_turn_committed = .{
-        .conversation_language = state.conversation_language,
-        .last_input_tokens = state.last_input_tokens,
-        .last_output_tokens = state.last_output_tokens,
-        .turn = state.history[state.history.len - 1],
+    const last = state.history[state.history.len - 1];
+    const user = switch (last) {
+        .assistant => |entry| entry.user,
+        .interrupted => |entry| entry.user,
+        .compacted_summary => session.UserTurn{ .text = @constCast("") },
+    };
+    return .{ .turn_started = .{
+        .input = .{ .user = user },
+        .language = state.conversation_language,
     } };
 }
 
@@ -5522,8 +5864,10 @@ test "commit boundary hides synced bytes until watermark publication" {
         .session_id = initial.id,
         .observed = &observed_history_len,
     };
-    _ = try loaded.appendEvent(
+    _ = try loaded.appendItemEvent(
         alloc,
+        "1",
+        null,
         historyEvent(next),
         20,
         .retry_expected_tail,
@@ -5549,8 +5893,10 @@ test "publication intent remains a read fence until writable resolution" {
 
     try std.testing.expectError(
         error.SessionCommitIndeterminate,
-        loaded.appendEvent(
+        loaded.appendItemEvent(
             alloc,
+            "1",
+            null,
             historyEvent(next),
             20,
             .retry_expected_tail,
@@ -5581,8 +5927,10 @@ test "publication indeterminacy blocks later append until explicit retry" {
 
     try std.testing.expectError(
         error.SessionCommitIndeterminate,
-        loaded.appendEvent(
+        loaded.appendItemEvent(
             alloc,
+            "1",
+            null,
             historyEvent(next),
             20,
             .retry_expected_tail,
@@ -5642,8 +5990,10 @@ test "intent cleanup pending confirms the namespace before a later append" {
     defer next.deinit(alloc);
     var failure = BoundaryFailure{ .target = .after_commit_intent_remove };
 
-    _ = try loaded.appendEvent(
+    _ = try loaded.appendItemEvent(
         alloc,
+        "1",
+        null,
         historyEvent(next),
         20,
         .retry_expected_tail,
@@ -5704,8 +6054,10 @@ test "writable recovery truncates a complete provisional tail without resetting 
 
     try std.testing.expectError(
         error.SessionPersistenceDegraded,
-        loaded.appendEvent(
+        loaded.appendItemEvent(
             alloc,
+            "1",
+            null,
             historyEvent(next),
             20,
             .retry_expected_tail,
@@ -5746,8 +6098,10 @@ test "writable resume preserves the event log when the watermark is invalid" {
     var failure = BoundaryFailure{ .target = .after_event_sync };
     try std.testing.expectError(
         error.SessionPersistenceDegraded,
-        loaded.appendEvent(
+        loaded.appendItemEvent(
             alloc,
+            "1",
+            null,
             historyEvent(next),
             20,
             .retry_expected_tail,
@@ -5816,8 +6170,10 @@ test "retry eligible failure captures the exact expected event tail" {
 
     try std.testing.expectError(
         error.SessionPersistenceDegraded,
-        loaded.appendEvent(
+        loaded.appendItemEvent(
             alloc,
+            "1",
+            null,
             historyEvent(next),
             20,
             .retry_expected_tail,
@@ -5850,15 +6206,20 @@ test "degraded retry publishes only the exact expected event tail" {
     defer initial.deinit(alloc);
     var loaded = try temp.root.startWritableSession(alloc, initial, .{});
     defer loaded.deinit(alloc);
-    var next = try stateWithTurn(alloc, loaded.state, 20);
+    // A self-contained line (no open turn behind it) so the published tail
+    // alone reconciles live state with the caller's copy.
+    const event = session_event.Event{ .preferences_changed = .{ .fast_mode = true } };
+    var next = try loaded.state.dupe(alloc);
     defer next.deinit(alloc);
+    next.preferences.fast_mode = true;
+    next.updated_at_ms = 20;
     var failure = BoundaryFailure{ .target = .after_event_sync };
 
     try std.testing.expectError(
         error.SessionPersistenceDegraded,
         loaded.appendEvent(
             alloc,
-            historyEvent(next),
+            event,
             20,
             .retry_expected_tail,
             .{ .test_controls = failure.test_controls() },
@@ -5870,10 +6231,8 @@ test "degraded retry publishes only the exact expected event tail" {
 
     try std.testing.expect(loaded.degradedTail() == null);
     try std.testing.expect(positionsEqual(expected, loaded.position));
-    try std.testing.expectEqual(@as(usize, 1), loaded.state.history.len);
-    var replayed = try temp.root.loadReadOnly(alloc, initial.id, .{});
-    defer replayed.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 1), replayed.history.len);
+    try std.testing.expect(loaded.state.preferences.fast_mode);
+    try std.testing.expectEqual(@as(usize, 0), loaded.state.history.len);
 }
 
 test "degraded retry replaces current state when the expected tail is not exact" {
@@ -5890,8 +6249,10 @@ test "degraded retry replaces current state when the expected tail is not exact"
 
     try std.testing.expectError(
         error.SessionPersistenceDegraded,
-        loaded.appendEvent(
+        loaded.appendItemEvent(
             alloc,
+            "1",
+            null,
             historyEvent(next),
             20,
             .retry_expected_tail,
@@ -5939,8 +6300,10 @@ test "rollback required failure is excluded from generic degraded retry" {
 
     try std.testing.expectError(
         error.SessionPersistenceDegraded,
-        loaded.appendEvent(
+        loaded.appendItemEvent(
             alloc,
+            "1",
+            null,
             historyEvent(next),
             20,
             .rollback_before_adapter_continue,
@@ -5971,8 +6334,10 @@ test "checkpoint scheduling publishes an exact committed checkpoint" {
     var next = try stateWithTurn(alloc, loaded.state, 20);
     defer next.deinit(alloc);
 
-    _ = try loaded.appendEvent(
+    _ = try loaded.appendItemEvent(
         alloc,
+        "1",
+        null,
         historyEvent(next),
         20,
         .retry_expected_tail,
@@ -6258,20 +6623,17 @@ test "oversized state commits through chunked replacement frames with contiguous
     var loaded = try temp.root.startWritableSession(alloc, initial, .{});
     defer loaded.deinit(alloc);
 
-    // A turn past the 8 MiB frame cap does not fit one frame.
+    // A message past the 8 MiB frame cap does not fit one frame.
     const big_text = try alloc.alloc(u8, 9 * 1024 * 1024);
     defer alloc.free(big_text);
     @memset(big_text, 'a');
-    const big_turn = try session.makeAssistantTurn(alloc, big_text, "response");
-    defer session.freeHistoryTurn(alloc, big_turn);
-    const oversized = session_event.Event{ .history_turn_committed = .{
-        .conversation_language = loaded.state.conversation_language,
-        .turn = big_turn,
+    const oversized = session_event.Event{ .assistant_message_completed = .{
+        .text = big_text,
     } };
     const before = loaded.position;
     try std.testing.expectError(
         error.EventFrameTooLarge,
-        loaded.appendEvent(alloc, oversized, 20, .retry_expected_tail, .{}),
+        loaded.appendItemEvent(alloc, "1", "item-big", oversized, 20, .retry_expected_tail, .{}),
     );
     try std.testing.expect(positionsEqual(before, loaded.position));
 
@@ -6281,7 +6643,7 @@ test "oversized state commits through chunked replacement frames with contiguous
     defer current.deinit(alloc);
     const owned_history = try alloc.alloc(session.HistoryTurn, 1);
     errdefer alloc.free(owned_history);
-    owned_history[0] = try session.dupeHistoryTurn(alloc, big_turn);
+    owned_history[0] = try session.makeAssistantTurn(alloc, big_text, "response");
     session.freeHistoryTurnSlice(alloc, current.history);
     current.history = owned_history;
     current.updated_at_ms = 30;

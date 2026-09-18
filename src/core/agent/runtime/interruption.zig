@@ -7,6 +7,8 @@ const execution_memory_helpers = @import("../execution_memory.zig");
 const runtime_execution_memory = @import("execution_memory.zig");
 const runtime_finalization = @import("finalization.zig");
 const runtime_deps = @import("deps.zig");
+const session_event = @import("../../session/session_event.zig");
+const model_response_recovery = @import("model_response_recovery.zig");
 const runtime_telemetry = @import("telemetry.zig");
 const worker_runtime = @import("../worker_runtime.zig");
 
@@ -31,6 +33,7 @@ pub fn persistInterruptedTurnOnce(
     retained_candidate: ?[]const u8,
     terminal_materializing: *bool,
     item_ids: types.InterruptedItemIds,
+    reasoning_texts: []const std.ArrayList(u8),
 ) !void {
     return persistInterruptedTurnWithPresentation(
         hooks,
@@ -46,6 +49,7 @@ pub fn persistInterruptedTurnOnce(
         terminal_materializing,
         null,
         item_ids,
+        reasoning_texts,
     );
 }
 
@@ -63,6 +67,7 @@ pub fn persistInterruptedCommandTurnOnce(
     terminal_materializing: *bool,
     cancelled_command: ?types.CancelledCommandPresentation,
     item_ids: types.InterruptedItemIds,
+    reasoning_texts: []const std.ArrayList(u8),
 ) !void {
     return persistInterruptedTurnWithPresentation(
         hooks,
@@ -78,7 +83,45 @@ pub fn persistInterruptedCommandTurnOnce(
         terminal_materializing,
         cancelled_command,
         item_ids,
+        reasoning_texts,
     );
+}
+
+/// Emits closing item lines for an interrupted or failed stream: its
+/// reasoning blocks then its message. Started repeats are idempotent in the
+/// fold, so re-emission here stays correct when the stream already noted
+/// them as work happened.
+fn noteInterruptedItems(
+    hooks: *const AgentRuntimeDeps,
+    turn_id: u64,
+    item_ids: types.InterruptedItemIds,
+    reasoning_texts: []const std.ArrayList(u8),
+    partial_assistant: ?[]const u8,
+    outcome: session_event.MessageOutcome,
+    cause: ?[]const u8,
+    attempt: ?u64,
+) !void {
+    const note_fn = hooks.note_session_event orelse return;
+    for (item_ids.reasoning, 0..) |item_id, index| {
+        const text = if (index < reasoning_texts.len) reasoning_texts[index].items else "";
+        try note_fn(hooks.ctx, .{ .reasoning_started = .{ .turn_id = turn_id, .item_id = item_id } });
+        try note_fn(hooks.ctx, .{ .reasoning_completed = .{
+            .turn_id = turn_id,
+            .item_id = item_id,
+            .text = text,
+        } });
+    }
+    if (item_ids.message) |item_id| {
+        try note_fn(hooks.ctx, .{ .message_started = .{ .turn_id = turn_id, .item_id = item_id } });
+        try note_fn(hooks.ctx, .{ .message_completed = .{
+            .turn_id = turn_id,
+            .item_id = item_id,
+            .text = partial_assistant orelse "",
+            .outcome = outcome,
+            .cause = cause,
+            .attempt = attempt,
+        } });
+    }
 }
 
 fn persistInterruptedTurnWithPresentation(
@@ -95,8 +138,20 @@ fn persistInterruptedTurnWithPresentation(
     terminal_materializing: *bool,
     cancelled_command: ?types.CancelledCommandPresentation,
     item_ids: types.InterruptedItemIds,
+    reasoning_texts: []const std.ArrayList(u8),
 ) !void {
     if (persisted.*) return;
+
+    try noteInterruptedItems(
+        hooks,
+        job.turn_id,
+        item_ids,
+        reasoning_texts,
+        partial_assistant,
+        .interrupted,
+        null,
+        null,
+    );
 
     const durable_active_tool_call = if (active_tool_call) |call|
         try execution_memory_helpers.dupeRedactedToolCall(
@@ -150,7 +205,7 @@ fn persistInterruptedTurnWithPresentation(
 
         persisted.* = true;
         var propagation_error: ?anyerror = null;
-        hooks.propagate_history_turn(hooks.ctx, turn) catch |err| {
+        hooks.propagate_history_turn(hooks.ctx, turn, .interrupted) catch |err| {
             propagation_error = err;
         };
         try traceInterruptedPersistence(
@@ -185,7 +240,7 @@ fn persistInterruptedTurnWithPresentation(
     } };
 
     var propagation_error: ?anyerror = null;
-    hooks.propagate_history_turn(hooks.ctx, turn) catch |err| {
+    hooks.propagate_history_turn(hooks.ctx, turn, .interrupted) catch |err| {
         propagation_error = err;
     };
     try traceInterruptedPersistence(
@@ -212,9 +267,23 @@ pub fn persistFailedPartialTurnOnce(
     current_turn_messages: []const types.ChatMessage,
     terminal_materializing: *bool,
     item_ids: types.InterruptedItemIds,
+    reasoning_texts: []const std.ArrayList(u8),
+    cause: model_response_recovery.FailureCause,
+    attempt: usize,
 ) !void {
     if (persisted.*) return;
     if (partial_assistant.len == 0) return;
+
+    try noteInterruptedItems(
+        hooks,
+        job.turn_id,
+        item_ids,
+        reasoning_texts,
+        partial_assistant,
+        .failed,
+        @tagName(cause),
+        @intCast(attempt),
+    );
 
     const execution = try runtime_execution_memory.buildInterruptedExecutionMemory(
         std.heap.c_allocator,
@@ -247,7 +316,7 @@ pub fn persistFailedPartialTurnOnce(
 
     persisted.* = true;
     var propagation_error: ?anyerror = null;
-    hooks.propagate_history_turn(hooks.ctx, turn) catch |err| {
+    hooks.propagate_history_turn(hooks.ctx, turn, .failed) catch |err| {
         propagation_error = err;
     };
     debug_trace.eventf(

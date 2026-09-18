@@ -43,6 +43,7 @@ const permissions = @import("../permissions/permissions.zig");
 const session_runtime = @import("../session/session.zig");
 const command_replay_store = @import("../session/command_replay_store.zig");
 const session_codec = @import("../session/session_codec.zig");
+const session_event = @import("../session/session_event.zig");
 const session_usage = @import("../session/session_usage.zig");
 const usage_report = @import("../session/usage_report.zig");
 const session_store = @import("../session/session_store.zig");
@@ -529,6 +530,8 @@ const AskContext = struct {
     writable: ?session_store.LoadedWritableSession = null,
     last_reported_input_tokens: ?u64 = null,
     last_reported_output_tokens: ?u64 = null,
+    noted_turn_id: ?u64 = null,
+    run_id: ?[]u8 = null,
     session_write_mutex: std.Io.Mutex = .init,
     requested_resume: ?ResumeTarget = null,
     explicit_model: ?[]const u8 = null,
@@ -683,17 +686,6 @@ const AskContext = struct {
         self.session.usage.finishProfilePublicationsBeforeShutdown();
         self.session.usage.configurePublicationSink(null);
         self.session.usage.configureCheckpointSink(null);
-        if (self.writable) |*writable| {
-            if (self.session.usage.isDirty()) {
-                flushAskUsageCheckpoint(self, writable) catch |err| {
-                    debug_trace.logf(
-                        "session",
-                        "failed to flush ask session usage err={s}",
-                        .{@errorName(err)},
-                    );
-                };
-            }
-        }
         self.web_fetch_runtime.deinit(self.alloc);
         self.capability_resolver.deinit(self.alloc);
         self.lifecycle_runtime.deinit();
@@ -714,6 +706,8 @@ const AskContext = struct {
             image_attachments.cleanupSnapshotDir(path);
             self.alloc.free(path);
         }
+        if (self.run_id) |id| self.alloc.free(id);
+        self.run_id = null;
         self.assistant_output.deinit(self.alloc);
         self.final_output.deinit(self.alloc);
         for (self.pending_tool_progress.items) |progress| progress.deinit(self.alloc);
@@ -1446,6 +1440,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
         try ctx.checkCancellation();
         try options.deps.initialize_session_stores(&ctx);
         try ctx.checkCancellation();
+        startAskRun(&ctx);
         if (startup.model_source == .process_override) {
             ctx.model = startup.selected_model;
         } else if (ctx.requested_resume != null) {
@@ -1723,7 +1718,7 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
             errdefer alloc.free(assistant_output);
             const tool_calls = try takeToolCallRecords(&ctx, alloc);
             const run_usage = takeRunReportedTokenUsage(&ctx);
-            return .{
+            var denied: PromptRunResult = .{
                 .exit_code = 1,
                 .assistant_output = assistant_output,
                 .interrupted = ctx.processInterruptRequested(),
@@ -1732,12 +1727,15 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
                 .input_tokens = run_usage.input_tokens,
                 .output_tokens = run_usage.output_tokens,
             };
+            finishAskRun(&ctx, &denied);
+            return denied;
         },
         else => {
             if (!options.output_mode.capturesJson()) return err;
             var failed_result = try takePromptRunResult(&ctx, alloc);
             failed_result.exit_code = 1;
             failed_result.error_code = @errorName(err);
+            finishAskRun(&ctx, &failed_result);
             return failed_result;
         },
     };
@@ -1745,8 +1743,53 @@ fn runPromptInternal(alloc: Allocator, prompt: []const u8, permission_override: 
     if (ctx.presenter) |value| try value.finish();
 
     var result = try takePromptRunResult(&ctx, alloc);
+    finishAskRun(&ctx, &result);
     finalizeFreshAuthSession(&ctx, &result);
     return result;
+}
+
+/// Opens the ask run on the session log. Best-effort: a degraded log must
+/// not fail the run before it starts.
+fn startAskRun(ctx: *AskContext) void {
+    const writable = if (ctx.writable) |*value| value else return;
+    const run_id = types.generate_item_id(ctx.alloc) catch |err| {
+        debug_trace.logf("ask", "run id minting failed err={s}", .{@errorName(err)});
+        return;
+    };
+    errdefer ctx.alloc.free(run_id);
+    _ = writable.appendRunStarted(
+        ctx.alloc,
+        run_id,
+        if (ctx.requested_resume != null) .resumed else .new,
+        io_mod.milliTimestamp(),
+        session_test_controls.logOptions(),
+    ) catch |err| {
+        debug_trace.logf("ask", "run_started append failed err={s}", .{@errorName(err)});
+        return;
+    };
+    ctx.run_id = run_id;
+}
+
+/// Closes the ask run opened by startAskRun. Best-effort like the open.
+fn finishAskRun(ctx: *AskContext, result: *const PromptRunResult) void {
+    const writable = if (ctx.writable) |*value| value else return;
+    const run_id = ctx.run_id orelse return;
+    const run_error: ?session_event.EventError = if (result.error_code) |code|
+        .{ .code = @constCast(code), .message = @constCast(code) }
+    else
+        null;
+    _ = writable.appendRunCompleted(
+        ctx.alloc,
+        run_id,
+        @intCast(result.exit_code),
+        if (result.final_output.len > 0) result.final_output else null,
+        if (result.model.len > 0) result.model else null,
+        run_error,
+        io_mod.milliTimestamp(),
+        session_test_controls.logOptions(),
+    ) catch |err| {
+        debug_trace.logf("ask", "run_completed append failed err={s}", .{@errorName(err)});
+    };
 }
 
 fn takePromptRunResult(ctx: *AskContext, alloc: Allocator) !PromptRunResult {
@@ -1919,6 +1962,7 @@ fn agentRuntimeDeps(ctx: *AskContext) agent_runtime.AgentRuntimeDeps {
         .execute_tool_call = executeToolCallAuthorized,
         .publish_committed_file_handoff = publishCommittedFileHandoff,
         .propagate_history_turn = propagateHistoryTurn,
+        .note_session_event = noteSessionEvent,
         .recovery_checkpoint = if (ctx.writable != null)
             .{
                 .set = setRecoveryCheckpoint,
@@ -1971,8 +2015,10 @@ fn refreshGatewayCredential(
 fn persistUsageCheckpoint(
     raw_ctx: *anyopaque,
     snapshot: session_usage.Snapshot,
+    settled: ?session_usage.SettledRecord,
 ) !void {
     const ctx: *AskContext = @ptrCast(@alignCast(raw_ctx));
+    const line = settled orelse return;
     ctx.session_write_mutex.lockUncancelable(io_mod.getIo());
     defer ctx.session_write_mutex.unlock(io_mod.getIo());
     const writable = if (ctx.writable) |*value|
@@ -1998,9 +2044,16 @@ fn persistUsageCheckpoint(
             session_test_controls.logOptions(),
         );
     }
-    _ = try writable.appendEvent(
+    var turn_buf: [20]u8 = undefined;
+    const turn_id: ?[]const u8 = if (line.attribution.turn_id) |id|
+        try std.fmt.bufPrint(&turn_buf, "{d}", .{id})
+    else
+        null;
+    try writable.appendUsageRecorded(
         ctx.alloc,
-        .{ .usage_checkpointed = .{ .usage = snapshot } },
+        line.record,
+        turn_id,
+        line.attribution.item_id,
         recovery_checkpoint.timestamp_ms,
         .retry_expected_tail,
         .{ .checkpoint_interval = 0 },
@@ -2023,9 +2076,8 @@ fn reportUsage(raw_ctx: *anyopaque, usage: types.Usage) void {
     defer ctx.session_write_mutex.unlock(io_mod.getIo());
     ctx.last_reported_input_tokens = usage.input_tokens;
     ctx.last_reported_output_tokens = usage.output_tokens;
-    const writable = if (ctx.writable) |*value| value else return;
-    writable.state.last_input_tokens = usage.input_tokens;
-    writable.state.last_output_tokens = usage.output_tokens;
+    // Last-response totals fold from usage_recorded lines now; the live
+    // state must equal the fold, so nothing mutates it here.
 }
 
 fn resolveModelCapabilities(raw_ctx: *anyopaque, _: Allocator, model: []const u8) model_capabilities.ResolveError!model_capabilities.Capabilities {
@@ -2578,12 +2630,36 @@ fn questionTextForAskCall(alloc: Allocator, call: ToolCall) !?[]u8 {
     );
 }
 
-fn propagateHistoryTurn(raw_ctx: *anyopaque, turn: HistoryTurn) !void {
+fn noteSessionEvent(raw_ctx: *anyopaque, note: session_event.SessionNote) !void {
+    const ctx: *AskContext = @ptrCast(@alignCast(raw_ctx));
+    ctx.session_write_mutex.lockUncancelable(io_mod.getIo());
+    defer ctx.session_write_mutex.unlock(io_mod.getIo());
+    const writable = if (ctx.writable) |*value| value else return;
+    var owned_note = note;
+    if (owned_note == .turn_started) {
+        owned_note.turn_started.language = ctx.session.languageSnapshot();
+        ctx.noted_turn_id = owned_note.turn_started.turn_id;
+    }
+    _ = try writable.appendSessionNote(
+        ctx.alloc,
+        owned_note,
+        io_mod.milliTimestamp(),
+        session_test_controls.logOptions(),
+    );
+}
+
+fn propagateHistoryTurn(
+    raw_ctx: *anyopaque,
+    turn: HistoryTurn,
+    outcome: types.TurnPresentationOutcome,
+) !void {
     const ctx: *AskContext = @ptrCast(@alignCast(raw_ctx));
     try ctx.session.appendHistoryEntry(ctx.alloc, turn);
     ctx.session_write_mutex.lockUncancelable(io_mod.getIo());
     defer ctx.session_write_mutex.unlock(io_mod.getIo());
     const writable = if (ctx.writable) |*value| value else return;
+    const turn_id = ctx.noted_turn_id;
+    ctx.noted_turn_id = null;
     try subagent_resume_admission.retainExternalRootUserTurn(
         ctx.store,
         ctx.alloc,
@@ -2603,16 +2679,15 @@ fn propagateHistoryTurn(raw_ctx: *anyopaque, turn: HistoryTurn) !void {
         );
     }
 
-    _ = writable.appendEvent(
+    // The turn's items already reached the log as work happened; only the
+    // closing boundary is left. Without a noted start the finished turn
+    // expands into its item lines instead.
+    _ = writable.commitTurnCompleted(
         ctx.alloc,
-        .{ .history_turn_committed = .{
-            .conversation_language = ctx.session.languageSnapshot(),
-            .last_input_tokens = writable.state.last_input_tokens,
-            .last_output_tokens = writable.state.last_output_tokens,
-            .turn = turn,
-        } },
+        turn,
+        turn_id,
+        outcome,
         io_mod.milliTimestamp(),
-        .retry_expected_tail,
         session_test_controls.logOptions(),
     ) catch |err| switch (err) {
         error.EventFrameTooLarge => {
@@ -2677,18 +2752,6 @@ fn currentAskState(
     if (state.usage) |*old| old.deinit(ctx.alloc);
     state.usage = usage;
     return state;
-}
-
-fn flushAskUsageCheckpoint(
-    ctx: *AskContext,
-    writable: *session_store.LoadedWritableSession,
-) !void {
-    try writable.appendUsageCheckpoint(
-        ctx.alloc,
-        &ctx.session.usage,
-        io_mod.milliTimestamp(),
-        session_test_controls.logOptions(),
-    );
 }
 
 fn commitAskStateReplacement(
@@ -4116,7 +4179,7 @@ fn testProcessQueuedPromptUnauthorizedThenHistory(agent: *agent_runtime.Agent, d
     const ctx: *AskContext = @ptrCast(@alignCast(deps.ctx));
     const turn = try session_runtime.makeAssistantTurn(ctx.alloc, job.prompt, "retained response");
     defer types.freeHistoryTurn(ctx.alloc, turn);
-    try deps.propagate_history_turn(deps.ctx, turn);
+    try deps.propagate_history_turn(deps.ctx, turn, .completed);
 }
 
 fn testProcessQueuedPromptToolThenUnauthorized(agent: *agent_runtime.Agent, deps: *const agent_runtime.AgentRuntimeDeps, semantic_presentation: ?agent_runtime.SemanticPresentationSink, lifecycle: agent_runtime.LifecycleContext, cfg: agent_runtime.Config, job: worker_runtime.QueuedPrompt) !void {
@@ -7064,7 +7127,7 @@ test "current ask state releases partial snapshots on allocation failure" {
     }
 }
 
-test "ask shutdown flush appends one usage event without a state replacement" {
+test "ask shutdown leaves ledger-internal usage dirt unflushed" {
     const setup_alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -7100,14 +7163,18 @@ test "ask shutdown flush appends one usage event without a state replacement" {
     try ctx.initializeSessionStores();
     const writable = &ctx.writable.?;
 
+    // Ledger-internal accounting (committed lines here) sits outside the log
+    // contract: shutdown writes no line for it and leaves the ledger dirty.
     try ctx.session.usage.recordCommittedLines(3, 1);
     try std.testing.expect(ctx.session.usage.isDirty());
     const before = writable.position;
-    try flushAskUsageCheckpoint(&ctx, writable);
-    try std.testing.expect(!ctx.session.usage.isDirty());
-    // Exactly one frame: a state replacement would advance seq by three or more.
-    try std.testing.expectEqual(before.through_seq + 1, writable.position.through_seq);
-    try std.testing.expectEqual(@as(u64, 3), writable.state.usage.?.lines_added);
+    ctx.session.usage.finishProfilePublicationsBeforeShutdown();
+    try std.testing.expect(ctx.session.usage.isDirty());
+    try std.testing.expectEqual(before.through_seq, writable.position.through_seq);
+    try std.testing.expectEqual(
+        before.through_event_log_bytes,
+        writable.position.through_event_log_bytes,
+    );
 }
 
 test "saved ask classifies unsafe store failure by request mode" {
@@ -7290,10 +7357,56 @@ test "headless ask overwrites session usage from latest completion" {
     try ctx.initializeSessionStores();
     try std.testing.expect(ctx.writable != null);
 
-    const deps = agentRuntimeDeps(&ctx);
-    const report_fn = deps.report_usage orelse return error.TestExpectedEqual;
-    report_fn(deps.ctx, .{ .input_tokens = 100, .output_tokens = 20 });
-    report_fn(deps.ctx, .{ .input_tokens = 107, .output_tokens = 23 });
+    // Latest call wins, overwriting rather than accumulating: gateway input
+    // tokens bill full prompt occupancy, not a delta.
+    const writable = &ctx.writable.?;
+    _ = try writable.appendItemEvent(
+        ctx.alloc,
+        "1",
+        null,
+        .{ .turn_started = .{ .input = .{ .user = .{
+            .text = @constCast("prompt"),
+        } } } },
+        10,
+        .retry_expected_tail,
+        .{},
+    );
+    _ = try writable.appendUsageRecorded(
+        ctx.alloc,
+        .{
+            .id = "gen-first",
+            .model = "test/model",
+            .total_cost = null,
+            .input_tokens = 100,
+            .output_tokens = 20,
+            .cache_read_tokens = 0,
+            .cache_write_tokens = 0,
+            .billable_web_search_calls = 0,
+        },
+        "1",
+        null,
+        11,
+        .retry_expected_tail,
+        .{},
+    );
+    _ = try writable.appendUsageRecorded(
+        ctx.alloc,
+        .{
+            .id = "gen-second",
+            .model = "test/model",
+            .total_cost = null,
+            .input_tokens = 107,
+            .output_tokens = 23,
+            .cache_read_tokens = 0,
+            .cache_write_tokens = 0,
+            .billable_web_search_calls = 0,
+        },
+        "1",
+        null,
+        12,
+        .retry_expected_tail,
+        .{},
+    );
 
     try std.testing.expectEqual(@as(?u64, 107), ctx.writable.?.state.last_input_tokens);
     try std.testing.expectEqual(@as(?u64, 23), ctx.writable.?.state.last_output_tokens);

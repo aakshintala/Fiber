@@ -4912,20 +4912,58 @@ fn writeStaleWritableHistoryFixture(
     );
     manifest_file.close(io_mod.getIo());
     defer alloc.free(stale_manifest);
-    const turn = try session.makeAssistantTurn(
+    _ = try writable.appendItemEvent(
         alloc,
-        "new canonical prompt",
-        "new canonical response",
+        "1",
+        null,
+        .{ .turn_started = .{ .input = .{ .user = .{
+            .text = @constCast("new canonical prompt"),
+        } } } },
+        updated_at_ms,
+        .retry_expected_tail,
+        .{},
     );
-    defer session.freeHistoryTurn(alloc, turn);
-    _ = try writable.appendEvent(
+    _ = try writable.appendItemEvent(
         alloc,
-        .{ .history_turn_committed = .{
-            .conversation_language = session.ConversationLanguage.literal("en"),
-            .last_input_tokens = 3,
-            .last_output_tokens = 4,
-            .turn = turn,
-        } },
+        "1",
+        "item-canonical",
+        .{ .assistant_message_started = .{} },
+        updated_at_ms,
+        .retry_expected_tail,
+        .{},
+    );
+    _ = try writable.appendItemEvent(
+        alloc,
+        "1",
+        "item-canonical",
+        .{ .assistant_message_completed = .{ .text = @constCast("new canonical response") } },
+        updated_at_ms,
+        .retry_expected_tail,
+        .{},
+    );
+    _ = try writable.appendUsageRecorded(
+        alloc,
+        .{
+            .id = "gen-canonical",
+            .model = "test/model",
+            .total_cost = null,
+            .input_tokens = 3,
+            .output_tokens = 4,
+            .cache_read_tokens = 0,
+            .cache_write_tokens = 0,
+            .billable_web_search_calls = 0,
+        },
+        "1",
+        "item-canonical",
+        updated_at_ms,
+        .retry_expected_tail,
+        .{},
+    );
+    _ = try writable.appendItemEvent(
+        alloc,
+        "1",
+        null,
+        .{ .turn_completed = .{ .outcome = .completed } },
         updated_at_ms,
         .retry_expected_tail,
         .{},
@@ -5746,15 +5784,20 @@ test "discarding a pristine started session permits usage checkpoints" {
     defer state.deinit(alloc);
     var writable = try ctx.store.startWritableSession(alloc, state);
 
-    var usage = session_usage.Usage.initFresh();
-    defer usage.deinit(alloc);
-    const sequence = try usage.reserveInvocation();
-    usage.finishInvocation(sequence, 0, .unbilled);
-    var snapshot = try usage.snapshot(alloc);
-    defer snapshot.deinit(alloc);
-    _ = try writable.appendEvent(
+    _ = try writable.appendUsageRecorded(
         alloc,
-        .{ .usage_checkpointed = .{ .usage = snapshot } },
+        .{
+            .id = "gen-pristine",
+            .model = "test/model",
+            .total_cost = null,
+            .input_tokens = 0,
+            .output_tokens = 0,
+            .cache_read_tokens = 0,
+            .cache_write_tokens = 0,
+            .billable_web_search_calls = 0,
+        },
+        null,
+        null,
         20,
         .retry_expected_tail,
         .{},

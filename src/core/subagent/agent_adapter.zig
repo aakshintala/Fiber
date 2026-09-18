@@ -25,6 +25,8 @@ const gateway_error_format = @import("../shared/gateway_error_format.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
 const io_mod = @import("../shared/io.zig");
 const session_codec = @import("../session/session_codec.zig");
+const session_event = @import("../session/session_event.zig");
+const session_test_controls = @import("../session/session_test_controls.zig");
 const types = @import("../shared/types.zig");
 const diff_mod = @import("../output/diff.zig");
 const domain = @import("domain.zig");
@@ -62,9 +64,8 @@ const Context = struct {
     admission: domain.AdmissionSnapshot,
     cancel: *std.atomic.Value(bool),
     subagent_id: u64,
-    last_input_tokens: ?u64 = null,
-    last_output_tokens: ?u64 = null,
     turn_outcome: ?types.TurnPresentationOutcome = null,
+    noted_turn_id: ?u64 = null,
 
     fn toolContext(self: *Context) tool_runtime.Context {
         var result = self.config.tool_context;
@@ -363,6 +364,7 @@ fn runtimeDeps(context: *Context) agent_runtime.AgentRuntimeDeps {
         .execute_tool_call = executeToolCall,
         .publish_committed_file_handoff = publishCommittedFileHandoff,
         .propagate_history_turn = propagateHistoryTurn,
+        .note_session_event = noteSessionEvent,
         .recovery_checkpoint = .{
             .set = setRecoveryCheckpoint,
         },
@@ -656,14 +658,36 @@ fn executeToolCall(raw: *anyopaque, request: agent_runtime.ToolExecutionRequest)
     return tool_runtime.executeToolCallAuthorized(tool_ctx, request);
 }
 
-fn propagateHistoryTurn(raw: *anyopaque, turn: types.HistoryTurn) !void {
+fn propagateHistoryTurn(
+    raw: *anyopaque,
+    turn: types.HistoryTurn,
+    outcome: types.TurnPresentationOutcome,
+) !void {
     const context: *Context = @ptrCast(@alignCast(raw));
+    const turn_id = context.noted_turn_id;
+    context.noted_turn_id = null;
     try context.turn.commit(
         context.turn.active_work_id orelse return error.StaleWork,
         turn,
-        context.last_input_tokens,
-        context.last_output_tokens,
+        outcome,
+        turn_id,
         io_mod.milliTimestamp(),
+    );
+}
+
+fn noteSessionEvent(raw: *anyopaque, note: session_event.SessionNote) !void {
+    const context: *Context = @ptrCast(@alignCast(raw));
+    var owned_note = note;
+    if (owned_note == .turn_started) {
+        owned_note.turn_started.language = context.turn.runtime.languageSnapshot();
+        owned_note.turn_started.work_id = context.turn.active_work_id;
+        context.noted_turn_id = owned_note.turn_started.turn_id;
+    }
+    _ = try context.turn.loaded.appendSessionNote(
+        context.turn.alloc,
+        owned_note,
+        io_mod.milliTimestamp(),
+        session_test_controls.logOptions(),
     );
 }
 
@@ -676,9 +700,10 @@ fn setRecoveryCheckpoint(
 }
 
 fn reportUsage(raw: *anyopaque, usage: types.Usage) void {
-    const context: *Context = @ptrCast(@alignCast(raw));
-    context.last_input_tokens = usage.input_tokens;
-    context.last_output_tokens = usage.output_tokens;
+    // Last-response totals fold from usage_recorded lines now; the stashed
+    // per-completion estimates no longer reach the log.
+    _ = raw;
+    _ = usage;
 }
 
 fn publishCommittedFileHandoff(_: *anyopaque, _: file_mutation.CommittedFileHandoff) agent_runtime.SecondaryPublicationReport {
