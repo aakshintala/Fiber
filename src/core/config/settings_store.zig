@@ -94,6 +94,7 @@ pub const UserSettingsPatch = struct {
     permission_mode: ?types.PermissionMode = null,
     yolo_acknowledged: ?bool = null,
     effort: ?types.ReasoningEffort = null,
+    fast_mode: ?bool = null,
     auto_upgrade: ?bool = null,
     max_agent_steps: ?usize = null,
     max_tool_result_bytes: ?usize = null,
@@ -112,6 +113,7 @@ pub const UserSettingsPatch = struct {
             self.permission_mode == null and
             self.yolo_acknowledged == null and
             self.effort == null and
+            self.fast_mode == null and
             self.auto_upgrade == null and
             self.max_agent_steps == null and
             self.max_tool_result_bytes == null and
@@ -207,6 +209,7 @@ const UserPreferenceField = enum(u4) {
     model,
     permission_mode,
     effort,
+    fast_mode,
     slash_menu_categories,
     collapse_tool_calls,
     startup_scrollback,
@@ -223,6 +226,7 @@ const UserPreferenceField = enum(u4) {
             .model => "settings.json.preference-migration.model.json",
             .permission_mode => "settings.json.preference-migration.permission_mode.json",
             .effort => "settings.json.preference-migration.effort.json",
+            .fast_mode => "settings.json.preference-migration.fast_mode.json",
             .slash_menu_categories => "settings.json.preference-migration.slash_menu_categories.json",
             .collapse_tool_calls => "settings.json.preference-migration.collapse_tool_calls.json",
             .startup_scrollback => "settings.json.preference-migration.startup_scrollback.json",
@@ -237,6 +241,7 @@ const user_preference_fields = [_]UserPreferenceField{
     .model,
     .permission_mode,
     .effort,
+    .fast_mode,
     .slash_menu_categories,
     .collapse_tool_calls,
     .startup_scrollback,
@@ -905,6 +910,27 @@ test "collapse tool calls user patch writes the profile preference" {
     try std.testing.expect(root.object.get("collapse_tool_calls").?.bool);
 }
 
+test "fast mode user patch writes the profile preference" {
+    // A fast-mode-only patch is not empty: it commits instead of no-op.
+    try std.testing.expect(!(UserSettingsPatch{ .fast_mode = true }).isEmpty());
+    try std.testing.expect((UserSettingsPatch{}).isEmpty());
+
+    const alloc = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    var parsed = try std.json.parseFromSlice(std.json.Value, arena.allocator(), "{}", .{});
+    defer parsed.deinit();
+    var root = parsed.value;
+
+    const application = try applyUserPatchToRoot(arena.allocator(), &root, .{ .fast_mode = true });
+    try std.testing.expect(application.changed);
+    try std.testing.expect(root.object.get("fast_mode").?.bool);
+
+    // Reapplying the stored value is a no-op commit.
+    const repeat = try applyUserPatchToRoot(arena.allocator(), &root, .{ .fast_mode = true });
+    try std.testing.expect(!repeat.changed);
+}
+
 test "numeric and enum user patches write profile preferences" {
     const alloc = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(alloc);
@@ -987,6 +1013,7 @@ fn applyUserPatchToRoot(
     if (patch.permission_mode) |value| application.changed = try putString(arena, &root.object, "permission_mode", @tagName(value)) or application.changed;
     if (patch.yolo_acknowledged) |value| application.changed = try putBool(arena, &root.object, "yolo_acknowledged", value) or application.changed;
     if (patch.effort) |value| application.changed = try putString(arena, &root.object, "effort", value.label()) or application.changed;
+    if (patch.fast_mode) |value| application.changed = try putBool(arena, &root.object, "fast_mode", value) or application.changed;
     if (patch.auto_upgrade) |value| application.changed = try putBool(arena, &root.object, "auto_upgrade", value) or application.changed;
     if (patch.max_agent_steps) |value| application.changed = try putInteger(arena, &root.object, "max_agent_steps", value) or application.changed;
     if (patch.max_tool_result_bytes) |value| application.changed = try putInteger(arena, &root.object, "max_tool_result_bytes", value) or application.changed;
@@ -1101,6 +1128,13 @@ fn cleanupLegacyWorkspacePreferences(
             "effort",
             .effort,
             patch.effort != null,
+            application,
+        );
+        removeLegacyLeaf(
+            &entry.value_ptr.object,
+            "fast_mode",
+            .fast_mode,
+            patch.fast_mode != null,
             application,
         );
         removeLegacyLeaf(
@@ -1804,7 +1838,7 @@ fn validateKnownSettingsObject(
     if (object.get("context_limits")) |value| {
         _ = context_limits.parseJsonObject(value) catch return error.InvalidSettingsFormat;
     }
-    inline for (&.{ "context", "auto_upgrade", "slash_menu_categories", "startup_scrollback", "yolo_acknowledged" }) |key| {
+    inline for (&.{ "context", "auto_upgrade", "slash_menu_categories", "startup_scrollback", "yolo_acknowledged", "fast_mode" }) |key| {
         if (object.get(key)) |value| {
             if (value != .bool) return error.InvalidSettingsFormat;
         }

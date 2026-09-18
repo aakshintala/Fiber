@@ -202,6 +202,7 @@ pub const SessionPreferencePatch = struct {
     pub fn userSettingsPatch(self: SessionPreferencePatch) config_runtime.UserSettingsPatch {
         var patch = config_runtime.UserSettingsPatch{
             .effort = self.effort,
+            .fast_mode = self.fast_mode,
         };
         if (self.model) |model| patch.model_preference = .{
             .provider = .codex,
@@ -210,6 +211,13 @@ pub const SessionPreferencePatch = struct {
         return patch;
     }
 };
+
+test "session preference patch carries fast mode to the profile patch" {
+    const carried = (SessionPreferencePatch{ .fast_mode = true }).userSettingsPatch();
+    try std.testing.expectEqual(true, carried.fast_mode.?);
+    const absent = (SessionPreferencePatch{}).userSettingsPatch();
+    try std.testing.expect(absent.fast_mode == null);
+}
 
 pub const PreferenceCommitResult = struct {
     settings_outcome: ?config_runtime.CommitOutcome = null,

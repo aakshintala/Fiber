@@ -932,13 +932,12 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         );
 
         const stored = JSON.parse(readFileSync(settingsPath, "utf8"));
-        // The profile default takes the model and effort; fast mode follows
-        // the scope on the session side (the profile patch never carried it).
+        // The profile default takes the model, effort, and fast mode together.
         expect(stored).toMatchObject({
           models: { codex: FAST_MODEL },
           effort: "auto",
+          fast_mode: false,
         });
-        expect(stored).not.toHaveProperty("fast_mode");
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
