@@ -956,6 +956,140 @@ test "model resolution routes each model through the guarded choke" {
     try std.testing.expect(resolve_base_url(&bare, "qwen") == null);
 }
 
+/// Client half of the deterministic fake routed turn: posts `request` to
+/// the loopback fake and records delivery, so the main thread can serve
+/// and assert without blocking.
+const FakeTurnClient = struct {
+    port: u16,
+    request: []const u8,
+    delivered: std.atomic.Value(bool) = .init(false),
+    failed: std.atomic.Value(bool) = .init(false),
+
+    fn run(self: *FakeTurnClient) void {
+        const io = std.testing.io;
+        var address = std.Io.net.IpAddress.parse("127.0.0.1", self.port) catch
+            return self.finish(true);
+        var stream = address.connect(io, .{ .mode = .stream }) catch
+            return self.finish(true);
+        defer stream.close(io);
+        var send_buf: [1024]u8 = undefined;
+        var writer = stream.writer(io, &send_buf);
+        writer.interface.writeAll(self.request) catch return self.finish(true);
+        writer.interface.flush() catch return self.finish(true);
+        self.finish(false);
+    }
+
+    fn finish(self: *FakeTurnClient, failed: bool) void {
+        self.failed.store(failed, .release);
+        self.delivered.store(true, .release);
+    }
+};
+
+/// Serves one fake routed turn: accepts a single connection, reads the
+/// request head, and returns the observed `Authorization` value — or null
+/// when no such header crossed. Replies minimally so the client never
+/// blocks on a full buffer. The fake stands in for the resolved endpoint
+/// (same loopback class); what it observes is the choke's header
+/// decision, built by the caller from `checked_authorization`.
+fn serveFakeTurn(alloc: Allocator, listener: *std.Io.net.Server) !?[]u8 {
+    const io = std.testing.io;
+    var stream = try listener.accept(io);
+    defer stream.close(io);
+    var read_buf: [4096]u8 = undefined;
+    var reader = stream.reader(io, &read_buf);
+    var observed: ?[]u8 = null;
+    errdefer if (observed) |value| alloc.free(value);
+    while (true) {
+        const line = (try reader.interface.takeDelimiter('\n')) orelse break;
+        const trimmed = std.mem.trimEnd(u8, line, "\r");
+        if (trimmed.len == 0) break;
+        if (std.ascii.startsWithIgnoreCase(trimmed, "authorization:")) {
+            const value = std.mem.trimStart(u8, trimmed["authorization:".len..], " ");
+            if (observed) |previous| alloc.free(previous);
+            observed = try alloc.dupe(u8, value);
+        }
+    }
+    var send_buf: [128]u8 = undefined;
+    var writer = stream.writer(io, &send_buf);
+    try writer.interface.writeAll("HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok");
+    try writer.interface.flush();
+    return observed;
+}
+
+/// Runs one fake routed turn for a connection: resolves the per-model URL,
+/// builds the wire headers from the choke's decision, and asserts the fake
+/// observed exactly `want_auth` (null means zero Authorization bytes).
+fn runFakeTurn(
+    alloc: Allocator,
+    kind: CredentialKind,
+    secret: ?[]const u8,
+    base_url: []const u8,
+    want_auth: ?[]const u8,
+) !void {
+    const io = std.testing.io;
+    const minted = try checked_authorization(alloc, kind, secret, base_url);
+    var auth_line: ?[]u8 = null;
+    if (minted) |value| {
+        defer alloc.free(value);
+        auth_line = try std.fmt.allocPrint(alloc, "authorization: {s}\r\n", .{value});
+    }
+    defer if (auth_line) |line| alloc.free(line);
+
+    var address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var listener = try address.listen(io, .{ .reuse_address = true });
+    defer listener.deinit(io);
+    const request = try std.fmt.allocPrint(
+        alloc,
+        "POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:{d}\r\n{s}content-length: 0\r\n\r\n",
+        .{ listener.socket.address.getPort(), auth_line orelse "" },
+    );
+    defer alloc.free(request);
+    var client = FakeTurnClient{ .port = listener.socket.address.getPort(), .request = request };
+    const thread = try std.Thread.spawn(.{}, FakeTurnClient.run, .{&client});
+    defer thread.join();
+    const observed = try serveFakeTurn(alloc, &listener);
+    while (!client.delivered.load(.acquire)) io.sleep(.{ .nanoseconds = std.time.ns_per_ms }, .real) catch {};
+    try std.testing.expect(!client.failed.load(.acquire));
+    if (want_auth) |want| {
+        const got = observed orelse return error.TestExpectedAuthHeader;
+        defer alloc.free(got);
+        try std.testing.expectEqualStrings(want, got);
+    } else if (observed) |got| {
+        defer alloc.free(got);
+        return error.TestUnexpectedAuthHeader;
+    }
+}
+
+test "a keyless routed turn sends zero Authorization bytes" {
+    const alloc = std.testing.allocator;
+    var parsed = try parseTestValue(alloc,
+        \\{"local":{"credential":"none","base_url":"http://127.0.0.1:11434/v1"},"keyed":{"credential":"api_key","base_url":"http://127.0.0.1:11434/v1"}}
+    );
+    defer parsed.deinit();
+    var set = ConnectionSet{};
+    defer set.deinit(alloc);
+    var detail = ParseDetail{};
+    defer detail.deinit(alloc);
+    try parseSetInto(alloc, parsed.value, &set, &detail);
+
+    const local = set.get("local") orelse return error.TestExpectedConnection;
+    try runFakeTurn(alloc, local.credential.?, null, resolve_base_url(local, "qwen2.5:7b") orelse
+        return error.TestExpectedUrl, null);
+    // A secret misrouted to a keyless connection fails before any socket
+    // opens: the choke never mints for `none`.
+    try std.testing.expectError(
+        error.MissingCredential,
+        checked_authorization(alloc, local.credential.?, "s3cret", resolve_base_url(local, "qwen2.5:7b") orelse
+            return error.TestExpectedUrl),
+    );
+
+    // Control: the same fake observes a keyed route's Bearer value, so the
+    // zero-bytes result above is detection, not blindness.
+    const keyed = set.get("keyed") orelse return error.TestExpectedConnection;
+    try runFakeTurn(alloc, keyed.credential.?, "s3cret", resolve_base_url(keyed, "qwen2.5:7b") orelse
+        return error.TestExpectedUrl, "Bearer s3cret");
+}
+
 test "transport guard lets keyless connections use plain HTTP anywhere" {
     const alloc = std.testing.allocator;
     for ([_][]const u8{
