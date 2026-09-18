@@ -33,6 +33,26 @@ def load_provider():
         return json.load(handle)["providers"]["opencode-go"]
 
 
+ZEN_BASE_URL = "https://opencode.ai/zen/v1"
+
+ZEN_SHELL = json.dumps(
+    {
+        "opencode-zen": {
+            "credential": "api_key",
+            "protocol": "chat_completions",
+            "base_url": ZEN_BASE_URL,
+            "billing": "metered",
+            "models": {},
+        }
+    }
+)
+
+
+def load_zen_provider():
+    with open(FIXTURE, "r", encoding="utf-8") as handle:
+        return json.load(handle)["providers"]["opencode"]
+
+
 class GenerateModelsDevTest(unittest.TestCase):
     def test_npm_mappings(self):
         entries, skipped = generate_models(load_provider(), BASE_URL)
@@ -87,6 +107,28 @@ class GenerateModelsDevTest(unittest.TestCase):
         connection = json.loads(first)["opencode-go"]
         self.assertEqual(connection["credential"], "api_key")
         self.assertEqual(connection["base_url"], BASE_URL)
+
+    def test_zen_npm_mappings_and_skips(self):
+        entries, skipped = generate_models(load_zen_provider(), ZEN_BASE_URL)
+        self.assertEqual(entries["zen-chat"]["protocol"], "chat_completions")
+        self.assertEqual(entries["zen-responses"]["protocol"], "responses")
+        self.assertNotIn("zen-skip-anthropic", entries)
+        self.assertEqual(
+            skipped,
+            ["zen-skip-anthropic (@ai-sdk/anthropic maps to Anthropic Messages, no adapter yet)"],
+        )
+
+    def test_zen_rerun_is_a_fixpoint_and_keeps_metered_shell(self):
+        with open(FIXTURE, "r", encoding="utf-8") as handle:
+            catalog = json.load(handle)
+        first, _ = regenerate(catalog, "opencode-zen", ZEN_SHELL)
+        second, _ = regenerate(catalog, "opencode-zen", first)
+        self.assertEqual(first, second)
+        connection = json.loads(first)["opencode-zen"]
+        self.assertEqual(connection["credential"], "api_key")
+        self.assertEqual(connection["base_url"], ZEN_BASE_URL)
+        self.assertEqual(connection["billing"], "metered")
+        self.assertEqual(connection["models"]["zen-chat"]["protocol"], "chat_completions")
 
     def test_unknown_provider_fails_loud(self):
         with open(FIXTURE, "r", encoding="utf-8") as handle:

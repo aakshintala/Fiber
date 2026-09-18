@@ -11,8 +11,9 @@ const Allocator = std.mem.Allocator;
 const codex_source: []const u8 = @embedFile("codex.json");
 
 const opencode_go_source: []const u8 = @embedFile("opencode-go.json");
+const opencode_zen_source: []const u8 = @embedFile("opencode-zen.json");
 
-const embedded_sources: []const []const u8 = &.{ codex_source, opencode_go_source };
+const embedded_sources: []const []const u8 = &.{ codex_source, opencode_go_source, opencode_zen_source };
 
 /// Parses every embedded preset into the set. Called at startup before user
 /// layers merge over it, so user `connections.<preset>` entries override
@@ -82,6 +83,31 @@ test "embedded opencode-go preset parses with the user-config parser" {
     }
     const replay = deepseek.compat.entries.get("reasoning_replay") orelse return error.TestExpectedPreset;
     try std.testing.expectEqual(true, replay.boolean);
+}
+
+test "embedded opencode-zen preset parses with the user-config parser" {
+    const alloc = std.testing.allocator;
+    var set = connection_mod.ConnectionSet{};
+    defer set.deinit(alloc);
+    var detail = connection_mod.ParseDetail{};
+    defer detail.deinit(alloc);
+    try loadInto(alloc, &set, &detail);
+
+    const zen = set.get("opencode-zen") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqual(connection_mod.CredentialKind.api_key, zen.credential.?);
+    try std.testing.expectEqual(connection_mod.Protocol.chat_completions, zen.protocol.?);
+    try std.testing.expectEqualStrings("https://opencode.ai/zen/v1", zen.base_url.?);
+    try std.testing.expectEqual(connection_mod.BillingKind.metered, zen.billing.?);
+
+    const chat = zen.models.get("deepseek-v4-flash") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqual(connection_mod.Protocol.chat_completions, chat.protocol.?);
+    const responses = zen.models.get("gpt-5") orelse return error.TestExpectedPreset;
+    try std.testing.expectEqual(connection_mod.Protocol.responses, responses.protocol.?);
+    for ([_]connection_mod.ModelOverride{ chat, responses }) |model| {
+        if (model.context_window orelse 0 <= 0) return error.TestExpectedPreset;
+        if (model.output_limit orelse 0 <= 0) return error.TestExpectedPreset;
+        if (model.price_input == null or model.price_output == null) return error.TestExpectedPreset;
+    }
 }
 
 test "malformed preset source fails to load" {
