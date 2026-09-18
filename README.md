@@ -135,8 +135,8 @@ fiber ask "explain the changes in this repository"
 With `--json`, the result carries a `context` object: `used_tokens` is the
 last response's input plus output tokens (null when that response did not
 report both), and `window_tokens` is the model window when known. `fiber
-session show --id <id>` reports the same object for the last committed turn
-of a saved session.
+session show --id <id>` and `fiber session show last` report the same object
+for the last committed turn of a saved session.
 
 Token usage and spend for one saved session in this workspace:
 
