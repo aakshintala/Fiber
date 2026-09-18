@@ -2352,6 +2352,32 @@ pub const State = struct {
         }
         if (detached_reduced_runtime) |runtime| destroyRuntime(alloc, runtime);
 
+        // Alias healthy unchanged servers into the candidate so their live
+        // connections survive this reload. Adopted objects stay owned by the
+        // previous runtime until the candidate health gate passes; any earlier
+        // exit rolls the aliases back and destroys only fresh shells.
+        var adopted: std.ArrayList(*mcp_runtime.McpServer) = .empty;
+        defer adopted.deinit(alloc);
+        var adoption_committed = false;
+        defer if (!adoption_committed) {
+            if (candidate) |runtime| runtime.rollbackAdoption(adopted.items);
+        };
+        const live: ?*mcp_runtime.McpRuntime = if (authority_reduced)
+            null
+        else live: {
+            self.lock.lockSharedUncancelable(io_mod.getIo());
+            defer self.lock.unlockShared(io_mod.getIo());
+            if (cancel_requested.load(.acquire) or
+                (pending != null and self.pending_reload != pending.?))
+            {
+                return error.Cancelled;
+            }
+            break :live self.runtime;
+        };
+        if (candidate) |next| {
+            if (live) |previous| try next.adoptCompatibleServers(previous, &adopted);
+        }
+
         var published = if (candidate) |runtime| published: {
             runtime.connectAllCancellable(registry, cancel_requested);
             if (cancel_requested.load(.acquire)) return error.Cancelled;
@@ -2361,6 +2387,10 @@ pub const State = struct {
             if (!authority_reduced and !mcp_health.publishCandidateForDecision(value)) {
                 const failure = (try runtime.requiredStartupFailure(alloc, captured_at_ms)) orelse
                     try alloc.dupe(u8, "A required MCP server is unavailable.");
+                // Detach adopted aliases before destroying the candidate: the
+                // previous runtime stays published with its objects intact.
+                runtime.rollbackAdoption(adopted.items);
+                adoption_committed = true;
                 destroyRuntime(alloc, runtime);
                 candidate_owned = false;
                 return .{ .retained_required_failure = failure };
@@ -2375,11 +2405,16 @@ pub const State = struct {
 
         self.lock.lockUncancelable(io_mod.getIo());
         if (cancel_requested.load(.acquire) or
-            (pending != null and self.pending_reload != pending.?))
+            (pending != null and self.pending_reload != pending.?) or
+            self.runtime != live)
         {
             self.lock.unlock(io_mod.getIo());
             return error.Cancelled;
         }
+        if (live) |previous| {
+            if (candidate) |next| previous.finalizeAdoption(adopted.items, next);
+        }
+        adoption_committed = true;
         const previous = self.runtime;
         self.runtime = candidate;
         self.lock.unlock(io_mod.getIo());
@@ -2688,9 +2723,103 @@ const TestReloadMode = enum {
     empty,
     delayed_empty,
     stalled_candidate,
+    keepalive_a,
+    keepalive_b,
+    keepalive_required_bad,
 };
 
 var test_reload_mode: TestReloadMode = .empty;
+
+var keepalive_pid_dir: []const u8 = "/tmp";
+
+const keepalive_handshake_script =
+    \\while IFS= read -r line; do
+    \\  id=${line#*'"id":'}
+    \\  id=${id%%,*}
+    \\  case "$line" in
+    \\    *'"method":"server/discover"'*)
+    \\      printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}}'
+    \\      ;;
+    \\    *'"method":"tools/list"'*)
+    \\      printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","ttlMs":60000,"tools":[]}}\n' "$id"
+    \\      ;;
+    \\    *'"method":"notifications/cancelled"'*)
+    \\      exit 0
+    \\      ;;
+    \\    *)
+    \\      exit 3
+    \\      ;;
+    \\  esac
+    \\done
+;
+
+const keepalive_churn_a_script = "# churn variant a\n" ++ keepalive_handshake_script;
+const keepalive_churn_b_script = "# churn variant b\n" ++ keepalive_handshake_script;
+
+fn keepaliveShellConfigForTest(
+    alloc: Allocator,
+    name: []const u8,
+    script: []const u8,
+    pid_name: []const u8,
+) !mcp_contract.McpServerConfig {
+    const owned_name = try alloc.dupe(u8, name);
+    errdefer alloc.free(owned_name);
+    const command = try alloc.dupe(u8, "sh");
+    errdefer alloc.free(command);
+    const body = try std.fmt.allocPrint(
+        alloc,
+        "echo $$ > {s}/{s}.pid\n{s}",
+        .{ keepalive_pid_dir, pid_name, script },
+    );
+    errdefer alloc.free(body);
+    const args = try alloc.alloc([]const u8, 2);
+    errdefer alloc.free(args);
+    args[0] = try alloc.dupe(u8, "-c");
+    errdefer alloc.free(args[0]);
+    args[1] = body;
+    return .{
+        .name = owned_name,
+        .command = command,
+        .args = args,
+    };
+}
+
+fn readPidFileForTest(alloc: Allocator, pid_path: []const u8) !std.posix.pid_t {
+    const deadline = io_mod.milliTimestamp() + 2_000;
+    while (true) {
+        if (std.Io.Dir.openFileAbsolute(io_mod.getIo(), pid_path, .{})) |file| {
+            var owned = file;
+            defer owned.close(io_mod.getIo());
+            if (io_mod.readFileToEnd(alloc, &owned, 64)) |bytes| {
+                defer alloc.free(bytes);
+                const trimmed = std.mem.trim(u8, bytes, &std.ascii.whitespace);
+                if (std.fmt.parseInt(std.posix.pid_t, trimmed, 10)) |pid| {
+                    return pid;
+                } else |_| {}
+            } else |_| {}
+        } else |err| {
+            if (err != error.FileNotFound or io_mod.milliTimestamp() >= deadline) return err;
+        }
+        if (io_mod.milliTimestamp() >= deadline) return error.TestPidUnreadable;
+        io_mod.sleep(5 * std.time.ns_per_ms);
+    }
+}
+
+fn expectProcessGoneForTest(pid: std.posix.pid_t) !void {
+    const deadline = io_mod.milliTimestamp() + 5_000;
+    while (true) {
+        std.posix.kill(pid, @enumFromInt(0)) catch |err| switch (err) {
+            error.ProcessNotFound => return,
+            else => {},
+        };
+        if (io_mod.milliTimestamp() >= deadline) return error.TestProcessStillRunning;
+        io_mod.sleep(5 * std.time.ns_per_ms);
+    }
+}
+
+fn expectPidAliveForTest(pid: std.posix.pid_t) !void {
+    try std.posix.kill(pid, @enumFromInt(0));
+}
 
 fn loadTestReloadRuntime(
     alloc: Allocator,
@@ -2703,6 +2832,51 @@ fn loadTestReloadRuntime(
         .delayed_empty => {
             io_mod.sleep(100 * std.time.ns_per_ms);
             return null;
+        },
+        .keepalive_a, .keepalive_b => {
+            const runtime = try alloc.create(mcp_runtime.McpRuntime);
+            errdefer alloc.destroy(runtime);
+            runtime.* = mcp_runtime.McpRuntime.init(alloc);
+            errdefer runtime.deinit();
+            try runtime.addServer(try keepaliveShellConfigForTest(
+                alloc,
+                "keeper",
+                keepalive_handshake_script,
+                "keeper",
+            ));
+            try runtime.addServer(try keepaliveShellConfigForTest(
+                alloc,
+                "churn",
+                if (test_reload_mode == .keepalive_a)
+                    keepalive_churn_a_script
+                else
+                    keepalive_churn_b_script,
+                "churn",
+            ));
+            return runtime;
+        },
+        .keepalive_required_bad => {
+            const runtime = try alloc.create(mcp_runtime.McpRuntime);
+            errdefer alloc.destroy(runtime);
+            runtime.* = mcp_runtime.McpRuntime.init(alloc);
+            errdefer runtime.deinit();
+            try runtime.addServer(try keepaliveShellConfigForTest(
+                alloc,
+                "keeper",
+                keepalive_handshake_script,
+                "keeper",
+            ));
+            const name = try alloc.dupe(u8, "required-bad");
+            errdefer alloc.free(name);
+            const command = try alloc.dupe(u8, "__fiber_missing_mcp_executable__");
+            errdefer alloc.free(command);
+            try runtime.addServer(.{
+                .name = name,
+                .command = command,
+                .enabled = true,
+                .required = true,
+            });
+            return runtime;
         },
         .required_disabled, .optional_failed, .stalled_candidate => {},
     }
@@ -2828,6 +3002,109 @@ test "transactional reload retains old runtime and publishes only accepted candi
         .retained_required_failure => return error.TestUnexpectedResult,
     }
     try std.testing.expect(state.acquire() == null);
+}
+
+test "reload preserves healthy connections across unrelated server changes" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const pid_dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", alloc);
+    defer alloc.free(pid_dir);
+    keepalive_pid_dir = pid_dir;
+    defer keepalive_pid_dir = "/tmp";
+    defer test_reload_mode = .empty;
+
+    const keeper_pid_path = try std.fmt.allocPrint(alloc, "{s}/keeper.pid", .{pid_dir});
+    defer alloc.free(keeper_pid_path);
+    const churn_pid_path = try std.fmt.allocPrint(alloc, "{s}/churn.pid", .{pid_dir});
+    defer alloc.free(churn_pid_path);
+
+    var state: State = .{};
+    defer state.deinit(alloc);
+
+    test_reload_mode = .keepalive_a;
+    var first = try state.reload(alloc, "/workspace", .{}, loadTestReloadRuntime, previewTestWorkspaceAuthority, .{}, 10);
+    defer first.deinit(alloc);
+    switch (first) {
+        .published => |published| {
+            try std.testing.expectEqual(mcp_health.StartupDecision.ready, published.health);
+            try std.testing.expectEqual(@as(usize, 2), published.configured_server_count);
+        },
+        .retained_required_failure => return error.TestUnexpectedResult,
+    }
+    const keeper_before = try readPidFileForTest(alloc, keeper_pid_path);
+    const churn_before = try readPidFileForTest(alloc, churn_pid_path);
+    try expectPidAliveForTest(keeper_before);
+
+    test_reload_mode = .keepalive_b;
+    var second = try state.reload(alloc, "/workspace", .{}, loadTestReloadRuntime, previewTestWorkspaceAuthority, .{}, 20);
+    defer second.deinit(alloc);
+    switch (second) {
+        .published => |published| {
+            try std.testing.expectEqual(mcp_health.StartupDecision.ready, published.health);
+            try std.testing.expectEqual(@as(usize, 2), published.configured_server_count);
+        },
+        .retained_required_failure => return error.TestUnexpectedResult,
+    }
+    const keeper_after = try readPidFileForTest(alloc, keeper_pid_path);
+    try std.testing.expectEqual(keeper_before, keeper_after);
+    try expectPidAliveForTest(keeper_after);
+    const churn_after = try readPidFileForTest(alloc, churn_pid_path);
+    try std.testing.expect(churn_after != churn_before);
+    try expectProcessGoneForTest(churn_before);
+}
+
+test "reload required failure preserves retained healthy connections" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const pid_dir = try tmp.dir.realPathFileAlloc(std.testing.io, ".", alloc);
+    defer alloc.free(pid_dir);
+    keepalive_pid_dir = pid_dir;
+    defer keepalive_pid_dir = "/tmp";
+    defer test_reload_mode = .empty;
+
+    const keeper_pid_path = try std.fmt.allocPrint(alloc, "{s}/keeper.pid", .{pid_dir});
+    defer alloc.free(keeper_pid_path);
+
+    var state: State = .{};
+    defer state.deinit(alloc);
+
+    test_reload_mode = .keepalive_a;
+    var first = try state.reload(alloc, "/workspace", .{}, loadTestReloadRuntime, previewTestWorkspaceAuthority, .{}, 10);
+    defer first.deinit(alloc);
+    const first_generation = switch (first) {
+        .published => |published| published.generation.?,
+        .retained_required_failure => return error.TestUnexpectedResult,
+    };
+    const keeper_before = try readPidFileForTest(alloc, keeper_pid_path);
+
+    test_reload_mode = .keepalive_required_bad;
+    var rejected = try state.reload(alloc, "/workspace", .{}, loadTestReloadRuntime, previewTestWorkspaceAuthority, .{}, 20);
+    defer rejected.deinit(alloc);
+    switch (rejected) {
+        .retained_required_failure => |failure| {
+            try std.testing.expect(std.mem.find(u8, failure, "required-bad") != null);
+        },
+        .published => return error.TestUnexpectedResult,
+    }
+    // The failed candidate may have overwritten the pid file with its own
+    // short-lived keeper before being destroyed, so the retained keeper is
+    // identified by its original pid: still alive under the same generation.
+    try expectPidAliveForTest(keeper_before);
+    {
+        var lease = state.acquire() orelse return error.TestUnexpectedResult;
+        defer lease.deinit();
+        try std.testing.expectEqual(first_generation, lease.runtime.generation);
+        var snapshot = try lease.runtime.snapshotHealth(alloc, 30);
+        defer snapshot.deinit(alloc);
+        try std.testing.expectEqual(@as(usize, 2), snapshot.servers.len);
+        for (snapshot.servers) |server| {
+            if (std.mem.eql(u8, server.configured_name, "keeper")) {
+                try std.testing.expectEqual(mcp_health.ConnectionState.ready, server.connection);
+            }
+        }
+    }
 }
 
 test "reducing preflight retires workspace authority before strict loader failure" {
