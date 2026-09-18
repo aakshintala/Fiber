@@ -42,6 +42,10 @@ PRESETS = {
         "provider": "opencode-go",
         "file": "src/protocols/presets/opencode-go.json",
     },
+    "opencode-zen": {
+        "provider": "opencode",
+        "file": "src/protocols/presets/opencode-zen.json",
+    },
 }
 
 # npm value to (fiber protocol, display protocol). Only protocols with an

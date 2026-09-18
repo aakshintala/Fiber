@@ -1,6 +1,6 @@
 # Model routing
 
-What is true as of #304. Later chain tickets (#287+) extend this file; nothing
+What is true as of #219. Later chain tickets (#287+) extend this file; nothing
 below describes behavior that does not exist yet.
 
 * The release binary routes through the Codex-only `provider_bundle` in
@@ -49,12 +49,27 @@ ChatGPT Responses endpoint, subscription billing.
 * Routing still reaches Codex through today's Codex-only path. Connections
   exist and validate; later tickets route through them.
 
+## OpenCode presets (#219)
+
+Two connections share one OpenCode key, stored once per connection: the
+`opencode-go` preset (`src/protocols/presets/opencode-go.json`, subscription
+billing, `https://opencode.ai/zen/go/v1`) and the `opencode-zen` preset
+(`src/protocols/presets/opencode-zen.json`, metered billing,
+`https://opencode.ai/zen/v1`). Both default to a stored `api_key`
+credential; an environment reference to `OPENCODE_API_KEY` stays available
+as the `env` credential kind, not the default. Per-connection login, Go's
+subscription and rate-limit errors, and routing a turn through either
+connection land in their own tickets; connections still exist and validate
+while routing reaches Codex through today's Codex-only path.
+
 ## Regenerating presets (#304)
 
-The `opencode-go` preset's model entries are generated from models.dev at
+The `opencode-go` and `opencode-zen` presets' model entries are generated
+from models.dev at
 development time by `scripts/generate_models_dev.py`, which reads
 `https://models.dev/catalog.json` (or a local snapshot via `--catalog`) and
-rewrites only the `models` object of `src/protocols/presets/opencode-go.json`.
+rewrites only the `models` object of `src/protocols/presets/opencode-go.json`
+and `src/protocols/presets/opencode-zen.json`.
 Each entry carries the id, protocol, per-model base-URL override, context and
 output limits, input modalities, reasoning, and prices. Rerunning against the
 same catalog is a fixpoint: run it twice and expect no diff.
@@ -69,6 +84,13 @@ The connection shell (credential, default protocol, base URL, billing) and
 every per-model `compat` object are hand-set and survive reruns: the script
 replaces only its own generated keys. `codex.json` stays hand-written:
 models.dev does not describe the ChatGPT subscription, so the script never
-touches it. Later presets gain their own row in the script with their own
-ticket. `scripts/tests/test_generate_models_dev.py` covers the mapping over a
+touches it. Each preset has its own row in the script's `PRESETS` table with
+its models.dev provider id (`opencode-go`, `opencode`); regenerate one
+preset with `python3 scripts/generate_models_dev.py --preset <name>`.
+`scripts/tests/test_generate_models_dev.py` covers the mapping over a
 checked-in catalog excerpt.
+
+As of this run, 28 Zen models (20 Anthropic Messages, 8 Google Generative
+AI) and 4 Go models (Anthropic Messages) are skipped: their adapters have
+not landed (#38, #283), so the script leaves them out and prints each id.
+Their adapter tickets rerun the script to regain them.
