@@ -1,0 +1,8 @@
+{
+  "codex": {
+    "credential": "oauth",
+    "protocol": "responses",
+    "base_url": "https://chatgpt.com/backend-api/codex/responses",
+    "billing": "subscription"
+  }
+}
