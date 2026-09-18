@@ -2766,6 +2766,185 @@ pub fn addOptionalCost(first: ?f64, second: ?f64) error{UsageOverflow}!?f64 {
     return next;
 }
 
+/// One generation's billable record as tracked by the session-log fold.
+/// Owned: the fold dupes both ids on insert and frees them when cleared.
+/// Kept beside the ledger (not in it) so per-item lines can rebuild a
+/// snapshot without reaching into ledger internals.
+pub const FoldGeneration = struct {
+    id: []u8,
+    model: []u8,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_write_tokens: u64,
+    reasoning_tokens: ?u64,
+    total_cost: ?f64,
+    billable_web_search_calls: u64,
+    first_seq: u64,
+
+    pub fn deinit(self: *FoldGeneration, alloc: Allocator) void {
+        alloc.free(self.id);
+        alloc.free(self.model);
+        self.* = undefined;
+    }
+};
+
+/// Rebuilds the billable usage snapshot from a resume-seeded base plus the
+/// generations folded since, mirroring the live ledger's math (fresh ledger,
+/// records applied in log order) so a refold reproduces the same aggregates.
+/// Non-billable ledger accounting (pending, publication backlog, incidents,
+/// durations, line counts) carries over from the base untouched. Quadratic in
+/// the folded generation count; folds run once per resume. The caller owns
+/// the returned snapshot.
+///
+/// A same-id line for a generation already counted in the base (a
+/// late-settled cost landing after resume) counts anew: the base keeps only
+/// aggregates, so the replaced values cannot be subtracted.
+/// ponytail: counts-anew on cross-resume replacement; persist the
+/// generation map (e.g. in the usage sidecar) if late settlement must stay
+/// exact across resume.
+pub fn snapshotFromFold(
+    alloc: Allocator,
+    base: ?Snapshot,
+    generations: []const FoldGeneration,
+) (Allocator.Error || error{UsageOverflow})!Snapshot {
+    var models: std.ArrayList(ModelAggregate) = .empty;
+    errdefer {
+        for (models.items) |*model| model.deinit(alloc);
+        models.deinit(alloc);
+    }
+    var total_cost: ?f64 = 0;
+    var input_tokens: u64 = 0;
+    var output_tokens: u64 = 0;
+    var cache_read_tokens: u64 = 0;
+    var cache_write_tokens: u64 = 0;
+    var reasoning_tokens: ?u64 = 0;
+    var request_count: ?u64 = 0;
+    var billable_web_search_calls: u64 = 0;
+    var next_sequence: u64 = 1;
+    var settled_through_sequence: u64 = 0;
+    if (base) |snapshot| {
+        total_cost = snapshot.total_cost;
+        input_tokens = snapshot.input_tokens;
+        output_tokens = snapshot.output_tokens;
+        cache_read_tokens = snapshot.cache_read_tokens;
+        cache_write_tokens = snapshot.cache_write_tokens;
+        reasoning_tokens = snapshot.reasoning_tokens;
+        request_count = snapshot.request_count;
+        billable_web_search_calls = snapshot.billable_web_search_calls;
+        next_sequence = snapshot.next_sequence;
+        settled_through_sequence = snapshot.settled_through_sequence;
+        for (snapshot.models) |model| {
+            try models.append(alloc, try model.dupe(alloc));
+        }
+    }
+    for (generations) |entry| {
+        const record = GenerationRecord{
+            .id = entry.id,
+            .model = entry.model,
+            .total_cost = entry.total_cost,
+            .input_tokens = entry.input_tokens,
+            .output_tokens = entry.output_tokens,
+            .cache_read_tokens = entry.cache_read_tokens,
+            .cache_write_tokens = entry.cache_write_tokens,
+            .reasoning_tokens = entry.reasoning_tokens,
+            .billable_web_search_calls = entry.billable_web_search_calls,
+        };
+        const model_index = for (models.items, 0..) |model, index| {
+            if (std.mem.eql(u8, model.model, entry.model)) break index;
+        } else null;
+        if (model_index) |index| {
+            try addRecordToModel(&models.items[index], record, entry.first_seq);
+        } else {
+            var model = ModelAggregate{
+                .model = try alloc.dupe(u8, entry.model),
+                .first_sequence = entry.first_seq,
+                .reasoning_tokens = 0,
+                .request_count = 0,
+            };
+            errdefer model.deinit(alloc);
+            try addRecordToModel(&model, record, entry.first_seq);
+            try models.append(alloc, model);
+        }
+        total_cost = try addOptionalCost(total_cost, entry.total_cost);
+        input_tokens = std.math.add(u64, input_tokens, entry.input_tokens) catch
+            return error.UsageOverflow;
+        output_tokens = std.math.add(u64, output_tokens, entry.output_tokens) catch
+            return error.UsageOverflow;
+        cache_read_tokens = std.math.add(u64, cache_read_tokens, entry.cache_read_tokens) catch
+            return error.UsageOverflow;
+        cache_write_tokens = std.math.add(u64, cache_write_tokens, entry.cache_write_tokens) catch
+            return error.UsageOverflow;
+        reasoning_tokens = try addOptionalCounter(reasoning_tokens, entry.reasoning_tokens);
+        request_count = if (request_count) |requests|
+            std.math.add(u64, requests, 1) catch return error.UsageOverflow
+        else
+            null;
+        billable_web_search_calls = std.math.add(
+            u64,
+            billable_web_search_calls,
+            entry.billable_web_search_calls,
+        ) catch return error.UsageOverflow;
+    }
+    next_sequence = std.math.add(u64, next_sequence, generations.len) catch
+        return error.UsageOverflow;
+    settled_through_sequence = std.math.add(u64, settled_through_sequence, generations.len) catch
+        return error.UsageOverflow;
+    const carried = if (base) |snapshot| snapshot else null;
+    var snapshot = Snapshot{
+        .billing = if (carried) |snapshot| snapshot.billing else .complete,
+        .api_duration_complete = if (carried) |snapshot| snapshot.api_duration_complete else true,
+        .wall_duration_complete = if (carried) |snapshot| snapshot.wall_duration_complete else true,
+        .code_complete = if (carried) |snapshot| snapshot.code_complete else true,
+        .next_sequence = next_sequence,
+        .settled_through_sequence = settled_through_sequence,
+        .api_duration_ms = if (carried) |snapshot| snapshot.api_duration_ms else 0,
+        .wall_duration_ms = if (carried) |snapshot| snapshot.wall_duration_ms else 0,
+        .total_cost = total_cost,
+        .input_tokens = input_tokens,
+        .output_tokens = output_tokens,
+        .cache_read_tokens = cache_read_tokens,
+        .cache_write_tokens = cache_write_tokens,
+        .reasoning_tokens = reasoning_tokens,
+        .request_count = request_count,
+        .billable_web_search_calls = billable_web_search_calls,
+        .lines_added = if (carried) |snapshot| snapshot.lines_added else 0,
+        .lines_removed = if (carried) |snapshot| snapshot.lines_removed else 0,
+        .models = try models.toOwnedSlice(alloc),
+        .pending = &.{},
+        .publication_backlog = &.{},
+        .incidents = &.{},
+    };
+    errdefer snapshot.deinit(alloc);
+    if (carried) |carried_snapshot| {
+        const owned_pending = try alloc.alloc(PendingGeneration, carried_snapshot.pending.len);
+        errdefer alloc.free(owned_pending);
+        var copied_pending: usize = 0;
+        errdefer for (owned_pending[0..copied_pending]) |*generation| generation.deinit(alloc);
+        for (carried_snapshot.pending, 0..) |generation, index| {
+            owned_pending[index] = try generation.dupe(alloc);
+            copied_pending += 1;
+        }
+        const owned_backlog = try alloc.alloc(
+            usage_report.GenerationFact,
+            carried_snapshot.publication_backlog.len,
+        );
+        errdefer alloc.free(owned_backlog);
+        var copied_backlog: usize = 0;
+        errdefer for (owned_backlog[0..copied_backlog]) |*fact| fact.deinit(alloc);
+        for (carried_snapshot.publication_backlog, 0..) |fact, index| {
+            owned_backlog[index] = try fact.dupe(alloc);
+            copied_backlog += 1;
+        }
+        const owned_incidents = try alloc.dupe(usage_report.Incident, carried_snapshot.incidents);
+        errdefer alloc.free(owned_incidents);
+        snapshot.pending = owned_pending;
+        snapshot.publication_backlog = owned_backlog;
+        snapshot.incidents = owned_incidents;
+    }
+    return snapshot;
+}
+
 pub fn dupeSnapshotOwned(alloc: Allocator, source: Snapshot) !Snapshot {
     const models = try alloc.alloc(ModelAggregate, source.models.len);
     errdefer alloc.free(models);
