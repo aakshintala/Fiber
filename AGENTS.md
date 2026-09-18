@@ -9,7 +9,7 @@ Do not say the work is "ready", "done", "good to go", "complete", or similar unt
 Before reporting the work as ready:
 
 1. Build succeeds.
-2. Focused tests for the changed path pass locally.
+2. The unit suite passes locally with `zig build test`. There is no per-test filter until #369.
 3. The `CI` check passes for the exact current commit on the pull request.
 4. Run the built binary locally and drive at least one real interaction that exercises the change end to end.
 5. Confirm the process did not abort, stderr is clean, and the behavior matches what you are about to tell the user.
@@ -157,9 +157,9 @@ Security is permission-first: every sensitive tool behavior routes through `src/
 
 ## Continuous integration
 
-Do not run the complete deterministic suite locally as the default loop. Run the
-focused test for the changed path, build, and exercise that path with
-`./zig-out/bin/fiber`.
+Do not run the complete deterministic E2E suite locally as the default loop. Run
+the unit suite with `zig build test` (there is no per-test filter until #369),
+build, and exercise the changed path with `./zig-out/bin/fiber`.
 
 Then commit, push the branch, and open a pull request. `ci.yml` is the only
 entrypoint. Draft is allowed as a signal to humans, but CI ignores it.
@@ -281,6 +281,7 @@ Read the matching file when the work calls for it. Each is the single source of
 truth for its area.
 
 * Rendering defects, tmux repros, tape recording and replay: [`docs/render-bugs.md`](docs/render-bugs.md)
+* Silent unit-test hangs on CI, the watchdog output, `-Dframe-pointers`, resampling a flaky job: [`.agents/ci-hang.md`](.agents/ci-hang.md)
 * Bun suites under `tests/e2e/` and `tests/evals/`: [`tests/README.md`](tests/README.md)
 * Startup latency budgets and binary size deltas: [`benchmarks/README.md`](benchmarks/README.md)
 * Cutting a release, writing the changelog: [`docs/releasing.md`](docs/releasing.md)
