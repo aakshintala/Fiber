@@ -131,6 +131,7 @@ async function runTtyPromptPermissionsCase(
       cwd: root.workspace,
       env: permissionEnv(root.home, codex),
       remainOnExit: true,
+      startupWaitMs: 0,
     });
     const prompt = await session.waitForText("Approve? [y/N]", TIMEOUT);
     expect(prompt).toContain("fiber wants to run:");
@@ -285,6 +286,7 @@ describe("generic permission typed errors", () => {
           cwd: root.workspace,
           env: permissionEnv(root.home, codex),
           remainOnExit: true,
+          startupWaitMs: 0,
         });
         await waitForPaneExit(session, 0);
         const scrollback = await session.captureFullScrollback();

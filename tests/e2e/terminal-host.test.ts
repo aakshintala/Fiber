@@ -1051,6 +1051,7 @@ test.skipIf(!tmuxAvailable())("private screen text grid matches an actual tmux c
     cwd: home,
     width: 40,
     height: 10,
+    startupWaitMs: 0,
   });
   try {
     await tmux.waitForText("ready", 5_000);

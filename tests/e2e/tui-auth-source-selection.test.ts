@@ -73,6 +73,7 @@ function startFx(
     stderrPath: testStderrPath,
     width: 100,
     height: 30,
+    startupWaitMs: 0,
   });
 }
 

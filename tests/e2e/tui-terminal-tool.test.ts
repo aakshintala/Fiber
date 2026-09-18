@@ -104,6 +104,7 @@ async function launch(
     width: 120,
     height: 32,
     stderrPath: fixture.stderrPath,
+    startupWaitMs: 0,
   });
   sessions.push(session);
   await session.waitForComposer(TIMEOUT);
