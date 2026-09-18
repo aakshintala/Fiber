@@ -58,8 +58,9 @@ billing, `https://opencode.ai/zen/go/v1`) and the `opencode-zen` preset
 `https://opencode.ai/zen/v1`). Both default to a stored `api_key`
 credential; an environment reference to `OPENCODE_API_KEY` stays available
 as the `env` credential kind, not the default. Per-connection login lands in
-#291, Go's 403/429 errors in #392 (blocked by #289), and preset loopback
-turns with `model-routing.test.ts` coverage in #393; connections still
+#291, Go's 403/429 errors in #392 (blocked by #293, #294), and preset loopback
+turns with `model-routing.test.ts` coverage in #393 (blocked by #38, #283,
+#289, #293, #294, #295); connections still
 exist and validate while routing reaches Codex through today's Codex-only
 path.
 
