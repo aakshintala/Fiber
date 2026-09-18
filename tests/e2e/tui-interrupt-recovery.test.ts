@@ -249,10 +249,11 @@ describe.skipIf(SKIP)("tui: interrupt recovery", () => {
       await session.waitForText("cancelled", TIMEOUT);
       await session.sendText(`/model ${FOLLOW_UP_MODEL}`);
       await session.sendKeys("Enter");
-      await waitForCondition(
-        () => JSON.parse(readFileSync(settingsPath, "utf8")).models?.codex === FOLLOW_UP_MODEL,
-        "follow-up model persistence",
-        LOCAL_FLAG_TIMEOUT,
+      // `/model <name>` is session-only: wait for the session-side switch,
+      // not a profile-default write (which no longer happens).
+      await session.waitForText(
+        `● Switched to ${FOLLOW_UP_MODEL} for this session`,
+        TIMEOUT,
       );
       await session.sendText("Confirm that the next prompt still works.");
       const interruptedScrollback = await session.captureFullScrollback();

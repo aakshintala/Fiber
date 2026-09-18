@@ -210,7 +210,25 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         );
         expect(beforeModelCommit).not.toHaveProperty("model");
         await session.sendKeys("Enter");
-        await session.waitForText(`● Switched to ${CODEX_MODEL}`, TIMEOUT);
+        await session.waitForText(
+          `● Switched to ${CODEX_MODEL} for this session`,
+          TIMEOUT,
+        );
+        // `/model <name>` is session-only: the profile default keeps no model.
+        const afterSessionSwitch = JSON.parse(
+          readFileSync(join(home, ".fiber", "settings.json"), "utf8"),
+        );
+        expect(afterSessionSwitch.models?.codex).not.toBe(CODEX_MODEL);
+        // Ctrl+S in the picker saves the model and effort as the profile default.
+        await session.sendLiteral(`/model ${CODEX_MODEL}`);
+        await session.waitForText(CODEX_MODEL, TIMEOUT);
+        await session.sendKeys("C-s");
+        await session.waitForText("default", TIMEOUT);
+        await session.sendKeys("Enter");
+        await session.waitForText(
+          `● Switched to ${CODEX_MODEL} for this session and default`,
+          TIMEOUT,
+        );
         await session.sendText("/settings startup-scrollback off");
         await session.waitForText("startup_scrollback: off", TIMEOUT);
         await disablePromptHistory(session, join(home, ".fiber", "settings.json"));
@@ -501,7 +519,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   );
 
   test(
-    "Codex picker effort drives request and persistence",
+    "Codex picker Enter drives the request session-only",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fiber-anthropic-capabilities-"));
       const replies = ["Codex selected model complete"];
@@ -576,12 +594,9 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
-        const stored = JSON.parse(readFileSync(settingsPath, "utf8"));
-        expect(stored).toMatchObject({
-          models: { codex: CODEX_PICKER_MODEL },
-          effort: "high",
-          fast_mode: false,
-        });
+        // Picker Enter is session-only: the profile default is byte-identical,
+        // so the next session starts on the previous default.
+        expect(readFileSync(settingsPath, "utf8")).toBe(initialSettings);
 
         session = await TmuxSession.create({
           cwd: opusRoot,
@@ -627,14 +642,12 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         mkdirSync(workspace);
         const workspaceRoot = realpathSync(workspace);
         const settingsPath = join(home, ".fiber", "settings.json");
-        writeFileSync(
-          settingsPath,
+        const initialSettings =
           JSON.stringify({
             model: CODEX_PICKER_MODEL,
             effort: "minimal",
-          }) + "\n",
-          { mode: 0o600 },
-        );
+          }) + "\n";
+        writeFileSync(settingsPath, initialSettings, { mode: 0o600 });
         const catalogEnv = seededFakeCodexEnv(home, codex, {
           ...NO_AUTH,
         });
@@ -652,10 +665,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         const staleRequest = JSON.parse(codex.requests[0]!.body);
         expect(staleRequest).not.toHaveProperty("reasoning");
         expect(staleRequest).not.toHaveProperty("service_tier");
-        expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
-          model: CODEX_PICKER_MODEL,
-          effort: "minimal",
-        });
+        expect(readFileSync(settingsPath, "utf8")).toBe(initialSettings);
 
         session = await TmuxSession.create({
           cwd: workspaceRoot,
@@ -674,13 +684,8 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForText(`${CODEX_PICKER_MODEL} · high`, TIMEOUT);
         await session.waitForComposer(TIMEOUT);
 
-        const stored = JSON.parse(
-          readFileSync(settingsPath, "utf8"),
-        );
-        expect(stored).toMatchObject({
-          models: { codex: CODEX_PICKER_MODEL },
-          effort: "high",
-        });
+        // Picker Enter is session-only: the profile default is byte-identical.
+        expect(readFileSync(settingsPath, "utf8")).toBe(initialSettings);
 
         await session.sendText("Use the selected model.");
         await session.waitForText("GPT 5.6 selected effort complete", TIMEOUT);
@@ -706,7 +711,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   );
 
   test(
-    "Codex picker selection persists with the selected effort",
+    "Codex picker Ctrl+S saves the model and effort as the default",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fiber-fable-capabilities-"));
       const codex = startFakeCodex({ extraModels: [CODEX_PICKER_MODEL] });
@@ -729,12 +734,16 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForText("Run /help", TIMEOUT);
         await filterStartupModelPicker(session, "sol");
         await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
-        await session.sendKeys("Enter");
+        await session.sendKeys("C-s");
         await session.waitForText("default", TIMEOUT);
         for (let i = 0; i < 2; i += 1) await session.sendKeys("Down");
         await session.waitForText("high", TIMEOUT);
         await session.sendKeys("Enter");
         await session.waitForText(`${CODEX_PICKER_MODEL} · high`, TIMEOUT);
+        await session.waitForText(
+          `● Switched to ${CODEX_PICKER_MODEL} for this session and default`,
+          TIMEOUT,
+        );
         await session.sendText("/quit");
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
@@ -754,7 +763,198 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   );
 
   test(
-    "model picker selection persists when a matching skill exists",
+    "model picker Ctrl+S at the effort step saves; Escape after Ctrl+S writes nothing",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "fiber-model-picker-save-stage-"));
+      const codex = startFakeCodex({
+        extraModels: [CODEX_PICKER_MODEL],
+        route: () => codexFinalText("fresh default reply"),
+      });
+      try {
+        const home = join(root, "home");
+        const workspace = join(root, "workspace");
+        const stderrPath = join(root, "stderr.log");
+        const freshStderrPath = join(root, "fresh-stderr.log");
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
+        mkdirSync(workspace);
+        const workspaceRoot = realpathSync(workspace);
+        const settingsPath = join(home, ".fiber", "settings.json");
+        const initialSettings =
+          JSON.stringify({ model: FAKE_CODEX_DEFAULT_MODEL }) + "\n";
+        writeFileSync(settingsPath, initialSettings, { mode: 0o600 });
+        const catalogEnv = seededFakeCodexEnv(home, codex, {
+          ...NO_AUTH,
+        });
+
+        session = await TmuxSession.create({
+          cwd: workspaceRoot,
+          env: catalogEnv,
+          stderrPath,
+        });
+        await session.waitForText("Run /help", TIMEOUT);
+
+        // Ctrl+S at the model step marks the save; Escape cancels it and
+        // writes nothing.
+        await session.sendLiteral("/model sol");
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
+        await session.sendKeys("C-s");
+        await session.waitForText("default", TIMEOUT);
+        await session.sendKeys("Escape");
+        await session.sendKeys("C-u");
+        await session.waitForPane(hasEmptyComposer, TIMEOUT);
+        expect(readFileSync(settingsPath, "utf8")).toBe(initialSettings);
+
+        // The mark died with the cancel: a plain Enter finish stays session-only.
+        await session.sendLiteral("/model sol");
+        await session.sendKeys("Tab");
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
+        await session.sendKeys("Enter");
+        await session.waitForText("default", TIMEOUT);
+        await session.sendKeys("Enter");
+        await session.waitForText(
+          `● Switched to ${CODEX_PICKER_MODEL} for this session`,
+          TIMEOUT,
+        );
+        expect(readFileSync(settingsPath, "utf8")).toBe(initialSettings);
+
+        // Ctrl+S at the effort step saves the session and the default together.
+        await session.sendLiteral("/model sol");
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
+        await session.sendKeys("Enter");
+        await session.waitForText("default", TIMEOUT);
+        await session.sendKeys("C-s");
+        await session.waitForText(
+          `● Switched to ${CODEX_PICKER_MODEL} for this session and default`,
+          TIMEOUT,
+        );
+        const stored = JSON.parse(readFileSync(settingsPath, "utf8"));
+        expect(stored).toMatchObject({
+          models: { codex: CODEX_PICKER_MODEL },
+          effort: "auto",
+        });
+        await session.sendText("/quit");
+        await session.waitForSessionEnd(TIMEOUT);
+        session = null;
+
+        // A fresh session starts on the saved default.
+        secondSession = await TmuxSession.create({
+          cwd: workspaceRoot,
+          env: catalogEnv,
+          stderrPath: freshStderrPath,
+        });
+        await secondSession.waitForText("Run /help", TIMEOUT);
+        await secondSession.sendText("Use the saved default.");
+        await secondSession.waitForText("fresh default reply", TIMEOUT);
+        expect(codex.requests).toHaveLength(1);
+        expect(JSON.parse(codex.requests[0]!.body).model).toBe(
+          CODEX_PICKER_MODEL,
+        );
+        await secondSession.sendText("/quit");
+        await secondSession.waitForSessionEnd(TIMEOUT);
+        secondSession = null;
+
+        expect(readFileSync(stderrPath, "utf8")).toBe("");
+        expect(readFileSync(freshStderrPath, "utf8")).toBe("");
+      } finally {
+        codex.stop();
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
+  test(
+    "model picker Ctrl+S at the fast step saves the default",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "fiber-model-picker-fast-save-"));
+      const codex = startFakeCodex();
+      const FAST_MODEL = "codex-sprint";
+      const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch() {
+          return Response.json({
+            models: [
+              {
+                slug: FAKE_CODEX_DEFAULT_MODEL,
+                visibility: "list",
+                supported_in_api: true,
+                supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }],
+                additional_speed_tiers: [],
+                input_modalities: ["text"],
+                context_window: 272000,
+              },
+              {
+                slug: FAST_MODEL,
+                visibility: "list",
+                supported_in_api: true,
+                supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }],
+                additional_speed_tiers: ["fast"],
+                input_modalities: ["text"],
+                context_window: 128000,
+              },
+            ],
+          });
+        },
+      });
+      try {
+        const home = join(root, "home");
+        const workspace = join(root, "workspace");
+        const stderrPath = join(root, "stderr.log");
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
+        mkdirSync(workspace);
+        const settingsPath = join(home, ".fiber", "settings.json");
+        expect(existsSync(settingsPath)).toBe(false);
+
+        session = await TmuxSession.create({
+          cwd: realpathSync(workspace),
+          env: seededFakeCodexEnv(home, codex, {
+            ...NO_AUTH,
+            FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+            FIBER_E2E_OPENAI_CODEX_MODELS_URL: `http://127.0.0.1:${server.port}/models`,
+          }),
+          stderrPath,
+        });
+        await session.waitForText("Run /help", TIMEOUT);
+        await session.sendLiteral("/model sprint");
+        await session.waitForText(FAST_MODEL, TIMEOUT);
+        await session.sendKeys("Enter");
+        await session.waitForText("default", TIMEOUT);
+        await session.sendKeys("Enter");
+        await session.waitForText("normal", TIMEOUT);
+        await session.sendKeys("Down");
+        await session.sendKeys("C-s");
+        await session.waitForText(
+          `● Switched to ${FAST_MODEL} for this session and default`,
+          TIMEOUT,
+        );
+
+        const stored = JSON.parse(readFileSync(settingsPath, "utf8"));
+        // The profile default takes the model and effort; fast mode follows
+        // the scope on the session side (the profile patch never carried it).
+        expect(stored).toMatchObject({
+          models: { codex: FAST_MODEL },
+          effort: "auto",
+        });
+        expect(stored).not.toHaveProperty("fast_mode");
+        await session.sendText("/quit");
+        await session.waitForSessionEnd(TIMEOUT);
+        session = null;
+
+        expect(readFileSync(stderrPath, "utf8")).toBe("");
+      } finally {
+        server.stop();
+        codex.stop();
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
+  test(
+    "model picker selection stays session-only when a matching skill exists",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fiber-model-picker-skill-"));
       const codex = startFakeCodex({ extraModels: [CODEX_PICKER_MODEL] });
@@ -795,13 +995,15 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         );
         expect(await session.capturePane()).not.toContain("saved to user settings");
 
-        const stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
-        expect(stored.models.codex).toBe(CODEX_PICKER_MODEL);
-        expect(stored.effort).toBe("auto");
+        // Picker Enter is session-only: no profile default is written.
+        expect(existsSync(join(home, ".fiber", "settings.json"))).toBe(false);
 
         const scrollback = await session.captureFullScrollbackEscapes();
         expect(scrollback).toContain(CODEX_PICKER_MODEL);
-        expect(scrollback).toContain(`● Switched to ${CODEX_PICKER_MODEL}`);
+        expect(scrollback).toContain(
+          `● Switched to ${CODEX_PICKER_MODEL} for this session`,
+        );
+        expect(scrollback).not.toContain("for this session and default");
         expect(codex.requests).toHaveLength(0);
 
         await session.sendText("/quit");
@@ -818,7 +1020,7 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
   );
 
   test(
-    "Codex catalog reasoning drives portable effort requests and persistence",
+    "Codex catalog reasoning drives portable effort requests session-only",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "fiber-codex-capabilities-"));
       const replies = ["portable auto complete", "portable future complete"];
@@ -851,10 +1053,13 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         expect(autoEffortPicker).toContain("low");
         expect(autoEffortPicker).toContain("high");
         await session.sendKeys("Enter");
-        await session.waitForText(`● Switched to ${CODEX_PICKER_MODEL}`, TIMEOUT);
+        await session.waitForText(
+          `● Switched to ${CODEX_PICKER_MODEL} for this session`,
+          TIMEOUT,
+        );
 
-        let stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
-        expect(stored.models.codex).toBe(CODEX_PICKER_MODEL);
+        // Picker Enter is session-only: no profile default is written.
+        expect(existsSync(join(home, ".fiber", "settings.json"))).toBe(false);
 
         await session.sendText("Use portable auto.");
         await session.waitForText("portable auto complete", TIMEOUT);
@@ -872,16 +1077,8 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.sendKeys("Enter");
         await session.waitForText("· low", TIMEOUT);
 
-        stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
-        const persistenceDeadline = Date.now() + TIMEOUT;
-        while (stored.effort !== "low" && Date.now() < persistenceDeadline) {
-          await Bun.sleep(25);
-          stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
-        }
-        expect(stored).toMatchObject({
-          models: { codex: CODEX_PICKER_MODEL },
-          effort: "low",
-        });
+        // The low effort applies to the session only; settings stay untouched.
+        expect(existsSync(join(home, ".fiber", "settings.json"))).toBe(false);
 
         await session.sendText("Use portable future.");
         await session.waitForText("portable future complete", TIMEOUT);
@@ -894,12 +1091,91 @@ describe.skipIf(!tmuxAvailable())("config persistence", () => {
         await session.waitForSessionEnd(TIMEOUT);
         session = null;
 
-        stored = JSON.parse(readFileSync(join(home, ".fiber", "settings.json"), "utf8"));
-        expect(stored).toMatchObject({
-          models: { codex: CODEX_PICKER_MODEL },
-          effort: "low",
-        });
+        expect(existsSync(join(home, ".fiber", "settings.json"))).toBe(false);
         expect(readFileSync(stderrPath, "utf8")).toBe("");
+      } finally {
+        codex.stop();
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
+  test(
+    "resuming a session-only model switch runs the switched model",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "fiber-model-switch-resume-"));
+      const replies = ["resumed model reply"];
+      let replyIndex = 0;
+      const codex = startFakeCodex({
+        extraModels: [CODEX_PICKER_MODEL],
+        route: () => codexFinalText(replies[replyIndex++] ?? "unexpected"),
+      });
+      try {
+        const home = join(root, "home");
+        const workspace = join(root, "workspace");
+        const stderrPath = join(root, "stderr.log");
+        const resumedStderrPath = join(root, "resumed-stderr.log");
+        mkdirSync(join(home, ".fiber"), { recursive: true, mode: 0o700 });
+        writeSeededChatGptLogin(home, chatGptAccessToken());
+        mkdirSync(workspace);
+        const workspaceRoot = realpathSync(workspace);
+        const catalogEnv = seededFakeCodexEnv(home, codex, {
+          ...NO_AUTH,
+        });
+
+        session = await TmuxSession.create({
+          cwd: workspaceRoot,
+          env: catalogEnv,
+          stderrPath,
+        });
+        await session.waitForText("Run /help", TIMEOUT);
+        await filterStartupModelPicker(session, "sol");
+        await session.waitForText(CODEX_PICKER_MODEL, TIMEOUT);
+        await session.sendKeys("Enter");
+        await session.waitForText("default", TIMEOUT);
+        await session.sendKeys("Down");
+        await session.waitForText("low", TIMEOUT);
+        await session.sendKeys("Enter");
+        await session.waitForText(
+          `● Switched to ${CODEX_PICKER_MODEL} for this session`,
+          TIMEOUT,
+        );
+        await session.sendText("/quit");
+        await session.waitForSessionEnd(TIMEOUT);
+        session = null;
+
+        // The switch never touched the profile default ...
+        expect(existsSync(join(home, ".fiber", "settings.json"))).toBe(false);
+
+        const sessionIds = readdirSync(join(home, ".fiber", "sessions"), {
+          withFileTypes: true,
+        })
+          .filter((entry) => entry.name !== "latest" && entry.isDirectory())
+          .map((entry) => entry.name);
+        expect(sessionIds).toHaveLength(1);
+
+        // ... yet the resumed session runs the switched model.
+        secondSession = await TmuxSession.create({
+          cmd: `${FIBER_BIN} resume ${sessionIds[0]}`,
+          cwd: workspaceRoot,
+          env: catalogEnv,
+          stderrPath: resumedStderrPath,
+        });
+        await secondSession.waitForText(`${CODEX_PICKER_MODEL} · low`, TIMEOUT);
+        await secondSession.sendText("Confirm the resumed model.");
+        await secondSession.waitForText("resumed model reply", TIMEOUT);
+        expect(codex.requests).toHaveLength(1);
+        const request = JSON.parse(codex.requests[0]!.body);
+        expect(request.model).toBe(CODEX_PICKER_MODEL);
+        expect(request.reasoning).toEqual({ effort: "low", summary: "auto" });
+        await secondSession.sendText("/quit");
+        await secondSession.waitForSessionEnd(TIMEOUT);
+        secondSession = null;
+
+        expect(existsSync(join(home, ".fiber", "settings.json"))).toBe(false);
+        expect(readFileSync(stderrPath, "utf8")).toBe("");
+        expect(readFileSync(resumedStderrPath, "utf8")).toBe("");
       } finally {
         codex.stop();
         rmSync(root, { recursive: true, force: true });
