@@ -526,16 +526,21 @@ test "account name resolves from the operating system when USER is unset" {
 test "MCP Keychain storage round-trips values beyond the security prompt limit" {
     if (comptime builtin.os.tag != .macos) return error.SkipZigTest;
     if (isDisabled()) return error.SkipZigTest;
+    std.debug.print("[DIAG-HANG] keychain round-trip START\n", .{});
 
     const alloc = std.testing.allocator;
     const test_mcp_service = "FIBER_TEST_MCP_OAUTH_CREDENTIALS_V1";
     const written = "mcp-credential-section-" ** 32;
 
+    std.debug.print("[DIAG-HANG] keychain round-trip before store\n", .{});
     storeMcpValueMac(test_mcp_service, written) catch return error.SkipZigTest;
+    std.debug.print("[DIAG-HANG] keychain round-trip after store\n", .{});
     defer _ = deleteMcpValueMac(alloc, test_mcp_service) catch false;
 
+    std.debug.print("[DIAG-HANG] keychain round-trip before load\n", .{});
     const read_back = (try loadMcpValueMac(alloc, test_mcp_service)) orelse
         return error.KeychainItemNotFound;
+    std.debug.print("[DIAG-HANG] keychain round-trip after load\n", .{});
     defer secret.zeroAndFree(alloc, read_back);
     try std.testing.expectEqualStrings(written, read_back);
     try std.testing.expect(try deleteMcpValueMac(alloc, test_mcp_service));

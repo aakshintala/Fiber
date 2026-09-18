@@ -2358,6 +2358,7 @@ test "direct executor detaches a callback-blocked worker at the join bound" {
         .environment_profile = .basic_read_only,
     }};
     const started_ms = io_mod.milliTimestamp();
+    std.debug.print("[DIAG-HANG] detach-blocked-worker START\n", .{});
     const result = executeDirectReadOnlyWithLimitAndTestControls(.{
         .max_command_output_bytes = 1,
         .timeout_ms = 300,
@@ -2369,6 +2370,7 @@ test "direct executor detaches a callback-blocked worker at the join bound" {
         .on_worker_exit = BlockedWorkerControl.onWorkerExit,
     });
     const elapsed_ms = io_mod.milliTimestamp() - started_ms;
+    std.debug.print("[DIAG-HANG] detach-blocked-worker execute returned elapsed={d}\n", .{elapsed_ms});
     try std.testing.expectError(error.TimeoutExpired, result);
     // Past the monitor settlement (proves the worker was really stuck, not
     // finished early) but well before a stuck callback could return on its
