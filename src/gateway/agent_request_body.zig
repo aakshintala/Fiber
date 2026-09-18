@@ -470,19 +470,7 @@ fn writeChatMessageJsonInner(
             } else {
                 for (message.images) |image| {
                     if (wrote_part) try writer.writeByte(',');
-                    if (budget) |active| {
-                        try image_attachments.writeImageFilePartJsonWithBudget(
-                            scratch_alloc,
-                            writer,
-                            image,
-                            .{
-                                .deadline = active.deadline,
-                                .cancel_flag = active.cancel_flag,
-                            },
-                        );
-                    } else {
-                        try image_attachments.writeImageFilePartJson(scratch_alloc, writer, image);
-                    }
+                    try writeResumedHistoryImagePart(scratch_alloc, writer, image, budget);
                     wrote_part = true;
                 }
             }
@@ -546,6 +534,39 @@ fn writeChatMessageJsonInner(
 
     if (cached) try writer.writeAll(anthropic_cache_meta);
     try writer.writeAll("}");
+}
+
+/// Writes one resumed history image part for the chat path: verified bytes
+/// become the file part, an unloadable snapshot becomes a typed
+/// model-visible notice part so the model knows the image existed and why
+/// it is gone. Mirrors responses_protocol.writeResumedHistoryImages: only
+/// allocation and cancellation failures propagate, so resume still succeeds.
+fn writeResumedHistoryImagePart(
+    scratch_alloc: std.mem.Allocator,
+    writer: *std.Io.Writer,
+    image: types.ImageAttachment,
+    budget: ?BuildBudget,
+) !void {
+    var part = try image_attachments.prepareResumedImagePart(scratch_alloc, image);
+    defer part.deinit(scratch_alloc);
+    switch (part) {
+        .image => |snapshot| try image_attachments.writeVerifiedImageFilePartJsonWithBudget(
+            writer,
+            snapshot,
+            .{
+                .deadline = if (budget) |active| active.deadline else null,
+                .cancel_flag = if (budget) |active| active.cancel_flag else null,
+            },
+        ),
+        .unavailable => |notice| {
+            var inner: std.Io.Writer.Allocating = .init(scratch_alloc);
+            defer inner.deinit();
+            try image_attachments.writeImageUnavailableNoticeJson(&inner.writer, notice);
+            try writer.writeAll("{\"type\":\"text\",\"text\":");
+            try std.json.Stringify.value(inner.written(), .{}, writer);
+            try writer.writeByte('}');
+        },
+    }
 }
 
 fn findCacheBreakpoint(messages: []const ChatMessage) ?usize {
@@ -1130,4 +1151,151 @@ test "gateway request emits provider ids while linking results by item id" {
     defer alloc.free(body);
     try std.testing.expect(std.mem.find(u8, body, "\"toolCallId\":\"call_provider\"") != null);
     try std.testing.expect(std.mem.find(u8, body, "item_abc") == null);
+}
+
+fn writeResumedHistorySnapshotFile(tmp: *std.testing.TmpDir, name: []const u8, bytes: []const u8) !void {
+    var file = try tmp.dir.createFile(std.testing.io, name, .{});
+    defer file.close(std.testing.io);
+    try file.writeStreamingAll(std.testing.io, bytes);
+}
+
+fn resumedHistorySnapshotDigestHex(bytes: []const u8) [64]u8 {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(bytes);
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    return std.fmt.bytesToHex(digest, .lower);
+}
+
+fn makeResumedHistoryImageAttachment(
+    alloc: std.mem.Allocator,
+    id: usize,
+    snapshot_path: []const u8,
+    digest_hex: []const u8,
+) !types.ImageAttachment {
+    return .{
+        .id = id,
+        .path = try alloc.dupe(u8, "/tmp/source.png"),
+        .media_type = try alloc.dupe(u8, "image/png"),
+        .snapshot_path = try alloc.dupe(u8, snapshot_path),
+        .snapshot_sha256 = try alloc.dupe(u8, digest_hex),
+    };
+}
+
+/// Extracts the in-place image_unavailable notice from a chat request body
+/// and asserts its exact payload. A malformed notice fails here: the inner
+/// text will not parse or fields will mismatch.
+fn expectChatImageUnavailableNotice(
+    body: []const u8,
+    image_id: usize,
+    reason: []const u8,
+    detail: []const u8,
+) !void {
+    const alloc = std.testing.allocator;
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc, body, .{});
+    defer parsed.deinit();
+    const content = parsed.value.object.get("content") orelse return error.TestExpectedContentMissing;
+    if (content != .array) return error.TestExpectedContentMissing;
+    var found = false;
+    for (content.array.items) |part| {
+        if (part != .object) continue;
+        const part_type = part.object.get("type") orelse continue;
+        if (part_type != .string or !std.mem.eql(u8, part_type.string, "text")) continue;
+        const text = part.object.get("text") orelse continue;
+        if (text != .string or std.mem.find(u8, text.string, "image_unavailable") == null) continue;
+        var notice = try std.json.parseFromSlice(std.json.Value, alloc, text.string, .{});
+        defer notice.deinit();
+        try std.testing.expectEqual(@as(usize, 4), notice.value.object.count());
+        const notice_type = notice.value.object.get("type") orelse return error.TestExpectedNoticeType;
+        try std.testing.expectEqualStrings("image_unavailable", notice_type.string);
+        const notice_id = notice.value.object.get("image_id") orelse return error.TestExpectedNoticeId;
+        try std.testing.expectEqual(image_id, @as(usize, @intCast(notice_id.integer)));
+        const notice_reason = notice.value.object.get("reason") orelse return error.TestExpectedNoticeReason;
+        try std.testing.expectEqualStrings(reason, notice_reason.string);
+        const notice_detail = notice.value.object.get("detail") orelse return error.TestExpectedNoticeDetail;
+        try std.testing.expectEqualStrings(detail, notice_detail.string);
+        found = true;
+    }
+    try std.testing.expect(found);
+}
+
+test "chat resumed history notices a missing snapshot without failing" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const tmp_root = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(tmp_root);
+    const missing_path = try std.fs.path.join(alloc, &.{ tmp_root, "gone.bin" });
+    defer alloc.free(missing_path);
+
+    const attachment = try makeResumedHistoryImageAttachment(alloc, 7, missing_path, "a" ** 64);
+    defer types.freeImageAttachment(alloc, attachment);
+    const images = [_]types.ImageAttachment{attachment};
+
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try writeChatMessageJson(alloc, &out.writer, .{
+        .role = .user,
+        .content = "Fix it",
+        .images = &images,
+    });
+    const body = out.written();
+
+    try expectChatImageUnavailableNotice(body, 7, "missing", "FileNotFound");
+    try std.testing.expect(std.mem.find(u8, body, "\"type\":\"file\"") == null);
+}
+
+test "chat resumed history notices a corrupt snapshot without failing" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const png_bytes = "\x89PNG\r\n\x1a\nvalid-image-bytes";
+    try writeResumedHistorySnapshotFile(&tmp, "image-7.bin", "tampered-bytes");
+    const snapshot_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "image-7.bin");
+    defer alloc.free(snapshot_path);
+    const digest_hex = resumedHistorySnapshotDigestHex(png_bytes);
+
+    const attachment = try makeResumedHistoryImageAttachment(alloc, 7, snapshot_path, &digest_hex);
+    defer types.freeImageAttachment(alloc, attachment);
+    const images = [_]types.ImageAttachment{attachment};
+
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try writeChatMessageJson(alloc, &out.writer, .{
+        .role = .user,
+        .content = "Fix it",
+        .images = &images,
+    });
+    const body = out.written();
+
+    try expectChatImageUnavailableNotice(body, 7, "corrupt", "ImageSnapshotCorrupt");
+    try std.testing.expect(std.mem.find(u8, body, "\"type\":\"file\"") == null);
+}
+
+test "chat resumed history rehydrates a valid snapshot unchanged" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const png_bytes = "\x89PNG\r\n\x1a\nvalid-image-bytes";
+    try writeResumedHistorySnapshotFile(&tmp, "image-7.bin", png_bytes);
+    const snapshot_path = try io_mod.dirRealpathAlloc(alloc, tmp.dir, "image-7.bin");
+    defer alloc.free(snapshot_path);
+    const digest_hex = resumedHistorySnapshotDigestHex(png_bytes);
+
+    const attachment = try makeResumedHistoryImageAttachment(alloc, 7, snapshot_path, &digest_hex);
+    defer types.freeImageAttachment(alloc, attachment);
+    const images = [_]types.ImageAttachment{attachment};
+
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try writeChatMessageJson(alloc, &out.writer, .{
+        .role = .user,
+        .content = "Fix it",
+        .images = &images,
+    });
+    const body = out.written();
+
+    try std.testing.expect(std.mem.find(u8, body, "\"type\":\"file\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"mediaType\":\"image/png\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "image_unavailable") == null);
 }
