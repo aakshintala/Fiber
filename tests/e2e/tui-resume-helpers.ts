@@ -38,6 +38,9 @@ export const TIMEOUT = 30_000;
 export const UPGRADE_TIMEOUT = TIMEOUT * 2;
 export const SESSION_PICKER_META_RE = /\bturns?\b/;
 export const SELECTED_COMPLETION_SGR = "\x1b[1m\x1b[38;5;255m";
+// Under NO_COLOR the shell strips colour runs but keeps styles, so the
+// selected row carries bold alone instead of bold+white.
+export const SELECTED_COMPLETION_BOLD_SGR = "\x1b[1m";
 
 export function fakeShellRun(
   callId: string,
@@ -616,7 +619,8 @@ export function visibleSessionPickerEntries(escapes: string): SessionPickerEntry
       row: index,
       title,
       meta,
-      selected: rawLines[index]!.includes(SELECTED_COMPLETION_SGR),
+      selected: rawLines[index]!.includes(SELECTED_COMPLETION_SGR) ||
+        rawLines[index]!.includes(SELECTED_COMPLETION_BOLD_SGR),
     });
   }
   return entries;

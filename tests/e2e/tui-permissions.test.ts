@@ -200,12 +200,24 @@ function fullDisplayClearCount(tapePath: string): number {
 }
 
 function expectAtomicApprovalExit(tapePath: string, frameStart: number) {
-  const frames = stdoutFrames(tapePath).slice(frameStart);
-  const leaveFrames = frames.filter((frame) =>
-    frame.payload.includes("\x1b[?1049l")
+  // Under NO_COLOR the shell strips colour runs piece by piece, so one
+  // logical frame lands on the tape as several frames. Join everything from
+  // the exit point and assert on the logical payload: exactly one
+  // alternate-screen leave with the restore and sync markers ordered
+  // around it.
+  const payload = Buffer.concat(
+    stdoutFrames(tapePath).slice(frameStart).map((frame) => frame.payload),
   );
-  expect(leaveFrames).toHaveLength(1);
-  const payload = leaveFrames[0]!.payload;
+  const leaveMarker = Buffer.from("\x1b[?1049l");
+  let leaveCount = 0;
+  let offset = 0;
+  while (offset < payload.length) {
+    const next = payload.indexOf(leaveMarker, offset);
+    if (next < 0) break;
+    leaveCount += 1;
+    offset = next + leaveMarker.length;
+  }
+  expect(leaveCount).toBe(1);
   const restoreIndex = payload.indexOf(
     "\x1b[?1000l\x1b[?1006l\x1b[?1049l\x1b[?25l",
   );

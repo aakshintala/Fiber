@@ -635,12 +635,13 @@ async function expectQuestionSelection(
   ordinal: number,
   selectedLabel: string,
 ) {
-  const pane = await activeSession.capturePaneEscapes();
+  const pane = await activeSession.capturePaneEscapesNoJoin();
   expect(hasQuestionSelection(pane, ordinal, selectedLabel)).toBe(true);
 }
 
-// Polls with color so question selection (now signalled purely by the white
-// style, no caret) is observable — plain capture drops SGR.
+// Polls the pane without joined wrapped lines so question selection (now
+// signalled by bold alone under NO_COLOR, no caret) is observable — plain
+// capture drops SGR and joined capture can drop the style opener.
 async function waitForQuestionPane(
   activeSession: TmuxSession,
   label: string,
@@ -650,7 +651,7 @@ async function waitForQuestionPane(
   const start = Date.now();
   let last = "";
   while (Date.now() - start < timeoutMs) {
-    last = await activeSession.capturePaneEscapes();
+    last = await activeSession.capturePaneEscapesNoJoin();
     if (predicate(last)) return last;
     await sleep(100);
   }
@@ -681,12 +682,14 @@ function hasSelection(pane: string, ordinal: number, selectedLabel: string) {
   return visibleText(pane).includes(visibleText(`› ${ordinal}. ${selectedLabel}`));
 }
 
-// The selected option is the only row carrying the white (255) style; match
-// the ordinal/label on that row after stripping the interleaved escapes.
+// The selected option is the only row carrying the selected-completion
+// style: white (255) with colour, bold alone under NO_COLOR (the shell
+// strips colour runs but keeps styles). Match the ordinal/label on that row
+// after stripping the interleaved escapes.
 function hasQuestionSelection(paneEscapes: string, ordinal: number, selectedLabel: string) {
   const needle = visibleText(`${ordinal}) ${selectedLabel}`);
   return paneEscapes.split(/\r?\n/).some((line) =>
-    line.includes("38;5;255") && visibleText(stripAnsi(line)).includes(needle)
+    (line.includes("38;5;255") || line.includes("\x1b[1m")) && visibleText(stripAnsi(line)).includes(needle)
   );
 }
 

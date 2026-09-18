@@ -16,6 +16,7 @@ pub const bold_style = "\x1b[1m";
 pub const ask_activity_label = "⏺ Asking";
 
 const user_message_card = @import("assistant/user_message_card.zig");
+const record_tape = @import("../core/workspace/record_tape.zig");
 
 pub const welcome_message_reserved_rows: u16 = 11;
 
@@ -28,9 +29,100 @@ pub var subtitle_style: []const u8 = "\x1b[1;38;5;255m";
 pub var system_notice_label_style: []const u8 = "\x1b[1;38;5;252m";
 pub var system_notice_text_style: []const u8 = "\x1b[38;5;250m";
 pub var dim_style: []const u8 = "\x1b[38;5;245m";
+// Semantic colour roles (issue #314). Every hue role carries a truecolor
+// value and the nearest 256-colour index; initTheme picks by the existing
+// truecolor detection. The rgb triple mirrors the truecolor value so unit
+// tests can assert WCAG contrast without parsing SGR.
+const ColorDef = struct {
+    truecolor: []const u8,
+    fallback_256: []const u8,
+    r: u8,
+    g: u8,
+    b: u8,
+};
+
+fn pickShade(shade: ColorDef) []const u8 {
+    return if (truecolor_enabled) shade.truecolor else shade.fallback_256;
+}
+
+// Status hues: error red, warning amber, success green. The light value is
+// dark enough for a white terminal, the dark value light enough for #1c1c1c.
+const error_light = ColorDef{ .truecolor = "\x1b[38;2;200;30;30m", .fallback_256 = "\x1b[38;5;160m", .r = 200, .g = 30, .b = 30 };
+const error_dark = ColorDef{ .truecolor = "\x1b[38;2;242;85;90m", .fallback_256 = "\x1b[38;5;203m", .r = 242, .g = 85, .b = 90 };
+const warning_light = ColorDef{ .truecolor = "\x1b[38;2;194;65;12m", .fallback_256 = "\x1b[38;5;130m", .r = 194, .g = 65, .b = 12 };
+const warning_dark = ColorDef{ .truecolor = "\x1b[38;2;253;176;34m", .fallback_256 = "\x1b[38;5;214m", .r = 253, .g = 176, .b = 34 };
+const success_light = ColorDef{ .truecolor = "\x1b[38;2;6;118;71m", .fallback_256 = "\x1b[38;5;29m", .r = 6, .g = 118, .b = 71 };
+const success_dark = ColorDef{ .truecolor = "\x1b[38;2;48;164;108m", .fallback_256 = "\x1b[38;5;71m", .r = 48, .g = 164, .b = 108 };
+// Permission hues: ask grey, auto amber, YOLO red.
+const ask_light = ColorDef{ .truecolor = "\x1b[38;2;71;84;103m", .fallback_256 = "\x1b[38;5;240m", .r = 71, .g = 84, .b = 103 };
+const ask_dark = ColorDef{ .truecolor = "\x1b[38;2;152;162;179m", .fallback_256 = "\x1b[38;5;248m", .r = 152, .g = 162, .b = 179 };
+// The thinking-activity marker keeps the grey the permission auto style used
+// to carry, so turning auto amber leaves the marker unchanged.
+const thinking_light = ColorDef{ .truecolor = "\x1b[38;2;68;68;68m", .fallback_256 = "\x1b[38;5;238m", .r = 68, .g = 68, .b = 68 };
+const thinking_dark = ColorDef{ .truecolor = "\x1b[38;2;208;208;208m", .fallback_256 = "\x1b[38;5;252m", .r = 208, .g = 208, .b = 208 };
+// Categorical roles for the /context breakdown (#310): setup in cool shades,
+// built-in and MCP tools in one indigo hue in two shades, conversation in
+// olive earth shades (kept off the warning hue family), the compacted
+// summary in magenta. Free space has no
+// colour. Dark values are tints of the light hues, so each family reads as
+// one family on both themes. None equals a status hue.
+const ctx_system_prompt_light = ColorDef{ .truecolor = "\x1b[38;2;14;116;144m", .fallback_256 = "\x1b[38;5;30m", .r = 14, .g = 116, .b = 144 };
+const ctx_system_prompt_dark = ColorDef{ .truecolor = "\x1b[38;2;146;192;205m", .fallback_256 = "\x1b[38;5;110m", .r = 146, .g = 192, .b = 205 };
+const ctx_project_instructions_light = ColorDef{ .truecolor = "\x1b[38;2;124;58;237m", .fallback_256 = "\x1b[38;5;99m", .r = 124, .g = 58, .b = 237 };
+const ctx_project_instructions_dark = ColorDef{ .truecolor = "\x1b[38;2;196;166;246m", .fallback_256 = "\x1b[38;5;183m", .r = 196, .g = 166, .b = 246 };
+const ctx_skills_light = ColorDef{ .truecolor = "\x1b[38;2;29;78;216m", .fallback_256 = "\x1b[38;5;26m", .r = 29, .g = 78, .b = 216 };
+const ctx_skills_dark = ColorDef{ .truecolor = "\x1b[38;2;153;175;237m", .fallback_256 = "\x1b[38;5;111m", .r = 153, .g = 175, .b = 237 };
+const ctx_environment_light = ColorDef{ .truecolor = "\x1b[38;2;3;105;161m", .fallback_256 = "\x1b[38;5;25m", .r = 3, .g = 105, .b = 161 };
+const ctx_environment_dark = ColorDef{ .truecolor = "\x1b[38;2;159;198;219m", .fallback_256 = "\x1b[38;5;152m", .r = 159, .g = 198, .b = 219 };
+const ctx_builtin_tools_light = ColorDef{ .truecolor = "\x1b[38;2;67;56;202m", .fallback_256 = "\x1b[38;5;62m", .r = 67, .g = 56, .b = 202 };
+const ctx_builtin_tools_dark = ColorDef{ .truecolor = "\x1b[38;2;170;165;231m", .fallback_256 = "\x1b[38;5;146m", .r = 170, .g = 165, .b = 231 };
+const ctx_mcp_tools_light = ColorDef{ .truecolor = "\x1b[38;2;99;102;241m", .fallback_256 = "\x1b[38;5;63m", .r = 99, .g = 102, .b = 241 };
+const ctx_mcp_tools_dark = ColorDef{ .truecolor = "\x1b[38;2;184;186;248m", .fallback_256 = "\x1b[38;5;147m", .r = 184, .g = 186, .b = 248 };
+const ctx_user_messages_light = ColorDef{ .truecolor = "\x1b[38;2;96;102;24m", .fallback_256 = "\x1b[38;5;58m", .r = 96, .g = 102, .b = 24 };
+const ctx_user_messages_dark = ColorDef{ .truecolor = "\x1b[38;2;182;190;130m", .fallback_256 = "\x1b[38;5;144m", .r = 182, .g = 190, .b = 130 };
+const ctx_assistant_messages_light = ColorDef{ .truecolor = "\x1b[38;2;70;80;18m", .fallback_256 = "\x1b[38;5;58m", .r = 70, .g = 80, .b = 18 };
+const ctx_assistant_messages_dark = ColorDef{ .truecolor = "\x1b[38;2;168;178;124m", .fallback_256 = "\x1b[38;5;144m", .r = 168, .g = 178, .b = 124 };
+const ctx_reasoning_light = ColorDef{ .truecolor = "\x1b[38;2;120;113;108m", .fallback_256 = "\x1b[38;5;243m", .r = 120, .g = 113, .b = 108 };
+const ctx_reasoning_dark = ColorDef{ .truecolor = "\x1b[38;2;194;191;188m", .fallback_256 = "\x1b[38;5;250m", .r = 194, .g = 191, .b = 188 };
+const ctx_tool_calls_light = ColorDef{ .truecolor = "\x1b[38;2;84;92;20m", .fallback_256 = "\x1b[38;5;58m", .r = 84, .g = 92, .b = 20 };
+const ctx_tool_calls_dark = ColorDef{ .truecolor = "\x1b[38;2;178;186;118m", .fallback_256 = "\x1b[38;5;144m", .r = 178, .g = 186, .b = 118 };
+const ctx_tool_output_light = ColorDef{ .truecolor = "\x1b[38;2;68;76;36m", .fallback_256 = "\x1b[38;5;58m", .r = 68, .g = 76, .b = 36 };
+const ctx_tool_output_dark = ColorDef{ .truecolor = "\x1b[38;2;170;178;138m", .fallback_256 = "\x1b[38;5;144m", .r = 170, .g = 178, .b = 138 };
+const ctx_compacted_summary_light = ColorDef{ .truecolor = "\x1b[38;2;162;28;175m", .fallback_256 = "\x1b[38;5;127m", .r = 162, .g = 28, .b = 175 };
+const ctx_compacted_summary_dark = ColorDef{ .truecolor = "\x1b[38;2;240;171;252m", .fallback_256 = "\x1b[38;5;219m", .r = 240, .g = 171, .b = 252 };
+// The conversation roles share the coarse 256-cube olive; the truecolor
+// values stay distinct.
+// Status hues reach status notices only (#314). warning_style, green_style
+// and red_style stay grey for every other use: tool states, MCP failures,
+// input warnings, questions and resume menus.
 pub var warning_style: []const u8 = "\x1b[38;5;252m";
 pub var green_style: []const u8 = "\x1b[38;5;252m";
 pub var red_style: []const u8 = "\x1b[38;5;252m";
+pub var notice_warning_style: []const u8 = "\x1b[38;5;252m";
+pub var notice_success_style: []const u8 = "\x1b[38;5;252m";
+pub var notice_error_style: []const u8 = "\x1b[38;5;252m";
+pub var permission_ask_style: []const u8 = "\x1b[38;5;245m";
+// Statusbar permissions "auto": warning amber. The thinking-activity marker
+// used to borrow this style; it now has thinking_marker_style below.
+pub var permission_auto_style: []const u8 = "\x1b[38;5;252m";
+pub var permission_yolo_style: []const u8 = "\x1b[38;5;252m";
+pub var thinking_marker_style: []const u8 = "\x1b[38;5;252m";
+// One role per /context category (#310 renders them; free space is unstyled).
+// #310 reads them through contextCategoryStyle; nothing outside this file
+// touches the vars directly.
+var ctx_system_prompt_style: []const u8 = "";
+var ctx_project_instructions_style: []const u8 = "";
+var ctx_skills_style: []const u8 = "";
+var ctx_builtin_tools_style: []const u8 = "";
+var ctx_mcp_tools_style: []const u8 = "";
+var ctx_environment_style: []const u8 = "";
+var ctx_user_messages_style: []const u8 = "";
+var ctx_assistant_messages_style: []const u8 = "";
+var ctx_reasoning_style: []const u8 = "";
+var ctx_tool_calls_style: []const u8 = "";
+var ctx_tool_output_style: []const u8 = "";
+var ctx_compacted_summary_style: []const u8 = "";
+const ctx_free_space_style: []const u8 = "";
 pub var diff_added_style: []const u8 = "\x1b[38;5;252m";
 pub var diff_removed_style: []const u8 = "\x1b[38;5;252m";
 // The line number and +/- sign carry the only color in an otherwise
@@ -46,8 +138,6 @@ pub var diff_removed_marker_style: []const u8 = diff_removed_marker_fallback;
 pub var approval_button_active_style: []const u8 = "\x1b[48;5;255m\x1b[38;5;235m\x1b[1m";
 pub var approval_button_inactive_style: []const u8 = "\x1b[48;5;239m\x1b[38;5;255m";
 pub var selected_completion_style: []const u8 = "\x1b[1;38;5;255m";
-// Statusbar permissions "auto": a step brighter than the statusline gray.
-pub var permission_auto_style: []const u8 = "\x1b[38;5;252m";
 var active_terminal_background: ?TerminalRgb = null;
 
 var truecolor_enabled: bool = true;
@@ -69,15 +159,30 @@ pub fn initTheme(light: bool, terminal_bg: ?TerminalRgb) void {
         system_notice_label_style = "\x1b[1;38;5;238m";
         system_notice_text_style = "\x1b[38;5;241m";
         dim_style = "\x1b[38;5;247m";
-        warning_style = "\x1b[38;5;238m";
-        green_style = "\x1b[38;5;238m";
-        red_style = "\x1b[38;5;238m";
+        notice_warning_style = pickShade(warning_light);
+        notice_success_style = pickShade(success_light);
+        notice_error_style = pickShade(error_light);
+        permission_ask_style = pickShade(ask_light);
+        permission_auto_style = pickShade(warning_light);
+        permission_yolo_style = pickShade(error_light);
+        thinking_marker_style = pickShade(thinking_light);
+        ctx_system_prompt_style = pickShade(ctx_system_prompt_light);
+        ctx_project_instructions_style = pickShade(ctx_project_instructions_light);
+        ctx_skills_style = pickShade(ctx_skills_light);
+        ctx_builtin_tools_style = pickShade(ctx_builtin_tools_light);
+        ctx_mcp_tools_style = pickShade(ctx_mcp_tools_light);
+        ctx_environment_style = pickShade(ctx_environment_light);
+        ctx_user_messages_style = pickShade(ctx_user_messages_light);
+        ctx_assistant_messages_style = pickShade(ctx_assistant_messages_light);
+        ctx_reasoning_style = pickShade(ctx_reasoning_light);
+        ctx_tool_calls_style = pickShade(ctx_tool_calls_light);
+        ctx_tool_output_style = pickShade(ctx_tool_output_light);
+        ctx_compacted_summary_style = pickShade(ctx_compacted_summary_light);
         diff_added_style = "\x1b[38;5;238m";
         diff_removed_style = "\x1b[38;5;238m";
         approval_button_active_style = "\x1b[48;5;236m\x1b[38;5;255m\x1b[1m";
         approval_button_inactive_style = "\x1b[48;5;251m\x1b[38;5;237m";
         selected_completion_style = "\x1b[1;38;5;235m";
-        permission_auto_style = "\x1b[38;5;238m";
     } else {
         divider_style = "\x1b[38;5;240m";
         hint_style = "\x1b[38;5;255m";
@@ -87,15 +192,30 @@ pub fn initTheme(light: bool, terminal_bg: ?TerminalRgb) void {
         system_notice_label_style = "\x1b[1;38;5;252m";
         system_notice_text_style = "\x1b[38;5;250m";
         dim_style = "\x1b[38;5;245m";
-        warning_style = "\x1b[38;5;252m";
-        green_style = "\x1b[38;5;252m";
-        red_style = "\x1b[38;5;252m";
+        notice_warning_style = pickShade(warning_dark);
+        notice_success_style = pickShade(success_dark);
+        notice_error_style = pickShade(error_dark);
+        permission_ask_style = pickShade(ask_dark);
+        permission_auto_style = pickShade(warning_dark);
+        permission_yolo_style = pickShade(error_dark);
+        thinking_marker_style = pickShade(thinking_dark);
+        ctx_system_prompt_style = pickShade(ctx_system_prompt_dark);
+        ctx_project_instructions_style = pickShade(ctx_project_instructions_dark);
+        ctx_skills_style = pickShade(ctx_skills_dark);
+        ctx_builtin_tools_style = pickShade(ctx_builtin_tools_dark);
+        ctx_mcp_tools_style = pickShade(ctx_mcp_tools_dark);
+        ctx_environment_style = pickShade(ctx_environment_dark);
+        ctx_user_messages_style = pickShade(ctx_user_messages_dark);
+        ctx_assistant_messages_style = pickShade(ctx_assistant_messages_dark);
+        ctx_reasoning_style = pickShade(ctx_reasoning_dark);
+        ctx_tool_calls_style = pickShade(ctx_tool_calls_dark);
+        ctx_tool_output_style = pickShade(ctx_tool_output_dark);
+        ctx_compacted_summary_style = pickShade(ctx_compacted_summary_dark);
         diff_added_style = "\x1b[38;5;252m";
         diff_removed_style = "\x1b[38;5;252m";
         approval_button_active_style = "\x1b[48;5;255m\x1b[38;5;235m\x1b[1m";
         approval_button_inactive_style = "\x1b[48;5;239m\x1b[38;5;255m";
         selected_completion_style = "\x1b[1;38;5;255m";
-        permission_auto_style = "\x1b[38;5;252m";
     }
 
     // The diff marker green/red reads the same on light and dark, so it is set
@@ -124,6 +244,221 @@ pub const explicitThemeOverride = theme_detection.explicitThemeOverride;
 pub const detectTheme = theme_detection.detectTheme;
 pub const parseOsc11Response = theme_protocol.parseOsc11Response;
 pub const truecolorSupportedForValues = theme_protocol.truecolorSupportedForValues;
+
+// NO_COLOR and TERM=dumb support. When colour is disabled the TUI emits no
+// foreground or background colour, greys included; bold, dim, italic,
+// underline and reverse pass through. Every painted byte bound for the
+// terminal flows through writeWithoutColor, so hardcoded colour sequences
+// spread across the UI need no per-site edits. External users go through
+// colorEnabled/setColorEnabled; nothing touches the var directly.
+var color_enabled: bool = true;
+
+pub fn setColorEnabled(enabled: bool) void {
+    color_enabled = enabled;
+}
+
+pub fn colorEnabled() bool {
+    return color_enabled;
+}
+
+// NO_COLOR disables colour when present, whatever its value; TERM=dumb
+// counts as NO_COLOR.
+pub fn colorEnabledForEnv(no_color_present: bool, term: ?[]const u8) bool {
+    if (no_color_present) return false;
+    if (term) |value| if (std.mem.eql(u8, value, "dumb")) return false;
+    return true;
+}
+
+pub fn colorEnabledFromEnv() bool {
+    return colorEnabledForEnv(io_mod.getenv("NO_COLOR") != null, io_mod.getenv("TERM"));
+}
+
+// Stripping only drops colour runs, so a partial write carries the file
+// streaming error plus NoProgress when zero bytes move.
+pub const PlainWriteError = std.Io.File.Writer.Error || error{NoProgress};
+
+pub const PlainWriteResult = union(enum) {
+    complete: usize,
+    partial: struct {
+        source_accepted: usize,
+        stripped_written: usize,
+        err: PlainWriteError,
+    },
+};
+
+fn writePiece(file: std.Io.File, piece: []const u8) !void {
+    var done: usize = 0;
+    while (done < piece.len) {
+        const n = try file.writeStreaming(io_mod.getIo(), &.{}, &.{piece[done..]}, 1);
+        if (n == 0) return error.NoProgress;
+        done += n;
+    }
+}
+
+fn recordStripped(metrics: *types.Metrics, piece: []const u8) void {
+    record_tape.recordStdout(piece);
+    metrics.ansi_bytes += piece.len;
+}
+
+// A single SGR parameter that sets a colour. 39/49 reset to the default
+// colour, which under NO_COLOR is already in effect.
+fn sgrParamIsColor(param: []const u8) bool {
+    const value = std.fmt.parseUnsigned(u16, param, 10) catch return false;
+    return (value >= 30 and value <= 37) or value == 39 or
+        (value >= 40 and value <= 47) or value == 49 or
+        (value >= 90 and value <= 97) or (value >= 100 and value <= 107);
+}
+
+// 38/48 open an extended colour run (38;5;N, 38;2;R;G;B, or the colon
+// forms); 58 does the same for underline colour. 59 resets the underline
+// colour and takes no parameter. The bare opener is dropped along with
+// its arguments.
+fn sgrParamIsExtendedOpen(param: []const u8) bool {
+    return std.mem.eql(u8, param, "38") or std.mem.eql(u8, param, "48") or
+        std.mem.eql(u8, param, "58") or std.mem.eql(u8, param, "59") or
+        std.mem.startsWith(u8, param, "38:") or std.mem.startsWith(u8, param, "48:") or
+        std.mem.startsWith(u8, param, "58:") or std.mem.startsWith(u8, param, "59:");
+}
+
+const SgrParamAction = union(enum) {
+    keep,
+    drop,
+    drop_with_skip: usize,
+};
+
+fn classifySgrParam(param: []const u8, rest: *std.mem.SplitIterator(u8, .scalar)) SgrParamAction {
+    if (sgrParamIsExtendedOpen(param)) {
+        // 59 takes no parameter, so it must not consume the next one:
+        // ESC[59;4m resets the underline colour and keeps underline.
+        if (std.mem.eql(u8, param, "38") or std.mem.eql(u8, param, "48") or
+            std.mem.eql(u8, param, "58"))
+        {
+            const mode = rest.next() orelse "";
+            if (std.mem.eql(u8, mode, "5")) return .{ .drop_with_skip = 1 };
+            // Truecolor mode 2 takes three params (R;G;B); skipping four
+            // would eat the trailing style of a combined sequence.
+            if (std.mem.eql(u8, mode, "2")) return .{ .drop_with_skip = 3 };
+        }
+        return .drop;
+    }
+    if (sgrParamIsColor(param)) return .drop;
+    return .keep;
+}
+
+fn countKeptSgrParams(inner: []const u8) usize {
+    var kept: usize = 0;
+    var skip: usize = 0;
+    var params = std.mem.splitScalar(u8, inner, ';');
+    while (params.next()) |param| {
+        if (skip > 0) {
+            skip -= 1;
+            continue;
+        }
+        switch (classifySgrParam(param, &params)) {
+            .keep => kept += 1,
+            .drop => {},
+            .drop_with_skip => |n| skip = n,
+        }
+    }
+    return kept;
+}
+
+fn writeFilteredSgr(file: std.Io.File, metrics: *types.Metrics, seq: []const u8) !usize {
+    const inner = seq[2 .. seq.len - 1];
+    // An all-colour sequence is dropped without emitting a bare escape.
+    if (countKeptSgrParams(inner) == 0) return 0;
+    var written: usize = 0;
+    var skip: usize = 0;
+    var first_kept = true;
+    var params = std.mem.splitScalar(u8, inner, ';');
+    try writePiece(file, "\x1b[");
+    recordStripped(metrics, "\x1b[");
+    written += 2;
+    while (params.next()) |param| {
+        if (skip > 0) {
+            skip -= 1;
+            continue;
+        }
+        switch (classifySgrParam(param, &params)) {
+            .keep => {},
+            .drop => continue,
+            .drop_with_skip => |n| {
+                skip = n;
+                continue;
+            },
+        }
+        if (!first_kept) {
+            try writePiece(file, ";");
+            recordStripped(metrics, ";");
+            written += 1;
+        }
+        first_kept = false;
+        try writePiece(file, param);
+        recordStripped(metrics, param);
+        written += param.len;
+    }
+    try writePiece(file, "m");
+    recordStripped(metrics, "m");
+    return written + 1;
+}
+
+fn csiSequenceEnd(bytes: []const u8, start: usize) ?usize {
+    var i = start;
+    while (i < bytes.len) : (i += 1) {
+        if (bytes[i] >= 0x40 and bytes[i] <= 0x7e) return i;
+    }
+    return null;
+}
+
+fn writeRawPiece(file: std.Io.File, metrics: *types.Metrics, piece: []const u8, source_accepted: usize, stripped_written: usize) ?PlainWriteResult {
+    writePiece(file, piece) catch |err| return .{ .partial = .{
+        .source_accepted = source_accepted,
+        .stripped_written = stripped_written,
+        .err = err,
+    } };
+    recordStripped(metrics, piece);
+    return null;
+}
+
+pub fn writeWithoutColor(file: std.Io.File, metrics: *types.Metrics, bytes: []const u8) PlainWriteResult {
+    var i: usize = 0;
+    var source_accepted: usize = 0;
+    var stripped_written: usize = 0;
+    while (i < bytes.len) {
+        if (bytes[i] == 0x1b and i + 1 < bytes.len and bytes[i + 1] == '[') {
+            const end = csiSequenceEnd(bytes, i + 2) orelse bytes.len;
+            const seq = bytes[i..@min(end + 1, bytes.len)];
+            if (end < bytes.len and bytes[end] == 'm') {
+                const wrote = writeFilteredSgr(file, metrics, seq) catch |err| return .{ .partial = .{
+                    .source_accepted = source_accepted,
+                    .stripped_written = stripped_written,
+                    .err = err,
+                } };
+                stripped_written += wrote;
+            } else if (writeRawPiece(file, metrics, seq, source_accepted, stripped_written)) |failed| {
+                return failed;
+            } else {
+                stripped_written += seq.len;
+            }
+            source_accepted = i + seq.len;
+            i += seq.len;
+        } else {
+            var run_end = i + 1;
+            while (run_end < bytes.len) {
+                if (bytes[run_end] == 0x1b and run_end + 1 < bytes.len and bytes[run_end + 1] == '[') break;
+                run_end += 1;
+            }
+            const run = bytes[i..run_end];
+            if (writeRawPiece(file, metrics, run, source_accepted, stripped_written)) |failed| {
+                return failed;
+            }
+            stripped_written += run.len;
+            source_accepted = run_end;
+            i = run_end;
+        }
+    }
+    return .{ .complete = stripped_written };
+}
 
 pub const InputLineView = struct {
     line: []const u8,
@@ -218,10 +553,49 @@ fn compactModelLabel(model: []const u8, out: []u8) []const u8 {
 }
 
 fn permissionModeStatusLabel(mode: types.PermissionMode, out: []u8) []const u8 {
+    // ask renders in the hint row's statusline grey base, which carries the
+    // permission_ask_style value, so it stays bare here.
     return switch (mode) {
         .ask => "ask",
         .auto => std.fmt.bufPrint(out, "{s}auto{s}", .{ permission_auto_style, statusline_style }) catch "auto",
-        .yolo => std.fmt.bufPrint(out, "{s}YOLO{s}", .{ permission_auto_style, statusline_style }) catch "YOLO",
+        .yolo => std.fmt.bufPrint(out, "{s}YOLO{s}", .{ permission_yolo_style, statusline_style }) catch "YOLO",
+    };
+}
+
+/// /context breakdown categories (#310). Every category except free space has
+/// exactly one categorical role; contextCategoryStyle is the lookup #310
+/// renders from.
+pub const ContextCategory = enum {
+    system_prompt,
+    project_instructions,
+    skills,
+    builtin_tools,
+    mcp_tools,
+    environment,
+    user_messages,
+    assistant_messages,
+    reasoning,
+    tool_calls,
+    tool_output,
+    compacted_summary,
+    free_space,
+};
+
+pub fn contextCategoryStyle(category: ContextCategory) []const u8 {
+    return switch (category) {
+        .system_prompt => ctx_system_prompt_style,
+        .project_instructions => ctx_project_instructions_style,
+        .skills => ctx_skills_style,
+        .builtin_tools => ctx_builtin_tools_style,
+        .mcp_tools => ctx_mcp_tools_style,
+        .environment => ctx_environment_style,
+        .user_messages => ctx_user_messages_style,
+        .assistant_messages => ctx_assistant_messages_style,
+        .reasoning => ctx_reasoning_style,
+        .tool_calls => ctx_tool_calls_style,
+        .tool_output => ctx_tool_output_style,
+        .compacted_summary => ctx_compacted_summary_style,
+        .free_space => ctx_free_space_style,
     };
 }
 
@@ -1053,14 +1427,14 @@ test "buildHintLine colors auto mode with theme accent" {
     try std.testing.expectEqualStrings(light_expected, light_line);
 }
 
-test "buildHintLine renders yolo uppercase with subdued permission styling" {
+test "buildHintLine renders yolo uppercase with permission yolo styling" {
     initTheme(false, null);
     var buf: [128]u8 = undefined;
     const line = buildHintLine(false, false, true, "openai/gpt-4o", .yolo, 0, null, false, .auto, false, .{}, 80, &buf);
     const expected = try std.fmt.allocPrint(
         std.testing.allocator,
         "{s}YOLO{s} · gpt-4o",
-        .{ permission_auto_style, statusline_style },
+        .{ permission_yolo_style, statusline_style },
     );
     defer std.testing.allocator.free(expected);
 
@@ -1079,4 +1453,258 @@ test "buildHintLine clips styled auto mode by visible width" {
     try std.testing.expectEqualStrings(expected, line);
     try std.testing.expectEqual(@as(usize, 13), display_width.visibleWidthIgnoringAnsi(line));
     try std.testing.expect(std.mem.endsWith(u8, line, "gpt-4o"));
+}
+
+fn testLinearizeChannel(value: u8) f64 {
+    const c: f64 = @as(f64, @floatFromInt(value)) / 255.0;
+    if (c <= 0.03928) return c / 12.92;
+    return std.math.pow(f64, (c + 0.055) / 1.055, 2.4);
+}
+
+fn testRelativeLuminance(r: u8, g: u8, b: u8) f64 {
+    return 0.2126 * testLinearizeChannel(r) + 0.7152 * testLinearizeChannel(g) + 0.0722 * testLinearizeChannel(b);
+}
+
+fn testContrastRatio(a: ColorDef, r: u8, g: u8, b: u8) f64 {
+    const first = testRelativeLuminance(a.r, a.g, a.b);
+    const second = testRelativeLuminance(r, g, b);
+    const high = @max(first, second);
+    const low = @min(first, second);
+    return (high + 0.05) / (low + 0.05);
+}
+
+// The light value of each text role is read on #ffffff, the dark value on
+// #1c1c1c: one hue cannot reach 4.5:1 on both, which is why the roles carry
+// per-theme values.
+const status_role_shades = [_]struct { name: []const u8, light: ColorDef, dark: ColorDef }{
+    .{ .name = "error", .light = error_light, .dark = error_dark },
+    .{ .name = "warning", .light = warning_light, .dark = warning_dark },
+    .{ .name = "success", .light = success_light, .dark = success_dark },
+    .{ .name = "permission ask", .light = ask_light, .dark = ask_dark },
+    .{ .name = "permission auto", .light = warning_light, .dark = warning_dark },
+    .{ .name = "permission yolo", .light = error_light, .dark = error_dark },
+    .{ .name = "thinking marker", .light = thinking_light, .dark = thinking_dark },
+};
+
+const categorical_role_shades = [_]struct { category: ContextCategory, light: ColorDef, dark: ColorDef }{
+    .{ .category = .system_prompt, .light = ctx_system_prompt_light, .dark = ctx_system_prompt_dark },
+    .{ .category = .project_instructions, .light = ctx_project_instructions_light, .dark = ctx_project_instructions_dark },
+    .{ .category = .skills, .light = ctx_skills_light, .dark = ctx_skills_dark },
+    .{ .category = .builtin_tools, .light = ctx_builtin_tools_light, .dark = ctx_builtin_tools_dark },
+    .{ .category = .mcp_tools, .light = ctx_mcp_tools_light, .dark = ctx_mcp_tools_dark },
+    .{ .category = .environment, .light = ctx_environment_light, .dark = ctx_environment_dark },
+    .{ .category = .user_messages, .light = ctx_user_messages_light, .dark = ctx_user_messages_dark },
+    .{ .category = .assistant_messages, .light = ctx_assistant_messages_light, .dark = ctx_assistant_messages_dark },
+    .{ .category = .reasoning, .light = ctx_reasoning_light, .dark = ctx_reasoning_dark },
+    .{ .category = .tool_calls, .light = ctx_tool_calls_light, .dark = ctx_tool_calls_dark },
+    .{ .category = .tool_output, .light = ctx_tool_output_light, .dark = ctx_tool_output_dark },
+    .{ .category = .compacted_summary, .light = ctx_compacted_summary_light, .dark = ctx_compacted_summary_dark },
+};
+
+test "semantic roles meet text contrast on their theme background" {
+    for (status_role_shades) |role| {
+        try std.testing.expect(testContrastRatio(role.light, 0xff, 0xff, 0xff) >= 4.5);
+        try std.testing.expect(testContrastRatio(role.dark, 0x1c, 0x1c, 0x1c) >= 4.5);
+    }
+}
+
+test "categorical roles meet non-text contrast on their theme background" {
+    for (categorical_role_shades) |role| {
+        try std.testing.expect(testContrastRatio(role.light, 0xff, 0xff, 0xff) >= 3.0);
+        try std.testing.expect(testContrastRatio(role.dark, 0x1c, 0x1c, 0x1c) >= 3.0);
+    }
+}
+
+// Hue families slice the colour wheel into twelve 30-degree buckets so the
+// collision check compares families, not exact equality. Near-grey shades
+// carry no hue claim and are skipped.
+fn testHueFamily(r: u8, g: u8, b: u8) ?u4 {
+    const max = @max(r, @max(g, b));
+    const min = @min(r, @min(g, b));
+    if (max == 0) return null;
+    const saturation = @as(f64, @floatFromInt(max - min)) / @as(f64, @floatFromInt(max));
+    if (saturation < 0.12) return null;
+    const rf: f64 = @floatFromInt(r);
+    const gf: f64 = @floatFromInt(g);
+    const bf: f64 = @floatFromInt(b);
+    const delta: f64 = @floatFromInt(max - min);
+    var h: f64 = undefined;
+    if (max == r) {
+        h = @mod((gf - bf) / delta, 6.0);
+    } else if (max == g) {
+        h = (bf - rf) / delta + 2.0;
+    } else {
+        h = (rf - gf) / delta + 4.0;
+    }
+    return @intCast(@as(u64, @intFromFloat(@floor(h * 2.0))) % 12);
+}
+
+test "categorical roles cover every context category and avoid status hues" {
+    const status_shades = [_]ColorDef{
+        error_light, error_dark, warning_light, warning_dark, success_light, success_dark,
+    };
+    var status_families = [_]bool{false} ** 12;
+    for (status_shades) |status| {
+        if (testHueFamily(status.r, status.g, status.b)) |family| status_families[family] = true;
+    }
+    // Every category resolves to a role, and free space stays unstyled.
+    for (categorical_role_shades) |role| {
+        try std.testing.expect(contextCategoryStyle(role.category).len > 0);
+    }
+    try std.testing.expectEqualStrings("", contextCategoryStyle(.free_space));
+    try std.testing.expectEqualStrings("", ctx_free_space_style);
+    // No categorical value equals a status hue, in truecolor or 256-color,
+    // and no saturated categorical value shares a status hue family.
+    for (categorical_role_shades) |role| {
+        for ([_]ColorDef{ role.light, role.dark }) |shade| {
+            for (status_shades) |status| {
+                try std.testing.expect(shade.r != status.r or shade.g != status.g or shade.b != status.b);
+                try std.testing.expect(!std.mem.eql(u8, shade.truecolor, status.truecolor));
+                try std.testing.expect(!std.mem.eql(u8, shade.fallback_256, status.fallback_256));
+            }
+            if (testHueFamily(shade.r, shade.g, shade.b)) |family| {
+                try std.testing.expect(!status_families[family]);
+            }
+        }
+    }
+}
+
+test "initTheme paints notice, status and permission hues on both themes" {
+    setTruecolorSupport(true);
+    initTheme(false, null);
+    try std.testing.expectEqualStrings(error_dark.truecolor, notice_error_style);
+    try std.testing.expectEqualStrings(warning_dark.truecolor, notice_warning_style);
+    try std.testing.expectEqualStrings(success_dark.truecolor, notice_success_style);
+    // The shared styles stay grey: tool states, MCP failures, input
+    // warnings, questions and resume menus never take a status hue.
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", red_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", warning_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", green_style);
+    try std.testing.expectEqualStrings(ask_dark.truecolor, permission_ask_style);
+    try std.testing.expectEqualStrings(warning_dark.truecolor, permission_auto_style);
+    try std.testing.expectEqualStrings(error_dark.truecolor, permission_yolo_style);
+    try std.testing.expectEqualStrings(thinking_dark.truecolor, thinking_marker_style);
+    try std.testing.expectEqualStrings(ctx_user_messages_dark.truecolor, contextCategoryStyle(.user_messages));
+
+    initTheme(true, null);
+    try std.testing.expectEqualStrings(error_light.truecolor, notice_error_style);
+    try std.testing.expectEqualStrings(warning_light.truecolor, notice_warning_style);
+    try std.testing.expectEqualStrings(success_light.truecolor, notice_success_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", red_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", warning_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", green_style);
+    try std.testing.expectEqualStrings(warning_light.truecolor, permission_auto_style);
+    try std.testing.expectEqualStrings(error_light.truecolor, permission_yolo_style);
+    try std.testing.expectEqualStrings(thinking_light.truecolor, thinking_marker_style);
+
+    setTruecolorSupport(false);
+    initTheme(false, null);
+    defer {
+        setTruecolorSupport(true);
+        initTheme(false, null);
+    }
+    try std.testing.expectEqualStrings(error_dark.fallback_256, notice_error_style);
+    try std.testing.expectEqualStrings("\x1b[38;5;252m", red_style);
+    try std.testing.expectEqualStrings(warning_dark.fallback_256, permission_auto_style);
+    try std.testing.expectEqualStrings(error_dark.fallback_256, permission_yolo_style);
+    try std.testing.expectEqualStrings(ctx_compacted_summary_dark.fallback_256, contextCategoryStyle(.compacted_summary));
+}
+
+test "colorEnabledForEnv honors NO_COLOR and TERM=dumb" {
+    try std.testing.expect(colorEnabledForEnv(false, "xterm-256color"));
+    try std.testing.expect(colorEnabledForEnv(false, null));
+    try std.testing.expect(!colorEnabledForEnv(true, "xterm-256color"));
+    try std.testing.expect(!colorEnabledForEnv(true, null));
+    try std.testing.expect(!colorEnabledForEnv(false, "dumb"));
+    try std.testing.expect(colorEnabledForEnv(false, "dumber"));
+}
+
+fn writeWithoutColorToTmp(input: []const u8) !struct { bytes: []u8, metrics: types.Metrics } {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile(std.testing.io, "stripped.log", .{ .read = true });
+    defer file.close(io_mod.getIo());
+    var metrics: types.Metrics = .{};
+    const result = writeWithoutColor(file, &metrics, input);
+    const written = switch (result) {
+        .complete => |n| n,
+        .partial => return error.TestUnexpectedResult,
+    };
+    const out = try std.testing.allocator.alloc(u8, written);
+    errdefer std.testing.allocator.free(out);
+    try std.testing.expectEqual(written, try file.readPositionalAll(io_mod.getIo(), out, 0));
+    return .{ .bytes = out, .metrics = metrics };
+}
+
+test "writeWithoutColor drops color SGR and keeps styles" {
+    const input = "\x1b[38;5;252mnotice\x1b[0m \x1b[1;38;5;255mbright\x1b[39m \x1b[31mred\x1b[7mok\x1b[27m \x1b[2mdim\x1b[22m \x1b[3mi\x1b[23m \x1b[4mu\x1b[24m";
+    const result = try writeWithoutColorToTmp(input);
+    defer std.testing.allocator.free(result.bytes);
+    try std.testing.expectEqualStrings(
+        "notice\x1b[0m \x1b[1mbright red\x1b[7mok\x1b[27m \x1b[2mdim\x1b[22m \x1b[3mi\x1b[23m \x1b[4mu\x1b[24m",
+        result.bytes,
+    );
+}
+
+test "writeWithoutColor drops truecolor and background runs" {
+    const input = "a\x1b[38;2;48;164;108m+\x1b[0m\x1b[48;5;255m\x1b[38;5;235m\x1b[1mbutton\x1b[0m";
+    const result = try writeWithoutColorToTmp(input);
+    defer std.testing.allocator.free(result.bytes);
+    try std.testing.expectEqualStrings("a+\x1b[0m\x1b[1mbutton\x1b[0m", result.bytes);
+}
+
+test "writeWithoutColor keeps trailing styles after a truecolor run" {
+    const input = "\x1b[1;38;2;48;164;108;4mok\x1b[0m";
+    const result = try writeWithoutColorToTmp(input);
+    defer std.testing.allocator.free(result.bytes);
+    try std.testing.expectEqualStrings("\x1b[1;4mok\x1b[0m", result.bytes);
+}
+
+test "writeWithoutColor drops colon-form colours but keeps colon styles" {
+    const input = "\x1b[38:5:203mcolon\x1b[0m \x1b[4:3mcurly\x1b[0m \x1b[58:2::200:30:30munder\x1b[59m \x1b[58;5;9msemi\x1b[0m";
+    const result = try writeWithoutColorToTmp(input);
+    defer std.testing.allocator.free(result.bytes);
+    try std.testing.expectEqualStrings("colon\x1b[0m \x1b[4:3mcurly\x1b[0m under semi\x1b[0m", result.bytes);
+}
+
+test "writeWithoutColor keeps styles after underline-default 59" {
+    const input = "\x1b[59;4mok\x1b[0m";
+    const result = try writeWithoutColorToTmp(input);
+    defer std.testing.allocator.free(result.bytes);
+    try std.testing.expectEqualStrings("\x1b[4mok\x1b[0m", result.bytes);
+}
+
+test "writeWithoutColor leaves movement and erase sequences alone" {
+    const input = "\x1b[?25l\x1b[10;1H\x1b[Ktext\x1b[2J\x1b[3J\x1b[H\x1b]2;fiber · hi\x07";
+    const result = try writeWithoutColorToTmp(input);
+    defer std.testing.allocator.free(result.bytes);
+    try std.testing.expectEqualStrings(input, result.bytes);
+}
+
+test "writeWithoutColor emits no color SGR parameters" {
+    const input = "\x1b[38;5;252merror\x1b[0m \x1b[1;33mwarn\x1b[0m \x1b[92mok\x1b[0m \x1b[48;2;1;2;3mbg\x1b[49m \x1b[38:5:203mcolon\x1b[0m";
+    const result = try writeWithoutColorToTmp(input);
+    defer std.testing.allocator.free(result.bytes);
+    var i: usize = 0;
+    while (i < result.bytes.len) {
+        if (result.bytes[i] == 0x1b and i + 1 < result.bytes.len and result.bytes[i + 1] == '[') {
+            var end = i + 2;
+            while (end < result.bytes.len and (result.bytes[end] < 0x40 or result.bytes[end] > 0x7e)) : (end += 1) {}
+            try std.testing.expect(end < result.bytes.len);
+            if (result.bytes[end] == 'm') {
+                var params = std.mem.splitScalar(u8, result.bytes[i + 2 .. end], ';');
+                while (params.next()) |param| {
+                    const value = std.fmt.parseUnsigned(u16, param, 10) catch continue;
+                    try std.testing.expect(!((value >= 30 and value <= 37) or (value >= 40 and value <= 47) or
+                        (value >= 90 and value <= 97) or (value >= 100 and value <= 107)));
+                    try std.testing.expect(value != 38 and value != 48);
+                }
+            }
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    try std.testing.expect(std.mem.find(u8, result.bytes, "38;") == null);
+    try std.testing.expect(std.mem.find(u8, result.bytes, "48;") == null);
 }

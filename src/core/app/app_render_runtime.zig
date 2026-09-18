@@ -487,9 +487,9 @@ pub fn Runtime(comptime App: type) type {
                 .red_style = ui_render.red_style,
                 .cancelled_text_style = ui_render.hint_style,
                 .notice_information_style = ui_render.system_notice_label_style,
-                .notice_success_style = ui_render.green_style,
-                .notice_warning_style = ui_render.warning_style,
-                .notice_error_style = ui_render.red_style,
+                .notice_success_style = ui_render.notice_success_style,
+                .notice_warning_style = ui_render.notice_warning_style,
+                .notice_error_style = ui_render.notice_error_style,
                 .notice_cancelled_style = ui_render.dim_style,
                 .code_highlight_theme = if (ui_render.is_light) .light else .dark,
             };

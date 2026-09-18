@@ -150,6 +150,28 @@ fiber usage --session <id>
 These examples write `fiber` for brevity. With a source build, use the
 path to the binary you built instead.
 
+## Terminal colours
+
+The interactive shell uses colour for the few things worth noticing:
+error, warning, and success notices and the permission mode in the status bar
+(`ask` grey, `auto` amber, `YOLO` red). Every other element stays grey,
+except diff markers, whose line numbers and +/- signs stay green/red,
+and colour never carries meaning on its own.
+
+When background detection guesses wrong, force the theme:
+
+```bash
+FIBER_THEME=light ./zig-out/bin/fiber
+FIBER_THEME=dark ./zig-out/bin/fiber
+```
+
+Any other value is ignored. To turn colour off entirely, set `NO_COLOR`
+(to any value, even empty); terminals reporting `TERM=dumb` get the same
+behaviour. With colour off, the shell emits no foreground or background
+colour, greys included, while bold, dim, italic, underline, and reverse
+video stay. The active approval choice keeps its reverse-video marker, so
+it stays distinguishable.
+
 ## Connect MCP servers
 
 Remote MCP servers are configured in `~/.fiber/mcp.json`:
