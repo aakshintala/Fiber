@@ -198,7 +198,7 @@ jobs:
                 echo "::group::HANG: thread stacks of test pid $pid"
                 if command -v sample >/dev/null 2>&1; then
                   sample "$pid" 2 -mayDie 2>&1 || true
-                  sudo -n lldb -p "$pid" --batch -o 'thread backtrace all' -o 'detach' 2>&1 || true
+                  sudo -n lldb -p "$pid" --batch -o 'p fiber_diag_current_test' -o 'thread backtrace all' -o 'detach' 2>&1 || true
                 else
                   cat "/proc/$pid/task/"*/stack 2>/dev/null || true
                 fi

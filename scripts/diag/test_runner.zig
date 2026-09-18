@@ -4,6 +4,9 @@
 const builtin = @import("builtin");
 
 const std = @import("std");
+
+/// DIAG ONLY (#352): index of the test currently running, read by lldb at hang time.
+export var fiber_diag_current_test: u32 = 0xffff_ffff;
 const Io = std.Io;
 const fatal = std.process.fatal;
 const testing = std.testing;
@@ -133,7 +136,7 @@ fn mainServer(init: std.process.Init.Minimal) !void {
                 log_err_count = 0;
                 const index = try server.receiveBody_u32();
                 const test_fn = builtin.test_functions[index];
-                std.debug.print("[TEST {d}/{d}] {s}\n", .{ index + 1, builtin.test_functions.len, test_fn.name });
+                fiber_diag_current_test = @intCast(index);
                 is_fuzz_test = false;
 
                 // let the build server know we're starting the test now
