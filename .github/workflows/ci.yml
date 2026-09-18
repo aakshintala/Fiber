@@ -72,7 +72,7 @@ jobs:
   # the static gates, which must stay fast.
   pgso-driver:
     name: PGSO driver tests
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'pgso-driver')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -177,17 +177,39 @@ jobs:
           trap 'printf "Unit test compile elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
           zig build test-compile -Doptimize=${{ matrix.platform.optimize }}
 
+      # A hang here (#352) produces no output at all. The watchdog gives the
+      # run a hard deadline, well under the job timeout so the step fails
+      # instead of being cancelled, and before killing it dumps every thread
+      # stack of each test binary with macOS `sample`.
       - name: Run unit tests
         env:
-          TEST_TIMEOUT_SECONDS: "1200"
+          TEST_TIMEOUT_SECONDS: "600"
         run: |
           started_at=$SECONDS
           trap 'printf "Unit test run elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
-          if command -v timeout >/dev/null 2>&1; then
-            timeout "${TEST_TIMEOUT_SECONDS}s" zig build test -Doptimize=${{ matrix.platform.optimize }}
-          else
-            zig build test -Doptimize=${{ matrix.platform.optimize }}
-          fi
+          zig build test -Doptimize=${{ matrix.platform.optimize }} &
+          build_pid=$!
+          while kill -0 "$build_pid" 2>/dev/null; do
+            if [ $((SECONDS - started_at)) -ge "$TEST_TIMEOUT_SECONDS" ]; then
+              echo "::group::HANG after ${TEST_TIMEOUT_SECONDS}s: process tree"
+              ps -axo pid,ppid,stat,etime,wchan,command | grep -E 'zig|/test' | grep -v grep || true
+              echo "::endgroup::"
+              for pid in $(pgrep -x test); do
+                echo "::group::HANG: thread stacks of test pid $pid"
+                if command -v sample >/dev/null 2>&1; then
+                  sample "$pid" 2 -mayDie 2>&1 || true
+                else
+                  cat "/proc/$pid/task/"*/stack 2>/dev/null || true
+                fi
+                echo "::endgroup::"
+              done
+              pkill -x test || true
+              kill "$build_pid" 2>/dev/null || true
+              exit 1
+            fi
+            sleep 5
+          done
+          wait "$build_pid"
 
       - name: Smoke test fresh binary
         run: ./scripts/smoke.sh
@@ -196,7 +218,7 @@ jobs:
   # tests/e2e/conformance, so the root-level shard planner never discovers it.
   conformance:
     name: MCP conformance
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'conformance')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -239,7 +261,7 @@ jobs:
   # ad-hoc signs the output.
   build:
     name: Build (${{ matrix.target }})
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'build')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -276,7 +298,7 @@ jobs:
   # downloaded here.
   e2e:
     name: E2E (${{ matrix.name }}, shard ${{ matrix.label }})
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'e2e')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: [scope, build]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
@@ -483,7 +505,7 @@ jobs:
   # CI job's needs: it must never block merging, only demand flake issues.
   flake-watch:
     name: Flake watch (non-blocking)
-    if: always() && contains(fromJSON('["success", "failure"]'), needs.e2e.result)
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: e2e
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -511,7 +533,7 @@ jobs:
 
   bench:
     name: Performance gates
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'bench')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: scope
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -568,7 +590,7 @@ jobs:
   # meaning on a manual dispatch.
   binary-size:
     name: ReleaseSafe size delta (${{ matrix.name }})
-    if: contains(fromJSON(needs.scope.outputs.jobs), 'binary-size')
+    if: false  # DIAG ONLY: slimmed for macos-native iteration
     needs: scope
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
