@@ -551,6 +551,7 @@ test "MCP Keychain storage round-trips values beyond the security prompt limit" 
 }
 
 test "cancellable MCP Keychain runner interrupts and reaps a stalled child" {
+    std.debug.print("[DIAG-HANG] cancellable MCP Keychain runner interrupts and reaps a stalled child START\n", .{});
     const Canceller = struct {
         flag: *std.atomic.Value(bool),
 
@@ -578,6 +579,7 @@ test "cancellable MCP Keychain runner interrupts and reaps a stalled child" {
 }
 
 test "default Keychain availability probe is cancellable" {
+    std.debug.print("[DIAG-HANG] default Keychain availability probe is cancellable START\n", .{});
     const Canceller = struct {
         flag: *std.atomic.Value(bool),
 
@@ -604,6 +606,7 @@ test "default Keychain availability probe is cancellable" {
 }
 
 test "cancellable MCP Keychain store wait interrupts a stalled child" {
+    std.debug.print("[DIAG-HANG] cancellable MCP Keychain store wait interrupts a stalled child START\n", .{});
     const Canceller = struct {
         flag: *std.atomic.Value(bool),
 

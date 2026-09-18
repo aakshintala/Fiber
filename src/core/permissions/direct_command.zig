@@ -2389,6 +2389,7 @@ test "direct executor detaches a callback-blocked worker at the join bound" {
 }
 
 test "direct executor kills a running child whose pipes closed early" {
+    std.debug.print("[DIAG-HANG] kill-early START\n", .{});
     if (builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
 
     // The child closes its pipes up front and keeps running, so the monitor
