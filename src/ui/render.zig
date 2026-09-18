@@ -310,8 +310,9 @@ fn sgrParamIsColor(param: []const u8) bool {
 }
 
 // 38/48 open an extended colour run (38;5;N, 38;2;R;G;B, or the colon
-// forms); 58/59 do the same for underline colour. The bare opener is
-// dropped along with its arguments.
+// forms); 58 does the same for underline colour. 59 resets the underline
+// colour and takes no parameter. The bare opener is dropped along with
+// its arguments.
 fn sgrParamIsExtendedOpen(param: []const u8) bool {
     return std.mem.eql(u8, param, "38") or std.mem.eql(u8, param, "48") or
         std.mem.eql(u8, param, "58") or std.mem.eql(u8, param, "59") or
@@ -327,8 +328,10 @@ const SgrParamAction = union(enum) {
 
 fn classifySgrParam(param: []const u8, rest: *std.mem.SplitIterator(u8, .scalar)) SgrParamAction {
     if (sgrParamIsExtendedOpen(param)) {
+        // 59 takes no parameter, so it must not consume the next one:
+        // ESC[59;4m resets the underline colour and keeps underline.
         if (std.mem.eql(u8, param, "38") or std.mem.eql(u8, param, "48") or
-            std.mem.eql(u8, param, "58") or std.mem.eql(u8, param, "59"))
+            std.mem.eql(u8, param, "58"))
         {
             const mode = rest.next() orelse "";
             if (std.mem.eql(u8, mode, "5")) return .{ .drop_with_skip = 1 };
@@ -1662,6 +1665,13 @@ test "writeWithoutColor drops colon-form colours but keeps colon styles" {
     const result = try writeWithoutColorToTmp(input);
     defer std.testing.allocator.free(result.bytes);
     try std.testing.expectEqualStrings("colon\x1b[0m \x1b[4:3mcurly\x1b[0m under semi\x1b[0m", result.bytes);
+}
+
+test "writeWithoutColor keeps styles after underline-default 59" {
+    const input = "\x1b[59;4mok\x1b[0m";
+    const result = try writeWithoutColorToTmp(input);
+    defer std.testing.allocator.free(result.bytes);
+    try std.testing.expectEqualStrings("\x1b[4mok\x1b[0m", result.bytes);
 }
 
 test "writeWithoutColor leaves movement and erase sequences alone" {

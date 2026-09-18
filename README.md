@@ -152,6 +152,7 @@ path to the binary you built instead.
 The interactive shell uses colour for the few things worth noticing:
 error, warning, and success notices and the permission mode in the status bar
 (`ask` grey, `auto` amber, `YOLO` red). Every other element stays grey,
+except diff markers, whose line numbers and +/- signs stay green/red,
 and colour never carries meaning on its own.
 
 When background detection guesses wrong, force the theme:
