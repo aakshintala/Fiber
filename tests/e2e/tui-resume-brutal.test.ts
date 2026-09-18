@@ -237,6 +237,7 @@ async function seedRealSession(paths: Paths, config: Config): Promise<IndexedSum
         20_000,
         config.chatBatches * config.chatLinesPerBatch * 2,
       ),
+      startupWaitMs: 0,
     });
     await session.waitForComposer(TIMEOUT);
     await session.sendText(`${REAL_TITLE}: build the prepared long chat and tool history.`);
@@ -455,6 +456,7 @@ async function runStress(config: Config): Promise<Paths> {
         50_000,
         config.chatBatches * config.chatLinesPerBatch * 2,
       ),
+      startupWaitMs: 0,
     });
     await session.waitForComposer(TIMEOUT * 4);
     const pid = session.processPid();

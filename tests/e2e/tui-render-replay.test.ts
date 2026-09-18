@@ -81,6 +81,7 @@ async function launch(options: {
       FIBER_TRACE_LOG: tracePath,
       FIBER_TRACE_SCOPES: TRACE_SCOPES,
     },
+    startupWaitMs: 0,
   });
   session = s;
   await s.waitForComposer(10_000);
@@ -130,6 +131,7 @@ async function launchAutomaticRecording(options: {
       FIBER_TRACE_LOG: tracePath,
       FIBER_TRACE_SCOPES: TRACE_SCOPES,
     },
+    startupWaitMs: 0,
   });
   session = s;
   if (!options.silentBanner) {
