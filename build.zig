@@ -62,9 +62,6 @@ pub fn build(b: *std.Build) void {
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
         .filters = test_filters,
-        // DIAG ONLY (never merge): simple-mode custom runner streams
-        // per-test progress so hangs are identifiable in CI logs.
-        .test_runner = .{ .path = b.path("tools/diag_test_runner.zig"), .mode = .simple },
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
     run_exe_tests.step.dependOn(b.getInstallStep());
