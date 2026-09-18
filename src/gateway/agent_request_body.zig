@@ -1173,13 +1173,28 @@ fn makeResumedHistoryImageAttachment(
     snapshot_path: []const u8,
     digest_hex: []const u8,
 ) !types.ImageAttachment {
-    return .{
+    const source = [_]types.ImageAttachment{.{
         .id = id,
-        .path = try alloc.dupe(u8, "/tmp/source.png"),
-        .media_type = try alloc.dupe(u8, "image/png"),
-        .snapshot_path = try alloc.dupe(u8, snapshot_path),
-        .snapshot_sha256 = try alloc.dupe(u8, digest_hex),
-    };
+        .path = @constCast("/tmp/source.png"),
+        .media_type = @constCast("image/png"),
+        .snapshot_path = @constCast(snapshot_path),
+        .snapshot_sha256 = @constCast(digest_hex),
+    }};
+    const owned = try types.dupeImageAttachmentSlice(alloc, &source);
+    defer alloc.free(owned);
+    return owned[0];
+}
+
+test "makeResumedHistoryImageAttachment preserves allocation failure without leaking" {
+    var fail_index: usize = 0;
+    while (fail_index < 6) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        if (makeResumedHistoryImageAttachment(failing.allocator(), 7, "/tmp/snap.bin", "a" ** 64)) |attachment| {
+            types.freeImageAttachment(failing.allocator(), attachment);
+        } else |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+        }
+    }
 }
 
 /// Extracts the in-place image_unavailable notice from a chat request body
