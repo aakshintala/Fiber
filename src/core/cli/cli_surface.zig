@@ -4700,6 +4700,7 @@ test "usage session lookup failures exit without crashing" {
 }
 
 test "usage session window failures exit without crashing" {
+    const session_usage = @import("../session/session_usage.zig");
     const session_codec = @import("../session/session_codec.zig");
     const session = @import("../session/session.zig");
     const alloc = std.testing.allocator;
@@ -4713,6 +4714,10 @@ test "usage session window failures exit without crashing" {
 
     var store = try session_store.Store.initFromHome(alloc, home, workspace);
     defer store.deinit(alloc);
+    var ledger_usage = session_usage.Usage.initFresh();
+    defer ledger_usage.deinit(alloc);
+    var ledger = try ledger_usage.snapshot(alloc);
+    defer ledger.deinit(alloc);
     var state: session_codec.DurableSessionState = .{
         .id = try alloc.dupe(u8, "usage-old"),
         .origin_workspace_root = try alloc.dupe(u8, workspace),
@@ -4730,20 +4735,9 @@ test "usage session window failures exit without crashing" {
     defer state.deinit(alloc);
     var writable = try store.startWritableSession(alloc, state);
     defer writable.deinit(alloc);
-    _ = try writable.appendUsageRecorded(
+    _ = try writable.appendEvent(
         alloc,
-        .{
-            .id = "gen-seed",
-            .model = "test/model",
-            .total_cost = null,
-            .input_tokens = 10,
-            .output_tokens = 2,
-            .cache_read_tokens = 0,
-            .cache_write_tokens = 0,
-            .billable_web_search_calls = 0,
-        },
-        null,
-        null,
+        .{ .usage_checkpointed = .{ .usage = ledger } },
         10,
         .retry_expected_tail,
         .{},
@@ -4833,41 +4827,18 @@ test "session show last renders the context survivor in text and json" {
     defer state.deinit(alloc);
     var writable = try store.startWritableSession(alloc, state);
     defer writable.deinit(alloc);
-    _ = try writable.appendItemEvent(
+    _ = try writable.appendEvent(
         alloc,
-        "1",
-        null,
-        .{ .turn_started = .{ .input = .{ .user = .{
-            .text = @constCast("hello"),
-        } } } },
+        .{ .history_turn_committed = .{
+            .conversation_language = session.ConversationLanguage.literal("en"),
+            .last_input_tokens = 43_000,
+            .last_output_tokens = 2_000,
+            .turn = .{ .assistant = .{
+                .user = .{ .text = @constCast("hello") },
+                .assistant = @constCast("world"),
+            } },
+        } },
         10,
-        .retry_expected_tail,
-        .{},
-    );
-    _ = try writable.appendUsageRecorded(
-        alloc,
-        .{
-            .id = "gen-last",
-            .model = "test/model",
-            .total_cost = null,
-            .input_tokens = 43_000,
-            .output_tokens = 2_000,
-            .cache_read_tokens = 0,
-            .cache_write_tokens = 0,
-            .billable_web_search_calls = 0,
-        },
-        "1",
-        null,
-        11,
-        .retry_expected_tail,
-        .{},
-    );
-    _ = try writable.appendItemEvent(
-        alloc,
-        "1",
-        null,
-        .{ .turn_completed = .{ .outcome = .completed } },
-        12,
         .retry_expected_tail,
         .{},
     );
