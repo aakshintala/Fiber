@@ -33,8 +33,9 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
             .stack_check = false,
             .stack_protector = false,
-            .omit_frame_pointer = true,
-            .unwind_tables = .none,
+            // DIAG ONLY (#352): keep frame pointers so lldb can unwind a hang.
+            .omit_frame_pointer = false,
+            .unwind_tables = .sync,
             .error_tracing = false,
             .strip = optimize != .Debug,
         }),
@@ -54,8 +55,6 @@ pub fn build(b: *std.Build) void {
 
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
-        // DIAG ONLY (#352): stock runner plus a per-test name print.
-        .test_runner = .{ .path = b.path("scripts/diag/test_runner.zig"), .mode = .server },
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
     run_exe_tests.step.dependOn(b.getInstallStep());

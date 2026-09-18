@@ -182,8 +182,8 @@ jobs:
         run: |
           started_at=$SECONDS
           trap 'printf "Unit test run elapsed: %ss\n" "$((SECONDS - started_at))"' EXIT
-          # DIAG ONLY: the stock runner copy in scripts/diag prints each test
-          # name under --listen, so the last [TEST] line names the hang.
+          # DIAG ONLY: build.zig keeps frame pointers on this branch, so the
+          # lldb backtrace below reaches the test function by name.
           zig build test -Doptimize=${{ matrix.platform.optimize }} &
           build_pid=$!
           while kill -0 "$build_pid" 2>/dev/null; do
@@ -198,7 +198,7 @@ jobs:
                 echo "::group::HANG: thread stacks of test pid $pid"
                 if command -v sample >/dev/null 2>&1; then
                   sample "$pid" 2 -mayDie 2>&1 || true
-                  sudo -n lldb -p "$pid" --batch -o 'p fiber_diag_current_test' -o 'thread backtrace all' -o 'detach' 2>&1 || true
+                  sudo -n lldb -p "$pid" --batch -o 'thread backtrace all' -o 'detach' 2>&1 || true
                 else
                   cat "/proc/$pid/task/"*/stack 2>/dev/null || true
                 fi
