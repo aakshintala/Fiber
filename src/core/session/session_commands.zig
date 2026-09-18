@@ -472,11 +472,14 @@ pub fn Commands(comptime App: type) type {
             app.worker.syncQueuedPromptEffort(app.effort);
 
             if (persist) {
+                // The /settings effort row keeps writing the default:
+                // /settings is the screen for changing settings.
                 try persistPreferenceTargets(
                     app,
                     .{ .effort = app.effort },
                     "effort",
                     !announce,
+                    .session_and_default,
                 );
             }
 
@@ -490,8 +493,8 @@ pub fn Commands(comptime App: type) type {
             try applyEffort(app, effort, false, true);
         }
 
-        pub fn selectModelFromPicker(app: *App, model: []const u8, effort: types.ReasoningEffort, fast_mode: bool) !void {
-            try setResolvedModelRuntime(app, model, true);
+        pub fn selectModelFromPicker(app: *App, model: []const u8, effort: types.ReasoningEffort, fast_mode: bool, scope: app_session_runtime.PreferenceScope) !void {
+            try setResolvedModelRuntime(app, model, true, scope);
             var patch = app_session_runtime.SessionPreferencePatch{
                 .provider = provider_runtime.provider(app),
                 .model = model,
@@ -506,7 +509,7 @@ pub fn Commands(comptime App: type) type {
                 try applyFastMode(app, selected_fast_mode, false);
             }
             patch.fast_mode = selected_fast_mode;
-            try persistPreferenceTargets(app, patch, "model picker", false);
+            try persistPreferenceTargets(app, patch, "model picker", false, scope);
         }
 
         fn writePermissionsStatus(app: *App) !void {
@@ -632,7 +635,9 @@ pub fn Commands(comptime App: type) type {
 
         fn setResolvedModel(app: *App, resolved: []const u8, announce: bool) !void {
             const model_changed = !std.mem.eql(u8, provider_runtime.model(app), resolved);
-            try setResolvedModelRuntime(app, resolved, announce);
+            // `/model <name>` stays in this session; Ctrl+S at the picker
+            // finishes with .session_and_default instead.
+            try setResolvedModelRuntime(app, resolved, announce, .session);
             if (model_changed and app.fast_mode) {
                 try applyFastMode(app, false, false);
             }
@@ -645,6 +650,7 @@ pub fn Commands(comptime App: type) type {
                 },
                 "model",
                 !announce,
+                .session,
             );
         }
 
@@ -654,11 +660,15 @@ pub fn Commands(comptime App: type) type {
             label: []const u8,
             // False when the caller announces state; failures still report.
             announce_commit: bool,
+            scope: app_session_runtime.PreferenceScope,
         ) !void {
             var result = if (comptime @hasDecl(App, "persistRuntimePreferences")) blk: {
-                break :blk app.persistRuntimePreferences(patch);
+                break :blk app.persistRuntimePreferences(patch, scope);
             } else blk: {
                 var committed = app_session_runtime.PreferenceCommitResult{};
+                // Session-only commits leave the profile default alone;
+                // the runtime change already landed above.
+                if (scope == .session) break :blk committed;
                 const attempt = config_runtime.attemptUserPreferences(
                     app.alloc,
                     patch.userSettingsPatch(),
@@ -713,7 +723,7 @@ pub fn Commands(comptime App: type) type {
             }
         }
 
-        fn setResolvedModelRuntime(app: *App, resolved: []const u8, announce: bool) !void {
+        fn setResolvedModelRuntime(app: *App, resolved: []const u8, announce: bool, scope: app_session_runtime.PreferenceScope) !void {
             if (!std.mem.eql(u8, provider_runtime.model(app), resolved)) {
                 try provider_runtime.replaceModel(app, resolved);
             }
@@ -730,7 +740,11 @@ pub fn Commands(comptime App: type) type {
                 else
                     false;
                 const prefix: []const u8 = if (active_response) "Next turn will use " else "Switched to ";
-                const line = try std.fmt.allocPrint(app.alloc, "{s}{s}", .{ prefix, selected });
+                const scope_suffix: []const u8 = switch (scope) {
+                    .session => " for this session",
+                    .session_and_default => " for this session and default",
+                };
+                const line = try std.fmt.allocPrint(app.alloc, "{s}{s}{s}", .{ prefix, selected, scope_suffix });
                 defer app.alloc.free(line);
                 try app.writeDomainNotice(.{ .topic = "", .tone = .neutral, .body = line }, true);
                 if (comptime @hasDecl(App, "playInteractionSound")) app.playInteractionSound();
@@ -977,6 +991,7 @@ const FakeApp = struct {
     last_preference_provider: ?model_provider.ProviderId = null,
     last_preference_effort: ?types.ReasoningEffort = null,
     last_preference_fast_mode: ?bool = null,
+    last_preference_scope: ?app_session_runtime.PreferenceScope = null,
     preference_settings_error: ?anyerror = null,
     preference_session_error: ?anyerror = null,
     preference_failure_cleanup: config_runtime.LegacyCleanup = .{},
@@ -1116,8 +1131,10 @@ const FakeApp = struct {
     fn persistRuntimePreferences(
         self: *FakeApp,
         patch: app_session_runtime.SessionPreferencePatch,
+        scope: app_session_runtime.PreferenceScope,
     ) app_session_runtime.PreferenceCommitResult {
         self.preference_commit_count += 1;
+        self.last_preference_scope = scope;
         self.last_preference_provider = patch.provider;
         self.last_preference_model.clearRetainingCapacity();
         if (patch.model) |model| {
@@ -1126,6 +1143,9 @@ const FakeApp = struct {
         }
         self.last_preference_effort = patch.effort;
         self.last_preference_fast_mode = patch.fast_mode;
+        // Session-only commits leave settings.json alone; the runtime
+        // change already landed, so there is nothing to report.
+        if (scope == .session) return .{ .session_error = self.preference_session_error };
         if (self.preference_settings_error == null) {
             const attempt = config_runtime.attemptUserPreferences(
                 self.alloc,
@@ -1603,7 +1623,7 @@ test "session_commands selectModelFromPicker skips effort changes for models wit
     defer app.deinit();
     app.effort = types.ReasoningEffort.literal("high");
 
-    try Commands(FakeApp).selectModelFromPicker(&app, "openai/gpt-4o", types.ReasoningEffort.literal("low"), true);
+    try Commands(FakeApp).selectModelFromPicker(&app, "openai/gpt-4o", types.ReasoningEffort.literal("low"), true, .session);
 
     try std.testing.expectEqualStrings("openai/gpt-4o", app.selected_model.items);
     try std.testing.expectEqualStrings("openai/gpt-4o", app.worker.synced_model.?);
@@ -1623,6 +1643,7 @@ test "session_commands model picker accepts the current selected model slice" {
         app.selected_model.items,
         types.ReasoningEffort.literal("high"),
         false,
+        .session,
     );
 
     try std.testing.expectEqualStrings("anthropic/claude-opus-4.6", app.selected_model.items);
@@ -1643,7 +1664,7 @@ test "session_commands selectModelFromPicker persists portable Gateway reasoning
     const efforts = [_]types.ReasoningEffort{types.ReasoningEffort.literal("low")};
     app.setGatewayControls("provider/new-reasoning-model", &efforts, false);
 
-    try Commands(FakeApp).selectModelFromPicker(&app, "provider/new-reasoning-model", types.ReasoningEffort.literal("low"), true);
+    try Commands(FakeApp).selectModelFromPicker(&app, "provider/new-reasoning-model", types.ReasoningEffort.literal("low"), true, .session);
 
     try std.testing.expectEqualStrings("provider/new-reasoning-model", app.selected_model.items);
     try std.testing.expectEqualStrings("provider/new-reasoning-model", app.worker.synced_model.?);
@@ -1669,6 +1690,7 @@ test "session_commands model selection clears fast mode when the selected model 
         "zai/glm-5.3",
         types.ReasoningEffort.literal("max"),
         true,
+        .session,
     );
 
     try std.testing.expectEqualStrings("zai/glm-5.3", app.selected_model.items);
@@ -1696,7 +1718,7 @@ test "session_commands selectModelFromPicker syncs queued fast mode and effort f
     const efforts = [_]types.ReasoningEffort{types.ReasoningEffort.literal("high")};
     app.setGatewayControls("anthropic/claude-opus-4.6", &efforts, true);
 
-    try Commands(FakeApp).selectModelFromPicker(&app, "anthropic/claude-opus-4.6", types.ReasoningEffort.literal("high"), true);
+    try Commands(FakeApp).selectModelFromPicker(&app, "anthropic/claude-opus-4.6", types.ReasoningEffort.literal("high"), true, .session);
 
     try std.testing.expect(app.fast_mode);
     try std.testing.expectEqual(types.ReasoningEffort.literal("high"), app.effort);
@@ -1713,7 +1735,7 @@ test "session_commands model picker follows mock catalog controls independent of
     const efforts = [_]types.ReasoningEffort{types.ReasoningEffort.literal("future-tier")};
     app.setGatewayControls("provider/model", &efforts, true);
 
-    try Commands(FakeApp).selectModelFromPicker(&app, "provider/model", types.ReasoningEffort.literal("future-tier"), true);
+    try Commands(FakeApp).selectModelFromPicker(&app, "provider/model", types.ReasoningEffort.literal("future-tier"), true, .session);
 
     try std.testing.expect(app.fast_mode);
     try std.testing.expectEqualStrings("future-tier", app.effort.label());
@@ -1738,6 +1760,7 @@ test "session_commands model picker emits one combined preference transaction" {
         "anthropic/claude-opus-4.7",
         types.ReasoningEffort.literal("high"),
         true,
+        .session_and_default,
     );
 
     try std.testing.expectEqual(@as(usize, 1), app.preference_commit_count);
@@ -1751,6 +1774,128 @@ test "session_commands model picker emits one combined preference transaction" {
         app.last_preference_effort.?,
     );
     try std.testing.expectEqual(true, app.last_preference_fast_mode.?);
+}
+
+fn readFixtureBytes(alloc: std.mem.Allocator, dir: std.Io.Dir, sub_path: []const u8) ![]u8 {
+    var file = try dir.openFile(io_mod.getIo(), sub_path, .{});
+    defer file.close(io_mod.getIo());
+    return io_mod.readFileToEnd(alloc, &file, 1024 * 1024);
+}
+
+test "session_commands picker enter leaves the profile default untouched" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", "{\"models\":{\"codex\":\"user/old\"}}\n");
+
+    const before = try readFixtureBytes(std.testing.allocator, tmp.dir, "home/.fiber/settings.json");
+    defer std.testing.allocator.free(before);
+
+    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
+    defer home.deinit();
+    var app = try FakeApp.init(std.testing.allocator, workspace_root, "old/runtime");
+    defer app.deinit();
+
+    try Commands(FakeApp).selectModelFromPicker(&app, "user/new", .auto, false, .session);
+
+    try std.testing.expectEqualStrings("user/new", app.selected_model.items);
+    try std.testing.expectEqual(app_session_runtime.PreferenceScope.session, app.last_preference_scope.?);
+    try expectTranscriptContains(&app, "Switched to user/new for this session");
+    try std.testing.expect(std.mem.find(u8, app.text(), "and default") == null);
+    // No profile write happened: a fresh session still starts on user/old.
+    const after = try readFixtureBytes(std.testing.allocator, tmp.dir, "home/.fiber/settings.json");
+    defer std.testing.allocator.free(after);
+    try std.testing.expectEqualStrings(before, after);
+}
+
+test "session_commands picker save writes model and effort to the profile default" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", "{\"models\":{\"codex\":\"user/old\"}}\n");
+
+    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
+    defer home.deinit();
+    var app = try FakeApp.init(std.testing.allocator, workspace_root, "old/runtime");
+    defer app.deinit();
+    const efforts = [_]types.ReasoningEffort{types.ReasoningEffort.literal("high")};
+    app.setGatewayControls("user/new", &efforts, false);
+
+    try Commands(FakeApp).selectModelFromPicker(&app, "user/new", types.ReasoningEffort.literal("high"), false, .session_and_default);
+
+    try expectTranscriptContains(&app, "Switched to user/new for this session and default");
+    var settings = try config_runtime.loadMergedSettings(std.testing.allocator, workspace_root);
+    defer settings.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("user/new", settings.models.get(.codex).?);
+    try std.testing.expectEqual(types.ReasoningEffort.literal("high"), settings.effort.?);
+}
+
+test "session_commands slash model leaves the profile default untouched" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", "{\"models\":{\"codex\":\"user/old\"}}\n");
+
+    const before = try readFixtureBytes(std.testing.allocator, tmp.dir, "home/.fiber/settings.json");
+    defer std.testing.allocator.free(before);
+
+    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
+    defer home.deinit();
+    var app = try FakeApp.init(std.testing.allocator, workspace_root, "old/runtime");
+    defer app.deinit();
+    app.fail_fetch = true;
+
+    try Commands(FakeApp).handleModel(&app, "user/new");
+
+    try std.testing.expectEqualStrings("user/new", app.selected_model.items);
+    try expectTranscriptContains(&app, "Switched to user/new for this session");
+    try std.testing.expect(std.mem.find(u8, app.text(), "and default") == null);
+    const after = try readFixtureBytes(std.testing.allocator, tmp.dir, "home/.fiber/settings.json");
+    defer std.testing.allocator.free(after);
+    try std.testing.expectEqualStrings(before, after);
+}
+
+test "session_commands settings effort row still writes the profile default" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", "{}\n");
+
+    const home = try SessionCommandTestHome.install(std.testing.allocator, home_root);
+    defer home.deinit();
+    var app = try FakeApp.init(std.testing.allocator, workspace_root, "old/runtime");
+    defer app.deinit();
+
+    try Commands(FakeApp).selectEffortFromSettings(&app, types.ReasoningEffort.literal("high"));
+
+    try std.testing.expectEqual(app_session_runtime.PreferenceScope.session_and_default, app.last_preference_scope.?);
+    var settings = try config_runtime.loadMergedSettings(std.testing.allocator, workspace_root);
+    defer settings.deinit(std.testing.allocator);
+    try std.testing.expectEqual(types.ReasoningEffort.literal("high"), settings.effort.?);
 }
 
 test "session_commands user save notice uses one post-commit load after legacy cleanup" {
@@ -1776,12 +1921,12 @@ test "session_commands user save notice uses one post-commit load after legacy c
     defer home.deinit();
     var app = try FakeApp.init(std.testing.allocator, workspace_root, "old/runtime");
     defer app.deinit();
-    app.fail_fetch = true;
 
-    try Commands(FakeApp).handleModel(&app, "user/new");
+    try Commands(FakeApp).selectModelFromPicker(&app, "user/new", types.ReasoningEffort.auto, false, .session_and_default);
 
     try std.testing.expectEqual(@as(usize, 1), app.post_commit_resolution_count);
-    try expectTranscriptContains(&app, "● Model: saved to user settings (scope=user)");
+    try expectTranscriptContains(&app, "Switched to user/new for this session and default");
+    try expectTranscriptContains(&app, "● Model picker: saved to user settings (scope=user)");
     try std.testing.expect(std.mem.find(u8, app.text(), "model=project") == null);
     try expectTranscriptContains(&app, "normalized 1 legacy value across 1 workspace");
     try expectTranscriptContains(&app, "settings.json.preference-migration.model.");
@@ -1809,13 +1954,12 @@ test "session_commands durable user save survives post-commit resolver failure" 
     defer home.deinit();
     var app = try FakeApp.init(std.testing.allocator, workspace_root, "old/runtime");
     defer app.deinit();
-    app.fail_fetch = true;
     app.post_commit_resolution_error = error.InjectedPostCommitResolutionFailure;
 
-    try Commands(FakeApp).handleModel(&app, "user/new");
+    try Commands(FakeApp).selectModelFromPicker(&app, "user/new", types.ReasoningEffort.auto, false, .session_and_default);
 
     try std.testing.expectEqual(@as(usize, 1), app.post_commit_resolution_count);
-    try expectTranscriptContains(&app, "● Model: saved to user settings (scope=user)");
+    try expectTranscriptContains(&app, "● Model picker: saved to user settings (scope=user)");
     try expectTranscriptContains(&app, "next-startup source unknown");
     try expectTranscriptContains(&app, "normalized 1 legacy value across 1 workspace");
     try expectTranscriptContains(&app, "settings.json.preference-migration.model.");
@@ -1843,22 +1987,20 @@ test "session_commands durable user save survives post-commit resolver diagnosti
     defer home.deinit();
     var app = try FakeApp.init(std.testing.allocator, workspace_root, "old/runtime");
     defer app.deinit();
-    app.fail_fetch = true;
     app.post_commit_resolution_diagnostic = .durable_path_unsafe;
 
-    try Commands(FakeApp).handleModel(&app, "user/new");
+    try Commands(FakeApp).selectModelFromPicker(&app, "user/new", types.ReasoningEffort.auto, false, .session_and_default);
 
     try std.testing.expectEqual(@as(usize, 1), app.post_commit_resolution_count);
-    try expectTranscriptContains(&app, "● Model: saved to user settings (scope=user)");
+    try expectTranscriptContains(&app, "● Model picker: saved to user settings (scope=user)");
     try expectTranscriptContains(&app, "next-startup source unknown (DurablePathUnsafe)");
 }
 
-test "session_commands runtime-first model keeps runtime state when both durable targets fail" {
+test "session_commands session-only model keeps runtime state when session persistence fails" {
     const alloc = std.testing.allocator;
     var app = try FakeApp.init(alloc, "/tmp/workspace", "old/model");
     defer app.deinit();
     app.fail_fetch = true;
-    app.preference_settings_error = error.SettingsWriteFailed;
     app.preference_session_error = error.SessionPersistenceDegraded;
 
     try Commands(FakeApp).handleModel(&app, "new/model");
@@ -1866,10 +2008,11 @@ test "session_commands runtime-first model keeps runtime state when both durable
     try std.testing.expectEqualStrings("new/model", app.selected_model.items);
     try std.testing.expectEqualStrings("new/model", app.worker.synced_model.?);
     try std.testing.expectEqual(@as(usize, 1), app.preference_commit_count);
-    try expectTranscriptContains(
-        &app,
-        "● Model: active for this process but not saved to user settings",
-    );
+    try std.testing.expectEqual(app_session_runtime.PreferenceScope.session, app.last_preference_scope.?);
+    try expectTranscriptContains(&app, "Switched to new/model for this session");
+    // Session-only never attempts the settings write, so only the
+    // session failure reports.
+    try std.testing.expect(std.mem.find(u8, app.text(), "user settings") == null);
     try expectTranscriptContains(
         &app,
         "● Model: failed to persist current session",
@@ -1891,12 +2034,13 @@ test "session_commands report indeterminate settings and session failures indepe
         .recovery_paths = recovery_paths,
     };
 
-    try Commands(FakeApp).handleModel(&app, "new/model");
+    try Commands(FakeApp).selectModelFromPicker(&app, "new/model", .auto, false, .session_and_default);
 
+    try expectTranscriptContains(&app, "Switched to new/model for this session and default");
     try expectTranscriptContains(&app, "user settings persistence uncertain");
     try expectTranscriptContains(&app, "normalized 1 legacy value across 1 workspace");
     try expectTranscriptContains(&app, "recovery=/tmp/settings.json.preference-migration.model.json");
-    try expectTranscriptContains(&app, "● Model: failed to persist current session");
+    try expectTranscriptContains(&app, "● Model picker: failed to persist current session");
 }
 
 test "session_commands no-op model still attempts its durable targets" {
@@ -1908,6 +2052,7 @@ test "session_commands no-op model still attempts its durable targets" {
     try Commands(FakeApp).handleModel(&app, "same/model");
 
     try std.testing.expectEqual(@as(usize, 1), app.preference_commit_count);
+    try std.testing.expectEqual(app_session_runtime.PreferenceScope.session, app.last_preference_scope.?);
     try std.testing.expectEqualStrings(
         "same/model",
         app.last_preference_model.items,
@@ -1933,7 +2078,7 @@ test "session_commands model controls remain catalog validated and clear unsuppo
     app.fast_mode = true;
     app.worker.synced_fast_mode = true;
 
-    try Commands(FakeApp).selectModelFromPicker(&app, "openai/gpt-4o", types.ReasoningEffort.literal("low"), false);
+    try Commands(FakeApp).selectModelFromPicker(&app, "openai/gpt-4o", types.ReasoningEffort.literal("low"), false, .session);
 
     try std.testing.expect(!app.fast_mode);
     try std.testing.expectEqual(@as(usize, 1), app.worker.fast_sync_count);
@@ -1953,7 +2098,7 @@ test "session_commands model controls remain catalog validated and clear unsuppo
         .supports_fast_mode = true,
     };
 
-    try Commands(FakeApp).selectModelFromPicker(&app, "anthropic/claude-opus-4.6", types.ReasoningEffort.literal("high"), true);
+    try Commands(FakeApp).selectModelFromPicker(&app, "anthropic/claude-opus-4.6", types.ReasoningEffort.literal("high"), true, .session);
 
     try std.testing.expectEqual(@as(?bool, true), app.worker.synced_fast_mode);
     try std.testing.expectEqual(@as(usize, 2), app.worker.fast_sync_count);

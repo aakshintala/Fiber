@@ -108,6 +108,7 @@ pub const Settings = struct {
     startup_scrollback: ?bool = null,
     prompt_history_enabled: ?bool = null,
     effort: ?types.ReasoningEffort = null,
+    fast_mode: ?bool = null,
     statusline_context: ?bool = null,
     statusline_session: ?bool = null,
     statusline_workspace: ?bool = null,
@@ -168,6 +169,7 @@ pub const ConfigSources = struct {
     models: ProviderModelSources = .{},
     permission_mode: ConfigSource = .compiled_default,
     effort: ConfigSource = .compiled_default,
+    fast_mode: ConfigSource = .compiled_default,
     auto_upgrade: ConfigSource = .compiled_default,
     max_agent_steps: ConfigSource = .compiled_default,
     max_tool_result_bytes: ConfigSource = .compiled_default,
@@ -653,6 +655,7 @@ fn hasLegacyWorkspacePreferences(root: std.json.Value) bool {
         inline for (&.{
             "model",
             "effort",
+            "fast_mode",
             "slash_menu_categories",
             "collapse_tool_calls",
             "startup_scrollback",
@@ -680,6 +683,7 @@ fn isProfileOnlySettingKey(key: []const u8) bool {
         "models",
         "connections",
         "effort",
+        "fast_mode",
         "slash_menu_categories",
         "collapse_tool_calls",
         "startup_scrollback",
@@ -754,6 +758,7 @@ fn updateConfigSources(sources: *ConfigSources, settings: Settings, source: Conf
     }
     if (settings.permission_mode != null) sources.permission_mode = source;
     if (settings.effort != null) sources.effort = source;
+    if (settings.fast_mode != null) sources.fast_mode = source;
     if (settings.auto_upgrade != null) sources.auto_upgrade = source;
     if (settings.max_agent_steps != null) sources.max_agent_steps = source;
     if (settings.max_tool_result_bytes != null) sources.max_tool_result_bytes = source;
@@ -1677,6 +1682,12 @@ fn parseProfileOnlyFields(
         }
     }
 
+    if (root.object.get("fast_mode")) |fast_mode_value| {
+        const value = fast_mode_value;
+        if (value != .bool) return error.InvalidFastModeType;
+        settings.fast_mode = value.bool;
+    }
+
     if (root.object.get("statusLine")) |statusline_value| {
         const value = statusline_value;
         if (value != .object) {
@@ -1761,6 +1772,7 @@ fn mergeSettings(target: *Settings, incoming: *Settings, alloc: Allocator) !void
     if (incoming.startup_scrollback) |value| target.startup_scrollback = value;
     if (incoming.prompt_history_enabled) |value| target.prompt_history_enabled = value;
     if (incoming.effort) |value| target.effort = value;
+    if (incoming.fast_mode) |value| target.fast_mode = value;
 
     if (incoming.statusline_context) |value| target.statusline_context = value;
     if (incoming.statusline_session) |value| target.statusline_session = value;
@@ -2418,6 +2430,47 @@ test "slash menu categories parses merges and rejects invalid types" {
         error.InvalidSlashMenuCategoriesType,
         parseSettingsJson(std.testing.allocator, "{\"slash_menu_categories\":\"off\"}"),
     );
+}
+
+test "fast mode parses merges and rejects invalid types" {
+    var absent = try parseSettingsJson(std.testing.allocator, "{}");
+    defer absent.deinit(std.testing.allocator);
+    try std.testing.expect(absent.fast_mode == null);
+
+    var first = try parseSettingsJson(std.testing.allocator, "{\"fast_mode\":true}");
+    defer first.deinit(std.testing.allocator);
+    try std.testing.expectEqual(true, first.fast_mode.?);
+
+    var second = try parseSettingsJson(std.testing.allocator, "{\"fast_mode\":false}");
+    defer second.deinit(std.testing.allocator);
+    try mergeSettings(&first, &second, std.testing.allocator);
+    try std.testing.expectEqual(false, first.fast_mode.?);
+
+    try std.testing.expectError(
+        error.InvalidFastModeType,
+        parseSettingsJson(std.testing.allocator, "{\"fast_mode\":\"off\"}"),
+    );
+}
+
+test "project fast mode is ignored and diagnosed" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+    try tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+    try writeFixtureFile(tmp.dir, "home/.fiber/settings.json", "{\"fast_mode\":true}\n");
+    try writeFixtureFile(tmp.dir, "workspace/.fiber.json", "{\"fast_mode\":false}\n");
+
+    const home_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "home");
+    defer std.testing.allocator.free(home_root);
+    const workspace_root = try io_mod.dirRealpathAlloc(std.testing.allocator, tmp.dir, "workspace");
+    defer std.testing.allocator.free(workspace_root);
+
+    var result = try loadMergedSettingsDetailedFromHome(std.testing.allocator, home_root, workspace_root);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(true, result.settings.fast_mode.?);
+    try std.testing.expectEqual(ConfigSource.user_global, result.sources.fast_mode);
+    try expectIgnoredProjectKey(result.diagnostics, "fast_mode");
 }
 
 test "first_call_tool_choice parses merges and round trips" {

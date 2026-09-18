@@ -2260,8 +2260,9 @@ const App = struct {
     pub fn persistRuntimePreferences(
         self: *App,
         patch: app_session_runtime.SessionPreferencePatch,
+        scope: app_session_runtime.PreferenceScope,
     ) app_session_runtime.PreferenceCommitResult {
-        return SessionAppRuntime.commitRuntimePreferences(self, patch);
+        return SessionAppRuntime.commitRuntimePreferences(self, patch, scope);
     }
 
     pub fn fastModeModelBound(self: *const App) bool {

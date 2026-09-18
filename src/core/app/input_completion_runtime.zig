@@ -124,6 +124,9 @@ pub fn CompletionRuntime(comptime App: type) type {
         pub fn dismissVisibleInlinePicker(app: *App) bool {
             const kind = visibleInlinePickerKind(app) orelse return false;
             app.input_runtime.picker.dismissInlinePicker(kind);
+            // Escape cancels: a Ctrl+S mark from an earlier step dies here,
+            // so resuming the flow and finishing stays session-only.
+            if (kind == .model) app.input_runtime.picker.model_picker_save_default = false;
             return true;
         }
 
@@ -1070,7 +1073,7 @@ pub fn CompletionRuntime(comptime App: type) type {
                         try setModelComposerText(app, "/model {s} {s} ", .{ model, effort.label() });
                         try app.input_runtime.picker.beginModelPickerFlow(app.alloc, model, model_capabilities.reasoningEffortIndex(capabilities, effort), true, .fast);
                     } else {
-                        try session_commands.Commands(App).selectModelFromPicker(app, model, effort, app.fast_mode);
+                        try session_commands.Commands(App).selectModelFromPicker(app, model, effort, app.fast_mode, modelPickerFinishScope(app));
                         app.input_runtime.inputResetState().clearCurrent(app.alloc);
                     }
                     app.shell.render_requests.request(.footer);
@@ -1085,12 +1088,39 @@ pub fn CompletionRuntime(comptime App: type) type {
                         return true;
                     };
                     const effort = model_capabilities.reasoningEffortAtIndex(model_capabilities.resolveForApp(App, app, model), app.input_runtime.picker.model_picker_effort_index);
-                    try session_commands.Commands(App).selectModelFromPicker(app, model, effort, fast_mode);
+                    try session_commands.Commands(App).selectModelFromPicker(app, model, effort, fast_mode, modelPickerFinishScope(app));
                     app.input_runtime.inputResetState().clearCurrent(app.alloc);
                     app.shell.render_requests.request(.footer);
                     return true;
                 },
             }
+        }
+
+        /// Ctrl+S at any model picker step: behaves like Enter at that step
+        /// and marks the choice to be saved. The remaining steps still run;
+        /// finishing writes the session and the profile default together.
+        /// Returns false when no model picker step is active.
+        pub fn submitModelPickerSavingDefault(app: *App) !bool {
+            if (app.input_runtime.picker.activeModelPickerQuery(&app.input_runtime.edit_state) == null) return false;
+            app.input_runtime.picker.model_picker_save_default = true;
+            if (!try submitModelPicker(app)) {
+                // Nothing happened (no match): leave no mark behind.
+                app.input_runtime.picker.model_picker_save_default = false;
+                return true;
+            }
+            // Advancing rewrites the composer, which resets the flow and
+            // the mark with it; re-mark while steps remain. A finish reads
+            // the mark above and its cleanup clears it.
+            if (app.input_runtime.picker.hasPendingModelPickerSelection()) {
+                app.input_runtime.picker.model_picker_save_default = true;
+            }
+            return true;
+        }
+
+        /// Enter finishes session-only; a Ctrl+S mark from any step
+        /// upgrades the finish to also write the profile default.
+        fn modelPickerFinishScope(app: *App) app_session_runtime.PreferenceScope {
+            return if (app.input_runtime.picker.model_picker_save_default) .session_and_default else .session;
         }
 
         fn selectedModelCompletion(app: *App) ?[]const u8 {
@@ -1132,7 +1162,7 @@ pub fn CompletionRuntime(comptime App: type) type {
             const supports_fast = capabilities.supports_fast_mode;
 
             if (!supports_effort and !supports_fast) {
-                try session_commands.Commands(App).selectModelFromPicker(app, model, app.effort, app.fast_mode);
+                try session_commands.Commands(App).selectModelFromPicker(app, model, app.effort, app.fast_mode, modelPickerFinishScope(app));
                 app.input_runtime.inputResetState().clearCurrent(app.alloc);
                 app.shell.render_requests.request(.footer);
                 return;

@@ -2810,12 +2810,8 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       await session.sendKeys("Enter");
       await waitForPaneText(session, `● Switched to ${selectedModel}`, 5_000);
 
-      const settings = JSON.parse(readFileSync(fixture.settingsPath, "utf8")) as {
-        models?: { codex?: string };
-        effort?: string;
-      };
-      expect(settings.models?.codex).toBe(selectedModel);
-      expect(settings.effort).toBe("low");
+      // Picker Enter is session-only: the profile default is byte-identical.
+      expect(readFileSync(fixture.settingsPath, "utf8")).toBe("{}\n");
       await waitForPaneTitle(session, `fiber · workspace · ${selectedModel}`, 10_000);
       expect(session.isAlive()).toBe(true);
 
@@ -2931,7 +2927,8 @@ describe.skipIf(SKIP)("tui: slash menu", () => {
       expect(hasEmptyComposer(pane)).toBe(true);
       expect(pane).not.toContain("Reasoning effort");
       expect(pane).not.toContain("default");
-      expect(JSON.parse(readFileSync(fixture.settingsPath, "utf8")).models.codex).toBe(selectedModel);
+      // Picker Enter is session-only: the profile default is byte-identical.
+      expect(readFileSync(fixture.settingsPath, "utf8")).toBe("{}\n");
       await waitForPaneTitle(session, `fiber · workspace · ${selectedModel}`, 10_000);
       expect(session.isAlive()).toBe(true);
       expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");

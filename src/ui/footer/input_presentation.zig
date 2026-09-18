@@ -157,6 +157,17 @@ test "steering review hint says enter applies steering" {
     try std.testing.expect(std.mem.find(u8, row.items, "steering paused · enter to apply") != null);
 }
 
+test "model picker hint names both scopes at every width" {
+    var wide = try composeModelPickerHintRow(std.testing.allocator, 100, false);
+    defer wide.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.find(u8, wide.items, "Enter This session") != null);
+    try std.testing.expect(std.mem.find(u8, wide.items, "Ctrl+S Save as default") != null);
+
+    var narrow = try composeModelPickerHintRow(std.testing.allocator, 20, false);
+    defer narrow.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.find(u8, narrow.items, "Ctrl+S") != null);
+}
+
 // Ordered widest-first; every fallback keeps the enter/esc controls so narrow
 // terminals never lose the submit and cancel instructions.
 const freeform_question_hints = [_][]const u8{
@@ -496,6 +507,42 @@ pub fn composeModelsMenuHintRow(alloc: Allocator, width: u16, ctrl_c_pending: bo
 
 pub fn composeResumeMenuHintRow(alloc: Allocator, width: u16, ctrl_c_pending: bool) !std.ArrayList(u8) {
     return composeCatalogMenuHintRow(alloc, width, ctrl_c_pending, .scope);
+}
+
+/// Hint for the /model inline picker (model, effort and fast steps share
+/// picker kind .model_stage, so one row covers every step). Enter applies
+/// the choice to this session only; Ctrl+S marks it to also become the
+/// profile default when the flow finishes.
+pub fn composeModelPickerHintRow(alloc: Allocator, width: u16, ctrl_c_pending: bool) !std.ArrayList(u8) {
+    if (ctrl_c_pending) {
+        var warning: std.ArrayList(u8) = .empty;
+        errdefer warning.deinit(alloc);
+        try warning.appendSlice(alloc, ui_render.statusline_style);
+        try row_text.appendClipped(alloc, &warning, "press ctrl+c again to exit", width);
+        try warning.appendSlice(alloc, ui_render.reset_style);
+        return warning;
+    }
+
+    const variants = [_][]const u8{
+        "↑↓ Navigate     Enter This session     Ctrl+S Save as default     Esc Cancel",
+        "↑↓ Move  Enter Session  Ctrl+S Save  Esc",
+        "Enter Session  Ctrl+S Save  Esc",
+        "Enter Ctrl+S Esc",
+    };
+    var hint = variants[variants.len - 1];
+    for (variants) |candidate| {
+        if (display_width.visibleWidth(candidate) <= width) {
+            hint = candidate;
+            break;
+        }
+    }
+
+    var row: std.ArrayList(u8) = .empty;
+    errdefer row.deinit(alloc);
+    try row.appendSlice(alloc, ui_render.dim_style);
+    try row_text.appendClipped(alloc, &row, hint, width);
+    try row.appendSlice(alloc, ui_render.reset_style);
+    return row;
 }
 
 pub fn composeMcpMenuHintRow(
