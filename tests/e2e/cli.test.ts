@@ -161,8 +161,8 @@ function writeLegacySession(
       workspace_root: workspaceRoot,
       conversation_language: "en",
       history_len: historyLen,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
+      last_input_tokens: null,
+      last_output_tokens: null,
       last_event_seq: 1,
       event_log_bytes: eventBytes,
       event_log_stat_fingerprint: "0".repeat(64),
@@ -293,6 +293,7 @@ Options:
 The prompt may be passed as arguments or piped on stdin when no prompt args are given.
 TTY stdout uses the Minimal transcript presentation; redirected stdout emits raw assistant Markdown.
 Operational progress and diagnostics are written to stderr. JSON \`output\` keeps accumulated assistant Markdown; \`final_output\` contains only the completed final response, or an empty string when absent.
+JSON \`context\` reports the last response's \`used_tokens\` (input plus output) with the model \`window_tokens\`; either is null when unknown.
 --system replaces only the built-in base prompt for this request; tool, skill, project, and runtime context still apply.
 With --permission-mode ask, JSON and quiet requests may prompt on stderr only when stdin is a TTY.
 `;
@@ -2047,27 +2048,15 @@ describe("cli: sessions", () => {
         });
         expect(snapshotTree(join(home, ".fiber"))).toEqual(before);
 
+        // `show last` resolves through the read-only detail like `show --id`,
+        // so an unreadable latest session fails closed the same way.
         const latest = await runFx(["session", "show", "last", "--json"], {
           cwd: workspaceRoot,
           env: { HOME: home },
           timeoutMs: TIMEOUT,
         });
-        expect(latest.code).toBe(0);
-        expect(JSON.parse(latest.stdout)).toEqual({
-          kind: "session.show",
-          ok: true,
-          data: {
-            id: "benchmark-session-01",
-            title: "Benchmark session 01",
-            preview: "Benchmark session 01 preview",
-            workspace_root: workspaceRoot,
-            origin_workspace_root: workspaceRoot,
-            created_at_ms: 1001,
-            updated_at_ms: 2001,
-            history_len: 1,
-            conversation_language: "en",
-          },
-        });
+        expect(latest.code).not.toBe(0);
+        expect(latest.stderr).toContain("AccessDenied");
         expect(snapshotTree(join(home, ".fiber"))).toEqual(before);
 
         const detail = await runFx(

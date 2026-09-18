@@ -62,8 +62,8 @@ const Context = struct {
     admission: domain.AdmissionSnapshot,
     cancel: *std.atomic.Value(bool),
     subagent_id: u64,
-    input_tokens: u64 = 0,
-    output_tokens: u64 = 0,
+    last_input_tokens: ?u64 = null,
+    last_output_tokens: ?u64 = null,
     turn_outcome: ?types.TurnPresentationOutcome = null,
 
     fn toolContext(self: *Context) tool_runtime.Context {
@@ -661,8 +661,8 @@ fn propagateHistoryTurn(raw: *anyopaque, turn: types.HistoryTurn) !void {
     try context.turn.commit(
         context.turn.active_work_id orelse return error.StaleWork,
         turn,
-        context.input_tokens,
-        context.output_tokens,
+        context.last_input_tokens,
+        context.last_output_tokens,
         io_mod.milliTimestamp(),
     );
 }
@@ -677,8 +677,8 @@ fn setRecoveryCheckpoint(
 
 fn reportUsage(raw: *anyopaque, usage: types.Usage) void {
     const context: *Context = @ptrCast(@alignCast(raw));
-    if (usage.input_tokens) |value| context.input_tokens = value;
-    if (usage.output_tokens) |value| context.output_tokens = value;
+    context.last_input_tokens = usage.input_tokens;
+    context.last_output_tokens = usage.output_tokens;
 }
 
 fn publishCommittedFileHandoff(_: *anyopaque, _: file_mutation.CommittedFileHandoff) agent_runtime.SecondaryPublicationReport {

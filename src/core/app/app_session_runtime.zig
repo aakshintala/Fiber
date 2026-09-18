@@ -1174,8 +1174,8 @@ pub fn Runtime(comptime App: type) type {
                 return;
             };
             app.session_persistence.degraded_warning_emitted = false;
-            app.total_input_tokens = 0;
-            app.total_output_tokens = 0;
+            app.last_input_tokens = null;
+            app.last_output_tokens = null;
             app.total_web_search_requests = 0;
         }
 
@@ -1438,8 +1438,8 @@ pub fn Runtime(comptime App: type) type {
             );
             try restoreRuntimePreferences(app, state.preferences);
 
-            app.total_input_tokens = state.total_input_tokens;
-            app.total_output_tokens = state.total_output_tokens;
+            app.last_input_tokens = state.last_input_tokens;
+            app.last_output_tokens = state.last_output_tokens;
             app.total_web_search_requests = 0;
 
             if (comptime @hasDecl(App, "beginResumeProjection")) {
@@ -2193,8 +2193,8 @@ pub fn Runtime(comptime App: type) type {
                 app.alloc,
                 .{ .history_turn_committed = .{
                     .conversation_language = app.session.languageSnapshot(),
-                    .total_input_tokens = app.total_input_tokens,
-                    .total_output_tokens = app.total_output_tokens,
+                    .last_input_tokens = app.last_input_tokens,
+                    .last_output_tokens = app.last_output_tokens,
                     .turn = turn,
                 } },
                 io_mod.milliTimestamp(),
@@ -4166,8 +4166,8 @@ pub fn Runtime(comptime App: type) type {
                 .preferences = owned_preferences,
                 .history = history,
                 .context_history_start = app.session.contextHistoryStart(),
-                .total_input_tokens = app.total_input_tokens,
-                .total_output_tokens = app.total_output_tokens,
+                .last_input_tokens = app.last_input_tokens,
+                .last_output_tokens = app.last_output_tokens,
                 .permission_state = permission_state,
                 .usage = usage,
                 .recovery_checkpoint = recovery_checkpoint,
@@ -4207,8 +4207,6 @@ pub fn Runtime(comptime App: type) type {
                 .conversation_language = app.session.languageSnapshot(),
                 .preferences = owned_preferences,
                 .history = history,
-                .total_input_tokens = 0,
-                .total_output_tokens = 0,
                 .permission_state = permission_state,
                 .usage = usage,
             };
@@ -4501,8 +4499,8 @@ const TestApp = struct {
     selected_model: std.ArrayList(u8) = .empty,
     effort: types.ReasoningEffort = .auto,
     fast_mode: bool = false,
-    total_input_tokens: u64 = 0,
-    total_output_tokens: u64 = 0,
+    last_input_tokens: ?u64 = null,
+    last_output_tokens: ?u64 = null,
     total_web_search_requests: u64 = 0,
     notices: std.ArrayList([]u8) = .empty,
     cards: std.ArrayList(PromptCard) = .empty,
@@ -5001,8 +4999,8 @@ fn writeSessionFixture(
         },
         .history = owned_history,
         .context_history_start = context_history_start,
-        .total_input_tokens = 17,
-        .total_output_tokens = 23,
+        .last_input_tokens = 17,
+        .last_output_tokens = 23,
     };
     defer state.deinit(alloc);
     var loaded = try store.startWritableSession(alloc, state);
@@ -6646,8 +6644,8 @@ test "upgrade resume restores active session with the installed version notice" 
         app.assistant_text.items,
     );
     try std.testing.expectEqual(@as(usize, 0), app.transcript.items.len);
-    try std.testing.expectEqual(@as(u64, 17), app.total_input_tokens);
-    try std.testing.expectEqual(@as(u64, 23), app.total_output_tokens);
+    try std.testing.expectEqual(@as(?u64, 17), app.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 23), app.last_output_tokens);
     try std.testing.expectEqual(@as(u64, 0), app.total_web_search_requests);
     try std.testing.expectEqualStrings("env/model", app.selected_model.items);
     try std.testing.expectEqualStrings(
@@ -7829,8 +7827,8 @@ test "appendHistoryTurn commits canonical history event and totals" {
     try Runtime(TestApp).initializePersistence(&app, true);
     try Runtime(TestApp).beginFreshPersistedSession(&app);
     app.total_web_search_requests = 3;
-    app.total_input_tokens = 7;
-    app.total_output_tokens = 11;
+    app.last_input_tokens = 7;
+    app.last_output_tokens = 11;
 
     const turn = try session_runtime.makeAssistantTurn(alloc, "question", "answer");
     defer session_runtime.freeHistoryTurn(alloc, turn);
@@ -7845,8 +7843,8 @@ test "appendHistoryTurn commits canonical history event and totals" {
     try std.testing.expectEqual(@as(usize, 1), loaded.history.len);
     try std.testing.expectEqualStrings("question", loaded.history[0].assistant.user.text);
     try std.testing.expectEqualStrings("answer", loaded.history[0].assistant.assistant);
-    try std.testing.expectEqual(@as(u64, 7), loaded.total_input_tokens);
-    try std.testing.expectEqual(@as(u64, 11), loaded.total_output_tokens);
+    try std.testing.expectEqual(@as(?u64, 7), loaded.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 11), loaded.last_output_tokens);
 }
 
 const SnapshotOwnershipProbe = struct {

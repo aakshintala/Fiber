@@ -485,8 +485,8 @@ const App = struct {
     /// Resolved display title for the active session. App owns these bytes;
     /// empty means no title has been derived or restored yet.
     session_title: std.ArrayList(u8) = .empty,
-    total_input_tokens: u64 = 0,
-    total_output_tokens: u64 = 0,
+    last_input_tokens: ?u64 = null,
+    last_output_tokens: ?u64 = null,
     total_web_search_requests: u64 = 0,
 
     stream: StreamState = .{},

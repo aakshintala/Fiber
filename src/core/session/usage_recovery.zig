@@ -358,8 +358,6 @@ test "recovery registry reads only marked durable session state" {
             .fast_mode = false,
         },
         .history = history,
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
         .usage = saved_usage,
     };
     defer state.deinit(alloc);
@@ -446,8 +444,6 @@ test "recovery marker distinguishes checkpoints around a crash boundary" {
             .fast_mode = false,
         },
         .history = history,
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
         .usage = initial_usage,
     };
     defer state.deinit(alloc);

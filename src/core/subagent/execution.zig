@@ -380,8 +380,8 @@ pub const TurnContext = struct {
         self: *TurnContext,
         work_id: []const u8,
         turn: types.HistoryTurn,
-        total_input_tokens: u64,
-        total_output_tokens: u64,
+        last_input_tokens: ?u64,
+        last_output_tokens: ?u64,
         timestamp_ms: i64,
     ) CommitError!void {
         if (self.committed) return error.TurnAlreadyCommitted;
@@ -400,8 +400,8 @@ pub const TurnContext = struct {
             self.alloc,
             .{ .history_turn_committed = .{
                 .conversation_language = self.runtime.languageSnapshot(),
-                .total_input_tokens = total_input_tokens,
-                .total_output_tokens = total_output_tokens,
+                .last_input_tokens = last_input_tokens,
+                .last_output_tokens = last_output_tokens,
                 .work_id = @constCast(work_id),
                 .turn = committed_turn,
             } },

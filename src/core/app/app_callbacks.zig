@@ -944,10 +944,14 @@ pub fn Bindings(comptime App: type) type {
             return app.formatToolExecutionErrorForAgent(arena, tool_name, err);
         }
 
+        /// Records the last successful conversation response's usage. Both
+        /// sides come from that single response: a partial report clears the
+        /// missing side so the context number turns unknown instead of
+        /// mixing two responses.
         fn agentReportUsage(ctx: *anyopaque, usage: types.Usage) void {
             const app: *App = @ptrCast(@alignCast(ctx));
-            if (usage.input_tokens) |input| app.total_input_tokens = input;
-            if (usage.output_tokens) |output| app.total_output_tokens = output;
+            app.last_input_tokens = usage.input_tokens;
+            app.last_output_tokens = usage.output_tokens;
         }
 
         fn agentReportInnerToolUsage(ctx: *anyopaque, tool_name: []const u8, usage: types.ToolUsage) void {
@@ -1310,8 +1314,8 @@ const FakeApp = struct {
     } = .{},
     pacer: FakePacer = .{},
     transcript: std.ArrayList(u8) = .empty,
-    total_input_tokens: u64 = 0,
-    total_output_tokens: u64 = 0,
+    last_input_tokens: ?u64 = null,
+    last_output_tokens: ?u64 = null,
     total_web_search_requests: u64 = 0,
     user_prompt_count: usize = 0,
     command_output_count: usize = 0,
@@ -1585,8 +1589,8 @@ const NoOverridePersistentApp = struct {
     shell: FakeShell = .{},
     pacer: FakePacer = .{},
     transcript: std.ArrayList(u8) = .empty,
-    total_input_tokens: u64 = 0,
-    total_output_tokens: u64 = 0,
+    last_input_tokens: ?u64 = null,
+    last_output_tokens: ?u64 = null,
     total_web_search_requests: u64 = 0,
     replaceable_count: usize = 0,
     replaceable_silent_count: usize = 0,
@@ -1857,9 +1861,25 @@ test "inner search tokens do not replace outer context counters" {
     }
     report(deps.ctx, "provider_tool", .{ .web_search_requests = 7 });
 
-    try std.testing.expectEqual(@as(u64, 100), app.total_input_tokens);
-    try std.testing.expectEqual(@as(u64, 20), app.total_output_tokens);
+    try std.testing.expectEqual(@as(?u64, 100), app.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 20), app.last_output_tokens);
     try std.testing.expectEqual(@as(u64, 4), app.total_web_search_requests);
+}
+
+test "partial usage report turns the context number unknown" {
+    var app = FakeApp.init(std.testing.allocator);
+    defer app.deinit();
+
+    const deps = Bindings(FakeApp).agentRuntimeDeps(&app);
+    const report = deps.report_usage orelse return error.TestExpectedEqual;
+    report(deps.ctx, .{ .input_tokens = 100, .output_tokens = 20 });
+    try std.testing.expectEqual(@as(?u64, 100), app.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 20), app.last_output_tokens);
+    // A later response that reports only one side clears the other instead
+    // of mixing two responses, so the surfaced number turns unknown.
+    report(deps.ctx, .{ .input_tokens = 999 });
+    try std.testing.expectEqual(@as(?u64, 999), app.last_input_tokens);
+    try std.testing.expect(app.last_output_tokens == null);
 }
 
 test "agent diff block callback enqueues worker event without direct transcript mutation" {

@@ -31,7 +31,7 @@ pub noinline fn renderSessionJson(
     try out.writer.writeAll(",\"conversation_language\":");
     try std.json.Stringify.value(language.view(), .{}, &out.writer);
     if (token_usage.input > 0 or token_usage.output > 0) {
-        try out.writer.print(",\"total_input_tokens\":{d},\"total_output_tokens\":{d}", .{ token_usage.input, token_usage.output });
+        try out.writer.print(",\"last_input_tokens\":{d},\"last_output_tokens\":{d}", .{ token_usage.input, token_usage.output });
     }
     if (token_usage.web_search_requests > 0) {
         try out.writer.print(",\"total_web_search_requests\":{d}", .{token_usage.web_search_requests});

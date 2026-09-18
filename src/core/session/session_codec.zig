@@ -166,8 +166,8 @@ pub const DurableSessionState = struct {
     preferences: DurableSessionPreferences,
     history: []session.HistoryTurn,
     context_history_start: usize = 0,
-    total_input_tokens: u64,
-    total_output_tokens: u64,
+    last_input_tokens: ?u64 = null,
+    last_output_tokens: ?u64 = null,
     permission_state: session_permission_state.State = .{},
     /// Last ordinary history commit correlated to durable subagent work. This
     /// control-only marker is not included in model history.
@@ -238,8 +238,8 @@ pub const DurableSessionState = struct {
             .preferences = preferences,
             .history = history,
             .context_history_start = self.context_history_start,
-            .total_input_tokens = self.total_input_tokens,
-            .total_output_tokens = self.total_output_tokens,
+            .last_input_tokens = self.last_input_tokens,
+            .last_output_tokens = self.last_output_tokens,
             .permission_state = permission_state,
             .last_subagent_work_id = last_subagent_work_id,
             .subagent_child = self.subagent_child,
@@ -730,11 +730,11 @@ fn writeState(writer: *std.Io.Writer, state: DurableSessionState) !void {
         if (i > 0) try writer.writeByte(',');
         try writeHistoryTurn(writer, turn);
     }
-    try writer.print("],\"total_input_tokens\":{d},\"total_output_tokens\":{d},\"context_history_start\":{d}", .{
-        state.total_input_tokens,
-        state.total_output_tokens,
-        state.context_history_start,
-    });
+    try writer.writeAll("],\"last_input_tokens\":");
+    try writeOptionalU64(writer, state.last_input_tokens);
+    try writer.writeAll(",\"last_output_tokens\":");
+    try writeOptionalU64(writer, state.last_output_tokens);
+    try writer.print(",\"context_history_start\":{d}", .{state.context_history_start});
     try writer.writeAll(",\"permission_state\":");
     try writePermissionState(writer, state.permission_state);
     if (state.usage) |usage| {
@@ -982,10 +982,8 @@ fn decodeStateImpl(alloc: Allocator, source: *std.Io.Reader, limits: DecodeLimit
     }
     try expectToken(try json_reader.next(), .array_end);
 
-    try expectKey(&json_reader, alloc, "total_input_tokens");
-    const total_input_tokens = try readU64(&json_reader, alloc);
-    try expectKey(&json_reader, alloc, "total_output_tokens");
-    const total_output_tokens = try readU64(&json_reader, alloc);
+    const last_input_tokens = try readLastResponseTokens(&json_reader, alloc, "last_input_tokens", "total_input_tokens");
+    const last_output_tokens = try readLastResponseTokens(&json_reader, alloc, "last_output_tokens", "total_output_tokens");
     var context_history_start: usize = 0;
     var context_seen = false;
     var permission_state: session_permission_state.State = .{};
@@ -1080,8 +1078,8 @@ fn decodeStateImpl(alloc: Allocator, source: *std.Io.Reader, limits: DecodeLimit
         },
         .history = owned_history,
         .context_history_start = context_history_start,
-        .total_input_tokens = total_input_tokens,
-        .total_output_tokens = total_output_tokens,
+        .last_input_tokens = last_input_tokens,
+        .last_output_tokens = last_output_tokens,
         .permission_state = permission_state,
         .last_subagent_work_id = last_subagent_work_id,
         .subagent_child = subagent_child,
@@ -2607,6 +2605,20 @@ fn expectKey(reader: *std.json.Reader, alloc: Allocator, expected: []const u8) !
     if (!std.mem.eql(u8, actual, expected)) return error.InvalidSessionFormat;
 }
 
+// Tolerance reader: pre-rename schema-3 states named the last-response
+// counters total_*; accept either name and map onto last_*.
+fn readLastResponseTokens(reader: *std.json.Reader, alloc: Allocator, modern: []const u8, legacy: []const u8) !?u64 {
+    const token = try reader.nextAllocMax(alloc, .alloc_if_needed, 64);
+    defer freeToken(alloc, token);
+    const actual = switch (token) {
+        .string => |value| value,
+        .allocated_string => |value| value,
+        else => return error.InvalidSessionFormat,
+    };
+    if (!std.mem.eql(u8, actual, modern) and !std.mem.eql(u8, actual, legacy)) return error.InvalidSessionFormat;
+    return try readNullableU64(reader, alloc);
+}
+
 fn readStringOwned(reader: *std.json.Reader, alloc: Allocator, max_len: usize) ![]u8 {
     const token = try reader.nextAllocMax(alloc, .alloc_always, max_len);
     return switch (token) {
@@ -2628,6 +2640,25 @@ fn readI64(reader: *std.json.Reader, alloc: Allocator) !i64 {
         else => return error.InvalidSessionFormat,
     };
     return std.fmt.parseInt(i64, raw, 10) catch error.InvalidSessionFormat;
+}
+
+pub fn writeOptionalU64(writer: *std.Io.Writer, value: ?u64) !void {
+    if (value) |number| {
+        try writer.print("{d}", .{number});
+    } else {
+        try writer.writeAll("null");
+    }
+}
+
+fn readNullableU64(reader: *std.json.Reader, alloc: Allocator) !?u64 {
+    const token = try reader.nextAllocMax(alloc, .alloc_if_needed, 32);
+    defer freeToken(alloc, token);
+    return switch (token) {
+        .null => null,
+        .number => |value| std.fmt.parseUnsigned(u64, value, 10) catch error.InvalidSessionFormat,
+        .allocated_number => |value| std.fmt.parseUnsigned(u64, value, 10) catch error.InvalidSessionFormat,
+        else => error.InvalidSessionFormat,
+    };
 }
 
 fn readU64(reader: *std.json.Reader, alloc: Allocator) !u64 {
@@ -2958,8 +2989,8 @@ test "durable state round trips live history while discarding legacy authority" 
         },
         .history = @constCast(history[0..]),
         .context_history_start = 3,
-        .total_input_tokens = 1234,
-        .total_output_tokens = 567,
+        .last_input_tokens = 1234,
+        .last_output_tokens = 567,
         .last_subagent_work_id = @constCast("work-17"),
         .subagent_child = true,
         .usage = usage,
@@ -2981,6 +3012,18 @@ test "durable state round trips live history while discarding legacy authority" 
     var decoded = try decodeState(alloc, &source, .{});
     defer decoded.deinit(alloc);
     try expectStateEqual(state, decoded);
+}
+
+test "pre-rename total_* durable state decodes onto last_*" {
+    const alloc = std.testing.allocator;
+    // Byte-faithful pre-rename schema-3 state: required total_* numbers
+    // where the current writer emits nullable last_*.
+    const raw = "{\"id\":\"session\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false,\"provider\":\"codex\"},\"history\":[],\"total_input_tokens\":128,\"total_output_tokens\":64,\"context_history_start\":0,\"permission_state\":{\"schema_version\":2,\"next_generation\":1,\"rules\":[]}}";
+    var source = std.Io.Reader.fixed(raw);
+    var state = try decodeState(alloc, &source, .{});
+    defer state.deinit(alloc);
+    try std.testing.expectEqual(@as(?u64, 128), state.last_input_tokens);
+    try std.testing.expectEqual(@as(?u64, 64), state.last_output_tokens);
 }
 
 test "durable state repairs duplicate-key execution and interrupted tool arguments" {
@@ -3035,8 +3078,8 @@ test "durable state repairs duplicate-key execution and interrupted tool argumen
             .fast_mode = false,
         },
         .history = @constCast(history[0..]),
-        .total_input_tokens = 3,
-        .total_output_tokens = 4,
+        .last_input_tokens = 3,
+        .last_output_tokens = 4,
     };
 
     var encoded: std.Io.Writer.Allocating = .init(alloc);
@@ -3103,7 +3146,7 @@ test "an unselected model persists but a checkpoint authority still requires one
         "{\"id\":\"fresh\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\"," ++
         "\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\"," ++
         "\"preferences\":{\"model\":\"\",\"effort\":\"auto\",\"fast_mode\":false}," ++
-        "\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}";
+        "\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null}";
     var source = std.Io.Reader.fixed(unselected);
     var decoded = try decodeState(alloc, &source, .{});
     defer decoded.deinit(alloc);
@@ -3138,7 +3181,7 @@ test "legacy durable state defaults context history start to zero" {
         "{\"id\":\"legacy\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\"," ++
         "\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\"," ++
         "\"preferences\":{\"model\":\"model\",\"effort\":\"auto\",\"fast_mode\":false}," ++
-        "\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}";
+        "\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null}";
     var source = std.Io.Reader.fixed(legacy);
     var decoded = try decodeState(alloc, &source, .{});
     defer decoded.deinit(alloc);
@@ -3148,7 +3191,7 @@ test "legacy durable state defaults context history start to zero" {
         "{\"id\":\"invalid\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\"," ++
         "\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\"," ++
         "\"preferences\":{\"model\":\"model\",\"effort\":\"auto\",\"fast_mode\":false}," ++
-        "\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0,\"context_history_start\":1}";
+        "\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null,\"context_history_start\":1}";
     var invalid_source = std.Io.Reader.fixed(invalid);
     try std.testing.expectError(
         error.InvalidDurableField,
@@ -3159,7 +3202,7 @@ test "legacy durable state defaults context history start to zero" {
 test "per-turn work provenance is strict and ordinary state omits it" {
     const alloc = std.testing.allocator;
     const ordinary =
-        "{\"id\":\"session\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[{\"kind\":\"assistant\",\"user\":{\"text\":\"hello\",\"images\":[]},\"assistant\":\"world\",\"execution\":{\"schema_version\":3,\"tool_steps\":[],\"files\":[]}}],\"total_input_tokens\":0,\"total_output_tokens\":0}";
+        "{\"id\":\"session\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[{\"kind\":\"assistant\",\"user\":{\"text\":\"hello\",\"images\":[]},\"assistant\":\"world\",\"execution\":{\"schema_version\":3,\"tool_steps\":[],\"files\":[]}}],\"last_input_tokens\":null,\"last_output_tokens\":null}";
     var ordinary_source = std.Io.Reader.fixed(ordinary);
     var state = try decodeState(alloc, &ordinary_source, .{});
     defer state.deinit(alloc);
@@ -3216,8 +3259,6 @@ test "durable session IDs accept safe opaque basenames" {
             .fast_mode = false,
         },
         .history = &.{},
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
     };
     var encoded: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer encoded.deinit();
@@ -3254,11 +3295,11 @@ test "durable session IDs reject unsafe basenames" {
 test "durable state rejects invalid metadata fields before returning" {
     const alloc = std.testing.allocator;
     const invalid_documents = [_][]const u8{
-        "{\"id\":\"../bad\",\"origin_workspace_root\":\"/tmp/a\",\"workspace_root\":\"/tmp/a\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"m\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}",
-        "{\"id\":\"good\",\"origin_workspace_root\":\"relative\",\"workspace_root\":\"/tmp/a\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"m\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}",
-        "{\"id\":\"good\",\"origin_workspace_root\":\"/tmp/a\",\"workspace_root\":\"/tmp/a\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\" en \",\"preferences\":{\"model\":\"m\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}",
-        "{\"id\":\"good\",\"origin_workspace_root\":\"/tmp/a\",\"workspace_root\":\"/tmp/a\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"m\",\"effort\":\"not valid\",\"fast_mode\":false},\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}",
-        "{\"id\":\"good\",\"origin_workspace_root\":\"/tmp/a\",\"workspace_root\":\"/tmp/a\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\" m\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}",
+        "{\"id\":\"../bad\",\"origin_workspace_root\":\"/tmp/a\",\"workspace_root\":\"/tmp/a\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"m\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null}",
+        "{\"id\":\"good\",\"origin_workspace_root\":\"relative\",\"workspace_root\":\"/tmp/a\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"m\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null}",
+        "{\"id\":\"good\",\"origin_workspace_root\":\"/tmp/a\",\"workspace_root\":\"/tmp/a\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\" en \",\"preferences\":{\"model\":\"m\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null}",
+        "{\"id\":\"good\",\"origin_workspace_root\":\"/tmp/a\",\"workspace_root\":\"/tmp/a\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"m\",\"effort\":\"not valid\",\"fast_mode\":false},\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null}",
+        "{\"id\":\"good\",\"origin_workspace_root\":\"/tmp/a\",\"workspace_root\":\"/tmp/a\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\" m\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null}",
     };
 
     for (invalid_documents) |document| {
@@ -3779,8 +3820,8 @@ fn expectStateEqual(expected: DurableSessionState, actual: DurableSessionState) 
     try std.testing.expectEqual(expected.preferences.effort, actual.preferences.effort);
     try std.testing.expectEqual(expected.preferences.fast_mode, actual.preferences.fast_mode);
     try std.testing.expectEqual(expected.context_history_start, actual.context_history_start);
-    try std.testing.expectEqual(expected.total_input_tokens, actual.total_input_tokens);
-    try std.testing.expectEqual(expected.total_output_tokens, actual.total_output_tokens);
+    try std.testing.expectEqual(expected.last_input_tokens, actual.last_input_tokens);
+    try std.testing.expectEqual(expected.last_output_tokens, actual.last_output_tokens);
     try std.testing.expectEqual(expected.subagent_child, actual.subagent_child);
     try expectPermissionStateEqual(expected.permission_state, actual.permission_state);
     try std.testing.expectEqual(expected.last_subagent_work_id != null, actual.last_subagent_work_id != null);
@@ -4073,8 +4114,6 @@ test "recovery checkpoint round trips while legacy state stays absent" {
             .fast_mode = false,
         },
         .history = &.{},
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
         .recovery_checkpoint = checkpoint,
     };
 
@@ -4103,7 +4142,7 @@ test "recovery checkpoint round trips while legacy state stays absent" {
     try std.testing.expect(restored.outstanding_reservation);
 
     const legacy =
-        "{\"id\":\"legacy\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"openai/gpt-test\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}";
+        "{\"id\":\"legacy\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"openai/gpt-test\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null}";
     var legacy_source = std.Io.Reader.fixed(legacy);
     var legacy_state = try decodeState(alloc, &legacy_source, .{});
     defer legacy_state.deinit(alloc);
@@ -4146,8 +4185,6 @@ test "session permission state round trips while legacy state stays empty" {
             .fast_mode = false,
         },
         .history = &.{},
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
         .permission_state = permission_state,
     };
     var encoded: std.Io.Writer.Allocating = .init(alloc);
@@ -4162,7 +4199,7 @@ test "session permission state round trips while legacy state stays empty" {
     );
 
     const legacy =
-        "{\"id\":\"legacy-permission-state\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"openai/gpt-test\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}";
+        "{\"id\":\"legacy-permission-state\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":2,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"openai/gpt-test\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null}";
     var legacy_source = std.Io.Reader.fixed(legacy);
     var legacy_state = try decodeState(alloc, &legacy_source, .{});
     defer legacy_state.deinit(alloc);
@@ -4183,8 +4220,6 @@ test "recovery checkpoint rejects an outstanding attempt beyond its budget" {
             .fast_mode = false,
         },
         .history = &.{},
-        .total_input_tokens = 0,
-        .total_output_tokens = 0,
         .recovery_checkpoint = .{
             .turn_id = 1,
             .user = .{ .text = @constCast("prompt") },
@@ -4244,9 +4279,9 @@ test "permission state schema two round trips before activation" {
 
 test "durable session optional fields handle fuzzed ownership paths" {
     try std.testing.fuzz({}, fuzzDurableSessionOptionalFields, .{ .corpus = &.{
-        "{\"id\":\"session\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0}",
-        "{\"id\":\"session\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0,\"context_history_start\":0,\"last_subagent_work_id\":\"work\"}",
-        "{\"id\":\"session\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"total_input_tokens\":0,\"total_output_tokens\":0,\"last_subagent_work_id\":\"work\",\"context_history_start\":0}",
+        "{\"id\":\"session\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null}",
+        "{\"id\":\"session\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null,\"context_history_start\":0,\"last_subagent_work_id\":\"work\"}",
+        "{\"id\":\"session\",\"origin_workspace_root\":\"/tmp/origin\",\"workspace_root\":\"/tmp/current\",\"created_at_ms\":1,\"updated_at_ms\":1,\"conversation_language\":\"en\",\"preferences\":{\"model\":\"test/model\",\"effort\":\"auto\",\"fast_mode\":false},\"history\":[],\"last_input_tokens\":null,\"last_output_tokens\":null,\"last_subagent_work_id\":\"work\",\"context_history_start\":0}",
         "",
         "{}",
         "{\"last_subagent_work_id\":null}",

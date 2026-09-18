@@ -50,6 +50,7 @@ pub const top_level_specs = [_]TopLevelSpec{
             "The prompt may be passed as arguments or piped on stdin when no prompt args are given.",
             "TTY stdout uses the Minimal transcript presentation; redirected stdout emits raw assistant Markdown.",
             "Operational progress and diagnostics are written to stderr. JSON `output` keeps accumulated assistant Markdown; `final_output` contains only the completed final response, or an empty string when absent.",
+            "JSON `context` reports the last response's `used_tokens` (input plus output) with the model `window_tokens`; either is null when unknown.",
             "--system replaces only the built-in base prompt for this request; tool, skill, project, and runtime context still apply.",
             "With --permission-mode ask, JSON and quiet requests may prompt on stderr only when stdin is a TTY.",
         },
@@ -172,6 +173,9 @@ pub const top_level_specs = [_]TopLevelSpec{
             .{ .flag = "resume [last|<id>]", .description = "Resume the latest workspace session or a session by id" },
             .{ .flag = "--id <id>", .description = "Select a saved session by exact id" },
             json_option,
+        },
+        .details = &.{
+            "JSON `show` output carries a `context` object with the last committed turn's `used_tokens` (input plus output, null when unknown); `window_tokens` is null for saved sessions.",
         },
     },
     .{
