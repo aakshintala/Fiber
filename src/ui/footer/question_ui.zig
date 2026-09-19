@@ -491,22 +491,19 @@ fn writeResolutionField(
     var start: usize = 0;
     var first = true;
     while (true) {
-        const line_end = if (std.mem.findScalar(u8, text[start..], '\n')) |relative|
-            start + relative
-        else
-            text.len;
         const prefix = if (first) first_prefix else continuation_prefix;
         const prefix_width = display_width.visibleWidth(prefix);
-        const budget = @as(usize, cols) -| prefix_width;
+        const budget = @max(@as(usize, cols) -| prefix_width, 1);
+        const line = nextWrappedTextLine(text, start, budget);
 
         if (style) |row_style| try writer.writeAll(row_style);
         try writer.writeAll(prefix);
-        try writeTruncated(writer, text[start..line_end], budget);
+        try writer.writeAll(text[start..line.content_end]);
         if (style != null) try writer.writeAll(ui_render.reset_style);
         try writer.writeByte('\n');
 
-        if (line_end == text.len) break;
-        start = line_end + 1;
+        if (line.next_start >= text.len) break;
+        start = line.next_start;
         first = false;
     }
 }
@@ -517,18 +514,6 @@ fn writeCancelledResolution(writer: *std.Io.Writer) !void {
     try writer.writeAll(ui_render.reset_style);
     try writer.writeAll(" Cancelled");
     try writer.writeByte('\n');
-}
-
-fn writeTruncated(writer: *std.Io.Writer, text: []const u8, budget: usize) !void {
-    if (budget == 0) return;
-    if (display_width.visibleWidth(text) <= budget) {
-        try writer.writeAll(text);
-        return;
-    }
-    const keep_budget = if (budget > 1) budget - 1 else 0;
-    const prefix = display_width.prefixByWidth(text, keep_budget);
-    try writer.writeAll(prefix);
-    try writer.writeAll("…");
 }
 
 test "question footer composes prompt inside decision panel" {
@@ -779,6 +764,64 @@ test "resolved multiline question fields keep every row inside the transcript ra
             "{s}     line-one{s}\n" ++
             "{s}     line-two{s}\n" ++
             "{s}     line-three{s}\n",
+        .{
+            ui_render.statusline_style, ui_render.reset_style,
+            ui_render.statusline_style, ui_render.reset_style,
+            ui_render.statusline_style, ui_render.reset_style,
+        },
+    );
+    defer std.testing.allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, text);
+}
+
+test "resolved question and answer hang-wrap at narrow width" {
+    const cols: u16 = 24;
+    const answers = [_]types.QuestionAnswer{.{
+        .question = "abcdefghijabcdefghij",
+        .answer = "klmnopqrstklmnopqrst",
+    }};
+    const text = try composeResolvedQuestionAnswers(std.testing.allocator, &answers, cols);
+    defer std.testing.allocator.free(text);
+
+    const expected = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "  1) abcdefghijabcdefghi\n" ++
+            "     j\n" ++
+            "{s}     klmnopqrstklmnopqrs{s}\n" ++
+            "{s}     t{s}\n",
+        .{
+            ui_render.statusline_style, ui_render.reset_style,
+            ui_render.statusline_style, ui_render.reset_style,
+        },
+    );
+    defer std.testing.allocator.free(expected);
+    try std.testing.expectEqualStrings(expected, text);
+    try std.testing.expect(std.mem.find(u8, text, "…") == null);
+
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        try std.testing.expect(display_width.visibleWidthIgnoringAnsi(line) <= cols);
+    }
+}
+
+test "resolved question and answer hang-wrap at word boundaries" {
+    const cols: u16 = 24;
+    const answers = [_]types.QuestionAnswer{.{
+        .question = "Which verification depth should I use for this?",
+        .answer = "Run the thorough verification path every time",
+    }};
+    const text = try composeResolvedQuestionAnswers(std.testing.allocator, &answers, cols);
+    defer std.testing.allocator.free(text);
+
+    const expected = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "  1) Which verification\n" ++
+            "     depth should I use\n" ++
+            "     for this?\n" ++
+            "{s}     Run the thorough{s}\n" ++
+            "{s}     verification path{s}\n" ++
+            "{s}     every time{s}\n",
         .{
             ui_render.statusline_style, ui_render.reset_style,
             ui_render.statusline_style, ui_render.reset_style,
