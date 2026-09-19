@@ -1182,7 +1182,7 @@ pub const Runtime = struct {
                 .persistence = entry.persistence(),
                 .output_delta = output_delta,
                 .output_truncated = entry.output_truncated or
-                    if (metadata) |value| value.truncated else false,
+                    if (metadata) |value| value.truncated or value.output_incomplete else false,
                 .duration_ms = if (metadata) |value| value.duration_ms else null,
                 .output_file = output_file,
                 .output_framed_bytes = entry.output_framed_bytes,
@@ -1715,6 +1715,53 @@ test "captured managed execution capacity rejects before spawn" {
     try std.testing.expectError(
         error.ExecutionCapacityExceeded,
         runtime.startCaptured(alloc, overflow),
+    );
+}
+
+test "captured completed snapshot folds output_incomplete into output_truncated" {
+    const alloc = std.testing.allocator;
+    var runtime = Runtime.init(alloc);
+    defer runtime.deinit();
+    var input = StartCapturedInput{
+        .execution_id = "managed-output-incomplete",
+        .command = "printf probe",
+        .cwd = "/tmp",
+        .environment = .legacy,
+        .authority = undefined,
+        .max_output_bytes = 4096,
+        .timeout_ms = 2_000,
+        .command_artifact_dir = null,
+        .yield_time_ms = 0,
+    };
+    input.authority = testAuthority(input);
+    var started = try runtime.startCaptured(alloc, input);
+    defer started.deinit(alloc);
+    try runtime.commitDelivery(started.snapshot.execution_id, started.reservation_id);
+
+    var completed = try runtime.wait(alloc, input.execution_id, 2_000, null);
+    defer completed.deinit(alloc);
+    try runtime.commitDelivery(completed.snapshot.execution_id, completed.reservation_id);
+
+    const entry = runtime.acquireEntry(input.execution_id) orelse
+        return error.TestExpectedEqual;
+    defer runtime.releaseEntry(entry);
+    const zio = io_mod.getIo();
+    entry.mutex.lockUncancelable(zio);
+    if (entry.result) |*run| {
+        if (run.command_result) |*metadata| {
+            metadata.output_incomplete = true;
+            metadata.truncated = false;
+        }
+    }
+    entry.output_truncated = false;
+    entry.mutex.unlock(zio);
+
+    var resnapshot = try runtime.wait(alloc, input.execution_id, 0, null);
+    defer resnapshot.deinit(alloc);
+    try std.testing.expect(resnapshot.snapshot.output_truncated);
+    try runtime.commitDelivery(
+        resnapshot.snapshot.execution_id,
+        resnapshot.reservation_id,
     );
 }
 

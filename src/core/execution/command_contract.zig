@@ -15,6 +15,7 @@ pub const CommandResult = struct {
     stdout_bytes: usize = 0,
     stderr_bytes: usize = 0,
     truncated: bool = false,
+    output_incomplete: bool = false,
     output_file: ?[]const u8 = null,
     stdout_file: ?[]const u8 = null,
     stderr_file: ?[]const u8 = null,
@@ -159,6 +160,9 @@ fn writeCommandJson(result: CommandResult, writer: *std.Io.Writer) !void {
     try writeIntField(writer, "stdout_bytes", result.stdout_bytes);
     try writeIntField(writer, "stderr_bytes", result.stderr_bytes);
     try writeBoolField(writer, "truncated", result.truncated);
+    if (result.output_incomplete) {
+        try writeBoolField(writer, "output_incomplete", true);
+    }
     try writeOptionalStringField(writer, "output_file", result.output_file);
     try writeOptionalStringField(writer, "stdout_file", result.stdout_file);
     try writeOptionalStringField(writer, "stderr_file", result.stderr_file);

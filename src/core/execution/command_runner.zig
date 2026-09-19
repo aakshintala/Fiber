@@ -15,6 +15,7 @@ const shell_resolver = @import("../terminal/shell_resolver.zig");
 const darwin_process_spawn = @import("../shared/darwin_process_spawn.zig");
 
 const Allocator = std.mem.Allocator;
+
 pub const CommandOutputStream = command_contract.CommandOutputStream;
 pub const CommandOutputCallback = command_contract.CommandOutputCallback;
 pub const CommandExecutionResult = command_contract.RunCommandResult;
@@ -717,6 +718,7 @@ const CollectedProcess = struct {
     stderr_bytes: usize,
     duration_ms: ?u64 = null,
     truncated: bool = false,
+    output_incomplete: bool = false,
     output_file: ?[]const u8 = null,
     stdout_file: ?[]const u8 = null,
     stderr_file: ?[]const u8 = null,
@@ -910,6 +912,7 @@ const OutputCollector = struct {
     stderr_preview: StreamPreview,
     stdout_bytes: usize = 0,
     stderr_bytes: usize = 0,
+    output_incomplete: bool = false,
     artifact: ?CommandArtifact = null,
 
     fn init(alloc: Allocator, cfg: Config) OutputCollector {
@@ -975,6 +978,7 @@ const OutputCollector = struct {
                 .stdout_bytes = self.stdout_bytes,
                 .stderr_bytes = self.stderr_bytes,
                 .truncated = truncated,
+                .output_incomplete = self.output_incomplete,
                 .output_file = artifact.output_file,
                 .stdout_file = artifact.stdout_file,
                 .stderr_file = artifact.stderr_file,
@@ -989,6 +993,7 @@ const OutputCollector = struct {
             .stderr = try self.stderr.toOwnedSlice(self.alloc),
             .stdout_bytes = self.stdout_bytes,
             .stderr_bytes = self.stderr_bytes,
+            .output_incomplete = self.output_incomplete,
         };
     }
 
@@ -1734,20 +1739,27 @@ fn formatCollectedOutput(alloc: Allocator, command: []const u8, cwd: []const u8,
 }
 
 fn formatCollectedOutputValue(alloc: Allocator, command: []const u8, cwd: []const u8, result: CollectedProcess) !command_contract.RunCommandResult {
-    if (result.output_file == null) return formatOutputWithStatus(
-        alloc,
-        command,
-        cwd,
-        result.status,
-        result.stdout,
-        result.stderr,
-        result.duration_ms,
-    );
+    if (result.output_file == null) {
+        var formatted = try formatOutputWithStatus(
+            alloc,
+            command,
+            cwd,
+            result.status,
+            result.stdout,
+            result.stderr,
+            result.duration_ms,
+        );
+        if (formatted.command_result) |*command_result| {
+            command_result.output_incomplete = result.output_incomplete;
+        }
+        return formatted;
+    }
 
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try command_contract.writeStatusLine(&out.writer, result.status);
     try out.writer.print("truncated={s}\n", .{if (result.truncated) "true" else "false"});
+    if (result.output_incomplete) try out.writer.writeAll("output_incomplete=true\n");
     try out.writer.print("stdout_bytes={d}\n", .{result.stdout_bytes});
     try out.writer.print("stderr_bytes={d}\n", .{result.stderr_bytes});
     if (result.output_file) |path| try out.writer.print("output_file={s}\n", .{path});
@@ -1772,6 +1784,7 @@ fn formatCollectedOutputValue(alloc: Allocator, command: []const u8, cwd: []cons
             .stdout_bytes = result.stdout_bytes,
             .stderr_bytes = result.stderr_bytes,
             .truncated = result.truncated,
+            .output_incomplete = result.output_incomplete,
             .output_file = metadataField(output, "output_file="),
             .stdout_file = metadataField(output, "stdout_file="),
             .stderr_file = metadataField(output, "stderr_file="),
@@ -2281,6 +2294,7 @@ fn collectOutput(
     var signal_started_ms: ?i64 = null;
     var force_kill_sent = false;
     var streams_finished = false;
+    var read_error_seen = false;
 
     while (true) {
         try updateTerminationSignal(
@@ -2368,6 +2382,22 @@ fn collectOutput(
                 try emitter.append(arena, output, .stderr, stderr_buf, cfg);
             }
             stderr_r.tossBuffered();
+        }
+
+        if (multi_reader.checkAnyError()) {} else |err| switch (err) {
+            error.OutOfMemory => return err,
+            error.Canceled, error.ConcurrencyUnavailable => return err,
+            else => |e| {
+                if (!read_error_seen) {
+                    debug_trace.logf(
+                        "core",
+                        "command output read failed err={s}",
+                        .{@errorName(e)},
+                    );
+                    output.output_incomplete = true;
+                    read_error_seen = true;
+                }
+            },
         }
 
         if (!keep_reading) {
@@ -3985,6 +4015,155 @@ test "artifact write failure after cancellation remains a bare error" {
         &leader_status,
     ));
     try std.testing.expect(ready_seen.load(.seq_cst));
+}
+
+test "read failure during output collection marks output incomplete" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(workspace);
+
+    const argv = [_][]const u8{ "/bin/sh", "-c", "printf 'KEEPME'; exit 0" };
+    var child = try std.process.spawn(io_mod.getIo(), .{
+        .argv = &argv,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .cwd = .{ .path = workspace },
+        .pgid = 0,
+    });
+    defer cleanupChild(&child);
+
+    const process_group_id = child.id;
+    var observer = try ProcessObserver.init(&child);
+    defer observer.deinit();
+
+    observer.stderr.close(observer.waiter.io);
+    observer.stderr = try tmp.dir.createFile(
+        io_mod.getIo(),
+        "unreadable.stderr",
+        .{ .truncate = true },
+    );
+
+    try observer.start();
+    defer observer.abort(process_group_id);
+
+    const cfg = Config{ .max_command_output_bytes = 1_048_576 };
+    var output = OutputCollector.init(alloc, cfg);
+    defer output.deinit();
+    var leader_status: ?command_contract.CommandStatus = null;
+
+    const source = try collectOutputForProcess(
+        alloc,
+        &observer,
+        &output,
+        cfg,
+        null,
+        process_group_id,
+        .process_group,
+        &leader_status,
+    );
+
+    const status = try waitForCollectedProcess(
+        &observer,
+        source,
+        process_group_id,
+        leader_status,
+    );
+    const collected = try output.finish(status);
+    defer alloc.free(collected.stdout);
+    defer alloc.free(collected.stderr);
+    try std.testing.expect(collected.output_incomplete);
+    try std.testing.expectEqual(@as(?i64, 0), command_contract.projectStatus(collected.status).exit_code);
+    try std.testing.expect(std.mem.eql(u8, collected.stdout, "KEEPME"));
+
+    const incomplete_json = try (command_contract.CommandResult{
+        .command = "test",
+        .cwd = workspace,
+        .output_incomplete = true,
+    }).toJson(alloc);
+    defer alloc.free(incomplete_json);
+    try std.testing.expect(std.mem.find(u8, incomplete_json, "\"output_incomplete\":true") != null);
+}
+
+test "stderr read failure still drains large stdout without hanging" {
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const workspace = try io_mod.dirRealpathAlloc(alloc, tmp.dir, ".");
+    defer alloc.free(workspace);
+
+    const argv = [_][]const u8{
+        "/bin/sh",
+        "-c",
+        "head -c 131072 /dev/zero | tr '\\0' 'X'; exit 0",
+    };
+    var child = try std.process.spawn(io_mod.getIo(), .{
+        .argv = &argv,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .cwd = .{ .path = workspace },
+        .pgid = 0,
+    });
+    defer cleanupChild(&child);
+
+    const process_group_id = child.id;
+    var observer = try ProcessObserver.init(&child);
+    defer observer.deinit();
+
+    observer.stderr.close(observer.waiter.io);
+    observer.stderr = try tmp.dir.createFile(
+        io_mod.getIo(),
+        "unreadable.stderr",
+        .{ .truncate = true },
+    );
+
+    try observer.start();
+    defer observer.abort(process_group_id);
+
+    const cfg = Config{ .max_command_output_bytes = 2_097_152 };
+    var output = OutputCollector.init(alloc, cfg);
+    defer output.deinit();
+    var leader_status: ?command_contract.CommandStatus = null;
+
+    const source = try collectOutputForProcess(
+        alloc,
+        &observer,
+        &output,
+        cfg,
+        null,
+        process_group_id,
+        .process_group,
+        &leader_status,
+    );
+
+    const status = try waitForCollectedProcess(
+        &observer,
+        source,
+        process_group_id,
+        leader_status,
+    );
+    const collected = try output.finish(status);
+    defer alloc.free(collected.stdout);
+    defer alloc.free(collected.stderr);
+
+    try std.testing.expect(collected.output_incomplete);
+    try std.testing.expect(collected.stdout.len > 65_536);
+    try std.testing.expectEqual(@as(?i64, 0), command_contract.projectStatus(collected.status).exit_code);
+}
+
+test "successful command reports complete output in metadata and json" {
+    const result = try executeCommand(.{
+        .max_command_output_bytes = 4096,
+    }, std.testing.allocator, "printf 'ok'", "/tmp");
+    defer std.testing.allocator.free(result.output);
+
+    try std.testing.expect(!result.command_result.?.output_incomplete);
+    const json = try result.command_result.?.toJson(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    try std.testing.expect(std.mem.find(u8, json, "output_incomplete") == null);
 }
 
 test "timeout source is distinct from cancellation" {
