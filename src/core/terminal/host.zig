@@ -517,7 +517,7 @@ fn runSupported(alloc: Allocator, config: Config) !void {
         startup.ready.set(io_mod.getIo());
         accept_thread.join();
         accept_joined = true;
-        if (!drainConnectedClients(&state, client_drain_timeout_ms)) {
+        if (!drainConnectedClients(io_mod.getIo(), &state, client_drain_timeout_ms)) {
             debug_trace.logf(
                 "terminal_host",
                 "host startup failed with {d} client thread(s) still running; preserving shared state until process exit",
@@ -554,7 +554,7 @@ fn runSupported(alloc: Allocator, config: Config) !void {
     }, &persistent_store, &host_instance, paths.authority_root_path, paths.transport_root_path);
     defer if (clients_drained) registry.deinit();
     defer {
-        clients_drained = drainConnectedClients(&state, client_drain_timeout_ms);
+        clients_drained = drainConnectedClients(io_mod.getIo(), &state, client_drain_timeout_ms);
         if (!clients_drained) {
             debug_trace.logf(
                 "terminal_host",
@@ -760,23 +760,25 @@ fn updateLiveWork(raw: ?*anyopaque, live: bool) void {
 /// until its peer speaks or disconnects, and a fatal host path must not hang
 /// waiting for it. Returns whether the drain completed; the caller keeps the
 /// shared state alive when it did not.
-fn drainConnectedClients(state: *HostState, timeout_ms: u64) bool {
+fn drainConnectedClients(zio: std.Io, state: *HostState, timeout_ms: u64) bool {
     state.stopping.store(true, .release);
     state.noteChanged();
 
-    const poll_ns: u64 = 5 * std.time.ns_per_ms;
-    var waited_ns: u64 = 0;
-    const limit_ns = std.math.mul(u64, timeout_ms, std.time.ns_per_ms) catch
-        std.math.maxInt(u64);
+    const poll_ns: i96 = 5 * std.time.ns_per_ms;
+    const limit_ns: i96 = @intCast(std.math.mul(u64, timeout_ms, std.time.ns_per_ms) catch
+        std.math.maxInt(u64));
+    const started = std.Io.Clock.Timestamp.now(zio, .awake);
     while (true) {
         if (state.connected_clients.load(.acquire) == 0) return true;
-        if (waited_ns >= limit_ns) return false;
+        const elapsed_ns = started.durationTo(
+            std.Io.Clock.Timestamp.now(zio, .awake),
+        ).raw.toNanoseconds();
+        if (elapsed_ns >= limit_ns) return false;
         std.Io.sleep(
-            io_mod.getIo(),
-            .{ .nanoseconds = @intCast(@min(poll_ns, limit_ns - waited_ns)) },
+            zio,
+            .fromNanoseconds(@min(poll_ns, limit_ns - elapsed_ns)),
             .awake,
         ) catch return state.connected_clients.load(.acquire) == 0;
-        waited_ns += poll_ns;
     }
 }
 
@@ -1961,19 +1963,42 @@ test "client drain reports success only when every client thread has left" {
     var state = HostState{ .idle_grace_ms = 0 };
 
     // No clients: the happy path, and it must not wait.
-    try std.testing.expect(drainConnectedClients(&state, 50));
+    try std.testing.expect(drainConnectedClients(std.testing.io, &state, 50));
     try std.testing.expect(state.stopping.load(.acquire));
 
     // A client that never leaves: the drain is bounded and reports failure
     // rather than blocking the host forever on a fatal path.
     state.stopping.store(false, .release);
     _ = state.connected_clients.fetchAdd(1, .acq_rel);
-    try std.testing.expect(!drainConnectedClients(&state, 50));
+    try std.testing.expect(!drainConnectedClients(std.testing.io, &state, 50));
     try std.testing.expect(state.stopping.load(.acquire));
 
     // The same client leaving makes the drain succeed.
     _ = state.connected_clients.fetchSub(1, .acq_rel);
-    try std.testing.expect(drainConnectedClients(&state, 50));
+    try std.testing.expect(drainConnectedClients(std.testing.io, &state, 50));
+}
+
+test "client drain counts scheduler delay against its deadline" {
+    const Delayed = struct {
+        elapsed_ns: i96 = 0,
+        fn now(raw: ?*anyopaque, _: std.Io.Clock) std.Io.Timestamp {
+            const self: *@This() = @ptrCast(@alignCast(raw.?));
+            return .{ .nanoseconds = self.elapsed_ns };
+        }
+        fn sleep(raw: ?*anyopaque, _: std.Io.Timeout) std.Io.Cancelable!void {
+            const self: *@This() = @ptrCast(@alignCast(raw.?));
+            self.elapsed_ns += 100 * std.time.ns_per_ms;
+        }
+    };
+    var delayed: Delayed = .{};
+    var vtable = std.testing.io.vtable.*;
+    vtable.now = Delayed.now;
+    vtable.sleep = Delayed.sleep;
+    const zio: std.Io = .{ .userdata = &delayed, .vtable = &vtable };
+    var state = HostState{ .idle_grace_ms = 0 };
+    state.connected_clients.store(1, .release);
+    try std.testing.expect(!drainConnectedClients(zio, &state, 50));
+    try std.testing.expectEqual(@as(i96, 100 * std.time.ns_per_ms), delayed.elapsed_ns);
 }
 
 test "a client that leaves during the drain window still drains" {
@@ -1990,7 +2015,7 @@ test "a client that leaves during the drain window still drains" {
     var thread = try std.Thread.spawn(.{}, Departing.run, .{&state});
     defer thread.join();
 
-    try std.testing.expect(drainConnectedClients(&state, 2_000));
+    try std.testing.expect(drainConnectedClients(std.testing.io, &state, 2_000));
     try std.testing.expectEqual(@as(usize, 0), state.connected_clients.load(.acquire));
 }
 

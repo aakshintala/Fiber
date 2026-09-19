@@ -3528,6 +3528,8 @@ describe("gateway stream lifecycle", () => {
       "import os,sys,time",
       "pid_path=sys.argv[1]",
       `count=${descendantCount}`,
+      // Exercise slow interpreter/fixture startup before any descendant exists.
+      "time.sleep(2.1)",
       "for _ in range(count):",
       " pid=os.fork()",
       " if pid == 0:",
@@ -3568,7 +3570,7 @@ printf '%s' ${JSON.stringify(trailingMarker)} > ${JSON.stringify(effectPath)}
           return fakeShellRun(timeoutCallId, command, {
             profile: "clean",
             yield_time_ms: 30_000,
-            timeout_ms: 2_000,
+            timeout_ms: 10_000,
           });
         case 1: {
           try {
