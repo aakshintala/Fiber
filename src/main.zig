@@ -2302,6 +2302,7 @@ const App = struct {
             self.approval_prompt.isActive() or
             @constCast(&self.mcp).projectPromptActive() or
             self.auth.signInEntryActive() or
+            self.terminal.alternate_screen_owner != .none or
             !self.shell.has_committed_frame or
             !self.shell.footer_viewport.has_frame or
             self.shell.footer_viewport.cursor.row == 0 or
@@ -2583,6 +2584,7 @@ const App = struct {
             RenderAppRuntime.requestActiveSurfaceFrame(self, .modal);
         }
         if (!self.shell.fullTranscriptActive() and
+            !self.terminal_input_runtime.native_clear_probe.active() and
             self.shell.takeReadyFullTranscriptOpen() and
             self.terminal.alternate_screen_owner == .none and
             !self.approval_prompt.isActive())
@@ -3369,6 +3371,36 @@ const handle_sigwinch: app_lifecycle.ResizeHandler = handleSigWinchNative;
 
 test "interactive startup does not begin with synthetic resize pending" {
     try std.testing.expect(!resize_interlock.resizePending());
+}
+
+test "native clear probe is ineligible while alternate screen owns the terminal" {
+    if (io_mod.getenv("TMUX") != null) return;
+
+    var app = App{
+        .alloc = std.testing.allocator,
+        .shell = .{
+            .has_committed_frame = true,
+            .layout = .{
+                .rows = 24,
+                .cols = 80,
+                .content_bottom = 21,
+                .divider_top_row = 22,
+                .input_row = 23,
+                .divider_bottom_row = 24,
+                .hint_row = 22,
+            },
+            .footer_viewport = .{
+                .has_frame = true,
+            },
+        },
+    };
+    const printable: u8 = 'a';
+
+    app.terminal.alternate_screen_owner = .none;
+    try std.testing.expect(app.nativeClearProbeEligible(printable));
+
+    app.terminal.alternate_screen_owner = .full_transcript;
+    try std.testing.expect(!app.nativeClearProbeEligible(printable));
 }
 
 test "session reset traces and clears active paste state" {
