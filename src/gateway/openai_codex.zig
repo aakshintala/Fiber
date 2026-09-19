@@ -510,6 +510,7 @@ fn mapReducerError(err: anyerror) anyerror {
         error.StreamIncomplete => error.OpenAICodexStreamIncomplete,
         error.ToolCallLimitExceeded => error.OpenAICodexToolCallLimitExceeded,
         error.ToolArgumentsTooLarge => error.OpenAICodexToolArgumentsTooLarge,
+        error.ConflictingToolArguments => error.OpenAICodexConflictingToolArguments,
         error.ResourceLimitExceeded => error.OpenAICodexResourceLimitExceeded,
         else => err,
     };
@@ -1119,6 +1120,14 @@ test "OpenAI Codex bounds every streamed argument representation and cleans stag
             .{ .tool_arguments_bytes = 3 },
         );
     }
+}
+
+test "OpenAI Codex maps conflicting argument finals to OpenAICodexConflictingToolArguments" {
+    const sse_text =
+        "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"tool\"}}\n\n" ++
+        "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"arguments\":\"{\\\"a\\\":1}\"}\n\n" ++
+        "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"arguments\":\"{\\\"b\\\":2}\"}}\n\n";
+    try expectOpenAICodexSseError(error.OpenAICodexConflictingToolArguments, sse_text, .{});
 }
 
 test "OpenAI Codex rejects oversized encrypted provider state" {
