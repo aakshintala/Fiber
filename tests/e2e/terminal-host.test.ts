@@ -49,6 +49,7 @@ import {
   expectProfileFailedRejection,
   failure,
   failureCode,
+  fileDiffersFrom,
   finishStartupObservation,
   forceCloseTerminalFixture,
   handshake,
@@ -67,6 +68,7 @@ import {
   protocolFixtureEnv,
   readSession,
   readSessionUntilContains,
+  readTextIfPresent,
   rememberStartAuthority,
   requestAction,
   requestScreen,
@@ -243,8 +245,7 @@ test("client reconciles an idle-retiring host before admitting a request", async
   }, buildCurrentClientFixture());
 
   await waitFor(() =>
-    existsSync(trace) &&
-    readFileSync(trace, "utf8").includes("host retiring idle=true")
+    readTextIfPresent(trace)?.includes("host retiring idle=true") ?? false
   );
 
   expect(await runClientFixture(home, 700)).toEqual({
@@ -511,10 +512,7 @@ test("durable authority survives reconnect and rejects every foreign scope", asy
   host.kill("SIGKILL");
   await waitForExit(host);
   const replacement = startHost(home, undefined, 10_000);
-  await waitFor(() =>
-    existsSync(paths.identity) &&
-    readFileSync(paths.identity, "utf8") !== priorIdentity
-  );
+  await waitFor(() => fileDiffersFrom(paths.identity, priorIdentity));
   const afterHostRestart = await handshake(paths.socket, { minimum: 4, current: 5 });
   const recoveredRead = await requestAction(
     afterHostRestart.client,
@@ -1007,9 +1005,7 @@ test("resized screen checkpoint survives a fresh host without raw reflow", async
   connected.client.close();
   const replacement = startHost(home, undefined, 300);
   await waitFor(
-    () =>
-      existsSync(paths.identity) &&
-      readFileSync(paths.identity, "utf8") !== oldIdentity,
+    () => fileDiffersFrom(paths.identity, oldIdentity),
     3_000,
   );
   const recovered = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -1889,7 +1885,7 @@ test.skipIf(process.platform !== "linux")(
       );
       expect(success(signaled, "signal").signal).toBe("terminate");
       await waitFor(
-        () => existsSync(termPath) && readFileSync(termPath, "utf8") === "term",
+        () => readTextIfPresent(termPath) === "term",
         2_000,
       );
       await waitFor(() => !processExists(childPid), 5_000);
@@ -2055,7 +2051,7 @@ while [ ! -e ${JSON.stringify(stopPath)} ]; do sleep 0.05; done
     );
     expect(success(signaled, "signal").signal).toBe("terminate");
     await waitFor(
-      () => existsSync(termPath) && readFileSync(termPath, "utf8") === "term",
+      () => readTextIfPresent(termPath) === "term",
       2_000,
     );
     expect(readFileSync(termPath, "utf8")).toBe("term");
@@ -2234,8 +2230,7 @@ test.skipIf(!tmuxAvailable())(
     const replacementStdout = streamText(replacement.stdout);
     const replacementStderr = streamText(replacement.stderr);
     await waitFor(() =>
-      existsSync(paths.socket) && existsSync(paths.identity) &&
-      readFileSync(paths.identity, "utf8") !== oldIdentity
+      existsSync(paths.socket) && fileDiffersFrom(paths.identity, oldIdentity)
     , 8_000);
     const recovered = await handshake(paths.socket, { minimum: 4, current: 5 });
     const listed = success(await requestAction(
@@ -2444,8 +2439,7 @@ test.skipIf(!tmuxAvailable())(
     const replacementStdout = streamText(replacement.stdout);
     const replacementStderr = streamText(replacement.stderr);
     await waitFor(
-      () => existsSync(paths.socket) && existsSync(paths.identity) &&
-        readFileSync(paths.identity, "utf8") !== firstIdentity,
+      () => existsSync(paths.socket) && fileDiffersFrom(paths.identity, firstIdentity),
       8_000,
     );
     const recovered = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -2688,8 +2682,7 @@ test(
       FIBER_TERMINAL_TEST_FAIL_CANCELLATION_OPEN: "1",
     });
     await waitFor(() =>
-      existsSync(paths.socket) && existsSync(paths.identity) &&
-      readFileSync(paths.identity, "utf8") !== oldIdentity
+      existsSync(paths.socket) && fileDiffersFrom(paths.identity, oldIdentity)
     );
     const reopened = await handshake(paths.socket, { minimum: 4, current: 5 });
     reopened.client.send(encodeFrame(
@@ -2712,9 +2705,11 @@ test(
       { cancel: {} },
     ));
     await expect(reopened.client.read()).rejects.toThrow("socket closed");
-    await waitFor(() => existsSync(trace) && readFileSync(trace, "utf8").includes(
-      `cancellation persistence failed correlation=335 session=${sessionId} err=${error}`,
-    ));
+    await waitFor(() =>
+      readTextIfPresent(trace)?.includes(
+        `cancellation persistence failed correlation=335 session=${sessionId} err=${error}`,
+      ) ?? false,
+    );
 
     const cleanup = await handshake(paths.socket, { minimum: 4, current: 5 });
     success(await requestAction(cleanup.client, cleanup.revision!, 336, "close", {
@@ -2992,10 +2987,8 @@ test("completed sessions recycle capacity and release every native backend resou
 
   const replacement = startHost(home, undefined, 10_000);
   await waitFor(
-    () =>
-      existsSync(paths.identity) &&
-      readFileSync(paths.identity, "utf8") !== previousIdentity,
-    3_000,
+    () => fileDiffersFrom(paths.identity, previousIdentity),
+    10_000,
   );
   const reopened = await handshake(paths.socket, { minimum: 4, current: 5 });
   const reopenedRead = await requestAction(
@@ -3603,9 +3596,7 @@ test("host crash closes the liveness channel and kills the terminal process grou
 
   const replacement = startHost(home, undefined, 1_000);
   await waitFor(
-    () =>
-      existsSync(paths.identity) &&
-      readFileSync(paths.identity, "utf8") !== oldIdentity,
+    () => fileDiffersFrom(paths.identity, oldIdentity),
     3_000,
   );
   const recovered = await handshake(paths.socket, { minimum: 4, current: 5 });
@@ -3866,8 +3857,7 @@ test.skipIf(!tmuxAvailable())(
     const replacement = startHost(home, undefined, 700);
     await waitFor(() =>
       existsSync(transport.socket) &&
-      existsSync(durable.identity) &&
-      readFileSync(durable.identity, "utf8") !== oldIdentity
+      fileDiffersFrom(durable.identity, oldIdentity)
     , 8_000);
     const recovered = await handshake(transport.socket, {
       minimum: 4,

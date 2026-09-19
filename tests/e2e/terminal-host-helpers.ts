@@ -805,6 +805,21 @@ export async function expectAbsentDuring(path: string, windowMs: number): Promis
   expect(existsSync(path)).toBe(false);
 }
 
+// ENOENT from a waitFor predicate must retry, not abort the poll.
+export function readTextIfPresent(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+export function fileDiffersFrom(path: string, previous: string): boolean {
+  const text = readTextIfPresent(path);
+  return text !== undefined && text !== previous;
+}
+
 export async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs = 2_000,
@@ -843,10 +858,9 @@ export async function expectProfileFailedRejection(
   expect(sessionId).toBeDefined();
   await waitFor(
     () =>
-      existsSync(tracePath) &&
-      readFileSync(tracePath, "utf8").includes(
+      readTextIfPresent(tracePath)?.includes(
         `tmux startup failed id=${sessionId} code=2`,
-      ),
+      ) ?? false,
     5_000,
     label,
   );
