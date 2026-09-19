@@ -52,7 +52,7 @@ pub const Store = struct {
             .list => |value| switch (request) {
                 .list => |filters| if (filters.task_id == null and
                     filters.workspace_root == null and filters.lifecycle == null and
-                    filters.backend == null)
+                    filters.backend == null and filters.owner_authority == null)
                 {
                     try self.replaceAll(alloc, value.sessions);
                 } else for (value.sessions) |facts| {
@@ -105,6 +105,25 @@ pub const Store = struct {
         return true;
     }
 
+    /// Records the launch command for a session that never issued a terminal
+    /// `.start` request, such as a captured shell execution. Existing rows keep
+    /// their lifecycle facts; only the label is replaced.
+    pub fn recordLabel(
+        self: *Store,
+        alloc: Allocator,
+        session_id: []const u8,
+        label: []const u8,
+    ) !void {
+        for (self.rows.items) |*row| {
+            if (!std.mem.eql(u8, row.session_id, session_id)) continue;
+            const replacement = try alloc.dupe(u8, label);
+            alloc.free(row.label);
+            row.label = replacement;
+            return;
+        }
+        try self.upsert(alloc, unlabeledFacts(session_id), label);
+    }
+
     fn replaceAll(
         self: *Store,
         alloc: Allocator,
@@ -122,9 +141,36 @@ pub const Store = struct {
             }
             try replacement.upsert(alloc, facts, label);
         }
+        for (self.rows.items) |row| {
+            if (!labelIsCommand(row)) continue;
+            if (catalogContains(sessions, row.session_id)) continue;
+            try replacement.recordLabel(alloc, row.session_id, row.label);
+        }
         var previous = self.*;
         self.* = replacement;
         previous.deinit(alloc);
+    }
+
+    fn unlabeledFacts(session_id: []const u8) contracts.SessionFacts {
+        return .{
+            .session_id = session_id,
+            .lifecycle = .running,
+            .attention = .{},
+            .backend = .native,
+            .output_cursor = .{ .segment = 1, .offset = 0 },
+            .screen_recovery = .{ .unavailable = .missing },
+        };
+    }
+
+    fn labelIsCommand(row: Row) bool {
+        return row.label.len != 0 and !std.mem.eql(u8, row.label, row.session_id);
+    }
+
+    fn catalogContains(sessions: []const contracts.SessionFacts, session_id: []const u8) bool {
+        for (sessions) |facts| {
+            if (std.mem.eql(u8, facts.session_id, session_id)) return true;
+        }
+        return false;
     }
 
     fn upsert(
@@ -159,6 +205,74 @@ pub const Store = struct {
         });
     }
 };
+
+test "recordLabel stores a launch command for a session with no start request" {
+    const alloc = std.testing.allocator;
+    var store: Store = .{};
+    defer store.deinit(alloc);
+    try store.recordLabel(alloc, "shell-captured", "printf CAPTURED_READY");
+    var snapshot = try store.snapshot(alloc);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(usize, 1), snapshot.rows.len);
+    try std.testing.expectEqualStrings("shell-captured", snapshot.rows[0].session_id);
+    try std.testing.expectEqualStrings("printf CAPTURED_READY", snapshot.rows[0].label);
+}
+
+test "catalog replaceAll keeps a captured launch command that is not in the catalog" {
+    const alloc = std.testing.allocator;
+    var store: Store = .{};
+    defer store.deinit(alloc);
+    try store.recordLabel(alloc, "shell-captured", "printf CAPTURED_READY");
+    const catalog = [_]contracts.SessionFacts{
+        testFacts("terminal-a", .running),
+    };
+    try store.observe(
+        alloc,
+        .{ .list = .{} },
+        .{ .success = .{ .list = .{ .sessions = &catalog } } },
+    );
+    var snapshot = try store.snapshot(alloc);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(usize, 2), snapshot.rows.len);
+    try std.testing.expectEqualStrings("terminal-a", snapshot.rows[0].session_id);
+    try std.testing.expectEqualStrings("terminal-a", snapshot.rows[0].label);
+    try std.testing.expectEqualStrings("shell-captured", snapshot.rows[1].session_id);
+    try std.testing.expectEqualStrings("printf CAPTURED_READY", snapshot.rows[1].label);
+}
+
+test "catalog replaceAll preserves a recorded launch command across a matching refresh" {
+    const alloc = std.testing.allocator;
+    var store: Store = .{};
+    defer store.deinit(alloc);
+    try store.recordLabel(alloc, "shell-resume", "printf TTY_RESUME_READY");
+    const catalog = [_]contracts.SessionFacts{
+        testFacts("shell-resume", .running),
+    };
+    try store.observe(
+        alloc,
+        .{ .list = .{} },
+        .{ .success = .{ .list = .{ .sessions = &catalog } } },
+    );
+    var snapshot = try store.snapshot(alloc);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(usize, 1), snapshot.rows.len);
+    try std.testing.expectEqual(contracts.Lifecycle.running, snapshot.rows[0].lifecycle);
+    try std.testing.expectEqualStrings("printf TTY_RESUME_READY", snapshot.rows[0].label);
+}
+
+fn checkRecordLabelAllocationFailures(alloc: Allocator) !void {
+    var store: Store = .{};
+    defer store.deinit(alloc);
+    try store.recordLabel(alloc, "shell-captured", "printf CAPTURED_READY");
+}
+
+test "recordLabel releases owned row fields on every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        checkRecordLabelAllocationFailures,
+        .{},
+    );
+}
 
 fn labelFromRequest(request: contracts.ActionRequest) ?[]const u8 {
     return switch (request) {

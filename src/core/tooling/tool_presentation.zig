@@ -8,6 +8,9 @@ const tool_dispatch = @import("tool_dispatch.zig");
 const terminal_contracts = @import("../terminal/contracts.zig");
 const terminal_client_runtime = @import("../terminal/client.zig");
 const terminal_ui_projection = @import("../terminal/ui_projection.zig");
+const background_sessions = @import("../terminal/background_sessions.zig");
+const managed_execution = @import("../execution/managed_execution.zig");
+const debug_trace = @import("../shared/debug_trace.zig");
 const types = @import("../shared/types.zig");
 const test_builtin_tools = if (builtin.is_test)
     @import("../../builtins/tools.zig")
@@ -410,12 +413,16 @@ fn resolveTerminalSessionTargetFromRows(
 }
 
 /// The caller owns the returned allocation and must free it with `alloc`.
+/// When `managed_executions` is set, a resumed TTY session is indexed first so
+/// inspect can record its launch command before the activity row is formatted.
 pub fn resolveTerminalDisplayTarget(
     alloc: Allocator,
     registry: tool_dispatch.Registry,
     workspace_root: []const u8,
     terminal_client: ?*terminal_client_runtime.Runtime,
     call: ToolCall,
+    managed_executions: ?*managed_execution.Runtime,
+    session_ctx: background_sessions.SessionContext,
 ) !?[]const u8 {
     var scratch_state = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer scratch_state.deinit();
@@ -424,6 +431,19 @@ pub fn resolveTerminalDisplayTarget(
         registry,
         call,
     ) orelse return null;
+    if (managed_executions) |runtime| {
+        background_sessions.ensureOwnedTtyIndexed(
+            session_ctx,
+            runtime,
+            session_id,
+        ) catch |err| {
+            debug_trace.logf(
+                "tool_presentation",
+                "owned session index failed session={s} err={s}",
+                .{ session_id, @errorName(err) },
+            );
+        };
+    }
     const runtime = terminal_client orelse return @as(?[]const u8, try resolveTerminalSessionTargetFromRows(
         alloc,
         workspace_root,
@@ -1020,6 +1040,66 @@ test "tool presentation preserves plain action fallbacks" {
         defer alloc.free(label);
         try std.testing.expectEqualStrings(case.expected, label);
     }
+}
+
+test "captured session display target is the launch command" {
+    const alloc = std.testing.allocator;
+    var projection: terminal_ui_projection.Store = .{};
+    defer projection.deinit(alloc);
+    try projection.recordLabel(alloc, "shell-captured", "printf CAPTURED_READY");
+    const call = ToolCall{
+        .id = "observe",
+        .name = "shell",
+        .arguments_json = "{\"action\":\"interact\",\"session_id\":\"shell-captured\"}",
+    };
+    var snapshot = try projection.snapshot(alloc);
+    defer snapshot.deinit();
+    const target = (try resolveTerminalDisplayTargetFromRows(
+        alloc,
+        test_tool_registry,
+        "/tmp/workspace",
+        call,
+        snapshot.rows,
+    )) orelse return error.TestExpectedEqual;
+    defer alloc.free(target);
+    try std.testing.expectEqualStrings("printf CAPTURED_READY", target);
+}
+
+test "captured session display target survives a catalog refresh" {
+    const alloc = std.testing.allocator;
+    var projection: terminal_ui_projection.Store = .{};
+    defer projection.deinit(alloc);
+    try projection.recordLabel(alloc, "shell-resume", "printf TTY_RESUME_READY");
+    try projection.observe(
+        alloc,
+        .{ .list = .{} },
+        .{ .success = .{ .list = .{ .sessions = &.{
+            terminal_contracts.SessionFacts{
+                .session_id = "terminal-other",
+                .lifecycle = .running,
+                .attention = .{},
+                .backend = .native,
+                .output_cursor = .{ .segment = 1, .offset = 0 },
+                .screen_recovery = .{ .unavailable = .missing },
+            },
+        } } } },
+    );
+    const call = ToolCall{
+        .id = "stop",
+        .name = "shell",
+        .arguments_json = "{\"action\":\"stop\",\"session_id\":\"shell-resume\"}",
+    };
+    var snapshot = try projection.snapshot(alloc);
+    defer snapshot.deinit();
+    const target = (try resolveTerminalDisplayTargetFromRows(
+        alloc,
+        test_tool_registry,
+        "/tmp/workspace",
+        call,
+        snapshot.rows,
+    )) orelse return error.TestExpectedEqual;
+    defer alloc.free(target);
+    try std.testing.expectEqualStrings("printf TTY_RESUME_READY", target);
 }
 
 test "terminal display target is call-local across a cold inspect projection update" {

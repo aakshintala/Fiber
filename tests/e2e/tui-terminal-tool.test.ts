@@ -254,7 +254,8 @@ test.skipIf(!tmuxAvailable())(
     expect(runResult).toContain(`\\"session_id\\":\\"${sessionId}\\"`);
     const scrollback = await active.captureFullScrollback();
     expect(scrollback).toContain("Ran printf CAPTURED_READY");
-    expect(scrollback).toContain(`Observed session ${sessionId}`);
+    expect(scrollback).toContain("Observed printf CAPTURED_READY");
+    expect(scrollback).not.toContain(`Observed session ${sessionId}`);
     expect(scrollback).not.toContain("Using terminal");
     expect(scrollback).not.toContain("Used terminal");
     expect(readFileSync(fixture.stderrPath, "utf8")).toBe("");
@@ -708,7 +709,8 @@ test.skipIf(!tmuxAvailable())(
     );
     expect(stopResult).toContain('\\"state\\":\\"stopped\\"');
     const scrollback = await resumed.captureFullScrollback();
-    expect(scrollback).toContain(`Stopped session ${sessionId}`);
+    expect(scrollback).toContain("Stopped printf 'TTY_RESUME_READY");
+    expect(scrollback).not.toContain(`Stopped session ${sessionId}`);
     expect(scrollback).not.toContain("Exited 143");
     const record = terminalRecords(fixture.home).find((candidate) =>
       candidate.session_id === sessionId

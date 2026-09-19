@@ -305,6 +305,21 @@ pub const Runtime = struct {
         return self.projection.snapshot(alloc);
     }
 
+    /// Records a launch-command label without issuing a terminal action.
+    /// Captured shell executions use this because they never send `.start`.
+    pub fn recordSessionLabel(
+        self: *Runtime,
+        alloc: Allocator,
+        session_id: []const u8,
+        label: []const u8,
+    ) Allocator.Error!void {
+        const zio = io_mod.getIo();
+        self.mutex.lockUncancelable(zio);
+        defer self.mutex.unlock(zio);
+        if (self.alloc == null) self.alloc = alloc;
+        try self.projection.recordLabel(self.alloc.?, session_id, label);
+    }
+
     pub fn deinit(self: *Runtime) void {
         const zio = io_mod.getIo();
         self.mutex.lockUncancelable(zio);

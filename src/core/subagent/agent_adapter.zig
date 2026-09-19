@@ -13,6 +13,7 @@ const file_mutation = @import("../tooling/file_mutation.zig");
 const tool_admission = @import("../tooling/tool_admission.zig");
 const tool_presentation = @import("../tooling/tool_presentation.zig");
 const tool_result_errors = @import("../tooling/tool_result_errors.zig");
+const background_sessions = @import("../terminal/background_sessions.zig");
 const model_tool_schema = @import("../tooling/model_tool_schema.zig");
 const tool_runtime = @import("../tooling/tool_runtime.zig");
 const tool_mcp_runtime = @import("../tooling/tool_mcp_runtime.zig");
@@ -623,12 +624,15 @@ fn describeToolActionCompleted(raw: *anyopaque, arena: Allocator, call: types.To
 
 fn resolveToolActionDisplayTarget(raw: *anyopaque, arena: Allocator, call: types.ToolCall) !?[]const u8 {
     const context: *Context = @ptrCast(@alignCast(raw));
+    const tool_ctx = context.toolContext();
     return tool_presentation.resolveTerminalDisplayTarget(
         arena,
-        context.config.tool_context.tool_registry,
-        context.config.tool_context.workspace_root,
-        context.config.tool_context.terminal_client,
+        tool_ctx.tool_registry,
+        tool_ctx.workspace_root,
+        tool_ctx.terminal_client,
         call,
+        tool_ctx.managed_executions,
+        background_sessions.fromToolContext(arena, tool_ctx),
     );
 }
 
