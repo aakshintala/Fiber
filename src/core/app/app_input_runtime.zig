@@ -1578,8 +1578,7 @@ pub fn Runtime(comptime App: type) type {
             if (app.stream.active) {
                 if (draftHasState(app)) {
                     clearDraftState(app, "ctrl_c");
-                    const disarm = gesture_state.disarmCtrlCExit(app.input_runtime.gestures);
-                    app.input_runtime.gestures = disarm.next;
+                    disarmCtrlCExit(app, "ctrl_c_draft_clear");
                     app.shell.render_requests.request(.footer);
                     return;
                 }
@@ -10212,6 +10211,30 @@ test "app_input_runtime active Ctrl-C with draft clears draft without cancelling
     try Runtime(RoutingFakeApp).handleByte(&app, 3, 4096, 100);
 
     try std.testing.expectEqualStrings("", app.input_runtime.edit_state.input.items);
+    try std.testing.expect(app.stream.active);
+    try std.testing.expect(!app.worker.cancel_requested);
+    try std.testing.expectEqualStrings("", app.transcript.items);
+    try std.testing.expect(!app.input_runtime.gestures.ctrlCExitArmed());
+    try std.testing.expect(!app.should_exit);
+    try std.testing.expect(app.shell.render_requests.hasReason(.footer));
+}
+
+test "app_input_runtime active Ctrl-C with pasted block draft clears draft without cancelling stream" {
+    const alloc = std.testing.allocator;
+    var app = try RoutingFakeApp.init(alloc);
+    defer app.deinit();
+    app.stream.active = true;
+    try app.input_runtime.entities.pasted_blocks.append(alloc, .{
+        .id = 1,
+        .text = try alloc.dupe(u8, "owned pasted text"),
+        .line_count = 1,
+    });
+    try std.testing.expectEqualStrings("", app.input_runtime.edit_state.input.items);
+    app.shell.render_requests.clearReason(.footer);
+
+    try Runtime(RoutingFakeApp).handleByte(&app, 3, 4096, 100);
+
+    try std.testing.expectEqual(@as(usize, 0), app.input_runtime.entities.pasted_blocks.items.len);
     try std.testing.expect(app.stream.active);
     try std.testing.expect(!app.worker.cancel_requested);
     try std.testing.expectEqualStrings("", app.transcript.items);
