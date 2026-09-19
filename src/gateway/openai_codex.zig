@@ -1,5 +1,6 @@
 const std = @import("std");
 const chatgpt_oauth = @import("../core/auth/chatgpt_oauth.zig");
+const connection_mod = @import("../protocols/presets/connection.zig");
 const image_attachments = @import("../core/images/image_attachments.zig");
 const secret = @import("../core/auth/secret.zig");
 const stream_provider = @import("../core/agent/stream_provider.zig");
@@ -11,6 +12,7 @@ const model_tool_schema = @import("../core/tooling/model_tool_schema.zig");
 
 const Allocator = std.mem.Allocator;
 const endpoint = "https://chatgpt.com/backend-api/codex/responses";
+const codex_connection_name = "codex";
 const e2e_endpoint_env = "FIBER_E2E_OPENAI_CODEX_RESPONSES_URL";
 const max_error_body_bytes: usize = 1024 * 1024;
 const max_sse_line_bytes: usize = 32 * 1024 * 1024;
@@ -183,22 +185,31 @@ const OpenRequestOperation = struct {
     }
 };
 
+/// Refusal for an insecure endpoint, naming the actual connection via the
+/// shared helper — never a hardcoded vendor. Built separately so tests pin
+/// the message without touching the network.
+fn insecure_transport_refusal(alloc: Allocator, send: connection_mod.CredentialSend) !stream_provider.Result {
+    const detail = try connection_mod.insecure_transport_detail(alloc, send);
+    return .{ .failed = .{
+        .kind = .invalid_request,
+        .detail = detail,
+        .ownership = .owned,
+    } };
+}
+
 pub fn streamPrepared(
     alloc: Allocator,
     request: stream_provider.ModelRequest,
     payload: []const u8,
 ) !stream_provider.Result {
     if (request.cancel_flag.load(.seq_cst)) return stream_provider.failResult(error.Cancelled);
+    const override = io_mod.getenv(e2e_endpoint_env);
+    if (override) |candidate| {
+        _ = std.Uri.parse(candidate) catch return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint);
+    }
+    const request_endpoint = override orelse endpoint;
     const account_id = try chatgpt_oauth.extractAccountId(alloc, request.credential.secret);
     defer alloc.free(account_id);
-    const auth_header = try std.fmt.allocPrint(alloc, "Bearer {s}", .{request.credential.secret});
-    defer secret.zeroAndFree(alloc, auth_header);
-    const request_endpoint = if (io_mod.getenv(e2e_endpoint_env)) |override| endpoint: {
-        if (!gateway_client.isLoopbackHttpUrl(override)) {
-            return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint);
-        }
-        break :endpoint override;
-    } else endpoint;
     const uri = try std.Uri.parse(request_endpoint);
 
     var extra_headers_buf: [7]std.http.Header = undefined;
@@ -220,17 +231,48 @@ pub fn streamPrepared(
 
     var client: std.http.Client = .{ .allocator = alloc, .io = io_mod.getIo() };
     defer client.deinit();
+    const connect_deadline = std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
+        .clock = .awake,
+        .raw = .fromMilliseconds(connect_timeout_ms),
+    });
+    try request.admission.admit();
+    // The credential send runs through the shared choke after admission on
+    // purpose: a `.failed` value returned before admission is masked
+    // upstream as ProviderAdmissionMissing, while admission itself is
+    // memory-only, so this refusal still precedes all network I/O with the
+    // connection named. The send carries the connection identity and the
+    // resolved endpoint — the override when set, else the compiled
+    // `https://` default — and the choke mints the only `Authorization`
+    // value this transport may attach, so this send site cannot bypass the
+    // guard: `OpenRequestOperation` below is fed only from here. The
+    // catalog fetch (openai_codex_models.zig) keeps its own loopback-only
+    // override check until it mints through the choke (#405). A keyed
+    // credential never crosses plain HTTP off loopback (decision 12).
+    const send = connection_mod.CredentialSend{
+        .connection_name = codex_connection_name,
+        .kind = .oauth,
+        .base_url = request_endpoint,
+    };
+    const maybe_auth_header = connection_mod.checked_authorization(
+        alloc,
+        send,
+        request.credential.secret,
+    ) catch |err| switch (err) {
+        error.InsecureCredentialTransport => return insecure_transport_refusal(alloc, send),
+        // Unreachable on this path: the override pre-parse above rejects
+        // unparseable URLs, and the lease always carries a secret.
+        error.InvalidBaseUrl, error.MissingCredential => return stream_provider.failResult(error.InvalidE2EOpenAICodexEndpoint),
+        error.OutOfMemory => return err,
+    };
+    const auth_header = maybe_auth_header orelse
+        return stream_provider.failResult(error.CodexSubscriptionCredentialRequired);
+    defer secret.zeroAndFree(alloc, auth_header);
     var open_operation = OpenRequestOperation{
         .client = &client,
         .uri = uri,
         .auth_header = auth_header,
         .extra_headers = extra_headers_buf[0..extra_count],
     };
-    const connect_deadline = std.Io.Clock.Timestamp.fromNow(io_mod.getIo(), .{
-        .clock = .awake,
-        .raw = .fromMilliseconds(connect_timeout_ms),
-    });
-    try request.admission.admit();
     var opened = try gateway_client.runBoundedHttpOperation(
         OpenedRequest,
         alloc,
@@ -1124,4 +1166,71 @@ test "OpenAI Codex rejects a 129th streamed tool call" {
     } else |err| {
         try std.testing.expectEqual(error.OpenAICodexToolCallLimitExceeded, err);
     }
+}
+
+test "codex refuses an insecure override before any network I/O" {
+    const alloc = std.testing.allocator;
+    // Point the resolved endpoint at unroutable TEST-NET-1: any attempted
+    // I/O would return an `error`, never a `.failed` result, so observing
+    // the refusal — with delivery still definitely unsent — proves the
+    // choke fired before connecting.
+    const override = "http://192.0.2.1:9/v1";
+    // Install a process-wide endpoint override, then restore exactly what
+    // was there. Both maps live on the C allocator and leak deliberately
+    // (the setTestHome precedent): a leaked empty map stands in for
+    // "unset" — observably identical, every lookup misses — and stays
+    // valid forever, so later tests never read freed memory.
+    const prev_environ = io_mod.environMap();
+    const empty_env = try std.heap.c_allocator.create(std.process.Environ.Map);
+    empty_env.* = std.process.Environ.Map.init(std.heap.c_allocator);
+    const injected_env = try std.heap.c_allocator.create(std.process.Environ.Map);
+    injected_env.* = std.process.Environ.Map.init(std.heap.c_allocator);
+    try injected_env.put(e2e_endpoint_env, override);
+    io_mod.setEnvironMap(injected_env);
+    defer io_mod.setEnvironMap(if (prev_environ) |map| map else empty_env);
+
+    const payload = "{\"https://api.openai.com/auth\":{\"chatgpt_account_id\":\"acct_test\"}}";
+    var encoded_buf: [256]u8 = undefined;
+    const encoded = std.base64.url_safe_no_pad.Encoder.encode(
+        encoded_buf[0..std.base64.url_safe_no_pad.Encoder.calcSize(payload.len)],
+        payload,
+    );
+    var token_buf: [512]u8 = undefined;
+    const token = try std.fmt.bufPrint(&token_buf, "h.{s}.s", .{encoded});
+
+    const Admit = struct {
+        fn admit(_: *anyopaque) anyerror!void {}
+    };
+    var callback_context: u8 = 0;
+    var cancelled = std.atomic.Value(bool).init(false);
+    var delivery = stream_provider.DeliveryCertainty.init();
+    var evidence: stream_provider.AttemptEvidence = .{};
+    var result = try agent_stream_provider.stream(alloc, .{
+        .credential = .{ .secret = token, .source = .chatgpt_subscription },
+        .model = "gpt-5.6-sol",
+        .retry_count = 1,
+        .messages = &.{},
+        .tool_choice = .none,
+        .provider_options = .{},
+        .trace_ctx = .{},
+        .content_capture_limit = null,
+        .delivery = &delivery,
+        .attempt_evidence = &evidence,
+        .events = .{ .context = &callback_context, .emit_fn = struct {
+            fn ignore(_: *anyopaque, _: stream_provider.Event) void {}
+        }.ignore },
+        .admission = .{ .context = &callback_context, .admit_fn = Admit.admit },
+        .cancel_flag = &cancelled,
+    });
+    defer result.deinit(alloc);
+    const failure = switch (result) {
+        .failed => |failure| failure,
+        else => return error.TestExpectedRefusal,
+    };
+    try std.testing.expectEqual(stream_provider.FailureKind.invalid_request, failure.kind);
+    try std.testing.expectEqual(stream_provider.ResultOwnership.owned, failure.ownership);
+    const detail = failure.detail orelse return error.TestExpectedRefusalDetail;
+    try std.testing.expect(std.mem.find(u8, detail, "'codex'") != null);
+    try std.testing.expect(std.mem.find(u8, detail, override) != null);
+    try std.testing.expectEqual(stream_provider.DeliveryCertainty.State.definitely_unsent, delivery.load());
 }

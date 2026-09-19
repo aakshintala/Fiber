@@ -9,6 +9,7 @@ const cli_replay = @import("cli_replay.zig");
 const command_specs = @import("../slash_commands/command_specs.zig");
 const collections = @import("../shared/collections.zig");
 const config_runtime = @import("../config/config_runtime.zig");
+const connection_mod = @import("../../protocols/presets/connection.zig");
 const credentials = @import("../auth/credentials.zig");
 const model_provider = @import("../config/model_provider.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
@@ -1863,6 +1864,39 @@ fn resolveAuthLoginProvider(
     return pickAuthProviderInteractive(deps);
 }
 
+/// Answers `fiber auth login <connection>` for a keyless connection: a
+/// `none` credential carries no secret, so there is nothing to log in to.
+/// Returns false for anything else — unknown names, keyed connections, and
+/// connections without a declared credential all keep today's usage error —
+/// and for an unreadable startup, so a broken settings file never masks
+/// the argument error. Reads only; per-connection login for keyed kinds
+/// belongs to slice 1 (#95) and is not anticipated here.
+fn report_keyless_connection_login(
+    alloc: Allocator,
+    cfg: Config,
+    deps: RunDeps,
+    args: []const [:0]const u8,
+) !bool {
+    if (args.len != 1) return false;
+    var startup = deps.load_startup_state_without_credentials(
+        alloc,
+        cfg.default_model,
+        cfg.default_agent_step_limit,
+    ) catch return false;
+    defer startup.deinit(alloc);
+    const connection = startup.connections.get(args[0]) orelse return false;
+    const kind = connection.credential orelse return false;
+    if (connection_mod.requires_credential(kind)) return false;
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    try out.writer.print(
+        "fiber auth login: connection '{s}' needs no credential.\n",
+        .{args[0]},
+    );
+    try writeStdout(deps, out.written());
+    return true;
+}
+
 fn runProviderLogin(
     alloc: Allocator,
     cfg: Config,
@@ -2003,6 +2037,13 @@ fn runTopLevelAuth(
             try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
             return .handled_usage_error;
         }
+        // Connection lookup precedes provider parsing: a keyless
+        // connection keeps its messaging even when its name collides with
+        // a provider slug (a user `codex` connection shadows the Codex
+        // provider here). Anything else — unknown names, keyed
+        // connections, undeclared credentials — falls through to provider
+        // parsing unchanged.
+        if (try report_keyless_connection_login(alloc, cfg, deps, rest[1..])) return .handled_success;
         const maybe_provider = parseLoginProvider(rest[1..]) catch {
             try writeTopLevelUsage(cfg.command_catalog, deps, .auth);
             return .handled_usage_error;
@@ -6691,6 +6732,79 @@ test "auth login rejects --json" {
         capture.deps(),
     );
     try std.testing.expectEqual(RunResult.handled_usage_error, result);
+}
+
+fn keyless_connection_startup_for_test(
+    alloc: Allocator,
+    _: []const u8,
+    default_agent_step_limit: usize,
+) !app_lifecycle.StartupState {
+    var state = app_lifecycle.StartupState{ .agent_step_limit = default_agent_step_limit };
+    errdefer state.deinit(alloc);
+    var parsed = try std.json.parseFromSlice(std.json.Value, alloc,
+        \\{"local":{"credential":"none","base_url":"http://127.0.0.1:11434/v1"},"keyed":{"credential":"api_key","base_url":"https://example.com/v1"},"codex":{"credential":"none","base_url":"http://127.0.0.1:11434/v1"}}
+    , .{});
+    defer parsed.deinit();
+    try connection_mod.parseSetInto(alloc, parsed.value, &state.connections, null);
+    return state;
+}
+
+test "auth login on a keyless connection needs no credential" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+    var deps = capture.deps();
+    deps.load_startup_state_without_credentials = keyless_connection_startup_for_test;
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("auth"), @constCast("login"), @constCast("local") },
+        testConfig(),
+        deps,
+    );
+    try std.testing.expectEqual(RunResult.handled_success, result);
+    try std.testing.expectEqualStrings(
+        "fiber auth login: connection 'local' needs no credential.\n",
+        capture.stdout.written(),
+    );
+}
+
+test "auth login on a keyless connection named like a provider keeps the messaging" {
+    var capture = CaptureOutput.init(std.testing.allocator);
+    defer capture.deinit();
+    var deps = capture.deps();
+    deps.load_startup_state_without_credentials = keyless_connection_startup_for_test;
+
+    const result = try runIfRequestedWithDeps(
+        std.testing.allocator,
+        &.{ @constCast("auth"), @constCast("login"), @constCast("codex") },
+        testConfig(),
+        deps,
+    );
+    try std.testing.expectEqual(RunResult.handled_success, result);
+    try std.testing.expectEqualStrings(
+        "fiber auth login: connection 'codex' needs no credential.\n",
+        capture.stdout.written(),
+    );
+}
+
+test "auth login keeps usage errors for keyed and unknown connections" {
+    for ([_][]const u8{ "keyed", "unknown" }) |name| {
+        var capture = CaptureOutput.init(std.testing.allocator);
+        defer capture.deinit();
+        var deps = capture.deps();
+        deps.load_startup_state_without_credentials = keyless_connection_startup_for_test;
+        const owned = try std.testing.allocator.dupeZ(u8, name);
+        defer std.testing.allocator.free(owned);
+
+        const result = try runIfRequestedWithDeps(
+            std.testing.allocator,
+            &.{ @constCast("auth"), @constCast("login"), owned },
+            testConfig(),
+            deps,
+        );
+        try std.testing.expectEqual(RunResult.handled_usage_error, result);
+        try std.testing.expect(std.mem.find(u8, capture.stdout.written(), "needs no credential") == null);
+    }
 }
 
 test "auth list renders provider catalog json" {

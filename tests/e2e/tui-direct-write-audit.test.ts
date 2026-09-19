@@ -91,7 +91,8 @@ describe("tui: direct-write audit", () => {
     expect(output).toContain("category=terminal_reset");
     expect(output).toContain("path=src/core/app/app_entry_runtime.zig");
     expect(output).toContain("function=writeRealStdout");
-  });
+    // This scans every source file; correctness is not a five-second CPU budget.
+  }, 30_000);
 
   test("accepts owned forms and rejects unowned acquisition or writes", () => {
     const fixtures: Fixture[] = [

@@ -2,6 +2,7 @@ const std = @import("std");
 const io_mod = @import("../shared/io.zig");
 const agent_steps = @import("../config/agent_steps.zig");
 const config_runtime = @import("../config/config_runtime.zig");
+const connection_mod = @import("../../protocols/presets/connection.zig");
 const auth_runtime = @import("../auth/auth_runtime.zig");
 const credentials = @import("../auth/credentials.zig");
 const host = @import("../hosts/host.zig");
@@ -112,6 +113,12 @@ pub const StartupState = struct {
     credential: ?credentials.Credential = null,
     credential_onboarding_skipped: bool = false,
     provider: model_provider.ProviderId = .codex,
+    /// Merged connection records (embedded presets plus user settings),
+    /// moved out of the settings load so CLI layers can answer
+    /// connection questions — such as keyless-login messaging — without
+    /// reloading settings. Routing still resolves through today's
+    /// provider path; this carries config, not a route.
+    connections: connection_mod.ConnectionSet = .{},
     selected_model: []u8 = &.{},
     configured_model: []u8 = &.{},
     model_source: config_runtime.ModelSource = .compiled_default,
@@ -148,6 +155,7 @@ pub const StartupState = struct {
         if (self.selected_model.len > 0) alloc.free(self.selected_model);
         if (self.configured_model.len > 0) alloc.free(self.configured_model);
         self.permission_rules.deinit(alloc);
+        self.connections.deinit(alloc);
         if (self.config_diagnostics.len > 0) {
             for (self.config_diagnostics) |*diagnostic| diagnostic.deinit(alloc);
             alloc.free(self.config_diagnostics);
@@ -362,6 +370,8 @@ fn loadStartupStateFromOwnedWorkspace(
     if (hasProcessModelOverride()) state.model_source = .process_override;
     state.config_diagnostics = detailed.diagnostics;
     detailed.diagnostics = &.{};
+    state.connections = detailed.settings.connections;
+    detailed.settings.connections = .{};
     state.prompt_history_enabled = settings.prompt_history_enabled orelse true;
     state.prompt_history_store_allowed = detailed.prompt_history_store_allowed;
     if (credential_mode) |mode| {

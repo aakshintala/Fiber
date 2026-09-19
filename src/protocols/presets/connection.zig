@@ -49,6 +49,15 @@ pub const CredentialKind = enum {
     }
 };
 
+/// Classifies the four credential kinds (decision 12; issue #45): only
+/// `none` travels without a secret. `fiber auth login` reads this to
+/// report keyless connections; the transport guard below exempts `none`
+/// from the plain-HTTP refusal. Per-connection header selection lands
+/// with routing (#289).
+pub fn requires_credential(kind: CredentialKind) bool {
+    return kind != .none;
+}
+
 /// Wire format. Anthropic Messages and other adapters extend this enum in
 /// their own tickets; unknown values fail here rather than at request time.
 pub const Protocol = enum {
@@ -282,6 +291,240 @@ pub const ConnectionSet = struct {
         try target.value_ptr.mergeFrom(alloc, incoming);
     }
 };
+
+/// Resolves the base URL one request uses (decision 6): a model entry
+/// override wins, otherwise the connection default applies. Runtime API:
+/// request-time routing resolves each model through here, then sends the
+/// resolved URL through `checked_authorization` — resolution never
+/// bypasses the guard. Returns null when neither layer sets one.
+/// Borrowed; empty model names only match an entry literally named empty,
+/// which the parser rejects.
+pub fn resolve_base_url(connection: *const Connection, model_name: []const u8) ?[]const u8 {
+    if (connection.models.getPtr(model_name)) |override| {
+        if (override.base_url) |url| return url;
+    }
+    return connection.base_url;
+}
+
+/// Loopback for the transport guard (decision 12, amended on #303):
+/// `localhost`, `127.0.0.0/8` and `::1`. Anything else, including an empty
+/// or unparseable host, is not loopback: the guard fails closed.
+fn is_loopback_host(host: []const u8) bool {
+    if (host.len == 0) return false;
+    const bare = if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']')
+        host[1 .. host.len - 1]
+    else
+        host;
+    if (bare.len == 0) return false;
+    if (std.ascii.eqlIgnoreCase(bare, "localhost")) return true;
+    if (std.mem.eql(u8, bare, "::1")) return true;
+    return is_loopback_ipv4(bare);
+}
+
+fn is_loopback_ipv4(host: []const u8) bool {
+    var parts: [4][]const u8 = undefined;
+    var count: usize = 0;
+    var iterator = std.mem.splitScalar(u8, host, '.');
+    while (iterator.next()) |part| {
+        if (count >= parts.len) return false;
+        parts[count] = part;
+        count += 1;
+    }
+    if (count != parts.len) return false;
+    if (!std.mem.eql(u8, parts[0], "127")) return false;
+    for (parts[1..]) |part| {
+        if (part.len == 0 or part.len > 3) return false;
+        var value: u16 = 0;
+        for (part) |byte| {
+            if (byte < '0' or byte > '9') return false;
+            value = value * 10 + (byte - '0');
+        }
+        if (value > 255) return false;
+    }
+    return true;
+}
+
+/// Transport validation for one credential send (decision 12). A dedicated
+/// bounded set: transport failures never widen the parser `Error` set and
+/// never travel as an inferred set. Both variants fail closed — no secret
+/// is sent — but they mean different things: `InvalidBaseUrl` is an
+/// unparseable URL, `InsecureCredentialTransport` is plain HTTP to a host
+/// other than loopback (or a missing host) for a keyed credential.
+pub const TransportError = error{
+    MissingCredential,
+    InvalidBaseUrl,
+    InsecureCredentialTransport,
+    OutOfMemory,
+};
+
+/// Refuses, before any network I/O, to send a keyed credential over plain
+/// HTTP to a host other than loopback (decision 12). Keyless (`none`)
+/// connections may use `http://` anywhere, and `https://` is unaffected.
+/// Callers report the failure naming the connection; the error itself
+/// carries no strings.
+/// One credential send through the choke: the ACTUAL connection identity
+/// plus its RESOLVED per-model URL. Connection-backed transports build
+/// this only via `resolve`, which resolves the per-model URL internally,
+/// so a model-entry override can never be bypassed by passing the
+/// connection default. (The Codex transport owns no `Connection` entry;
+/// it builds the value from its fixed identity and resolved endpoint.)
+/// Either way the guard below sees the URL that will actually be dialed,
+/// and refusals name this connection. All fields are borrowed.
+pub const CredentialSend = struct {
+    connection_name: []const u8,
+    kind: CredentialKind,
+    base_url: []const u8,
+
+    fn resolve(connection_name: []const u8, connection: *const Connection, model_name: []const u8) TransportError!CredentialSend {
+        const kind = connection.credential orelse return error.MissingCredential;
+        const url = resolve_base_url(connection, model_name) orelse return error.InvalidBaseUrl;
+        return .{ .connection_name = connection_name, .kind = kind, .base_url = url };
+    }
+};
+
+/// Owned refusal detail naming the refused connection. Built separately so
+/// the choke error itself carries no strings while every report names the
+/// actual connection — never a hardcoded vendor. Caller owns the result.
+pub fn insecure_transport_detail(alloc: Allocator, send: CredentialSend) TransportError![]u8 {
+    return std.fmt.allocPrint(
+        alloc,
+        "connection '{s}' refuses to send its credential over plain HTTP to '{s}'; use https:// or loopback http://",
+        .{ send.connection_name, send.base_url },
+    );
+}
+
+/// Single choke for every model credential send (decision 12): guards the
+/// resolved per-model base URL on the send, then mints the `Authorization`
+/// value — or returns null when the connection is keyless, so a `none`
+/// route has no header value to attach and the fake sees zero Authorization
+/// bytes. A transport cannot send what it cannot mint: the only way to
+/// turn a secret into a header value is through here, which keeps the next
+/// transport (#289, #295) inside the invariant by construction. Callers
+/// report failures with `insecure_transport_detail`, which names the
+/// send's connection; the error itself carries no strings. The returned
+/// slice is owned by the caller, which zeroes and frees it; null needs no
+/// cleanup.
+pub fn checked_authorization(
+    alloc: Allocator,
+    send: CredentialSend,
+    secret: ?[]const u8,
+) TransportError!?[]u8 {
+    if (send.kind == .none) {
+        if (secret != null) return error.MissingCredential;
+        return null;
+    }
+    const owned = secret orelse return error.MissingCredential;
+    try check_credential_transport(send.kind, send.base_url);
+    return try std.fmt.allocPrint(alloc, "Bearer {s}", .{owned});
+}
+
+fn check_credential_transport(kind: CredentialKind, base_url: []const u8) TransportError!void {
+    if (kind == .none) return;
+    const uri = std.Uri.parse(base_url) catch return error.InvalidBaseUrl;
+    if (!std.ascii.eqlIgnoreCase(uri.scheme, "http")) return;
+    const host_component = uri.host orelse return error.InsecureCredentialTransport;
+    var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
+    const host = host_component.toRaw(&host_buf) catch return error.InvalidBaseUrl;
+    if (is_loopback_host(host)) return;
+    return error.InsecureCredentialTransport;
+}
+
+/// Strict-standard Chat Completions compat for a connection that sets no
+/// compat flags (decision 7): exactly what pi's `openai-completions.js`
+/// `detectCompat` returns with no vendor matched (pi-ai 0.85.1), so Fiber
+/// never sniffs the URL to guess quirks. Declared flags layer over these
+/// in the adapter ticket (#295), which owns the flag vocabulary. pi's
+/// vendor-routing objects (`openRouterRouting`, `vercelGatewayRouting`,
+/// `chatTemplateKwargs`, `chatTemplateArgs`) are omitted here: Fiber's
+/// generic escape hatch for those knobs is `extra_body` (decision data).
+const StrictStandardCompat = struct {
+    supports_store: bool = true,
+    supports_developer_role: bool = true,
+    supports_reasoning_effort: bool = true,
+    supports_usage_in_streaming: bool = true,
+    supports_finish_reason: bool = true,
+    max_tokens_field: []const u8 = "max_completion_tokens",
+    requires_tool_result_name: bool = false,
+    requires_assistant_after_tool_result: bool = false,
+    requires_thinking_as_text: bool = false,
+    requires_reasoning_content_on_assistant_messages: bool = false,
+    thinking_format: []const u8 = "openai",
+    supports_strict_mode: bool = true,
+    supports_openai_grammar_tools: bool = false,
+    supports_thinking_token_budget: bool = false,
+    thinking_token_budget_field: ?[]const u8 = null,
+    cache_control_format: ?[]const u8 = null,
+    send_session_affinity_headers: bool = false,
+    deferred_tools_mode: ?[]const u8 = null,
+    session_affinity_format: []const u8 = "openai",
+    supports_long_cache_retention: bool = true,
+    zai_tool_stream: bool = false,
+};
+
+const strict_standard_compat: StrictStandardCompat = .{};
+
+/// One effective compat value. Declared entries layer over the strict
+/// standard, and everything here is borrowed — the caller never frees.
+pub const EffectiveCompat = union(enum) {
+    string: []const u8,
+    boolean: bool,
+    integer: i64,
+};
+
+/// Strict-standard default for one compat key (decision 7), or null when
+/// the key has no standard default and the adapter falls back on its own.
+/// Reads the single `strict_standard_compat` source above, so the table
+/// cannot drift from it.
+fn strict_compat_default(key: []const u8) ?EffectiveCompat {
+    const strict = strict_standard_compat;
+    if (std.mem.eql(u8, key, "supports_store")) return .{ .boolean = strict.supports_store };
+    if (std.mem.eql(u8, key, "supports_developer_role")) return .{ .boolean = strict.supports_developer_role };
+    if (std.mem.eql(u8, key, "supports_reasoning_effort")) return .{ .boolean = strict.supports_reasoning_effort };
+    if (std.mem.eql(u8, key, "supports_usage_in_streaming")) return .{ .boolean = strict.supports_usage_in_streaming };
+    if (std.mem.eql(u8, key, "supports_finish_reason")) return .{ .boolean = strict.supports_finish_reason };
+    if (std.mem.eql(u8, key, "max_tokens_field")) return .{ .string = strict.max_tokens_field };
+    if (std.mem.eql(u8, key, "requires_tool_result_name")) return .{ .boolean = strict.requires_tool_result_name };
+    if (std.mem.eql(u8, key, "requires_assistant_after_tool_result")) return .{ .boolean = strict.requires_assistant_after_tool_result };
+    if (std.mem.eql(u8, key, "requires_thinking_as_text")) return .{ .boolean = strict.requires_thinking_as_text };
+    if (std.mem.eql(u8, key, "requires_reasoning_content_on_assistant_messages")) return .{ .boolean = strict.requires_reasoning_content_on_assistant_messages };
+    if (std.mem.eql(u8, key, "thinking_format")) return .{ .string = strict.thinking_format };
+    if (std.mem.eql(u8, key, "supports_strict_mode")) return .{ .boolean = strict.supports_strict_mode };
+    if (std.mem.eql(u8, key, "supports_openai_grammar_tools")) return .{ .boolean = strict.supports_openai_grammar_tools };
+    if (std.mem.eql(u8, key, "supports_thinking_token_budget")) return .{ .boolean = strict.supports_thinking_token_budget };
+    if (std.mem.eql(u8, key, "thinking_token_budget_field")) return if (strict.thinking_token_budget_field) |value| .{ .string = value } else null;
+    if (std.mem.eql(u8, key, "cache_control_format")) return if (strict.cache_control_format) |value| .{ .string = value } else null;
+    if (std.mem.eql(u8, key, "send_session_affinity_headers")) return .{ .boolean = strict.send_session_affinity_headers };
+    if (std.mem.eql(u8, key, "deferred_tools_mode")) return if (strict.deferred_tools_mode) |value| .{ .string = value } else null;
+    if (std.mem.eql(u8, key, "session_affinity_format")) return .{ .string = strict.session_affinity_format };
+    if (std.mem.eql(u8, key, "supports_long_cache_retention")) return .{ .boolean = strict.supports_long_cache_retention };
+    if (std.mem.eql(u8, key, "zai_tool_stream")) return .{ .boolean = strict.zai_tool_stream };
+    return null;
+}
+
+fn declared_compat_value(declared: CompatValue) EffectiveCompat {
+    return switch (declared) {
+        .string => |text| .{ .string = text },
+        .boolean => |flag| .{ .boolean = flag },
+        .integer => |number| .{ .integer = number },
+    };
+}
+
+/// Effective compat for one model on a connection (decision 7): the model
+/// entry's declared value wins, then the connection's, then the strict
+/// standard — so a flagless connection ACTUALLY gets the defaults. Null
+/// means neither layer nor the standard says anything, and the adapter
+/// (#295) falls back on its own. Runtime API; borrowed.
+pub fn effective_compat(
+    connection: *const Connection,
+    model_name: []const u8,
+    key: []const u8,
+) ?EffectiveCompat {
+    if (connection.models.getPtr(model_name)) |override| {
+        if (override.compat.entries.get(key)) |declared| return declared_compat_value(declared);
+    }
+    if (connection.compat.entries.get(key)) |declared| return declared_compat_value(declared);
+    return strict_compat_default(key);
+}
 
 /// Names the connection and key behind an `UnknownConnectionKey` failure, so
 /// settings load can report both. Owned strings; empty unless set.
@@ -692,4 +935,381 @@ test "malformed connection shapes fail" {
             return error.TestExpectedParseFailure;
         } else |_| {}
     }
+}
+
+test "none needs no credential while keyed kinds do" {
+    try std.testing.expect(!requires_credential(.none));
+    try std.testing.expect(requires_credential(.oauth));
+    try std.testing.expect(requires_credential(.api_key));
+    try std.testing.expect(requires_credential(.env));
+}
+
+test "model resolution routes each model through the guarded choke" {
+    const alloc = std.testing.allocator;
+    var parsed = try parseTestValue(alloc,
+        \\{"local":{"credential":"api_key","base_url":"http://127.0.0.1:11434/v1","models":{"qwen":{"base_url":"http://192.0.2.1:11434/v1"},"llama":{}}},"keyless":{"credential":"none","base_url":"http://192.0.2.1:11434/v1"}}
+    );
+    defer parsed.deinit();
+    var set = ConnectionSet{};
+    defer set.deinit(alloc);
+    var detail = ParseDetail{};
+    defer detail.deinit(alloc);
+    try parseSetInto(alloc, parsed.value, &set, &detail);
+
+    const local = set.get("local") orelse return error.TestExpectedConnection;
+    // The override resolves per model and cannot bypass the choke: qwen
+    // refuses, while llama and undescribed models mint a Bearer value.
+    const qwen = try CredentialSend.resolve("local", local, "qwen");
+    try std.testing.expectEqualStrings("http://192.0.2.1:11434/v1", qwen.base_url);
+    try std.testing.expectError(
+        error.InsecureCredentialTransport,
+        checked_authorization(alloc, qwen, "s3cret"),
+    );
+    for ([_]bool{ true, false }) |described| {
+        const name = if (described) "llama" else "undescribed";
+        const send = try CredentialSend.resolve("local", local, name);
+        try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", send.base_url);
+        const minted = (try checked_authorization(alloc, send, "s3cret")) orelse
+            return error.TestExpectedHeader;
+        defer alloc.free(minted);
+        try std.testing.expectEqualStrings("Bearer s3cret", minted);
+    }
+
+    // A keyless route mints nothing, so no Authorization header can leave;
+    // a secret misrouted to it fails closed instead of sending.
+    const keyless = set.get("keyless") orelse return error.TestExpectedConnection;
+    const keyless_send = try CredentialSend.resolve("keyless", keyless, "any");
+    try std.testing.expect(try checked_authorization(alloc, keyless_send, null) == null);
+    try std.testing.expectError(
+        error.MissingCredential,
+        checked_authorization(alloc, keyless_send, "s3cret"),
+    );
+
+    // A connection with no credential and no URL cannot even build a send.
+    var bare = Connection{};
+    try std.testing.expect(resolve_base_url(&bare, "qwen") == null);
+    try std.testing.expectError(error.MissingCredential, CredentialSend.resolve("bare", &bare, "qwen"));
+}
+
+test "the choke refuses a non-codex route naming that connection" {
+    const alloc = std.testing.allocator;
+    var parsed = try parseTestValue(alloc,
+        \\{"local":{"credential":"api_key","base_url":"http://127.0.0.1:11434/v1","models":{"qwen":{"base_url":"http://192.0.2.1:11434/v1"}}}}
+    );
+    defer parsed.deinit();
+    var set = ConnectionSet{};
+    defer set.deinit(alloc);
+    var detail = ParseDetail{};
+    defer detail.deinit(alloc);
+    try parseSetInto(alloc, parsed.value, &set, &detail);
+
+    const local = set.get("local") orelse return error.TestExpectedConnection;
+    // Bypass-proof: the model override resolves — not the loopback
+    // default — so the choke sees the URL that would actually be dialed.
+    const send = try CredentialSend.resolve("local", local, "qwen");
+    try std.testing.expectEqualStrings("http://192.0.2.1:11434/v1", send.base_url);
+    try std.testing.expectError(
+        error.InsecureCredentialTransport,
+        checked_authorization(alloc, send, "s3cret"),
+    );
+    // The shared refusal names the actual connection, never a hardcoded vendor.
+    const refusal = try insecure_transport_detail(alloc, send);
+    defer alloc.free(refusal);
+    try std.testing.expect(std.mem.find(u8, refusal, "'local'") != null);
+    try std.testing.expect(std.mem.find(u8, refusal, "'codex'") == null);
+    try std.testing.expect(std.mem.find(u8, refusal, send.base_url) != null);
+
+    // Control: the undescribed model resolves the loopback default and mints.
+    const loopback = try CredentialSend.resolve("local", local, "llama");
+    try std.testing.expectEqualStrings("http://127.0.0.1:11434/v1", loopback.base_url);
+    const minted = (try checked_authorization(alloc, loopback, "s3cret")) orelse
+        return error.TestExpectedHeader;
+    defer alloc.free(minted);
+    try std.testing.expectEqualStrings("Bearer s3cret", minted);
+}
+
+/// Client half of the deterministic fake routed turn: posts `request` to
+/// the loopback fake and records delivery, so the main thread can serve
+/// and assert without blocking.
+const FakeTurnClient = struct {
+    port: u16,
+    request: []const u8,
+    delivered: std.atomic.Value(bool) = .init(false),
+    failed: std.atomic.Value(bool) = .init(false),
+
+    fn run(self: *FakeTurnClient) void {
+        const io = std.testing.io;
+        var address = std.Io.net.IpAddress.parse("127.0.0.1", self.port) catch
+            return self.finish(true);
+        var stream = address.connect(io, .{ .mode = .stream }) catch
+            return self.finish(true);
+        defer stream.close(io);
+        var send_buf: [1024]u8 = undefined;
+        var writer = stream.writer(io, &send_buf);
+        writer.interface.writeAll(self.request) catch return self.finish(true);
+        writer.interface.flush() catch return self.finish(true);
+        self.finish(false);
+    }
+
+    fn finish(self: *FakeTurnClient, failed: bool) void {
+        self.failed.store(failed, .release);
+        self.delivered.store(true, .release);
+    }
+};
+
+/// Serves one fake routed turn: accepts a single connection, reads the
+/// request head, and returns the observed `Authorization` value — or null
+/// when no such header crossed. Replies minimally so the client never
+/// blocks on a full buffer. The fake stands in for the resolved endpoint
+/// (same loopback class); what it observes is the choke's header
+/// decision, built from the choke's mint on the resolved send.
+fn serve_fake_turn(alloc: Allocator, listener: *std.Io.net.Server) !?[]u8 {
+    const io = std.testing.io;
+    var stream = try listener.accept(io);
+    defer stream.close(io);
+    var read_buf: [4096]u8 = undefined;
+    var reader = stream.reader(io, &read_buf);
+    var observed: ?[]u8 = null;
+    errdefer if (observed) |value| alloc.free(value);
+    while (true) {
+        const line = (try reader.interface.takeDelimiter('\n')) orelse break;
+        const trimmed = std.mem.trimEnd(u8, line, "\r");
+        if (trimmed.len == 0) break;
+        if (std.ascii.startsWithIgnoreCase(trimmed, "authorization:")) {
+            const value = std.mem.trimStart(u8, trimmed["authorization:".len..], " ");
+            if (observed) |previous| alloc.free(previous);
+            observed = try alloc.dupe(u8, value);
+        }
+    }
+    var send_buf: [128]u8 = undefined;
+    var writer = stream.writer(io, &send_buf);
+    try writer.interface.writeAll("HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok");
+    try writer.interface.flush();
+    return observed;
+}
+
+/// Runs one fake routed turn for a connection: resolves the per-model URL
+/// internally, builds the wire headers from the choke's decision, and
+/// asserts the fake observed exactly `want_auth` (null means zero
+/// Authorization bytes). The headers derive only from the choke's mint on
+/// the resolved send, so a model-entry override cannot be bypassed.
+fn run_fake_turn(
+    alloc: Allocator,
+    connection_name: []const u8,
+    connection: *const Connection,
+    model_name: []const u8,
+    secret: ?[]const u8,
+    want_auth: ?[]const u8,
+) !void {
+    const io = std.testing.io;
+    const send = try CredentialSend.resolve(connection_name, connection, model_name);
+    const minted = try checked_authorization(alloc, send, secret);
+    var auth_line: ?[]u8 = null;
+    if (minted) |value| {
+        defer alloc.free(value);
+        auth_line = try std.fmt.allocPrint(alloc, "authorization: {s}\r\n", .{value});
+    }
+    defer if (auth_line) |line| alloc.free(line);
+
+    var address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var listener = try address.listen(io, .{ .reuse_address = true });
+    defer listener.deinit(io);
+    const request = try std.fmt.allocPrint(
+        alloc,
+        "POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:{d}\r\n{s}content-length: 0\r\n\r\n",
+        .{ listener.socket.address.getPort(), auth_line orelse "" },
+    );
+    defer alloc.free(request);
+    var client = FakeTurnClient{ .port = listener.socket.address.getPort(), .request = request };
+    const thread = try std.Thread.spawn(.{}, FakeTurnClient.run, .{&client});
+    defer thread.join();
+    const observed = try serve_fake_turn(alloc, &listener);
+    while (!client.delivered.load(.acquire)) io.sleep(.{ .nanoseconds = std.time.ns_per_ms }, .real) catch {};
+    try std.testing.expect(!client.failed.load(.acquire));
+    if (want_auth) |want| {
+        const got = observed orelse return error.TestExpectedAuthHeader;
+        defer alloc.free(got);
+        try std.testing.expectEqualStrings(want, got);
+    } else if (observed) |got| {
+        defer alloc.free(got);
+        return error.TestUnexpectedAuthHeader;
+    }
+}
+
+test "a keyless routed turn sends zero Authorization bytes" {
+    const alloc = std.testing.allocator;
+    var parsed = try parseTestValue(alloc,
+        \\{"local":{"credential":"none","base_url":"http://127.0.0.1:11434/v1"},"keyed":{"credential":"api_key","base_url":"http://127.0.0.1:11434/v1"}}
+    );
+    defer parsed.deinit();
+    var set = ConnectionSet{};
+    defer set.deinit(alloc);
+    var detail = ParseDetail{};
+    defer detail.deinit(alloc);
+    try parseSetInto(alloc, parsed.value, &set, &detail);
+
+    const local = set.get("local") orelse return error.TestExpectedConnection;
+    try run_fake_turn(alloc, "local", local, "qwen2.5:7b", null, null);
+    // A secret misrouted to a keyless connection fails before any socket
+    // opens: the choke never mints for `none`.
+    const local_send = try CredentialSend.resolve("local", local, "qwen2.5:7b");
+    try std.testing.expectError(
+        error.MissingCredential,
+        checked_authorization(alloc, local_send, "s3cret"),
+    );
+
+    // Control: the same fake observes a keyed route's Bearer value, so the
+    // zero-bytes result above is detection, not blindness.
+    const keyed = set.get("keyed") orelse return error.TestExpectedConnection;
+    try run_fake_turn(alloc, "keyed", keyed, "qwen2.5:7b", "s3cret", "Bearer s3cret");
+}
+
+test "transport guard lets keyless connections use plain HTTP anywhere" {
+    const alloc = std.testing.allocator;
+    for ([_][]const u8{
+        "http://192.0.2.1:11434/v1",
+        "http://example.com/v1",
+        "https://example.com/v1",
+    }) |url| {
+        const send = CredentialSend{ .connection_name = "keyless", .kind = .none, .base_url = url };
+        try std.testing.expect(try checked_authorization(alloc, send, null) == null);
+    }
+}
+
+test "transport guard refuses keyed credentials over plain HTTP off loopback" {
+    const kinds = [_]CredentialKind{ .oauth, .api_key, .env };
+    const urls = [_][]const u8{
+        "http://192.0.2.1:11434/v1",
+        "http://lan-box:11434/v1",
+        "http://example.com/v1",
+        "HTTP://192.0.2.1/v1",
+    };
+    const alloc = std.testing.allocator;
+    for (kinds) |kind| {
+        for (urls) |url| {
+            const send = CredentialSend{ .connection_name = "local", .kind = kind, .base_url = url };
+            try std.testing.expectError(
+                error.InsecureCredentialTransport,
+                checked_authorization(alloc, send, "s3cret"),
+            );
+        }
+    }
+}
+
+test "transport guard keeps https and loopback HTTP flowing with a key" {
+    const urls = [_][]const u8{
+        "https://192.0.2.1/v1",
+        "https://example.com/v1",
+        "http://localhost:11434/v1",
+        "http://LOCALHOST:11434/v1",
+        "http://127.0.0.1:11434/v1",
+        "http://127.0.0.2:11434/v1",
+        "http://127.1.2.3:11434/v1",
+        "http://127.0.0.1/v1",
+        "http://[::1]:11434/v1",
+    };
+    const alloc = std.testing.allocator;
+    for (urls) |url| {
+        const send = CredentialSend{ .connection_name = "local", .kind = .api_key, .base_url = url };
+        const minted = (try checked_authorization(alloc, send, "s3cret")) orelse
+            return error.TestExpectedHeader;
+        defer alloc.free(minted);
+        try std.testing.expectEqualStrings("Bearer s3cret", minted);
+    }
+}
+
+test "transport guard fails closed on exotic hosts" {
+    const urls = [_][]const u8{
+        "http://0.0.0.0:11434/v1",
+        "http://localhost.:11434/v1",
+        "http://127.1:11434/v1",
+        "http://[::2]:11434/v1",
+        "http:///v1",
+    };
+    const alloc = std.testing.allocator;
+    for (urls) |url| {
+        const send = CredentialSend{ .connection_name = "local", .kind = .api_key, .base_url = url };
+        try std.testing.expectError(
+            error.InsecureCredentialTransport,
+            checked_authorization(alloc, send, "s3cret"),
+        );
+    }
+    // No secret means no send, and an unparseable URL fails closed too.
+    const missing = CredentialSend{ .connection_name = "local", .kind = .api_key, .base_url = "https://example.com/v1" };
+    try std.testing.expectError(
+        error.MissingCredential,
+        checked_authorization(alloc, missing, null),
+    );
+    const unparseable = CredentialSend{ .connection_name = "local", .kind = .api_key, .base_url = ":::not-a-url" };
+    try std.testing.expectError(
+        error.InvalidBaseUrl,
+        checked_authorization(alloc, unparseable, "s3cret"),
+    );
+    try std.testing.expect(is_loopback_host("::1"));
+    try std.testing.expect(is_loopback_host("[::1]"));
+    try std.testing.expect(!is_loopback_host(""));
+    try std.testing.expect(!is_loopback_host("example.com"));
+}
+
+test "flagless connections get the strict standard, declared flags win" {
+    const alloc = std.testing.allocator;
+    var parsed = try parseTestValue(alloc,
+        \\{"plain":{"credential":"none","base_url":"http://127.0.0.1:11434/v1"},"flagged":{"credential":"none","base_url":"http://127.0.0.1:11434/v1","compat":{"supports_store":false,"max_tokens_field":"max_tokens"}},"layered":{"credential":"none","base_url":"http://127.0.0.1:11434/v1","compat":{"supports_store":false},"models":{"qwen":{"compat":{"supports_store":true,"supports_strict_mode":false}}}}}
+    );
+    defer parsed.deinit();
+    var set = ConnectionSet{};
+    defer set.deinit(alloc);
+    var detail = ParseDetail{};
+    defer detail.deinit(alloc);
+    try parseSetInto(alloc, parsed.value, &set, &detail);
+
+    const plain = set.get("plain") orelse return error.TestExpectedConnection;
+    const strict_bool: []const struct { key: []const u8, want: bool } = &.{
+        .{ .key = "supports_store", .want = true },
+        .{ .key = "supports_developer_role", .want = true },
+        .{ .key = "supports_strict_mode", .want = true },
+        .{ .key = "supports_long_cache_retention", .want = true },
+        .{ .key = "requires_tool_result_name", .want = false },
+        .{ .key = "supports_thinking_token_budget", .want = false },
+        .{ .key = "send_session_affinity_headers", .want = false },
+    };
+    for (strict_bool) |case| {
+        const got = effective_compat(plain, "any", case.key) orelse return error.TestExpectedCompat;
+        try std.testing.expect(got == .boolean and got.boolean == case.want);
+    }
+    const strict_string: []const struct { key: []const u8, want: []const u8 } = &.{
+        .{ .key = "max_tokens_field", .want = "max_completion_tokens" },
+        .{ .key = "thinking_format", .want = "openai" },
+        .{ .key = "session_affinity_format", .want = "openai" },
+    };
+    for (strict_string) |case| {
+        const got = effective_compat(plain, "any", case.key) orelse return error.TestExpectedCompat;
+        try std.testing.expect(got == .string);
+        try std.testing.expectEqualStrings(case.want, got.string);
+    }
+    // Null-valued strict fields and unknown keys have no default: the
+    // adapter falls back on its own.
+    try std.testing.expect(effective_compat(plain, "any", "thinking_token_budget_field") == null);
+    try std.testing.expect(effective_compat(plain, "any", "bogus_flag") == null);
+
+    // Declared connection flags layer over the strict standard.
+    const flagged = set.get("flagged") orelse return error.TestExpectedConnection;
+    const stored = effective_compat(flagged, "any", "supports_store") orelse return error.TestExpectedCompat;
+    try std.testing.expect(stored == .boolean and !stored.boolean);
+    const field = effective_compat(flagged, "any", "max_tokens_field") orelse return error.TestExpectedCompat;
+    try std.testing.expect(field == .string);
+    try std.testing.expectEqualStrings("max_tokens", field.string);
+
+    // A model entry override wins over the connection, which wins over
+    // the strict standard.
+    const layered = set.get("layered") orelse return error.TestExpectedConnection;
+    const qwen_store = effective_compat(layered, "qwen", "supports_store") orelse return error.TestExpectedCompat;
+    try std.testing.expect(qwen_store == .boolean and qwen_store.boolean);
+    const default_store = effective_compat(layered, "undescribed", "supports_store") orelse return error.TestExpectedCompat;
+    try std.testing.expect(default_store == .boolean and !default_store.boolean);
+    const qwen_strict = effective_compat(layered, "qwen", "supports_strict_mode") orelse return error.TestExpectedCompat;
+    try std.testing.expect(qwen_strict == .boolean and !qwen_strict.boolean);
+    const qwen_field = effective_compat(layered, "qwen", "max_tokens_field") orelse return error.TestExpectedCompat;
+    try std.testing.expect(qwen_field == .string);
+    try std.testing.expectEqualStrings("max_completion_tokens", qwen_field.string);
 }
