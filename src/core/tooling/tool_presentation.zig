@@ -8,6 +8,10 @@ const tool_dispatch = @import("tool_dispatch.zig");
 const terminal_contracts = @import("../terminal/contracts.zig");
 const terminal_client_runtime = @import("../terminal/client.zig");
 const terminal_ui_projection = @import("../terminal/ui_projection.zig");
+const background_sessions = @import("../terminal/background_sessions.zig");
+const managed_execution = @import("../execution/managed_execution.zig");
+const debug_trace = @import("../shared/debug_trace.zig");
+const io_mod = @import("../shared/io.zig");
 const types = @import("../shared/types.zig");
 const test_builtin_tools = if (builtin.is_test)
     @import("../../builtins/tools.zig")
@@ -390,13 +394,11 @@ fn resolveTerminalSessionTargetFromRows(
     session_id: []const u8,
     rows: []const terminal_ui_projection.Row,
 ) ![]const u8 {
-    for (rows) |row| {
-        if (!std.mem.eql(u8, row.session_id, session_id)) continue;
-        if (row.label.len == 0 or std.mem.eql(u8, row.label, session_id)) break;
+    if (commandLabelForSession(rows, session_id)) |label| {
         return try formatTerminalDisplayTarget(
             alloc,
             workspace_root,
-            row.label,
+            label,
         );
     }
 
@@ -409,13 +411,41 @@ fn resolveTerminalSessionTargetFromRows(
     return try std.fmt.allocPrint(alloc, "session {s}", .{encoded.bytes});
 }
 
+fn commandLabelForSession(
+    rows: []const terminal_ui_projection.Row,
+    session_id: []const u8,
+) ?[]const u8 {
+    for (rows) |row| {
+        if (!std.mem.eql(u8, row.session_id, session_id)) continue;
+        if (row.label.len == 0 or std.mem.eql(u8, row.label, session_id)) return null;
+        return row.label;
+    }
+    return null;
+}
+
+fn shouldIndexOwnedTty(
+    terminal_client: ?*terminal_client_runtime.Runtime,
+    session_id: []const u8,
+    rows: []const terminal_ui_projection.Row,
+) bool {
+    if (commandLabelForSession(rows, session_id) != null) return false;
+    if (terminal_client) |runtime| {
+        if (runtime.unresolvedDisplayTargetContains(session_id)) return false;
+    }
+    return true;
+}
+
 /// The caller owns the returned allocation and must free it with `alloc`.
+/// A resumed TTY is indexed only when the projection does not already hold
+/// its launch command. An id that still does not resolve is not indexed again.
 pub fn resolveTerminalDisplayTarget(
     alloc: Allocator,
     registry: tool_dispatch.Registry,
     workspace_root: []const u8,
     terminal_client: ?*terminal_client_runtime.Runtime,
     call: ToolCall,
+    managed_executions: ?*managed_execution.Runtime,
+    session_ctx: background_sessions.SessionContext,
 ) !?[]const u8 {
     var scratch_state = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer scratch_state.deinit();
@@ -424,19 +454,49 @@ pub fn resolveTerminalDisplayTarget(
         registry,
         call,
     ) orelse return null;
-    const runtime = terminal_client orelse return @as(?[]const u8, try resolveTerminalSessionTargetFromRows(
-        alloc,
-        workspace_root,
-        session_id,
-        &.{},
-    ));
-    var snapshot = try runtime.terminalProjection(std.heap.c_allocator);
-    defer snapshot.deinit();
+
+    var snapshot_storage: ?terminal_ui_projection.Snapshot = null;
+    defer if (snapshot_storage) |*snapshot| snapshot.deinit();
+    if (terminal_client) |runtime| {
+        snapshot_storage = try runtime.terminalProjection(std.heap.c_allocator);
+    }
+    const initial_rows = if (snapshot_storage) |snapshot| snapshot.rows else &.{};
+
+    if (managed_executions) |runtime| {
+        if (shouldIndexOwnedTty(terminal_client, session_id, initial_rows)) {
+            if (comptime builtin.is_test) TestOwnedTtyIndexCalls.count += 1;
+            if (background_sessions.ensureOwnedTtyIndexed(
+                session_ctx,
+                runtime,
+                session_id,
+            )) |_| {
+                if (terminal_client) |client_runtime| {
+                    const refreshed = try client_runtime.terminalProjection(std.heap.c_allocator);
+                    if (snapshot_storage) |*snapshot| snapshot.deinit();
+                    snapshot_storage = refreshed;
+                }
+                const rows = if (snapshot_storage) |snapshot| snapshot.rows else &.{};
+                if (commandLabelForSession(rows, session_id) == null) {
+                    if (terminal_client) |client_runtime| {
+                        client_runtime.rememberUnresolvedDisplayTarget(session_id);
+                    }
+                }
+            } else |err| {
+                debug_trace.logf(
+                    "tool_presentation",
+                    "owned session index failed session={s} err={s}",
+                    .{ session_id, @errorName(err) },
+                );
+            }
+        }
+    }
+
+    const rows = if (snapshot_storage) |snapshot| snapshot.rows else &.{};
     return @as(?[]const u8, try resolveTerminalSessionTargetFromRows(
         alloc,
         workspace_root,
         session_id,
-        snapshot.rows,
+        rows,
     ));
 }
 
@@ -1022,6 +1082,66 @@ test "tool presentation preserves plain action fallbacks" {
     }
 }
 
+test "captured session display target is the launch command" {
+    const alloc = std.testing.allocator;
+    var projection: terminal_ui_projection.Store = .{};
+    defer projection.deinit(alloc);
+    try projection.recordLabel(alloc, "shell-captured", "printf CAPTURED_READY");
+    const call = ToolCall{
+        .id = "observe",
+        .name = "shell",
+        .arguments_json = "{\"action\":\"interact\",\"session_id\":\"shell-captured\"}",
+    };
+    var snapshot = try projection.snapshot(alloc);
+    defer snapshot.deinit();
+    const target = (try resolveTerminalDisplayTargetFromRows(
+        alloc,
+        test_tool_registry,
+        "/tmp/workspace",
+        call,
+        snapshot.rows,
+    )) orelse return error.TestExpectedEqual;
+    defer alloc.free(target);
+    try std.testing.expectEqualStrings("printf CAPTURED_READY", target);
+}
+
+test "captured session display target survives a catalog refresh" {
+    const alloc = std.testing.allocator;
+    var projection: terminal_ui_projection.Store = .{};
+    defer projection.deinit(alloc);
+    try projection.recordLabel(alloc, "shell-resume", "printf TTY_RESUME_READY");
+    try projection.observe(
+        alloc,
+        .{ .list = .{} },
+        .{ .success = .{ .list = .{ .sessions = &.{
+            terminal_contracts.SessionFacts{
+                .session_id = "terminal-other",
+                .lifecycle = .running,
+                .attention = .{},
+                .backend = .native,
+                .output_cursor = .{ .segment = 1, .offset = 0 },
+                .screen_recovery = .{ .unavailable = .missing },
+            },
+        } } } },
+    );
+    const call = ToolCall{
+        .id = "stop",
+        .name = "shell",
+        .arguments_json = "{\"action\":\"stop\",\"session_id\":\"shell-resume\"}",
+    };
+    var snapshot = try projection.snapshot(alloc);
+    defer snapshot.deinit();
+    const target = (try resolveTerminalDisplayTargetFromRows(
+        alloc,
+        test_tool_registry,
+        "/tmp/workspace",
+        call,
+        snapshot.rows,
+    )) orelse return error.TestExpectedEqual;
+    defer alloc.free(target);
+    try std.testing.expectEqualStrings("printf TTY_RESUME_READY", target);
+}
+
 test "terminal display target is call-local across a cold inspect projection update" {
     const alloc = std.testing.allocator;
     const session_id = "terminal-cold-session";
@@ -1130,4 +1250,78 @@ test "tool presentation frees all formatted output with a normal allocator" {
 
 fn expectContains(text: []const u8, needle: []const u8) !void {
     try std.testing.expect(std.mem.find(u8, text, needle) != null);
+}
+
+const TestOwnedTtyIndexCalls = if (builtin.is_test) struct {
+    var count: usize = 0;
+} else struct {};
+
+fn resolveDisplayTargetForTest(
+    alloc: Allocator,
+    arguments_json: []const u8,
+    terminal_client: ?*terminal_client_runtime.Runtime,
+    managed_executions: *managed_execution.Runtime,
+) ![]const u8 {
+    const target = (try resolveTerminalDisplayTarget(
+        alloc,
+        test_tool_registry,
+        "/tmp/workspace",
+        terminal_client,
+        .{
+            .id = "observe",
+            .name = "shell",
+            .arguments_json = arguments_json,
+        },
+        managed_executions,
+        .{ .alloc = alloc, .lifecycle_allocator = alloc },
+    )) orelse return error.TestExpectedEqual;
+    return target;
+}
+
+test "unresolvable session id indexes owned TTY at most once" {
+    const alloc = std.testing.allocator;
+    var executions = managed_execution.Runtime.init(alloc);
+    defer executions.deinit();
+    var terminal: terminal_client_runtime.Runtime = .{};
+    defer terminal.deinit();
+    TestOwnedTtyIndexCalls.count = 0;
+
+    const first = try resolveDisplayTargetForTest(
+        alloc,
+        "{\"action\":\"interact\",\"session_id\":\"shell-unresolved-382\"}",
+        &terminal,
+        &executions,
+    );
+    defer alloc.free(first);
+    const second = try resolveDisplayTargetForTest(
+        alloc,
+        "{\"action\":\"interact\",\"session_id\":\"shell-unresolved-382\"}",
+        &terminal,
+        &executions,
+    );
+    defer alloc.free(second);
+
+    try std.testing.expectEqualStrings("session shell-unresolved-382", first);
+    try std.testing.expectEqualStrings("session shell-unresolved-382", second);
+    try std.testing.expectEqual(@as(usize, 1), TestOwnedTtyIndexCalls.count);
+}
+
+test "known command label does not index owned TTY" {
+    const alloc = std.testing.allocator;
+    var executions = managed_execution.Runtime.init(alloc);
+    defer executions.deinit();
+    var terminal: terminal_client_runtime.Runtime = .{};
+    defer terminal.deinit();
+    try terminal.recordSessionLabel(alloc, "shell-known-382", "printf KNOWN_READY");
+    TestOwnedTtyIndexCalls.count = 0;
+
+    const target = try resolveDisplayTargetForTest(
+        alloc,
+        "{\"action\":\"interact\",\"session_id\":\"shell-known-382\"}",
+        &terminal,
+        &executions,
+    );
+    defer alloc.free(target);
+    try std.testing.expectEqualStrings("printf KNOWN_READY", target);
+    try std.testing.expectEqual(@as(usize, 0), TestOwnedTtyIndexCalls.count);
 }

@@ -28,6 +28,25 @@ pub const SessionContext = struct {
     cancel_flag: ?*std.atomic.Value(bool) = null,
 };
 
+/// Builds the ownership context used to index a resumed TTY session before
+/// resolving its activity-row label.
+pub fn fromToolContext(alloc: Allocator, ctx: anytype) SessionContext {
+    return .{
+        .alloc = alloc,
+        .lifecycle_allocator = ctx.session_allocator,
+        .terminal_client = ctx.terminal_client,
+        .owner = ctx.session_child_capability,
+        .durable_session_id = ctx.lifecycle_scope.session_id,
+        .workspace_root = ctx.workspace_root,
+        .transport_role = switch (ctx.lifecycle_scope.kind) {
+            .interactive, .subagent => .interactive,
+            .ask => .headless,
+        },
+        .max_output_bytes = ctx.max_command_output_bytes,
+        .cancel_flag = ctx.cancel_flag,
+    };
+}
+
 pub const ParsedTerminalExecution = struct {
     result: contracts.OwnedResult,
 

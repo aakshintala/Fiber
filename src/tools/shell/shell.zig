@@ -473,6 +473,19 @@ fn callRun(
         return runtimeFailure(ctx, err);
     };
     defer prepared.deinit(ctx.allocator);
+    if (ctx.terminal_client) |client| {
+        client.recordSessionLabel(
+            ctx.lifecycle_allocator,
+            prepared.snapshot.execution_id,
+            command,
+        ) catch |err| {
+            debug_trace.logf(
+                "shell",
+                "captured session label unavailable session={s} err={s}",
+                .{ prepared.snapshot.execution_id, @errorName(err) },
+            );
+        };
+    }
     // Typed timeout signal: a synchronously started command reaches
     // .stopped(null) only via error.TimeoutExpired. Cancellations return
     // before this point, so no error-name round trip is needed.

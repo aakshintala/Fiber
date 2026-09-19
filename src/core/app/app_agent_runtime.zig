@@ -40,6 +40,7 @@ else
     struct {};
 const tool_presentation = @import("../tooling/tool_presentation.zig");
 const tool_runtime = @import("../tooling/tool_runtime.zig");
+const background_sessions = @import("../terminal/background_sessions.zig");
 const skill_invocation = @import("../skills/skill_invocation.zig");
 const web_fetch_runtime = @import("../tooling/web_fetch_runtime.zig");
 const types = @import("../shared/types.zig");
@@ -436,6 +437,8 @@ pub fn Runtime(comptime App: type) type {
                 ctx.workspace_root,
                 ctx.terminal_client,
                 call,
+                ctx.managed_executions,
+                background_sessions.fromToolContext(arena, ctx),
             );
         }
 

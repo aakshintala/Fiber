@@ -69,6 +69,7 @@ const tool_mcp_runtime = @import("../tooling/tool_mcp_runtime.zig");
 const tool_presentation = @import("../tooling/tool_presentation.zig");
 const tool_result_errors = @import("../tooling/tool_result_errors.zig");
 const tool_runtime = @import("../tooling/tool_runtime.zig");
+const background_sessions = @import("../terminal/background_sessions.zig");
 const tool_set_contract = @import("../tooling/tool_set.zig");
 const skill_invocation = @import("../skills/skill_invocation.zig");
 const web_fetch_runtime = @import("../tooling/web_fetch_runtime.zig");
@@ -2367,12 +2368,15 @@ fn describeToolAction(raw_ctx: *anyopaque, arena: Allocator, call: ToolCall, dis
 
 fn resolveToolActionDisplayTarget(raw_ctx: *anyopaque, arena: Allocator, call: ToolCall) !?[]const u8 {
     const ctx: *AskContext = @ptrCast(@alignCast(raw_ctx));
+    const tool_ctx = ctx.toolContext();
     return tool_presentation.resolveTerminalDisplayTarget(
         arena,
-        ctx.toolRegistry(),
-        ctx.workspace_root,
-        &ctx.terminal_client,
+        tool_ctx.tool_registry,
+        tool_ctx.workspace_root,
+        tool_ctx.terminal_client,
         call,
+        tool_ctx.managed_executions,
+        background_sessions.fromToolContext(arena, tool_ctx),
     );
 }
 
