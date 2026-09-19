@@ -360,6 +360,57 @@ test "processQueuedPrompt stops repeated malformed calls before another provider
     try std.testing.expectEqual(@as(usize, 0), hooks.executed_names.items.len);
 }
 
+test "processQueuedPrompt continues with steering queued before a repeated-malformed terminal" {
+    const alloc = std.testing.allocator;
+    const call_one = [_]ToolCall{.{
+        .id = "call_1",
+        .name = "read_file",
+        .arguments_json = "{}",
+        .argument_integrity = .malformed_json,
+    }};
+    const call_two = [_]ToolCall{.{
+        .id = "call_2",
+        .name = "read_file",
+        .arguments_json = "{}",
+        .argument_integrity = .malformed_json,
+    }};
+    const call_three = [_]ToolCall{.{
+        .id = "call_3",
+        .name = "read_file",
+        .arguments_json = "{}",
+        .argument_integrity = .malformed_json,
+    }};
+    const completions = [_]FakeCompletion{
+        .{ .tool_calls = &call_one },
+        .{ .tool_calls = &call_two },
+        .{ .tool_calls = &call_three },
+        .{ .content = "Steered recovery answer" },
+    };
+    var gateway = FakeGateway.init(alloc, &completions);
+    defer gateway.deinit();
+    const steering = [_][]const u8{"stop repeating the broken call"};
+    var hooks = FakeAgentRuntimeDeps.init(alloc);
+    // Step-top takes are 1-3; the failed-terminal take is 4.
+    hooks.steering_messages = &steering;
+    hooks.steering_take_at = 4;
+    defer hooks.deinit();
+    var fixture = PromptFixture{};
+
+    try runFakePrompt(&gateway, &hooks, fixture.config(), fixture.job());
+
+    // The turn continued instead of ending: the fourth request carries the
+    // queued steering, and the malformed-stop notice never rendered.
+    try std.testing.expectEqual(@as(usize, 4), gateway.request_bodies.items.len);
+    try expectBodyContains(&gateway, 3, "user_steering");
+    try expectBodyContains(&gateway, 3, "stop repeating the broken call");
+    try std.testing.expect(!textContains(&hooks, "Repeated malformed tool arguments"));
+    try std.testing.expectEqualStrings("Steered recovery answer", hooks.finish_assistant_text.?);
+    try std.testing.expectEqual(types.TurnPresentationOutcome.completed, hooks.finalized_outcome.?);
+    const execution = hooks.history_turns.items[0].assistant.execution;
+    try std.testing.expectEqual(@as(usize, 1), execution.steering.len);
+    try std.testing.expectEqualStrings("stop repeating the broken call", execution.steering[0]);
+}
+
 test "processQueuedPrompt returns a final response after a repeated tool-name cycle" {
     const alloc = std.testing.allocator;
     const c1 = [_]ToolCall{toolCall("call_1", "read_file", "{\"path\":\"a\"}")};
