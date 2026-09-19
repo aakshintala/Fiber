@@ -3562,6 +3562,11 @@ pub const McpServer = struct {
     auth_lock: std.Io.Mutex = .init,
     status_lock: std.Io.Mutex = .init,
     auth_generation: std.atomic.Value(u64) = .init(0),
+    /// Connect-phase marker set when this server is aliased into an
+    /// unpublished reload candidate. The candidate connect pass skips marked
+    /// servers so a live adopted transport is never reconnected or orphaned.
+    /// Sticky once set; fresh candidate shells always start false.
+    reload_adopted: std.atomic.Value(bool) = .init(false),
     auth_logout_in_progress: std.atomic.Value(bool) = .init(false),
     auth_credentials_present: std.atomic.Value(bool) = .init(false),
     auth_challenge_present: std.atomic.Value(bool) = .init(false),
@@ -3909,7 +3914,7 @@ pub const McpRuntime = struct {
     alloc: Allocator,
     generation: u64,
     legacy_url_runtime_generation: u64 = 0,
-    servers: std.ArrayList(McpServer) = .empty,
+    servers: std.ArrayList(*McpServer) = .empty,
     workspace_diagnostics: std.ArrayList(project_config.WorkspaceDiagnostic) = .empty,
     catalog_mutex: std.Io.RwLock = .init,
     recovery_mutex: std.Io.Mutex = .init,
@@ -3959,26 +3964,7 @@ pub const McpRuntime = struct {
             self.discovery_thread = null;
             thread.join();
         }
-        for (self.servers.items) |*server| {
-            server.connection_lock.lockSharedUncancelable(io_mod.getIo());
-            server.catalog_commit_lock.lockUncancelable(io_mod.getIo());
-            server.signalToolSubscriptionStop();
-            server.catalog_commit_lock.unlock(io_mod.getIo());
-            server.connection_lock.unlockShared(io_mod.getIo());
-
-            server.subscription_lifecycle_lock.lockUncancelable(io_mod.getIo());
-            server.connection_lock.lockUncancelable(io_mod.getIo());
-            server.catalog_commit_lock.lockUncancelable(io_mod.getIo());
-            self.catalog_mutex.lockUncancelable(io_mod.getIo());
-            var detached = detachPublishedConnection(server);
-            self.catalog_mutex.unlock(io_mod.getIo());
-            server.catalog_commit_lock.unlock(io_mod.getIo());
-
-            detached.deinitGracefully(self.alloc);
-            server.deinit(self.alloc);
-            server.connection_lock.unlock(io_mod.getIo());
-            server.subscription_lifecycle_lock.unlock(io_mod.getIo());
-        }
+        for (self.servers.items) |server| self.destroy_server(server);
         self.servers.deinit(self.alloc);
         for (self.workspace_diagnostics.items) |*diagnostic| {
             diagnostic.deinit(self.alloc);
@@ -4045,7 +4031,7 @@ pub const McpRuntime = struct {
         self.legacy_url_waiter_mutex.lockUncancelable(io_mod.getIo());
         self.cancelAllLegacyUrlWaitersLocked();
         self.legacy_url_waiter_mutex.unlock(io_mod.getIo());
-        for (self.servers.items) |*server| {
+        for (self.servers.items) |server| {
             server.connection_lock.lockSharedUncancelable(io_mod.getIo());
             server.catalog_commit_lock.lockUncancelable(io_mod.getIo());
             server.signalToolSubscriptionStop();
@@ -4909,7 +4895,138 @@ pub const McpRuntime = struct {
         )) {
             return error.McpConfigAdmissionMismatch;
         }
-        try self.servers.append(self.alloc, .{ .config = config, .runtime = self, .owner_alloc = self.alloc });
+        const server = try self.alloc.create(McpServer);
+        errdefer self.alloc.destroy(server);
+        server.* = .{ .config = config, .runtime = self, .owner_alloc = self.alloc };
+        errdefer server.deinit(self.alloc);
+        try self.servers.append(self.alloc, server);
+    }
+
+    fn destroy_server(self: *McpRuntime, server: *McpServer) void {
+        server.connection_lock.lockSharedUncancelable(io_mod.getIo());
+        server.catalog_commit_lock.lockUncancelable(io_mod.getIo());
+        server.signalToolSubscriptionStop();
+        server.catalog_commit_lock.unlock(io_mod.getIo());
+        server.connection_lock.unlockShared(io_mod.getIo());
+
+        server.subscription_lifecycle_lock.lockUncancelable(io_mod.getIo());
+        server.connection_lock.lockUncancelable(io_mod.getIo());
+        server.catalog_commit_lock.lockUncancelable(io_mod.getIo());
+        self.catalog_mutex.lockUncancelable(io_mod.getIo());
+        var detached = detachPublishedConnection(server);
+        self.catalog_mutex.unlock(io_mod.getIo());
+        server.catalog_commit_lock.unlock(io_mod.getIo());
+
+        detached.deinitGracefully(self.alloc);
+        server.deinit(self.alloc);
+        server.connection_lock.unlock(io_mod.getIo());
+        server.subscription_lifecycle_lock.unlock(io_mod.getIo());
+        self.alloc.destroy(server);
+    }
+
+    /// Reload reuse probe, adapted from upstream vercel-labs/fx f1a6dfc2
+    /// (healthy-connection reconciliation). Returns the published live server
+    /// a fresh candidate slot may adopt without reconnecting: equal effective
+    /// configuration admitted for connection, currently ready, with a live
+    /// transport. The object never moves; the caller transfers list ownership
+    /// through `adopt_server_at`, `rollback_adoption`, and `finalize_adoption`.
+    fn find_reusable_server(
+        self: *McpRuntime,
+        config: *const McpServerConfig,
+    ) ?*McpServer {
+        if (startup_admission.decide(
+            config.enabled,
+            config.required,
+            config.workspace_admission,
+            .all,
+        ) != .connect) return null;
+        // List membership only changes on the reload thread, which owns this
+        // scan; per-server state is rechecked under its own locks below.
+        for (self.servers.items) |server| {
+            if (!std.mem.eql(u8, server.config.name, config.name)) continue;
+            if (!project_config.same_server_config(server.config, config.*)) continue;
+            server.status_lock.lockUncancelable(io_mod.getIo());
+            const ready = server.state == .ready;
+            server.status_lock.unlock(io_mod.getIo());
+            if (!ready) continue;
+            server.connection_lock.lockSharedUncancelable(io_mod.getIo());
+            const alive = switch (server.config.transport) {
+                .stdio => if (server.dispatcher) |dispatcher|
+                    dispatcher.isRunning()
+                else
+                    false,
+                .http => if (server.legacy_http) |client|
+                    !client.stopping.load(.acquire) and
+                        !client.session_retired.load(.acquire)
+                else
+                    false,
+                .sse => if (server.legacy_sse) |client|
+                    client.readerFinishReason() == null
+                else
+                    false,
+            };
+            server.connection_lock.unlockShared(io_mod.getIo());
+            if (!alive) continue;
+            return server;
+        }
+        return null;
+    }
+
+    /// Replaces this candidate's unconnected shell at `index` with an adopted
+    /// live server, destroying the shell. The live runtime keeps sole
+    /// ownership until `finalize_adoption`; `rollback_adoption` detaches adopted
+    /// aliases so the candidate can be destroyed without touching live state.
+    fn adopt_server_at(self: *McpRuntime, index: usize, live: *McpServer) void {
+        const shell = self.servers.items[index];
+        std.debug.assert(!shell.reload_adopted.load(.acquire));
+        self.servers.items[index] = live;
+        live.reload_adopted.store(true, .release);
+        shell.deinit(self.alloc);
+        self.alloc.destroy(shell);
+    }
+
+    /// Aliases every reusable live server into this fresh candidate, replacing
+    /// its unconnected shell in place. Records adopted objects in `adopted`
+    /// for `rollback_adoption`/`finalize_adoption`. Candidate order is preserved;
+    /// duplicate candidate names adopt only the first slot.
+    pub fn adopt_compatible_servers(
+        self: *McpRuntime,
+        live: *McpRuntime,
+        adopted: *std.ArrayList(*McpServer),
+    ) !void {
+        errdefer self.rollback_adoption(adopted.items);
+        try adopted.ensureTotalCapacity(self.alloc, self.servers.items.len);
+        for (self.servers.items, 0..) |shell, index| {
+            const reusable = live.find_reusable_server(&shell.config) orelse continue;
+            if (std.mem.findScalar(*McpServer, adopted.items, reusable) != null) continue;
+            self.adopt_server_at(index, reusable);
+            adopted.appendAssumeCapacity(reusable);
+        }
+    }
+
+    pub fn rollback_adoption(self: *McpRuntime, adopted: []const *McpServer) void {
+        for (adopted) |server| {
+            const index = self.index_of_server(server) orelse continue;
+            _ = self.servers.swapRemove(index);
+        }
+    }
+
+    /// Removes adopted servers from the previous runtime and repoints them at
+    /// their new owner. Runs after the candidate health gate, before the
+    /// reconciled set is published; removed servers stay behind for the
+    /// existing retirement drain.
+    pub fn finalize_adoption(
+        self: *McpRuntime,
+        adopted: []const *McpServer,
+        new_owner: *McpRuntime,
+    ) void {
+        self.catalog_mutex.lockUncancelable(io_mod.getIo());
+        defer self.catalog_mutex.unlock(io_mod.getIo());
+        for (adopted) |server| {
+            const index = self.index_of_server(server) orelse continue;
+            _ = self.servers.swapRemove(index);
+            server.runtime = new_owner;
+        }
     }
 
     pub fn workspaceAuthorityReducedAgainst(
@@ -5046,7 +5163,7 @@ pub const McpRuntime = struct {
             alloc.free(items);
         }
         const discovery_state = self.discovery_state.load(.seq_cst);
-        for (self.servers.items, 0..) |*server, index| {
+        for (self.servers.items, 0..) |server, index| {
             if (discovery_state != .complete) {
                 items[index] = try snapshotServerHealthBeforeDiscoveryPublication(
                     alloc,
@@ -5120,7 +5237,7 @@ pub const McpRuntime = struct {
         const discovery_state = self.discovery_state.load(.acquire);
         const deferred_pending = include_ask_deferred and
             self.deferred_discovery_state.load(.acquire) != .complete;
-        for (self.servers.items, 0..) |*server, index| {
+        for (self.servers.items, 0..) |server, index| {
             if (discovery_state != .complete) {
                 const connection: health.ConnectionState = if (!server.config.enabled)
                     .disabled
@@ -5235,7 +5352,7 @@ pub const McpRuntime = struct {
             for (items[0..initialized]) |*item| item.deinit(alloc);
             alloc.free(items);
         }
-        for (self.servers.items, 0..) |*server, index| {
+        for (self.servers.items, 0..) |server, index| {
             const name = try alloc.dupe(u8, server.config.name);
             errdefer alloc.free(name);
             const command = try alloc.dupe(u8, server.config.command orelse "");
@@ -5434,16 +5551,32 @@ pub const McpRuntime = struct {
         defer used_tool_names.deinit();
 
         self.catalog_mutex.lockSharedUncancelable(io_mod.getIo());
-        for (self.servers.items) |*server| {
+        for (self.servers.items) |server| {
             const decision = startup_admission.decide(
                 server.config.enabled,
                 server.config.required,
                 server.config.workspace_admission,
                 phase,
             );
-            if (decision != .deferred) continue;
+            // Adopted reload survivors keep their connection and tool names,
+            // so fresh servers must still avoid them. Fresh shells are never
+            // marked, so every other caller is unaffected.
+            const adopted = server.reload_adopted.load(.acquire);
+            if (decision != .deferred and !adopted) continue;
+            if (adopted) {
+                // An adopted server is still published by its previous
+                // runtime, where a concurrent refresh, recovery, or logout
+                // can replace its catalogs. Read under the same per-server
+                // locks that fence replacement.
+                server.connection_lock.lockSharedUncancelable(io_mod.getIo());
+                server.catalog_commit_lock.lockUncancelable(io_mod.getIo());
+            }
             for (server.tool_catalog.tools.items) |tool| {
                 used_tool_names.put(tool.prefixed_name, {}) catch |err| {
+                    if (adopted) {
+                        server.catalog_commit_lock.unlock(io_mod.getIo());
+                        server.connection_lock.unlockShared(io_mod.getIo());
+                    }
                     self.catalog_mutex.unlockShared(io_mod.getIo());
                     debug_trace.logf(
                         "mcp",
@@ -5453,11 +5586,19 @@ pub const McpRuntime = struct {
                     return;
                 };
             }
+            if (adopted) {
+                server.catalog_commit_lock.unlock(io_mod.getIo());
+                server.connection_lock.unlockShared(io_mod.getIo());
+            }
         }
         self.catalog_mutex.unlockShared(io_mod.getIo());
 
-        for (self.servers.items) |*server| {
+        for (self.servers.items) |server| {
             if (cancel_requested.load(.acquire)) return;
+            // Adopted reload survivors keep their live connection and are
+            // judged by the reload health gate instead; reconnecting one
+            // would orphan its transport. Fresh shells are never marked.
+            if (server.reload_adopted.load(.acquire)) continue;
             switch (startup_admission.decide(
                 server.config.enabled,
                 server.config.required,
@@ -5825,8 +5966,25 @@ pub const McpRuntime = struct {
     }
 
     fn findServer(self: *McpRuntime, name: []const u8) ?*McpServer {
-        for (self.servers.items) |*server| {
+        for (self.servers.items) |server| {
             if (std.mem.eql(u8, server.config.name, name)) return server;
+        }
+        return null;
+    }
+
+    /// Pointer-identity membership check for operations that resolved a server
+    /// before releasing the catalog lock. Reload adoption can swap list
+    /// membership while the object stays alive, so refresh and recovery paths
+    /// must confirm the object is still the published owner of its name.
+    fn is_current_server(self: *McpRuntime, server: *McpServer) bool {
+        self.catalog_mutex.lockSharedUncancelable(io_mod.getIo());
+        defer self.catalog_mutex.unlockShared(io_mod.getIo());
+        return self.findServer(server.config.name) == server;
+    }
+
+    fn index_of_server(self: *const McpRuntime, server: *const McpServer) ?usize {
+        for (self.servers.items, 0..) |candidate, index| {
+            if (candidate == server) return index;
         }
         return null;
     }
@@ -5863,7 +6021,7 @@ pub const McpRuntime = struct {
 
     fn lookupTool(self: *McpRuntime, name: []const u8) ?struct { server: *McpServer, tool: McpTool } {
         if (self.isDiscovering()) return null;
-        for (self.servers.items) |*server| {
+        for (self.servers.items) |server| {
             if (server.state != .ready) continue;
             if (!serverCatalogAvailable(server)) continue;
             for (server.tool_catalog.tools.items) |tool| {
@@ -5877,7 +6035,7 @@ pub const McpRuntime = struct {
 
     fn lookupCallableTool(self: *McpRuntime, name: []const u8) ?struct { server: *McpServer, tool: McpTool } {
         if (self.isDiscovering()) return null;
-        for (self.servers.items) |*server| {
+        for (self.servers.items) |server| {
             if (server.state != .ready and server.state != .failed) continue;
             if (!serverCatalogAvailable(server)) continue;
             for (server.tool_catalog.tools.items) |tool| {
@@ -5895,16 +6053,17 @@ pub const McpRuntime = struct {
         access: *const OperationAccessGuard,
         server_filter: ?[]const u8,
     ) void {
-        for (0..self.servers.items.len) |index| {
+        for (self.servers.items) |server| {
+            const server_name = server.config.name;
             if (server_filter) |name| {
-                if (!std.mem.eql(u8, self.servers.items[index].config.name, name)) continue;
+                if (!std.mem.eql(u8, server_name, name)) continue;
             }
-            if (!access.allows(.{ .tool_server = self.servers.items[index].config.name })) {
+            if (!access.allows(.{ .tool_server = server_name })) {
                 continue;
             }
             _ = refreshToolCatalog(
                 self,
-                index,
+                server,
                 null,
                 cancel_flag,
                 access.access,
@@ -5912,7 +6071,7 @@ pub const McpRuntime = struct {
                 debug_trace.logf(
                     "mcp",
                     "tool cache refresh check failed server={s} err={s}",
-                    .{ self.servers.items[index].config.name, @errorName(err) },
+                    .{ server_name, @errorName(err) },
                 );
             };
         }
@@ -5926,19 +6085,19 @@ pub const McpRuntime = struct {
         access: tool_mcp_runtime.Access,
     ) !void {
         try lockRwSharedUntil(&self.catalog_mutex, deadline, cancel_flag);
-        var server_index: ?usize = null;
-        for (self.servers.items, 0..) |server, index| {
+        var matched: ?*McpServer = null;
+        for (self.servers.items) |server| {
             for (server.tool_catalog.tools.items) |tool| {
                 if (std.mem.eql(u8, tool.prefixed_name, name)) {
-                    server_index = index;
+                    matched = server;
                     break;
                 }
             }
-            if (server_index != null) break;
+            if (matched != null) break;
         }
         self.catalog_mutex.unlockShared(io_mod.getIo());
-        const index = server_index orelse return;
-        _ = try refreshToolCatalog(self, index, deadline, cancel_flag, access);
+        const server = matched orelse return;
+        _ = try refreshToolCatalog(self, server, deadline, cancel_flag, access);
     }
 
     pub fn hasTool(self: *McpRuntime, name: []const u8) bool {
@@ -5981,7 +6140,7 @@ pub const McpRuntime = struct {
             for (names.items) |name| alloc.free(name);
             names.deinit(alloc);
         }
-        for (self.servers.items) |*server| {
+        for (self.servers.items) |server| {
             if (server.state != .ready) continue;
             if (!serverCatalogAvailable(server)) continue;
             for (server.tool_catalog.tools.items) |tool| {
@@ -6019,7 +6178,7 @@ pub const McpRuntime = struct {
         }
         self.catalog_mutex.lockSharedUncancelable(io_mod.getIo());
         defer self.catalog_mutex.unlockShared(io_mod.getIo());
-        for (self.servers.items) |*server| {
+        for (self.servers.items) |server| {
             if (server.state != .ready) continue;
             const first_tool = tools.items.len;
             if (serverCatalogAvailable(server)) {
@@ -6259,7 +6418,7 @@ pub const McpRuntime = struct {
             }
             var candidate_capacity: usize = 0;
             var server_configured = request.server == null;
-            for (self.servers.items) |*server| {
+            for (self.servers.items) |server| {
                 if (request.server) |name| {
                     if (!std.mem.eql(u8, server.config.name, name)) continue;
                     server_configured = true;
@@ -6286,7 +6445,7 @@ pub const McpRuntime = struct {
             defer identity_scratch_state.deinit();
             const identity_scratch = identity_scratch_state.allocator();
             var candidate_count: usize = 0;
-            for (self.servers.items) |*server| {
+            for (self.servers.items) |server| {
                 if (request.server) |name| {
                     if (!std.mem.eql(u8, server.config.name, name)) continue;
                 }
@@ -6819,7 +6978,7 @@ pub const McpRuntime = struct {
     ) std.Io.Clock.Timestamp {
         var timeout_ms = mcp_contract.default_operation_timeout_ms;
         var found_bounded_transport = false;
-        for (self.servers.items) |*server| {
+        for (self.servers.items) |server| {
             if (!server.config.enabled or
                 (server.config.transport != .stdio and
                     server.config.transport != .http and
@@ -7171,7 +7330,7 @@ pub const McpRuntime = struct {
 
         var used_tool_names = std.StringHashMap(void).init(self.alloc);
         defer used_tool_names.deinit();
-        for (self.servers.items) |*candidate| {
+        for (self.servers.items) |candidate| {
             if (candidate == server) continue;
             for (candidate.tool_catalog.tools.items) |tool| {
                 used_tool_names.put(tool.prefixed_name, {}) catch |err| {
@@ -7239,7 +7398,7 @@ pub const McpRuntime = struct {
         if (self.discovery_state.load(.acquire) != .idle) {
             return error.McpDiscoveryInProgress;
         }
-        for (self.servers.items) |*server| {
+        for (self.servers.items) |server| {
             try loadStoredCredentials(self.alloc, server, .{
                 .lifecycle_cancel_flag = &self.retiring,
             });
@@ -7986,13 +8145,12 @@ fn writeFeatureEnvelopeStart(
 
 fn refreshToolCatalog(
     self: *McpRuntime,
-    server_index: usize,
+    server: *McpServer,
     requested_deadline: ?std.Io.Clock.Timestamp,
     cancel_flag: ?*std.atomic.Value(bool),
     access: tool_mcp_runtime.Access,
 ) !bool {
-    if (server_index >= self.servers.items.len) return false;
-    const server = &self.servers.items[server_index];
+    if (!self.is_current_server(server)) return true;
     if (server.state != .ready and server.state != .failed) return true;
     var operation_access = try OperationAccessGuard.init(
         self.alloc,
@@ -8294,8 +8452,8 @@ fn refreshToolCatalog(
     var used_tool_names = std.StringHashMap(void).init(self.alloc);
     defer used_tool_names.deinit();
     try lockRwSharedUntil(&self.catalog_mutex, deadline, cancel_flag);
-    for (self.servers.items, 0..) |candidate_server, candidate_index| {
-        if (candidate_index == server_index) continue;
+    for (self.servers.items) |candidate_server| {
+        if (candidate_server == server) continue;
         for (candidate_server.tool_catalog.tools.items) |tool| {
             used_tool_names.put(tool.prefixed_name, {}) catch {
                 self.catalog_mutex.unlockShared(io_mod.getIo());
@@ -9015,11 +9173,11 @@ fn fetchLegacySseToolCatalog(
 
 fn renderAuthenticationRequired(
     alloc: Allocator,
-    servers: []McpServer,
+    servers: []*McpServer,
     access: *const OperationAccessGuard,
     query: []const u8,
 ) !?[]u8 {
-    for (servers) |*server| {
+    for (servers) |server| {
         if (!access.allows(.{ .tool_server = server.config.name })) continue;
         if (!queryContainsCompleteIdentity(query, server.config.name)) continue;
         server.status_lock.lockUncancelable(io_mod.getIo());
@@ -9123,7 +9281,10 @@ test "operation deadline includes waiting for the connection lease" {
 test "MRTR tool snapshots bind server schemas and both generations" {
     const alloc = std.testing.allocator;
     var runtime = McpRuntime.init(alloc);
-    defer runtime.servers.deinit(alloc);
+    defer {
+        alloc.destroy(runtime.servers.items[0]);
+        runtime.servers.deinit(alloc);
+    }
 
     var server = McpServer{
         .config = .{ .name = "fixture" },
@@ -9155,8 +9316,12 @@ test "MRTR tool snapshots bind server schemas and both generations" {
         .input_schema_json = @constCast("{\"type\":\"object\"}"),
         .tags = &.{},
     });
-    try runtime.servers.append(alloc, server);
-    defer runtime.servers.items[0].tool_catalog.tools.deinit(alloc);
+    const heap_server = try alloc.create(McpServer);
+    errdefer alloc.destroy(heap_server);
+    heap_server.* = server;
+    errdefer heap_server.tool_catalog.tools.deinit(alloc);
+    try runtime.servers.append(alloc, heap_server);
+    defer heap_server.tool_catalog.tools.deinit(alloc);
 
     var snapshot = ToolCallSnapshot{
         .server_name = @constCast("fixture"),
@@ -9179,7 +9344,7 @@ test "MRTR tool snapshots bind server schemas and both generations" {
     runtime.servers.items[0].connection_generation = 8;
     runtime.servers.items[0].catalog_generation = 12;
     try std.testing.expect(refreshSnapshotGenerationsIfIdentityMatches(
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         &snapshot,
         13,
     ));
@@ -9197,7 +9362,7 @@ test "MRTR tool snapshots bind server schemas and both generations" {
     runtime.servers.items[0].tool_catalog.metadata.?.key = other_cache_key;
     try std.testing.expect(runtime.serverForSnapshotLocked(&snapshot) == null);
     try std.testing.expect(!refreshSnapshotGenerationsIfIdentityMatches(
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         &snapshot,
         14,
     ));
@@ -9206,7 +9371,7 @@ test "MRTR tool snapshots bind server schemas and both generations" {
         "{\"type\":\"object\",\"additionalProperties\":false}",
     );
     try std.testing.expect(!refreshSnapshotGenerationsIfIdentityMatches(
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         &snapshot,
         14,
     ));
@@ -9683,7 +9848,7 @@ test "runtime shutdown releases catalog locks before subscription cancellation w
         1,
         4096,
     );
-    const server = &runtime.servers.items[0];
+    const server = runtime.servers.items[0];
     server.dispatcher = dispatcher;
     server.connection_generation = 1;
     server.stdio_protocol = .modern;
@@ -9841,7 +10006,7 @@ test "scoped stdio recovery rejects revoked authority before state changes" {
         .name = try alloc.dupe(u8, "fixture"),
         .command = try alloc.dupe(u8, "/definitely/not/an/fiber-mcp-fixture"),
     });
-    const server = &runtime.servers.items[0];
+    const server = runtime.servers.items[0];
     server.state = .ready;
 
     var used = std.StringHashMap(void).init(alloc);
@@ -10287,7 +10452,7 @@ test "doctor probe performs zero credential store operations" {
     runtime.connectAllForDoctor(.{});
     try std.testing.expectEqual(loads_before, mcp_auth_store.TestStoreCounters.loads.load(.seq_cst));
     try std.testing.expectEqual(saves_before, mcp_auth_store.TestStoreCounters.saves.load(.seq_cst));
-    const probed = &runtime.servers.items[0];
+    const probed = runtime.servers.items[0];
     try std.testing.expectEqual(ServerState.failed, probed.state);
     try std.testing.expect(probed.auth_challenge_present.load(.acquire));
     try std.testing.expect(probed.auth_credentials == null);
@@ -11584,12 +11749,16 @@ fn createToolSubscriptionWithResources(
                 server.negotiated_protocol_version,
                 modern_protocol_version,
             )) {
-                const runtime = server.runtime orelse return null;
+                if (server.runtime == null) return null;
                 break :subscription try tool_subscription.State.createHttp(
                     alloc,
                     server.config.name,
                     .{
-                        .context = runtime,
+                        // The adopted server object never moves across reload
+                        // adoption; the listener resolves its runtime owner per
+                        // call so retained subscriptions survive the old
+                        // runtime's destruction.
+                        .context = @ptrCast(server),
                         .callback = listenModernHttpToolSubscription,
                     },
                     server.connection_generation,
@@ -11651,7 +11820,10 @@ fn legacyCompletionPassthrough(
     client_generation: u64,
 ) tool_subscription.NotificationPassthrough {
     return .{
-        .context = @ptrCast(server.runtime.?),
+        // Server-relative context: the server object outlives reload adoption
+        // while its runtime owner is replaced, so delivery after the old
+        // runtime is destroyed still resolves the current owner.
+        .context = @ptrCast(server),
         .source = .{
             .server_name = server.config.name,
             .connection_generation = server.connection_generation,
@@ -11667,7 +11839,8 @@ fn handleLegacyCompletionNotification(
     source: tool_subscription.NotificationSource,
     value: std.json.Value,
 ) void {
-    const runtime: *McpRuntime = @ptrCast(@alignCast(raw_context));
+    const server: *McpServer = @ptrCast(@alignCast(raw_context));
+    const runtime = server.runtime orelse return;
     routeLegacyCompletionNotification(runtime, source, value);
 }
 
@@ -11983,8 +12156,10 @@ fn listenModernHttpToolSubscription(
     notifications: mcp_contract.NotificationSink,
     control: streamable_http.Control,
 ) ![]u8 {
-    const self: *McpRuntime = @ptrCast(@alignCast(raw));
-    const server = self.findServer(server_name) orelse return error.McpConnectionClosed;
+    const server: *McpServer = @ptrCast(@alignCast(raw));
+    if (!std.mem.eql(u8, server_name, server.config.name)) return error.McpConnectionClosed;
+    const self = server.runtime orelse return error.McpConnectionClosed;
+    if (self.findServer(server.config.name) != server) return error.McpConnectionClosed;
     try lockRwSharedWithControl(&server.connection_lock, control);
     defer server.connection_lock.unlockShared(io_mod.getIo());
     if (server.connection_generation != connection_generation or
@@ -13664,7 +13839,7 @@ fn reconnectLegacy(
     try lockRwUntil(&self.catalog_mutex, deadline, cancel_flag);
     var catalog_locked = true;
     errdefer if (catalog_locked) self.catalog_mutex.unlock(io_mod.getIo());
-    for (self.servers.items) |*candidate| {
+    for (self.servers.items) |candidate| {
         if (candidate == server) continue;
         for (candidate.tool_catalog.tools.items) |tool| {
             try used_tool_names.put(tool.prefixed_name, {});
@@ -13788,7 +13963,7 @@ fn recoverLegacyHttpSession(
     try lockRwUntil(&self.catalog_mutex, deadline, cancel_flag);
     var catalog_locked = true;
     errdefer if (catalog_locked) self.catalog_mutex.unlock(io_mod.getIo());
-    for (self.servers.items) |*candidate| {
+    for (self.servers.items) |candidate| {
         if (candidate == server) continue;
         for (candidate.tool_catalog.tools.items) |tool| {
             try used_tool_names.put(tool.prefixed_name, {});
@@ -15040,7 +15215,7 @@ test "legacy completion routing keeps recovered connection identities distinct" 
     const alloc = std.testing.allocator;
     var runtime = McpRuntime.init(alloc);
     defer runtime.deinit();
-    try runtime.servers.append(alloc, .{
+    try appendStackServerForTest(&runtime, .{
         .config = .{ .name = try alloc.dupe(u8, "server") },
         .runtime = &runtime,
         .state = .ready,
@@ -15136,7 +15311,7 @@ test "legacy URL completions require an established unique candidate before repl
     const alloc = std.testing.allocator;
     var runtime = McpRuntime.init(alloc);
     defer runtime.deinit();
-    try runtime.servers.append(alloc, .{
+    try appendStackServerForTest(&runtime, .{
         .config = .{ .name = try alloc.dupe(u8, "server") },
         .runtime = &runtime,
         .state = .ready,
@@ -15386,7 +15561,7 @@ test "legacy URL provisional completions cannot cross concurrent operation windo
     const alloc = std.testing.allocator;
     var runtime = McpRuntime.init(alloc);
     defer runtime.deinit();
-    try runtime.servers.append(alloc, .{
+    try appendStackServerForTest(&runtime, .{
         .config = .{ .name = try alloc.dupe(u8, "server") },
         .runtime = &runtime,
         .state = .ready,
@@ -15545,7 +15720,7 @@ test "late completion after cancellation cannot satisfy same-id reuse" {
     const alloc = std.testing.allocator;
     var runtime = McpRuntime.init(alloc);
     defer runtime.deinit();
-    try runtime.servers.append(alloc, .{
+    try appendStackServerForTest(&runtime, .{
         .config = .{ .name = try alloc.dupe(u8, "server") },
         .runtime = &runtime,
         .state = .ready,
@@ -15611,7 +15786,7 @@ test "legacy URL waiter registration is serialized with auth invalidation" {
     const alloc = std.testing.allocator;
     var runtime = McpRuntime.init(alloc);
     defer runtime.deinit();
-    try runtime.servers.append(alloc, .{
+    try appendStackServerForTest(&runtime, .{
         .config = .{ .name = try alloc.dupe(u8, "server") },
         .runtime = &runtime,
         .state = .ready,
@@ -15642,7 +15817,7 @@ test "legacy URL waiter registration is serialized with auth invalidation" {
 
     waiter.binding.auth_generation = 5;
     try runtime.registerCurrentLegacyUrlWaiter(&waiter);
-    advanceAuthGeneration(&runtime.servers.items[0]);
+    advanceAuthGeneration(runtime.servers.items[0]);
     try std.testing.expectEqual(
         tool_mcp_runtime.LegacyUrlCompletionStatus.cancelled,
         waiter.signal.status.load(.acquire),
@@ -15655,7 +15830,7 @@ test "logout rollback preserves active legacy completion authority" {
     const alloc = std.testing.allocator;
     var runtime = McpRuntime.init(alloc);
     defer runtime.deinit();
-    try runtime.servers.append(alloc, .{
+    try appendStackServerForTest(&runtime, .{
         .config = .{ .name = try alloc.dupe(u8, "server") },
         .runtime = &runtime,
         .state = .ready,
@@ -15695,7 +15870,7 @@ test "logout rollback preserves active legacy completion authority" {
     try runtime.registerCurrentLegacyUrlWaiter(&waiter);
     defer runtime.unregisterLegacyUrlWaiter(&waiter);
 
-    var detached = McpRuntime.detachAuthForLogout(&runtime.servers.items[0]);
+    var detached = McpRuntime.detachAuthForLogout(runtime.servers.items[0]);
     defer detached.deinit(alloc);
     try std.testing.expectEqual(
         @as(u64, 5),
@@ -15719,7 +15894,7 @@ test "logout rollback preserves active legacy completion authority" {
         runtime.legacy_url_completion_candidates.items[0].status,
     );
 
-    runtime.restoreAuthAfterLogout(&runtime.servers.items[0], &detached);
+    runtime.restoreAuthAfterLogout(runtime.servers.items[0], &detached);
     try std.testing.expect(completed[0]);
     try std.testing.expectEqual(
         tool_mcp_runtime.LegacyUrlCompletionStatus.completed,
@@ -15751,7 +15926,7 @@ test "logout rollback preserves active legacy completion authority" {
     };
     try runtime.registerCurrentLegacyUrlWaiter(&committed_waiter);
     defer runtime.unregisterLegacyUrlWaiter(&committed_waiter);
-    var committed_detached = McpRuntime.detachAuthForLogout(&runtime.servers.items[0]);
+    var committed_detached = McpRuntime.detachAuthForLogout(runtime.servers.items[0]);
     defer committed_detached.deinit(alloc);
     var committed_notification = try std.json.parseFromSlice(
         std.json.Value,
@@ -15762,7 +15937,7 @@ test "logout rollback preserves active legacy completion authority" {
     defer committed_notification.deinit();
     routeLegacyCompletionNotification(&runtime, source, committed_notification.value);
     try std.testing.expect(!committed[0]);
-    advanceAuthGeneration(&runtime.servers.items[0]);
+    advanceAuthGeneration(runtime.servers.items[0]);
     try std.testing.expectEqual(
         tool_mcp_runtime.LegacyUrlCompletionStatus.cancelled,
         committed_waiter.signal.status.load(.acquire),
@@ -15778,7 +15953,7 @@ test "logout rollback preserves early legacy completion authority" {
     const alloc = std.testing.allocator;
     var runtime = McpRuntime.init(alloc);
     defer runtime.deinit();
-    try runtime.servers.append(alloc, .{
+    try appendStackServerForTest(&runtime, .{
         .config = .{ .name = try alloc.dupe(u8, "server") },
         .runtime = &runtime,
         .state = .ready,
@@ -15804,7 +15979,7 @@ test "logout rollback preserves early legacy completion authority" {
         window,
     );
 
-    var detached = McpRuntime.detachAuthForLogout(&runtime.servers.items[0]);
+    var detached = McpRuntime.detachAuthForLogout(runtime.servers.items[0]);
     defer detached.deinit(alloc);
     var notification = try std.json.parseFromSlice(
         std.json.Value,
@@ -15854,7 +16029,7 @@ test "logout rollback preserves early legacy completion authority" {
         waiter.signal.status.load(.acquire),
     );
 
-    runtime.restoreAuthAfterLogout(&runtime.servers.items[0], &detached);
+    runtime.restoreAuthAfterLogout(runtime.servers.items[0], &detached);
     try std.testing.expect(completed[0]);
     try std.testing.expectEqual(
         tool_mcp_runtime.LegacyUrlCompletionStatus.completed,
@@ -15896,7 +16071,7 @@ test "logout rollback preserves early legacy completion authority" {
     );
     try std.testing.expect(!runtime.early_legacy_url_completions.items[0].logout_fenced);
 
-    var pre_fence_detached = McpRuntime.detachAuthForLogout(&runtime.servers.items[0]);
+    var pre_fence_detached = McpRuntime.detachAuthForLogout(runtime.servers.items[0]);
     defer pre_fence_detached.deinit(alloc);
     try runtime.registerLegacyUrlCompletionCandidates(
         source,
@@ -15932,7 +16107,7 @@ test "logout rollback preserves early legacy completion authority" {
     );
     try std.testing.expect(!pre_fence_completed[0]);
     runtime.restoreAuthAfterLogout(
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         &pre_fence_detached,
     );
     try std.testing.expect(pre_fence_completed[0]);
@@ -15957,7 +16132,7 @@ test "logout rollback preserves early legacy completion authority" {
         runtime.legacy_url_runtime_generation,
         committed_window,
     );
-    var committed_detached = McpRuntime.detachAuthForLogout(&runtime.servers.items[0]);
+    var committed_detached = McpRuntime.detachAuthForLogout(runtime.servers.items[0]);
     defer committed_detached.deinit(alloc);
     var committed_notification = try std.json.parseFromSlice(
         std.json.Value,
@@ -15992,7 +16167,7 @@ test "logout rollback preserves early legacy completion authority" {
     try runtime.registerCurrentLegacyUrlWaiter(&committed_waiter);
     defer runtime.unregisterLegacyUrlWaiter(&committed_waiter);
     try std.testing.expect(!committed[0]);
-    advanceAuthGeneration(&runtime.servers.items[0]);
+    advanceAuthGeneration(runtime.servers.items[0]);
     try std.testing.expectEqual(
         tool_mcp_runtime.LegacyUrlCompletionStatus.cancelled,
         committed_waiter.signal.status.load(.acquire),
@@ -16021,7 +16196,7 @@ test "logout releases completion arbitration before draining active legacy HTTP"
         .version = .v2025_11_25,
         .session_id = null,
     };
-    try runtime.servers.append(alloc, .{
+    try appendStackServerForTest(&runtime, .{
         .config = .{ .name = try alloc.dupe(u8, "server") },
         .runtime = &runtime,
         .legacy_http = client,
@@ -16069,7 +16244,7 @@ test "logout releases completion arbitration before draining active legacy HTTP"
     var finished = std.atomic.Value(bool).init(false);
     const thread = try std.Thread.spawn(.{}, Logout.run, .{Logout{
         .runtime = &runtime,
-        .server = &runtime.servers.items[0],
+        .server = runtime.servers.items[0],
         .detached = &detached,
         .finished = &finished,
     }});
@@ -16122,7 +16297,7 @@ test "legacy completion passthrough snapshots a recovery candidate" {
     server.catalog_generation = 18;
     server.auth_generation.store(19, .release);
 
-    try std.testing.expect(passthrough.context == @as(*anyopaque, @ptrCast(&runtime)));
+    try std.testing.expect(passthrough.context == @as(*anyopaque, @ptrCast(&server)));
     try std.testing.expectEqual(@as(u64, 7), passthrough.source.connection_generation);
     try std.testing.expectEqual(@as(u64, 70), passthrough.source.client_generation);
     try std.testing.expectEqual(@as(u64, 9), passthrough.source.auth_generation);
@@ -16756,6 +16931,14 @@ test "modern request builders share required request metadata" {
     );
 }
 
+fn appendStackServerForTest(runtime: *McpRuntime, value: McpServer) !void {
+    const server = try runtime.alloc.create(McpServer);
+    errdefer runtime.alloc.destroy(server);
+    server.* = value;
+    errdefer server.deinit(runtime.alloc);
+    try runtime.servers.append(runtime.alloc, server);
+}
+
 fn shellMcpConfigForTest(alloc: Allocator, name: []const u8, script: []const u8) !McpServerConfig {
     const owned_name = try alloc.dupe(u8, name);
     errdefer alloc.free(owned_name);
@@ -16965,7 +17148,7 @@ test "connectServer discovers and calls a modern NDJSON tool" {
     try runtime.addServer(try shellMcpConfigForTest(alloc, "modern", shell_server));
     runtime.connectAll(.{});
 
-    const server = &runtime.servers.items[0];
+    const server = runtime.servers.items[0];
     try std.testing.expectEqual(ServerState.ready, server.state);
     try std.testing.expectEqual(StdioProtocol.modern, server.stdio_protocol);
     try std.testing.expectEqualStrings("Use echo.", server.instructions.?);
@@ -17079,7 +17262,7 @@ test "modern MCP calls delegate unsupported schema assertions to the server" {
     try runtime.addServer(try shellMcpConfigForTest(alloc, "provider", shell_server));
     runtime.connectAll(.{});
 
-    const server = &runtime.servers.items[0];
+    const server = runtime.servers.items[0];
     try std.testing.expectEqual(ServerState.ready, server.state);
     try std.testing.expectEqual(@as(usize, 2), server.tool_catalog.tools.items.len);
     const valid = try runtime.validateToolArgumentsByName(
@@ -17767,7 +17950,7 @@ test "modern stdio tool discovery consumes every page and publishes deterministi
     try runtime.addServer(try shellMcpConfigForTest(alloc, "pages", shell_server));
     runtime.connectAll(.{});
 
-    const server = &runtime.servers.items[0];
+    const server = runtime.servers.items[0];
     try std.testing.expectEqual(ServerState.ready, server.state);
     try std.testing.expectEqual(@as(usize, 2), server.tool_catalog.tools.items.len);
     try std.testing.expectEqualStrings("alpha", server.tool_catalog.tools.items[0].original_name);
@@ -17808,7 +17991,7 @@ test "delayed modern discovery response does not fall back to legacy" {
     try runtime.addServer(try shellMcpConfigForTest(alloc, "delayed-modern", shell_server));
     runtime.connectAll(.{});
 
-    const server = &runtime.servers.items[0];
+    const server = runtime.servers.items[0];
     try std.testing.expectEqual(ServerState.ready, server.state);
     try std.testing.expectEqual(StdioProtocol.modern, server.stdio_protocol);
 
@@ -17843,7 +18026,7 @@ test "unsupported modern version falls back when legacy is mutually supported" {
     try runtime.addServer(try shellMcpConfigForTest(alloc, "mutual-version", shell_server));
     runtime.connectAll(.{});
 
-    const server = &runtime.servers.items[0];
+    const server = runtime.servers.items[0];
     try std.testing.expectEqual(ServerState.ready, server.state);
     try std.testing.expectEqual(StdioProtocol.legacy, server.stdio_protocol);
 
@@ -17878,7 +18061,7 @@ test "stdio discovery negotiates declared 2025-11 legacy elicitation" {
     try runtime.addServer(try shellMcpConfigForTest(alloc, "no-mutual-version", shell_server));
     runtime.connectAll(.{});
 
-    const server = &runtime.servers.items[0];
+    const server = runtime.servers.items[0];
     try std.testing.expectEqual(ServerState.ready, server.state);
     try std.testing.expectEqualStrings(legacy_2025_11_protocol_version, server.negotiated_protocol_version);
     try std.testing.expectEqual(StdioProtocol.legacy, server.stdio_protocol);
@@ -17907,7 +18090,7 @@ test "malformed modern discovery response does not fall back to legacy" {
     try runtime.addServer(try shellMcpConfigForTest(alloc, "malformed-modern", shell_server));
     runtime.connectAll(.{});
 
-    const server = &runtime.servers.items[0];
+    const server = runtime.servers.items[0];
     try std.testing.expectEqual(ServerState.failed, server.state);
     try std.testing.expectEqualStrings("McpMissingResultType", server.last_error.?);
 }
@@ -18040,7 +18223,7 @@ test "model catalog reports deferred ask servers without connecting and counts o
     const response =
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"one","inputSchema":{"type":"object"}},{"name":"two","inputSchema":{"type":"object"}}]}}
     ;
-    try parseAndStoreTools(alloc, &runtime.servers.items[0], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[0], .{}, response, &used);
 
     var denied_rules = [_]types.PermissionRule{.{
         .permission = @constCast("mcp_required_two"),
@@ -18063,7 +18246,7 @@ test "model catalog reports deferred ask servers without connecting and counts o
     try std.testing.expectEqual(DiscoveryState.idle, runtime.deferred_discovery_state.load(.acquire));
 
     runtime.servers.items[1].state = .ready;
-    try parseAndStoreTools(alloc, &runtime.servers.items[1], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[1], .{}, response, &used);
     runtime.deferred_discovery_state.store(.complete, .release);
     var after = try runtime.snapshotModelCatalog(alloc, .{}, true);
     defer after.deinit(alloc);
@@ -18086,7 +18269,7 @@ fn checkModelCatalogSnapshotAllocationFailures(alloc: Allocator) !void {
         .enabled = false,
     });
     runtime.discovery_state.store(.complete, .release);
-    for (runtime.servers.items) |*server| server.state = .disabled;
+    for (runtime.servers.items) |server| server.state = .disabled;
 
     var snapshot = try runtime.snapshotModelCatalog(alloc, .{}, false);
     snapshot.deinit(alloc);
@@ -18127,7 +18310,7 @@ test "MCP health reads only lock-free state during discovery" {
         .required = true,
     });
 
-    const active = &runtime.servers.items[0];
+    const active = runtime.servers.items[0];
     active.state = .ready;
     active.negotiated_server_name = try alloc.dupe(u8, "published-name");
     active.negotiated_server_version = try alloc.dupe(u8, "1.0.0");
@@ -18461,14 +18644,22 @@ test "cursor replacement preserves the previous owner on allocation failure" {
 
 fn checkServerDiagnosticSnapshotAllocationFailures(alloc: Allocator) !void {
     var runtime = McpRuntime.init(alloc);
-    defer runtime.servers.deinit(alloc);
+    defer {
+        if (runtime.servers.items.len > 0) alloc.destroy(runtime.servers.items[0]);
+        runtime.servers.deinit(alloc);
+    }
     var server = McpServer{
         .config = .{ .name = "fixture", .command = "fixture-command" },
         .state = .failed,
     };
     server.last_error = try alloc.dupe(u8, "fixture-error");
     defer alloc.free(server.last_error.?);
-    try runtime.servers.append(alloc, server);
+    const heap_server = try alloc.create(McpServer);
+    {
+        errdefer alloc.destroy(heap_server);
+        heap_server.* = server;
+        try runtime.servers.append(alloc, heap_server);
+    }
 
     var snapshot = try runtime.snapshotServerDiagnostics(alloc);
     defer snapshot.deinit(alloc);
@@ -18554,7 +18745,7 @@ test "MCP search matches each retained source field" {
     defer used.deinit();
     try parseAndStoreTools(
         alloc,
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         .{},
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"create_issue","description":"Create ticket","inputSchema":{"type":"object","properties":{"repository_slug":{"type":"string"}}}}]}}
     ,
@@ -18619,7 +18810,7 @@ test "MCP search bounds untrusted description and schema fields" {
     defer used.deinit();
     try parseAndStoreTools(
         alloc,
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         .{},
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"probe","description":"initial","inputSchema":{"type":"object"}}]}}
     ,
@@ -18671,7 +18862,7 @@ test "MCP search releases request-scoped ranking allocations" {
     defer used.deinit();
     try parseAndStoreTools(
         alloc,
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         .{},
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"create_issue","description":"Create issue","inputSchema":{"type":"object"}}]}}
     ,
@@ -18710,13 +18901,13 @@ test "MCP search keeps the globally strongest matches across servers" {
         .name = try alloc.dupe(u8, "linear"),
         .command = try alloc.dupe(u8, "fixture"),
     });
-    for (runtime.servers.items) |*server| server.state = .ready;
+    for (runtime.servers.items) |server| server.state = .ready;
 
     var used = std.StringHashMap(void).init(alloc);
     defer used.deinit();
     try parseAndStoreTools(
         alloc,
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         .{},
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"launch","description":"Deploy Linear infrastructure","inputSchema":{"type":"object"}}]}}
     ,
@@ -18724,7 +18915,7 @@ test "MCP search keeps the globally strongest matches across servers" {
     );
     try parseAndStoreTools(
         alloc,
-        &runtime.servers.items[1],
+        runtime.servers.items[1],
         .{},
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"echo","description":"Deploy Linear data","inputSchema":{"type":"object"}}]}}
     ,
@@ -18757,15 +18948,15 @@ test "MCP search applies exact server scope before ranking" {
         .name = try alloc.dupe(u8, "grafana"),
         .command = try alloc.dupe(u8, "fixture"),
     });
-    for (runtime.servers.items) |*server| server.state = .ready;
+    for (runtime.servers.items) |server| server.state = .ready;
 
     var used = std.StringHashMap(void).init(alloc);
     defer used.deinit();
     const response =
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"list_monitors","description":"List service monitors","inputSchema":{"type":"object"}}]}}
     ;
-    try parseAndStoreTools(alloc, &runtime.servers.items[0], .{}, response, &used);
-    try parseAndStoreTools(alloc, &runtime.servers.items[1], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[0], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[1], .{}, response, &used);
 
     const inventory = try lexical_relevance.prepare("");
     var scoped = try runtime.searchToolsPrepared(
@@ -18828,7 +19019,7 @@ test "MCP search preserves exact identities and scopes authentication guidance" 
     const response =
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"echo","description":"Echo Linear data","inputSchema":{"type":"object"}},{"name":"read/file","description":"Read a Linear file","inputSchema":{"type":"object"}}]}}
     ;
-    try parseAndStoreTools(alloc, &runtime.servers.items[0], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[0], .{}, response, &used);
 
     const cases = [_]struct {
         query: []const u8,
@@ -18884,7 +19075,7 @@ test "MCP search returns metadata without advertising every executable schema" {
     const response =
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"create_issue","description":"Create an issue in a GitHub repository","inputSchema":{"type":"object","properties":{"repo":{"type":"string","description":"Repository name"},"title":{"type":"string"}},"required":["repo","title"]}}]}}
     ;
-    try parseAndStoreTools(alloc, &runtime.servers.items[0], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[0], .{}, response, &used);
 
     var results = try runtime.searchTools(alloc, "github issue", 5, .{}, .{}, .unrestricted);
     defer results.deinit(alloc);
@@ -18926,7 +19117,7 @@ test "MCP search reports an authorized match beyond the count cap" {
     defer used.deinit();
     try parseAndStoreTools(
         alloc,
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         .{},
         response.written(),
         &used,
@@ -18972,7 +19163,7 @@ test "scoped MCP cached tool and feature operations reject authority revoked aft
     ;
     try parseAndStoreTools(
         alloc,
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         .{},
         response,
         &used,
@@ -19123,15 +19314,15 @@ test "MCP access snapshot excludes servers whose tools are denied" {
         .name = try alloc.dupe(u8, "denied"),
         .command = try alloc.dupe(u8, "cmd"),
     });
-    for (runtime.servers.items) |*server| server.state = .ready;
+    for (runtime.servers.items) |server| server.state = .ready;
 
     var used = std.StringHashMap(void).init(alloc);
     defer used.deinit();
     const response =
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}}
     ;
-    try parseAndStoreTools(alloc, &runtime.servers.items[0], .{}, response, &used);
-    try parseAndStoreTools(alloc, &runtime.servers.items[1], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[0], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[1], .{}, response, &used);
 
     var denied_rules = [_]types.PermissionRule{.{
         .permission = @constCast("mcp_denied_echo"),
@@ -19166,7 +19357,7 @@ test "MCP access snapshot admits feature-only servers independently of tools" {
         .name = try alloc.dupe(u8, "features"),
         .command = try alloc.dupe(u8, "cmd"),
     });
-    const server = &runtime.servers.items[0];
+    const server = runtime.servers.items[0];
     server.state = .ready;
     server.capabilities = .{
         .resources = true,
@@ -19251,7 +19442,7 @@ fn checkAccessSnapshotAllocationFailures(alloc: Allocator) !void {
     ;
     try parseAndStoreTools(
         std.testing.allocator,
-        &runtime.servers.items[0],
+        runtime.servers.items[0],
         .{},
         response,
         &used,
@@ -19275,7 +19466,7 @@ test "MCP transport precommit rejects MCP view and full authority changes" {
     const response =
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}}
     ;
-    try parseAndStoreTools(alloc, &runtime.servers.items[0], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[0], .{}, response, &used);
 
     var captured = try runtime.snapshotAccessView(alloc, "child", "parent", .{}, true);
     defer captured.deinit(alloc);
@@ -19348,15 +19539,15 @@ test "scoped MCP authentication rendering excludes denied servers" {
         .command = try alloc.dupe(u8, "cmd"),
         .bearer_token_env = try alloc.dupe(u8, "DENIED_SECRET_ENV"),
     });
-    for (runtime.servers.items) |*server| server.state = .ready;
+    for (runtime.servers.items) |server| server.state = .ready;
 
     var used = std.StringHashMap(void).init(alloc);
     defer used.deinit();
     const response =
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}}
     ;
-    try parseAndStoreTools(alloc, &runtime.servers.items[0], .{}, response, &used);
-    try parseAndStoreTools(alloc, &runtime.servers.items[1], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[0], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[1], .{}, response, &used);
     var denied_rules = [_]types.PermissionRule{.{
         .permission = @constCast("mcp_denied_echo"),
         .pattern = @constCast("*"),
@@ -19440,7 +19631,11 @@ test "MCP server instructions are captured from initialize and exposed only when
 
     var runtime = McpRuntime.init(alloc);
     defer runtime.deinit();
-    try runtime.servers.append(alloc, server);
+    const heap_server = try alloc.create(McpServer);
+    errdefer alloc.destroy(heap_server);
+    heap_server.* = server;
+    errdefer heap_server.deinit(alloc);
+    try runtime.servers.append(alloc, heap_server);
     server = .{ .config = .{ .name = try alloc.dupe(u8, "moved"), .command = try alloc.dupe(u8, "moved") } };
 
     var results = try runtime.searchTools(alloc, "github issue", 5, .{}, .{}, .unrestricted);
@@ -19476,7 +19671,7 @@ test "MCP exact selection returns one executable schema by prefixed name" {
     const response =
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read","description":"Read a file","inputSchema":{"type":"object","properties":{"path":{"type":"string"}}}}]}}
     ;
-    try parseAndStoreTools(alloc, &runtime.servers.items[0], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[0], .{}, response, &used);
 
     var schema_result = (try runtime.toolSchemaJsonByName(alloc, "mcp_fs_read", .{}, .{})) orelse return error.TestExpectedEqual;
     defer schema_result.deinit(alloc);
@@ -19505,7 +19700,7 @@ test "MCP selection truncates instructions and rejects an oversized schema atomi
     const response =
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"lookup","description":"Lookup docs","inputSchema":{"type":"object","properties":{"query":{"type":"string","description":"An exact query that must stay intact"}},"required":["query"]}}]}}
     ;
-    try parseAndStoreTools(alloc, &runtime.servers.items[0], .{}, response, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[0], .{}, response, &used);
 
     var limits = context_limits.Values{};
     limits.mcp_server_instructions_bytes = .{ .value = .{ .bytes = 11 }, .source = .user_workspace };
@@ -19558,8 +19753,8 @@ test "MCP metadata caps encoded descriptions and preserves ready-server tool ord
     const response_b =
         \\{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"three","description":"cccccccccccccccccccccccccccccccccccccccc","inputSchema":{"type":"object"}},{"name":"four","description":"dddddddddddddddddddddddddddddddddddddddd","inputSchema":{"type":"object"}}]}}
     ;
-    try parseAndStoreTools(alloc, &runtime.servers.items[0], .{}, response_a, &used);
-    try parseAndStoreTools(alloc, &runtime.servers.items[1], .{}, response_b, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[0], .{}, response_a, &used);
+    try parseAndStoreTools(alloc, runtime.servers.items[1], .{}, response_b, &used);
 
     var limits = context_limits.Values{};
     limits.mcp_description_bytes = .{ .value = .{ .bytes = 12 }, .source = .user_global };
@@ -19728,4 +19923,506 @@ test "tool call request compacts pretty-printed arguments into a single line" {
         "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"raw/tool\",\"arguments\":{\"path\":\"/tmp/a\",\"note\":\"line one\\nline two\"}}}",
         request,
     );
+}
+
+const keepalive_keeper_script =
+    \\while IFS= read -r line; do
+    \\  id=${line#*'"id":'}
+    \\  id=${id%%,*}
+    \\  case "$line" in
+    \\    *'"method":"server/discover"'*)
+    \\      printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}}'
+    \\      ;;
+    \\    *'"method":"tools/list"'*)
+    \\      printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","ttlMs":60000,"tools":[{"name":"echo","description":"Echo text","inputSchema":{"type":"object"}}]}}\n' "$id"
+    \\      ;;
+    \\    *'"method":"tools/call"'*)
+    \\      sleep 2
+    \\      printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","content":[{"type":"text","text":"kept echo"}]}}\n' "$id"
+    \\      ;;
+    \\    *'"method":"notifications/cancelled"'*)
+    \\      exit 0
+    \\      ;;
+    \\    *)
+    \\      exit 3
+    \\      ;;
+    \\  esac
+    \\done
+;
+
+const keepalive_empty_tools_script =
+    \\while IFS= read -r line; do
+    \\  id=${line#*'"id":'}
+    \\  id=${id%%,*}
+    \\  case "$line" in
+    \\    *'"method":"server/discover"'*)
+    \\      printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}}'
+    \\      ;;
+    \\    *'"method":"tools/list"'*)
+    \\      printf '{"jsonrpc":"2.0","id":%s,"result":{"resultType":"complete","ttlMs":60000,"tools":[]}}\n' "$id"
+    \\      ;;
+    \\    *'"method":"notifications/cancelled"'*)
+    \\      exit 0
+    \\      ;;
+    \\    *)
+    \\      exit 3
+    \\      ;;
+    \\  esac
+    \\done
+;
+
+test "reload adoption reuses healthy servers and replaces changed ones" {
+    const alloc = std.testing.allocator;
+    const churn_a_script = "# churn variant a\n" ++ keepalive_empty_tools_script;
+    const churn_b_script = "# churn variant b\n" ++ keepalive_empty_tools_script;
+
+    var live = McpRuntime.init(alloc);
+    var live_alive = true;
+    defer if (live_alive) live.deinit();
+    try live.addServer(try shellMcpConfigForTest(alloc, "keeper", keepalive_keeper_script));
+    try live.addServer(try shellMcpConfigForTest(alloc, "churn", churn_a_script));
+    try live.addServer(try shellMcpConfigForTest(alloc, "gone", keepalive_empty_tools_script));
+    live.connectAll(.{});
+    const keeper_live = live.findServer("keeper") orelse return error.TestUnexpectedResult;
+    const keeper_dispatcher = keeper_live.dispatcher orelse return error.TestUnexpectedResult;
+    const keeper_generation = keeper_live.connection_generation;
+    const churn_live = live.findServer("churn") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(ServerState.ready, keeper_live.state);
+
+    var candidate = McpRuntime.init(alloc);
+    var candidate_alive = true;
+    defer if (candidate_alive) candidate.deinit();
+    try candidate.addServer(try shellMcpConfigForTest(alloc, "keeper", keepalive_keeper_script));
+    try candidate.addServer(try shellMcpConfigForTest(alloc, "churn", churn_b_script));
+    var adopted: std.ArrayList(*McpServer) = .empty;
+    defer adopted.deinit(alloc);
+    try candidate.adopt_compatible_servers(&live, &adopted);
+    try std.testing.expectEqual(@as(usize, 1), adopted.items.len);
+    try std.testing.expectEqual(keeper_live, adopted.items[0]);
+
+    var cancel = std.atomic.Value(bool).init(false);
+    candidate.connectAllCancellable(.{}, &cancel);
+    // The adopted connection is untouched by the candidate connect pass.
+    try std.testing.expectEqual(keeper_live, live.findServer("keeper").?);
+    try std.testing.expectEqual(keeper_dispatcher, keeper_live.dispatcher.?);
+    try std.testing.expectEqual(keeper_generation, keeper_live.connection_generation);
+    try std.testing.expect(keeper_live.dispatcher.?.isRunning());
+    const churn_next = candidate.findServer("churn") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(churn_next != churn_live);
+    try std.testing.expect(candidate.findServer("gone") == null);
+
+    var snapshot = try candidate.snapshotHealth(alloc, clockMillis());
+    defer snapshot.deinit(alloc);
+    try std.testing.expectEqual(health.StartupDecision.ready, health.startupDecision(snapshot.servers));
+
+    live.finalize_adoption(adopted.items, &candidate);
+    try std.testing.expect(live.findServer("keeper") == null);
+    try std.testing.expectEqual(keeper_live, candidate.findServer("keeper").?);
+    try std.testing.expect(candidate.hasTool("mcp_keeper_echo"));
+
+    // Destroying the previous runtime retires only the servers left behind;
+    // the adopted connection stays live under its new owner.
+    live.deinit();
+    live_alive = false;
+    try std.testing.expect(keeper_live.dispatcher.?.isRunning());
+    candidate.deinit();
+    candidate_alive = false;
+}
+
+test "in-flight calls on adopted servers finish once across finalize" {
+    const alloc = std.testing.allocator;
+    var live = McpRuntime.init(alloc);
+    var live_alive = true;
+    defer if (live_alive) live.deinit();
+    try live.addServer(try shellMcpConfigForTest(alloc, "keeper", keepalive_keeper_script));
+    live.connectAll(.{});
+    try std.testing.expect(live.hasTool("mcp_keeper_echo"));
+    const keeper_live = live.findServer("keeper") orelse return error.TestUnexpectedResult;
+    const keeper_dispatcher = keeper_live.dispatcher orelse return error.TestUnexpectedResult;
+
+    const Call = struct {
+        runtime: *McpRuntime,
+        result: ?[]u8 = null,
+        err: ?anyerror = null,
+
+        fn run(self: *@This()) void {
+            if (!self.runtime.acquireUse()) {
+                self.err = error.McpRuntimeUnavailable;
+                return;
+            }
+            defer self.runtime.releaseUse();
+            const call = self.runtime.callToolByNameWithOptions(
+                std.testing.allocator,
+                "mcp_keeper_echo",
+                "{}",
+                tool_result_limits.default_max_tool_result_bytes,
+                .{},
+            ) catch |err| {
+                self.err = err;
+                return;
+            };
+            if (call) |value| {
+                var owned = value;
+                defer owned.deinit(std.testing.allocator);
+                self.result = std.testing.allocator.dupe(u8, owned.model_output) catch |err| {
+                    self.err = err;
+                    return;
+                };
+            } else {
+                self.err = error.TestExpectedResult;
+            }
+        }
+    };
+    var call = Call{ .runtime = &live };
+    const call_thread = try std.Thread.spawn(.{}, Call.run, .{&call});
+
+    const dispatcher = keeper_live.dispatcher.?;
+    const committed_deadline = std.Io.Clock.Timestamp.fromNow(std.testing.io, .{
+        .clock = .awake,
+        .raw = .fromSeconds(10),
+    });
+    while (dispatcher.pendingRequestCount() == 0) {
+        if (!std.Io.Clock.Timestamp.compare(
+            std.Io.Clock.Timestamp.now(std.testing.io, .awake),
+            .lt,
+            committed_deadline,
+        )) {
+            call_thread.join();
+            return error.McpToolCallNotCommitted;
+        }
+        std.Thread.yield() catch std.atomic.spinLoopHint();
+    }
+
+    var candidate = McpRuntime.init(alloc);
+    var candidate_alive = true;
+    defer if (candidate_alive) candidate.deinit();
+    try candidate.addServer(try shellMcpConfigForTest(alloc, "keeper", keepalive_keeper_script));
+    var adopted: std.ArrayList(*McpServer) = .empty;
+    defer adopted.deinit(alloc);
+    try candidate.adopt_compatible_servers(&live, &adopted);
+    try std.testing.expectEqual(@as(usize, 1), adopted.items.len);
+    var cancel = std.atomic.Value(bool).init(false);
+    candidate.connectAllCancellable(.{}, &cancel);
+    live.finalize_adoption(adopted.items, &candidate);
+
+    call_thread.join();
+    try std.testing.expectEqual(@as(?anyerror, null), call.err);
+    const output = call.result orelse return error.TestExpectedResult;
+    defer std.testing.allocator.free(output);
+    try std.testing.expect(std.mem.find(u8, output, "kept echo") != null);
+    try std.testing.expectEqual(keeper_dispatcher, keeper_live.dispatcher.?);
+
+    live.deinit();
+    live_alive = false;
+    candidate.deinit();
+    candidate_alive = false;
+}
+
+test "changed auth identity is never adopted" {
+    const alloc = std.testing.allocator;
+    var live = McpRuntime.init(alloc);
+    var live_alive = true;
+    defer if (live_alive) live.deinit();
+    try live.addServer(try shellMcpConfigForTest(alloc, "keeper", keepalive_keeper_script));
+    live.connectAll(.{});
+    const keeper_live = live.findServer("keeper") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(ServerState.ready, keeper_live.state);
+
+    var candidate = McpRuntime.init(alloc);
+    defer candidate.deinit();
+    var rotated = try shellMcpConfigForTest(alloc, "keeper", keepalive_keeper_script);
+    rotated.auth = .{ .client_id = try alloc.dupe(u8, "rotated") };
+    try appendStackServerForTest(&candidate, .{ .config = rotated, .runtime = &candidate, .owner_alloc = alloc });
+    const shell = candidate.findServer("keeper").?;
+
+    var adopted: std.ArrayList(*McpServer) = .empty;
+    defer adopted.deinit(alloc);
+    try candidate.adopt_compatible_servers(&live, &adopted);
+    try std.testing.expectEqual(@as(usize, 0), adopted.items.len);
+    try std.testing.expect(candidate.findServer("keeper") == shell);
+
+    live.deinit();
+    live_alive = false;
+}
+
+fn remote_mcp_config_for_test(
+    alloc: Allocator,
+    name: []const u8,
+    transport: mcp_contract.McpTransport,
+    url: []const u8,
+) !mcp_contract.McpServerConfig {
+    return .{
+        .name = try alloc.dupe(u8, name),
+        .transport = transport,
+        .url = try alloc.dupe(u8, url),
+    };
+}
+
+test "reload adoption keeps healthy HTTP and SSE transports" {
+    const alloc = std.testing.allocator;
+    const url = "http://127.0.0.1:9/mcp";
+    const http_client = try alloc.create(legacy_streamable_http.Client);
+    http_client.* = .{
+        .owner_allocator = alloc,
+        .url = url,
+        .static_headers = &.{},
+        .version = .v2025_06_18,
+        .session_id = null,
+    };
+    const sse_client = try alloc.create(legacy_http_sse.Client);
+    sse_client.* = .{
+        .owner_allocator = alloc,
+        .shared_allocator = alloc,
+        .discovery_url = url,
+        .static_headers = &.{},
+        .pending = @FieldType(legacy_http_sse.Client, "pending").init(alloc),
+        .max_event_bytes = .init(1024),
+        .state = .running,
+    };
+
+    var live = McpRuntime.init(alloc);
+    var live_alive = true;
+    defer if (live_alive) live.deinit();
+    try live.addServer(try remote_mcp_config_for_test(alloc, "http", .http, url));
+    try live.addServer(try remote_mcp_config_for_test(alloc, "sse", .sse, url));
+    const http_live = live.findServer("http") orelse return error.TestUnexpectedResult;
+    http_live.state = .ready;
+    http_live.legacy_http = http_client;
+    const sse_live = live.findServer("sse") orelse return error.TestUnexpectedResult;
+    sse_live.state = .ready;
+    sse_live.legacy_sse = sse_client;
+
+    var candidate = McpRuntime.init(alloc);
+    var candidate_alive = true;
+    defer if (candidate_alive) candidate.deinit();
+    try candidate.addServer(try remote_mcp_config_for_test(alloc, "http", .http, url));
+    try candidate.addServer(try remote_mcp_config_for_test(alloc, "sse", .sse, url));
+    var adopted: std.ArrayList(*McpServer) = .empty;
+    defer adopted.deinit(alloc);
+    try candidate.adopt_compatible_servers(&live, &adopted);
+    try std.testing.expectEqual(@as(usize, 2), adopted.items.len);
+
+    live.finalize_adoption(adopted.items, &candidate);
+    live.deinit();
+    live_alive = false;
+    candidate.deinit();
+    candidate_alive = false;
+}
+
+test "reload adoption rejects dead HTTP and SSE transports" {
+    const alloc = std.testing.allocator;
+    const url = "http://127.0.0.1:9/mcp";
+    const stopping_http = try alloc.create(legacy_streamable_http.Client);
+    stopping_http.* = .{
+        .owner_allocator = alloc,
+        .url = url,
+        .static_headers = &.{},
+        .version = .v2025_06_18,
+        .session_id = null,
+    };
+    stopping_http.stopping.store(true, .release);
+    const retired_http = try alloc.create(legacy_streamable_http.Client);
+    retired_http.* = .{
+        .owner_allocator = alloc,
+        .url = url,
+        .static_headers = &.{},
+        .version = .v2025_06_18,
+        .session_id = null,
+    };
+    retired_http.retireExpiredSession();
+    const failed_sse = try alloc.create(legacy_http_sse.Client);
+    failed_sse.* = .{
+        .owner_allocator = alloc,
+        .shared_allocator = alloc,
+        .discovery_url = url,
+        .static_headers = &.{},
+        .pending = @FieldType(legacy_http_sse.Client, "pending").init(alloc),
+        .max_event_bytes = .init(1024),
+        .state = .failed,
+    };
+    const stopped_sse = try alloc.create(legacy_http_sse.Client);
+    stopped_sse.* = .{
+        .owner_allocator = alloc,
+        .shared_allocator = alloc,
+        .discovery_url = url,
+        .static_headers = &.{},
+        .pending = @FieldType(legacy_http_sse.Client, "pending").init(alloc),
+        .max_event_bytes = .init(1024),
+        .state = .stopped,
+    };
+
+    var live = McpRuntime.init(alloc);
+    var live_alive = true;
+    defer if (live_alive) live.deinit();
+    try live.addServer(try remote_mcp_config_for_test(alloc, "http-stopping", .http, url));
+    try live.addServer(try remote_mcp_config_for_test(alloc, "http-retired", .http, url));
+    try live.addServer(try remote_mcp_config_for_test(alloc, "sse-failed", .sse, url));
+    try live.addServer(try remote_mcp_config_for_test(alloc, "sse-stopped", .sse, url));
+    const stopping_live = live.findServer("http-stopping") orelse return error.TestUnexpectedResult;
+    stopping_live.state = .ready;
+    stopping_live.legacy_http = stopping_http;
+    const retired_live = live.findServer("http-retired") orelse return error.TestUnexpectedResult;
+    retired_live.state = .ready;
+    retired_live.legacy_http = retired_http;
+    const failed_live = live.findServer("sse-failed") orelse return error.TestUnexpectedResult;
+    failed_live.state = .ready;
+    failed_live.legacy_sse = failed_sse;
+    const stopped_live = live.findServer("sse-stopped") orelse return error.TestUnexpectedResult;
+    stopped_live.state = .ready;
+    stopped_live.legacy_sse = stopped_sse;
+
+    var candidate = McpRuntime.init(alloc);
+    var candidate_alive = true;
+    defer if (candidate_alive) candidate.deinit();
+    try candidate.addServer(try remote_mcp_config_for_test(alloc, "http-stopping", .http, url));
+    try candidate.addServer(try remote_mcp_config_for_test(alloc, "http-retired", .http, url));
+    try candidate.addServer(try remote_mcp_config_for_test(alloc, "sse-failed", .sse, url));
+    try candidate.addServer(try remote_mcp_config_for_test(alloc, "sse-stopped", .sse, url));
+    var adopted: std.ArrayList(*McpServer) = .empty;
+    defer adopted.deinit(alloc);
+    try candidate.adopt_compatible_servers(&live, &adopted);
+    // Finalize before asserting so each server object keeps a single owner
+    // even when adoption unexpectedly succeeds.
+    live.finalize_adoption(adopted.items, &candidate);
+    try std.testing.expectEqual(@as(usize, 0), adopted.items.len);
+
+    live.deinit();
+    live_alive = false;
+    candidate.deinit();
+    candidate_alive = false;
+}
+
+test "retained subscriptions deliver after the old runtime is destroyed" {
+    const alloc = std.testing.allocator;
+    const url = "http://127.0.0.1:9/mcp";
+    const http_client = try alloc.create(legacy_streamable_http.Client);
+    http_client.* = .{
+        .owner_allocator = alloc,
+        .url = url,
+        .static_headers = &.{},
+        .version = .v2025_06_18,
+        .session_id = null,
+    };
+
+    var live = McpRuntime.init(alloc);
+    var live_alive = true;
+    defer if (live_alive) live.deinit();
+    try live.addServer(try remote_mcp_config_for_test(alloc, "remote", .http, url));
+    const server = live.findServer("remote") orelse return error.TestUnexpectedResult;
+    server.state = .ready;
+    server.connection_generation = 7;
+    server.tools_list_changed = true;
+    server.legacy_http = http_client;
+    try startToolSubscription(alloc, server, .{});
+    const retained = server.tool_subscription orelse return error.TestUnexpectedResult;
+    const passthrough = retained.notification_passthrough orelse return error.TestUnexpectedResult;
+    // The retained subscription must stay server-relative: the server object
+    // survives adoption while its runtime owner is replaced and destroyed.
+    try std.testing.expectEqual(@as(*anyopaque, @ptrCast(server)), passthrough.context);
+    try std.testing.expect(passthrough.context != @as(*anyopaque, @ptrCast(&live)));
+
+    var candidate = McpRuntime.init(alloc);
+    var candidate_alive = true;
+    defer if (candidate_alive) candidate.deinit();
+    try candidate.addServer(try remote_mcp_config_for_test(alloc, "remote", .http, url));
+    var adopted: std.ArrayList(*McpServer) = .empty;
+    defer adopted.deinit(alloc);
+    try candidate.adopt_compatible_servers(&live, &adopted);
+    try std.testing.expectEqual(@as(usize, 1), adopted.items.len);
+
+    live.finalize_adoption(adopted.items, &candidate);
+    live.deinit();
+    live_alive = false;
+
+    const Probe = struct {
+        seen: bool = false,
+
+        fn accept(
+            _: *anyopaque,
+            _: tool_mcp_runtime.InputOrigin,
+            _: []const u8,
+        ) tool_mcp_runtime.LegacyUrlAcceptTransition {
+            return .missing;
+        }
+
+        fn consume(
+            raw: *anyopaque,
+            _: tool_mcp_runtime.LegacyUrlCompletion,
+        ) tool_mcp_runtime.LegacyUrlConsumeTransition {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.seen = true;
+            return .{ .consumed = null };
+        }
+
+        fn publish(_: *anyopaque, _: []u8) void {}
+    };
+    var probe = Probe{};
+    candidate.setLegacyUrlCompletionSink(.{
+        .context = @ptrCast(&probe),
+        .accept = Probe.accept,
+        .consume = Probe.consume,
+        .publish = Probe.publish,
+    });
+    var frame = try std.json.parseFromSlice(
+        std.json.Value,
+        alloc,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/elicitation/complete\",\"params\":{\"elicitationId\":\"retained\"}}",
+        .{},
+    );
+    defer frame.deinit();
+    const stored = server.tool_subscription orelse return error.TestUnexpectedResult;
+    const stored_passthrough = stored.notification_passthrough orelse return error.TestUnexpectedResult;
+    stored_passthrough.callback(stored_passthrough.context, stored_passthrough.source, frame.value);
+    try std.testing.expect(probe.seen);
+
+    candidate.deinit();
+    candidate_alive = false;
+}
+
+test "modern HTTP subscription listener resolves its current runtime owner" {
+    const alloc = std.testing.allocator;
+    const url = "http://127.0.0.1:9/mcp";
+    var live = McpRuntime.init(alloc);
+    defer live.deinit();
+    try live.addServer(try remote_mcp_config_for_test(alloc, "modern", .http, url));
+    const server = live.findServer("modern") orelse return error.TestUnexpectedResult;
+    server.state = .ready;
+    server.connection_generation = 5;
+    server.negotiated_protocol_version = modern_protocol_version;
+    var sink_ctx: u8 = 0;
+    const sink = mcp_contract.NotificationSink{
+        .context = @ptrCast(&sink_ctx),
+        .callback = struct {
+            fn callback(_: *anyopaque, _: std.json.Value) void {}
+        }.callback,
+    };
+    const control = streamable_http.Control{
+        .deadline = std.Io.Clock.Timestamp.fromNow(std.testing.io, .{
+            .clock = .awake,
+            .raw = .fromSeconds(5),
+        }),
+    };
+    // Every guard below returns before any network use.
+    try std.testing.expectError(
+        error.McpConnectionClosed,
+        listenModernHttpToolSubscription(@ptrCast(server), alloc, "modern", 4, "{}", sink, control),
+    );
+    try std.testing.expectError(
+        error.McpConnectionClosed,
+        listenModernHttpToolSubscription(@ptrCast(server), alloc, "other", 5, "{}", sink, control),
+    );
+    var other = McpRuntime.init(alloc);
+    defer other.deinit();
+    server.runtime = &other;
+    try std.testing.expectError(
+        error.McpConnectionClosed,
+        listenModernHttpToolSubscription(@ptrCast(server), alloc, "modern", 5, "{}", sink, control),
+    );
+    server.runtime = &live;
+    server.runtime = null;
+    try std.testing.expectError(
+        error.McpConnectionClosed,
+        listenModernHttpToolSubscription(@ptrCast(server), alloc, "modern", 5, "{}", sink, control),
+    );
+    server.runtime = &live;
 }
