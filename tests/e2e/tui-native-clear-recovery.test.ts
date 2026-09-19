@@ -146,6 +146,37 @@ tmuxTest("native-clear replay settles a complete paste before the next key", asy
   expect(readFileSync(stderr_path, "utf8")).toBe("");
 }, 30_000);
 
+tmuxTest("typing on an open alternate screen does not start native-clear probe", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "fiber-native-clear-alt-screen-"));
+  temp_dirs.push(dir);
+  const trace_path = join(dir, "trace.log");
+  const stderr_path = join(dir, "stderr.log");
+
+  session = await TmuxSession.create({
+    width: 100,
+    height: 30,
+    stderrPath: stderr_path,
+    env: {
+      AI_GATEWAY_API_KEY: undefined,
+      VERCEL_OIDC_TOKEN: undefined,
+      FIBER_THEME: undefined,
+      TMUX: undefined,
+      FIBER_TRACE_LOG: trace_path,
+      FIBER_TRACE_SCOPES: "native_clear",
+    },
+  });
+  await session.waitForComposer(10_000);
+  await session.sendKeys("C-o");
+  await session.waitForPane((pane) => pane.includes("ctrl o close"), 10_000);
+  await session.sendLiteral("abc");
+
+  await Bun.sleep(2_000);
+  const trace = existsSync(trace_path) ? readFileSync(trace_path, "utf8") : "";
+  expect(trace).not.toContain("native_clear_probe requested");
+  expect(trace).not.toContain("native_clear_recovery_requested");
+  expect(readFileSync(stderr_path, "utf8")).toBe("");
+}, 30_000);
+
 tmuxTest("tmux leaves native-clear probing disabled and preserves ordinary input", async () => {
   const dir = mkdtempSync(join(tmpdir(), "fiber-native-clear-tmux-"));
   temp_dirs.push(dir);

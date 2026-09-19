@@ -2584,6 +2584,7 @@ const App = struct {
             RenderAppRuntime.requestActiveSurfaceFrame(self, .modal);
         }
         if (!self.shell.fullTranscriptActive() and
+            !self.terminal_input_runtime.native_clear_probe.active() and
             self.shell.takeReadyFullTranscriptOpen() and
             self.terminal.alternate_screen_owner == .none and
             !self.approval_prompt.isActive())
