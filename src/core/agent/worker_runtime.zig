@@ -848,6 +848,17 @@ pub const WorkerRuntime = struct {
     /// Returns allocator-owned steering text for `turn_id`, removing only those
     /// entries from the shared admission-ordered queue.
     pub fn takeSteering(self: *WorkerRuntime, alloc: std.mem.Allocator, turn_id: u64) ![][]u8 {
+        return self.takeSteeringTo(alloc, alloc, turn_id);
+    }
+
+    /// Copies matching steering text into `dest` before removing those entries.
+    /// `event_alloc` owns worker-event payloads and the queued prompt records.
+    pub fn takeSteeringTo(
+        self: *WorkerRuntime,
+        event_alloc: std.mem.Allocator,
+        dest: std.mem.Allocator,
+        turn_id: u64,
+    ) ![][]u8 {
         self.worker_mutex.lockUncancelable(io_mod.getIo());
         defer self.worker_mutex.unlock(io_mod.getIo());
         if (!self.worker_processing or
@@ -863,30 +874,30 @@ pub const WorkerRuntime = struct {
         }
         if (steering_count == 0) return &.{};
 
-        const messages = try alloc.alloc([]u8, steering_count);
+        const messages = try dest.alloc([]u8, steering_count);
         var copied: usize = 0;
         errdefer {
-            for (messages[0..copied]) |text| alloc.free(text);
-            alloc.free(messages);
+            for (messages[0..copied]) |text| dest.free(text);
+            dest.free(messages);
         }
-        const events = try alloc.alloc(WorkerEvent, steering_count);
+        const events = try event_alloc.alloc(WorkerEvent, steering_count);
         var event_count: usize = 0;
         errdefer {
-            for (events[0..event_count]) |event| freeWorkerEvent(alloc, event);
-            alloc.free(events);
+            for (events[0..event_count]) |event| freeWorkerEvent(event_alloc, event);
+            event_alloc.free(events);
         }
         for (self.queued_prompts.items) |prompt| {
             if (prompt.steer_target_turn_id != turn_id) continue;
-            messages[copied] = try alloc.dupe(u8, prompt.prompt);
+            messages[copied] = try dest.dupe(u8, prompt.prompt);
             copied += 1;
             events[event_count] = .{
-                .append_user_feedback = try alloc.dupe(u8, prompt.prompt),
+                .append_user_feedback = try event_alloc.dupe(u8, prompt.prompt),
             };
             event_count += 1;
         }
-        try self.worker_events.ensureUnusedCapacity(alloc, events.len);
+        try self.worker_events.ensureUnusedCapacity(event_alloc, events.len);
         for (events) |event| self.worker_events.appendAssumeCapacity(event);
-        alloc.free(events);
+        event_alloc.free(events);
 
         var index: usize = 0;
         while (index < self.queued_prompts.items.len) {
@@ -895,7 +906,7 @@ pub const WorkerRuntime = struct {
                 continue;
             }
             const prompt = self.queued_prompts.orderedRemove(index);
-            freeQueuedPrompt(alloc, prompt);
+            freeQueuedPrompt(event_alloc, prompt);
             if (self.queued_prompt_count > 0) self.queued_prompt_count -= 1;
         }
         debug_trace.eventf("worker", "prompt_steering_consumed", .{ .turn_id = turn_id }, "count={d}", .{messages.len});
@@ -3126,6 +3137,38 @@ test "active prompt admission drains steering in FIFO order" {
     try std.testing.expectEqual(@as(usize, 2), runtime.worker_events.items.len);
     try std.testing.expectEqualStrings("first", runtime.worker_events.items[0].append_user_feedback);
     try std.testing.expectEqualStrings("second", runtime.worker_events.items[1].append_user_feedback);
+}
+
+fn checkTakeSteeringDestAllocFailurePreservesQueue(dest: std.mem.Allocator) !void {
+    const owner = std.testing.allocator;
+    var runtime = WorkerRuntime{};
+    defer runtime.deinit(owner);
+    runtime.worker_processing = true;
+    runtime.active_turn_id = 41;
+    try runtime.admitPrompt(owner, try makePrompt(owner, "steer me", "model"), true);
+
+    const guidance = runtime.takeSteeringTo(owner, dest, 41) catch |err| {
+        if (runtime.queued_prompts.items.len != 1)
+            return error.SteeringLostOnAllocationFailure;
+        if (!std.mem.eql(u8, runtime.queued_prompts.items[0].prompt, "steer me"))
+            return error.SteeringTextChangedOnAllocationFailure;
+        return err;
+    };
+    defer {
+        for (guidance) |text| dest.free(text);
+        dest.free(guidance);
+    }
+    try std.testing.expectEqual(@as(usize, 1), guidance.len);
+    try std.testing.expectEqualStrings("steer me", guidance[0]);
+    try std.testing.expectEqual(@as(usize, 0), runtime.queued_prompts.items.len);
+}
+
+test "takeSteering dest allocation failures keep queued steering" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        checkTakeSteeringDestAllocFailurePreservesQueue,
+        .{},
+    );
 }
 
 test "queue review atomically blocks steering consumption and edits by prompt identity" {

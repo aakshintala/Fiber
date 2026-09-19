@@ -534,15 +534,7 @@ pub fn Bindings(comptime App: type) type {
 
         fn agentTakeSteering(ctx: *anyopaque, arena: std.mem.Allocator, turn_id: u64) ![]const []const u8 {
             const app: *App = @ptrCast(@alignCast(ctx));
-            const owned = try app.worker.takeSteering(std.heap.c_allocator, turn_id);
-            if (owned.len == 0) return &.{};
-            defer {
-                for (owned) |text| std.heap.c_allocator.free(text);
-                std.heap.c_allocator.free(owned);
-            }
-            const result = try arena.alloc([]const u8, owned.len);
-            for (owned, result) |text, *dest| dest.* = try arena.dupe(u8, text);
-            return result;
+            return app.worker.takeSteeringTo(std.heap.c_allocator, arena, turn_id);
         }
 
         fn agentAppendStaticContext(ctx: *anyopaque, arena: Allocator, project_context: ?[]const u8, messages: *std.ArrayList(ChatMessage)) !void {

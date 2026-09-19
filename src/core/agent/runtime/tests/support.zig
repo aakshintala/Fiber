@@ -658,6 +658,9 @@ pub const FakeAgentRuntimeDeps = struct {
     pause_on_auto_retry_status: bool = false,
     recovery_pause_flag: ?*std.atomic.Value(bool) = null,
     route_recovery_status_error_attempt: ?usize = null,
+    steering_messages: []const []const u8 = &.{},
+    steering_take_at: usize = 1,
+    steering_take_count: usize = 0,
 
     pub fn init(alloc: Allocator) FakeAgentRuntimeDeps {
         return .{ .alloc = alloc };
@@ -769,12 +772,29 @@ pub const FakeAgentRuntimeDeps = struct {
             .request_route_recovery = if (self.enable_route_recovery) requestRouteRecovery else null,
             .available_model_capabilities = availableModelCapabilities,
             .resolve_model_capabilities = resolveModelCapabilities,
+            .take_steering = if (self.steering_messages.len > 0) takeSteering else null,
             .format_tool_execution_error = formatError,
             .record_tool_call_rejected = recordRejected,
             .report_inner_tool_usage = reportCapturedInnerToolUsage,
             .usage = self.usage,
             .usage_allocator = self.alloc,
         };
+    }
+
+    /// Caller owns the returned outer slice (`arena`). Element strings are
+    /// borrowed from `steering_messages` and remain valid for this fake's
+    /// lifetime.
+    fn takeSteering(raw: *anyopaque, arena: Allocator, _: u64) ![]const []const u8 {
+        const self: *FakeAgentRuntimeDeps = @ptrCast(@alignCast(raw));
+        const next_take = self.steering_take_count + 1;
+        if (next_take != self.steering_take_at) {
+            self.steering_take_count = next_take;
+            return &.{};
+        }
+        const messages = try arena.alloc([]const u8, self.steering_messages.len);
+        for (self.steering_messages, messages) |text, *copy| copy.* = text;
+        self.steering_take_count = next_take;
+        return messages;
     }
 
     fn setRecoveryCheckpoint(
