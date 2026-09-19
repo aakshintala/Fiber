@@ -145,6 +145,10 @@ const PendingCardProjection = struct {
     paint_row_count: u16,
     leading_advance_rows: u16,
 
+    fn overlaps_flow_endpoint(self: PendingCardProjection, cursor_col: u16) bool {
+        return self.leading_advance_rows == 0 and cursor_col > 1;
+    }
+
     fn deinit(self: *PendingCardProjection, alloc: std.mem.Allocator) void {
         alloc.free(self.bytes);
         self.* = undefined;
@@ -1548,7 +1552,16 @@ pub fn Runtime(comptime App: type) type {
                     .paint => .paint,
                     .retain_committed => |retained| .{ .retain = retained },
                 } else .paint;
-            var pending_paint_ctx: ?PendingCardPaintContext = if (pending_card) |card| .{
+            const pending_preview_deferred = if (pending_card) |card|
+                if (prepared_transcript) |prepared|
+                    card.overlaps_flow_endpoint(prepared.cursor.cursor_col)
+                else
+                    false
+            else
+                false;
+            var pending_paint_ctx: ?PendingCardPaintContext = if (pending_preview_deferred)
+                null
+            else if (pending_card) |card| .{
                 .bytes = card.bytes,
                 .row = (if (prepared_transcript) |*prepared|
                     prepared.cursor.cursor_row
@@ -1710,6 +1723,8 @@ pub fn Runtime(comptime App: type) type {
                 .animation_visible = frame_ctx.activity_result.painted,
                 .yolo_warning_visible = !render_reconciliation.alternate_screen_owns_rendering and
                     footer_frame.composed.danger_status_visible,
+                // Adoption still proceeds when the preview would overwrite the
+                // flow endpoint. The committed pending UI is the real card.
                 .pending_prompt_presented = pending_card != null,
             };
         }
@@ -2364,6 +2379,51 @@ test "pending prompt projection waits for a paintable terminal width" {
     )).?;
     defer projection.deinit(alloc);
     try std.testing.expect(projection.paint_row_count > 0);
+}
+
+test "pending prompt preview defers only when it would overwrite the flow endpoint" {
+    const alloc = std.testing.allocator;
+    const TestApp = struct {
+        alloc: std.mem.Allocator,
+        submission: @import("input_submit_runtime.zig").State,
+    };
+    var app = TestApp{
+        .alloc = alloc,
+        .submission = .{ .pending = .{ .draft = .{
+            .turn_id = 1,
+            .prompt = try alloc.dupe(u8, "line\n" ** 30),
+            .images = &.{},
+            .skill_display_spans = &.{},
+        } } },
+    };
+    defer app.submission.pending.?.deinit(alloc);
+    const cases = [_]struct { row: u16, col: u16, advance: u16, deferred: bool }{
+        .{ .row = 20, .col = 1, .advance = 0, .deferred = false },
+        .{ .row = 8, .col = 47, .advance = 2, .deferred = false },
+        .{ .row = 19, .col = 47, .advance = 1, .deferred = false },
+        .{ .row = 20, .col = 47, .advance = 0, .deferred = true },
+        .{ .row = 24, .col = 47, .advance = 0, .deferred = true },
+    };
+    for (cases) |case| {
+        var shell = transcript_runtime.TranscriptRuntime{
+            .layout = .{
+                .cols = 80,
+                .rows = 24,
+                .content_bottom = 20,
+                .divider_top_row = 21,
+                .input_row = 22,
+                .divider_bottom_row = 23,
+                .hint_row = 24,
+            },
+            .cursor_row = case.row,
+            .cursor_col = case.col,
+        };
+        defer shell.deinit(alloc);
+        var card = (try buildPendingCardProjection(TestApp, &app, &shell, null)).?;
+        defer card.deinit(alloc);
+        try std.testing.expectEqual(case.advance, card.leading_advance_rows);
+        try std.testing.expectEqual(case.deferred, card.overlaps_flow_endpoint(case.col));
+    }
 }
 
 test "pending prompt uses the canonical user turn boundary" {
