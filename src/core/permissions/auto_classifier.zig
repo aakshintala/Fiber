@@ -1245,9 +1245,7 @@ fn buildTestReviewPayload(
 }
 
 fn parseCompletion(alloc: std.mem.Allocator, completion: types.ModelCompletion) !ParseOutcome {
-    if (completion.content) |content| {
-        if (std.mem.trim(u8, content, " \t\r\n").len > 0) return .invalid;
-    }
+    // Authorization comes only from permission_decision; assistant prose is ignored.
     if (completion.tool_calls.len != 1) return .invalid;
 
     const call = completion.tool_calls[0];
@@ -1834,7 +1832,6 @@ test "automatic review rejects malformed extra and legacy decision assessments" 
         .{ .content = "clear" },
         .{ .tool_calls = &.{} },
         .{ .tool_calls = &.{ valid_call, valid_call } },
-        .{ .content = "commentary", .tool_calls = &.{valid_call} },
     };
     for (completions) |completion| {
         try std.testing.expectEqual(
@@ -1842,6 +1839,40 @@ test "automatic review rejects malformed extra and legacy decision assessments" 
             std.meta.activeTag(try parseCompletion(std.testing.allocator, completion)),
         );
     }
+}
+
+test "automatic review accepts permission_decision when prose accompanies the tool call" {
+    const alloc = std.testing.allocator;
+    const valid_call = types.ToolCall{
+        .id = "decision_1",
+        .name = tool_name,
+        .arguments_json = "{\"risk\":\"low\",\"decision\":\"clear\",\"rationale\":\"safe\"}",
+    };
+    const content_cases = [_]?[]const u8{
+        "commentary",
+        "Line one of narration.\nLine two explains the call.\n",
+        // Authorization comes only from the structured tool call; prose cannot override it in either direction.
+        "This is dangerous, I recommend deny.",
+    };
+    for (content_cases) |content| {
+        var outcome = try parseCompletion(alloc, .{
+            .content = content,
+            .tool_calls = &.{valid_call},
+        });
+        defer outcome.deinit(alloc);
+        switch (outcome) {
+            .valid => |result| {
+                try std.testing.expectEqual(Decision.clear, result.decision);
+                try std.testing.expectEqualStrings("safe", result.rationale);
+            },
+            .evidence_incomplete, .invalid => return error.TestExpectedEqual,
+        }
+    }
+
+    try std.testing.expectEqual(
+        std.meta.Tag(ParseOutcome).invalid,
+        std.meta.activeTag(try parseCompletion(alloc, .{ .content = "clear" })),
+    );
 }
 
 test "automatic review does not send redacted action evidence" {
