@@ -12,7 +12,16 @@ import {
   writeSeededChatGptLogin,
 } from "./tmux-helpers";
 
-const TIMEOUT = 15_000;
+// runFx resolves on child `close` (eval-helpers.ts), which Node emits only
+// after stdout and stderr have ended. A negative progress check is therefore
+// not racing a drain. The #402 flake was bun's 15s test deadline matching
+// that kill timer: a loaded macOS runner aborted with `timed out at 15000ms`
+// before close, then passed on retry. bun's budget must stay strictly above
+// the process budget so the login-required stderr is observed in full.
+const ASK_TIMEOUT_MS = 30_000;
+const TEST_TIMEOUT_MS = 45_000;
+const LOGIN_REQUIRED =
+  "fiber needs a Codex subscription login for this model. Run fiber auth login codex.";
 const NO_CODEX_AUTH = {
   FIBER_DISABLE_KEYCHAIN: "1",
 };
@@ -27,6 +36,7 @@ async function runWithoutCodexAuth(args: string[]) {
     return await runFx(args, {
       cwd: workspace,
       env: { ...NO_CODEX_AUTH, HOME: home },
+      timeoutMs: ASK_TIMEOUT_MS,
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -39,6 +49,15 @@ function expectNoFetchProgress(stderr: string) {
   expect(stderr).not.toContain("Extracting ");
 }
 
+function expectAuthFailureWithoutFetchProgress(
+  result: Awaited<ReturnType<typeof runFx>>,
+) {
+  expect(result.timedOut).toBe(false);
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain(LOGIN_REQUIRED);
+  expectNoFetchProgress(result.stderr);
+}
+
 describe("web_fetch permission progress", () => {
   test(
     "default ask emits no native fetch progress before authentication",
@@ -49,11 +68,9 @@ describe("web_fetch permission progress", () => {
         "fetch http://localhost/ and summarize it",
       ]);
 
-      expect(result.code).toBe(1);
-      expect(result.stderr).toContain("fiber needs a Codex subscription login for this model. Run fiber auth login codex.");
-      expectNoFetchProgress(result.stderr);
+      expectAuthFailureWithoutFetchProgress(result);
     },
-    TIMEOUT,
+    TEST_TIMEOUT_MS,
   );
 
   test(
@@ -99,10 +116,11 @@ describe("web_fetch permission progress", () => {
           {
             cwd: workspace,
             env: seededFakeCodexEnv(home, codex),
-            timeoutMs: TIMEOUT,
+            timeoutMs: ASK_TIMEOUT_MS,
           },
         );
 
+        expect(result.timedOut).toBe(false);
         expect(codex.requests.length).toBeGreaterThanOrEqual(2);
         expect(
           codex.requests.some((request) =>
@@ -119,7 +137,7 @@ describe("web_fetch permission progress", () => {
         rmSync(root, { recursive: true, force: true });
       }
     },
-    TIMEOUT,
+    TEST_TIMEOUT_MS,
   );
 
 });
