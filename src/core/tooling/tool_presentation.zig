@@ -11,6 +11,7 @@ const terminal_ui_projection = @import("../terminal/ui_projection.zig");
 const background_sessions = @import("../terminal/background_sessions.zig");
 const managed_execution = @import("../execution/managed_execution.zig");
 const debug_trace = @import("../shared/debug_trace.zig");
+const io_mod = @import("../shared/io.zig");
 const types = @import("../shared/types.zig");
 const test_builtin_tools = if (builtin.is_test)
     @import("../../builtins/tools.zig")
@@ -393,13 +394,11 @@ fn resolveTerminalSessionTargetFromRows(
     session_id: []const u8,
     rows: []const terminal_ui_projection.Row,
 ) ![]const u8 {
-    for (rows) |row| {
-        if (!std.mem.eql(u8, row.session_id, session_id)) continue;
-        if (row.label.len == 0 or std.mem.eql(u8, row.label, session_id)) break;
+    if (commandLabelForSession(rows, session_id)) |label| {
         return try formatTerminalDisplayTarget(
             alloc,
             workspace_root,
-            row.label,
+            label,
         );
     }
 
@@ -412,9 +411,67 @@ fn resolveTerminalSessionTargetFromRows(
     return try std.fmt.allocPrint(alloc, "session {s}", .{encoded.bytes});
 }
 
+fn commandLabelForSession(
+    rows: []const terminal_ui_projection.Row,
+    session_id: []const u8,
+) ?[]const u8 {
+    for (rows) |row| {
+        if (!std.mem.eql(u8, row.session_id, session_id)) continue;
+        if (row.label.len == 0 or std.mem.eql(u8, row.label, session_id)) return null;
+        return row.label;
+    }
+    return null;
+}
+
+fn shouldIndexOwnedTty(
+    session_id: []const u8,
+    rows: []const terminal_ui_projection.Row,
+) bool {
+    if (unresolvedDisplayTargetContains(session_id)) return false;
+    return commandLabelForSession(rows, session_id) == null;
+}
+
+// ponytail: remember 64 unresolved session hashes, ring-evict; grow if resume replay floods unique ids
+const max_unresolved_display_targets = 64;
+var unresolved_display_target_mutex: std.Io.Mutex = .init;
+var unresolved_display_target_hashes: [max_unresolved_display_targets]u64 = undefined;
+var unresolved_display_target_len: usize = 0;
+var unresolved_display_target_next: usize = 0;
+
+fn unresolvedDisplayTargetContains(session_id: []const u8) bool {
+    const hashed = std.hash.Wyhash.hash(0, session_id);
+    const zio = io_mod.getIo();
+    unresolved_display_target_mutex.lockUncancelable(zio);
+    defer unresolved_display_target_mutex.unlock(zio);
+    const occupied = @min(unresolved_display_target_len, max_unresolved_display_targets);
+    for (unresolved_display_target_hashes[0..occupied]) |value| {
+        if (value == hashed) return true;
+    }
+    return false;
+}
+
+fn rememberUnresolvedDisplayTarget(session_id: []const u8) void {
+    const hashed = std.hash.Wyhash.hash(0, session_id);
+    const zio = io_mod.getIo();
+    unresolved_display_target_mutex.lockUncancelable(zio);
+    defer unresolved_display_target_mutex.unlock(zio);
+    const occupied = @min(unresolved_display_target_len, max_unresolved_display_targets);
+    for (unresolved_display_target_hashes[0..occupied]) |value| {
+        if (value == hashed) return;
+    }
+    unresolved_display_target_hashes[unresolved_display_target_next] = hashed;
+    unresolved_display_target_next += 1;
+    if (unresolved_display_target_next == max_unresolved_display_targets) {
+        unresolved_display_target_next = 0;
+    }
+    if (unresolved_display_target_len < max_unresolved_display_targets) {
+        unresolved_display_target_len += 1;
+    }
+}
+
 /// The caller owns the returned allocation and must free it with `alloc`.
-/// When `managed_executions` is set, a resumed TTY session is indexed first so
-/// inspect can record its launch command before the activity row is formatted.
+/// A resumed TTY is indexed only when the projection does not already hold
+/// its launch command. An id that still does not resolve is not indexed again.
 pub fn resolveTerminalDisplayTarget(
     alloc: Allocator,
     registry: tool_dispatch.Registry,
@@ -431,32 +488,47 @@ pub fn resolveTerminalDisplayTarget(
         registry,
         call,
     ) orelse return null;
-    if (managed_executions) |runtime| {
-        background_sessions.ensureOwnedTtyIndexed(
-            session_ctx,
-            runtime,
-            session_id,
-        ) catch |err| {
-            debug_trace.logf(
-                "tool_presentation",
-                "owned session index failed session={s} err={s}",
-                .{ session_id, @errorName(err) },
-            );
-        };
+
+    var snapshot_storage: ?terminal_ui_projection.Snapshot = null;
+    defer if (snapshot_storage) |*snapshot| snapshot.deinit();
+    if (terminal_client) |runtime| {
+        snapshot_storage = try runtime.terminalProjection(std.heap.c_allocator);
     }
-    const runtime = terminal_client orelse return @as(?[]const u8, try resolveTerminalSessionTargetFromRows(
-        alloc,
-        workspace_root,
-        session_id,
-        &.{},
-    ));
-    var snapshot = try runtime.terminalProjection(std.heap.c_allocator);
-    defer snapshot.deinit();
+    const initial_rows = if (snapshot_storage) |snapshot| snapshot.rows else &.{};
+
+    if (managed_executions) |runtime| {
+        if (shouldIndexOwnedTty(session_id, initial_rows)) {
+            if (comptime builtin.is_test) TestOwnedTtyIndexCalls.count += 1;
+            if (background_sessions.ensureOwnedTtyIndexed(
+                session_ctx,
+                runtime,
+                session_id,
+            )) |_| {
+                if (terminal_client) |client_runtime| {
+                    const refreshed = try client_runtime.terminalProjection(std.heap.c_allocator);
+                    if (snapshot_storage) |*snapshot| snapshot.deinit();
+                    snapshot_storage = refreshed;
+                }
+                const rows = if (snapshot_storage) |snapshot| snapshot.rows else &.{};
+                if (commandLabelForSession(rows, session_id) == null) {
+                    rememberUnresolvedDisplayTarget(session_id);
+                }
+            } else |err| {
+                debug_trace.logf(
+                    "tool_presentation",
+                    "owned session index failed session={s} err={s}",
+                    .{ session_id, @errorName(err) },
+                );
+            }
+        }
+    }
+
+    const rows = if (snapshot_storage) |snapshot| snapshot.rows else &.{};
     return @as(?[]const u8, try resolveTerminalSessionTargetFromRows(
         alloc,
         workspace_root,
         session_id,
-        snapshot.rows,
+        rows,
     ));
 }
 
@@ -1210,4 +1282,76 @@ test "tool presentation frees all formatted output with a normal allocator" {
 
 fn expectContains(text: []const u8, needle: []const u8) !void {
     try std.testing.expect(std.mem.find(u8, text, needle) != null);
+}
+
+const TestOwnedTtyIndexCalls = if (builtin.is_test) struct {
+    var count: usize = 0;
+} else struct {};
+
+fn resolveDisplayTargetForTest(
+    alloc: Allocator,
+    arguments_json: []const u8,
+    terminal_client: ?*terminal_client_runtime.Runtime,
+    managed_executions: *managed_execution.Runtime,
+) ![]const u8 {
+    const target = (try resolveTerminalDisplayTarget(
+        alloc,
+        test_tool_registry,
+        "/tmp/workspace",
+        terminal_client,
+        .{
+            .id = "observe",
+            .name = "shell",
+            .arguments_json = arguments_json,
+        },
+        managed_executions,
+        .{ .alloc = alloc, .lifecycle_allocator = alloc },
+    )) orelse return error.TestExpectedEqual;
+    return target;
+}
+
+test "unresolvable session id indexes owned TTY at most once" {
+    const alloc = std.testing.allocator;
+    var executions = managed_execution.Runtime.init(alloc);
+    defer executions.deinit();
+    TestOwnedTtyIndexCalls.count = 0;
+
+    const first = try resolveDisplayTargetForTest(
+        alloc,
+        "{\"action\":\"interact\",\"session_id\":\"shell-unresolved-382\"}",
+        null,
+        &executions,
+    );
+    defer alloc.free(first);
+    const second = try resolveDisplayTargetForTest(
+        alloc,
+        "{\"action\":\"interact\",\"session_id\":\"shell-unresolved-382\"}",
+        null,
+        &executions,
+    );
+    defer alloc.free(second);
+
+    try std.testing.expectEqualStrings("session shell-unresolved-382", first);
+    try std.testing.expectEqualStrings("session shell-unresolved-382", second);
+    try std.testing.expectEqual(@as(usize, 1), TestOwnedTtyIndexCalls.count);
+}
+
+test "known command label does not index owned TTY" {
+    const alloc = std.testing.allocator;
+    var executions = managed_execution.Runtime.init(alloc);
+    defer executions.deinit();
+    var terminal: terminal_client_runtime.Runtime = .{};
+    defer terminal.deinit();
+    try terminal.recordSessionLabel(alloc, "shell-known-382", "printf KNOWN_READY");
+    TestOwnedTtyIndexCalls.count = 0;
+
+    const target = try resolveDisplayTargetForTest(
+        alloc,
+        "{\"action\":\"interact\",\"session_id\":\"shell-known-382\"}",
+        &terminal,
+        &executions,
+    );
+    defer alloc.free(target);
+    try std.testing.expectEqualStrings("printf KNOWN_READY", target);
+    try std.testing.expectEqual(@as(usize, 0), TestOwnedTtyIndexCalls.count);
 }

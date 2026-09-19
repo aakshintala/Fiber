@@ -2,6 +2,8 @@ const std = @import("std");
 const contracts = @import("contracts.zig");
 
 const Allocator = std.mem.Allocator;
+// ponytail: keep the 64 newest uncatalogued command rows; LRU/age eviction if a long-lived process needs more captured history
+const max_retained_uncatalogued_command_rows: usize = 64;
 
 pub const Row = struct {
     session_id: []u8,
@@ -52,7 +54,7 @@ pub const Store = struct {
             .list => |value| switch (request) {
                 .list => |filters| if (filters.task_id == null and
                     filters.workspace_root == null and filters.lifecycle == null and
-                    filters.backend == null and filters.owner_authority == null)
+                    filters.backend == null)
                 {
                     try self.replaceAll(alloc, value.sessions);
                 } else for (value.sessions) |facts| {
@@ -141,9 +143,19 @@ pub const Store = struct {
             }
             try replacement.upsert(alloc, facts, label);
         }
+        var retained_uncatalogued: usize = 0;
         for (self.rows.items) |row| {
-            if (!labelIsCommand(row)) continue;
-            if (catalogContains(sessions, row.session_id)) continue;
+            if (!shouldRetainUncataloguedCommand(row, sessions)) continue;
+            retained_uncatalogued += 1;
+        }
+        const skip = retained_uncatalogued -| max_retained_uncatalogued_command_rows;
+        var skipped: usize = 0;
+        for (self.rows.items) |row| {
+            if (!shouldRetainUncataloguedCommand(row, sessions)) continue;
+            if (skipped < skip) {
+                skipped += 1;
+                continue;
+            }
             try replacement.recordLabel(alloc, row.session_id, row.label);
         }
         var previous = self.*;
@@ -164,6 +176,10 @@ pub const Store = struct {
 
     fn labelIsCommand(row: Row) bool {
         return row.label.len != 0 and !std.mem.eql(u8, row.label, row.session_id);
+    }
+
+    fn shouldRetainUncataloguedCommand(row: Row, sessions: []const contracts.SessionFacts) bool {
+        return labelIsCommand(row) and !catalogContains(sessions, row.session_id);
     }
 
     fn catalogContains(sessions: []const contracts.SessionFacts, session_id: []const u8) bool {
@@ -260,6 +276,68 @@ test "catalog replaceAll preserves a recorded launch command across a matching r
     try std.testing.expectEqualStrings("printf TTY_RESUME_READY", snapshot.rows[0].label);
 }
 
+test "owner-authority catalog list replaces the projection and keeps captured commands" {
+    const alloc = std.testing.allocator;
+    var store: Store = .{};
+    defer store.deinit(alloc);
+    try store.recordLabel(alloc, "shell-captured", "printf CAPTURED_READY");
+    const full = [_]contracts.SessionFacts{
+        testFacts("terminal-a", .running),
+        testFacts("terminal-b", .starting),
+    };
+    try store.observe(
+        alloc,
+        .{ .list = .{} },
+        .{ .success = .{ .list = .{ .sessions = &full } } },
+    );
+
+    const owned = [_]contracts.SessionFacts{
+        testFacts("terminal-a", .running),
+    };
+    try store.observe(
+        alloc,
+        .{ .list = .{ .owner_authority = testOwnerAuthority() } },
+        .{ .success = .{ .list = .{ .sessions = &owned } } },
+    );
+    var snapshot = try store.snapshot(alloc);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(usize, 2), snapshot.rows.len);
+    try std.testing.expectEqualStrings("terminal-a", snapshot.rows[0].session_id);
+    try std.testing.expectEqualStrings("shell-captured", snapshot.rows[1].session_id);
+    try std.testing.expectEqualStrings("printf CAPTURED_READY", snapshot.rows[1].label);
+}
+
+test "catalog replaceAll caps retained uncatalogued command rows" {
+    const alloc = std.testing.allocator;
+    var store: Store = .{};
+    defer store.deinit(alloc);
+    var index: usize = 0;
+    while (index < max_retained_uncatalogued_command_rows + 8) : (index += 1) {
+        var id_buf: [32]u8 = undefined;
+        const session_id = try std.fmt.bufPrint(&id_buf, "shell-{d}", .{index});
+        var command_buf: [32]u8 = undefined;
+        const command = try std.fmt.bufPrint(&command_buf, "printf {d}", .{index});
+        try store.recordLabel(alloc, session_id, command);
+    }
+    const catalog = [_]contracts.SessionFacts{
+        testFacts("terminal-a", .running),
+    };
+    try store.observe(
+        alloc,
+        .{ .list = .{} },
+        .{ .success = .{ .list = .{ .sessions = &catalog } } },
+    );
+    var snapshot = try store.snapshot(alloc);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(usize, 1 + max_retained_uncatalogued_command_rows), snapshot.rows.len);
+    try std.testing.expectEqualStrings("terminal-a", snapshot.rows[0].session_id);
+    try std.testing.expectEqualStrings("shell-8", snapshot.rows[1].session_id);
+    try std.testing.expectEqualStrings(
+        "shell-71",
+        snapshot.rows[snapshot.rows.len - 1].session_id,
+    );
+}
+
 fn checkRecordLabelAllocationFailures(alloc: Allocator) !void {
     var store: Store = .{};
     defer store.deinit(alloc);
@@ -341,5 +419,18 @@ fn testFacts(
         .backend = .native,
         .output_cursor = .{ .segment = 1, .offset = 0 },
         .screen_recovery = .{ .unavailable = .missing },
+    };
+}
+
+fn testOwnerAuthority() contracts.OwnerCatalogAuthorityClaim {
+    return .{
+        .principal = .{
+            .profile_user = "fiber",
+            .durable_session_id = "test-session",
+            .workspace_root = "/tmp/workspace",
+            .transport_role = .interactive,
+        },
+        .actor = .agent,
+        .proof = .{ .bytes = [_]u8{1} ** 32 },
     };
 }
