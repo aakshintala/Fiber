@@ -30,6 +30,7 @@ const Slot = struct {
     route_changed: std.Io.Condition = .init,
     thread: ?std.Thread = null,
     finished: bool = false,
+    work_done: std.atomic.Value(bool) = .init(false),
     done: std.Io.Event = .unset,
 };
 
@@ -53,7 +54,8 @@ pub const Owner = struct {
                 if (self.closed) return error.OwnerClosed;
                 for (self.slots.items, 0..) |slot, index| {
                     if (!std.mem.eql(u8, slot.child_id, child_id)) continue;
-                    if (!slot.finished) return .already_running;
+                    if (!slot.finished and !slot.work_done.load(.seq_cst))
+                        return .already_running;
                     break :blk self.slots.swapRemove(index);
                 }
                 const slot = try self.alloc.create(Slot);
@@ -226,6 +228,7 @@ fn destroySlot(owner: *Owner, slot: *Slot) void {
 fn slotMain(slot: *Slot) void {
     const owner = slot.owner;
     const outcome = runOne(slot);
+    slot.work_done.store(true, .seq_cst);
     owner.finish(slot.child_id, outcome.work_id, outcome.outcome);
     owner.mutex.lockUncancelable(io_mod.getIo());
     slot.finished = true;
@@ -506,4 +509,315 @@ test "worker detach invalidates approval routes before worker deinit" {
             null,
         ),
     );
+}
+
+const LockGate = struct {
+    allow: std.atomic.Value(bool) = .init(true),
+    blocked: std.Io.Event = .unset,
+
+    fn tryLock(raw: ?*anyopaque, file: std.Io.File) anyerror!bool {
+        const self: *LockGate = @ptrCast(@alignCast(raw.?));
+        if (!self.allow.load(.seq_cst)) {
+            self.blocked.set(io_mod.getIo());
+            return false;
+        }
+        return file.tryLock(io_mod.getIo(), .exclusive);
+    }
+};
+
+const RunHarness = struct {
+    entered: std.Io.Event = .unset,
+    release_run: std.Io.Event = .unset,
+    left: std.Io.Event = .unset,
+};
+
+const RaceEnv = struct {
+    tmp: std.testing.TmpDir,
+    home: []u8,
+    workspace: []u8,
+    sessions: session_store.Store,
+    approvals: approval_registry.Registry,
+    resolver: authority.Resolver,
+    gate: LockGate,
+    harness: RunHarness,
+    owner: Owner,
+    child_id: []const u8,
+
+    fn init(self: *RaceEnv, alloc: Allocator) !void {
+        const session = @import("../session/session.zig");
+        const session_codec = @import("../session/session_codec.zig");
+        const parent_id = "parent1";
+        const child_id = "child1";
+
+        self.tmp = std.testing.tmpDir(.{});
+        errdefer self.tmp.cleanup();
+        try self.tmp.dir.createDirPath(io_mod.getIo(), "home/.fiber");
+        try self.tmp.dir.createDirPath(io_mod.getIo(), "workspace");
+        self.home = try io_mod.dirRealpathAlloc(alloc, self.tmp.dir, "home");
+        errdefer alloc.free(self.home);
+        self.workspace = try io_mod.dirRealpathAlloc(alloc, self.tmp.dir, "workspace");
+        errdefer alloc.free(self.workspace);
+        self.sessions = try session_store.Store.initFromHome(alloc, self.home, self.workspace);
+        errdefer self.sessions.deinit(alloc);
+
+        var parent_state = try raceDurable(alloc, session, session_codec, parent_id, self.workspace);
+        defer parent_state.deinit(alloc);
+        var parent = try self.sessions.startWritableSession(alloc, parent_state);
+        parent.deinit(alloc);
+
+        var child_durable = try raceDurable(alloc, session, session_codec, child_id, self.workspace);
+        child_durable.subagent_child = true;
+        defer child_durable.deinit(alloc);
+        var child = try self.sessions.startWritableSession(alloc, child_durable);
+        child.deinit(alloc);
+
+        self.gate = .{};
+        self.harness = .{};
+        self.approvals = .{ .alloc = alloc };
+        errdefer self.approvals.deinit();
+        self.resolver = .{
+            .sessions = &self.sessions,
+            .root_id = parent_id,
+            .host = .{ .resolve_fn = unusedHostResolve },
+        };
+        self.child_id = child_id;
+        self.owner = .{
+            .alloc = alloc,
+            .sessions = &self.sessions,
+            .state_store = .{
+                .sessions = &self.sessions,
+                .parent_id = parent_id,
+                .options = .{
+                    .lock_ops = .{
+                        .ctx = &self.gate,
+                        .try_lock = LockGate.tryLock,
+                    },
+                },
+            },
+            .services = .{
+                .context = &self.harness,
+                .capture_fn = captureStub,
+                .run_fn = runStub,
+            },
+            .authority_resolver = &self.resolver,
+            .approvals = &self.approvals,
+        };
+        errdefer self.owner.deinit();
+
+        var registry = try child_state.Registry.init(alloc, parent_id);
+        defer registry.deinit(alloc);
+        var active = child_state.ActiveWork{
+            .id = try alloc.dupe(u8, "work-1"),
+            .message = try alloc.dupe(u8, "follow up"),
+            .created_at_ms = 1,
+        };
+        defer active.deinit(alloc);
+        try registry.appendPersistent(alloc, child_id, "reviewer", "Review carefully.", active);
+        var lock = try self.owner.state_store.acquireLock(alloc);
+        defer lock.release();
+        try self.owner.state_store.save(alloc, registry);
+    }
+
+    fn deinit(self: *RaceEnv, alloc: Allocator) void {
+        self.gate.allow.store(true, .seq_cst);
+        self.harness.release_run.set(io_mod.getIo());
+        self.owner.deinit();
+        self.approvals.deinit();
+        self.sessions.deinit(alloc);
+        alloc.free(self.workspace);
+        alloc.free(self.home);
+        self.tmp.cleanup();
+    }
+};
+
+fn raceDurable(
+    alloc: Allocator,
+    session: type,
+    session_codec: type,
+    id: []const u8,
+    workspace_root: []const u8,
+) !session_codec.DurableSessionState {
+    return .{
+        .id = try alloc.dupe(u8, id),
+        .origin_workspace_root = try alloc.dupe(u8, workspace_root),
+        .workspace_root = try alloc.dupe(u8, workspace_root),
+        .created_at_ms = 1,
+        .updated_at_ms = 1,
+        .conversation_language = session.ConversationLanguage.literal("en"),
+        .history = &.{},
+        .preferences = .{
+            .model = try alloc.dupe(u8, "test"),
+            .effort = .auto,
+            .fast_mode = false,
+        },
+    };
+}
+
+fn unusedHostResolve(
+    _: ?*anyopaque,
+    _: Allocator,
+    _: []const u8,
+) authority.HostResolveError!authority.HostAuthority {
+    return error.HostAuthorityUnavailable;
+}
+
+fn captureStub(
+    _: ?*anyopaque,
+    alloc: Allocator,
+    request: execution.CaptureRequest,
+) execution.ServiceError!@import("domain.zig").AdmissionSnapshot {
+    const domain = @import("domain.zig");
+    return domain.captureAdmission(alloc, .{
+        .parent_id = request.parent_id,
+        .source_id = request.source_id,
+        .model = request.preferences.model,
+        .provider = request.preferences.provider,
+        .effort = request.preferences.effort,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.AdmissionFailed,
+    };
+}
+
+fn runStub(
+    raw: ?*anyopaque,
+    _: *execution.TurnContext,
+    _: @import("domain.zig").QueuedMessage,
+    _: @import("domain.zig").AdmissionSnapshot,
+    cancel: *std.atomic.Value(bool),
+) execution.ServiceError!execution.RunOutcome {
+    const harness: *RunHarness = @ptrCast(@alignCast(raw.?));
+    const io = io_mod.getIo();
+    harness.entered.set(io);
+    const deadline = std.Io.Clock.Timestamp.fromNow(io, .{
+        .clock = .awake,
+        .raw = .fromMilliseconds(5_000),
+    });
+    while (!harness.release_run.isSet() and !cancel.load(.seq_cst)) {
+        const now = std.Io.Clock.Timestamp.now(io, .awake);
+        if (!std.Io.Clock.Timestamp.compare(now, .lt, deadline)) return error.Cancelled;
+        harness.release_run.waitTimeout(io, .{
+            .duration = .{
+                .clock = .awake,
+                .raw = .fromMilliseconds(10),
+            },
+        }) catch {};
+    }
+    harness.left.set(io);
+    if (cancel.load(.seq_cst) and !harness.release_run.isSet()) return error.Cancelled;
+    return .completed;
+}
+
+fn waitUntilSet(event: *std.Io.Event, timeout_ms: i64) error{SomethingNeverHappened}!void {
+    const io = io_mod.getIo();
+    const deadline = std.Io.Clock.Timestamp.fromNow(io, .{
+        .clock = .awake,
+        .raw = .fromMilliseconds(timeout_ms),
+    });
+    while (!event.isSet()) {
+        const now = std.Io.Clock.Timestamp.now(io, .awake);
+        if (!std.Io.Clock.Timestamp.compare(now, .lt, deadline))
+            return error.SomethingNeverHappened;
+        event.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            error.Timeout => {},
+            error.Canceled => return error.SomethingNeverHappened,
+        };
+    }
+}
+
+const FollowUp = struct {
+    owner: *Owner,
+    child_id: []const u8,
+    result: ?StartError!StartResult = null,
+    done: std.Io.Event = .unset,
+
+    fn run(self: *FollowUp) void {
+        self.result = self.owner.start(self.child_id);
+        self.done.set(io_mod.getIo());
+    }
+};
+
+fn expectFollowUpAdmitted(env: *RaceEnv) !void {
+    var followup = FollowUp{
+        .owner = &env.owner,
+        .child_id = env.child_id,
+    };
+    const thread = try std.Thread.spawn(.{}, FollowUp.run, .{&followup});
+    defer thread.join();
+    defer env.gate.allow.store(true, .seq_cst);
+
+    const io = io_mod.getIo();
+    const deadline = std.Io.Clock.Timestamp.fromNow(io, .{
+        .clock = .awake,
+        .raw = .fromMilliseconds(2_000),
+    });
+    var admitted = false;
+    while (true) {
+        if (followup.done.isSet()) break;
+        if (env.owner.findSlot(env.child_id) == null) {
+            admitted = true;
+            break;
+        }
+        const now = std.Io.Clock.Timestamp.now(io, .awake);
+        if (!std.Io.Clock.Timestamp.compare(now, .lt, deadline))
+            return error.SomethingNeverHappened;
+        io_mod.sleep(5 * std.time.ns_per_ms);
+    }
+    if (admitted) {
+        env.gate.allow.store(true, .seq_cst);
+        try waitUntilSet(&followup.done, 2_000);
+    }
+    try std.testing.expectEqual(
+        StartResult.started,
+        try (followup.result orelse return error.SomethingNeverHappened),
+    );
+}
+
+fn pinFinishWindow(env: *RaceEnv) !void {
+    env.gate.allow.store(false, .seq_cst);
+    try waitUntilSet(&env.harness.left, 2_000);
+    try waitUntilSet(&env.gate.blocked, 2_000);
+    const slot = env.owner.findSlot(env.child_id) orelse return error.SomethingNeverHappened;
+    if (slot.finished) return error.FinishWindowClosed;
+}
+
+test "follow-up after finish is admitted while durable write is in flight" {
+    const alloc = std.testing.allocator;
+    var env: RaceEnv = undefined;
+    try env.init(alloc);
+    defer env.deinit(alloc);
+
+    try std.testing.expectEqual(StartResult.started, try env.owner.start(env.child_id));
+    try waitUntilSet(&env.harness.entered, 2_000);
+    env.gate.allow.store(false, .seq_cst);
+    env.harness.release_run.set(io_mod.getIo());
+    try pinFinishWindow(&env);
+    try expectFollowUpAdmitted(&env);
+}
+
+test "follow-up after cancel is admitted while durable write is in flight" {
+    const alloc = std.testing.allocator;
+    var env: RaceEnv = undefined;
+    try env.init(alloc);
+    defer env.deinit(alloc);
+
+    try std.testing.expectEqual(StartResult.started, try env.owner.start(env.child_id));
+    try waitUntilSet(&env.harness.entered, 2_000);
+    env.gate.allow.store(false, .seq_cst);
+    try env.owner.cancel(env.child_id);
+    try pinFinishWindow(&env);
+    try expectFollowUpAdmitted(&env);
+}
+
+test "follow-up while child is running stays already_running" {
+    const alloc = std.testing.allocator;
+    var env: RaceEnv = undefined;
+    try env.init(alloc);
+    defer env.deinit(alloc);
+
+    try std.testing.expectEqual(StartResult.started, try env.owner.start(env.child_id));
+    try waitUntilSet(&env.harness.entered, 2_000);
+    try std.testing.expectEqual(StartResult.already_running, try env.owner.start(env.child_id));
+    const slot = env.owner.findSlot(env.child_id) orelse return error.SomethingNeverHappened;
+    try std.testing.expect(!slot.finished);
 }
