@@ -432,7 +432,15 @@ fn refreshSession(
     try body.writer.writeAll(",\"grant_type\":\"refresh_token\",\"refresh_token\":");
     try std.json.Stringify.value(session.refresh_token, .{}, &body.writer);
     try body.writer.writeByte('}');
-    var token = try requestRefreshToken(alloc, transport, body.written());
+    var token = requestRefreshToken(alloc, transport, body.written()) catch |err| {
+        if (err != error.ChatGptRefreshRejected) return err;
+        debug_trace.logf("auth", "ChatGPT refresh rejected with terminal OAuth error; retiring stored session", .{});
+        _ = mutation.delete() catch |delete_err| {
+            debug_trace.logf("auth", "ChatGPT session retirement failed err={s}", .{@errorName(delete_err)});
+            return error.ChatGptOAuthRequestFailed;
+        };
+        return error.ChatGptRefreshRejected;
+    };
     defer token.deinit(alloc);
 
     const account_id = try extractAccountId(alloc, token.access_token);
@@ -466,6 +474,19 @@ fn refreshSession(
     replacement.account_id = &.{};
 }
 
+fn refreshRequiresSignIn(body: []const u8) bool {
+    const terminal_codes = [_][]const u8{
+        "\"refresh_token_expired\"",
+        "\"refresh_token_reused\"",
+        "\"refresh_token_invalidated\"",
+        "\"invalid_grant\"",
+    };
+    for (terminal_codes) |code| {
+        if (std.mem.find(u8, body, code) != null) return true;
+    }
+    return false;
+}
+
 const RefreshTokenResponse = struct {
     access_token: []u8,
     refresh_token: ?[]u8,
@@ -485,13 +506,18 @@ fn requestRefreshToken(
 ) !RefreshTokenResponse {
     const endpoint_url = try configuredEndpoint(alloc, e2e_token_url_env, token_url);
     defer alloc.free(endpoint_url);
-    const bytes = try requestAccepted(
-        alloc,
-        transport,
-        .post_json,
-        endpoint_url,
-        payload,
-    );
+    var response = try transport.execute(alloc, .{
+        .method = .post_json,
+        .url = endpoint_url,
+        .payload = payload,
+    });
+    defer response.deinit(alloc);
+    if (response.disposition != .accepted) {
+        debug_trace.logf("auth", "ChatGPT OAuth request rejected url={s}", .{endpoint_url});
+        if (refreshRequiresSignIn(response.body)) return error.ChatGptRefreshRejected;
+        return error.ChatGptOAuthRequestFailed;
+    }
+    const bytes = response.takeBody();
     defer secret.zeroAndFree(alloc, bytes);
     var parsed = try std.json.parseFromSlice(std.json.Value, alloc, bytes, .{});
     defer parsed.deinit();
@@ -614,16 +640,6 @@ fn isLoopbackHttpUrl(url: []const u8) bool {
     return std.mem.eql(u8, host_name, "127.0.0.1") or
         std.ascii.eqlIgnoreCase(host_name, "localhost") or
         std.mem.eql(u8, host_name, "[::1]");
-}
-
-fn requestAccepted(
-    alloc: Allocator,
-    transport: oauth_transport.Provider,
-    method: oauth_transport.Method,
-    url: []const u8,
-    payload: []const u8,
-) ![]u8 {
-    return requestAcceptedWithBounds(alloc, transport, method, url, payload, null, null);
 }
 
 fn requestAcceptedWithBounds(
@@ -868,6 +884,58 @@ test "Codex refresh uses JSON and accepts omitted token rotation and lifetime" {
     try std.testing.expect(std.mem.find(u8, state.payload[0..state.payload_len], "\"grant_type\":\"refresh_token\"") != null);
     try std.testing.expect(response.refresh_token == null);
     try std.testing.expect(response.expires_in == null);
+}
+
+test "Codex refresh classifies terminal OAuth rejections" {
+    const RejectState = struct {
+        body: []const u8,
+
+        fn execute(
+            raw: ?*anyopaque,
+            alloc: Allocator,
+            request: oauth_transport.Request,
+        ) !oauth_transport.Response {
+            const self: *@This() = @ptrCast(@alignCast(raw.?));
+            _ = request;
+            return .{
+                .disposition = .rejected,
+                .body = try alloc.dupe(u8, self.body),
+            };
+        }
+    };
+
+    const payload =
+        "{\"client_id\":\"client\",\"grant_type\":\"refresh_token\",\"refresh_token\":\"refresh\"}";
+
+    const terminal_bodies = [_][]const u8{
+        "{\"error\":\"invalid_grant\"}",
+        "{\"error\":\"refresh_token_expired\"}",
+        "{\"error\":\"refresh_token_reused\"}",
+        "{\"error\":\"refresh_token_invalidated\"}",
+    };
+    for (terminal_bodies) |body| {
+        var state = RejectState{ .body = body };
+        const err = requestRefreshToken(
+            std.testing.allocator,
+            .{ .context = &state, .execute_fn = RejectState.execute },
+            payload,
+        );
+        try std.testing.expectError(error.ChatGptRefreshRejected, err);
+    }
+
+    const transient_bodies = [_][]const u8{
+        "{\"error\":\"server_error\"}",
+        "{\"error\":\"invalid_request\"}",
+    };
+    for (transient_bodies) |body| {
+        var state = RejectState{ .body = body };
+        const err = requestRefreshToken(
+            std.testing.allocator,
+            .{ .context = &state, .execute_fn = RejectState.execute },
+            payload,
+        );
+        try std.testing.expectError(error.ChatGptOAuthRequestFailed, err);
+    }
 }
 
 test "ChatGPT browser authorization URL uses PKCE without device authentication" {

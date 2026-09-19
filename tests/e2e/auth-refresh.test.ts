@@ -40,6 +40,62 @@ function writeChatGptLogin(
   });
 }
 
+function startFakeChatGptTokensReject(errorCode: string, status = 400) {
+  const requests: Array<{ method: string; path: string; body: string }> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url);
+      const body = await request.text();
+      requests.push({ method: request.method, path: url.pathname, body });
+      return Response.json({ error: errorCode }, { status });
+    },
+  });
+  return {
+    tokenUrl: `http://127.0.0.1:${server.port}/token`,
+    requests,
+    stop() {
+      server.stop(true);
+    },
+  };
+}
+
+function startMinimalCodexServer() {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/models") {
+        return Response.json({
+          models: [
+            {
+              slug: "gpt-5.6-luna",
+              visibility: "list",
+              supported_in_api: true,
+              supported_reasoning_levels: [{ effort: "low" }],
+              additional_speed_tiers: [],
+              input_modalities: ["text"],
+              context_window: 128000,
+            },
+          ],
+        });
+      }
+      return new Response(codexFinalText("CODEX_OK"), {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  });
+  return {
+    responsesUrl: `http://127.0.0.1:${server.port}/responses`,
+    modelsUrl: `http://127.0.0.1:${server.port}/models`,
+    stop() {
+      server.stop(true);
+    },
+  };
+}
+
 function startFakeChatGptTokens(tokens: string[]) {
   const requests: Array<{ method: string; path: string; body: string }> = [];
   const server = Bun.serve({
@@ -75,6 +131,113 @@ function sessionIdsFromHome(home: string): string[] {
     .map((entry) => entry.name)
     .sort();
 }
+
+test(
+  "terminal refresh rejection retires stored login and does not retry refresh",
+  async () => {
+    const home = mkdtempSync(join(tmpdir(), "fiber-auth-terminal-refresh-e2e-"));
+    const tokens = startFakeChatGptTokensReject("invalid_grant");
+    const codex = startMinimalCodexServer();
+    writeChatGptLogin(home, "dead-refresh-token");
+    const authPath = join(home, ".fiber", "chatgpt-auth.json");
+    const env = {
+      ...fakeCodexEnv(home, {
+        responsesUrl: codex.responsesUrl,
+        modelsUrl: codex.modelsUrl,
+        tokenUrl: tokens.tokenUrl,
+      } as ReturnType<typeof startFakeCodex>),
+      FIBER_DISABLE_KEYCHAIN: "1",
+    };
+
+    try {
+      expect(existsSync(authPath)).toBe(true);
+      const first = await runFx(
+        ["ask", "--json", "--no-save", "attempt with dead refresh token"],
+        { env, timeoutMs: TIMEOUT },
+      );
+      expect(first.code).not.toBe(0);
+      expect(existsSync(authPath)).toBe(false);
+      expect(tokens.requests).toHaveLength(1);
+
+      const second = await runFx(
+        ["ask", "--json", "--no-save", "second attempt without stored login"],
+        { env, timeoutMs: TIMEOUT },
+      );
+      expect(second.code).not.toBe(0);
+      const secondOutput = `${second.stdout}\n${second.stderr}`;
+      expect(secondOutput).toContain("fiber auth login codex");
+      expect(tokens.requests).toHaveLength(1);
+    } finally {
+      codex.stop();
+      tokens.stop();
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  TIMEOUT,
+);
+
+test(
+  "non-terminal refresh rejection and successful refresh keep stored login",
+  async () => {
+    const home = mkdtempSync(join(tmpdir(), "fiber-auth-refresh-preserve-e2e-"));
+    const codex = startMinimalCodexServer();
+    const authPath = join(home, ".fiber", "chatgpt-auth.json");
+
+    const successTokens = startFakeChatGptTokens([EXPIRED_REFRESH_TOKEN]);
+    writeChatGptLogin(home, "seeded-refresh-token");
+    const successEnv = {
+      ...fakeCodexEnv(home, {
+        responsesUrl: codex.responsesUrl,
+        modelsUrl: codex.modelsUrl,
+        tokenUrl: successTokens.tokenUrl,
+      } as ReturnType<typeof startFakeCodex>),
+      FIBER_DISABLE_KEYCHAIN: "1",
+    };
+
+    try {
+      const refreshed = await runFx(
+        ["ask", "--json", "--no-save", "refresh then stop"],
+        { env: successEnv, timeoutMs: TIMEOUT },
+      );
+      expect(
+        refreshed.code,
+        `stdout: ${refreshed.stdout}\nstderr: ${refreshed.stderr}`,
+      ).toBe(0);
+      expect(existsSync(authPath)).toBe(true);
+      expect(successTokens.requests).toHaveLength(1);
+    } finally {
+      successTokens.stop();
+    }
+
+    const transientTokens = startFakeChatGptTokensReject("server_error", 503);
+    writeChatGptLogin(home, "seeded-refresh-token");
+    const seededAuthFile = readFileSync(authPath, "utf8");
+    const transientEnv = {
+      ...fakeCodexEnv(home, {
+        responsesUrl: codex.responsesUrl,
+        modelsUrl: codex.modelsUrl,
+        tokenUrl: transientTokens.tokenUrl,
+      } as ReturnType<typeof startFakeCodex>),
+      FIBER_DISABLE_KEYCHAIN: "1",
+    };
+
+    try {
+      const rejected = await runFx(
+        ["ask", "--json", "--no-save", "transient refresh failure"],
+        { env: transientEnv, timeoutMs: TIMEOUT },
+      );
+      expect(rejected.code).not.toBe(0);
+      expect(existsSync(authPath)).toBe(true);
+      expect(readFileSync(authPath, "utf8")).toBe(seededAuthFile);
+      expect(transientTokens.requests).toHaveLength(1);
+    } finally {
+      transientTokens.stop();
+      codex.stop();
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  TIMEOUT,
+);
 
 test(
   "fiber ask refreshes an expired login then forces one refresh and retry after 401",
