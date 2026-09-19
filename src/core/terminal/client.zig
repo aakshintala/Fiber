@@ -16,6 +16,8 @@ const Allocator = std.mem.Allocator;
 const connect_deadline_ms: i64 = 2_000;
 const handshake_deadline_ms: i64 = 5_000;
 const max_active_requests: usize = 32;
+// ponytail: remember 64 unresolved session hashes, ring-evict; grow if resume replay floods unique ids
+const max_unresolved_display_targets: usize = 64;
 pub const AdmissionError =
     contracts.RequestValidationError ||
     Allocator.Error ||
@@ -189,6 +191,40 @@ pub const Runtime = struct {
     active_count: usize = 0,
     next_correlation_value: u64 = 1,
     projection: ui_projection.Store = .{},
+    unresolved_display_target_hashes: [max_unresolved_display_targets]u64 = @splat(0),
+    unresolved_display_target_len: usize = 0,
+    unresolved_display_target_next: usize = 0,
+
+    pub fn unresolvedDisplayTargetContains(self: *Runtime, session_id: []const u8) bool {
+        const hashed = std.hash.Wyhash.hash(0, session_id);
+        const zio = io_mod.getIo();
+        self.mutex.lockUncancelable(zio);
+        defer self.mutex.unlock(zio);
+        const occupied = @min(self.unresolved_display_target_len, max_unresolved_display_targets);
+        for (self.unresolved_display_target_hashes[0..occupied]) |value| {
+            if (value == hashed) return true;
+        }
+        return false;
+    }
+
+    pub fn rememberUnresolvedDisplayTarget(self: *Runtime, session_id: []const u8) void {
+        const hashed = std.hash.Wyhash.hash(0, session_id);
+        const zio = io_mod.getIo();
+        self.mutex.lockUncancelable(zio);
+        defer self.mutex.unlock(zio);
+        const occupied = @min(self.unresolved_display_target_len, max_unresolved_display_targets);
+        for (self.unresolved_display_target_hashes[0..occupied]) |value| {
+            if (value == hashed) return;
+        }
+        self.unresolved_display_target_hashes[self.unresolved_display_target_next] = hashed;
+        self.unresolved_display_target_next += 1;
+        if (self.unresolved_display_target_next == max_unresolved_display_targets) {
+            self.unresolved_display_target_next = 0;
+        }
+        if (self.unresolved_display_target_len < max_unresolved_display_targets) {
+            self.unresolved_display_target_len += 1;
+        }
+    }
 
     pub fn nextCorrelationId(self: *Runtime) contracts.CorrelationId {
         const zio = io_mod.getIo();
@@ -367,6 +403,9 @@ pub const Runtime = struct {
         self.active_count = 0;
         self.next_correlation_value = 1;
         self.projection = .{};
+        self.unresolved_display_target_hashes = @splat(0);
+        self.unresolved_display_target_len = 0;
+        self.unresolved_display_target_next = 0;
     }
 
     fn pushCompletionLocked(self: *Runtime, completion: Completion) void {

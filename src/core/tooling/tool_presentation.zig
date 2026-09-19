@@ -424,49 +424,15 @@ fn commandLabelForSession(
 }
 
 fn shouldIndexOwnedTty(
+    terminal_client: ?*terminal_client_runtime.Runtime,
     session_id: []const u8,
     rows: []const terminal_ui_projection.Row,
 ) bool {
-    if (unresolvedDisplayTargetContains(session_id)) return false;
-    return commandLabelForSession(rows, session_id) == null;
-}
-
-// ponytail: remember 64 unresolved session hashes, ring-evict; grow if resume replay floods unique ids
-const max_unresolved_display_targets = 64;
-var unresolved_display_target_mutex: std.Io.Mutex = .init;
-var unresolved_display_target_hashes: [max_unresolved_display_targets]u64 = undefined;
-var unresolved_display_target_len: usize = 0;
-var unresolved_display_target_next: usize = 0;
-
-fn unresolvedDisplayTargetContains(session_id: []const u8) bool {
-    const hashed = std.hash.Wyhash.hash(0, session_id);
-    const zio = io_mod.getIo();
-    unresolved_display_target_mutex.lockUncancelable(zio);
-    defer unresolved_display_target_mutex.unlock(zio);
-    const occupied = @min(unresolved_display_target_len, max_unresolved_display_targets);
-    for (unresolved_display_target_hashes[0..occupied]) |value| {
-        if (value == hashed) return true;
+    if (commandLabelForSession(rows, session_id) != null) return false;
+    if (terminal_client) |runtime| {
+        if (runtime.unresolvedDisplayTargetContains(session_id)) return false;
     }
-    return false;
-}
-
-fn rememberUnresolvedDisplayTarget(session_id: []const u8) void {
-    const hashed = std.hash.Wyhash.hash(0, session_id);
-    const zio = io_mod.getIo();
-    unresolved_display_target_mutex.lockUncancelable(zio);
-    defer unresolved_display_target_mutex.unlock(zio);
-    const occupied = @min(unresolved_display_target_len, max_unresolved_display_targets);
-    for (unresolved_display_target_hashes[0..occupied]) |value| {
-        if (value == hashed) return;
-    }
-    unresolved_display_target_hashes[unresolved_display_target_next] = hashed;
-    unresolved_display_target_next += 1;
-    if (unresolved_display_target_next == max_unresolved_display_targets) {
-        unresolved_display_target_next = 0;
-    }
-    if (unresolved_display_target_len < max_unresolved_display_targets) {
-        unresolved_display_target_len += 1;
-    }
+    return true;
 }
 
 /// The caller owns the returned allocation and must free it with `alloc`.
@@ -497,7 +463,7 @@ pub fn resolveTerminalDisplayTarget(
     const initial_rows = if (snapshot_storage) |snapshot| snapshot.rows else &.{};
 
     if (managed_executions) |runtime| {
-        if (shouldIndexOwnedTty(session_id, initial_rows)) {
+        if (shouldIndexOwnedTty(terminal_client, session_id, initial_rows)) {
             if (comptime builtin.is_test) TestOwnedTtyIndexCalls.count += 1;
             if (background_sessions.ensureOwnedTtyIndexed(
                 session_ctx,
@@ -511,7 +477,9 @@ pub fn resolveTerminalDisplayTarget(
                 }
                 const rows = if (snapshot_storage) |snapshot| snapshot.rows else &.{};
                 if (commandLabelForSession(rows, session_id) == null) {
-                    rememberUnresolvedDisplayTarget(session_id);
+                    if (terminal_client) |client_runtime| {
+                        client_runtime.rememberUnresolvedDisplayTarget(session_id);
+                    }
                 }
             } else |err| {
                 debug_trace.logf(
@@ -1314,19 +1282,21 @@ test "unresolvable session id indexes owned TTY at most once" {
     const alloc = std.testing.allocator;
     var executions = managed_execution.Runtime.init(alloc);
     defer executions.deinit();
+    var terminal: terminal_client_runtime.Runtime = .{};
+    defer terminal.deinit();
     TestOwnedTtyIndexCalls.count = 0;
 
     const first = try resolveDisplayTargetForTest(
         alloc,
         "{\"action\":\"interact\",\"session_id\":\"shell-unresolved-382\"}",
-        null,
+        &terminal,
         &executions,
     );
     defer alloc.free(first);
     const second = try resolveDisplayTargetForTest(
         alloc,
         "{\"action\":\"interact\",\"session_id\":\"shell-unresolved-382\"}",
-        null,
+        &terminal,
         &executions,
     );
     defer alloc.free(second);
