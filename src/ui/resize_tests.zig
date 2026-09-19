@@ -6010,7 +6010,7 @@ test "footer renders slash completions while stream is active" {
     try expectGridContains(&h, "/model");
 }
 
-test "footer keeps model picker suppressed while stream is active" {
+test "footer renders model picker while stream is active" {
     const alloc = std.testing.allocator;
     var h = try Harness.init(alloc, 80, 24, 4);
     defer h.deinit();
@@ -6035,7 +6035,7 @@ test "footer keeps model picker suppressed while stream is active" {
     try h.flush();
 
     try expectGridContains(&h, "/model g");
-    try expectGridNotContains(&h, "gpt-test-model");
+    try expectGridContains(&h, "gpt-test-model");
 }
 
 test "footer suppresses slash skill rows for streaming model-shaped input" {
@@ -6072,7 +6072,7 @@ test "footer suppresses slash skill rows for streaming model-shaped input" {
     try expectGridNotContains(&h, "model-helper");
 }
 
-test "footer keeps file picker suppressed while stream is active" {
+test "footer renders file picker while stream is active" {
     const alloc = std.testing.allocator;
     var h = try Harness.init(alloc, 80, 24, 4);
     defer h.deinit();
@@ -6097,7 +6097,7 @@ test "footer keeps file picker suppressed while stream is active" {
     try h.flush();
 
     try expectGridContains(&h, "@sr");
-    try expectGridNotContains(&h, "src/main.zig");
+    try expectGridContains(&h, "src/main.zig");
 }
 
 test "typed file picker survives one hundred tiny and wide resize oscillations with selection intact" {
