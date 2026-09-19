@@ -145,6 +145,10 @@ const PendingCardProjection = struct {
     paint_row_count: u16,
     leading_advance_rows: u16,
 
+    fn overlaps_flow_endpoint(self: PendingCardProjection, cursor_col: u16) bool {
+        return self.leading_advance_rows == 0 and cursor_col > 1;
+    }
+
     fn deinit(self: *PendingCardProjection, alloc: std.mem.Allocator) void {
         alloc.free(self.bytes);
         self.* = undefined;
@@ -170,6 +174,32 @@ const PendingCardPaintContext = struct {
         );
     }
 };
+
+const PendingCardFlowCursor = struct {
+    row: u16,
+    col: u16,
+};
+
+fn pendingCardPaintContext(
+    card: PendingCardProjection,
+    prepared_cursor: ?PendingCardFlowCursor,
+    shell_cursor_row: u16,
+    shell_cursor_col: u16,
+) ?PendingCardPaintContext {
+    // prepareCandidate leaves prepared_transcript null when the pending tail
+    // consumes the whole transcript band (canonical_area.isEmpty). The shell
+    // cursor is still the prior occupied endpoint, so the overlap check has
+    // to use it. Forcing this path to paint re-enables the old painter on
+    // the same mid-row ghost.
+    const cursor_row = if (prepared_cursor) |cursor| cursor.row else shell_cursor_row;
+    const cursor_col = if (prepared_cursor) |cursor| cursor.col else shell_cursor_col;
+    if (card.overlaps_flow_endpoint(cursor_col)) return null;
+    return .{
+        .bytes = card.bytes,
+        .row = cursor_row +| card.leading_advance_rows,
+        .max_rows = card.paint_row_count,
+    };
+}
 
 fn pendingCardLeadingAdvanceRows(
     cursor_row: u16,
@@ -1548,14 +1578,18 @@ pub fn Runtime(comptime App: type) type {
                     .paint => .paint,
                     .retain_committed => |retained| .{ .retain = retained },
                 } else .paint;
-            var pending_paint_ctx: ?PendingCardPaintContext = if (pending_card) |card| .{
-                .bytes = card.bytes,
-                .row = (if (prepared_transcript) |*prepared|
-                    prepared.cursor.cursor_row
-                else
-                    presentation_shell.cursor_row) +| card.leading_advance_rows,
-                .max_rows = card.paint_row_count,
-            } else null;
+            var pending_paint_ctx: ?PendingCardPaintContext = if (pending_card) |card|
+                pendingCardPaintContext(
+                    card,
+                    if (prepared_transcript) |*prepared| .{
+                        .row = prepared.cursor.cursor_row,
+                        .col = prepared.cursor.cursor_col,
+                    } else null,
+                    presentation_shell.cursor_row,
+                    presentation_shell.cursor_col,
+                )
+            else
+                null;
             if (pending_paint_ctx) |paint_ctx| switch (transcript_body) {
                 .paint => {},
                 .retain => |retained_source| {
@@ -1710,6 +1744,8 @@ pub fn Runtime(comptime App: type) type {
                 .animation_visible = frame_ctx.activity_result.painted,
                 .yolo_warning_visible = !render_reconciliation.alternate_screen_owns_rendering and
                     footer_frame.composed.danger_status_visible,
+                // Adoption still proceeds when the preview would overwrite the
+                // flow endpoint. The committed pending UI is the real card.
                 .pending_prompt_presented = pending_card != null,
             };
         }
@@ -2364,6 +2400,230 @@ test "pending prompt projection waits for a paintable terminal width" {
     )).?;
     defer projection.deinit(alloc);
     try std.testing.expect(projection.paint_row_count > 0);
+}
+
+test "pending prompt preview defers only when it would overwrite the flow endpoint" {
+    const alloc = std.testing.allocator;
+    const TestApp = struct {
+        alloc: std.mem.Allocator,
+        submission: @import("input_submit_runtime.zig").State,
+    };
+    var app = TestApp{
+        .alloc = alloc,
+        .submission = .{ .pending = .{ .draft = .{
+            .turn_id = 1,
+            .prompt = try alloc.dupe(u8, "line\n" ** 30),
+            .images = &.{},
+            .skill_display_spans = &.{},
+        } } },
+    };
+    defer app.submission.pending.?.deinit(alloc);
+    const cases = [_]struct { row: u16, col: u16, advance: u16, deferred: bool }{
+        .{ .row = 20, .col = 1, .advance = 0, .deferred = false },
+        .{ .row = 8, .col = 47, .advance = 2, .deferred = false },
+        .{ .row = 19, .col = 47, .advance = 1, .deferred = false },
+        .{ .row = 20, .col = 47, .advance = 0, .deferred = true },
+        .{ .row = 24, .col = 47, .advance = 0, .deferred = true },
+    };
+    for (cases) |case| {
+        var shell = transcript_runtime.TranscriptRuntime{
+            .layout = .{
+                .cols = 80,
+                .rows = 24,
+                .content_bottom = 20,
+                .divider_top_row = 21,
+                .input_row = 22,
+                .divider_bottom_row = 23,
+                .hint_row = 24,
+            },
+            .cursor_row = case.row,
+            .cursor_col = case.col,
+        };
+        defer shell.deinit(alloc);
+        var card = (try buildPendingCardProjection(TestApp, &app, &shell, null)).?;
+        defer card.deinit(alloc);
+        try std.testing.expectEqual(case.advance, card.leading_advance_rows);
+        try std.testing.expectEqual(case.deferred, card.overlaps_flow_endpoint(case.col));
+    }
+}
+
+fn occupiedEndpointRowHoldsMarker(
+    surface: render_engine.frame_surface.FrameSurface,
+    row: u16,
+    marker: []const u8,
+) bool {
+    for (marker, 0..) |byte, index| {
+        const cell = surface.cellAt(row, @intCast(index + 1)) orelse return false;
+        if (cell.codepoint != byte) return false;
+    }
+    return true;
+}
+
+test "pending prompt preview paints no cells on the occupied endpoint row" {
+    const alloc = std.testing.allocator;
+    const TestApp = struct {
+        alloc: std.mem.Allocator,
+        submission: @import("input_submit_runtime.zig").State,
+    };
+    var app = TestApp{
+        .alloc = alloc,
+        .submission = .{ .pending = .{ .draft = .{
+            .turn_id = 1,
+            .prompt = try alloc.dupe(u8, "line\n" ** 30),
+            .images = &.{},
+            .skill_display_spans = &.{},
+        } } },
+    };
+    defer app.submission.pending.?.deinit(alloc);
+
+    const marker = "ENDPOINT";
+    const cases = [_]struct {
+        prepared: bool,
+        rows: u16,
+        content_bottom: u16,
+        band_top: u16,
+        cursor_row: u16,
+        cursor_col: u16,
+        marker_survives: bool,
+    }{
+        // Original hole: prepared transcript ends mid-row on the last content row.
+        .{
+            .prepared = true,
+            .rows = 8,
+            .content_bottom = 5,
+            .band_top = 2,
+            .cursor_row = 5,
+            .cursor_col = 12,
+            .marker_survives = true,
+        },
+        // Defect 1: the pending tail fills a one-row band, so prepared_transcript
+        // is null while the shell cursor is still the occupied mid-row endpoint.
+        .{
+            .prepared = false,
+            .rows = 6,
+            .content_bottom = 4,
+            .band_top = 4,
+            .cursor_row = 4,
+            .cursor_col = 12,
+            .marker_survives = true,
+        },
+        // Column 1 must still paint; this is not the mid-row ghost.
+        .{
+            .prepared = true,
+            .rows = 8,
+            .content_bottom = 5,
+            .band_top = 2,
+            .cursor_row = 5,
+            .cursor_col = 1,
+            .marker_survives = false,
+        },
+    };
+
+    for (cases) |case| {
+        var shell = transcript_runtime.TranscriptRuntime{
+            .layout = .{
+                .cols = 40,
+                .rows = case.rows,
+                .content_bottom = case.content_bottom,
+                .divider_top_row = case.content_bottom + 1,
+                .input_row = case.content_bottom + 1,
+                .divider_bottom_row = case.content_bottom + 1,
+                .hint_row = case.rows,
+            },
+            .cursor_row = case.cursor_row,
+            .cursor_col = case.cursor_col,
+        };
+        defer shell.deinit(alloc);
+        var card = (try buildPendingCardProjection(TestApp, &app, &shell, null)).?;
+        defer card.deinit(alloc);
+
+        const canonical = transcriptAreaBeforePendingTail(
+            .{ .top = case.band_top, .bottom = case.content_bottom },
+            card.row_count,
+        );
+        if (case.prepared) {
+            try std.testing.expect(!canonical.isEmpty());
+        } else {
+            try std.testing.expect(canonical.isEmpty());
+        }
+
+        const footer_top = case.content_bottom + 1;
+        const plan = render_engine.paint_plan.PaintPlan{
+            .layout = shell.layout,
+            .viewport = .{
+                .top_row = case.band_top,
+                .bottom_row = case.content_bottom,
+                .start_line = 0,
+                .partial_skip_rows = 0,
+                .line_count = 1,
+                .last_visible_row = case.content_bottom,
+            },
+            .footer = .{
+                .top = footer_top,
+                .top_divider = footer_top,
+                .banner = footer_top,
+                .input_base = footer_top,
+                .picker_divider = footer_top,
+                .picker_start = case.rows,
+                .bottom_divider = footer_top,
+                .hint = case.rows,
+                .total_rows = case.rows - case.content_bottom,
+            },
+            .activity = .none,
+            .preserved_band = render_engine.paint_plan.FrameBand.empty(.preserved_shell),
+            .transcript_band = .{
+                .top = case.band_top,
+                .bottom = case.content_bottom,
+                .owner = .transcript,
+            },
+            .activity_band = render_engine.paint_plan.FrameBand.empty(.activity),
+            .footer_band = .{ .top = footer_top, .bottom = case.rows, .owner = .footer },
+            .invalidation = render_engine.paint_plan.FrameInvalidationSet.empty(),
+            .footer_clean_allowed = true,
+            .synchronized_update = true,
+            .cursor_target = .{ .row = footer_top, .col = 1, .visible = true },
+            .footer_reservation_source = .footer_layout,
+            .bottom_reserved_rows = 0,
+            .preserve_scrollback = true,
+        };
+
+        var shadow = try vt_emulator.Grid.init(alloc, plan.layout.cols, plan.layout.rows);
+        defer shadow.deinit();
+        var pos_buf: [32]u8 = undefined;
+        const placed = std.fmt.bufPrint(
+            &pos_buf,
+            "\x1b[{d};1H{s}",
+            .{ case.cursor_row, marker },
+        ) catch unreachable;
+        try shadow.feed(placed);
+
+        var surface = try render_engine.frame_surface.FrameSurface.initFromShadow(alloc, plan, shadow);
+        defer surface.deinit();
+        try surface.retainTranscriptBandFromGrid(shadow, .{
+            .top = case.band_top,
+            .bottom = case.content_bottom,
+        });
+        try std.testing.expect(occupiedEndpointRowHoldsMarker(surface, case.cursor_row, marker));
+
+        const prepared_cursor: ?PendingCardFlowCursor = if (case.prepared)
+            .{ .row = case.cursor_row, .col = case.cursor_col }
+        else
+            null;
+        if (pendingCardPaintContext(
+            card,
+            prepared_cursor,
+            shell.cursor_row,
+            shell.cursor_col,
+        )) |paint_ctx_value| {
+            var paint_ctx = paint_ctx_value;
+            try PendingCardPaintContext.paint(@ptrCast(&paint_ctx), &surface);
+        }
+
+        try std.testing.expectEqual(
+            case.marker_survives,
+            occupiedEndpointRowHoldsMarker(surface, case.cursor_row, marker),
+        );
+    }
 }
 
 test "pending prompt uses the canonical user turn boundary" {

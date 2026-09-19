@@ -557,6 +557,96 @@ tmuxTest(
 );
 
 tmuxTest(
+  "long paste submitted at a full bottom edge leaves no preview fragment in scrollback",
+  async () => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "fiber-paste-submit-")));
+    const home = join(root, "home");
+    const workspace = join(root, "workspace");
+    mkdirSync(join(home, ".fiber"), { recursive: true });
+    mkdirSync(workspace);
+    writeFileSync(join(home, ".fiber", "settings.json"), JSON.stringify({}));
+    stderrPath = join(root, "stderr.log");
+    writeFileSync(stderrPath, "");
+
+    // The first answer overflows the viewport so its summary sits mid-line at
+    // the band bottom; the submitted card is taller than the screen.
+    const filler = Array.from(
+      { length: 240 },
+      (_, index) => `FILLER_ANSWER_LINE_${String(index).padStart(3, "0")}`,
+    ).join("\n");
+    const pasteLines = ["# Pending card probe", ""];
+    for (let index = 1; index <= 380; index++) {
+      pasteLines.push(`- probe line ${String(index).padStart(3, "0")}`);
+    }
+    pasteLines.push("", "- PENDING_PROBE_LAST_LINE");
+    const pasteText = pasteLines.join("\n");
+
+    codex = startFakeCodex({
+      route: () =>
+        codexFinalText(
+          (codex?.requests.length ?? 0) === 1 ? filler : "SECOND_ANSWER_OK",
+        ),
+    });
+
+    session = await TmuxSession.create({
+      cmd: FIBER_BIN,
+      cwd: workspace,
+      width: 168,
+      height: 75,
+      isolated: true,
+      remainOnExit: true,
+      minimumHistoryLines: 20_000,
+      stderrPath,
+      env: seededFakeCodexEnv(home, codex, {
+        FIBER_MODEL: FAKE_CODEX_DEFAULT_MODEL,
+        FIBER_PERMISSION_MODE: "yolo",
+        FIBER_E2E_DISABLE_DOTENV: "1",
+      }),
+    });
+
+    await session.waitForStableComposer(20_000);
+    await session.sendText("Fill the screen.");
+    await session.waitForText("FILLER_ANSWER_LINE_239", TIMEOUT);
+    await session.waitForStableComposer(20_000);
+    const beforeSubmit = await session.captureFullScrollback();
+    const priorSummary = beforeSubmit
+      .split("\n")
+      .find((line) => line.includes("↑") && line.includes("↓") && line.includes("("))
+      ?.trim();
+    expect(priorSummary).toBeTruthy();
+
+    await session.pasteText(pasteText);
+    const pastedPane = await session.waitForText("[Pasted text #1, 384 lines]", 15_000);
+    expect(composerContains(pastedPane, "[Pasted text #1, 384 lines]")).toBe(true);
+
+    await session.sendKeys("Enter");
+    await session.waitForText("SECOND_ANSWER_OK", TIMEOUT);
+    await session.waitForStableComposer(20_000);
+    const after = await session.captureFullScrollback();
+
+    const cardTailCandidates = after
+      .split("\n")
+      .filter((line) => line.trim().startsWith("┃ - PEND"));
+    expect(
+      cardTailCandidates.filter(
+        (line) => line.trim() === "┃ - PENDING_PROBE_LAST_LINE",
+      ),
+    ).toHaveLength(1);
+    expect(
+      cardTailCandidates.filter(
+        (line) => line.trim() !== "┃ - PENDING_PROBE_LAST_LINE",
+      ),
+    ).toHaveLength(0);
+    expect(
+      after.split("\n").filter((line) => line.trim() === priorSummary),
+    ).toHaveLength(1);
+    expect(codex.requests).toHaveLength(2);
+    expectCleanRuntime(session);
+  },
+  TIMEOUT * 2,
+);
+
+tmuxTest(
   "terminal characters stay atomic and Ctrl+K joins at EOL",
   async () => {
     const active = await startFx(false);
