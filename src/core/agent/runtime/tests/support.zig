@@ -781,12 +781,19 @@ pub const FakeAgentRuntimeDeps = struct {
         };
     }
 
+    /// Caller owns the returned outer slice (`arena`). Element strings are
+    /// borrowed from `steering_messages` and remain valid for this fake's
+    /// lifetime.
     fn takeSteering(raw: *anyopaque, arena: Allocator, _: u64) ![]const []const u8 {
         const self: *FakeAgentRuntimeDeps = @ptrCast(@alignCast(raw));
-        self.steering_take_count += 1;
-        if (self.steering_take_count != self.steering_take_at) return &.{};
+        const next_take = self.steering_take_count + 1;
+        if (next_take != self.steering_take_at) {
+            self.steering_take_count = next_take;
+            return &.{};
+        }
         const messages = try arena.alloc([]const u8, self.steering_messages.len);
         for (self.steering_messages, messages) |text, *copy| copy.* = text;
+        self.steering_take_count = next_take;
         return messages;
     }
 

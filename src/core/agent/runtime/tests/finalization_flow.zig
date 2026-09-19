@@ -399,11 +399,12 @@ test "processQueuedPrompt continues with steering queued before a repeated-malfo
     try runFakePrompt(&gateway, &hooks, fixture.config(), fixture.job());
 
     // The turn continued instead of ending: the fourth request carries the
-    // queued steering, and the malformed-stop notice never rendered.
+    // queued steering, and the malformed-stop notice still rendered so the
+    // user can see why the agent is changing course.
     try std.testing.expectEqual(@as(usize, 4), gateway.request_bodies.items.len);
     try expectBodyContains(&gateway, 3, "user_steering");
     try expectBodyContains(&gateway, 3, "stop repeating the broken call");
-    try std.testing.expect(!textContains(&hooks, "Repeated malformed tool arguments"));
+    try std.testing.expect(textContains(&hooks, "Repeated malformed tool arguments"));
     try std.testing.expectEqualStrings("Steered recovery answer", hooks.finish_assistant_text.?);
     try std.testing.expectEqual(types.TurnPresentationOutcome.completed, hooks.finalized_outcome.?);
     const execution = hooks.history_turns.items[0].assistant.execution;

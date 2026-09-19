@@ -8834,11 +8834,6 @@ fn processQueuedPromptLoop(
             &step_batch,
         );
         if (malformed_arguments_retry.finishBatch()) {
-            if (agent_steps.allowsStep(config.agent_step_limit, step + 1) and
-                try consumePendingSteering(deps, arena, &within_turn_suffix, turn_id, null))
-            {
-                continue;
-            }
             debug_trace.eventf(
                 "agent",
                 "repeated_malformed_tool_arguments",
@@ -8846,7 +8841,13 @@ fn processQueuedPromptLoop(
                 "tool_call_count={d}",
                 .{effective_tool_calls.len},
             );
-            try finishFailedTurnWithNotice(
+            try emitOperationalNotice(deps, repeated_malformed_arguments_notice);
+            if (agent_steps.allowsStep(config.agent_step_limit, step + 1) and
+                try consumePendingSteering(deps, arena, &within_turn_suffix, turn_id, null))
+            {
+                continue;
+            }
+            try persistFailedTurnWithNotice(
                 deps,
                 finalization,
                 arena,
@@ -8861,15 +8862,15 @@ fn processQueuedPromptLoop(
             return;
         }
         if (terminal_validation_retry.finishBatch()) {
+            try deps.push_system_notice(
+                deps.ctx,
+                repeated_terminal_validation_notice,
+            );
             if (agent_steps.allowsStep(config.agent_step_limit, step + 1) and
                 try consumePendingSteering(deps, arena, &within_turn_suffix, turn_id, null))
             {
                 continue;
             }
-            try deps.push_system_notice(
-                deps.ctx,
-                repeated_terminal_validation_notice,
-            );
             const assistant_text = if (stop_state.retained_candidate != null)
                 try hooks.prompt.joinVisibleSegments(
                     arena,
@@ -8896,11 +8897,6 @@ fn processQueuedPromptLoop(
             return;
         }
         if (shell_execution_failure_retry.finishBatch()) {
-            if (agent_steps.allowsStep(config.agent_step_limit, step + 1) and
-                try consumePendingSteering(deps, arena, &within_turn_suffix, turn_id, null))
-            {
-                continue;
-            }
             debug_trace.eventf(
                 "agent",
                 "repeated_shell_execution_failure",
@@ -8908,7 +8904,13 @@ fn processQueuedPromptLoop(
                 "tool_call_count={d}",
                 .{effective_tool_calls.len},
             );
-            try finishFailedTurnWithNotice(
+            try emitOperationalNotice(deps, repeated_shell_execution_failure_notice);
+            if (agent_steps.allowsStep(config.agent_step_limit, step + 1) and
+                try consumePendingSteering(deps, arena, &within_turn_suffix, turn_id, null))
+            {
+                continue;
+            }
+            try persistFailedTurnWithNotice(
                 deps,
                 finalization,
                 arena,
@@ -9075,18 +9077,29 @@ fn consumePendingSteering(
     assistant_prefix: ?[]const u8,
 ) !bool {
     const take = deps.take_steering orelse return false;
+    const extra: usize = if (assistant_prefix != null) 1 else 0;
     const guidance = try take(deps.ctx, arena, turn_id);
     if (guidance.len == 0) return false;
-    if (assistant_prefix) |text| {
-        try within_turn_suffix.append(arena, .{ .role = .assistant, .content = text });
+    const suffix_len = within_turn_suffix.items.len;
+    errdefer within_turn_suffix.shrinkRetainingCapacity(suffix_len);
+
+    const wrapped = try arena.alloc([]u8, guidance.len);
+    for (guidance, wrapped) |text, *dest| {
+        dest.* = try runtime_execution_memory.steeringMessage(arena, text);
     }
-    for (guidance) |text| {
-        try within_turn_suffix.append(arena, .{
-            .role = .user,
-            .content = try runtime_execution_memory.steeringMessage(arena, text),
-        });
+    try within_turn_suffix.ensureUnusedCapacity(arena, extra + wrapped.len);
+    if (assistant_prefix) |text| {
+        within_turn_suffix.appendAssumeCapacity(.{ .role = .assistant, .content = text });
+    }
+    for (wrapped) |content| {
+        within_turn_suffix.appendAssumeCapacity(.{ .role = .user, .content = content });
     }
     return true;
+}
+
+fn emitOperationalNotice(deps: *const AgentRuntimeDeps, notice: []const u8) !void {
+    try deps.push_text(deps.ctx, .{ .operational = notice });
+    try deps.push_text(deps.ctx, .{ .operational = "\n" });
 }
 
 fn finishFailedTurnWithNotice(
@@ -9101,8 +9114,33 @@ fn finishFailedTurnWithNotice(
     notice: []const u8,
     trace_outcome: []const u8,
 ) !void {
-    try deps.push_text(deps.ctx, .{ .operational = notice });
-    try deps.push_text(deps.ctx, .{ .operational = "\n" });
+    try emitOperationalNotice(deps, notice);
+    try persistFailedTurnWithNotice(
+        deps,
+        finalization,
+        arena,
+        job,
+        current_turn_messages,
+        summary_accumulator,
+        stop_state,
+        finish_trace,
+        notice,
+        trace_outcome,
+    );
+}
+
+fn persistFailedTurnWithNotice(
+    deps: *const AgentRuntimeDeps,
+    finalization: *TurnFinalizationGuard,
+    arena: Allocator,
+    job: QueuedPrompt,
+    current_turn_messages: []const ChatMessage,
+    summary_accumulator: *runtime_telemetry.TurnSummaryAccumulator,
+    stop_state: *CommonStopState,
+    finish_trace: *PromptFinishTrace,
+    notice: []const u8,
+    trace_outcome: []const u8,
+) !void {
     if (stop_state.retained_candidate != null) {
         const assistant_text = try hooks.prompt.joinVisibleSegments(
             arena,
