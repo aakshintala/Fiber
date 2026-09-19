@@ -1576,6 +1576,13 @@ pub fn Runtime(comptime App: type) type {
             debug_trace.logf("input", "ctrl_c_exit_hint_armed", .{});
 
             if (app.stream.active) {
+                if (draftHasState(app)) {
+                    clearDraftState(app, "ctrl_c");
+                    const disarm = gesture_state.disarmCtrlCExit(app.input_runtime.gestures);
+                    app.input_runtime.gestures = disarm.next;
+                    app.shell.render_requests.request(.footer);
+                    return;
+                }
                 try interrupt_rt.cancelActiveOperation(app);
                 app.shell.render_requests.request(.footer);
                 return;
@@ -10192,6 +10199,59 @@ test "app_input_runtime active Ctrl-C cancels stream and arms exit window" {
     try std.testing.expect(app.input_runtime.gestures.ctrlCExitArmedAt() != null);
     try std.testing.expect(!app.should_exit);
     try std.testing.expect(app.shell.render_requests.hasReason(.footer));
+}
+
+test "app_input_runtime active Ctrl-C with draft clears draft without cancelling stream" {
+    const alloc = std.testing.allocator;
+    var app = try RoutingFakeApp.init(alloc);
+    defer app.deinit();
+    app.stream.active = true;
+    try app.input_runtime.textReplacementState().replace(alloc, "draft while streaming");
+    app.shell.render_requests.clearReason(.footer);
+
+    try Runtime(RoutingFakeApp).handleByte(&app, 3, 4096, 100);
+
+    try std.testing.expectEqualStrings("", app.input_runtime.edit_state.input.items);
+    try std.testing.expect(app.stream.active);
+    try std.testing.expect(!app.worker.cancel_requested);
+    try std.testing.expectEqualStrings("", app.transcript.items);
+    try std.testing.expect(!app.input_runtime.gestures.ctrlCExitArmed());
+    try std.testing.expect(!app.should_exit);
+    try std.testing.expect(app.shell.render_requests.hasReason(.footer));
+}
+
+test "app_input_runtime active Ctrl-C with empty composer cancels stream" {
+    const alloc = std.testing.allocator;
+    var app = try RoutingFakeApp.init(alloc);
+    defer app.deinit();
+    app.stream.active = true;
+    try std.testing.expectEqualStrings("", app.input_runtime.edit_state.input.items);
+    app.shell.render_requests.clearReason(.footer);
+
+    try Runtime(RoutingFakeApp).handleByte(&app, 3, 4096, 100);
+
+    try std.testing.expect(!app.stream.active);
+    try std.testing.expect(app.worker.cancel_requested);
+    try std.testing.expect(app.input_runtime.gestures.ctrlCExitArmed());
+    try std.testing.expect(!app.should_exit);
+}
+
+test "app_input_runtime idle Ctrl-C with draft leaves exit gesture armed" {
+    const alloc = std.testing.allocator;
+    var app = try RoutingFakeApp.init(alloc);
+    defer app.deinit();
+    try app.input_runtime.textReplacementState().replace(alloc, "idle draft");
+    app.shell.render_requests.clearReason(.footer);
+
+    try Runtime(RoutingFakeApp).handleByte(&app, 3, 4096, 100);
+
+    try std.testing.expectEqualStrings("", app.input_runtime.edit_state.input.items);
+    try std.testing.expect(!app.stream.active);
+    try std.testing.expect(app.input_runtime.gestures.ctrlCExitArmed());
+    try std.testing.expect(!app.should_exit);
+
+    try Runtime(RoutingFakeApp).handleByte(&app, 3, 4096, 100);
+    try std.testing.expect(app.should_exit);
 }
 
 test "app_input_runtime active tool Escape waits for terminal feedback before repainting" {
