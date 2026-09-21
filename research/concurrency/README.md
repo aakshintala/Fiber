@@ -17,6 +17,7 @@ When a root `Cargo.toml` is added for Fiber itself, list `research/concurrency` 
 | `measure` | Shared helper: CPU (`getrusage`), threads/RSS (`proc_pidinfo`), wakeups (Mach `TASK_POWER_INFO`). |
 | `sse_server` | Tiny HTTP/1.1 server for chunked streaming and hang tests (library, not a bench binary). |
 | `idle_std` | One thread blocked on `mpsc::recv`, no runtime. |
+| `threads_scale` | N parked threads on `mpsc::recv`; idle CPU/wakeups/RSS vs thread count and stack size. |
 | `idle_tokio_mt` | Multi-thread tokio parked on `pending()` plus an unused channel. |
 | `idle_tokio_ct` | Current-thread tokio parked on pending work on a dedicated driver thread. |
 | `idle_tokio_io` | Multi-thread tokio with an idle TCP `read` on the reactor. |
@@ -30,11 +31,15 @@ When a root `Cargo.toml` is added for Fiber itself, list `research/concurrency` 
 | `cancel_tcp` | Latency to unblock `read()` via `TcpStream::shutdown` from another thread. |
 | `cancel_timeout` | Latency to escape `read()` with `SO_RCVTIMEO` plus a cancel flag. |
 | `cancel_http_ureq` | Whether ureq’s body read can be cancelled; owned-socket control path. |
+| `cancel_ureq_connector` | Whether a custom ureq Connector can stash a TcpStream so another thread can shutdown() a blocked body read; chunked decode still works. |
 | `http_ureq` | Chunk arrival times streaming with ureq (rustls). |
 | `http_attohttpc` | Chunk arrival times with attohttpc (tls-rustls). |
 | `http_minreq` | minreq `send()` vs `send_lazy` streaming behavior. |
 | `http_isahc` | Chunk arrival times with isahc (libcurl). |
 | `http_rustls` | Blocking rustls `StreamOwned` client; chunk arrival times. |
+| `mini_blocking` | Same mini harness on `std::thread` + blocking `TcpStream` (SSE stream + subprocess + fsync log + cancel). |
+| `mini_smol` | Same mini harness on smol. |
+| `mini_tokio` | Same mini harness on multi-thread tokio. |
 
 Raw measurement copies from the macOS run live under `results/`.
 

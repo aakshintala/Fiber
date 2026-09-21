@@ -138,9 +138,133 @@ of v0.0.1 scope; its shape is settled after
 What an approval actually asks about, and what answers it when nobody is at
 the keyboard, is `docs/permissions.md`.
 
+## Concurrency
+
+Settled by
+[The threading and streaming model](https://github.com/aakshintala/fiber/issues/9);
+the rationale and the rejected runtimes are
+[ADR 0004](adr/0004-blocking-threads-no-async-runtime.md).
+
+### What a thread is here, and what owning means
+
+A thread is a worker inside the Fiber process. It does one thing at a time and
+parks — asleep, costing nothing — until something wakes it. Fiber needs
+several because some work blocks: reading a model's answer off the network
+takes twenty seconds, and nothing else can happen on that worker meanwhile.
+
+**Owning** a piece of state means exactly one worker may touch it, and
+everyone else asks that worker. It is the whole of Fiber's concurrency
+discipline: the rules below say who owns what, and nothing else is shared.
+
+Fiber uses blocking threads and no async runtime.
+
+### The threads
+
+| Thread | Owns | Lives |
+|---|---|---|
+| loop | the turn: what happens next, and every durable event | the process |
+| terminal input | the keyboard | the process, when a terminal is attached |
+| terminal render | the screen | the process, when a terminal is attached |
+| driver input | a door's stdin | the process, on a non-interactive door |
+| one per running tool call | that call's subprocess and its output | the call |
+
+`log` is not a thread. It is a shared object behind a lock: whoever emits an
+event calls it, and it mints `seq`, writes, fsyncs and fans out.
+
+Background jobs, child sessions and MCP servers each add one parked thread per
+blocking pipe. That is affordable: 512 parked threads measured 11.6 MiB RSS
+and 0.35 ms of CPU over ten seconds on macOS arm64.
+
+### One inbox
+
+Everything that wants the loop's attention sends to one queue: a driver's
+commands, a finished tool call, news from a background job. The loop blocks on
+that queue when it is idle, which is why an idle Fiber costs nothing.
+
+The loop drains the queue **at step boundaries** — between one round-trip to
+the model and the next. It does not drain it while a model response is
+streaming, and it does not need to: cancellation does not travel through the
+queue, and a steering message applies at the next step boundary anyway.
+
+### Streaming
+
+The loop reads the model's response itself, on its own thread, blocking. There
+is no separate reader thread and no parser task: during a model response the
+loop has nothing else to decide.
+
+As fragments arrive it emits them as ephemeral events and keeps reading.
+Watchers receive events on bounded channels. **When a watcher falls behind,
+ephemeral events are dropped and durable ones are not** — a lagging watcher
+re-reads what it missed from the log by `seq`, which `docs/events.md` already
+guarantees is possible. The loop never blocks on a watcher, so a slow screen
+cannot stall a turn.
+
+**Only the loop thread emits durable events.** Any thread may emit ephemeral
+ones through an emitter handle defined in `contract`. This keeps `seq` minted
+in one place and keeps the fsync ordering rule in `docs/events.md` — two
+fsyncs bracketing each side effect — a property of one thread's sequence of
+calls rather than of a race.
+
+### Tool calls in a step
+
+A step may request several tool calls. **Permission decisions are made in
+order, before any of them runs**, so `ask` mode never raises four prompts at
+once and the reviewer is never asked about a call whose sibling has already
+changed the workspace. Once they are all decided, they **run concurrently**,
+one thread each, and their results are returned to the model in the order the
+model asked for them.
+
+Two tools writing the same file at the same time is the hazard this creates.
+`tools` owns a per-path lock that its file-mutating built-ins take, and that is
+available to an extension's tool. It is offered, not enforced: an extension
+runs with the account's full rights, so an extension that skips it corrupts
+its own writes and nothing else, exactly as `docs/permissions.md` already
+accepts for misdeclared effects.
+
+### Cancellation
+
+Fiber owns the socket its model requests run on. The HTTP client is ureq
+behind a custom connector that keeps the `TcpStream` handle, so a second
+thread can close the socket and unblock a read that is stuck inside the
+client — measured at 211 µs on macOS arm64.
+
+One press of the cancel key ends the **turn**:
+
+- the model stream stops,
+- any in-flight tool call completes as `cancelled`,
+- the turn ends with `turn_completed { outcome: interrupted }`,
+- background jobs keep running, because a job outlives the turn that started
+  it.
+
+What the log shows afterwards follows from `docs/events.md` and adds nothing
+new: the cancelled calls carry `status: cancelled`, there is no
+`assistant_message_completed` for the interrupted response, and the partial
+text is gone, because deltas are ephemeral. It is on screen for the rest of
+the session and absent after a resume.
+
+A cancelled turn always writes `turn_completed`. A `turn_started` with no
+`turn_completed` therefore means the process died, not that someone pressed
+escape.
+
+### Steering
+
+A message typed while a turn is running reaches the loop immediately and is
+applied at the next step boundary: after the current tool calls finish, before
+the next model call. It is a durable event, so the log shows exactly what the
+turn received. A message that a turn ends before applying becomes the next
+turn's input rather than being dropped.
+
+### Both front doors
+
+The threading is identical on the non-interactive door, as map premise 6
+requires. The render and terminal-input threads are replaced by a stdin reader
+that is a driver and a stdout writer that is a watcher; the loop, the inbox,
+the streaming, the cancellation and the tool-call scheduling are the same code.
+A door has no privilege the terminal lacks, and neither has a path to state
+that the other does not.
+
 ## Not settled here
 
-- Threading and streaming: [The threading and streaming model](https://github.com/aakshintala/fiber/issues/9)
 - Which front doors exist: [Front doors: which invocation modes does v0.0.1 have?](https://github.com/aakshintala/fiber/issues/10)
 - The extension runtime: [Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11)
 - Provider routing: [Provider and model routing](https://github.com/aakshintala/fiber/issues/12)

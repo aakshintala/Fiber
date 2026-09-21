@@ -1,0 +1,183 @@
+=== threads_scale sweep (macOS arm64) ===
+
+--- N_THREADS=1 STACK_KIB=0 ---
+=== threads_scale N_THREADS=1 STACK_KIB=0 ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 10.005
+cpu_user_us: 14
+cpu_sys_us: 101
+cpu_total_us: 115
+cpu_total_ms: 0.115
+cpu_pct_of_one_core: 0.001149
+pti_cpu_ns: 113833 (user 14708) (sys 99125)
+threads_start: 2
+threads_end: 2
+threads_running_end: 1
+rss_bytes: 1671168
+rss_kib: 1632.0
+maxrss_bytes: 1671168
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.0999
+csw: 1
+csw_per_sec: 0.0999
+unix_syscalls_delta: 3
+
+--- N_THREADS=8 STACK_KIB=0 ---
+=== threads_scale N_THREADS=8 STACK_KIB=0 ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 10.002
+cpu_user_us: 15
+cpu_sys_us: 94
+cpu_total_us: 109
+cpu_total_ms: 0.109
+cpu_pct_of_one_core: 0.001090
+pti_cpu_ns: 103459 (user 14084) (sys 89375)
+threads_start: 9
+threads_end: 9
+threads_running_end: 1
+rss_bytes: 1785856
+rss_kib: 1744.0
+maxrss_bytes: 1785856
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.1000
+csw: 1
+csw_per_sec: 0.1000
+unix_syscalls_delta: 3
+
+--- N_THREADS=32 STACK_KIB=0 ---
+=== threads_scale N_THREADS=32 STACK_KIB=0 ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 10.002
+cpu_user_us: 10
+cpu_sys_us: 67
+cpu_total_us: 77
+cpu_total_ms: 0.077
+cpu_pct_of_one_core: 0.000770
+pti_cpu_ns: 79500 (user 10375) (sys 69125)
+threads_start: 33
+threads_end: 33
+threads_running_end: 1
+rss_bytes: 2326528
+rss_kib: 2272.0
+maxrss_bytes: 2326528
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.1000
+csw: 1
+csw_per_sec: 0.1000
+unix_syscalls_delta: 3
+
+--- N_THREADS=128 STACK_KIB=0 ---
+=== threads_scale N_THREADS=128 STACK_KIB=0 ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 10.005
+cpu_user_us: 14
+cpu_sys_us: 143
+cpu_total_us: 157
+cpu_total_ms: 0.157
+cpu_pct_of_one_core: 0.001569
+pti_cpu_ns: 148667 (user 13792) (sys 134875)
+threads_start: 129
+threads_end: 129
+threads_running_end: 1
+rss_bytes: 4292608
+rss_kib: 4192.0
+maxrss_bytes: 4292608
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.0999
+csw: 1
+csw_per_sec: 0.0999
+unix_syscalls_delta: 3
+
+--- N_THREADS=512 STACK_KIB=0 ---
+=== threads_scale N_THREADS=512 STACK_KIB=0 ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 10.005
+cpu_user_us: 12
+cpu_sys_us: 342
+cpu_total_us: 354
+cpu_total_ms: 0.354
+cpu_pct_of_one_core: 0.003538
+pti_cpu_ns: 369584 (user 11500) (sys 358084)
+threads_start: 513
+threads_end: 513
+threads_running_end: 1
+rss_bytes: 11911168
+rss_kib: 11632.0
+maxrss_bytes: 11911168
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.1000
+csw: 1
+csw_per_sec: 0.1000
+unix_syscalls_delta: 3
+
+--- N_THREADS=128 STACK_KIB=64 ---
+=== threads_scale N_THREADS=128 STACK_KIB=64 ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 10.003
+cpu_user_us: 13
+cpu_sys_us: 165
+cpu_total_us: 178
+cpu_total_ms: 0.178
+cpu_pct_of_one_core: 0.001780
+pti_cpu_ns: 174500 (user 13125) (sys 161375)
+threads_start: 129
+threads_end: 129
+threads_running_end: 1
+rss_bytes: 4243456
+rss_kib: 4144.0
+maxrss_bytes: 4243456
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.1000
+csw: 1
+csw_per_sec: 0.1000
+unix_syscalls_delta: 3
+
+--- N_THREADS=512 STACK_KIB=64 ---
+=== threads_scale N_THREADS=512 STACK_KIB=64 ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 10.005
+cpu_user_us: 13
+cpu_sys_us: 454
+cpu_total_us: 467
+cpu_total_ms: 0.467
+cpu_pct_of_one_core: 0.004667
+pti_cpu_ns: 452084 (user 13917) (sys 438167)
+threads_start: 513
+threads_end: 513
+threads_running_end: 1
+rss_bytes: 11911168
+rss_kib: 11632.0
+maxrss_bytes: 11911168
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.0999
+csw: 1
+csw_per_sec: 0.0999
+unix_syscalls_delta: 3

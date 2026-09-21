@@ -1,0 +1,7 @@
+[package]
+name = "threads_scale"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+measure = { path = "../measure" }
