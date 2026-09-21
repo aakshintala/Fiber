@@ -84,6 +84,19 @@ everything, and nothing depends on `main`.
    returns.
 6. `main` holds no feature logic.
 
+## How the boundaries are enforced
+
+Fiber is a cargo workspace with one crate per module. Each crate's
+manifest lists what it may use, so a call the rules above forbid does
+not compile — it is a build failure, not a lint finding or a review
+comment. The rationale is
+[Module boundaries are crate boundaries](adr/0002-module-boundaries-are-crate-boundaries.md);
+the measurements are on
+[issue #7](https://github.com/aakshintala/fiber/issues/7#issuecomment-5756970986).
+This is why `contract` depends on nothing: a cycle between crates is a
+build failure, so the module holding the shared types has to sit at the
+bottom.
+
 ## The three seams
 
 ### Tool seam
@@ -124,9 +137,6 @@ of v0.0.1 scope; its shape is settled after
 
 ## Not settled here
 
-- How are these boundaries enforced — separate crates the compiler checks, or
-  one crate with module privacy and a CI lint? That is still open, pending a
-  measurement of whether a cargo workspace materially scopes builds and tests.
 - Threading and streaming: [The threading and streaming model](https://github.com/aakshintala/fiber/issues/9)
 - Which front doors exist: [Front doors: which invocation modes does v0.0.1 have?](https://github.com/aakshintala/fiber/issues/10)
 - The extension runtime: [Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11)
