@@ -116,6 +116,26 @@ A permission decision recorded in the session log, honoured for the rest of
 that session and gone when it ends. Never written anywhere but the log.
 _Avoid_: always-allow, remembered approval
 
+**Step boundary**:
+The point between one round-trip to the model and the next, where the loop
+accepts anything that arrived while it was busy. The only moment inside a turn
+at which a turn can change course.
+_Avoid_: checkpoint, safe point, yield point
+
+**Steering message**:
+Input sent while a turn is running, which joins that turn at the next step
+boundary rather than starting a new one. A steering message the turn ends
+before applying becomes the next turn's input.
+_Avoid_: follow-up, queued prompt, interjection
+
+**Cancellation**:
+Ending a turn early because a person asked. The model stream stops, in-flight
+tool calls complete as cancelled, and the turn completes with the outcome
+interrupted. Background jobs survive it, because a job outlives the turn that
+started it.
+_Avoid_: abort, stop, kill, interrupt (the outcome is named interrupted; the
+act is cancellation)
+
 ## Deliberately unnamed
 
 **One Fiber process, from launch to exit.** The archived Zig tree called this a

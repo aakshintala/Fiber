@@ -127,6 +127,15 @@ as soon as a child session relays its own messages onto the same stdout.
 | `session_started` | yes | creation time, workspace root |
 | `turn_started` | yes | the input that started it |
 | `turn_completed` | yes | `outcome` (`completed`, `interrupted`, `failed`), `error` on failure |
+| `steering_applied` | yes | the text a running turn received at a step boundary, and where it came from |
+
+A **steering message** — input sent while a turn is running — joins that turn
+at its next step boundary, and `steering_applied` is how the log shows what
+the turn actually received. A message the turn ends before applying becomes
+the next turn's input, so it appears on the next `turn_started` instead. The
+threading this rests on is the concurrency section of `docs/architecture.md`;
+the driver commands that send, amend and withdraw one are
+[Front doors](https://github.com/aakshintala/fiber/issues/10).
 
 `turn_completed` means settled. Retries and compaction happen inside the turn
 and appear as actions, so there is never a second "really finished" event.
