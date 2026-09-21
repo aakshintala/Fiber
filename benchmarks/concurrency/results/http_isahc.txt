@@ -1,0 +1,9 @@
+isahc read#1 +0.0ms bytes=15 "data: event-0\n\n"
+isahc read#2 +210.3ms bytes=15 "data: event-1\n\n"
+isahc read#3 +419.1ms bytes=15 "data: event-2\n\n"
+isahc read#4 +629.4ms bytes=15 "data: event-3\n\n"
+isahc read#5 +839.6ms bytes=15 "data: event-4\n\n"
+isahc read#6 +1045.0ms bytes=15 "data: event-5\n\n"
+isahc read#7 +1245.5ms bytes=15 "data: event-6\n\n"
+isahc read#8 +1455.7ms bytes=15 "data: event-7\n\n"
+isahc done reads=8 elapsed_ms=1456.0

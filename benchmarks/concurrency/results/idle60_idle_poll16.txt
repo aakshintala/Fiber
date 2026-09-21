@@ -1,0 +1,24 @@
+=== idle_poll16 ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 60.006
+cpu_user_us: 8625
+cpu_sys_us: 44789
+cpu_total_us: 53414
+cpu_total_ms: 53.414
+cpu_pct_of_one_core: 0.089014
+pti_cpu_ns: 53415792 (user 8625417) (sys 44790375)
+threads_start: 2
+threads_end: 2
+threads_running_end: 1
+rss_bytes: 1671168
+rss_kib: 1632.0
+maxrss_bytes: 1671168
+interrupt_wakeups: 3388
+platform_idle_wakeups: 20
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 3408
+wakeups_per_sec: 56.7940
+csw: 3394
+csw_per_sec: 56.5607
+unix_syscalls_delta: 3390

@@ -1,0 +1,8 @@
+[package]
+name = "http_attohttpc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sse_server = { path = "../sse_server" }
+attohttpc = { version = "0.29", default-features = false, features = ["tls-rustls"] }

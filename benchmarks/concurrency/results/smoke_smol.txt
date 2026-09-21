@@ -1,0 +1,24 @@
+=== idle_smol ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 5.009
+cpu_user_us: 11
+cpu_sys_us: 27
+cpu_total_us: 38
+cpu_total_ms: 0.038
+cpu_pct_of_one_core: 0.000759
+pti_cpu_ns: 36542 (user 10750) (sys 25792)
+threads_start: 3
+threads_end: 3
+threads_running_end: 1
+rss_bytes: 1949696
+rss_kib: 1904.0
+maxrss_bytes: 1949696
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.1996
+csw: 1
+csw_per_sec: 0.1996
+unix_syscalls_delta: 3

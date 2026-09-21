@@ -1,0 +1,24 @@
+=== tui_poll16 ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 60.003
+cpu_user_us: 19632
+cpu_sys_us: 71208
+cpu_total_us: 90840
+cpu_total_ms: 90.840
+cpu_pct_of_one_core: 0.151393
+pti_cpu_ns: 90819749 (user 19631291) (sys 71188458)
+threads_start: 2
+threads_end: 2
+threads_running_end: 1
+rss_bytes: 1753088
+rss_kib: 1712.0
+maxrss_bytes: 1753088
+interrupt_wakeups: 2753
+platform_idle_wakeups: 17
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 2770
+wakeups_per_sec: 46.1646
+csw: 2765
+csw_per_sec: 46.0813
+unix_syscalls_delta: 2755

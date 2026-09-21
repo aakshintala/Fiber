@@ -1,0 +1,5 @@
+tui_idle v0.1.0 (/Users/aakshintala/work/fiber-research/issue-8/bench/tui_idle)
+├── crossterm v0.28.1
+├── measure v0.1.0 (/Users/aakshintala/work/fiber-research/issue-8/bench/measure)
+├── ratatui v0.29.0
+└── sse_server v0.1.0 (/Users/aakshintala/work/fiber-research/issue-8/bench/sse_server)

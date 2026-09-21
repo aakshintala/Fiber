@@ -1,0 +1,24 @@
+=== idle_async_std ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 60.010
+cpu_user_us: 28
+cpu_sys_us: 103
+cpu_total_us: 131
+cpu_total_ms: 0.131
+cpu_pct_of_one_core: 0.000218
+pti_cpu_ns: 130791 (user 28666) (sys 102125)
+threads_start: 14
+threads_end: 14
+threads_running_end: 1
+rss_bytes: 2359296
+rss_kib: 2304.0
+maxrss_bytes: 2359296
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.0167
+csw: 1
+csw_per_sec: 0.0167
+unix_syscalls_delta: 3

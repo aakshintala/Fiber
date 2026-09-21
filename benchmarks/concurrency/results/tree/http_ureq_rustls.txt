@@ -1,0 +1,4 @@
+    Blocking waiting for file lock on package cache
+rustls v0.23.45
+└── ureq v3.4.2
+    └── http_ureq v0.1.0 (/Users/aakshintala/work/fiber-research/issue-8/bench/http_ureq)

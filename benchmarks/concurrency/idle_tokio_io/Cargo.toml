@@ -1,0 +1,9 @@
+[package]
+name = "idle_tokio_io"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+measure = { path = "../measure" }
+sse_server = { path = "../sse_server" }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time"] }

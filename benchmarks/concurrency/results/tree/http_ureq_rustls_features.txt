@@ -1,0 +1,24 @@
+rustls v0.23.45
+├── rustls feature "log"
+│   └── rustls feature "logging"
+│       └── ureq v3.4.2
+│           ├── ureq feature "_ring"
+│           │   └── ureq feature "rustls"
+│           │       └── http_ureq v0.1.0 (/Users/aakshintala/work/fiber-research/issue-8/bench/http_ureq)
+│           │           └── http_ureq feature "default" (command-line)
+│           ├── ureq feature "_rustls"
+│           │   └── ureq feature "rustls-no-provider"
+│           │       └── ureq feature "rustls" (*)
+│           ├── ureq feature "_tls"
+│           │   └── ureq feature "rustls-no-provider" (*)
+│           ├── ureq feature "rustls" (*)
+│           ├── ureq feature "rustls-no-provider" (*)
+│           └── ureq feature "rustls-webpki-roots"
+│               └── ureq feature "rustls" (*)
+├── rustls feature "logging" (*)
+├── rustls feature "ring"
+│   └── ureq feature "_ring" (*)
+├── rustls feature "std"
+│   └── ureq v3.4.2 (*)
+└── rustls feature "tls12"
+    └── ureq v3.4.2 (*)

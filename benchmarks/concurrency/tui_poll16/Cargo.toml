@@ -1,0 +1,8 @@
+[package]
+name = "tui_poll16"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+measure = { path = "../measure" }
+crossterm = { version = "0.28", default-features = false, features = ["events"] }

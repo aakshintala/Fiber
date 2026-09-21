@@ -1,0 +1,4 @@
+ureq version path: cancel_http_ureq
+ureq: entered body read (headers already consumed)
+ureq: still blocked in read after 150ms with no socket handle to shut down
+owned-tcp-under-http shutdown after 289.3us result=Ok(0)
