@@ -135,13 +135,16 @@ the terminal or a future GUI's canvas directly, is a named future and is out
 of v0.0.1 scope; its shape is settled after
 [issue #11](https://github.com/aakshintala/fiber/issues/11).
 
+What an approval actually asks about, and what answers it when nobody is at
+the keyboard, is `docs/permissions.md`.
+
 ## Not settled here
 
 - Threading and streaming: [The threading and streaming model](https://github.com/aakshintala/fiber/issues/9)
 - Which front doors exist: [Front doors: which invocation modes does v0.0.1 have?](https://github.com/aakshintala/fiber/issues/10)
 - The extension runtime: [Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11)
 - Provider routing: [Provider and model routing](https://github.com/aakshintala/fiber/issues/12)
-- Permissions: [Permissions and approvals, attended and headless](https://github.com/aakshintala/fiber/issues/13)
+- Confinement: [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
 - The tool set: [The v0.0.1 tool set](https://github.com/aakshintala/fiber/issues/14)
 - Background jobs: [Background jobs: one killable object](https://github.com/aakshintala/fiber/issues/20)
 - Subagents: [Subagents and delegates: children on one stream](https://github.com/aakshintala/fiber/issues/21)

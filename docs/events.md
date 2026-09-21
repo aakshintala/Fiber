@@ -184,7 +184,11 @@ rejected and does nothing, so a late approval can never authorise a different
 action.
 
 The full shape of approvals, and what happens with no human present, is
-[Permissions and approvals](https://github.com/aakshintala/fiber/issues/13).
+`docs/permissions.md`. It fixes these two payloads' contents: a request
+carries the tool call's `action_id`, the call's declared effects and paths,
+and why it was raised; a resolution carries the decision, the reason, and what
+decided it — a human, a standing rule, a session grant, the reviewer, or the
+mode.
 
 ### Usage and notices
 
