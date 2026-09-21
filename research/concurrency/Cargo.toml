@@ -24,4 +24,7 @@ members = [
     "http_rustls",
     "idle_poll16",
     "threads_scale",
+    "mini_blocking",
+    "mini_smol",
+    "mini_tokio",
 ]

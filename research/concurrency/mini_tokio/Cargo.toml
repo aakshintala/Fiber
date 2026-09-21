@@ -1,0 +1,11 @@
+[package]
+name = "mini_tokio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sse_server = { path = "../sse_server" }
+# rt-multi-thread: runtime; net: TcpStream; time: sleep; process: Command;
+# fs: File + sync_all; io-util: AsyncReadExt/AsyncWriteExt; macros: select!;
+# sync: oneshot + mpsc.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "process", "fs", "io-util", "macros", "sync"] }

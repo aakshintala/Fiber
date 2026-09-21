@@ -37,6 +37,9 @@ When a root `Cargo.toml` is added for Fiber itself, list `research/concurrency` 
 | `http_minreq` | minreq `send()` vs `send_lazy` streaming behavior. |
 | `http_isahc` | Chunk arrival times with isahc (libcurl). |
 | `http_rustls` | Blocking rustls `StreamOwned` client; chunk arrival times. |
+| `mini_blocking` | Same mini harness on `std::thread` + blocking `TcpStream` (SSE stream + subprocess + fsync log + cancel). |
+| `mini_smol` | Same mini harness on smol. |
+| `mini_tokio` | Same mini harness on multi-thread tokio. |
 
 Raw measurement copies from the macOS run live under `results/`.
 

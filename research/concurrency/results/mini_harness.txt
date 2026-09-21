@@ -1,0 +1,165 @@
+=== mini harness (macOS arm64 only) ===
+
+Host: Darwin 25.6.0 arm64, Apple M3 Pro, 11 logical CPUs, rustc 1.98.1.
+Linux was not measured. Do not treat these timings, RSS, or binary sizes as Linux numbers.
+Release binaries; three runs each. Median reported with min alongside (n=3).
+
+SLOC: non-blank, non-comment lines of src/main.rs. A line counts as a comment if,
+after strip(), it starts with `//` (covers `//`, `///`, `//!`). No `/* */` in these
+files. Counted with a short Python loop over the file.
+
+Crate count: `cargo tree -p <crate> --prefix none --no-dedupe | awk '{print $1}' | sort -u | grep -v '^$' | wc -l`
+
+Thread count at runtime: skipped. `/usr/bin/time -l` on macOS does not report it, and
+these crates cannot take the workspace `measure` helper (deps limited to sse_server /
+smol / tokio). The programs exit in ~500ms, so sampling `ps` mid-run is not cheap.
+
+Wall time is quoted two ways: `/usr/bin/time -l` `real` (0.01s resolution) and the
+program's own `total +<ms>ms` line.
+
+Binary sizes: `cargo build --release`, then `strip` a copy. `stat -f %z`.
+
+Peak RSS: `/usr/bin/time -l` "maximum resident set size". Darwin documents this in bytes.
+
+---
+
+## mini_blocking  (std::thread + std::net::TcpStream)
+
+unstripped: 663904 bytes
+stripped:   517304 bytes
+crates:     2  (mini_blocking, sse_server)
+SLOC:       132
+
+run 1 output:
+event 0 +0.3ms
+event 1 +55.4ms
+event 2 +110.4ms
+event 3 +165.5ms
+event 4 +220.7ms
+event 5 +275.7ms
+subprocess tool-done +312.0ms
+event 6 +328.8ms
+event 7 +382.4ms
+event 8 +435.3ms
+event 9 +490.3ms
+cancelled +505.3ms latency=76us
+total +505.6ms events=10 subprocess=done
+
+run 2 cancelled +505.6ms latency=88us  total +505.8ms events=10 subprocess=done
+run 3 cancelled +505.6ms latency=113us total +505.9ms events=10 subprocess=done
+
+cancel latency us: 76, 88, 113  → median 88, min 76
+program total ms:  505.6, 505.8, 505.9 → median 505.8, min 505.6
+
+/usr/bin/time -l (run 1, quoted):
+        0.50 real         0.00 user         0.00 sys
+             2031616  maximum resident set size
+
+time -l real s:    0.50, 0.51, 0.51 → median 0.51, min 0.50
+time -l maxrss B:  2031616, 2031616, 2031616 → median 2031616, min 2031616
+
+---
+
+## mini_smol  (smol)
+
+unstripped: 1161728 bytes
+stripped:   862096 bytes
+crates:     34
+SLOC:       137
+
+run 1 output:
+event 0 +0.5ms
+event 1 +55.6ms
+event 2 +110.8ms
+event 3 +164.9ms
+event 4 +220.0ms
+event 5 +275.1ms
+subprocess tool-done +315.9ms
+event 6 +330.2ms
+event 7 +385.3ms
+event 8 +438.4ms
+event 9 +490.2ms
+cancelled +500.7ms latency=31us
+total +500.9ms events=10 subprocess=done
+
+run 2 cancelled +501.6ms latency=42us total +501.8ms events=10 subprocess=done
+run 3 cancelled +501.6ms latency=45us total +501.8ms events=10 subprocess=done
+
+cancel latency us: 31, 42, 45 → median 42, min 31
+program total ms:  500.9, 501.8, 501.8 → median 501.8, min 500.9
+
+/usr/bin/time -l (run 1, quoted):
+        0.50 real         0.00 user         0.01 sys
+             2326528  maximum resident set size
+
+time -l real s:    0.50, 0.50, 0.50 → median 0.50, min 0.50
+time -l maxrss B:  2326528, 2326528, 2326528 → median 2326528, min 2326528
+
+---
+
+## mini_tokio  (tokio multi-thread)
+
+unstripped: 1229088 bytes
+stripped:   915472 bytes
+crates:     15
+SLOC:       133
+
+run 1 output:
+event 0 +0.5ms
+event 1 +55.6ms
+event 2 +110.7ms
+event 3 +164.1ms
+event 4 +219.2ms
+event 5 +273.8ms
+subprocess tool-done +315.5ms
+event 6 +327.7ms
+event 7 +378.3ms
+event 8 +432.6ms
+event 9 +487.2ms
+cancelled +502.1ms latency=28us
+total +502.2ms events=10 subprocess=done
+
+run 2 cancelled +502.2ms latency=27us total +502.3ms events=10 subprocess=done
+run 3 cancelled +502.6ms latency=23us total +502.8ms events=10 subprocess=done
+
+cancel latency us: 28, 27, 23 → median 27, min 23
+program total ms:  502.2, 502.3, 502.8 → median 502.3, min 502.2
+
+/usr/bin/time -l (run 1, quoted):
+        0.50 real         0.00 user         0.01 sys
+             2572288  maximum resident set size
+
+time -l real s:    0.50, 0.50, 0.50 → median 0.50, min 0.50
+time -l maxrss B:  2572288, 2555904, 2572288 → median 2572288, min 2555904
+
+---
+
+## Three-way (median / min)
+
+                    stripped  unstripped   maxrss B         time-l real s   total ms     cancel us   crates  SLOC
+mini_blocking         517304      663904    2031616 / same     0.51 / 0.50  505.8 / 505.6   88 / 76       2   132
+mini_smol             862096     1161728    2326528 / same     0.50 / 0.50  501.8 / 500.9   42 / 31      34   137
+mini_tokio            915472     1229088    2572288 / 2555904  0.50 / 0.50  502.3 / 502.2   27 / 23      15   133
+
+---
+
+## async-std maintained? smol HTTP client?
+
+async-std is discontinued. crates.io crate description is now "Deprecated in favor of
+`smol`" (https://crates.io/crates/async-std). Latest release 1.13.2 was published
+2025-08-15; that publish is the deprecation. The README states "async-std has been
+discontinued; use smol instead" (https://github.com/async-rs/async-std). It is not
+an actively developed runtime.
+
+smol has no first-party HTTP client. Its own docs show a hand-rolled TCP GET
+(https://docs.rs/smol/latest/smol/).
+
+The currently maintained async HTTP client that runs on smol is isahc: runtime-agnostic
+(futures-lite, not tokio), latest crates.io release 2.0.1 on 2026-07-05
+(https://crates.io/crates/isahc, https://github.com/sagebind/isahc). This workspace
+already measures it as `http_isahc`.
+
+surf, the old async-std client, last published 2.3.2 on 2021-11-01
+(https://crates.io/crates/surf) and is not maintained. reqwest is maintained but
+tokio-only (https://crates.io/crates/reqwest). smol-hyper is a hyper runtime adapter,
+not a client, last published 0.1.1 on 2023-12-29 (https://crates.io/crates/smol-hyper).
