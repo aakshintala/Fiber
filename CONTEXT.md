@@ -33,6 +33,30 @@ _Avoid_: item, part, block, entry, step, move
 One written record of something that happened. The event stream is the record.
 _Avoid_: record, entry, line
 
+**Session log**:
+The events of one session, in order, as written down. It is the session's only
+state of record: everything else is derived from it.
+_Avoid_: journal, transcript, history file
+
+**Durable event**:
+An event a client needs in order to know the session's true state, work in
+flight included. Durable events are exactly the session log.
+
+**Ephemeral event**:
+An event a later durable event makes obsolete, such as a fragment of streamed
+text. Losing one costs nothing.
+
+**Sequence number**:
+A durable event's position in its session log. It is what a client stores to
+say where it got to, and it is never reset or reused.
+_Avoid_: offset, index, cursor position
+
+**Fold**:
+Replaying events in order to arrive at some present fact — what the model is
+sent, what the screen shows, what a session has cost. A fold is never written
+down as its own record.
+_Avoid_: projection, snapshot, materialised view
+
 **Tool call**:
 Fiber doing something outside the conversation, such as reading a file or running
 a command. It carries a request, a result, and a record of whether it actually
@@ -46,6 +70,10 @@ _Avoid_: tool use, function call
 and the headless slot are all expressed in terms of sessions, and a session's
 processes never overlap, so nothing has to tell two of them apart. Name it when
 a decision needs it.
+
+The session log records the boundary without naming the unit: `fiber_started`
+and `fiber_exited`. A start with no matching exit is how a resumed session knows
+the previous process died rather than finished.
 
 ## Reading pi's source
 
