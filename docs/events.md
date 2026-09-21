@@ -94,17 +94,31 @@ tickets, which inherit every rule on this page and cannot violate one.
 | Kind | Durable | Payload |
 |---|---|---|
 | `fiber_started` | yes | Fiber version, `schema_version`, new session or resumed |
-| `fiber_exited` | yes | exit code, the final message's `action_id`, `error` if it failed |
+| `fiber_exited` | yes | exit code, the final message's `action_id` and its text, `error` if it failed |
 
 A process is not a named unit in the glossary; these two lines record its
 boundary without inventing one. They are durable for one reason: a
 `fiber_started` with no matching `fiber_exited` is the only record that a process
 died rather than finished. That is the same trick tool calls use below.
 
-`fiber_exited` points at the final message rather than copying its text. A copy
-would be a fold written down as its own truth — the bug this whole page exists
-to prevent. A caller that wants only the answer uses plain output, where Fiber
-prints the text and nothing else.
+`fiber_exited` copies the final message's text as well as pointing at it, so a
+one-shot caller reads the last line and is done:
+
+```sh
+answer=$(fiber ask --json "$prompt" | tail -1 | jq -r .payload.text)
+```
+
+**That copy is output, never a source.** Fiber never reads it back, no fold
+consults it, and if it ever disagrees with the action it points at, the action
+wins. This is the one place a line restates content another line already
+carries, and it is safe for a specific reason: it is written once, at exit,
+from the message it copies, so it cannot drift while a session is running.
+Every other duplicate is the bug this page exists to prevent — a stored fold
+that is read back and goes stale.
+
+The alternative was making callers filter the stream for the last
+`assistant_message_completed`, which is a one-liner today and stops being one
+as soon as a child session relays its own messages onto the same stdout.
 
 ### Session and turn
 
@@ -227,7 +241,8 @@ steps 1..N makes the log quadratic in tool calls within a turn; measured on the
 Zig implementation, a 429-call turn wrote 412 MB and peaked at 2.1 GiB RSS,
 where per-action lines carry the same information written once each. Any future
 line that summarises the turn so far reintroduces this, so it needs this
-decision overturned first.
+decision overturned first. The one restatement in the contract, the final text
+on `fiber_exited`, sits outside any turn and is never read back.
 
 **A torn tail is discarded.** A reader stops at the last complete line and a
 writer truncates a partial line before appending, so a power cut cannot make a
