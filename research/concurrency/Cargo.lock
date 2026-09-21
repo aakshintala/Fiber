@@ -305,6 +305,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cancel_ureq_connector"
+version = "0.1.0"
+dependencies = [
+ "sse_server",
+ "ureq",
+]
+
+[[package]]
 name = "cassowary"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1704,6 +1712,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "threads_scale"
+version = "0.1.0"
+dependencies = [
+ "measure",
 ]
 
 [[package]]

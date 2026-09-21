@@ -18,8 +18,10 @@ members = [
     "cancel_tcp",
     "cancel_timeout",
     "cancel_http_ureq",
+    "cancel_ureq_connector",
     "idle_tokio_io",
     "idle_tokio_sleep",
     "http_rustls",
     "idle_poll16",
+    "threads_scale",
 ]
