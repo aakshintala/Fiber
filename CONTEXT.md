@@ -128,6 +128,18 @@ boundary rather than starting a new one. A steering message the turn ends
 before applying becomes the next turn's input.
 _Avoid_: follow-up, queued prompt, interjection
 
+**Front door**:
+A way of starting Fiber. There are two: the terminal, and the non-interactive
+door. Which subcommand opened a door changes where its prompt comes from and
+when it exits, never what the loop does.
+_Avoid_: mode, entry point, interface
+
+**Driver command**:
+One thing a driver may send to a session, from a closed set Fiber defines. A
+command is not an event: it goes in, it is acknowledged, and what it causes is
+recorded as events like everything else.
+_Avoid_: request, message, RPC
+
 **Cancellation**:
 Ending a turn early because a person asked. The model stream stops, in-flight
 tool calls complete as cancelled, and the turn completes with the outcome

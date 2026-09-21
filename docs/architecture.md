@@ -8,6 +8,9 @@ that ticket's resolution holds the rationale and the rejected alternatives.
 Vocabulary is `CONTEXT.md`. Watcher, driver, participant, seam, hook, session,
 turn, event and tool call mean what it says there and nothing else.
 
+How Fiber is started, and the commands a driver may send, is
+`docs/invocation.md`.
+
 ## Three kinds of participant
 
 Everything that touches a running session is one of three things.
@@ -47,7 +50,7 @@ display-only."
 | `extensions` | Loads extension code, hosts the runtime, and wires what extensions register into the three seams. |
 | `tui` | Draws the terminal. Watches events, sends commands, knows nothing else. |
 | `config` | Reads the configuration directory. Answers questions; never asks any. |
-| `doors` | The non-interactive front door: argv in, JSON lines out. Which doors exist is [Front doors: which invocation modes does v0.0.1 have?](https://github.com/aakshintala/fiber/issues/10); this page only fixes that a door sits beside the TUI with no privilege the TUI lacks. |
+| `doors` | The non-interactive front door: argv or stdin in, JSON lines out. Which doors exist and what a driver may send them is `docs/invocation.md`; this page only fixes that a door sits beside the TUI with no privilege the TUI lacks. |
 | `main` | The composition root. Parses argv, builds everything once, picks a door. No feature logic. |
 
 ### Why contract exists
@@ -265,7 +268,6 @@ that the other does not.
 
 ## Not settled here
 
-- Which front doors exist: [Front doors: which invocation modes does v0.0.1 have?](https://github.com/aakshintala/fiber/issues/10)
 - The extension runtime: [Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11)
 - Provider routing: [Provider and model routing](https://github.com/aakshintala/fiber/issues/12)
 - Confinement: [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)

@@ -105,7 +105,7 @@ died rather than finished. That is the same trick tool calls use below.
 one-shot caller reads the last line and is done:
 
 ```sh
-answer=$(fiber ask --json "$prompt" | tail -1 | jq -r .payload.text)
+answer=$(fiber ask "$prompt" | tail -1 | jq -r .payload.text)
 ```
 
 **That copy is output, never a source.** Fiber never reads it back, no fold
@@ -134,8 +134,8 @@ at its next step boundary, and `steering_applied` is how the log shows what
 the turn actually received. A message the turn ends before applying becomes
 the next turn's input, so it appears on the next `turn_started` instead. The
 threading this rests on is the concurrency section of `docs/architecture.md`;
-the driver commands that send, amend and withdraw one are
-[Front doors](https://github.com/aakshintala/fiber/issues/10).
+the driver commands that send, amend and withdraw one — `steer`, `steer_amend`
+and `steer_drop` — are `docs/invocation.md`.
 
 `turn_completed` means settled. Retries and compaction happen inside the turn
 and appear as actions, so there is never a second "really finished" event.
