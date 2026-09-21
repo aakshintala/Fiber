@@ -1,12 +1,14 @@
 # Concurrency benchmarks (issue #8)
 
+The `research/` directory holds small measurement programs that answered a specific design question and are kept so the numbers can be re-run later. Fiber’s real usage weight is on Linux, and none of these have been run there yet; Linux is where you should re-run before trusting timings. This is not Fiber’s own performance benchmark suite (those will live under `benchmarks/` when they exist) and it is not a place for design documents.
+
 These programs answer whether Fiber can hold concurrent streaming work (SSE body, tty, file writes, background jobs) without an async runtime, with idle CPU comparable to a parked `std::thread`, and what cancellation and HTTP client choices look like in that model.
 
 Every timing and CPU number in `results/` was measured on **macOS arm64 only** (Darwin 25.6.0, Apple M3 Pro, 11 logical CPUs, rustc 1.98.1). Linux was not measured — no Docker, podman, or VM was available on the machine that ran them. **Linux is where Fiber’s real usage weight sits; re-run these benchmarks on Linux before treating any of their timings as Fiber’s.** Thread counts, `cargo tree` edges, and whether a crate pulls tokio generalise across platforms; the timings do not.
 
 Full analysis: [issue #8 comment](https://github.com/aakshintala/fiber/issues/8#issuecomment-5756312384).
 
-When a root `Cargo.toml` is added for Fiber itself, list `benchmarks/concurrency` in that workspace’s `exclude` so this standalone workspace is not pulled into Fiber’s build.
+When a root `Cargo.toml` is added for Fiber itself, list `research/concurrency` in that workspace’s `exclude` so this standalone workspace is not pulled into Fiber’s build.
 
 ## What each crate measures
 
@@ -38,7 +40,7 @@ Raw measurement copies from the macOS run live under `results/`.
 
 ## How to re-run
 
-From this directory (`benchmarks/concurrency/`):
+From this directory (`research/concurrency/`):
 
 ```text
 cargo build --release -p idle_std -p idle_tokio_mt -p idle_tokio_ct -p idle_tokio_io -p idle_tokio_sleep -p idle_smol -p idle_async_std -p idle_polling -p idle_poll16 -p tui_idle -p tui_poll16
