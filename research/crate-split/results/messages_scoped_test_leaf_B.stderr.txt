@@ -1,0 +1,3 @@
+   Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.55s
+     Running unittests src/lib.rs (/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-test-debug/debug/deps/bytes_util-e535b30af7cfa025)

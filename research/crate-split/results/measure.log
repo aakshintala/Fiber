@@ -1,0 +1,287 @@
+macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)
+{'shape_a_rs_lines': 39448, 'shape_b_rs_lines': 39406, 'shape_a_cargo_toml_files': 1, 'shape_a_cargo_toml_lines': 13, 'shape_b_cargo_toml_files': 9, 'shape_b_cargo_toml_lines': 142, 'command': 'python3 measure.py (pathlib rglob *.rs / Cargo.toml line counts)'}
+== cargo fetch A
+== cargo fetch B
+== clean_build_debug_A: 5 clean runs, cmd=cargo build, target=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-debug
+   run 1/5: 16.525s
+   run 2/5: 17.345s
+   run 3/5: 17.195s
+   run 4/5: 17.191s
+   run 5/5: 17.564s
+== clean_build_release_A: 5 clean runs, cmd=cargo build --release, target=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-release
+   run 1/5: 24.180s
+   run 2/5: 22.447s
+   run 3/5: 23.037s
+   run 4/5: 22.283s
+   run 5/5: 22.166s
+== clean_build_debug_B: 5 clean runs, cmd=cargo build, target=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug
+   run 1/5: 11.306s
+   run 2/5: 10.987s
+   run 3/5: 10.801s
+   run 4/5: 11.060s
+   run 5/5: 10.632s
+== clean_build_release_B: 5 clean runs, cmd=cargo build --release, target=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-release
+   run 1/5: 13.220s
+   run 2/5: 13.399s
+   run 3/5: 13.477s
+   run 4/5: 13.052s
+   run 5/5: 13.188s
+== incr_leaf_build_debug_A: warmup + 5 touched rebuilds
+   warmup: 0.037s
+   run 1/5: 3.904s
+   run 2/5: 3.197s
+   run 3/5: 3.181s
+   run 4/5: 3.132s
+   run 5/5: 3.177s
+== incr_top_build_debug_A: warmup + 5 touched rebuilds
+   warmup: 0.030s
+   run 1/5: 3.118s
+   run 2/5: 3.149s
+   run 3/5: 3.128s
+   run 4/5: 3.168s
+   run 5/5: 3.126s
+== incr_core_build_debug_A: warmup + 5 touched rebuilds
+   warmup: 0.031s
+   run 1/5: 3.205s
+   run 2/5: 3.139s
+   run 3/5: 3.165s
+   run 4/5: 3.130s
+   run 5/5: 3.175s
+== incr_leaf_build_release_A: warmup + 5 touched rebuilds
+   warmup: 19.051s
+   run 1/5: 19.620s
+   run 2/5: 19.082s
+   run 3/5: 19.774s
+   run 4/5: 19.721s
+   run 5/5: 19.939s
+== incr_top_build_release_A: warmup + 5 touched rebuilds
+   warmup: 0.050s
+   run 1/5: 19.615s
+   run 2/5: 19.515s
+   run 3/5: 19.116s
+   run 4/5: 20.942s
+   run 5/5: 19.296s
+== incr_core_build_release_A: warmup + 5 touched rebuilds
+   warmup: 0.050s
+   run 1/5: 19.665s
+   run 2/5: 19.208s
+   run 3/5: 18.930s
+   run 4/5: 18.999s
+   run 5/5: 19.179s
+== incr_leaf_build_debug_B: warmup + 5 touched rebuilds
+   warmup: 0.062s
+   run 1/5: 2.206s
+   run 2/5: 1.753s
+   run 3/5: 1.773s
+   run 4/5: 1.742s
+   run 5/5: 1.781s
+== incr_top_build_debug_B: warmup + 5 touched rebuilds
+   warmup: 0.033s
+   run 1/5: 0.607s
+   run 2/5: 0.603s
+   run 3/5: 0.601s
+   run 4/5: 0.599s
+   run 5/5: 0.600s
+== incr_core_build_debug_B: warmup + 5 touched rebuilds
+   warmup: 0.032s
+   run 1/5: 1.847s
+   run 2/5: 1.809s
+   run 3/5: 1.773s
+   run 4/5: 1.801s
+   run 5/5: 1.782s
+== incr_leaf_build_release_B: warmup + 5 touched rebuilds
+   warmup: 10.067s
+   run 1/5: 9.180s
+   run 2/5: 9.165s
+   run 3/5: 9.249s
+   run 4/5: 9.166s
+   run 5/5: 9.193s
+== incr_top_build_release_B: warmup + 5 touched rebuilds
+   warmup: 0.032s
+   run 1/5: 2.820s
+   run 2/5: 2.815s
+   run 3/5: 2.827s
+   run 4/5: 2.845s
+   run 5/5: 2.851s
+== incr_core_build_release_B: warmup + 5 touched rebuilds
+   warmup: 0.033s
+   run 1/5: 9.871s
+   run 2/5: 9.813s
+   run 3/5: 9.798s
+   run 4/5: 9.592s
+   run 5/5: 9.570s
+== clean_check_debug_A: 5 clean runs, cmd=cargo check, target=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-check-debug
+   run 1/5: 12.973s
+   run 2/5: 12.880s
+   run 3/5: 12.534s
+   run 4/5: 12.631s
+   run 5/5: 13.475s
+== incr_leaf_check_debug_A: warmup + 5 touched rebuilds
+   warmup: 0.049s
+   run 1/5: 2.637s
+   run 2/5: 2.672s
+   run 3/5: 2.669s
+   run 4/5: 2.461s
+   run 5/5: 3.047s
+== incr_top_check_debug_A: warmup + 5 touched rebuilds
+   warmup: 0.031s
+   run 1/5: 2.494s
+   run 2/5: 2.522s
+   run 3/5: 2.692s
+   run 4/5: 2.631s
+   run 5/5: 2.442s
+== clean_check_release_A: 5 clean runs, cmd=cargo check --release, target=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-check-release
+   run 1/5: 11.881s
+   run 2/5: 11.281s
+   run 3/5: 11.615s
+   run 4/5: 12.837s
+   run 5/5: 12.086s
+== incr_leaf_check_release_A: warmup + 5 touched rebuilds
+   warmup: 0.050s
+   run 1/5: 8.686s
+   run 2/5: 8.602s
+   run 3/5: 8.841s
+   run 4/5: 8.817s
+   run 5/5: 8.870s
+== incr_top_check_release_A: warmup + 5 touched rebuilds
+   warmup: 0.030s
+   run 1/5: 9.112s
+   run 2/5: 8.749s
+   run 3/5: 8.860s
+   run 4/5: 9.529s
+   run 5/5: 8.823s
+== clean_check_debug_B: 5 clean runs, cmd=cargo check, target=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-check-debug
+   run 1/5: 8.426s
+   run 2/5: 8.805s
+   run 3/5: 9.951s
+   run 4/5: 8.855s
+   run 5/5: 8.830s
+== incr_leaf_check_debug_B: warmup + 5 touched rebuilds
+   warmup: 0.032s
+   run 1/5: 1.454s
+   run 2/5: 1.478s
+   run 3/5: 1.510s
+   run 4/5: 1.451s
+   run 5/5: 1.462s
+== incr_top_check_debug_B: warmup + 5 touched rebuilds
+   warmup: 0.030s
+   run 1/5: 0.414s
+   run 2/5: 0.411s
+   run 3/5: 0.409s
+   run 4/5: 0.409s
+   run 5/5: 0.411s
+== clean_check_release_B: 5 clean runs, cmd=cargo check --release, target=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-check-release
+   run 1/5: 8.379s
+   run 2/5: 9.028s
+   run 3/5: 8.414s
+   run 4/5: 8.563s
+   run 5/5: 8.559s
+== incr_leaf_check_release_B: warmup + 5 touched rebuilds
+   warmup: 0.035s
+   run 1/5: 5.034s
+   run 2/5: 5.012s
+   run 3/5: 5.072s
+   run 4/5: 5.040s
+   run 5/5: 5.091s
+== incr_top_check_release_B: warmup + 5 touched rebuilds
+   warmup: 0.030s
+   run 1/5: 1.310s
+   run 2/5: 1.306s
+   run 3/5: 1.307s
+   run 4/5: 1.304s
+   run 5/5: 1.305s
+== warm_test_A: warmup + 5 runs, cmd=cargo test
+   warmup: 22.209s
+   run 1/5: 0.077s
+   run 2/5: 0.041s
+   run 3/5: 0.039s
+   run 4/5: 0.038s
+   run 5/5: 0.038s
+== warm_test_B: warmup + 5 runs, cmd=cargo test
+   warmup: 15.748s
+   run 1/5: 0.071s
+   run 2/5: 0.055s
+   run 3/5: 0.052s
+   run 4/5: 0.053s
+   run 5/5: 0.052s
+== scoped_test_A: warmup + 5 runs, cmd=cargo test --lib bytes_util::
+   warmup: 0.031s
+   run 1/5: 3.857s
+   run 2/5: 3.456s
+   run 3/5: 3.439s
+   run 4/5: 3.465s
+   run 5/5: 3.492s
+== scoped_test_B: warmup + 5 runs, cmd=cargo test -p bytes_util
+   warmup: 0.049s
+   run 1/5: 0.925s
+   run 2/5: 0.890s
+   run 3/5: 0.922s
+   run 4/5: 0.882s
+   run 5/5: 0.972s
+== messages_scoped_test_leaf_B: cargo test -p bytes_util --message-format=json
+== messages_scoped_test_leaf_A: cargo test --lib bytes_util:: --message-format=json
+== messages_incr_core_build_B: cargo build --message-format=json
+== messages_incr_leaf_build_B: cargo build --message-format=json
+== messages_incr_top_build_B: cargo build --message-format=json
+== timings_debug_A: cargo build --timings=html,json
+error: unexpected value 'html,json' for '--timings' found; no more were expected
+
+Usage: cargo build --timings
+
+For more information, try '--help'.
+
+timings failed for timings_debug_A
+resuming from results/results.json
+== cargo fetch A
+== cargo fetch B
+skip clean_build_debug_A (already recorded)
+skip clean_build_release_A (already recorded)
+skip clean_build_debug_B (already recorded)
+skip clean_build_release_B (already recorded)
+skip incr_leaf_build_debug_A (already recorded)
+skip incr_top_build_debug_A (already recorded)
+skip incr_core_build_debug_A (already recorded)
+skip incr_leaf_build_release_A (already recorded)
+skip incr_top_build_release_A (already recorded)
+skip incr_core_build_release_A (already recorded)
+skip incr_leaf_build_debug_B (already recorded)
+skip incr_top_build_debug_B (already recorded)
+skip incr_core_build_debug_B (already recorded)
+skip incr_leaf_build_release_B (already recorded)
+skip incr_top_build_release_B (already recorded)
+skip incr_core_build_release_B (already recorded)
+skip clean_check_debug_A (already recorded)
+skip incr_leaf_check_debug_A (already recorded)
+skip incr_top_check_debug_A (already recorded)
+skip clean_check_release_A (already recorded)
+skip incr_leaf_check_release_A (already recorded)
+skip incr_top_check_release_A (already recorded)
+skip clean_check_debug_B (already recorded)
+skip incr_leaf_check_debug_B (already recorded)
+skip incr_top_check_debug_B (already recorded)
+skip clean_check_release_B (already recorded)
+skip incr_leaf_check_release_B (already recorded)
+skip incr_top_check_release_B (already recorded)
+skip warm_test_A
+skip warm_test_B
+skip scoped_test_A
+skip scoped_test_B
+skip messages_scoped_test_leaf_B
+skip messages_scoped_test_leaf_A
+skip messages_incr_core_build_B
+skip messages_incr_leaf_build_B
+skip messages_incr_top_build_B
+== messages_incr_core_build_isolated_B: warmup cargo build
+   warmup: 0.041s
+== messages_incr_core_build_isolated_B: cargo build --message-format=json
+== timings_debug_A: cargo build --timings
+== timings_release_A: cargo build --timings --release
+== timings_debug_B: cargo build --timings
+== timings_release_B: cargo build --timings --release
+== CGU=1 clean cargo build (Shape A, incremental off)
+   19.988s
+== CGU=16 clean cargo build (Shape A, incremental off)
+   15.653s
+== CGU=256 clean cargo build (Shape A, incremental off)
+   15.333s
+done. results in /Users/aakshintala/work/fiber-research/crate-split/results/results.json

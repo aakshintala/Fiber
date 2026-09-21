@@ -1,0 +1,1483 @@
+{
+  "platform": {
+    "uname": "Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64",
+    "cpu": "Apple M3 Pro",
+    "ncpu": 11,
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "label": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)"
+  },
+  "scenarios": {
+    "rustc_help": {
+      "z_help_returncode": 1,
+      "z_help_has_threads": false,
+      "codegen_units_in_C_help": true,
+      "C_help_excerpt": "    -C             codegen-units=val -- divide crate into N units to optimize in parallel\n    -C               incremental=val -- enable incremental compilation",
+      "command": "rustc -Z help; rustc -C help"
+    },
+    "clean_build_debug_A": {
+      "times": [
+        16.524542042,
+        17.345445708,
+        17.194672542,
+        17.190681874999996,
+        17.564193499999988
+      ],
+      "median": 17.194672542,
+      "min": 16.524542042,
+      "max": 17.564193499999988,
+      "mean": 17.163907133399995,
+      "n": 5,
+      "scenario": "clean_build_debug_A",
+      "shape": "A",
+      "profile": "debug",
+      "kind": "build",
+      "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-debug && CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-debug CARGO_INCREMENTAL=1 cargo build",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    "clean_build_release_A": {
+      "times": [
+        24.179779707999998,
+        22.446664374999983,
+        23.036971499999993,
+        22.28270758299999,
+        22.16636566699998
+      ],
+      "median": 22.446664374999983,
+      "min": 22.16636566699998,
+      "max": 24.179779707999998,
+      "mean": 22.822497766599987,
+      "n": 5,
+      "scenario": "clean_build_release_A",
+      "shape": "A",
+      "profile": "release",
+      "kind": "build",
+      "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-release && CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-release CARGO_INCREMENTAL=0 cargo build --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    "clean_build_debug_B": {
+      "times": [
+        11.306256708000006,
+        10.987050709000016,
+        10.801211208000012,
+        11.060013584000018,
+        10.632362874999984
+      ],
+      "median": 10.987050709000016,
+      "min": 10.632362874999984,
+      "max": 11.306256708000006,
+      "mean": 10.957379016800008,
+      "n": 5,
+      "scenario": "clean_build_debug_B",
+      "shape": "B",
+      "profile": "debug",
+      "kind": "build",
+      "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug && CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug CARGO_INCREMENTAL=1 cargo build",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    "clean_build_release_B": {
+      "times": [
+        13.22014412499999,
+        13.39949204200002,
+        13.47714537500002,
+        13.052063334000024,
+        13.187853000000018
+      ],
+      "median": 13.22014412499999,
+      "min": 13.052063334000024,
+      "max": 13.47714537500002,
+      "mean": 13.267339575200015,
+      "n": 5,
+      "scenario": "clean_build_release_B",
+      "shape": "B",
+      "profile": "release",
+      "kind": "build",
+      "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-release && CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-release CARGO_INCREMENTAL=0 cargo build --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    "incr_leaf_build_debug_A": {
+      "times": [
+        3.9037930410000286,
+        3.1974870829999986,
+        3.1807237080000164,
+        3.1318681250000395,
+        3.176606292000031
+      ],
+      "median": 3.1807237080000164,
+      "min": 3.1318681250000395,
+      "max": 3.9037930410000286,
+      "mean": 3.3180956498000227,
+      "n": 5,
+      "scenario": "incr_leaf_build_debug_A",
+      "shape": "A",
+      "profile": "debug",
+      "kind": "build",
+      "touch": "leaf",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_a/src/bytes_util/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_a/src/bytes_util/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-debug CARGO_INCREMENTAL=1 cargo build",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "incr_top_build_debug_A": {
+      "times": [
+        3.118055750000053,
+        3.1493763330000206,
+        3.128487249999978,
+        3.167965958000025,
+        3.126155707999999
+      ],
+      "median": 3.128487249999978,
+      "min": 3.118055750000053,
+      "max": 3.167965958000025,
+      "mean": 3.138008199800015,
+      "n": 5,
+      "scenario": "incr_top_build_debug_A",
+      "shape": "A",
+      "profile": "debug",
+      "kind": "build",
+      "touch": "top",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_a/src/policy/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_a/src/policy/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-debug CARGO_INCREMENTAL=1 cargo build",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "incr_core_build_debug_A": {
+      "times": [
+        3.2053379170000085,
+        3.1393460839999534,
+        3.1648217499999873,
+        3.129625167000029,
+        3.174950249999995
+      ],
+      "median": 3.1648217499999873,
+      "min": 3.129625167000029,
+      "max": 3.2053379170000085,
+      "mean": 3.1628162335999948,
+      "n": 5,
+      "scenario": "incr_core_build_debug_A",
+      "shape": "A",
+      "profile": "debug",
+      "kind": "build",
+      "touch": "core",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_a/src/core_ids/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_a/src/core_ids/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-debug CARGO_INCREMENTAL=1 cargo build",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "incr_leaf_build_release_A": {
+      "times": [
+        19.619845957999985,
+        19.081719541999973,
+        19.773569416999976,
+        19.72147612499998,
+        19.938718209
+      ],
+      "median": 19.72147612499998,
+      "min": 19.081719541999973,
+      "max": 19.938718209,
+      "mean": 19.627065850199983,
+      "n": 5,
+      "scenario": "incr_leaf_build_release_A",
+      "shape": "A",
+      "profile": "release",
+      "kind": "build",
+      "touch": "leaf",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_a/src/bytes_util/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_a/src/bytes_util/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-release CARGO_INCREMENTAL=0 cargo build --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "incr_top_build_release_A": {
+      "times": [
+        19.615365416999964,
+        19.514529707999998,
+        19.11568683300004,
+        20.941564791999895,
+        19.296047166999983
+      ],
+      "median": 19.514529707999998,
+      "min": 19.11568683300004,
+      "max": 20.941564791999895,
+      "mean": 19.696638783399976,
+      "n": 5,
+      "scenario": "incr_top_build_release_A",
+      "shape": "A",
+      "profile": "release",
+      "kind": "build",
+      "touch": "top",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_a/src/policy/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_a/src/policy/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-release CARGO_INCREMENTAL=0 cargo build --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "incr_core_build_release_A": {
+      "times": [
+        19.665088792000006,
+        19.20799604199999,
+        18.93035850000001,
+        18.998826208999958,
+        19.17858799999999
+      ],
+      "median": 19.17858799999999,
+      "min": 18.93035850000001,
+      "max": 19.665088792000006,
+      "mean": 19.196171508599992,
+      "n": 5,
+      "scenario": "incr_core_build_release_A",
+      "shape": "A",
+      "profile": "release",
+      "kind": "build",
+      "touch": "core",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_a/src/core_ids/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_a/src/core_ids/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-release CARGO_INCREMENTAL=0 cargo build --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "incr_leaf_build_debug_B": {
+      "times": [
+        2.20557287500003,
+        1.752862167000103,
+        1.7733538340000905,
+        1.7420366249999688,
+        1.781420750000052
+      ],
+      "median": 1.7733538340000905,
+      "min": 1.7420366249999688,
+      "max": 2.20557287500003,
+      "mean": 1.8510492502000488,
+      "n": 5,
+      "scenario": "incr_leaf_build_debug_B",
+      "shape": "B",
+      "profile": "debug",
+      "kind": "build",
+      "touch": "leaf",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util/src/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util/src/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug CARGO_INCREMENTAL=1 cargo build",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)",
+        "Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)",
+        "Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)",
+        "Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)",
+        "Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ]
+    },
+    "incr_top_build_debug_B": {
+      "times": [
+        0.6070228749999842,
+        0.6030090829999608,
+        0.6008057500000632,
+        0.5992435829999749,
+        0.6000825000000987
+      ],
+      "median": 0.6008057500000632,
+      "min": 0.5992435829999749,
+      "max": 0.6070228749999842,
+      "mean": 0.6020327582000163,
+      "n": 5,
+      "scenario": "incr_top_build_debug_B",
+      "shape": "B",
+      "profile": "debug",
+      "kind": "build",
+      "touch": "top",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy/src/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy/src/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug CARGO_INCREMENTAL=1 cargo build",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ]
+    },
+    "incr_core_build_debug_B": {
+      "times": [
+        1.847115375000044,
+        1.8087562919999982,
+        1.7733698749999576,
+        1.8006878330000973,
+        1.7818995830000404
+      ],
+      "median": 1.8006878330000973,
+      "min": 1.7733698749999576,
+      "max": 1.847115375000044,
+      "mean": 1.8023657916000275,
+      "n": 5,
+      "scenario": "incr_core_build_debug_B",
+      "shape": "B",
+      "profile": "debug",
+      "kind": "build",
+      "touch": "core",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids/src/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids/src/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug CARGO_INCREMENTAL=1 cargo build",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling core_ids v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids)",
+        "Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)",
+        "Compiling catalog v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/catalog)",
+        "Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)",
+        "Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)",
+        "Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ]
+    },
+    "incr_leaf_build_release_B": {
+      "times": [
+        9.180200417000037,
+        9.164927042000045,
+        9.249096500000064,
+        9.165569417000029,
+        9.192642167000031
+      ],
+      "median": 9.180200417000037,
+      "min": 9.164927042000045,
+      "max": 9.249096500000064,
+      "mean": 9.190487108600042,
+      "n": 5,
+      "scenario": "incr_leaf_build_release_B",
+      "shape": "B",
+      "profile": "release",
+      "kind": "build",
+      "touch": "leaf",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util/src/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util/src/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-release CARGO_INCREMENTAL=0 cargo build --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)",
+        "Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)",
+        "Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)",
+        "Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)",
+        "Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ]
+    },
+    "incr_top_build_release_B": {
+      "times": [
+        2.8195053750000625,
+        2.8148605420000194,
+        2.8273774159999903,
+        2.845340792000002,
+        2.850659250000035
+      ],
+      "median": 2.8273774159999903,
+      "min": 2.8148605420000194,
+      "max": 2.850659250000035,
+      "mean": 2.831548675000022,
+      "n": 5,
+      "scenario": "incr_top_build_release_B",
+      "shape": "B",
+      "profile": "release",
+      "kind": "build",
+      "touch": "top",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy/src/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy/src/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-release CARGO_INCREMENTAL=0 cargo build --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ]
+    },
+    "incr_core_build_release_B": {
+      "times": [
+        9.87079612499997,
+        9.812882917000024,
+        9.797842500000002,
+        9.592413374999978,
+        9.56996300000003
+      ],
+      "median": 9.797842500000002,
+      "min": 9.56996300000003,
+      "max": 9.87079612499997,
+      "mean": 9.728779583400001,
+      "n": 5,
+      "scenario": "incr_core_build_release_B",
+      "shape": "B",
+      "profile": "release",
+      "kind": "build",
+      "touch": "core",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids/src/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids/src/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-release CARGO_INCREMENTAL=0 cargo build --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Compiling core_ids v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids)",
+        "Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)",
+        "Compiling catalog v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/catalog)",
+        "Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)",
+        "Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)",
+        "Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ]
+    },
+    "clean_check_debug_A": {
+      "times": [
+        12.973018582999998,
+        12.879767958000002,
+        12.53424074999998,
+        12.630900124999926,
+        13.474716708000074
+      ],
+      "median": 12.879767958000002,
+      "min": 12.53424074999998,
+      "max": 13.474716708000074,
+      "mean": 12.898528824799996,
+      "n": 5,
+      "scenario": "clean_check_debug_A",
+      "shape": "A",
+      "profile": "debug",
+      "kind": "check",
+      "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/A-check-debug && CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-check-debug CARGO_INCREMENTAL=1 cargo check",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    "incr_leaf_check_debug_A": {
+      "times": [
+        2.6374512910000476,
+        2.671500041999934,
+        2.669450209000047,
+        2.461140291999982,
+        3.047225166999965
+      ],
+      "median": 2.669450209000047,
+      "min": 2.461140291999982,
+      "max": 3.047225166999965,
+      "mean": 2.697353400199995,
+      "n": 5,
+      "scenario": "incr_leaf_check_debug_A",
+      "shape": "A",
+      "profile": "debug",
+      "kind": "check",
+      "touch": "leaf",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_a/src/bytes_util/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_a/src/bytes_util/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-check-debug CARGO_INCREMENTAL=1 cargo check",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Checking fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "incr_top_check_debug_A": {
+      "times": [
+        2.4935072079999827,
+        2.5219177499999432,
+        2.6915804999999864,
+        2.6306305839999595,
+        2.4419120840000232
+      ],
+      "median": 2.5219177499999432,
+      "min": 2.4419120840000232,
+      "max": 2.6915804999999864,
+      "mean": 2.555909625199979,
+      "n": 5,
+      "scenario": "incr_top_check_debug_A",
+      "shape": "A",
+      "profile": "debug",
+      "kind": "check",
+      "touch": "top",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_a/src/policy/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_a/src/policy/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-check-debug CARGO_INCREMENTAL=1 cargo check",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Checking fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "clean_check_release_A": {
+      "times": [
+        11.881450167000025,
+        11.281429666000008,
+        11.614825166999935,
+        12.837365208000051,
+        12.08557774999997
+      ],
+      "median": 11.881450167000025,
+      "min": 11.281429666000008,
+      "max": 12.837365208000051,
+      "mean": 11.940129591599998,
+      "n": 5,
+      "scenario": "clean_check_release_A",
+      "shape": "A",
+      "profile": "release",
+      "kind": "check",
+      "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/A-check-release && CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-check-release CARGO_INCREMENTAL=0 cargo check --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    "incr_leaf_check_release_A": {
+      "times": [
+        8.685520915999973,
+        8.602314750000005,
+        8.841029416999959,
+        8.816850166999984,
+        8.86977324999998
+      ],
+      "median": 8.816850166999984,
+      "min": 8.602314750000005,
+      "max": 8.86977324999998,
+      "mean": 8.76309769999998,
+      "n": 5,
+      "scenario": "incr_leaf_check_release_A",
+      "shape": "A",
+      "profile": "release",
+      "kind": "check",
+      "touch": "leaf",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_a/src/bytes_util/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_a/src/bytes_util/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-check-release CARGO_INCREMENTAL=0 cargo check --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Checking fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "incr_top_check_release_A": {
+      "times": [
+        9.112491625000075,
+        8.749065665999979,
+        8.859728499999846,
+        9.52875241699985,
+        8.823476416999938
+      ],
+      "median": 8.859728499999846,
+      "min": 8.749065665999979,
+      "max": 9.52875241699985,
+      "mean": 9.014702924999938,
+      "n": 5,
+      "scenario": "incr_top_check_release_A",
+      "shape": "A",
+      "profile": "release",
+      "kind": "check",
+      "touch": "top",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_a/src/policy/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_a/src/policy/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-check-release CARGO_INCREMENTAL=0 cargo check --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Checking fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "clean_check_debug_B": {
+      "times": [
+        8.425991833000126,
+        8.804659291999997,
+        9.951412041999902,
+        8.855013291999967,
+        8.829786667000008
+      ],
+      "median": 8.829786667000008,
+      "min": 8.425991833000126,
+      "max": 9.951412041999902,
+      "mean": 8.9733726252,
+      "n": 5,
+      "scenario": "clean_check_debug_B",
+      "shape": "B",
+      "profile": "debug",
+      "kind": "check",
+      "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/B-check-debug && CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-check-debug CARGO_INCREMENTAL=1 cargo check",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    "incr_leaf_check_debug_B": {
+      "times": [
+        1.4542736250000416,
+        1.4782334999999875,
+        1.5096843750000062,
+        1.4510742919999302,
+        1.461827792000122
+      ],
+      "median": 1.461827792000122,
+      "min": 1.4510742919999302,
+      "max": 1.5096843750000062,
+      "mean": 1.4710187168000175,
+      "n": 5,
+      "scenario": "incr_leaf_check_debug_B",
+      "shape": "B",
+      "profile": "debug",
+      "kind": "check",
+      "touch": "leaf",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util/src/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util/src/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-check-debug CARGO_INCREMENTAL=1 cargo check",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Checking bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)",
+        "Checking syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)",
+        "Checking engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)",
+        "Checking policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Checking session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)",
+        "Checking app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ]
+    },
+    "incr_top_check_debug_B": {
+      "times": [
+        0.4142759170001682,
+        0.41116600000009385,
+        0.4088387919998695,
+        0.40937429200016595,
+        0.4107446660000278
+      ],
+      "median": 0.4107446660000278,
+      "min": 0.4088387919998695,
+      "max": 0.4142759170001682,
+      "mean": 0.41087993340006507,
+      "n": 5,
+      "scenario": "incr_top_check_debug_B",
+      "shape": "B",
+      "profile": "debug",
+      "kind": "check",
+      "touch": "top",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy/src/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy/src/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-check-debug CARGO_INCREMENTAL=1 cargo check",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Checking policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Checking app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ]
+    },
+    "clean_check_release_B": {
+      "times": [
+        8.37936154099998,
+        9.02836354100009,
+        8.413869791000025,
+        8.562505790999921,
+        8.559488500000043
+      ],
+      "median": 8.559488500000043,
+      "min": 8.37936154099998,
+      "max": 9.02836354100009,
+      "mean": 8.588717832800011,
+      "n": 5,
+      "scenario": "clean_check_release_B",
+      "shape": "B",
+      "profile": "release",
+      "kind": "check",
+      "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/B-check-release && CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-check-release CARGO_INCREMENTAL=0 cargo check --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)"
+    },
+    "incr_leaf_check_release_B": {
+      "times": [
+        5.033905417000142,
+        5.012460749999946,
+        5.071579666999924,
+        5.039662208999971,
+        5.091040583999984
+      ],
+      "median": 5.039662208999971,
+      "min": 5.012460749999946,
+      "max": 5.091040583999984,
+      "mean": 5.0497297253999935,
+      "n": 5,
+      "scenario": "incr_leaf_check_release_B",
+      "shape": "B",
+      "profile": "release",
+      "kind": "check",
+      "touch": "leaf",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util/src/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util/src/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-check-release CARGO_INCREMENTAL=0 cargo check --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Checking bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)",
+        "Checking syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)",
+        "Checking engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)",
+        "Checking policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Checking session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)",
+        "Checking app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ]
+    },
+    "incr_top_check_release_B": {
+      "times": [
+        1.3104257499999221,
+        1.306397792000098,
+        1.3070131249999122,
+        1.3043495829999756,
+        1.3054403749999892
+      ],
+      "median": 1.306397792000098,
+      "min": 1.3043495829999756,
+      "max": 1.3104257499999221,
+      "mean": 1.3067253249999795,
+      "n": 5,
+      "scenario": "incr_top_check_release_B",
+      "shape": "B",
+      "profile": "release",
+      "kind": "check",
+      "touch": "top",
+      "touch_file": "/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy/src/model_0.rs",
+      "command": "toggle TOUCH_MARKER in /Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy/src/model_0.rs; CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-check-release CARGO_INCREMENTAL=0 cargo check --release",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "stderr_compiling": [
+        "Checking policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Checking app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ]
+    },
+    "warm_test_A": {
+      "times": [
+        0.07683387499992023,
+        0.040846416000022145,
+        0.03865379200010466,
+        0.03809275000003254,
+        0.038318459000038274
+      ],
+      "median": 0.03865379200010466,
+      "min": 0.03809275000003254,
+      "max": 0.07683387499992023,
+      "mean": 0.04654905840002357,
+      "n": 5,
+      "scenario": "warm_test_A",
+      "shape": "A",
+      "scoped": false,
+      "command": "cargo test",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "note": "Warm full `cargo test` with no source change after a successful test build.",
+      "stderr_compiling": []
+    },
+    "warm_test_B": {
+      "times": [
+        0.07069316599995545,
+        0.05471075000014025,
+        0.05223204200001419,
+        0.0525722920001499,
+        0.05245308300004581
+      ],
+      "median": 0.0525722920001499,
+      "min": 0.05223204200001419,
+      "max": 0.07069316599995545,
+      "mean": 0.056532266600061123,
+      "n": 5,
+      "scenario": "warm_test_B",
+      "shape": "B",
+      "scoped": false,
+      "command": "cargo test",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "note": "Warm full `cargo test` with no source change after a successful test build.",
+      "stderr_compiling": []
+    },
+    "scoped_test_A": {
+      "times": [
+        3.8574823339999966,
+        3.4556165420001435,
+        3.43867579200014,
+        3.4649125410001034,
+        3.491957917000036
+      ],
+      "median": 3.4649125410001034,
+      "min": 3.43867579200014,
+      "max": 3.8574823339999966,
+      "mean": 3.541729025200084,
+      "n": 5,
+      "scenario": "scoped_test_A",
+      "shape": "A",
+      "scoped": true,
+      "command": "cargo test --lib bytes_util::",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "note": "Shape A `cargo test --lib bytes_util::` filters which tests RUN but still compiles the whole lib crate.",
+      "stderr_compiling": [
+        "Compiling fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ]
+    },
+    "scoped_test_B": {
+      "times": [
+        0.9252275000001191,
+        0.8895436669999981,
+        0.9220929170001,
+        0.8817542499998581,
+        0.9720179999999345
+      ],
+      "median": 0.9220929170001,
+      "min": 0.8817542499998581,
+      "max": 0.9720179999999345,
+      "mean": 0.918127266800002,
+      "n": 5,
+      "scenario": "scoped_test_B",
+      "shape": "B",
+      "scoped": true,
+      "command": "cargo test -p bytes_util",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "note": "Shape B `cargo test -p bytes_util` builds only that crate and its deps.",
+      "stderr_compiling": [
+        "Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)"
+      ]
+    },
+    "messages_scoped_test_leaf_B": {
+      "scenario": "messages_scoped_test_leaf_B",
+      "shape": "B",
+      "seconds": 0.8872434160000466,
+      "returncode": 0,
+      "command": "CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-test-debug cargo test -p bytes_util --message-format=json",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "workspace_packages_with_compiler_artifact": [],
+      "stderr_compiling": [
+        "Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)"
+      ],
+      "stderr_tail": "   Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.55s\n     Running unittests src/lib.rs (/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-test-debug/debug/deps/bytes_util-e535b30af7cfa025)\n"
+    },
+    "messages_scoped_test_leaf_A": {
+      "scenario": "messages_scoped_test_leaf_A",
+      "shape": "A",
+      "seconds": 3.471621665999919,
+      "returncode": 0,
+      "command": "CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-test-debug cargo test --lib bytes_util:: --message-format=json",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "workspace_packages_with_compiler_artifact": [],
+      "stderr_compiling": [
+        "Compiling fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)"
+      ],
+      "stderr_tail": "   Compiling fiber_synth v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_a)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.98s\n     Running unittests src/lib.rs (/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-test-debug/debug/deps/fiber_synth-fd3e3a9f4e2c32df)\n"
+    },
+    "messages_incr_core_build_B": {
+      "scenario": "messages_incr_core_build_B",
+      "shape": "B",
+      "seconds": 2.353481417000012,
+      "returncode": 0,
+      "command": "CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug cargo build --message-format=json",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "workspace_packages_with_compiler_artifact": [],
+      "stderr_compiling": [
+        "Compiling core_ids v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids)",
+        "Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)",
+        "Compiling catalog v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/catalog)",
+        "Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)",
+        "Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)",
+        "Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)",
+        "Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ],
+      "stderr_tail": "   Compiling core_ids v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids)\n   Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)\n   Compiling catalog v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/catalog)\n   Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)\n   Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)\n   Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)\n   Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)\n   Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.32s\n"
+    },
+    "messages_incr_leaf_build_B": {
+      "scenario": "messages_incr_leaf_build_B",
+      "shape": "B",
+      "seconds": 1.8151256250000642,
+      "returncode": 0,
+      "command": "CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug cargo build --message-format=json",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "workspace_packages_with_compiler_artifact": [],
+      "stderr_compiling": [
+        "Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)",
+        "Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)",
+        "Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)",
+        "Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)",
+        "Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ],
+      "stderr_tail": "   Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)\n   Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)\n   Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)\n   Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)\n   Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)\n   Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.79s\n"
+    },
+    "messages_incr_top_build_B": {
+      "scenario": "messages_incr_top_build_B",
+      "shape": "B",
+      "seconds": 0.611218708000024,
+      "returncode": 0,
+      "command": "CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug cargo build --message-format=json",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "workspace_packages_with_compiler_artifact": [],
+      "stderr_compiling": [
+        "Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ],
+      "stderr_tail": "   Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)\n   Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.59s\n"
+    },
+    "messages_incr_core_build_isolated_B": {
+      "scenario": "messages_incr_core_build_isolated_B",
+      "shape": "B",
+      "seconds": 2.552209333,
+      "returncode": 0,
+      "command": "CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug cargo build --message-format=json",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "workspace_packages_with_compiler_artifact": [],
+      "stderr_compiling": [
+        "Compiling core_ids v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids)",
+        "Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)",
+        "Compiling catalog v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/catalog)",
+        "Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)",
+        "Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)",
+        "Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)",
+        "Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)"
+      ],
+      "stderr_tail": "   Compiling core_ids v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids)\n   Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)\n   Compiling catalog v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/catalog)\n   Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)\n   Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)\n   Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)\n   Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.53s\n"
+    },
+    "timings_debug_A": {
+      "scenario": "timings_debug_A",
+      "shape": "A",
+      "profile": "debug",
+      "seconds": 17.782310958,
+      "command": "parsed UNIT_DATA from /Users/aakshintala/work/fiber-research/crate-split/results/timings-A-debug/cargo-timing.html",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "copied_to": "/Users/aakshintala/work/fiber-research/crate-split/results/timings-A-debug",
+      "files": [
+        "cargo-timing-20260921T072532961Z-8b08fd47daab970a.html",
+        "cargo-timing.html"
+      ],
+      "units": [],
+      "peak_concurrent_units": 10,
+      "max_overlap_names": [
+        "itoa",
+        "memchr",
+        "thiserror build-script",
+        "proc-macro2 build-script",
+        "quote build-script",
+        "zmij build-script",
+        "serde build-script",
+        "unicode-ident",
+        "serde_json build-script",
+        "serde_core build-script"
+      ],
+      "total_units": "29",
+      "max_concurrency_html": "10 (jobs=11 ncpu=11)",
+      "total_time_html": "17.8s",
+      "our_crates": [
+        {
+          "name": "fiber_synth",
+          "target": "",
+          "start": 2.96,
+          "duration": 14.67,
+          "end": 17.63,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 12.53
+            },
+            {
+              "name": "codegen",
+              "start": 12.53,
+              "end": 14.67
+            }
+          ]
+        },
+        {
+          "name": "fiber_synth",
+          "target": " fiber_synth \"bin\"",
+          "start": 17.63,
+          "duration": 0.14,
+          "end": 17.77,
+          "sections": []
+        }
+      ],
+      "peak_concurrent_our_crates": 1,
+      "our_overlap_names": [
+        "fiber_synth"
+      ]
+    },
+    "timings_release_A": {
+      "scenario": "timings_release_A",
+      "shape": "A",
+      "profile": "release",
+      "seconds": 23.275548041,
+      "command": "parsed UNIT_DATA from /Users/aakshintala/work/fiber-research/crate-split/results/timings-A-release/cargo-timing.html",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_a",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "copied_to": "/Users/aakshintala/work/fiber-research/crate-split/results/timings-A-release",
+      "files": [
+        "cargo-timing-20260921T072550755Z-8b08fd47daab970a.html",
+        "cargo-timing.html"
+      ],
+      "units": [],
+      "peak_concurrent_units": 10,
+      "max_overlap_names": [
+        "zmij build-script",
+        "proc-macro2 build-script",
+        "serde_core build-script",
+        "unicode-ident",
+        "quote build-script",
+        "thiserror build-script",
+        "itoa",
+        "memchr",
+        "serde_json build-script",
+        "serde build-script"
+      ],
+      "total_units": "29",
+      "max_concurrency_html": "10 (jobs=11 ncpu=11)",
+      "total_time_html": "23.2s",
+      "our_crates": [
+        {
+          "name": "fiber_synth",
+          "target": "",
+          "start": 3.21,
+          "duration": 19.86,
+          "end": 23.07,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 12.38
+            },
+            {
+              "name": "codegen",
+              "start": 12.38,
+              "end": 19.86
+            }
+          ]
+        },
+        {
+          "name": "fiber_synth",
+          "target": " fiber_synth \"bin\"",
+          "start": 23.08,
+          "duration": 0.17,
+          "end": 23.25,
+          "sections": []
+        }
+      ],
+      "peak_concurrent_our_crates": 1,
+      "our_overlap_names": [
+        "fiber_synth"
+      ]
+    },
+    "timings_debug_B": {
+      "scenario": "timings_debug_B",
+      "shape": "B",
+      "profile": "debug",
+      "seconds": 11.009015417,
+      "command": "parsed UNIT_DATA from /Users/aakshintala/work/fiber-research/crate-split/results/timings-B-debug/cargo-timing.html",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "copied_to": "/Users/aakshintala/work/fiber-research/crate-split/results/timings-B-debug",
+      "files": [
+        "cargo-timing-20260921T072614032Z-23e2cbd848ebb365.html",
+        "cargo-timing.html"
+      ],
+      "units": [],
+      "peak_concurrent_units": 10,
+      "max_overlap_names": [
+        "zmij build-script",
+        "unicode-ident",
+        "thiserror build-script",
+        "itoa",
+        "memchr",
+        "serde_json build-script",
+        "serde_core build-script",
+        "serde build-script",
+        "proc-macro2 build-script",
+        "quote build-script"
+      ],
+      "total_units": "35",
+      "max_concurrency_html": "10 (jobs=11 ncpu=11)",
+      "total_time_html": "11.0s",
+      "our_crates": [
+        {
+          "name": "bytes_util",
+          "target": "",
+          "start": 3.22,
+          "duration": 2.26,
+          "end": 5.48,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 1.78
+            },
+            {
+              "name": "codegen",
+              "start": 1.78,
+              "end": 2.26
+            }
+          ]
+        },
+        {
+          "name": "core_ids",
+          "target": "",
+          "start": 3.22,
+          "duration": 2.22,
+          "end": 5.44,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 1.73
+            },
+            {
+              "name": "codegen",
+              "start": 1.73,
+              "end": 2.22
+            }
+          ]
+        },
+        {
+          "name": "catalog",
+          "target": "",
+          "start": 4.94,
+          "duration": 2.35,
+          "end": 7.290000000000001,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 1.9
+            },
+            {
+              "name": "codegen",
+              "start": 1.9,
+              "end": 2.35
+            }
+          ]
+        },
+        {
+          "name": "syntax",
+          "target": "",
+          "start": 5.0,
+          "duration": 2.38,
+          "end": 7.38,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 1.89
+            },
+            {
+              "name": "codegen",
+              "start": 1.89,
+              "end": 2.38
+            }
+          ]
+        },
+        {
+          "name": "engine",
+          "target": "",
+          "start": 6.89,
+          "duration": 2.31,
+          "end": 9.2,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 1.88
+            },
+            {
+              "name": "codegen",
+              "start": 1.88,
+              "end": 2.31
+            }
+          ]
+        },
+        {
+          "name": "policy",
+          "target": "",
+          "start": 6.89,
+          "duration": 2.33,
+          "end": 9.219999999999999,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 1.9
+            },
+            {
+              "name": "codegen",
+              "start": 1.9,
+              "end": 2.33
+            }
+          ]
+        },
+        {
+          "name": "session",
+          "target": "",
+          "start": 8.77,
+          "duration": 2.1,
+          "end": 10.87,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 1.8
+            },
+            {
+              "name": "codegen",
+              "start": 1.8,
+              "end": 2.1
+            }
+          ]
+        },
+        {
+          "name": "app",
+          "target": " app \"bin\"",
+          "start": 10.87,
+          "duration": 0.11,
+          "end": 10.979999999999999,
+          "sections": []
+        }
+      ],
+      "peak_concurrent_our_crates": 4,
+      "our_overlap_names": [
+        "bytes_util",
+        "core_ids",
+        "catalog",
+        "syntax"
+      ]
+    },
+    "timings_release_B": {
+      "scenario": "timings_release_B",
+      "shape": "B",
+      "profile": "release",
+      "seconds": 13.672351166999995,
+      "command": "parsed UNIT_DATA from /Users/aakshintala/work/fiber-research/crate-split/results/timings-B-release/cargo-timing.html",
+      "cwd": "/Users/aakshintala/work/fiber-research/crate-split/shape_b",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "copied_to": "/Users/aakshintala/work/fiber-research/crate-split/results/timings-B-release",
+      "files": [
+        "cargo-timing-20260921T072625033Z-23e2cbd848ebb365.html",
+        "cargo-timing.html"
+      ],
+      "units": [],
+      "peak_concurrent_units": 10,
+      "max_overlap_names": [
+        "quote build-script",
+        "zmij build-script",
+        "unicode-ident",
+        "thiserror build-script",
+        "itoa",
+        "memchr",
+        "serde_json build-script",
+        "proc-macro2 build-script",
+        "serde_core build-script",
+        "serde build-script"
+      ],
+      "total_units": "35",
+      "max_concurrency_html": "10 (jobs=11 ncpu=11)",
+      "total_time_html": "13.7s",
+      "our_crates": [
+        {
+          "name": "bytes_util",
+          "target": "",
+          "start": 3.3,
+          "duration": 3.42,
+          "end": 6.72,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 1.77
+            },
+            {
+              "name": "codegen",
+              "start": 1.77,
+              "end": 3.42
+            }
+          ]
+        },
+        {
+          "name": "core_ids",
+          "target": "",
+          "start": 3.3,
+          "duration": 3.09,
+          "end": 6.39,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 1.71
+            },
+            {
+              "name": "codegen",
+              "start": 1.71,
+              "end": 3.09
+            }
+          ]
+        },
+        {
+          "name": "catalog",
+          "target": "",
+          "start": 5.01,
+          "duration": 4.09,
+          "end": 9.1,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 2.43
+            },
+            {
+              "name": "codegen",
+              "start": 2.43,
+              "end": 4.09
+            }
+          ]
+        },
+        {
+          "name": "syntax",
+          "target": "",
+          "start": 5.07,
+          "duration": 4.32,
+          "end": 9.39,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 2.45
+            },
+            {
+              "name": "codegen",
+              "start": 2.45,
+              "end": 4.32
+            }
+          ]
+        },
+        {
+          "name": "policy",
+          "target": "",
+          "start": 7.52,
+          "duration": 4.3,
+          "end": 11.82,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 2.49
+            },
+            {
+              "name": "codegen",
+              "start": 2.49,
+              "end": 4.3
+            }
+          ]
+        },
+        {
+          "name": "engine",
+          "target": "",
+          "start": 7.52,
+          "duration": 4.07,
+          "end": 11.59,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 2.45
+            },
+            {
+              "name": "codegen",
+              "start": 2.45,
+              "end": 4.07
+            }
+          ]
+        },
+        {
+          "name": "session",
+          "target": "",
+          "start": 9.97,
+          "duration": 3.58,
+          "end": 13.55,
+          "sections": [
+            {
+              "name": "frontend",
+              "start": 0.0,
+              "end": 2.51
+            },
+            {
+              "name": "codegen",
+              "start": 2.51,
+              "end": 3.58
+            }
+          ]
+        },
+        {
+          "name": "app",
+          "target": " app \"bin\"",
+          "start": 13.56,
+          "duration": 0.1,
+          "end": 13.66,
+          "sections": []
+        }
+      ],
+      "peak_concurrent_our_crates": 4,
+      "our_overlap_names": [
+        "bytes_util",
+        "core_ids",
+        "catalog",
+        "syntax"
+      ]
+    },
+    "cgu_experiment_A": {
+      "scenario": "cgu_experiment_A",
+      "shape": "A",
+      "profile": "debug",
+      "platform": "macOS arm64 (Darwin Amoghs-MacBook-Pro.local 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:36 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6030 arm64); Apple M3 Pro; 11 CPUs; rustc 1.98.1 (48a229cea 2026-09-01)",
+      "variants": {
+        "1": {
+          "seconds": 19.988028416000006,
+          "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/A-cgu-1 && CARGO_PROFILE_DEV_CODEGEN_UNITS=1 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-cgu-1 cargo build"
+        },
+        "16": {
+          "seconds": 15.65319537500001,
+          "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/A-cgu-16 && CARGO_PROFILE_DEV_CODEGEN_UNITS=16 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-cgu-16 cargo build"
+        },
+        "256": {
+          "seconds": 15.333033458000003,
+          "command": "rm -rf /Users/aakshintala/work/fiber-research/crate-split/artifacts/A-cgu-256 && CARGO_PROFILE_DEV_CODEGEN_UNITS=256 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-cgu-256 cargo build"
+        }
+      }
+    },
+    "target_sizes": {
+      "A-build-debug": {
+        "path": "/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-debug",
+        "bytes": 1129365504,
+        "human": "1.1G",
+        "command": "du -sk /Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-debug"
+      },
+      "A-build-release": {
+        "path": "/Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-release",
+        "bytes": 243974144,
+        "human": "233M",
+        "command": "du -sk /Users/aakshintala/work/fiber-research/crate-split/artifacts/A-build-release"
+      },
+      "B-build-debug": {
+        "path": "/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug",
+        "bytes": 1129857024,
+        "human": "1.1G",
+        "command": "du -sk /Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-debug"
+      },
+      "B-build-release": {
+        "path": "/Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-release",
+        "bytes": 233783296,
+        "human": "223M",
+        "command": "du -sk /Users/aakshintala/work/fiber-research/crate-split/artifacts/B-build-release"
+      }
+    }
+  },
+  "lines": {
+    "shape_a_rs_lines": 39448,
+    "shape_b_rs_lines": 39406,
+    "shape_a_cargo_toml_files": 1,
+    "shape_a_cargo_toml_lines": 13,
+    "shape_b_cargo_toml_files": 9,
+    "shape_b_cargo_toml_lines": 142,
+    "command": "python3 measure.py (pathlib rglob *.rs / Cargo.toml line counts)"
+  }
+}

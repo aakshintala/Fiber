@@ -1,0 +1,9 @@
+   Compiling core_ids v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/core_ids)
+   Compiling bytes_util v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/bytes_util)
+   Compiling catalog v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/catalog)
+   Compiling syntax v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/syntax)
+   Compiling engine v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/engine)
+   Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)
+   Compiling session v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/session)
+   Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.32s
