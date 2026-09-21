@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "measure",
+    "sse_server",
+    "idle_tokio_mt",
+    "idle_tokio_ct",
+    "idle_std",
+    "idle_smol",
+    "idle_async_std",
+    "idle_polling",
+    "http_ureq",
+    "http_attohttpc",
+    "http_minreq",
+    "http_isahc",
+    "tui_idle",
+    "tui_poll16",
+    "cancel_tcp",
+    "cancel_timeout",
+    "cancel_http_ureq",
+    "idle_tokio_io",
+    "idle_tokio_sleep",
+    "http_rustls",
+    "idle_poll16",
+]

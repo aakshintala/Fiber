@@ -1,0 +1,8 @@
+[package]
+name = "http_isahc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sse_server = { path = "../sse_server" }
+isahc = { version = "1", default-features = false, features = ["http2"] }

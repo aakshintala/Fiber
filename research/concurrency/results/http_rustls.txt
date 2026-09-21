@@ -1,0 +1,10 @@
+rustls read#1 +0.0ms bytes=20 "f\r\ndata: event-0\n\n\r\n"
+rustls read#2 +210.4ms bytes=20 "f\r\ndata: event-1\n\n\r\n"
+rustls read#3 +414.0ms bytes=20 "f\r\ndata: event-2\n\n\r\n"
+rustls read#4 +615.7ms bytes=20 "f\r\ndata: event-3\n\n\r\n"
+rustls read#5 +821.9ms bytes=20 "f\r\ndata: event-4\n\n\r\n"
+rustls read#6 +1032.4ms bytes=20 "f\r\ndata: event-5\n\n\r\n"
+rustls read#7 +1241.7ms bytes=20 "f\r\ndata: event-6\n\n\r\n"
+rustls read#8 +1452.0ms bytes=25 "f\r\ndata: event-7\n\n\r\n0\r\n\r\n"
+rustls read-err peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+rustls done reads=8 elapsed_ms=1452.2

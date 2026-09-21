@@ -1,0 +1,10 @@
+[package]
+name = "tui_idle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+measure = { path = "../measure" }
+sse_server = { path = "../sse_server" }
+crossterm = { version = "0.28", default-features = false, features = ["events"] }
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }

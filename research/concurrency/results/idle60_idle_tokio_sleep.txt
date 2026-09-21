@@ -1,0 +1,24 @@
+=== idle_tokio_sleep ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 60.005
+cpu_user_us: 31
+cpu_sys_us: 113
+cpu_total_us: 144
+cpu_total_ms: 0.144
+cpu_pct_of_one_core: 0.000240
+pti_cpu_ns: 140500 (user 31291) (sys 109209)
+threads_start: 12
+threads_end: 12
+threads_running_end: 1
+rss_bytes: 2080768
+rss_kib: 2032.0
+maxrss_bytes: 2080768
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.0167
+csw: 1
+csw_per_sec: 0.0167
+unix_syscalls_delta: 3

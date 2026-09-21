@@ -1,0 +1,3 @@
+http_minreq v0.1.0 (/Users/aakshintala/work/fiber-research/issue-8/bench/http_minreq)
+├── minreq v2.14.1
+└── sse_server v0.1.0 (/Users/aakshintala/work/fiber-research/issue-8/bench/sse_server)

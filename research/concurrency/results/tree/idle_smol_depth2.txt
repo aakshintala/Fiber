@@ -1,0 +1,14 @@
+idle_smol v0.1.0 (/Users/aakshintala/work/fiber-research/issue-8/bench/idle_smol)
+├── measure v0.1.0 (/Users/aakshintala/work/fiber-research/issue-8/bench/measure)
+│   └── libc v0.2.189
+└── smol v2.0.2
+    ├── async-channel v2.5.0
+    ├── async-executor v1.14.0
+    ├── async-fs v2.2.0
+    ├── async-io v2.6.0
+    │   [build-dependencies]
+    ├── async-lock v3.4.2
+    ├── async-net v2.0.0
+    ├── async-process v2.5.0
+    ├── blocking v1.7.0
+    └── futures-lite v2.6.1

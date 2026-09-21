@@ -1,0 +1,9 @@
+attohttpc read#1 +0.1ms bytes=15 "data: event-0\n\n"
+attohttpc read#2 +210.0ms bytes=15 "data: event-1\n\n"
+attohttpc read#3 +418.9ms bytes=15 "data: event-2\n\n"
+attohttpc read#4 +621.4ms bytes=15 "data: event-3\n\n"
+attohttpc read#5 +831.6ms bytes=15 "data: event-4\n\n"
+attohttpc read#6 +1041.8ms bytes=15 "data: event-5\n\n"
+attohttpc read#7 +1251.9ms bytes=15 "data: event-6\n\n"
+attohttpc read#8 +1462.0ms bytes=15 "data: event-7\n\n"
+attohttpc done reads=8 elapsed_ms=1462.1

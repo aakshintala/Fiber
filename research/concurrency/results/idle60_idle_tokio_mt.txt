@@ -1,0 +1,24 @@
+=== idle_tokio_mt ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 60.010
+cpu_user_us: 29
+cpu_sys_us: 85
+cpu_total_us: 114
+cpu_total_ms: 0.114
+cpu_pct_of_one_core: 0.000190
+pti_cpu_ns: 109958 (user 28875) (sys 81083)
+threads_start: 12
+threads_end: 12
+threads_running_end: 1
+rss_bytes: 2129920
+rss_kib: 2080.0
+maxrss_bytes: 2129920
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.0167
+csw: 1
+csw_per_sec: 0.0167
+unix_syscalls_delta: 3

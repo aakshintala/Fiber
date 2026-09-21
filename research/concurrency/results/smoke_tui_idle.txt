@@ -1,0 +1,26 @@
+tui_idle crossterm read failed (Failed to initialize input reader); falling back to mpsc recv
+tui_idle event_mode will be reported by the event thread on stderr at start
+=== tui_idle ===
+platform: Darwin 25.6.0 arm64 (quoted as macOS arm64)
+window_s: 5.007
+cpu_user_us: 30
+cpu_sys_us: 52
+cpu_total_us: 82
+cpu_total_ms: 0.082
+cpu_pct_of_one_core: 0.001638
+pti_cpu_ns: 83292 (user 29709) (sys 53583)
+threads_start: 5
+threads_end: 5
+threads_running_end: 1
+rss_bytes: 2097152
+rss_kib: 2048.0
+maxrss_bytes: 2097152
+interrupt_wakeups: 1
+platform_idle_wakeups: 0
+timer_wakeups_bin_1: 0
+timer_wakeups_bin_2: 0
+wakeup_sum: 1
+wakeups_per_sec: 0.1997
+csw: 1
+csw_per_sec: 0.1997
+unix_syscalls_delta: 3

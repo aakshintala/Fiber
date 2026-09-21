@@ -1,0 +1,4 @@
+cancel_timeout 10ms n=20 min_us=2663.0 p50_us=4573.7 p95_us=6744.5 max_us=7001.2 mean_us=4844.6
+cancel_timeout 20ms n=20 min_us=13072.3 p50_us=14605.3 p95_us=16822.4 max_us=16941.7 mean_us=14747.2
+cancel_timeout 50ms n=20 min_us=43131.7 p50_us=44693.6 p95_us=46742.3 max_us=46981.9 mean_us=44924.6
+cancel_timeout 100ms n=20 min_us=92898.5 p50_us=94895.7 p95_us=96725.5 max_us=96888.1 mean_us=95288.4

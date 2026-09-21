@@ -1,0 +1,9 @@
+ureq read#1 +0.0ms bytes=15 "data: event-0\n\n"
+ureq read#2 +207.0ms bytes=15 "data: event-1\n\n"
+ureq read#3 +414.4ms bytes=15 "data: event-2\n\n"
+ureq read#4 +619.4ms bytes=15 "data: event-3\n\n"
+ureq read#5 +828.2ms bytes=15 "data: event-4\n\n"
+ureq read#6 +1037.8ms bytes=15 "data: event-5\n\n"
+ureq read#7 +1247.9ms bytes=15 "data: event-6\n\n"
+ureq read#8 +1458.1ms bytes=15 "data: event-7\n\n"
+ureq done reads=8 elapsed_ms=1458.7

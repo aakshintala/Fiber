@@ -1,0 +1,8 @@
+[package]
+name = "idle_smol"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+measure = { path = "../measure" }
+smol = "2"

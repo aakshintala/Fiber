@@ -1,0 +1,21 @@
+minreq send() assembled body after +1449.3ms bytes=120
+minreq send() body="data: event-0\n\ndata: event-1\n\ndata: event-2\n\ndata: event-3\n\ndata: event-4\n\ndata: event-5\n\ndata: event-6\n\ndata: event-7\n\n"
+minreq send_lazy 512B buf read#1 +1452.5ms bytes=120 "data: event-0\n\ndata: event-1\n\ndata: event-2\n\ndata: event-3\n\ndata: event-4\n\ndata: event-5\n\ndata: event-6\n\ndata: event-7\n\n"
+minreq send_lazy 512B buf done reads=1 elapsed_ms=1452.7
+minreq 1-byte-read newline +0.0ms total_bytes=14
+minreq 1-byte-read newline +0.1ms total_bytes=15
+minreq 1-byte-read newline +206.7ms total_bytes=29
+minreq 1-byte-read newline +206.9ms total_bytes=30
+minreq 1-byte-read newline +407.7ms total_bytes=44
+minreq 1-byte-read newline +407.8ms total_bytes=45
+minreq 1-byte-read newline +616.0ms total_bytes=59
+minreq 1-byte-read newline +616.1ms total_bytes=60
+minreq 1-byte-read newline +826.2ms total_bytes=74
+minreq 1-byte-read newline +826.3ms total_bytes=75
+minreq 1-byte-read newline +1032.8ms total_bytes=89
+minreq 1-byte-read newline +1032.9ms total_bytes=90
+minreq 1-byte-read newline +1236.1ms total_bytes=104
+minreq 1-byte-read newline +1236.2ms total_bytes=105
+minreq 1-byte-read newline +1439.1ms total_bytes=119
+minreq 1-byte-read newline +1439.2ms total_bytes=120
+minreq 1-byte-read done reads=120 bytes=120

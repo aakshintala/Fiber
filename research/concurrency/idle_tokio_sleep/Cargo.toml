@@ -1,0 +1,8 @@
+[package]
+name = "idle_tokio_sleep"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+measure = { path = "../measure" }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros"] }

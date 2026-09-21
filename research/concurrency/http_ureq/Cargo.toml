@@ -1,0 +1,8 @@
+[package]
+name = "http_ureq"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sse_server = { path = "../sse_server" }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
