@@ -63,6 +63,31 @@ a command. It carries a request, a result, and a record of whether it actually
 ran.
 _Avoid_: tool use, function call
 
+**Watcher**:
+Something that reads the event stream and cannot reply. The terminal's
+rendering, a non-interactive run's stdout, a second client. A watcher can be
+absent, slow or added later without changing the session.
+
+**Driver**:
+Something that sends commands to a session. The terminal's input, and stdin on
+the non-interactive door. A driver may only send the commands Fiber defines.
+_Avoid_: controller, client
+
+**Participant**:
+Something the loop asks during a turn, whose answer may refuse or change what
+happens. Tools, providers and hooks are participants. A watcher and a driver
+never are.
+
+**Seam**:
+The defined surface one kind of participant is reached through. Fiber has three:
+the tool seam, the provider seam and the hook seam.
+_Avoid_: interface, plugin point, API
+
+**Hook**:
+A participant asked before or after something happens, which may allow it,
+change it or refuse it. Distinct from a tool, which is asked to do work, and a
+provider, which is asked for a model's response.
+
 ## Deliberately unnamed
 
 **One Fiber process, from launch to exit.** The archived Zig tree called this a
