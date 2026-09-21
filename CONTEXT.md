@@ -88,6 +88,34 @@ A participant asked before or after something happens, which may allow it,
 change it or refuse it. Distinct from a tool, which is asked to do work, and a
 provider, which is asked for a model's response.
 
+**Workspace**:
+The root Fiber was launched against, recorded on `session_started`. Where a
+project's own files live, and the boundary a permission decision turns on.
+_Avoid_: project root, cwd, repo
+
+**Effect**:
+What one tool call does, in a closed vocabulary its tool declares before the
+call runs: reads, writes, executes, network, plus whether it is reversible and
+which paths it touches. Effects are what the loop reasons about; it never sees
+the call's arguments.
+_Avoid_: capability, permission, risk, category
+
+**Reviewer**:
+The model asked whether a tool call may proceed. It is shown the human's
+messages and the agent's tool calls, never the model's own prose or any tool
+result, and it answers allow or block with a reason.
+_Avoid_: guardian, classifier, gate, judge
+
+**Standing rule**:
+A permission decision recorded in the configuration directory, surviving every
+session until deleted. Scoped globally or to one project.
+_Avoid_: saved rule, policy, preference
+
+**Session grant**:
+A permission decision recorded in the session log, honoured for the rest of
+that session and gone when it ends. Never written anywhere but the log.
+_Avoid_: always-allow, remembered approval
+
 ## Deliberately unnamed
 
 **One Fiber process, from launch to exit.** The archived Zig tree called this a
