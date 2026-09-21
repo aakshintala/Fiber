@@ -47,48 +47,18 @@ display-only."
 | `extensions` | Loads extension code, hosts the runtime, and wires what extensions register into the three seams. |
 | `tui` | Draws the terminal. Watches events, sends commands, knows nothing else. |
 | `config` | Reads the configuration directory. Answers questions; never asks any. |
-| `doors` | The non-interactive front door: argv in, JSON lines out. Which doors exist is issue #10's decision; this page only fixes that a door sits beside the TUI with no privilege the TUI lacks. |
+| `doors` | The non-interactive front door: argv in, JSON lines out. Which doors exist is [Front doors: which invocation modes does v0.0.1 have?](https://github.com/aakshintala/fiber/issues/10); this page only fixes that a door sits beside the TUI with no privilege the TUI lacks. |
 | `main` | The composition root. Parses argv, builds everything once, picks a door. No feature logic. |
 
-`contract` holds the vocabulary every other module speaks, and contains no
-behaviour at all. Everything else points one direction: the loop calling down
-into providers, tools and extensions, with nothing calling back up — except
-that an extension mid-turn needs to ask Fiber something, such as what is in
-the session. That is a call upward, and it is the one thing that would make
-the dependency graph circular. Putting the types and the seam definitions in a
-module that depends on nothing, and that everything else depends on, breaks
-that cycle: the extension talks to `contract`, not to `loop`.
+### Why contract exists
 
-`log` owns the session directory. It is the only thing that opens
-`events.jsonl`, holds the lock, mints `seq` and decides fsync order. It also
-hands events to whoever is watching.
-
-`loop` runs turns and steps. It is the only thing that decides what happens
-next.
-
-`provider` talks to model APIs: wire formats, credentials, streaming. It is
-reached only through the provider seam.
-
-`tools` runs tool calls: shell, file edits, search. It is reached only through
-the tool seam.
-
-`extensions` loads extension code, hosts the runtime, and wires what
-extensions register into the three seams.
-
-`tui` draws the terminal. It watches events, sends commands, and knows nothing
-else.
-
-`config` reads the configuration directory. It answers questions and never
-asks any.
-
-`doors` is the non-interactive front door: argv in, JSON lines out. Which
-doors exist is
-[Front doors: which invocation modes does v0.0.1 have?](https://github.com/aakshintala/fiber/issues/10);
-this page only fixes that a door sits beside the TUI with no privilege the
-TUI lacks.
-
-`main` is the composition root. It parses argv, builds everything once, and
-picks a door. It holds no feature logic.
+Everything else points one direction: the loop calling down into providers,
+tools and extensions, with nothing calling back up — except that an extension
+mid-turn needs to ask Fiber something, such as what is in the session. That is
+a call upward, and it is the one thing that would make the dependency graph
+circular. Putting the types and the seam definitions in a module that depends
+on nothing, and that everything else depends on, breaks that cycle: the
+extension talks to `contract`, not to `loop`.
 
 ## The call rules
 
