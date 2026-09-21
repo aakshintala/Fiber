@@ -1,0 +1,3 @@
+   Compiling policy v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/policy)
+   Compiling app v0.1.0 (/Users/aakshintala/work/fiber-research/crate-split/shape_b/crates/app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.59s
