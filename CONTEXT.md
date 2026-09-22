@@ -89,11 +89,21 @@ change it or refuse it. Distinct from a tool, which is asked to do work, and a
 provider, which is asked for a model's response.
 
 **Extension**:
-A script Fiber loads and runs with the account's full rights, registering tools,
-providers and hooks through the three seams exactly as a built-in does. Written
-in embedded Lua 5.4; one VM per extension, created on first use. See
+A package Fiber installs and loads, registering tools, providers and hooks
+through the three seams exactly as a built-in does. Data, plus embedded Lua 5.4
+where it needs code; its code runs with the account's full rights. See
 `docs/extensions.md`.
 _Avoid_: plugin, addon, module
+
+**Provider**:
+An endpoint Fiber sends model requests to: a name, a credential and a list of
+models. Every provider is an extension. See `docs/model-routing.md`.
+_Avoid_: connection, backend, vendor
+
+**Protocol**:
+A wire format a provider speaks: how a request is shaped and how a streamed
+reply is read. Protocols are built into Fiber; an extension cannot add one.
+_Avoid_: API, dialect, adapter
 
 **Workspace**:
 The root Fiber was launched against, recorded on `session_started`. Where a
