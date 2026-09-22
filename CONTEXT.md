@@ -88,6 +88,13 @@ A participant asked before or after something happens, which may allow it,
 change it or refuse it. Distinct from a tool, which is asked to do work, and a
 provider, which is asked for a model's response.
 
+**Extension**:
+A script Fiber loads and runs with the account's full rights, registering tools,
+providers and hooks through the three seams exactly as a built-in does. Written
+in embedded Lua 5.4; one VM per extension, created on first use. See
+`docs/extensions.md`.
+_Avoid_: plugin, addon, module
+
 **Workspace**:
 The root Fiber was launched against, recorded on `session_started`. Where a
 project's own files live, and the boundary a permission decision turns on.

@@ -1,0 +1,141 @@
+# 6. The extension runtime is embedded Lua 5.4
+
+Date: 2026-09-21
+
+## Status
+
+Accepted. Settled by
+[Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11),
+against the runtime comparison in
+[#3](https://github.com/aakshintala/fiber/issues/3). The contract is
+`docs/extensions.md`; the trust model is `docs/permissions.md`; the seams are
+`docs/architecture.md`. Measurements: `research/extension-runtime/` (pass1
+disqualification probes, pass2 RSS sweep, pass3 authoring probe, vm-isolation).
+
+## Context
+
+Map premise 8: v0.0.1 ships an extension system where an extension registers
+through the same three seams a built-in does — tool, provider and hook — and can
+replace a built-in by name. The owner reopened the runtime, which had been an
+unexamined `mlua` assumption: "Lua vs something else is up for debate again,"
+and named a registry where users freely build and share extensions, pi-style,
+with no sandbox.
+
+Four constraints were fixed going in: a hook must answer synchronously inside a
+turn under an enforced timeout (`docs/architecture.md`); an extension runs with
+the account's full rights and the runtime is not a security boundary
+(`docs/permissions.md`); no async runtime, no tokio, zero idle CPU
+([ADR 0004](0004-blocking-threads-no-async-runtime.md)); and runtime memory, not
+binary size, is the metric that matters.
+
+Candidates measured: Lua 5.4 and Luau (both via `mlua`), JavaScript via
+`rquickjs` (QuickJS), and — considered and rejected without a full sweep —
+Starlark, WASM (`wasmtime`/`wasmi`), and full TypeScript on a V8-class runtime.
+
+## Decision
+
+**Embed Lua 5.4 through `mlua` (vendored). One Lua VM per extension, created
+lazily on first use. No sandbox. The five shipped providers are native Rust, not
+extensions.**
+
+The evidence, in the order it decided things:
+
+- **Memory.** Lua 5.4 is the leanest candidate at every concurrency level and on
+  every platform (macOS arm64, Linux x86_64, Linux arm64). At 16 concurrent
+  interpreters it peaks around 5 MiB against QuickJS's ~11 and Luau's ~14, and it
+  reclaims memory to the OS on Linux where QuickJS never does. Per-instance
+  marginal cost is ~150 KiB against ~500 for both others
+  (`research/extension-runtime/pass2`). This is the axis the owner prioritised.
+
+- **Authoring by a model is a wash.** Since Fiber is a coding agent, extensions
+  will be model-written. Five models across tiers wrote the streaming provider in
+  Lua 5.4, Luau and QuickJS-JS; 14 of 15 ran correctly first try, and no output
+  in any language reached for an API the embedding lacks
+  (`research/extension-runtime/pass3`). JavaScript's training-data advantage did
+  not convert into an authoring edge, and it did not disadvantage Lua. Authoring
+  does not break the tie; memory does.
+
+- **Interruptibility.** All three can stop a wedged script under a deadline. Lua
+  5.4's mechanism is a debug hook raising an ordinary Lua error, which a script
+  can swallow with `pcall`; a two-stage hook (escalate to every-instruction once
+  the deadline passes) closes that, verified against an adversarial retry loop
+  (`research/extension-runtime/pass1`). QuickJS and Luau get an uncatchable
+  deadline from one call; the Lua fix is a known, measured cost, not a defect.
+
+- **Runs source, one binary.** Lua, Luau and QuickJS all run source with no build
+  step and link into one static binary. WASM does not: no interpreter runs wasm
+  *source*, so a model-authored, registry-distributed extension would need a
+  compiler in the loop or pre-built bytecode — disqualifying for a coding-agent
+  registry, independent of wasm's otherwise good RSS.
+
+One VM per extension costs ~120 KiB per extension and gives per-extension memory
+caps, separate GC and crash containment; a shared VM with per-`_ENV` isolation is
+leaner at large counts and is the documented fallback
+(`research/extension-runtime/vm-isolation`). Lazy instantiation means a session
+with no extension in use creates no VM and pays no idle cost.
+
+## Consequences
+
+- **The build gains a C toolchain dependency.** `mlua` vendored compiles Lua's C
+  via `cc` on every target. Proven building clean on all three release targets in
+  CI. Not unique to Lua — QuickJS compiles C too — but it is now on the release
+  path; [#16](https://github.com/aakshintala/fiber/issues/16) owns keeping `cc`
+  there.
+
+- **Panic strategy is constrained.** A Rust panic inside a *host* callback aborts
+  the process under `panic = "abort"` — and with several sessions in one process
+  (premise 2) that takes them all down. Extension-level Lua errors are safe either
+  way. Fiber must build `panic = "unwind"`, or hold every host callback to a
+  no-panic bar. This is a Fiber-wide build decision to settle with #16's
+  binary-size budget, recorded here because Lua's error safety depends on it.
+
+- **JSON is a permanent host-owned API.** Lua has no built-in JSON, so
+  `json.decode`/`encode` are host functions Fiber maintains. QuickJS would have
+  provided them natively. Small, and already implemented via serde.
+
+- **Lua 5.4 specifically, not 5.5.** 5.5's incremental-GC and array-allocation
+  improvements show as 0–3% RSS on both the isolation and streaming workloads —
+  its real win is GC pause latency, irrelevant on an I/O-bound provider hot path
+  — while 5.4 has far more model training mass and more maturity, on a
+  hard-to-reverse choice (`research/extension-runtime/vm-isolation`).
+
+- **No npm, no library ecosystem.** An extension is one self-contained script.
+  This is the main thing forgone versus full TypeScript, and it is accepted: full
+  TS means a V8-class runtime (tens of MiB RSS, a JIT) that breaks the small-
+  binary and low-RSS premises, or a system Node dependency that breaks single-
+  binary distribution. If a library ecosystem is ever genuinely needed, the
+  answer is to add an out-of-process extension type over the same three-seam
+  contract, not to have paid V8's price for the default in-process path.
+
+## Rejected
+
+**QuickJS (JavaScript via `rquickjs`).** The strongest alternative: uncatchable
+deadline from one call, `JSON.parse` native, best training-data familiarity, and
+prebuilt bindings for all three targets. Rejected on memory — ~2× Lua per
+instance and it never returns memory to the OS — after pass3 showed its
+familiarity advantage did not convert into an authoring edge. It was the "JS
+syntax without the ecosystem" middle option, and captured neither the low-RSS
+prize nor the npm prize.
+
+**Luau.** Uncatchable deadline with no staging, a first-class `sandbox()`, native
+gradual types, and a working `require`. Rejected on memory: heaviest of the
+candidates on both a fixed per-process baseline (4–6 MiB before any work) and
+per-instance cost, and the penalty is the VM itself — measured identical with the
+sandbox on and off — so dropping the sandbox we do not want buys nothing.
+
+**Starlark.** Ruled out in [#3](https://github.com/aakshintala/fiber/issues/3):
+idle RSS in the 6.5 MiB band and peak RSS that scaled to 45 MiB on a loop-heavy
+script.
+
+**WASM (`wasmtime`/`wasmi`).** Its one real edge is a capability sandbox the
+owner explicitly does not want. `wasmtime` is the heaviest runtime and needs
+tokio for any real I/O (via `wasmtime-wasi`), violating ADR 0004; `wasmi` is lean
+but shares the disqualifier: wasm is bytecode, so a model-authored,
+registry-distributed extension cannot run as source without a compile step.
+
+**Full TypeScript on a V8-class runtime (the pi model).** Buys npm, real types,
+and near-drop-in portability of pi's extension ecosystem. Rejected because it is
+a different architecture, not a runtime knob: embedding V8 costs tens of MiB of
+RSS and a JIT, breaking the low-RSS premise; shelling out to system Node/Bun
+breaks single-binary distribution. The genuine loss (npm) is recoverable later
+via an out-of-process extension type if it is ever needed.
