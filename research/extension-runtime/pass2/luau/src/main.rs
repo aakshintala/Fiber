@@ -42,7 +42,7 @@ fn rss_kib() -> u64 {
 
 fn make_instance(strategy: &str) -> Lua {
     let lua = Lua::new_with(safe_libs(), LuaOptions::default()).expect("new_with");
-    lua.sandbox(true).expect("sandbox");
+    if std::env::var("FIBER_SANDBOX").as_deref() == Ok("1") { lua.sandbox(true).expect("sandbox"); }
     match strategy {
         "serde" => {
             let decode = lua.create_function(|lua, s: String| {
