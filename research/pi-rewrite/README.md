@@ -99,10 +99,21 @@ A later spec, `facets.md`, goes further. It is not built.
 
 What this means for Fiber:
 
-- The split exists because pi is becoming multi-process with remote presentations. Fiber runs one process per session, and a GUI reads the same event stream as every other client (ADR 0005, #10). Nothing in Fiber has a second process an extension would need a separate piece for.
-- Fiber already answers pi's question-tool problem another way. Anything Fiber needs from a person goes through the event contract (#7's guard rule), so an extension asks through the contract instead of shipping its own UI.
-- The membrane lesson applies only if Fiber ever makes Lua a security boundary, which ADR 0006 explicitly does not. If that changes: never hand Lua a userdata wrapping a live host object. Pass strings and numbers, and keep the host's objects in a Rust-side table indexed by integer.
-- Facets would matter to Fiber only if extensions gain a UI surface in a remote client, for example a web frontend drawing an extension's own widget. That is not on the v0.0.1 map.
+[#7](https://github.com/aakshintala/fiber/issues/7) already settled two tiers for anything an extension or the loop needs from a person (`docs/architecture.md`, "Asking a human"). Facets line up with the upper tier and have no equivalent of the lower one.
+
+- **Tier 1, portable.** A closed, versioned set of interactions (approval, confirm, select, text input, status) carried as request events. Any connected client answers with `reply` and a `request_id`, including a headless driver. The first answer wins and a stale reply is rejected. pi's question tool has the same lifecycle: one pending request per call, every client shows it, the first answer settles it for all, and a late joiner sees it pending. But in pi each extension defines its own contract and must ship a facet for every client it wants to appear on. In Fiber, an extension that asks through tier 1 appears on every client with no UI code, and an unattended driver can always answer.
+- **Tier 2, per medium.** #7 found that "a drawing surface is always a surface *for one medium*": pi's `ctx.ui.custom()` cannot be reached from a React GUI without embedding a terminal. So above the portable tier, code is written per medium. That is exactly what a facet is. Fiber named this tier as a future outside v0.0.1, shaped after #11. It is listed on the map as not yet specified, with this section as its reference.
+
+Both designs start from the same diagnosis. #7 cites pi's docs saying its TUI methods are "no-ops or return defaults" in RPC mode, and facets are pi's fix for that. pi's fix makes every extension write per-client code. Fiber's fix gives extensions a small shared vocabulary that works everywhere, with per-medium code as the escape hatch. The #7 resolution argues that having the escape hatch is what lets tier 1 stay small.
+
+When tier 2 is shaped, pi's design offers:
+
+- A shared contract file plus one bundle per medium, so a web build never contains terminal code.
+- Instances keyed per invocation, with late joiners picking up what is pending.
+- Authority stays in the session. A client facet sees JSON contracts and copied state, never credentials or tools.
+- The trust question. If the server or session ships drawing code to a client, as `facets.md` proposes, a malicious session can run code in the client's process. pi's answer is an isolated-vm isolate that exchanges only strings and numbers (`02-sandbox/src/membrane.ts`). Fiber avoids the question only if a client runs extension code it installed itself.
+
+Separately, the membrane lesson applies to the Lua runtime only if Fiber ever makes Lua a security boundary, which ADR 0006 explicitly does not. If that changes: never hand Lua a userdata wrapping a live host object. Pass strings and numbers, and keep the host's objects in a Rust-side table indexed by integer.
 
 ## Claims re-checked by hand
 
