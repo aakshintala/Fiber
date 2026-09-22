@@ -90,10 +90,16 @@ provider, which is asked for a model's response.
 
 **Extension**:
 A package Fiber installs and loads, registering tools, providers and hooks
-through the three seams exactly as a built-in does. Data, plus embedded Lua 5.4
-where it needs code; its code runs with the account's full rights. See
-`docs/extensions.md`.
+through the three seams exactly as a built-in does. It may also carry skills,
+prompt templates, themes and binaries. Its code is embedded Lua 5.4 and runs
+with the account's full rights. See `docs/extensions.md`.
 _Avoid_: plugin, addon, module
+
+**Extension approval**:
+A person's decision to let a repository's extension load, made after seeing
+what it registers and carries. It covers exact content: a changed extension
+needs a new approval.
+_Avoid_: review (the reviewer is the permission model), trust
 
 **Provider**:
 An endpoint Fiber sends model requests to: a name, a credential and a list of

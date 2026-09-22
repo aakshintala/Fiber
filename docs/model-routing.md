@@ -28,8 +28,9 @@ Fiber release.
 
 Every provider is an extension, the five v0.0.1 ships included: OpenCode,
 ChatGPT/codex, muse (the Meta Model API), OpenRouter and Databricks. Extensions
-are fetched and installed, not built into the binary. How is
-[Extension distribution](https://github.com/aakshintala/fiber/issues/45).
+are fetched and installed, not built into the binary. Installing Fiber
+installs these five. How extensions arrive and stay current is
+`docs/extensions.md`.
 
 ## What a provider extension declares
 
@@ -113,7 +114,7 @@ Project config may choose the default model from providers already installed.
 It cannot declare a provider or change a provider's base URL. If it could, a
 cloned repository could point `openrouter` at its own server, and Fiber would
 send it your OpenRouter key. A repository that needs a provider ships an
-extension, which the person reviews before it loads.
+extension, which a person approves before it loads.
 
 ## Credentials
 
