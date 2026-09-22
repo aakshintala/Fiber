@@ -27,6 +27,9 @@ jobs:
           uname -srm
           getconf PAGESIZE
           ldd --version | head -1 || true
-      - name: Run the probe
+      - name: Run the pass-1 probe
         working-directory: research/extension-runtime/pass1
+        run: ./measure.sh
+      - name: Run the pass-2 RSS sweep
+        working-directory: research/extension-runtime/pass2
         run: ./measure.sh
