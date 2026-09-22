@@ -1,0 +1,5 @@
+[workspace]
+members = ["lua", "js"]
+resolver = "2"
+[profile.release]
+debug = false
