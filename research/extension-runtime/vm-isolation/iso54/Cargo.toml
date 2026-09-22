@@ -1,0 +1,9 @@
+[workspace]
+[package]
+name = "iso54"
+version = "0.0.0"
+edition = "2021"
+[dependencies]
+mlua = { version = "0.12", features = ["lua54", "vendored", "send"] }
+[profile.release]
+debug = false
