@@ -140,6 +140,7 @@ binary is fetched and replaced is not settled here.
 
 ## Not settled here
 
-- Fiber's own debug and crash logs.
+- Fiber's own debug and crash logs:
+  [Observability: what Fiber records about itself outside a session](https://github.com/aakshintala/fiber/issues/60)
 - Config file names and format, and the project directory `.fiber/` inside a
   repository (Configuration).
