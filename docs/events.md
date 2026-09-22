@@ -196,8 +196,8 @@ The full shape of approvals, and what happens with no human present, is
 `docs/permissions.md`. It fixes these two payloads' contents: a request
 carries the tool call's `action_id`, the call's declared effects and paths,
 and why it was raised; a resolution carries the decision, the reason, and what
-decided it — a human, a standing rule, a session grant, the reviewer, or the
-mode.
+decided it — the credential deny, a human, a standing rule, a session grant,
+the reviewer, or the mode.
 
 ### Usage and notices
 
