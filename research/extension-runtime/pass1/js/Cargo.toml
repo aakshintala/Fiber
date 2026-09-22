@@ -1,0 +1,7 @@
+[package]
+name = "probe-js"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+rquickjs = { version = "0.14", features = ["parallel"] }
