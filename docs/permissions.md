@@ -64,31 +64,34 @@ inside a turn.
 | `auto` | the reviewer, escalating to a human on repetition or failure |
 | `ask` | a human, every time |
 | `readonly` | nothing: every effect but `reads` is refused |
-| `yolo` | nothing is asked; standing denies still apply |
+| `yolo` | nothing is asked; the credential deny and standing denies still apply |
 
 `ask` is not a separate mechanism. It is `auto` with the reviewer replaced by
 a person: the same effects, the same fast paths, the same events. It exists so
 that a gated session is possible with no reviewer at all — offline, or with
 the reviewer's provider down.
 
-`yolo` honours a standing deny and nothing else. A standing deny is the one
-thing a person wrote down deliberately, and a mode that exists to stop asking
-questions should not also revoke an answer already given. Yolo changes nothing
-about the log: every tool call is recorded exactly as in any other mode.
+`yolo` honours the credential deny, a standing deny, and nothing else. A
+standing deny is the one thing a person wrote down deliberately, and a mode
+that exists to stop asking questions should not also revoke an answer already
+given. Yolo changes nothing about the log: every tool call is recorded
+exactly as in any other mode.
 
 ## The order a call is judged in
 
-1. **A standing deny** matching this call: refused. No model call, no question.
-2. **A standing ask** matching this call: a human is asked, whatever the mode.
-3. **`readonly` mode**: anything but `reads` is refused.
-4. **`yolo` mode**: allowed.
-5. **A fast path** — see below: allowed, with no model call.
-6. **A session grant** matching this call: allowed.
-7. **A standing allow** matching this call: allowed.
-8. Otherwise **reviewed**: by the reviewer in `auto`, by a human in `ask`.
+1. **The credential deny**: a call whose paths touch Fiber home's
+   `credentials/` is refused, in every mode. See [Credentials](#credentials).
+2. **A standing deny** matching this call: refused. No model call, no question.
+3. **A standing ask** matching this call: a human is asked, whatever the mode.
+4. **`readonly` mode**: anything but `reads` is refused.
+5. **`yolo` mode**: allowed.
+6. **A fast path** — see below: allowed, with no model call.
+7. **A session grant** matching this call: allowed.
+8. **A standing allow** matching this call: allowed.
+9. Otherwise **reviewed**: by the reviewer in `auto`, by a human in `ask`.
 
-Deny is evaluated before everything because a rule that can be widened by a
-later layer is not a deny.
+The credential deny and a standing deny are both evaluated before everything
+else, because a rule that can be widened by a later layer is not a deny.
 
 ### Fast paths
 
@@ -107,9 +110,37 @@ Editing the repo you launched in is the most common thing a coding agent does.
 Putting a model call in front of it buys little — the session log records every
 edit and version control can undo one — and costs latency on every action.
 
+## Credentials
+
+Fiber refuses every tool call whose declared paths touch the credential
+directory in [Fiber home](state.md) (`credentials/`). This is a built-in
+deny: it is not a standing rule, no person or extension can remove it, and
+it applies in every mode, `yolo` included. It covers every effect — a read, a
+write, anything — not only reads.
+
+Fiber has no OS sandbox, so without this deny an agent's file read or shell
+command could retrieve the stored tokens. The macOS Keychain is not an
+alternative protection: any process running as the person can read a keychain
+item the same way Fiber would. Source: the archived tree's
+[Deny tool reads of the credential store](https://github.com/aakshintala/fiber-zig/issues/97).
+
+Paths are canonicalised before matching (symlinks resolved, `..` removed), so
+no spelling of the path escapes it. The deny follows the resolved Fiber home,
+so it still protects the credentials when `FIBER_HOME` moves Fiber home. If
+Fiber home cannot be resolved, Fiber does not start ([Fiber home](state.md)
+already makes a bad `FIBER_HOME` a startup error), so the deny can never be
+silently narrowed.
+
+Like every other decision on this page, it relies on declared paths. Whether
+the shell tool declares the paths a command touches is the shell tool's job;
+that is not settled here. An extension tool that misdeclares its paths gets
+nothing it could not do directly, the same boundary the Effects section
+already states for extensions. [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
+is where confinement beyond this is settled.
+
 ## The reviewer
 
-In `auto`, a call that reaches step 8 is judged by a model.
+In `auto`, a call that reaches step 9 is judged by a model.
 
 ### What it is shown
 
@@ -213,8 +244,9 @@ their contents.
 effects, its paths, and which step of the order above sent it here.
 
 `permission_resolved` carries the decision, the reason, and **what decided it**:
-a human, a standing rule, a session grant, the reviewer, or the mode. A
-reviewer decision also carries the reviewer's model and which stage decided.
+the credential deny, a human, a standing rule, a session grant, the reviewer,
+or the mode. A reviewer decision also carries the reviewer's model and which
+stage decided.
 
 A blocked call ends as `tool_call_completed` with `status: denied` and a
 `reason`, both already in the contract. The proof that nothing ran is also

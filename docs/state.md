@@ -106,7 +106,9 @@ approved in one repository is not asked about again in another
 
 **Credentials.** One file per provider at `credentials/<provider>`, mode
 0600, in a 0700 directory. There is no OS keychain. OAuth refresh takes a
-lock on the credential file (`docs/model-routing.md`).
+lock on the credential file (`docs/model-routing.md`). Every tool call
+touching `credentials/` is refused in every mode
+([docs/permissions.md](permissions.md#credentials)).
 
 **Cache.** `cache/` holds only what is always safe to delete;
 `rm -rf ~/.fiber/cache` is a documented safe reset. Today it holds each
