@@ -1,3 +1,7 @@
+# Own workspace on purpose: Cargo unifies mlua-sys features across a
+# workspace, and lua54 + luau together are a compile_error.
+[workspace]
+
 [package]
 name = "probe-luau"
 version = "0.0.0"
@@ -5,3 +9,6 @@ edition = "2021"
 
 [dependencies]
 mlua = { version = "0.12", features = ["luau", "vendored", "send"] }
+
+[profile.release]
+debug = false

@@ -176,12 +176,21 @@ fn probe_sandbox() {
     // sandbox() makes globals read-only: confirm a script cannot patch a builtin.
     let patched = lua.load("string.rep = function() return 'pwned' end").exec().is_ok();
     // `require` being non-nil does not mean it can reach disk. Try it.
-    let req = lua.load(r#"local ok, err = pcall(require, "./luau_mod_test") return tostring(ok)..":"..tostring(err)"#)
+    // Self-contained: write a module into a fresh temp dir, chdir there, and
+    // require it by relative path. Result must not depend on the caller's cwd.
+    let dir = std::env::temp_dir().join(format!("luau_req_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(dir.join("luau_mod_test.luau"), "return { answer = 42 }\n").expect("write");
+    let prev = std::env::current_dir().expect("cwd");
+    std::env::set_current_dir(&dir).expect("chdir");
+    let req = lua.load(r#"local ok, v = pcall(require, "./luau_mod_test") if not ok then return "blocked:"..tostring(v) end return "read_from_disk:"..tostring(v.answer)"#)
         .eval::<String>().unwrap_or_else(|e| format!("raised:{}", first_line(&e.to_string())));
+    std::env::set_current_dir(prev).ok();
+    std::fs::remove_dir_all(&dir).ok();
     // Same for loadstring: can it compile and run new code?
     let ls = lua.load(r#"local ok, f = pcall(loadstring, "return 7*6") if not ok then return "blocked" end if f == nil then return "nil" end return tostring(f())"#)
         .eval::<String>().unwrap_or_else(|e| format!("raised:{}", first_line(&e.to_string())));
-    println!("RESULT sandbox_detail INFO require_etc_hosts={req} loadstring={ls}");
+    println!("RESULT sandbox_detail INFO require={req} loadstring={ls}");
     println!("RESULT sandbox {} reachable_globals=[{}] globals_writable={patched}",
              if present.is_empty() && !patched { "PASS" } else { "PARTIAL" },
              present.join(","));

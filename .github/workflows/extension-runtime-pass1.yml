@@ -30,9 +30,3 @@ jobs:
       - name: Run the probe
         working-directory: research/extension-runtime/pass1
         run: ./measure.sh
-      - name: Hook cost, steady state
-        working-directory: research/extension-runtime/pass1
-        run: |
-          for b in probe-lua probe-luau probe-js; do
-            for i in 1 2 3 4 5; do ./target/release/$b hook_cost; done
-          done
