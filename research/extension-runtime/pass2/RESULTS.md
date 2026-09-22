@@ -49,3 +49,18 @@ overcome a real memory penalty to stay in contention.
   pass-1's enforcement-overhead differences would surface.
 - Reclaim under an allocate-then-free burst (pass-1 tested this via OOM; this
   workload does not).
+
+## Is Luau's penalty the sandbox? No — it's the VM
+
+Measured Luau with `sandbox(true)` and without, on all three platforms. The two
+are identical within noise on both the fixed baseline and the per-instance cost:
+
+| platform | inst | luau-nosbx peak | luau-sbx peak |
+|---|---:|---:|---:|
+| macOS arm64 | 16 | 16496 | 16560 |
+| Linux x86_64 | 16 | 15664 | 15640 |
+| Linux arm64 | 16 | 14176 | 13876 |
+
+Baseline (rss_start), Linux x86_64: nosbx 5712, sbx 5780 - the ~5.7 MiB start
+(vs Lua's ~3.0) is the Luau VM, not sandbox mode. Dropping the sandbox is free
+and buys no memory back. Default is now no-sandbox (the ship config) regardless.
