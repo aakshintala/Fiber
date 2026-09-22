@@ -49,7 +49,7 @@ display-only."
 | `tools` | Runs tool calls: shell, file edits, search. Reached only through the tool seam. |
 | `extensions` | Loads extension code, hosts the runtime, and wires what extensions register into the three seams. |
 | `tui` | Draws the terminal. Watches events, sends commands, knows nothing else. |
-| `config` | Reads the configuration directory. Answers questions; never asks any. |
+| `config` | Reads the configuration files in [Fiber home](state.md). Answers questions; never asks any. |
 | `doors` | The non-interactive front door: argv or stdin in, JSON lines out. Which doors exist and what a driver may send them is `docs/invocation.md`; this page only fixes that a door sits beside the TUI with no privilege the TUI lacks. |
 | `main` | The composition root. Parses argv, builds everything once, picks a door. No feature logic. |
 
@@ -83,8 +83,8 @@ everything, and nothing depends on `main`.
    built-in tools inside `src/core/` production code, plus a core enum listing
    every built-in by name
    ([Core reasons about tool kinds, not builtin names](https://github.com/aakshintala/fiber-zig/issues/138)).
-5. Only `config` reads the configuration directory. `main` distributes what it
-   returns.
+5. Only `config` reads the configuration files in [Fiber home](state.md).
+   `main` distributes what it returns.
 6. `main` holds no feature logic.
 
 ## How the boundaries are enforced
@@ -272,9 +272,8 @@ that the other does not.
 
 - The extension runtime: [Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11)
 - Confinement: [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
-- The tool set: [The v0.0.1 tool set](https://github.com/aakshintala/fiber/issues/14)
+- The tool set: [The tool contract: what every tool shares](https://github.com/aakshintala/fiber/issues/14)
 - Background jobs: [Background jobs: one killable object](https://github.com/aakshintala/fiber/issues/20)
 - Subagents: [Subagents and delegates: children on one stream](https://github.com/aakshintala/fiber/issues/21)
 - MCP: [Does v0.0.1 speak MCP, and as what?](https://github.com/aakshintala/fiber/issues/22)
-- The state directory: [The state directory: what Fiber writes, and where](https://github.com/aakshintala/fiber/issues/23)
 - Compaction: [Compaction: when a session outgrows its context](https://github.com/aakshintala/fiber/issues/24)

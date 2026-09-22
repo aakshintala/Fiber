@@ -232,9 +232,8 @@ ahead without asking, so scripts can set up a machine.
 Install refuses an extension whose manifest needs a newer Fiber than the one
 running.
 
-Installed extensions live in Fiber's state directory, one directory each. Where
-that directory is,
-[The state directory](https://github.com/aakshintala/fiber/issues/23) decides.
+Installed extensions live in [Fiber home](state.md), one directory each, at
+`extensions/<name>/`.
 
 Installing an extension runs none of its code. A pure-data provider is only
 ever read, and a Lua script first runs when the extension is first used.
@@ -276,8 +275,8 @@ The full source is one key away. Approving a declared extension fetches it.
 
 An approval covers exact content. If the extension changes, Fiber shows the
 diff since the approved content and asks again. Approvals are recorded per
-machine in the state directory, keyed by content, so content approved in one
-repository is not asked about again in another.
+machine in [Fiber home](state.md) at `approvals/<content-hash>`, so content
+approved in one repository is not asked about again in another.
 
 A headless run never fetches and never loads unapproved content. If a repository
 declares an extension that is not installed, the run fails with

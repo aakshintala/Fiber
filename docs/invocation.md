@@ -197,8 +197,6 @@ supervisor that knows only about Fiber is worth less than one that does not.
 
 - The TUI's own shape, including whether it edits a queued steering message:
   [TUI: scrollback or full screen?](https://github.com/aakshintala/fiber/issues/15)
-- Where a session directory physically lives:
-  [The state directory: what Fiber writes, and where](https://github.com/aakshintala/fiber/issues/23)
 - What SIGTERM guarantees:
   [Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34)
 - Whether Fiber consumes MCP servers:

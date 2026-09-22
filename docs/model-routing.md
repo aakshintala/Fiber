@@ -65,9 +65,9 @@ that is data.
 
 A provider may also declare a Lua `models()` function that returns its model
 list. It runs when the list is needed and there is no cached copy, and again
-in the background each time Fiber starts. Fiber stores the result on disk and
-serves that copy until the refresh returns. Nothing refreshes on a timer, so an
-idle Fiber does no work.
+in the background each time Fiber starts. Fiber stores the result on disk in
+[Fiber home](state.md)'s cache and serves that copy until the refresh returns.
+Nothing refreshes on a timer, so an idle Fiber does no work.
 
 The function can ask the vendor's own listing endpoint, read a file, or look up
 metadata anywhere, models.dev included. A vendor with no listing endpoint ships a
@@ -119,8 +119,7 @@ extension, which a person approves before it loads.
 ## Credentials
 
 Each provider has one credential, stored in a file only the owner can read
-(mode 0600) in Fiber's state directory. Where that directory is,
-[The state directory](https://github.com/aakshintala/fiber/issues/23) decides.
+(mode 0600) in [Fiber home](state.md) at `credentials/<provider>`.
 A key can come from:
 
 - the stored credential

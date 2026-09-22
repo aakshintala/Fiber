@@ -214,8 +214,8 @@ no watermarks, no reconciliation file.
 
 ## Resume
 
-A session is reconstructed from the log and the configuration directory,
-nothing else.
+A session is reconstructed from the log and the configuration in
+[Fiber home](state.md), nothing else.
 
 Open memory-maps or scans the file into an offset table and folds the
 latest-wins facts as it goes. Only the window a consumer actually needs is
@@ -269,7 +269,7 @@ hanging or corrupting the log. Readers need no lock at all: append-only plus
 ## The session directory
 
 ```
-<state dir>/sessions/<session_id>/
+~/.fiber/projects/<key>/sessions/<session_id>/
   events.jsonl     the log
   session.lock     one writer
   artifacts/       bytes too large to inline
@@ -278,10 +278,10 @@ hanging or corrupting the log. Readers need no lock at all: append-only plus
 Nothing else. A directory is a session when its log parses and begins with
 `session_started`; no marker file can outlive the thing it marks. Listing
 sessions reads the logs — 601 session files' first lines took 39 ms warm on
-macOS arm64, so there is nothing for an index to save yet. Whether Fiber ever
-writes a derived database, and where this directory lives, is the state
-directory ticket; whatever it decides, any such store is derived from the logs,
-rebuildable at will, and never the truth.
+macOS arm64, so there is nothing for an index to save yet. Fiber writes no
+derived database; where the directory lives and how projects are keyed is
+[Fiber home](state.md). Any future derived store is derived from the logs,
+rebuildable, and never the truth.
 
 ## Versioning
 

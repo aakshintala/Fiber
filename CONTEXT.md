@@ -111,6 +111,18 @@ A wire format a provider speaks: how a request is shaped and how a streamed
 reply is read. Protocols are built into Fiber; an extension cannot add one.
 _Avoid_: API, dialect, adapter
 
+**Fiber home**:
+The one directory holding everything Fiber writes outside a repository,
+`~/.fiber` unless `FIBER_HOME` moves it.
+_Avoid_: state directory, configuration directory, config dir
+
+**Project**:
+A git repository, identified by git's shared directory so its worktrees are one
+project and a separate clone is another; outside git, the launch directory.
+Sessions, prompt history and per-project standing rules are kept per project,
+distinct from the workspace, which is the root a session was launched against.
+_Avoid_: repo, workspace
+
 **Workspace**:
 The root Fiber was launched against, recorded on `session_started`. Where a
 project's own files live, and the boundary a permission decision turns on.
@@ -130,8 +142,8 @@ result, and it answers allow or block with a reason.
 _Avoid_: guardian, classifier, gate, judge
 
 **Standing rule**:
-A permission decision recorded in the configuration directory, surviving every
-session until deleted. Scoped globally or to one project.
+A permission decision recorded in Fiber home, surviving every session until
+deleted. Scoped globally or to one project.
 _Avoid_: saved rule, policy, preference
 
 **Session grant**:
