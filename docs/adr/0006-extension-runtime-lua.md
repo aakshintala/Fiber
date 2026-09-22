@@ -5,7 +5,9 @@ Date: 2026-09-21
 ## Status
 
 Accepted. Settled by
-[Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11),
+[Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11)
+and, for what a package holds and how it is shared,
+[Extension distribution](https://github.com/aakshintala/fiber/issues/45),
 against the runtime comparison in
 [#3](https://github.com/aakshintala/fiber/issues/3). The contract is
 `docs/extensions.md`; the trust model is `docs/permissions.md`; the seams are
@@ -16,7 +18,7 @@ disqualification probes, pass2 RSS sweep, pass3 authoring probe, vm-isolation).
 
 Map premise 8: v0.0.1 ships an extension system where an extension registers
 through the same three seams a built-in does — tool, provider and hook — and can
-replace a built-in by name. The runtime has to serve a registry where people freely
+replace a built-in by name. The runtime has to serve an ecosystem where people freely
 build and share extensions, as pi's does, with no sandbox.
 
 Four constraints were fixed going in: a hook must answer synchronously inside a
@@ -62,9 +64,9 @@ The evidence, in the order it decided things:
 
 - **Runs source, one binary.** Lua, Luau and QuickJS all run source with no build
   step and link into one static binary. WASM does not: no interpreter runs wasm
-  *source*, so a model-authored, registry-distributed extension would need a
-  compiler in the loop or pre-built bytecode — disqualifying for a coding-agent
-  registry, independent of wasm's otherwise good RSS.
+  *source*, so a model-authored, git-distributed extension would need a
+  compiler in the loop or pre-built bytecode — disqualifying when extensions
+  are shared as source, independent of wasm's otherwise good RSS.
 
 One VM per extension costs ~120 KiB per extension and gives per-extension memory
 caps, separate GC and crash containment; a shared VM with per-`_ENV` isolation is
@@ -97,13 +99,14 @@ with no extension in use creates no VM and pays no idle cost.
   — while 5.4 has far more model training mass and more maturity, on a
   hard-to-reverse choice (`research/extension-runtime/vm-isolation`).
 
-- **No npm, no library ecosystem.** An extension is one self-contained script.
-  This is the main thing forgone versus full TypeScript, and it is accepted: full
-  TS means a V8-class runtime (tens of MiB RSS, a JIT) that breaks the small-
-  binary and low-RSS premises, or a system Node dependency that breaks single-
-  binary distribution. If a library ecosystem is ever genuinely needed, the
-  answer is to add an out-of-process extension type over the same three-seam
-  contract, not to have paid V8's price for the default in-process path.
+- **Lua code is shared through Fiber's own packages, not npm.** An extension
+  is a directory of Lua files, loaded with a `require` limited to that
+  directory. Shared code is either vendored into the extension or taken from
+  another extension it depends on by name and version. Fiber fetches and
+  resolves those dependencies itself (`docs/extensions.md`). What is forgone
+  against full TypeScript is npm's existing libraries, not sharing: full TS
+  means a V8-class runtime (tens of MiB RSS, a JIT) that breaks the low-RSS
+  premise, or a system Node dependency that breaks single-binary distribution.
 
 ## Rejected
 
@@ -129,11 +132,12 @@ script.
 owner explicitly does not want. `wasmtime` is the heaviest runtime and needs
 tokio for any real I/O (via `wasmtime-wasi`), violating ADR 0004; `wasmi` is lean
 but shares the disqualifier: wasm is bytecode, so a model-authored,
-registry-distributed extension cannot run as source without a compile step.
+git-distributed extension cannot run as source without a compile step.
 
 **Full TypeScript on a V8-class runtime (the pi model).** Buys npm, real types,
 and near-drop-in portability of pi's extension ecosystem. Rejected because it is
 a different architecture, not a runtime knob: embedding V8 costs tens of MiB of
 RSS and a JIT, breaking the low-RSS premise; shelling out to system Node/Bun
-breaks single-binary distribution. The genuine loss (npm) is recoverable later
-via an out-of-process extension type if it is ever needed.
+breaks single-binary distribution. The genuine loss is npm's existing
+libraries. Sharing code between extensions is kept, through Fiber's own
+packages.

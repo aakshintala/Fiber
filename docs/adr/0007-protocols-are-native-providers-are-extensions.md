@@ -39,9 +39,10 @@ Provider Lua never runs on the request path.
 - A vendor with a genuinely new wire format needs a Fiber release. pi lets an
   extension supply its own stream parser. Fiber does not, because that is a
   second, untested implementation of the hardest code.
-- A fresh install has no providers until one is installed. That makes
-  [Extension distribution](https://github.com/aakshintala/fiber/issues/45) part
-  of first run.
+- The binary alone has no providers. Installing Fiber also installs the five
+  first-party provider extensions, and fixing a vendor quirk is an extension
+  update, not a release. See
+  [Extension distribution](https://github.com/aakshintala/fiber/issues/45).
 - A session that uses a provider with a discovery function creates a Lua VM,
   about 120 KiB (`research/extension-runtime/vm-isolation`). A session whose
   providers are pure data creates none.

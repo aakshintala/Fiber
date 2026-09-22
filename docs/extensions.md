@@ -8,10 +8,10 @@ The seams are `docs/architecture.md`; the runtime choice and its reasoning are
 
 ## What an extension is
 
-An extension is a package Fiber installs and loads: data, plus a Lua script
-where it needs code. Its code runs with the account's full rights. It registers capabilities through the same three seams a built-in uses —
-tool, provider and hook — and a registration by an existing name replaces the
-built-in, recorded in the session log. An extension that registers a tool named
+An extension is a package Fiber installs and loads. Its code runs with the
+account's full rights. It registers capabilities through the same three seams a
+built-in uses — tool, provider and hook — and a registration by an existing
+name replaces the built-in, recorded in the session log. An extension that registers a tool named
 `read` becomes the `read` tool; the loop never learns whether the answer came
 from Fiber or from the extension.
 
@@ -19,6 +19,39 @@ The script does its work synchronously and returns. There is no background
 execution, no event loop, no `async`. This follows
 [ADR 0004](adr/0004-blocking-threads-no-async-runtime.md): a hook answers inside
 the turn, under a timeout Fiber enforces.
+
+## What a package holds
+
+An extension is one directory. Its manifest states:
+
+- its name, which is also where it is fetched from (see [Names](#names))
+- its version
+- the lowest Fiber version it runs on
+- the other extensions it depends on, each with a minimum version
+- the native binaries it ships, if any, with one download URL and one sha256
+  per platform
+
+Beside the manifest it may hold:
+
+- data, such as a provider's models and flags
+- Lua scripts, as many as it needs
+- libraries it vendors: a copy of someone else's Lua code, kept inside the
+  extension's own directory
+- skills, prompt templates and themes
+
+What a skill, a prompt template and a theme are to Fiber is not yet specified.
+This page covers only how they arrive.
+
+A script loads another script with `require`. `require` finds files inside the
+extension's own directory and nowhere else, so one extension cannot load
+another's code by path. Code shared between extensions reaches an extension in
+one of two ways: the extension vendors a copy, or it depends on the extension
+that holds the code.
+
+A native binary never runs from Lua directly. The extension runs it through a
+host call, and the tool making that call declares the `executes` effect, so the
+permission decision in `docs/permissions.md` sees it like any other command.
+That host call is not yet specified.
 
 ## The runtime
 
@@ -28,8 +61,9 @@ choice and the alternatives weighed — JavaScript via QuickJS, Luau, Starlark,
 WASM, and full TypeScript — are in [ADR 0006](adr/0006-extension-runtime-lua.md).
 
 The embedding is bare. An extension sees a stripped standard library — `table`,
-`string`, `math`, `utf8`, `coroutine` — and nothing else. There is no `io`, no
-`os`, no `package`/`require`, no `debug`. It cannot open a file, make a socket,
+`string`, `math`, `utf8`, `coroutine` — plus a `require` limited to its own
+directory, and nothing else. There is no `io`, no `os`, no `package`, no
+`debug`. It cannot open a file, make a socket,
 read an environment variable, or spawn a process on its own. Every capability
 reaches it through a host-provided global.
 
@@ -37,7 +71,8 @@ This is not a security boundary. Per `docs/permissions.md`, an extension runs
 with the account's full rights; the stripped stdlib is a structural fact — the
 host owns I/O — not a sandbox. A hostile extension is contained the way `npm
 install` is contained: not at all at runtime, only by the decision to install
-it. Trust is resolved when an extension is installed, not while it runs.
+it. Trust is resolved when an extension is installed or approved, not while
+it runs. How that works is [Distribution](#distribution).
 
 ## What an extension can do
 
@@ -138,8 +173,115 @@ what v0.0.1 does.
 ## Notes for authors
 
 - The embedding is Lua 5.4, not LuaJIT and not Luau. Write ordinary Lua 5.4.
-- There is no `require` and no package ecosystem. An extension is one
-  self-contained script plus what `host` and the stripped stdlib give it.
+- `require` loads files from your extension's own directory only. To use
+  someone else's Lua, vendor a copy into your directory or depend on the
+  extension that holds it.
+- Give your extension a version tag for every release. Dependents name a
+  minimum version, and Fiber installs nothing newer than someone asked for.
 - JSON is `json.decode` / `json.encode`, provided by the host. Lua has none.
 - Do not reach for `io`, `os`, `fetch`, sockets or environment variables — they
   are absent. Route every side effect through `host`.
+
+## Distribution
+
+### Names
+
+An extension's name is where it lives, as with Go modules:
+`github.com/owner/repo/path`. A dependency is written the same way. Any git host
+works, there is no registry, and two authors cannot claim the same name. A
+local path also works, for an extension under development.
+
+The five first-party provider extensions also have short names, so
+`fiber install openrouter` means the first-party extension's full name.
+
+Fiber fetches with the system `git`, so your SSH keys and credential helpers
+apply. If `git` is missing, the command fails with a stable error.
+
+### Versions
+
+A version is a git tag, such as `v1.4.0`. When extensions depend on the same
+extension, Fiber installs the lowest version that meets every stated minimum.
+If `openrouter` needs `oauth-helper` 1.2 or later, `databricks` needs 1.4 or
+later, and 1.9 is the newest, Fiber installs 1.4. The same inputs always give
+the same result, so there is no lockfile and no solver. A newer version arrives
+only when something raises its minimum.
+
+Two extensions that need different major versions, such as 1.x and 2.x, stop
+the install with an error naming both.
+
+Fiber records the exact commit it installed and loads only that. Nothing is
+signed. The fetch runs over TLS or SSH, and a binary is checked against the
+sha256 in its manifest. Fiber downloads only the binary for the platform it is
+running on.
+
+### Installing
+
+| Command | What it does |
+|---|---|
+| `fiber install <name>` | Installs an extension and its dependencies. If any part fails, nothing is installed. |
+| `fiber update <name>` | Moves one extension to its newest version and re-resolves its dependencies. |
+| `fiber remove <name>` | Removes an extension, and any dependency nothing else uses. |
+| `fiber list` | Lists installed extensions with their versions and commits. |
+
+In a terminal, `install` and `update` show a summary and ask before going
+ahead. The summary is the same one described in
+[Extensions a repository brings](#extensions-a-repository-brings), and on
+update it adds the diff since the installed version. Without a terminal they go
+ahead without asking, so scripts can set up a machine.
+
+Install refuses an extension whose manifest needs a newer Fiber than the one
+running.
+
+Installed extensions live in Fiber's state directory, one directory each. Where
+that directory is,
+[The state directory](https://github.com/aakshintala/fiber/issues/23) decides.
+
+Installing an extension runs none of its code. A pure-data provider is only
+ever read, and a Lua script first runs when the extension is first used.
+
+### A fresh install
+
+Installing Fiber also installs the five first-party provider extensions, so
+the first run fetches nothing.
+
+A Fiber binary that arrived some other way has no extensions. In the terminal,
+the model picker offers the five first-party providers, and choosing one
+installs it. A headless run fails with `extension_missing`.
+
+### Staying current
+
+`fiber upgrade` updates the Fiber binary and every installed extension
+together, so a new Fiber and the extensions written for it arrive at the same
+time. `fiber update <name>` updates one extension.
+
+Nothing checks for updates on a timer. Extensions change only when someone runs
+one of these commands, so an idle Fiber does no work.
+
+### Extensions a repository brings
+
+A repository can bring extensions in two ways:
+
+- ship them in `.fiber/extensions/<name>/`
+- declare them by name and version in project config, to be fetched
+
+Fiber loads neither until a person approves it. The first time a session would
+load one, the terminal shows:
+
+- where it comes from and its version
+- the tools it registers, each with its effects
+- the providers it registers, each with its base URLs
+- the hooks, skills, prompt templates, themes and binaries it carries
+
+The full source is one key away. Approving a declared extension fetches it.
+
+An approval covers exact content. If the extension changes, Fiber shows the
+diff since the approved content and asks again. Approvals are recorded per
+machine in the state directory, keyed by content, so content approved in one
+repository is not asked about again in another.
+
+A headless run never fetches and never loads unapproved content. If a repository
+declares an extension that is not installed, the run fails with
+`extension_missing`. If it brings one nobody has approved, the run fails with
+`extension_unapproved`, listing each one. `fiber approve`, run in the
+repository from a terminal, shows the same summary for each and records the
+approvals, so a later headless run can load them.
