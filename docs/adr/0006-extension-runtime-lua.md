@@ -16,10 +16,8 @@ disqualification probes, pass2 RSS sweep, pass3 authoring probe, vm-isolation).
 
 Map premise 8: v0.0.1 ships an extension system where an extension registers
 through the same three seams a built-in does — tool, provider and hook — and can
-replace a built-in by name. The owner reopened the runtime, which had been an
-unexamined `mlua` assumption: "Lua vs something else is up for debate again,"
-and named a registry where users freely build and share extensions, pi-style,
-with no sandbox.
+replace a built-in by name. The runtime has to serve a registry where people freely
+build and share extensions, as pi's does, with no sandbox.
 
 Four constraints were fixed going in: a hook must answer synchronously inside a
 turn under an enforced timeout (`docs/architecture.md`); an extension runs with
@@ -35,8 +33,8 @@ Starlark, WASM (`wasmtime`/`wasmi`), and full TypeScript on a V8-class runtime.
 ## Decision
 
 **Embed Lua 5.4 through `mlua` (vendored). One Lua VM per extension, created
-lazily on first use. No sandbox. The five shipped providers are native Rust, not
-extensions.**
+lazily on first use. No sandbox.** How providers use it is
+[ADR 0007](0007-protocols-are-native-providers-are-extensions.md).
 
 The evidence, in the order it decided things:
 
@@ -45,7 +43,7 @@ The evidence, in the order it decided things:
   interpreters it peaks around 5 MiB against QuickJS's ~11 and Luau's ~14, and it
   reclaims memory to the OS on Linux where QuickJS never does. Per-instance
   marginal cost is ~150 KiB against ~500 for both others
-  (`research/extension-runtime/pass2`). This is the axis the owner prioritised.
+  (`research/extension-runtime/pass2`). Memory is the axis that matters most.
 
 - **Authoring by a model is a wash.** Since Fiber is a coding agent, extensions
   will be model-written. Five models across tiers wrote the streaming provider in

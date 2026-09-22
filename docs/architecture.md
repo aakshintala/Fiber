@@ -79,7 +79,7 @@ everything, and nothing depends on `main`.
 3. Only `log` opens the session directory, holds the lock, or mints `seq`.
 4. `loop` never names a tool, a vendor or a provider. It reasons about what a
    tool is allowed to do, never about which tool it is. An audit of the
-   archived Zig tree on 2026-09-13 found about 211 string literals naming
+   archived Zig tree found about 211 string literals naming
    built-in tools inside `src/core/` production code, plus a core enum listing
    every built-in by name
    ([Core reasons about tool kinds, not builtin names](https://github.com/aakshintala/fiber-zig/issues/138)).
@@ -113,7 +113,9 @@ back; it never learns whether the answer was Fiber's or an extension's.
 
 ### Provider seam
 
-"send this to a model and stream back actions."
+"send this to a model and stream back actions." A provider is an extension
+over a native wire protocol; see `docs/model-routing.md` and
+[ADR 0007](adr/0007-protocols-are-native-providers-are-extensions.md).
 
 ### Hook seam
 
@@ -269,7 +271,6 @@ that the other does not.
 ## Not settled here
 
 - The extension runtime: [Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11)
-- Provider routing: [Provider and model routing](https://github.com/aakshintala/fiber/issues/12)
 - Confinement: [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
 - The tool set: [The v0.0.1 tool set](https://github.com/aakshintala/fiber/issues/14)
 - Background jobs: [Background jobs: one killable object](https://github.com/aakshintala/fiber/issues/20)

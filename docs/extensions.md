@@ -8,8 +8,8 @@ The seams are `docs/architecture.md`; the runtime choice and its reasoning are
 
 ## What an extension is
 
-An extension is a single script Fiber loads and runs with the account's full
-rights. It registers capabilities through the same three seams a built-in uses —
+An extension is a package Fiber installs and loads: data, plus a Lua script
+where it needs code. Its code runs with the account's full rights. It registers capabilities through the same three seams a built-in uses —
 tool, provider and hook — and a registration by an existing name replaces the
 built-in, recorded in the session log. An extension that registers a tool named
 `read` becomes the `read` tool; the loop never learns whether the answer came
@@ -47,15 +47,13 @@ globals the host installs: `host` for capabilities, `fiber` for registration.
 ```
 host.secret(name)              -- the configured secret string for `name`
 host.http(opts)                -- one blocking HTTP request; returns { status, body }
-host.http_stream(opts, on_line)-- streams a response; calls on_line(line) per line, blocking
-host.emit(text)                -- append text to the assistant's turn output
 host.log(msg)                  -- write a debug line
 json.decode(str) / json.encode(value)   -- JSON, host-provided (Lua has none built in)
 ```
 
 ```
 fiber.tool(name, { description, input_schema, run })
-fiber.provider(name, { chat })
+fiber.provider(name, { models })
 fiber.hook(event, handler)
 ```
 
@@ -66,60 +64,53 @@ processes except through `host`, because the embedding gives it no other way.
 
 ## What writing a provider looks like
 
-A provider turns a request into a stream of assistant text. Here is the whole of
-one, for a vendor that streams in the Anthropic wire format:
+A provider extension is mostly data: its name, how its credential is found, and
+its models, each with a protocol, a base URL, flags and metadata. The wire
+protocols are native Rust, so a provider never parses a stream. What a provider
+declares, and why, is `docs/model-routing.md`. The file format for that data is
+settled with configuration.
+
+The one piece of Lua a provider may have is a function that discovers its
+models. Here is one for a gateway that lists its models at `/models`:
 
 ```lua
 fiber.provider("acme", {
-  chat = function(req)
+  models = function()
     local key = host.secret("acme.api_key")
-    host.http_stream({
-      url = "https://api.acme.dev/v1/messages",
-      method = "POST",
+    local reply = host.http({
+      url = "https://api.acme.dev/v1/models",
       headers = { authorization = "Bearer " .. key },
-      body = json.encode({ model = req.model, max_tokens = req.max_tokens, messages = req.messages }),
-    }, function(line)
-      if string.sub(line, 1, 6) ~= "data: " then return end
-      local payload = string.sub(line, 7)
-      if payload == "[DONE]" then return end
-      local ev = json.decode(payload)
-      if ev.type == "content_block_delta" and ev.delta and ev.delta.type == "text_delta" then
-        host.emit(ev.delta.text)
-      end
-    end)
+    })
+    local list = {}
+    for _, m in ipairs(json.decode(reply.body).data) do
+      table.insert(list, {
+        id = m.id,
+        protocol = m.id:find("^claude") and "anthropic-messages" or "openai-completions",
+        base_url = "https://api.acme.dev/v1",
+        context_window = m.context_length,
+      })
+    end
+    return list
   end,
 })
 ```
 
-In plain terms: Fiber calls `chat` with the request. The extension fetches the
-API key, builds the request body as JSON, and asks the host to POST it and
-stream the reply. The host does the network work and hands back one line at a
-time. For each line the extension skips anything that is not a data line, decodes
-the JSON, and when a line carries a piece of assistant text, passes that text to
-`host.emit`. Fiber assembles what is emitted into the turn's answer. The
-extension never opens a socket, manages a connection, or parses HTTP — the host
-owns all of that; the extension owns the shape of one vendor's request and reply.
+In plain terms: Fiber calls `models` when it needs the model list. The function
+fetches the API key, asks the gateway for its models, and returns one entry per
+model, choosing each model's protocol from its name. Fiber caches the list on
+disk and refreshes it in the background at startup. The function never runs
+while a request is being sent.
 
 Writing a tool or a hook has the same shape: register a name, receive a call, do
 pure work plus host calls, return.
-
-## Are the five shipped providers extensions?
-
-No. The five providers v0.0.1 ships — OpenCode subscription, ChatGPT/codex OAuth,
-muse API key, OpenRouter, Databricks — are native Rust, compiled in, registering
-through the provider seam exactly as an extension would. They are built-ins, not
-scripts. This keeps them off the extension runtime entirely: their wire formats,
-auth flows and streaming are Rust, and a session that never loads an extension
-never creates a Lua VM (see next). Extensions exist to add a sixth provider, or
-to replace one of the five by name, without rebuilding Fiber.
 
 ## Loading, and cost when nothing is loaded
 
 Each extension gets its own Lua VM, created the first time the extension is
 invoked, not at startup. A session that loads no extension — or loads one it
 never calls — creates no VM and pays no idle CPU and no runtime memory for the
-extension system at all. This was a hard requirement of the ticket and it is met
-by lazy instantiation, not by making the runtime cheap.
+extension system at all. Lazy creation, not a cheap runtime, is what makes this
+true.
 
 One VM per extension (rather than one shared VM for all) costs about 120 KiB per
 extension — measured, `research/extension-runtime/vm-isolation/` — and buys real

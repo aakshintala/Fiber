@@ -10,15 +10,15 @@ The contract is `docs/invocation.md`.
 
 ## Context
 
-Map premise 2 was amended while resolving this ticket. It now reads: "v0.0.1
+Map premise 2 reads: "v0.0.1
 must support both interactive sessions, as pi does, and non-interactive
 sessions for delegated work, as pi, codex and cursor-agent each offer a
 headless mode... A non-interactive caller may have several delegations
 outstanding at once."
 
 That makes being delegated to a thing v0.0.1 owes, which raises the question
-of how much of the delegation machinery belongs inside Fiber. The owner's
-original test, recorded on the ticket, was: "if fiber can do everything that we
+of how much of the delegation machinery belongs inside Fiber. The test
+for it: "if fiber can do everything that we
 built cursor-delegate around the cursor-agent CLI, then just the CLI is enough.
 if not, include MCP."
 
@@ -27,21 +27,19 @@ answered the capability half: of roughly 25 capabilities, "all but four are
 orchestration and policy around a single spawn", and the four that remain "do
 not apply when the caller is shell-capable".
 
-Two things reopened it.
+Two facts outweigh that finding.
 
 **That finding was about capability, not discoverability.** An MCP tool arrives
 in a calling agent's catalog with a name, a schema and a description, and is
 callable without anyone having explained it. A CLI arrives as nothing: it needs
 a skill whose description happens to match, or an injection at session start,
-and if neither fires the tool may as well not be installed. Premise 2's
-amendment makes that gap matter, because a slot Fiber must serve is one a
+and if neither fires the tool may as well not be installed. Premise 2
+makes that gap matter, because a slot Fiber must serve is one a
 caller has to be able to find.
 
-**An argument built on cursor-agent keeping no durable record was wrong.** It
-does: `~/.cursor/projects/<project>/agent-transcripts/<id>/<id>.jsonl`, one
+**cursor-agent keeps a durable record too.** It is `~/.cursor/projects/<project>/agent-transcripts/<id>/<id>.jsonl`, one
 JSON object per line, ending in `{"type":"turn_ended","status":"success"}` —
-143 of them for this project alone. Both agents write a log. The owner's
-correction stands: "Having to scrape that log ad-hoc each time is stupid when
+143 of them for this project alone. Both agents write a log. As the owner put it: "Having to scrape that log ad-hoc each time is stupid when
 it can be done by the tool instead." A log is not an interface, and the
 existence of one is no argument against shipping an API over it.
 

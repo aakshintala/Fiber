@@ -15,12 +15,10 @@ alongside it, append to a log with an fsync on the critical path, draw a
 terminal, and let a person cancel all of it mid-stream. Rust offers two ways
 to write that: plain blocking `std::thread`, or an async runtime.
 
-The map had already ruled out tokio, on idle CPU.
-[#8](https://github.com/aakshintala/fiber/issues/8) falsified that reason: a
-parked tokio runtime measured the same idle CPU as a parked `std::thread`
-(0.114 ms vs 0.122 ms over 60 s). The rule was left standing on dependency
-graph size and thread count, which nobody had measured either. This ticket
-re-opened the question rather than inherit it.
+Idle CPU does not decide it. A parked tokio runtime costs the same idle CPU as
+a parked `std::thread` (0.114 ms against 0.122 ms over 60 s,
+[#8](https://github.com/aakshintala/fiber/issues/8)). Dependency graph size and
+thread count needed measuring too.
 
 Three measurements decided what the argument could rest on. All were run on
 macOS arm64 (Darwin 25.6.0, Apple M3 Pro, rustc 1.98.1) and **none of them has

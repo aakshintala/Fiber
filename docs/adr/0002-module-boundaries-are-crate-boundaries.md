@@ -1,7 +1,7 @@
 # Module boundaries are crate boundaries
 
 The archived Zig predecessor had this same rule written down — core was not
-to know built-in tool names — and an audit on 2026-09-13 found about 211
+to know built-in tool names — and an audit found about 211
 string literals naming built-in tools inside `src/core/` production code,
 including a core enum listing every built-in by name
 ([Core reasons about tool kinds, not builtin names](https://github.com/aakshintala/fiber-zig/issues/138)).
