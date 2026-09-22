@@ -176,19 +176,20 @@ A **session grant** is an event in the session log. It is honoured for the rest
 of that session, survives a resume because the log does, is visible to every
 client, and is gone when the session ends.
 
-A **standing rule** is a line in the configuration directory. It survives
+A **standing rule** is a line in [Fiber home](state.md). It survives
 everything until deleted, and it is a file a person can read and revoke.
 
 This split is forced. `docs/events.md` says "No sidecar. A session directory
 holds the log, a lock, and directories for bytes too big to inline." A rule
 that outlives its session cannot be session state, so it is configuration, and
-`docs/architecture.md` says "Only `config` reads the configuration
-directory."
+`docs/architecture.md` says "Only `config` reads the configuration files in
+Fiber home."
 
 ### Scope
 
-Standing rules come from two files: a global one, and one per project. The
-project's rules win where both match.
+Standing rules come from two files in [Fiber home](state.md): a global one at
+the top level, and the project's `rules` file. The project's rules win where
+both match.
 
 A project is identified by **git's shared directory**, so every worktree of a
 repository shares one set of rules and a separate clone does not. Outside a git
@@ -250,6 +251,6 @@ run continues under the rule above until it exhausts the block budget.
   escaping it. Fiber's policy is designed to sit above such a layer; nothing on
   this page assumes one exists.
 - Which tools exist, and therefore which effects are actually declared:
-  [The v0.0.1 tool set](https://github.com/aakshintala/fiber/issues/14).
+  [The tool contract: what every tool shares](https://github.com/aakshintala/fiber/issues/14).
 - How the reviewer's model is named and routed:
   [Provider and model routing](https://github.com/aakshintala/fiber/issues/12).
