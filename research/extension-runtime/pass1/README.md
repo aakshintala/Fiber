@@ -4,9 +4,11 @@ Answers one question for [#11](https://github.com/aakshintala/fiber/issues/11):
 does either candidate runtime fail a constraint that is already settled, making
 the full measurement sweep pointless?
 
-Candidates: `mlua` 0.12 (Lua 5.4, vendored, `send`) and `rquickjs` 0.14
-(`parallel`). Both at the versions [#3](https://github.com/aakshintala/fiber/issues/3)
-measured.
+Candidates: `mlua` 0.12 with the **Lua 5.4** backend and with the **Luau**
+backend, and `rquickjs` 0.14 (`parallel`). #3 measured Lua 5.4 and LuaJIT but
+not Luau; Luau is here because mlua's API changes under it - `set_hook` is
+replaced by a purpose-built `set_interrupt`, and a first-class `sandbox()`
+appears - and those are exactly the axes that separated the candidates.
 
 Constraints under test:
 

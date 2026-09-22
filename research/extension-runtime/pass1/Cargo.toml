@@ -1,5 +1,5 @@
 [workspace]
-members = ["lua", "js"]
+members = ["lua", "js", "luau"]
 resolver = "2"
 
 [profile.release]

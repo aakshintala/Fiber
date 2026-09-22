@@ -14,6 +14,9 @@ run() { # run <bin> <probe>
 echo "=== lua (mlua 0.12, Lua 5.4, stdlib stripped to TABLE/STRING/MATH/UTF8/COROUTINE) ==="
 for p in sandbox interrupt interrupt_guarded interrupt_rearm interrupt_escalate \
          threads error recurse oom hook_cost; do run probe-lua "$p"; done
+echo "=== luau (mlua 0.12 feature luau, sandbox(true)) ==="
+for p in sandbox interrupt interrupt_guarded interrupt_adversarial \
+         threads error recurse oom hook_cost; do run probe-luau "$p"; done
 echo "=== js (rquickjs 0.14, Context::full) ==="
 for p in sandbox interrupt interrupt_guarded threads error recurse oom hook_cost; do
   run probe-js "$p"; done
