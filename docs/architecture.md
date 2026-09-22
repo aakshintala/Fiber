@@ -134,8 +134,8 @@ v0.0.1 ships one closed, versioned set of interactions — approval, confirm,
 select, text input, status — carried on the same request events the loop uses
 to ask a human anything, and answerable by any connected client including a
 headless one. A medium-specific drawing surface, letting an extension take
-the terminal or a future GUI's canvas directly, is a named future and is out
-of v0.0.1 scope; its shape is settled after
+the terminal or a future GUI's canvas directly, is a named future; whether
+v0.0.1 includes it is not yet ruled, and its shape is settled after
 [issue #11](https://github.com/aakshintala/fiber/issues/11).
 
 What an approval actually asks about, and what answers it when nobody is at
