@@ -287,8 +287,8 @@ that ticket's resolution holds the rationale and the rejected alternatives.
 The kinds are `docs/events.md`.
 
 - One object: one `job_id`, one lifecycle, stopped the same way whatever runs
-  inside it. A job is a shell command, a monitor, a native child session, or a
-  delegate to another harness.
+  inside it. A job is a shell command, a monitor or a delegate
+  (`docs/delegates.md`).
 - The call that starts a job completes in its own turn with a receipt naming
   the `job_id` and the path of the job's output file in the session's
   `artifacts/`. There is no pending status. Every provider needs a tool result
@@ -306,7 +306,7 @@ The kinds are `docs/events.md`.
   found shorter empty polls burned turns). `write` on a job not started with
   `tty` fails with `invalid_arguments`. A `write` call declares `executes`,
   because typed input can make the program do anything. `jobs` only sees
-  and acts on jobs the calling session started, so a child cannot stop its
+  and acts on jobs the calling session started, so a delegate cannot stop its
   parent's work.
 - Completion reaches the model by waking it. If the loop is idle, a finished
   job starts a new turn whose input names the job or jobs. If a turn is
@@ -351,7 +351,7 @@ The kinds are `docs/events.md`.
   [Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34).
 - When a session is about to end with jobs still running — a non-interactive
   run whose model has given its final answer, `close` or stdin EOF on
-  `fiber serve`, or a child session finishing its task — Fiber wakes the model
+  `fiber serve`, or a delegate finishing its task — Fiber wakes the model
   once with a notice listing the running jobs, telling it to stop the ones it
   does not need and that the rest will be waited for. Whatever is still
   running after that is waited for, whatever its kind, and each completion
@@ -361,22 +361,24 @@ The kinds are `docs/events.md`.
   ([Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34)),
   because a cap on the waiter cannot tell a hang from long healthy work such
   as a CI watch.
-- There is no cap on running jobs. Parked threads are measured in
-  `docs/architecture.md` ("The threads").
+- There is no cap on running jobs, except that a session runs at most 10
+  delegates at once (`docs/delegates.md`, "Limits"). Parked threads are
+  measured in `docs/architecture.md` ("The threads").
 
 ## Built in or extension
 
 A first-party tool is compiled in unless its behaviour depends on a vendor or
-on the person's environment. Read, write, edit, shell, background jobs,
-subagents, the task list, asking the person and web fetch behave the same for
-everyone and are compiled in, as is search if [Search: built-in tools or the
-shell?](https://github.com/aakshintala/fiber/issues/54) keeps it as a tool.
+on the person's environment. Read, write, edit, shell, background jobs, the
+Fiber delegate harness, the task list, asking the person and web fetch behave
+the same for everyone and are compiled in, as is search if
+[Search: built-in tools or the shell?](https://github.com/aakshintala/fiber/issues/54)
+keeps it as a tool.
 The default tool set therefore never needs a Lua VM, and a headless run never
 fails with `extension_missing` for one of them.
 Built-ins register through the tool seam exactly as an extension does and can be
 replaced by name (`docs/architecture.md`, "Tool seam").
 
-Three kinds ship as extensions:
+Four kinds ship as extensions:
 
 - Provider quota: each provider reports it differently, and providers are
   already extensions, so the quota lookup lives in each provider's package.
@@ -388,6 +390,10 @@ Three kinds ship as extensions:
 - Compact build and test output (the owner's `structured_return`): parsing
   depends on the person's toolchain, so it is an extension over an after-tool
   hook that replaces `content`, with the full log in the artifact.
+- Delegate harnesses other than Fiber, such as Claude Code and cursor-agent:
+  each runs another vendor's agent program (`docs/delegates.md`,
+  "Harnesses"). What a harness extension declares belongs to
+  [Harness extensions: running another agent as a delegate](https://github.com/aakshintala/fiber/issues/77).
 
 ## Not settled here
 
@@ -401,3 +407,4 @@ Three kinds ship as extensions:
   [Hook points](https://github.com/aakshintala/fiber/issues/48).
 - Confinement:
   [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
+- Delegates are `docs/delegates.md`, which lists what it leaves open.

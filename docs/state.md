@@ -11,6 +11,7 @@ Default `~/.fiber` on macOS and Linux; `FIBER_HOME` relocates all of it.
     sessions/<id>/                events.jsonl, session.lock, artifacts/
     history.jsonl                 prompt history, append-only
     rules                         this project's standing rules
+    worktrees/<id>/               one git worktree per delegate that asked for one
   extensions/<name>/              installed extensions, one directory each
   approvals/<content-hash>        one file per approved extension content
   credentials/<provider>          one file per provider, mode 0600
@@ -85,6 +86,9 @@ The session directory is unchanged from `docs/events.md`:
 The full output behind a bounded tool result goes in that session's
 `artifacts/`.
 
+A fork's history is a pointer into another session's log (`docs/delegates.md`,
+"Forks"). Deleting a session a fork points at deletes its forks or is refused.
+
 ## What each part holds
 
 **Standing rules.** A global file at the top level of Fiber home and the
@@ -114,6 +118,10 @@ touching `credentials/` is refused in every mode
 `rm -rf ~/.fiber/cache` is a documented safe reset. Today it holds each
 provider's discovered model list, one file per provider at
 `cache/models/<provider>.json`, fetched and replaced whole.
+
+**Worktrees.** Per project, `worktrees/<id>/`: the git worktree of a delegate
+started with `isolation: worktree`. When one is removed or kept is
+`docs/delegates.md` ("Worktrees").
 
 **Prompt history.** Per project, `history.jsonl`: one JSON line per prompt,
 append-only. Up-arrow recalls prompts typed anywhere in that project.

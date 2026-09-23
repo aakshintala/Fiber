@@ -276,6 +276,26 @@ private channel. Claude Code makes the same distinction with
 With no client attached and no answer possible, escalation is a block and the
 run continues under the rule above until it exhausts the block budget.
 
+## Delegates
+
+A Fiber delegate (`docs/delegates.md`) runs in its parent's mode. A mode is
+never changed by the model, a tool or an extension, so a delegate cannot run in
+a more permissive mode than its parent.
+
+- In `auto`, each delegate has its own reviewer, which judges that delegate's
+  calls.
+- An escalation from a delegate is relayed up the tree to whoever drives the
+  root session. They answer it with `reply` naming the delegate's `session_id`
+  (`docs/invocation.md`). With nobody attached, the escalation is a block, as
+  for any headless run, and the delegate carries on.
+- A model never answers a delegate's approval, the parent's model included.
+  The parent's model shapes the delegate's reviewer only through the prompt it
+  wrote and through `delegate_message`, which the reviewer reads as the human's
+  messages.
+- Starting any delegate declares `executes`, so the parent's mode judges the
+  start, and `readonly` refuses it. A delegate running another harness runs in
+  the mode its harness extension sets.
+
 ## Not settled here
 
 - Whether Fiber confines what a tool can reach at the operating-system level:
