@@ -5,16 +5,22 @@ much resident memory a delegate costs as threads in its parent's process,
 compared with running as its own process. It feeds the open question on
 [#21](https://github.com/aakshintala/fiber/issues/21).
 
-All numbers are from macOS arm64 only: Apple M3 Pro, 18 GiB, macOS 26.6.2,
-rustc 1.98.1, release build. Linux is unmeasured, so PSS is unmeasured too.
-No Linux machine, container or VM was available, and none was provisioned.
+Numbers come from three platforms, and every table names its platform:
+
+- macOS arm64: Apple M3 Pro, 18 GiB, macOS 26.6.2, rustc 1.98.1, release
+  build
+- Linux x86_64: GitHub Actions `ubuntu-latest`, 4 vCPUs, 16 GiB, Ubuntu with
+  kernel 6.17 (Azure), glibc 2.39, rustc 1.98.1, release build
+- Linux arm64: GitHub Actions `ubuntu-24.04-arm`, the same except the CPU
 
 ## The probe
 
-The probe is a throwaway Rust program, kept out of the repository at
-`/private/tmp/claude-501/-Users-aakshintala-work-fiber/d8d6e81c-d6ca-4d87-bb8b-96c612a16745/scratchpad/rss-probe/`
-(`src/main.rs`, `measure.sh`, `grid.sh`, and raw output in
-`results-macos-1.txt` and `results-macos-2.txt`). That directory is temporary.
+The probe is a throwaway Rust program in
+[`probe/`](probe/): `src/main.rs`, `measure.sh`, `grid.sh` (round 1),
+`round2.sh` and `fetch.sh` (round 2), and `mcp/mcp_measure.py`. Raw macOS
+output is in `probe/results/` and `probe/mcp/`. The Linux runs used a
+temporary GitHub Actions workflow on the `research/delegate-memory-2` branch,
+run 35927424303, which uploaded the raw Linux output as artifacts.
 
 It links mlua 0.12 (Lua 5.4, vendored), rusqlite 0.40 (bundled SQLite),
 rustls 0.23 (ring provider, webpki-roots 1.0) and serde_json 1. One session
@@ -32,14 +38,18 @@ holds:
 
 In thread mode, N sessions run in one process. In process mode, a launcher
 spawns N copies of the same binary, each holding one session. Each case was
-measured 2 seconds after every session reported ready. The whole grid ran
-twice. The runs agree within 1%; the tables use the second run.
+measured 2 seconds after every session reported ready. On macOS the whole
+grid ran twice. The runs agree within 1%; the tables use the second run. On
+Linux it ran once on each runner.
 
-`phys_footprint` (from `footprint <pid>`) is what macOS charges a process. It
-counts private dirty and compressed memory, not shared code pages. `ps` RSS
-counts shared code pages in every process, so summing RSS across processes
-overstates the real cost. Process-mode totals exclude the launcher, which sits
-at the idle baseline.
+On macOS the probe reports `phys_footprint` (from `footprint <pid>`), which is
+what macOS charges a process. It counts private dirty and compressed memory,
+not shared code pages. On Linux it reports PSS from `/proc/<pid>/smaps_rollup`,
+which splits each shared page between the processes that map it, so PSS sums
+to the real total. RSS counts shared pages in every process, so summing RSS
+across processes overstates the real cost. Process-mode totals exclude the
+launcher, which sits at the idle baseline. Footprint and PSS are different
+measures, so compare designs within a platform rather than across platforms.
 
 ## Results (macOS arm64)
 
@@ -91,6 +101,61 @@ The five components sum to about 590 KB, which matches the 606 KB thread-mode
 slope. A conversation costs about 1.7 times its serialised size once parsed
 into `serde_json::Value`.
 
+## Results (Linux)
+
+Stripped binary: 4.1 MB on x86_64 (4,060,720 bytes), 3.7 MB on arm64
+(3,690,112 bytes).
+
+Idle process with nothing initialised: 1.1 MiB PSS and 3.0 MiB RSS on x86_64,
+0.9 MiB PSS and 2.3 MiB RSS on arm64.
+
+### Total PSS, MiB
+
+| Conversation | Mode | Platform | N=1 | N=10 | N=110 | Per session, N=10 to 110 |
+|---|---|---|---|---|---|---|
+| 200 KB | threads, shared TLS config | Linux x86_64 | 3.8 | 9.3 | 68.8 | 609 KB |
+| 200 KB | threads, shared TLS config | Linux arm64 | 3.5 | 9.0 | 68.9 | 613 KB |
+| 200 KB | threads, TLS config per session | Linux x86_64 | 3.8 | 9.4 | 70.1 | 623 KB |
+| 200 KB | threads, TLS config per session | Linux arm64 | 3.5 | 9.1 | 70.3 | 627 KB |
+| 200 KB | processes | Linux x86_64 | 3.4 | 11.8 | 95.5 | 857 KB |
+| 200 KB | processes | Linux arm64 | 3.1 | 11.1 | 92.6 | 835 KB |
+| 2 MiB | threads, shared TLS config | Linux x86_64 | 6.9 | 40.6 | 413.6 | 3,820 KB |
+| 2 MiB | threads, shared TLS config | Linux arm64 | 6.7 | 40.3 | 413.7 | 3,823 KB |
+| 2 MiB | threads, TLS config per session | Linux x86_64 | 6.9 | 40.7 | 414.9 | 3,833 KB |
+| 2 MiB | threads, TLS config per session | Linux arm64 | 6.7 | 40.4 | 415.1 | 3,836 KB |
+| 2 MiB | processes | Linux x86_64 | 6.5 | 43.1 | 440.2 | 4,065 KB |
+| 2 MiB | processes | Linux arm64 | 6.3 | 42.4 | 437.2 | 4,043 KB |
+
+A single process has a lower PSS than a single thread-mode session because it
+shares its code pages with the idle launcher.
+
+### Total RSS, MiB
+
+| Conversation | Mode | Platform | N=1 | N=10 | N=110 | Per session, N=10 to 110 |
+|---|---|---|---|---|---|---|
+| 200 KB | threads, TLS config per session | Linux x86_64 | 5.8 | 11.3 | 72.2 | 623 KB |
+| 200 KB | threads, TLS config per session | Linux arm64 | 5.0 | 10.6 | 71.8 | 627 KB |
+| 200 KB | processes | Linux x86_64 | 5.8 | 57.9 | 638.7 | 5,947 KB |
+| 200 KB | processes | Linux arm64 | 5.0 | 50.3 | 552.7 | 5,145 KB |
+| 2 MiB | threads, TLS config per session | Linux x86_64 | 8.9 | 42.7 | 416.9 | 3,832 KB |
+| 2 MiB | threads, TLS config per session | Linux arm64 | 8.2 | 41.9 | 416.5 | 3,836 KB |
+| 2 MiB | processes | Linux x86_64 | 8.9 | 89.4 | 983.0 | 9,150 KB |
+| 2 MiB | processes | Linux arm64 | 8.2 | 81.6 | 897.2 | 8,352 KB |
+
+### Each component's cost per session (Linux, PSS)
+
+| Component | Linux x86_64 | Linux arm64 |
+|---|---|---|
+| Conversation, 2 MiB | 3,557 KB | 3,558 KB |
+| Conversation, 200 KB | 350 KB | 350 KB |
+| SQLite connection | 135 KB | 135 KB |
+| Lua state with a 5 KB script | 91 KB | 91 KB |
+| rustls config, built per session | 14 KB | 15 KB |
+| rustls config, shared through `Arc` | under 1 KB | under 1 KB |
+| Blocked thread | 11 KB | 11 KB |
+
+RSS per component matches PSS to within 1 KB on Linux.
+
 ## What is shared and what is duplicated
 
 A separate process adds about 1.4 MiB of footprint per delegate on macOS
@@ -99,11 +164,18 @@ itself: dirty data segments, dynamic loader state, allocator zones and
 metadata, the main thread's stack and page tables. Threads in one process pay
 it once.
 
-The 1.9 MB of code pages are shared either way. The operating system maps
-them once, so they appear in each process's RSS but not in its footprint.
+On Linux a separate process adds much less: about 230 KB of PSS on x86_64
+(857 KB against 623 KB) and 210 KB on arm64 (835 KB against 627 KB). glibc
+did not raise the thread-mode cost: a thread-mode session costs about the same
+on Linux as on macOS.
+
+The code pages are shared either way. The operating system maps them once, so
+they appear in each process's RSS but not in its footprint, and PSS splits
+them between processes. That is why summed RSS for processes is 5 to 6 MiB per
+process on Linux.
 
 The rustls config is the only session component that threads can share and
-processes cannot. It is 28 KB, so sharing it saves little.
+processes cannot. It is 14 to 28 KB, so sharing it saves little.
 
 The Lua state, SQLite connection, conversation and loop thread are private to
 each session in both modes. The conversation dominates. At 2 MiB it is 93% of
@@ -117,10 +189,12 @@ extra: 215 MiB against 67 MiB with 200 KB conversations, and 562 MiB against
 409 MiB with 2 MiB conversations. The gap is a fixed cost per process. The
 conversation held in memory is the largest cost in both modes, and it grows
 with the session, so how Fiber holds a conversation matters more than threads
-against processes once conversations are large. Linux has not been measured.
-glibc gives each thread its own allocator arena, which could raise the
-thread-mode cost on Linux, so re-run the probe there before relying on these
-numbers for Linux.
+against processes once conversations are large.
+
+On Linux the gap is smaller: about 230 KB of PSS per process on x86_64 and
+210 KB on arm64. At 110 sessions with 200 KB conversations, processes use
+96 MiB against 70 MiB for threads on x86_64, and 93 MiB against 70 MiB on
+arm64.
 
 ## Round 2: state one process can share
 
@@ -129,12 +203,10 @@ the state that delegates running as threads in one process can share, and
 that separate processes each hold their own copy of: MCP servers, compiled
 extension code and a provider model catalog.
 
-Same machine, same platform: macOS arm64 only. Linux is still unmeasured,
-and no Linux machine was provisioned. Footprint is `phys_footprint`, as
-above. The probe gained two modes, `luaset` and `json`, plus
-`mcp/mcp_measure.py` and `round2.sh`. Raw output is in
-`results-macos-round2.txt` and `mcp/results-macos-mcp.txt`, all in the same
-temporary directory.
+The platforms and measures are the same as above: footprint on macOS arm64,
+PSS on the two Linux runners. The probe gained two modes, `luaset` and
+`json`, plus `round2.sh`, `fetch.sh` and `mcp/mcp_measure.py`. MCP servers
+were measured on macOS only: see below.
 
 ### MCP servers
 

@@ -30,9 +30,27 @@ jobs:
         run: |
           bash fetch.sh
           bash round2.sh | tee round2.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: MCP servers
+        run: |
+          W=$RUNNER_TEMP
+          git clone -q --depth 1 https://github.com/aakshintala/ClaudeBar $W/ClaudeBar
+          git clone -q --depth 1 https://github.com/aakshintala/cursor-delegate $W/cursor-delegate
+          (cd $W/ClaudeBar/mcp && npm ci --silent)
+          (cd $W/cursor-delegate && npm ci --silent && npm run build --silent)
+          {
+            node --version
+            echo "ClaudeBar $(git -C $W/ClaudeBar rev-parse --short HEAD) cursor-delegate $(git -C $W/cursor-delegate rev-parse --short HEAD)"
+            for i in 1 2; do
+              python3 mcp/mcp_measure.py quotabar "$GITHUB_WORKSPACE" '{"QUOTABAR_MCP_PORT":"8787"}' node --experimental-strip-types $W/ClaudeBar/mcp/index.ts
+              python3 mcp/mcp_measure.py cursor-delegate "$GITHUB_WORKSPACE" '{}' node $W/cursor-delegate/dist/index.js
+            done
+          } | tee mcp.txt
       - name: Print results
         if: always()
-        run: cat env.txt round1.txt round2.txt || true
+        run: cat env.txt round1.txt round2.txt mcp.txt || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -41,3 +59,4 @@ jobs:
             research/delegate-memory/probe/env.txt
             research/delegate-memory/probe/round1.txt
             research/delegate-memory/probe/round2.txt
+            research/delegate-memory/probe/mcp.txt

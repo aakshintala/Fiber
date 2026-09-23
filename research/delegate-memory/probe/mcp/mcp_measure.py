@@ -39,7 +39,12 @@ def tree(pid):
     while st:
         x = st.pop(); res.append(x); st += kids.get(x,[])
     return res
-def fp(pid):
+def rollup(pid, key):  # Linux: KB from /proc/<pid>/smaps_rollup
+    for l in open(f"/proc/{pid}/smaps_rollup"):
+        if l.startswith(key + ":"): return int(l.split()[1])
+    return 0
+def fp(pid):  # footprint on macOS, PSS on Linux (reported as footprint_kb)
+    if sys.platform == "linux": return rollup(pid, "Pss")
     o = subprocess.run(["footprint",str(pid)],capture_output=True,text=True).stdout
     m = re.search(r"phys_footprint:\s+([\d.]+)\s+(\w+)", o)
     if not m: return 0
