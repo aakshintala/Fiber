@@ -16,7 +16,7 @@ the process contract over them.
 |---|---|
 | `fiber` | The terminal. Requires a tty; without one it is a usage error naming `fiber serve`. |
 | `fiber serve` | The non-interactive door. Stays open. Its stdin is the driver channel: one JSON command per line. This is the door a GUI frontend, a supervising tool or a script uses. |
-| `fiber ask` | The same non-interactive door with the prompt already supplied and one turn to run. Its stdin is the prompt. |
+| `fiber ask` | The same non-interactive door with the prompt already supplied and no further prompts accepted. Its stdin is the prompt. |
 
 `ask` is not a second door and not a second code path. It is `serve` with its
 input already supplied and no more coming — the archived tree reached the same
@@ -84,7 +84,8 @@ acknowledgements carry no `seq`, so they never reach the log.
 | `steer_drop` | Removes a queued steering message, so nothing is applied. |
 | `cancel` | Ends the running turn. |
 | `reply` | Answers an interaction the loop raised: approval, confirm, select, text input or status. |
-| `close` | Accept no more prompts; finish the turn in flight and exit. |
+| `job_stop` | Stops a running job by `job_id`. Rejected `stale_request` if the job is not running. |
+| `close` | Accept no more prompts; finish the turn in flight, then any running jobs (`docs/tools.md`, "Background jobs"), and exit. |
 
 Rejection codes: `malformed`, `unknown_command`, `busy`, `stale_request`.
 
@@ -106,13 +107,16 @@ text. One command closes that window. Both amend and drop are rejected
 `docs/architecture.md` puts one inbox behind one thread draining at step
 boundaries, so an amend lands wholly before a drain or wholly after it.
 
+**`job_stop` names a running `job_id`.** It is rejected `stale_request` if the
+job is not running. The terminal lists jobs with `/jobs` and can stop one from
+there. The list is a fold of the log, so there is no driver list command.
+
 **The set is a floor, not a proof.** It is what Fiber's settled semantics
 require today. An open ticket may add one — [#24](https://github.com/aakshintala/fiber/issues/24)
 if a human can force compaction, [#12](https://github.com/aakshintala/fiber/issues/12)
-if a model can be switched mid-session, [#20](https://github.com/aakshintala/fiber/issues/20)
-if a background job can be killed independently of its turn. Adding a command
-is additive and not breaking, which is why `unknown_command` exists: an older
-Fiber tells a newer client no, in words, instead of ignoring it.
+if a model can be switched mid-session. Adding a command is additive and not
+breaking, which is why `unknown_command` exists: an older Fiber tells a newer
+client no, in words, instead of ignoring it.
 
 A driver that needs a command Fiber does not define has found a hole in the
 contract, not a reason for a private channel. Premise 5 gives the TUI "no
@@ -126,14 +130,15 @@ is a command every driver gets.
 Both subcommands take the same resume selector.
 
 **Stdin EOF and `close` mean the same thing: no more prompts are coming.**
-Fiber finishes the turn in flight and exits. Neither cancels.
+Neither cancels. Fiber finishes the turn in flight, gives the ending notice and
+waits for any running jobs (`docs/tools.md`, "Background jobs"), then exits.
 
 One rule covers both cases that matter. A GUI frontend that dies mid-turn
-closes the pipe, and Fiber finishes the turn and exits rather than orphaning
+closes the pipe, and Fiber follows that same path rather than orphaning
 itself. A delegated run is spawned with its prompt supplied and stdin already
-at EOF, so it runs that one turn — twenty minutes if it takes twenty minutes —
-and exits; its caller's turn ending changes nothing, because the caller's turn
-was never holding the pipe.
+at EOF, so it runs until the model's final answer — twenty minutes if it takes
+twenty minutes — on the same path; its caller's turn ending changes nothing,
+because the caller's turn was never holding the pipe.
 
 **A prompt arriving mid-turn is rejected `busy` and starts nothing.** Steering
 is the mid-turn channel. Fiber holds no prompt queue that no durable event

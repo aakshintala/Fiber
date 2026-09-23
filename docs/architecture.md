@@ -275,7 +275,7 @@ that the other does not.
 - Confinement: [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
 - The tool contract is `docs/tools.md`; the tool set is indexed in
   [Epic: tools](https://github.com/aakshintala/fiber/issues/59)
-- Background jobs: [Background jobs: one killable object](https://github.com/aakshintala/fiber/issues/20)
+- Background jobs are `docs/tools.md` ("Background jobs")
 - Subagents: [Subagents and delegates: children on one stream](https://github.com/aakshintala/fiber/issues/21)
 - MCP: [Does v0.0.1 speak MCP, and as what?](https://github.com/aakshintala/fiber/issues/22)
 - Compaction: [Compaction: when a session outgrows its context](https://github.com/aakshintala/fiber/issues/24)

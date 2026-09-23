@@ -85,9 +85,9 @@ an ephemeral event where it is display-only.
 
 ## Kinds
 
-v0.0.1's loop emits the kinds below. Children, background jobs, delegates and
-MCP elicitation are in v0.0.1's scope but their kinds are defined by their own
-tickets, which inherit every rule on this page and cannot violate one.
+v0.0.1's loop emits the kinds below. Children, delegates and MCP elicitation
+are in v0.0.1's scope but their kinds are defined by their own tickets, which
+inherit every rule on this page and cannot violate one.
 
 ### Process boundary
 
@@ -125,7 +125,7 @@ as soon as a child session relays its own messages onto the same stdout.
 | Kind | Durable | Payload |
 |---|---|---|
 | `session_started` | yes | creation time, workspace root |
-| `turn_started` | yes | the input that started it |
+| `turn_started` | yes | the input that started it; for a turn started by jobs, a source naming those `job_id`s |
 | `turn_completed` | yes | `outcome` (`completed`, `interrupted`, `failed`), `error` on failure |
 | `steering_applied` | yes | the text a running turn received at a step boundary, and where it came from |
 
@@ -214,6 +214,35 @@ late is a second `usage_recorded` with the same generation id, replacing the
 first. Consumers sum; resume rebuilds the ledger by folding. No pending queue,
 no watermarks, no reconciliation file.
 
+### Jobs
+
+Behaviour is `docs/tools.md` ("Background jobs").
+
+| Kind | Durable | Payload |
+|---|---|---|
+| `job_started` | yes | `job_id`, the `action_id` of the tool call that started it, the tool name, a short description, the output file's path |
+| `job_delta` | no | progress for clients, paced like `tool_call_delta` (`docs/tools.md`, "Progress") |
+| `job_line` | yes | `job_id` and one line a monitor delivered to the model |
+| `job_completed` | yes | `status` (`completed`, `failed`, `cancelled`), `error { code, message }`, `process` as on `tool_call_completed`, and for a failed job the tail of its output, capped |
+| `jobs_pending_notified` | yes | the `job_id`s named in the ending notice (`docs/tools.md`, "Background jobs") |
+
+A child's session id is added by
+[Subagents and delegates: children on one stream](https://github.com/aakshintala/fiber/issues/21).
+There is no job-kind field: tool identity is an opaque name (`docs/tools.md`).
+
+`job_line` is durable because the model saw it, and resume must rebuild what
+the model saw.
+
+`job_completed` has no `denied`: the starting call is what gets denied.
+`status` is a closed set. `error.code` values defined here are `nonzero_exit`
+(as on `tool_call_completed`), `indeterminate`, `orphaned`, `flooded`, and
+`output_cap`. The output tail is the first time those bytes enter the log.
+
+Only the loop thread writes durable events, and it drains its inbox at step
+boundaries (`docs/architecture.md`, "One inbox"), so `job_completed` and
+`job_line` are written at the step boundary where the model receives them.
+Their position in the log is the delivery point.
+
 ## Resume
 
 A session is reconstructed from the log and the configuration in
@@ -233,8 +262,13 @@ What the reader can tell about work that was in flight, from the log alone:
 | `tool_call_requested`, no `tool_call_started` | provably never ran; safe to run or discard |
 | `tool_call_started`, no `tool_call_completed` | uncertain; never blindly re-run |
 | `tool_call_completed` | ran, with its outcome |
+| `job_started`, no `job_completed` | the process that ran it died; on open Fiber writes `job_completed` with `status: failed` and `error.code: orphaned` |
 | `turn_started`, no `turn_completed` | the turn was cut short; render what was logged and say so |
 | `fiber_started`, no `fiber_exited` | that process died rather than exited |
+
+On open, Fiber writes that `job_completed` and does not touch any process. A
+crash does not kill a child in its own process group, so Fiber cannot know
+whether the job finished or still runs, and the status is not `cancelled`.
 
 Partial assistant text from an interrupted response is gone, because deltas are
 ephemeral. The log does not pay to store text a completion would supersede.

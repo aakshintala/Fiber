@@ -115,6 +115,67 @@ between chunks of work. The loop writes `tool_call_completed` with
 call cancelled while it can still change something. The one wait it cannot cut
 short is a read blocked in the kernel, such as on a hung network filesystem.
 
+## Background jobs
+
+Settled by
+[Background jobs: one killable object](https://github.com/aakshintala/fiber/issues/20);
+that ticket's resolution holds the rationale and the rejected alternatives.
+The kinds are `docs/events.md`.
+
+- One object: one `job_id`, one lifecycle, stopped the same way whatever runs
+  inside it. A job is a shell command, a monitor, a native child session, or a
+  delegate to another harness.
+- The call that starts a job completes in its own turn with a receipt naming
+  the `job_id` and the path of the job's output file in the session's
+  `artifacts/`. There is no pending status. Every provider needs a tool result
+  before the model's next step, so a call held open across turns would stall
+  the turn.
+- A job's output streams to that file. The model reads it with the ordinary
+  `read` tool ("Bounded results"). There is no output action.
+- The model-facing tool is one `jobs` tool with actions `list`, `wait`, and
+  `stop`. `wait` blocks up to a timeout. Cancelling a wait (for example because
+  the turn is cancelled) stops only the wait and leaves the job running.
+  `jobs` only sees and acts on jobs the calling session started, so a child
+  cannot stop its parent's work.
+- Completion reaches the model by waking it. If the loop is idle, a finished
+  job starts a new turn whose input names the job or jobs. If a turn is
+  running, the news joins it at the next step boundary, the way a steering
+  message does. Jobs finishing together are delivered together in one turn,
+  not one turn each. If a `jobs wait` already returned a job's final state to
+  the model, no completion notice is sent for it.
+- A monitor is a job running a watch command where each line on standard
+  output becomes a notice to the model, delivered the same way as a
+  completion. Standard error goes to a separate file and never becomes a
+  notice. It ends when its command exits or it is stopped. A monitor that
+  floods notices is stopped as `failed` with code `flooded`, with a message
+  telling the model to tighten its filter.
+- A job whose output file passes 5 GB is stopped as `failed` with code
+  `output_cap` (Claude Code's documented kill threshold).
+- Stopping one job uses the same mechanism as cancelling a tool call
+  ("Cancellation"). The wait after the kill is bounded: if a descendant that
+  escaped the process group still holds the output pipe open past the bound,
+  the job ends `failed` with code `indeterminate`, never `completed`. A
+  stopped job ends `cancelled`.
+- Jobs live and die with the Fiber process. Nothing reattaches to a job after
+  a restart. Stopping every job at exit belongs to
+  [Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34).
+- When a session is about to end with jobs still running — a non-interactive
+  run whose model has given its final answer, `close` or stdin EOF on
+  `fiber serve`, or a child session finishing its task — Fiber wakes the model
+  once with a notice listing the running jobs, telling it to stop the ones it
+  does not need and that the rest will be waited for. Whatever is still
+  running after that is waited for, whatever its kind, and each completion
+  wakes the model. The session ends when it is idle with no jobs running.
+  There is no cap on this wait: a hang is bounded at the command that hangs
+  (the shell tool's timeout,
+  [Shell: running a command, and when it becomes a job](https://github.com/aakshintala/fiber/issues/53))
+  and by the caller's SIGTERM
+  ([Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34)),
+  because a cap on the waiter cannot tell a hang from long healthy work such
+  as a CI watch.
+- There is no cap on running jobs. Parked threads are measured in
+  `docs/architecture.md` ("The threads").
+
 ## Built in or extension
 
 A first-party tool is compiled in unless its behaviour depends on a vendor or
@@ -152,3 +213,7 @@ Three kinds ship as extensions:
   [Hook points](https://github.com/aakshintala/fiber/issues/48).
 - Confinement:
   [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
+- Whether a long shell command becomes a job on its own:
+  [Shell: running a command, and when it becomes a job](https://github.com/aakshintala/fiber/issues/53).
+- The flood threshold at which a monitor is stopped as `flooded`. Claude Code's
+  number is unprobed.
