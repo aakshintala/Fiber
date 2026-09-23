@@ -42,7 +42,7 @@ judged is `docs/permissions.md`; the events themselves are `docs/events.md`.
 ## What a result carries
 
 `tool_call_completed` carries, beside `status`, `reason`, `error` and `process`
-(fixed in `docs/events.md`; do not restate their definitions):
+(defined in `docs/events.md`):
 
 - `content`: text and image parts. It is exactly what the model is sent,
   including after an after-tool hook has rewritten it. The hook's timing
@@ -118,10 +118,12 @@ short is a read blocked in the kernel, such as on a hung network filesystem.
 ## Built in or extension
 
 A first-party tool is compiled in unless its behaviour depends on a vendor or
-on the person's environment. Read, write, edit, shell, search, background
-jobs, subagents, the task list, asking the person, and web fetch behave the
-same for everyone and are compiled in, so the default tool set never starts a
-Lua VM and a headless run never fails with `extension_missing` for one of them.
+on the person's environment. Read, write, edit, shell, background jobs,
+subagents, the task list, asking the person and web fetch behave the same for
+everyone and are compiled in, as is search if [Search: built-in tools or the
+shell?](https://github.com/aakshintala/fiber/issues/54) keeps it as a tool.
+The default tool set therefore never needs a Lua VM, and a headless run never
+fails with `extension_missing` for one of them.
 Built-ins register through the tool seam exactly as an extension does and can be
 replaced by name (`docs/architecture.md`, "Tool seam").
 
