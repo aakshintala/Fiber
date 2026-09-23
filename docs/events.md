@@ -222,7 +222,7 @@ Behaviour is `docs/tools.md` ("Background jobs").
 |---|---|---|
 | `job_started` | yes | `job_id`, the `action_id` of the tool call that started it, the tool name, a short description, the output file's path |
 | `job_delta` | no | progress for clients, paced like `tool_call_delta` (`docs/tools.md`, "Progress") |
-| `job_line` | yes | `job_id` and one line a monitor delivered to the model |
+| `job_line` | yes | `job_id`, the batch of lines a monitor delivered to the model (cut as `docs/tools.md` describes), and a count of deliveries suppressed since the last one, when any were |
 | `job_completed` | yes | `status` (`completed`, `failed`, `cancelled`), `error { code, message }`, `process` as on `tool_call_completed`, and for a failed job the tail of its output, capped |
 | `jobs_pending_notified` | yes | the `job_id`s named in the ending notice (`docs/tools.md`, "Background jobs") |
 
@@ -235,8 +235,9 @@ the model saw.
 
 `job_completed` has no `denied`: the starting call is what gets denied.
 `status` is a closed set. `error.code` values defined here are `nonzero_exit`
-(as on `tool_call_completed`), `indeterminate`, `orphaned`, `flooded`, and
-`output_cap`. The output tail is the first time those bytes enter the log.
+and `timeout` (as on `tool_call_completed`), `indeterminate`, `orphaned`,
+`flooded`, and `output_cap`. The output tail is the first time those bytes
+enter the log.
 
 Only the loop thread writes durable events, and it drains its inbox at step
 boundaries (`docs/architecture.md`, "One inbox"), so `job_completed` and

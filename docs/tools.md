@@ -143,12 +143,31 @@ The kinds are `docs/events.md`.
   message does. Jobs finishing together are delivered together in one turn,
   not one turn each. If a `jobs wait` already returned a job's final state to
   the model, no completion notice is sent for it.
-- A monitor is a job running a watch command where each line on standard
-  output becomes a notice to the model, delivered the same way as a
-  completion. Standard error goes to a separate file and never becomes a
-  notice. It ends when its command exits or it is stopped. A monitor that
-  floods notices is stopped as `failed` with code `flooded`, with a message
-  telling the model to tighten its filter.
+- A monitor is a job running a watch command. Lines on its standard output
+  are delivered to the model in batches, the same way as a completion.
+  Standard error goes to a separate file and never reaches the model. It
+  ends when its command exits, it is stopped, or its deadline passes.
+  - Batching: lines are joined into one delivery. Each line is cut at 500
+    characters and each delivery at 3,000 characters, with a marker saying
+    it was cut. The full output stays in the job's output file.
+  - Rate: deliveries draw from a budget of 10, refilled one every 2 seconds.
+    A delivery that finds the budget empty is dropped, and the model is
+    later told how many were suppressed and that it should restart the
+    monitor with a more selective filter. The monitor keeps running.
+  - Flood stop: after 30 seconds of continuous suppression the monitor is
+    stopped as `failed` with code `flooded`, and the model is told to
+    restart it with a more selective source.
+  - Deadline: every monitor has a deadline, 5 minutes by default, at most
+    30 minutes, and at most 10 minutes in a non-interactive run. The model
+    may set a shorter or longer one within those limits when it starts the
+    monitor. At the deadline the monitor ends as `failed` with code
+    `timeout`, as a timed-out shell call does (`process.timed_out`). The
+    model is told the monitor expired and can start it again. The deadline
+    is what stops a forgotten monitor from holding a non-interactive run
+    open under the "ending with jobs running" rule in this section.
+  - Source and testing: these are Claude Code's numbers, taken as they are.
+    Timing-dependent behaviour is tested under an injected clock, never by
+    waiting in real time.
 - A job whose output file passes 5 GB is stopped as `failed` with code
   `output_cap` (Claude Code's documented kill threshold).
 - Stopping one job uses the same mechanism as cancelling a tool call
@@ -215,5 +234,3 @@ Three kinds ship as extensions:
   [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
 - Whether a long shell command becomes a job on its own:
   [Shell: running a command, and when it becomes a job](https://github.com/aakshintala/fiber/issues/53).
-- The flood threshold at which a monitor is stopped as `flooded`. Claude Code's
-  number is unprobed.
