@@ -1,0 +1,43 @@
+# Temporary: runs the #76 memory probe on Linux. Deleted before the PR is ready.
+name: delegate-memory-probe
+on:
+  push:
+    branches: [research/delegate-memory-2]
+  pull_request:
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: research/delegate-memory/probe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release --locked
+      - name: Environment
+        run: |
+          { uname -a; nproc; free -m; rustc --version; ldd --version | head -1;
+            echo "binary bytes: $(stat -c %s target/release/rss-probe)"; } | tee env.txt
+      - name: Round 1 grid
+        run: bash grid.sh | tee round1.txt
+      - name: Round 2 grid
+        run: |
+          bash fetch.sh
+          bash round2.sh | tee round2.txt
+      - name: Print results
+        if: always()
+        run: cat env.txt round1.txt round2.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.os }}
+          path: |
+            research/delegate-memory/probe/env.txt
+            research/delegate-memory/probe/round1.txt
+            research/delegate-memory/probe/round2.txt
