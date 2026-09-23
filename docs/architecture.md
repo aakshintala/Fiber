@@ -176,7 +176,7 @@ Fiber uses blocking threads and no async runtime.
 `log` is not a thread. It is a shared object behind a lock: whoever emits an
 event calls it, and it mints `seq`, writes, fsyncs and fans out.
 
-Background jobs, child sessions and MCP servers each add one parked thread per
+Background jobs, delegates and MCP servers each add one parked thread per
 blocking pipe. That is affordable: 512 parked threads measured 11.6 MiB RSS
 and 0.35 ms of CPU over ten seconds on macOS arm64.
 
@@ -276,6 +276,6 @@ that the other does not.
 - The tool contract is `docs/tools.md`; the tool set is indexed in
   [Epic: tools](https://github.com/aakshintala/fiber/issues/59)
 - Background jobs are `docs/tools.md` ("Background jobs")
-- Subagents: [Subagents and delegates: children on one stream](https://github.com/aakshintala/fiber/issues/21)
+- Delegates are `docs/delegates.md`
 - MCP: [Does v0.0.1 speak MCP, and as what?](https://github.com/aakshintala/fiber/issues/22)
 - Compaction: [Compaction: when a session outgrows its context](https://github.com/aakshintala/fiber/issues/24)

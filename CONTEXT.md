@@ -65,9 +65,29 @@ _Avoid_: tool use, function call
 
 **Job**:
 Work a tool call starts that outlives the call, such as a background command, a
-monitor or a child session. It has its own id and its own ending, and it
-survives cancellation of the turn that started it.
+monitor or a delegate. It has its own id and its own ending, and it survives
+cancellation of the turn that started it.
 _Avoid_: background session, task, process
+
+**Delegate**:
+An agent session a session starts to do part of its work, running Fiber or
+another harness. It is a job, and its own session.
+_Avoid_: subagent, child, worker
+
+**Harness**:
+The agent program a delegate runs: Fiber, or another vendor's, such as Claude
+Code or cursor-agent.
+_Avoid_: agent type, backend
+
+**Fork**:
+A Fiber delegate whose history begins as its parent's conversation up to a
+point, shared rather than copied.
+_Avoid_: clone, branch
+
+**Role**:
+A configured name for a delegate's model reference, so that written
+instructions survive a model being withdrawn.
+_Avoid_: preset, alias, tier
 
 **Artifact**:
 The full bytes behind something too large to put in the session log, such as a

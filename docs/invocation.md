@@ -79,11 +79,11 @@ acknowledgements carry no `seq`, so they never reach the log.
 | Command | What it does |
 |---|---|
 | `prompt` | Starts a turn. Rejected `busy` if a turn is running. |
-| `steer` | Sends a steering message, which joins the running turn at its next step boundary. A steering message also moves any running shell call to the background, so it reaches the model at the next step boundary. |
+| `steer` | Sends a steering message, which joins the running turn at its next step boundary. A steering message also moves any running shell call to the background, so it reaches the model at the next step boundary. Takes an optional `session_id` naming a delegate. |
 | `steer_amend` | Replaces a steering message's text while it is still queued. |
 | `steer_drop` | Removes a queued steering message, so nothing is applied. |
 | `cancel` | Ends the running turn. |
-| `reply` | Answers an interaction the loop raised: approval, confirm, select, text input or status. |
+| `reply` | Answers an interaction the loop raised: approval, confirm, select, text input or status. Takes an optional `session_id` naming a delegate. |
 | `job_stop` | Stops a running job by `job_id`. Rejected `stale_request` if the job is not running. |
 | `background` | Moves every shell call running in the current turn to the background (`docs/tools.md`, "Shell"). Rejected `stale_request` if none is running. |
 | `close` | Accept no more prompts; finish the turn in flight, then any running jobs (`docs/tools.md`, "Background jobs"), and exit. |
@@ -107,6 +107,12 @@ text. One command closes that window. Both amend and drop are rejected
 `stale_request` once `steering_applied` has landed, and neither can tear:
 `docs/architecture.md` puts one inbox behind one thread draining at step
 boundaries, so an amend lands wholly before a drain or wholly after it.
+
+**`steer` and `reply` can name a delegate.** With an optional `session_id`
+naming a delegate, the command goes to that delegate instead of this session.
+Each parent forwards a command addressed to a descendant down the tree, so a
+driver reaches any delegate in it (`docs/delegates.md`). The command is
+rejected `stale_request` if no such delegate is running.
 
 **`job_stop` names a running `job_id`.** It is rejected `stale_request` if the
 job is not running. The terminal lists jobs with `/jobs` and can stop one from
@@ -176,10 +182,11 @@ no tty is required**, because either would break that byte-for-byte equality.
 ## Isolation
 
 Fiber accepts a workspace path, runs in it, and records it on
-`session_started`. **Fiber never creates a git worktree.** A supervising tool
-that wants an isolated run makes the tree and passes the path; it needs git
-anyway to report what changed. This follows `docs/architecture.md`'s "`main`
-holds no feature logic" and keeps git out of the binary.
+`session_started`. Fiber creates a worktree only for a delegate that asks for
+one (`docs/delegates.md`). A supervisor starting Fiber still makes the tree
+and passes the path; it needs git anyway to report what changed. This follows
+`docs/architecture.md`'s "`main` holds no feature logic" and keeps git out of
+the binary.
 
 ## Fiber serves no MCP
 

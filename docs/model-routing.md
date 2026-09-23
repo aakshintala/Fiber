@@ -80,7 +80,7 @@ and belong to
 
 ## Naming a model
 
-A stored model reference is always `provider/model`, for example
+A session's stored model reference is always `provider/model`, for example
 `databricks/databricks-claude-opus-5`.
 
 When a person types a model:
@@ -93,6 +93,11 @@ When a person types a model:
    are an error that lists both.
 
 The exact match comes first because OpenRouter model ids contain colons.
+
+A delegate's model is named with its harness first:
+`harness:provider/model:effort`, such as `fiber:openai/gpt-5.6:xhigh`,
+`claude:opus:high` or `cursor-agent:composer-2.5`. The rules for it are
+`docs/delegates.md` ("Choosing a model").
 
 ## Choosing the model
 
@@ -107,8 +112,11 @@ If none of these gives a model, the terminal opens a model picker, and saving
 the choice writes the config default. A headless run fails with the error code
 `no_model`. Fiber never picks a model that nobody chose.
 
-A one-shot review run gets a different model by passing `--model`. There are no
-named roles in config.
+A one-shot review run gets a different model by passing `--model`. A role is a
+configured name for a delegate's model reference (`docs/delegates.md`). Roles
+name only the models delegates use; the session's own model is chosen in
+the order above. Where roles are configured is not settled here
+(Configuration).
 
 Project config may choose the default model from providers already installed.
 It cannot declare a provider or change a provider's base URL. If it could, a

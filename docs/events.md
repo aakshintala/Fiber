@@ -59,6 +59,10 @@ to durable lines carrying its own `session_id` and you have `events.jsonl`, byte
 for byte. There is no second format and no replay command: a client catching up
 reads the file.
 
+A Fiber delegate's lines are relayed onto its parent's stdout as they are, each
+carrying the delegate's `session_id`, so filtering by `session_id` still gives
+the parent's log (`docs/delegates.md`, "One stream").
+
 In an attended run stdout is the terminal, so that equality binds the
 non-interactive door only. The TUI consumes the same event stream in-process and
 holds no private path to state; anything it renders exists in this contract, as
@@ -85,9 +89,9 @@ an ephemeral event where it is display-only.
 
 ## Kinds
 
-v0.0.1's loop emits the kinds below. Children, delegates and MCP elicitation
-are in v0.0.1's scope but their kinds are defined by their own tickets, which
-inherit every rule on this page and cannot violate one.
+v0.0.1's loop emits the kinds below. MCP elicitation is in v0.0.1's scope but
+its kinds are defined by its own ticket, which inherits every rule on this page
+and cannot violate one.
 
 ### Process boundary
 
@@ -118,13 +122,13 @@ that is read back and goes stale.
 
 The alternative was making callers filter the stream for the last
 `assistant_message_completed`, which is a one-liner today and stops being one
-as soon as a child session relays its own messages onto the same stdout.
+as soon as a delegate relays its own messages onto the same stdout.
 
 ### Session and turn
 
 | Kind | Durable | Payload |
 |---|---|---|
-| `session_started` | yes | creation time, workspace root |
+| `session_started` | yes | creation time, workspace root; optional `parent { session_id, delegate_id }` for a delegate and `forked_from { session_id, seq }` for a fork (`docs/delegates.md`) |
 | `turn_started` | yes | the input that started it; for a turn started by jobs, a source naming those `job_id`s |
 | `turn_completed` | yes | `outcome` (`completed`, `interrupted`, `failed`), `error` on failure |
 | `steering_applied` | yes | the text a running turn received at a step boundary, and where it came from |
@@ -216,19 +220,24 @@ no watermarks, no reconciliation file.
 
 ### Jobs
 
-Behaviour is `docs/tools.md` ("Background jobs").
+Behaviour is `docs/tools.md` ("Background jobs"); delegates are
+`docs/delegates.md`.
 
 | Kind | Durable | Payload |
 |---|---|---|
 | `job_started` | yes | `job_id`, the `action_id` of the tool call that started it, the tool name, a short description, the output file's path |
+| `delegate_started` | yes | `job_id`, the delegate's `session_id`, harness, model reference (role resolved), workspace, worktree path and branch when isolated, `forked_from` for a fork |
 | `job_delta` | no | progress for clients, paced like `tool_call_delta` (`docs/tools.md`, "Progress") |
 | `job_line` | yes | `job_id`, the batch of lines a monitor delivered to the model (cut as `docs/tools.md` describes), and a count of deliveries suppressed since the last one, when any were |
+| `delegate_finished` | yes | `job_id`, the final message (bounded, with `artifact` when cut), usage totals, worktree state (path, branch, dirty) |
 | `job_completed` | yes | `status` (`completed`, `failed`, `cancelled`), `error { code, message }`, `process` as on `tool_call_completed`, and for a failed job the tail of its output, capped |
 | `jobs_pending_notified` | yes | the `job_id`s named in the ending notice (`docs/tools.md`, "Background jobs") |
 
-A child's session id is added by
-[Subagents and delegates: children on one stream](https://github.com/aakshintala/fiber/issues/21).
-There is no job-kind field: tool identity is an opaque name (`docs/tools.md`).
+A delegate's `session_id` is on `delegate_started`, which is written after
+`job_started` for each run; `delegate_finished` is written just before
+`job_completed`. Both are keyed by `job_id`, as `job_line` is
+(`docs/delegates.md`, "Events"). There is no job-kind field: tool identity is
+an opaque name (`docs/tools.md`).
 
 `job_line` is durable because the model saw it, and resume must rebuild what
 the model saw.
