@@ -190,8 +190,9 @@ the binary.
 
 ## Fiber serves no MCP
 
-v0.0.1 ships no MCP server, and the job supervisor that manages several
-outstanding delegations lives outside Fiber. The rationale is
+v0.0.1 ships no MCP server, and the supervisor that manages several
+outstanding delegations to Fiber lives outside Fiber. A session's own
+delegates are `docs/delegates.md`. The rationale is
 [ADR 0005](adr/0005-no-mcp-server-the-supervisor-is-external.md). Whether Fiber
 is an MCP *client* — consuming tool servers — is a separate question and stays
 [#22](https://github.com/aakshintala/fiber/issues/22)'s.

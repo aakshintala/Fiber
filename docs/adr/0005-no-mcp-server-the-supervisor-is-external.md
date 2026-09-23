@@ -89,8 +89,10 @@ owner does not use.
 
 - A calling agent cannot discover Fiber without a wrapper or a skill. This is
   accepted, and it is the cost being paid.
-- Nothing in Fiber tracks a job. There is no job id distinct from the session
-  id, no status file, no heartbeat, and nothing that can drift from the log.
+- Nothing in Fiber tracks a delegation made to it from outside. The caller's
+  handle is the session id. There is no status file, no heartbeat, and nothing
+  that can drift from the log. Fiber's own background jobs and delegates
+  (`docs/tools.md`, `docs/delegates.md`) are a different thing.
 - `cancel` across several runs, `wait-any`, `list` and gate execution are the
   wrapper's, and Fiber publishes no API for them.
 - Nothing kills a wedged Fiber from inside. `timeout(1)`, or the wrapper's own
