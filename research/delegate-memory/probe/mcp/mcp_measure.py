@@ -55,7 +55,8 @@ rss = sum(int(subprocess.run(["ps","-o","rss=","-p",str(x)],capture_output=True,
 f = sum(fp(x) for x in pids)
 tools = [t["name"] for t in (tl or {}).get("result",{}).get("tools",[])]
 caps = (init or {}).get("result",{}).get("capabilities") if init else None
-print(json.dumps({"name":name,"alive":p.poll() is None,"procs":len(pids),"rss_kb":rss,"footprint_kb":round(f),"initialized":init is not None,"tools":tools,"server_caps":caps}))
+anon = sum(rollup(x, "Anonymous") for x in pids) if sys.platform == "linux" else None  # private heap, not shareable
+print(json.dumps({"name":name,"alive":p.poll() is None,"procs":len(pids),"rss_kb":rss,"footprint_kb":round(f),"anon_kb":anon,"initialized":init is not None,"tools":tools,"server_caps":caps}))
 p.kill()
 for x in pids:
     try: os.kill(x, 9)
