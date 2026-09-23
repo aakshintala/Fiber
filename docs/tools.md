@@ -105,8 +105,9 @@ flush. These are pi's numbers, not measured for Fiber.
 ## Cancellation
 
 `cancelled` means the tool stopped. Fiber interrupts every kind of tool itself
-rather than asking it to stop: it kills a process's process group; it raises an
-error inside running Lua through mlua's instruction hook (`Lua::set_hook`, whose
+rather than asking it to stop: it kills a process's process group ("Shell",
+"Stopping a command"); it raises an error inside running Lua through mlua's
+instruction hook (`Lua::set_hook`, whose
 documentation says the error "will be propagated through the Lua code that was
 executing"); it closes the socket of a network call made through the host, as it
 does for a model request; and a built-in Rust tool checks for cancellation
@@ -114,6 +115,169 @@ between chunks of work. The loop writes `tool_call_completed` with
 `status: cancelled` only after the tool has returned, so the log never calls a
 call cancelled while it can still change something. The one wait it cannot cut
 short is a read blocked in the kernel, such as on a hung network filesystem.
+
+## Shell
+
+Settled by
+[Shell: running a command, and when it becomes a job](https://github.com/aakshintala/fiber/issues/53);
+that ticket's resolution holds the rationale and the rejected alternatives.
+
+### Running a command
+
+- The command runs as `/bin/bash -c <command>`, or `sh -c` where `/bin/bash`
+  does not exist. It gets the environment Fiber was launched with and reads
+  no shell startup files.
+- It runs in a new process session and its own process group, with no
+  controlling terminal, and standard input connected to nothing
+  (`/dev/null`). Standard output and standard error are one stream, in the
+  order they arrive.
+- With no terminal and nothing on standard input, a command that prompts
+  fails at once instead of waiting forever. Probed on macOS (2026-09-23):
+  `read` returned an empty answer, opening `/dev/tty` failed with "Device
+  not configured", `sudo` failed with "a terminal is required", git asking
+  for HTTPS credentials failed in 1.9 s, and Python's `input()` raised
+  EOFError. There is therefore no warning for a command waiting on a
+  prompt.
+- Arguments: `command` (required); `workdir` (optional; defaults to the
+  workspace; a relative path is resolved against the workspace);
+  `timeout_ms` (optional); `run_in_background` (optional); `tty`
+  (optional). Each call starts fresh: a `cd` does not carry over to the
+  next call.
+- A bare wait is rejected. When the call is not `run_in_background` and
+  the first part of the command is `sleep N` with N of 25 seconds or more,
+  alone or followed by other commands, the call completes as `failed` with
+  code `invalid_arguments` and never starts. The message points to
+  `run_in_background`, `jobs wait`, or a monitor running an `until` loop.
+  A `sleep` inside a loop is not the first part of the command and is
+  allowed. This is Claude Code 2.1.280's rule, read from its binary.
+
+### Timeout
+
+- `timeout_ms` is the one thing that kills a command for running long.
+  When the model gives none it is 600,000 (10 minutes). There is no
+  maximum. It counts from when the command started.
+- It applies to every command, run in the foreground or as a job, and it
+  stays with a command after the command moves to the background. This is
+  where a hang is bounded: "Background jobs" has no cap on waiting.
+- A command that times out ends `failed` with code `timeout` and
+  `process.timed_out` true.
+- The unit is milliseconds, as in Claude Code and codex. In the owner's pi
+  sessions (pi's timeout is in seconds), 1,347 of 9,372 timeouts the model
+  set (14%) were 10,000 or more, milliseconds written into a seconds field,
+  which made a wait 1,000 times longer; the opposite mistake in a
+  milliseconds field kills the command within a second, so the model sees
+  it straight away.
+- Of 26,687 foreground shell commands in the owner's pi sessions, 4 ran
+  past 10 minutes without a timeout the model set, and 3 of those 4 were
+  hangs (115 minutes, 291 minutes and 11.2 hours).
+
+### Moving to the background
+
+- A command moves to the background, becoming a job ("Background jobs"),
+  when any of these happens:
+  - It has run for 30 seconds.
+  - It was started with `run_in_background` or `tty`, in which case it
+    moves at once.
+  - A steering message arrives while it runs, so the message reaches the
+    model at the next step boundary instead of waiting for the command.
+  - A driver sends the `background` driver command (`docs/invocation.md`).
+  - Its shell exits while processes it started are still running ("When a
+    command ends").
+- Moving never kills anything and never restarts anything. The tool call
+  completes with the job's receipt, which says the command is still
+  running, why it moved, the `job_id` and the output file's path. Output
+  already produced and all later output go to the job's output file.
+- 5.1% of the owner's foreground pi commands ran longer than 30 s (8.6%
+  longer than 10 s, 2.9% longer than 2 minutes). Claude Code moves a
+  command at its 2-minute timeout; codex returns a still-running command
+  after 10 s.
+
+### When a command ends
+
+- A command runs until its process group is empty, not until its shell
+  exits and not until its output pipe closes. Fiber checks whether the
+  group still has members (`kill(-pgid, 0)`).
+- If the shell exits and processes it started are still in the group, the
+  command moves to the background at once. The receipt gives the shell's
+  exit code and names what was left running (command names and process
+  ids). The job ends when the group is empty, and keeps the command's
+  timeout.
+- A process that left the group on purpose (for example with `nohup` or
+  `setsid`) is not tracked.
+- The longest call in the owner's pi sessions, 11.2 hours, started a local
+  server with `&`; the server held the output pipe open and pi waited for
+  the pipe to close.
+
+### Stopping a command
+
+- A timeout, a cancellation and a `jobs stop` all stop a command the same
+  way: SIGTERM to the whole process group, then SIGKILL to the group
+  800 ms later if any member is still alive. 800 ms is the value from the
+  archived Zig tree (fiber-zig). The grace period exists because programs
+  clean up on SIGTERM: git, for example, removes its `index.lock` on
+  SIGTERM and leaves it behind on SIGKILL.
+- After the kill, Fiber reads output for at most 2 seconds more (codex's
+  drain bound). If output is still held open after that, for example by a
+  descendant that escaped the group, Fiber stops reading and the result is
+  `failed` with code `indeterminate`, never `completed`.
+- [Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34)
+  uses the same two values.
+
+### Result and output
+
+- Exit code 0 is `completed`. A nonzero exit is `failed` with code
+  `nonzero_exit` and `process.exit_code`. A command killed by a signal
+  Fiber did not send is `failed` with code `signal` and `process.signal`.
+  A timeout is as above; a cancellation is `cancelled`.
+- Output follows "Bounded results": the shell declares `tail`, the default
+  16 KiB cap applies, the full output is in the session's `artifacts/`,
+  and output streams as `tool_call_delta` while the call runs. After a
+  move to the background, output goes to the job's output file.
+
+### Terminal (`tty`)
+
+- With `tty: true` the command runs in a pseudo-terminal instead of pipes,
+  so a program that behaves differently on a terminal, or waits for typed
+  input (a REPL, `git rebase -i`, a debugger), can be driven. It moves to
+  the background at once; the receipt carries whatever output arrived in
+  the first 250 ms.
+- The model types into it with the `jobs` action `write` ("Background
+  jobs"). Output is the terminal's raw bytes. Fiber keeps no screen model
+  and runs no separate terminal host process. codex works the same way
+  (opt-in `tty`, raw bytes, typed input through a timed wait).
+- Prompts do not fail at once on a terminal; that is the point of `tty`.
+  The timeout still bounds the command.
+
+### Effects
+
+- The shell tool classifies each call (`docs/permissions.md`, "Effects").
+  It splits the command on `&&`, `||`, `;` and `|`, and checks each part
+  against a fixed list of read-only commands and the flags allowed for
+  each. If every part is on the list, the call declares `reads`,
+  reversible, with the paths the command names, resolved against
+  `workdir`. Otherwise it declares `executes`, with no paths.
+- It declares `executes` whenever it finds something it cannot read
+  plainly: command substitution (`$( )` or backticks), process
+  substitution, a redirect, or anything else outside the list.
+- Flags matter because read-only-looking commands have writing or
+  executing flags: `git diff --output=<file>` writes a file,
+  `rg --pre <cmd>` and `find -exec` run programs, `find -delete` deletes,
+  `sort -o` writes. The list and its flag rules are part of building the
+  shell tool.
+- A call declared `reads` takes the permission fast path and is allowed in
+  `readonly` mode.
+- The credential deny (`docs/permissions.md`, "Credentials") sees paths
+  only for commands the recogniser understands. A command it does not
+  understand, such as `python -c` opening a file, declares no paths, so
+  the deny cannot see it; in `auto` and `ask` it is still reviewed, and in
+  `yolo` nothing stops it. Closing that gap needs confinement:
+  [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30).
+- If Fiber confines tools, a shell call declared `reads` runs confined to
+  read-only access, so a command wrongly on the list fails instead of
+  writing.
+- The built-in shell is trusted to classify because it is compiled in. An
+  extension that replaces the shell classifies its own calls and is
+  believed, as `docs/permissions.md` already states.
 
 ## Background jobs
 
@@ -132,11 +296,18 @@ The kinds are `docs/events.md`.
   the turn.
 - A job's output streams to that file. The model reads it with the ordinary
   `read` tool ("Bounded results"). There is no output action.
-- The model-facing tool is one `jobs` tool with actions `list`, `wait`, and
-  `stop`. `wait` blocks up to a timeout. Cancelling a wait (for example because
-  the turn is cancelled) stops only the wait and leaves the job running.
-  `jobs` only sees and acts on jobs the calling session started, so a child
-  cannot stop its parent's work.
+- The model-facing tool is one `jobs` tool with actions `list`, `wait`,
+  `stop` and `write`. `wait` blocks up to a timeout. Cancelling a wait (for
+  example because the turn is cancelled) stops only the wait and leaves the
+  job running. `write` sends input to a job started with `tty` and returns
+  the output that arrives within a wait after the write, 250 ms by default,
+  at most 30 seconds. A write with no input waits at least 5 seconds
+  (codex's floor; [fiber-zig#8](https://github.com/aakshintala/fiber-zig/issues/8)
+  found shorter empty polls burned turns). `write` on a job not started with
+  `tty` fails with `invalid_arguments`. A `write` call declares `executes`,
+  because typed input can make the program do anything. `jobs` only sees
+  and acts on jobs the calling session started, so a child cannot stop its
+  parent's work.
 - Completion reaches the model by waking it. If the loop is idle, a finished
   job starts a new turn whose input names the job or jobs. If a turn is
   running, the news joins it at the next step boundary, the way a steering
@@ -171,10 +342,10 @@ The kinds are `docs/events.md`.
 - A job whose output file passes 5 GB is stopped as `failed` with code
   `output_cap` (Claude Code's documented kill threshold).
 - Stopping one job uses the same mechanism as cancelling a tool call
-  ("Cancellation"). The wait after the kill is bounded: if a descendant that
-  escaped the process group still holds the output pipe open past the bound,
-  the job ends `failed` with code `indeterminate`, never `completed`. A
-  stopped job ends `cancelled`.
+  ("Shell", "Stopping a command"). If a descendant that escaped the process
+  group still holds the output pipe open past the bound, the job ends
+  `failed` with code `indeterminate`, never `completed`. A stopped job ends
+  `cancelled`.
 - Jobs live and die with the Fiber process. Nothing reattaches to a job after
   a restart. Stopping every job at exit belongs to
   [Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34).
@@ -186,9 +357,7 @@ The kinds are `docs/events.md`.
   running after that is waited for, whatever its kind, and each completion
   wakes the model. The session ends when it is idle with no jobs running.
   There is no cap on this wait: a hang is bounded at the command that hangs
-  (the shell tool's timeout,
-  [Shell: running a command, and when it becomes a job](https://github.com/aakshintala/fiber/issues/53))
-  and by the caller's SIGTERM
+  (the shell tool's timeout, "Timeout") and by the caller's SIGTERM
   ([Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34)),
   because a cap on the waiter cannot tell a hang from long healthy work such
   as a CI watch.
@@ -232,5 +401,3 @@ Three kinds ship as extensions:
   [Hook points](https://github.com/aakshintala/fiber/issues/48).
 - Confinement:
   [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
-- Whether a long shell command becomes a job on its own:
-  [Shell: running a command, and when it becomes a job](https://github.com/aakshintala/fiber/issues/53).
