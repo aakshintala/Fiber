@@ -1,0 +1,11 @@
+Fresh start, initialize + tools/list, 5 s idle (mcp_measure.py). Two runs, identical to 100 KB.
+quotabar        procs=1 rss_kb=93520 footprint_kb=60416 tools=get_quotas
+cursor-delegate procs=1 rss_kb=84176 footprint_kb=44032 tools=cursor_run,cursor_poll,cursor_cancel,cursor_wait,cursor_wait_any,cursor_wait_all,cursor_answer,doctor
+node_repl       procs=1 rss_kb=17136 footprint_kb=6753  tools=js,js_add_node_module_dir,js_reset,turn_ended
+node_repl after one js call (kernel started) procs=2 rss_kb=78864 footprint_kb=29105
+
+Long-running instances owned by a Claude Code session, 16 h 46 min old:
+quotabar        pid 80995 rss_kb=36112 phys_footprint=39 MB (peak 60 MB)
+cursor-delegate pid 80996 rss_kb=43792 phys_footprint=34 MB (peak 44 MB)
+
+Not measured: computer-use (disabled in ~/.codex/config.toml), omnigent (~/work/lens/.cursor/mcp.json; interpreter not on disk).

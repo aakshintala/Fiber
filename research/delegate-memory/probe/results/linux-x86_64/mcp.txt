@@ -1,0 +1,6 @@
+v24.21.0
+ClaudeBar 7dc3517 cursor-delegate 0d94e2c
+{"name": "quotabar", "alive": true, "procs": 1, "rss_kb": 99376, "footprint_kb": 95557, "anon_kb": 48036, "initialized": true, "tools": ["get_quotas"], "server_caps": {"tools": {"listChanged": true}}}
+{"name": "cursor-delegate", "alive": true, "procs": 1, "rss_kb": 84860, "footprint_kb": 81228, "anon_kb": 35004, "initialized": true, "tools": ["cursor_run", "cursor_poll", "cursor_cancel", "cursor_wait", "cursor_wait_any", "cursor_wait_all", "cursor_answer", "doctor"], "server_caps": {"tools": {}}}
+{"name": "quotabar", "alive": true, "procs": 1, "rss_kb": 98812, "footprint_kb": 95086, "anon_kb": 47544, "initialized": true, "tools": ["get_quotas"], "server_caps": {"tools": {"listChanged": true}}}
+{"name": "cursor-delegate", "alive": true, "procs": 1, "rss_kb": 84856, "footprint_kb": 81223, "anon_kb": 35000, "initialized": true, "tools": ["cursor_run", "cursor_poll", "cursor_cancel", "cursor_wait", "cursor_wait_any", "cursor_wait_all", "cursor_answer", "doctor"], "server_caps": {"tools": {}}}

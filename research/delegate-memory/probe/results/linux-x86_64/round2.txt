@@ -1,0 +1,13 @@
+modules=19 loc=15800 source_bytes=520229 functions=1274 bytecode_bytes=719828 stripped_bytecode_bytes=517697 lua_used_memory_empty=22572 lua_used_memory_loaded=1450042
+idle | 1 | 3176 | 1228 | 3176 1228
+luaset 1 src | 1 | 5856 | 3885 | 5856 3885
+luaset 10 src | 1 | 21336 | 19339 | 21336 19339
+luaset 40 src | 1 | 71748 | 69777 | 71748 69777
+luaset 1 bin | 1 | 6648 | 4681 | 6648 4681
+luaset 10 bin | 1 | 21164 | 19160 | 21164 19160
+luaset 40 bin | 1 | 69036 | 67076 | 69036 67076
+luaset 1 strip | 1 | 6308 | 4337 | 6308 4337
+luaset 10 strip | 1 | 18060 | 16063 | 18060 16063
+luaset 40 strip | 1 | 57660 | 55693 | 57660 55693
+json openrouter-models.json | 1 | 8992 | 7025 | 8992 7025
+json models-dev.json | 1 | 55448 | 53451 | 55448 53451
