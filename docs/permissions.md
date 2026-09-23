@@ -37,8 +37,9 @@ Before a tool call runs, its tool declares that call's **effects**:
 A call declares every effect that applies, plus two qualifiers: whether it is
 **reversible**, and the **paths** it touches where it has any. A shell tool
 asked to run `git status` declares `reads`, reversible. Asked to run
-`rm -rf build/`, it declares `writes` and `executes`, not reversible, path
-`build/`. An edit to an existing file is an irreversible write; creating a new
+`rm -rf build/`, it declares `executes`, not reversible, with no paths,
+because the shell only recognises read-only commands (`docs/tools.md`,
+"Shell"). An edit to an existing file is an irreversible write; creating a new
 one is a reversible write.
 
 Classification is per call, not per tool. A tool that classified itself once,
@@ -131,9 +132,9 @@ Fiber home cannot be resolved, Fiber does not start ([Fiber home](state.md)
 already makes a bad `FIBER_HOME` a startup error), so the deny can never be
 silently narrowed.
 
-Like every other decision on this page, it relies on declared paths. Whether
-the shell tool declares the paths a command touches is the shell tool's job;
-that is not settled here. An extension tool that misdeclares its paths gets
+Like every other decision on this page, it relies on declared paths. The
+shell tool declares paths only for commands it recognises as read-only
+(`docs/tools.md`, "Shell"). An extension tool that misdeclares its paths gets
 nothing it could not do directly, the same boundary the Effects section
 already states for extensions. [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
 is where confinement beyond this is settled.

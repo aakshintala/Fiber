@@ -79,12 +79,13 @@ acknowledgements carry no `seq`, so they never reach the log.
 | Command | What it does |
 |---|---|
 | `prompt` | Starts a turn. Rejected `busy` if a turn is running. |
-| `steer` | Sends a steering message, which joins the running turn at its next step boundary. |
+| `steer` | Sends a steering message, which joins the running turn at its next step boundary. A steering message also moves any running shell call to the background, so it reaches the model at the next step boundary. |
 | `steer_amend` | Replaces a steering message's text while it is still queued. |
 | `steer_drop` | Removes a queued steering message, so nothing is applied. |
 | `cancel` | Ends the running turn. |
 | `reply` | Answers an interaction the loop raised: approval, confirm, select, text input or status. |
 | `job_stop` | Stops a running job by `job_id`. Rejected `stale_request` if the job is not running. |
+| `background` | Moves every shell call running in the current turn to the background (`docs/tools.md`, "Shell"). Rejected `stale_request` if none is running. |
 | `close` | Accept no more prompts; finish the turn in flight, then any running jobs (`docs/tools.md`, "Background jobs"), and exit. |
 
 Rejection codes: `malformed`, `unknown_command`, `busy`, `stale_request`.
@@ -110,6 +111,11 @@ boundaries, so an amend lands wholly before a drain or wholly after it.
 **`job_stop` names a running `job_id`.** It is rejected `stale_request` if the
 job is not running. The terminal lists jobs with `/jobs` and can stop one from
 there. The list is a fold of the log, so there is no driver list command.
+
+**`background` frees the turn without a message.** It does what a steering
+message does to running shell calls, with nothing sent to the model. The
+terminal binds it to Ctrl+B. It never kills a command: the command becomes a
+job and keeps its timeout.
 
 **The set is a floor, not a proof.** It is what Fiber's settled semantics
 require today. An open ticket may add one — [#24](https://github.com/aakshintala/fiber/issues/24)

@@ -235,7 +235,8 @@ the model saw.
 
 `job_completed` has no `denied`: the starting call is what gets denied.
 `status` is a closed set. `error.code` values defined here are `nonzero_exit`
-and `timeout` (as on `tool_call_completed`), `indeterminate`, `orphaned`,
+and `timeout` (as on `tool_call_completed`), `signal` (a process killed by a
+signal Fiber did not send), `indeterminate`, `orphaned`,
 `flooded`, and `output_cap`. The output tail is the first time those bytes
 enter the log.
 
