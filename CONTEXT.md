@@ -63,6 +63,12 @@ a command. It carries a request, a result, and a record of whether it actually
 ran.
 _Avoid_: tool use, function call
 
+**Job**:
+Work a tool call starts that outlives the call, such as a background command, a
+monitor or a child session. It has its own id and its own ending, and it
+survives cancellation of the turn that started it.
+_Avoid_: background session, task, process
+
 **Artifact**:
 The full bytes behind something too large to put in the session log, such as a
 cut tool result or an image, kept beside the log and referenced from it by path.
