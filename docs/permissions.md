@@ -282,7 +282,8 @@ run continues under the rule above until it exhausts the block budget.
   Both references pair a sandbox with this policy and use approval only for
   escaping it. Fiber's policy is designed to sit above such a layer; nothing on
   this page assumes one exists.
-- Which tools exist, and therefore which effects are actually declared:
-  [The tool contract: what every tool shares](https://github.com/aakshintala/fiber/issues/14).
+- Which tools exist is indexed in
+  [Epic: tools](https://github.com/aakshintala/fiber/issues/59); how a tool
+  declares effects is `docs/tools.md`.
 - How the reviewer's model is named and routed:
   [Provider and model routing](https://github.com/aakshintala/fiber/issues/12).

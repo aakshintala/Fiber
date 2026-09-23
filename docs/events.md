@@ -168,10 +168,12 @@ separate error channel, so no failure is ever reported twice.
   value here is a breaking change.
 - `reason`, an open set, on a denial.
 - `error { code, message }` on a failure, with a stable `code` so a consumer can
-  treat `timeout` differently from `invalid_arguments` without parsing English.
-  A nonzero exit is `failed` with code `nonzero_exit`.
+  treat `timeout` differently from `invalid_arguments` or `unknown_tool`
+  without parsing English. A nonzero exit is `failed` with code `nonzero_exit`.
 - `process { exit_code?, signal?, timed_out }` on any call that ran a process,
   keyed on whether the field is present rather than on the tool's name.
+- `content`, `details` and, when the result was cut, `artifact`; their meaning
+  is `docs/tools.md`.
 
 An unknown `error.code` is a generic failure and an unknown `reason` is a
 generic denial; the consumer shows the message. Adding either value is additive.
