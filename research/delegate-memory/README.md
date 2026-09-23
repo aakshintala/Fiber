@@ -121,3 +121,202 @@ against processes once conversations are large. Linux has not been measured.
 glibc gives each thread its own allocator arena, which could raise the
 thread-mode cost on Linux, so re-run the probe there before relying on these
 numbers for Linux.
+
+## Round 2: state one process can share
+
+The sections above measure only what each session owns. This round measures
+the state that delegates running as threads in one process can share, and
+that separate processes each hold their own copy of: MCP servers, compiled
+extension code and a provider model catalog.
+
+Same machine, same platform: macOS arm64 only. Linux is still unmeasured,
+and no Linux machine was provisioned. Footprint is `phys_footprint`, as
+above. The probe gained two modes, `luaset` and `json`, plus
+`mcp/mcp_measure.py` and `round2.sh`. Raw output is in
+`results-macos-round2.txt` and `mcp/results-macos-mcp.txt`, all in the same
+temporary directory.
+
+### MCP servers
+
+These are the MCP servers the owner configures:
+
+- Claude Code, user scope in `~/.claude.json`: `quotabar`
+  (`node --experimental-strip-types ~/work/ClaudeBar/mcp/index.ts`)
+- Claude Code, from the `cursor-delegate` plugin's `.mcp.json`:
+  `cursor-delegate` (`node ~/work/cursor-delegate/dist/index.js`). pi also
+  loads it: `~/.pi/agent/mcp-cache.json` lists it as pi's only server.
+- Codex, `~/.codex/config.toml`: `node_repl` (a native binary shipped in
+  ChatGPT.app), and `computer-use`, which is disabled
+- `~/work/lens/.cursor/mcp.json`, a project-scoped Cursor config: `omnigent`
+
+No project in `~/.claude.json` has its own servers, `~/.claude/settings.json`
+defines none, and `~/.cursor/mcp.json` does not exist. The claude.ai
+connectors that Claude Code shows are remote HTTP servers with no local
+process.
+
+`mcp_measure.py` started each server over stdio, sent `initialize`,
+`notifications/initialized` and `tools/list`, left it idle for 5 seconds, then
+measured its whole process tree. Two runs agreed to within 100 KB.
+
+| Server | Footprint | RSS | Tools | Tied to a workspace |
+|---|---|---|---|---|
+| quotabar | 59.0 MiB | 91.3 MiB | `get_quotas` | No |
+| cursor-delegate | 43.0 MiB | 82.2 MiB | `cursor_run`, `cursor_poll`, `cursor_cancel`, `cursor_wait`, `cursor_wait_any`, `cursor_wait_all`, `cursor_answer`, `doctor` | Yes, by default |
+| node_repl, idle | 6.6 MiB | 16.7 MiB | `js`, `js_add_node_module_dir`, `js_reset`, `turn_ended` | No, but it keeps session state |
+| node_repl, after one `js` call | 28.4 MiB | 77.0 MiB | as above | as above |
+| computer-use | not measured | not measured | | Disabled in the Codex config |
+| omnigent | not measured | not measured | | Its interpreter, `~/.local/share/uv/tools/omnigent/bin/python`, is not on disk |
+
+The two Node servers are mostly V8 heap. The copies that one Claude Code
+session had held for 16 hours were smaller, because macOS had compressed their
+idle pages: quotabar at 39 MB footprint and 35 MiB RSS, cursor-delegate at
+34 MB and 43 MiB. The totals below use the fresh numbers.
+
+Whether each server is tied to a workspace:
+
+- quotabar is not. Its one tool reads quota data from the QuotaBar app over
+  local HTTP on port 8787 (`ClaudeBar/mcp/index.ts`).
+- cursor-delegate is, by default. It records `process.cwd()` at startup as
+  `serverCwd` (`dist/index.js:111`), runs `cursor-agent` there and reads the
+  git HEAD there (`dist/runner.js:44,59`). A call can name another directory
+  with the `CallerProvided` isolation type, which passes `--workspace <path>`
+  (`dist/isolation.js`). So one instance can serve several worktrees only if
+  every call names its worktree.
+- node_repl is not tied to a workspace, but it keeps a JavaScript kernel whose
+  variables persist between calls, and `turn_ended` marks turns. Sessions
+  sharing one instance would share that kernel.
+
+Neither Node server's code mentions MCP roots. The node_repl binary contains
+the `roots/list` method name, probably from its MCP library; whether it calls
+it was not tested. MCP gives one set of roots to each client connection, so a
+single stdio connection cannot give different delegates different roots. A
+root that multiplexes several delegates over one connection works for servers
+like quotabar, which hold no workspace or session state. It does not work for
+a server that reads roots or its working directory, or keeps per-session
+state, unless each delegate gets its own instance.
+
+The MCP set used in the totals below is quotabar plus cursor-delegate, the two
+servers the owner runs every day through Claude Code and pi: 104,448 KB
+(102.0 MiB) footprint.
+
+### Extensions in Lua
+
+The owner's pi-rig package (`aakshintala/pi-rig`, cloned read-only) has 18
+extensions under `extensions/`, in 52 TypeScript files and 14,435 lines of
+code excluding tests (588 KB). A further 1,475 lines of helpers sit in
+`shared/`. The largest extensions are `context` (5,583 lines), `usage`
+(2,452), `stamp` (1,245) and `subagents` (1,071).
+
+The probe generates one Lua module for each extension with the same line
+count, plus one module for `shared/`: 19 modules, 15,800 lines, 508 KB of
+source and 1,274 functions. Each module defines functions, tables of string
+constants and tool definitions, and registers every fifth function with a
+host function, as a pi extension registers tools and hooks. It then calls
+each of its functions once.
+
+Lua's own allocator count for one state with the whole set loaded is
+1,450,042 bytes. Measured by footprint, N states in one process, slope from
+N=10 to N=40:
+
+| How each state loads the set | Footprint per state | Held once per process |
+|---|---|---|
+| Compile the source | 1,809 KB | 508 KB of source, freed after loading |
+| Load shared bytecode, debug info kept | 1,536 KB | 703 KB of bytecode |
+| Load shared bytecode, debug info stripped | 1,263 KB | 506 KB of bytecode |
+
+Lua 5.4 cannot share compiled functions between states. Loading bytecode
+still builds a private copy of every function prototype, constant and string
+in each state. So sharing bytecode saves only the parser's leftover heap
+(about 270 KB per state) and, if stripped, debug information such as line
+numbers (a further 270 KB). A separate process gets the same saving by loading
+the same bytecode from a file and freeing the buffer. The extension set costs
+about 1.5 MiB per session in both designs.
+
+mlua's `Lua` cannot be called from several threads at once. By default it is
+not `Send`. With mlua's `send` feature it is `Send + Sync`, but every call
+takes a reentrant mutex (`src/types/sync.rs`), so calls from several threads
+wait for each other. Each session therefore needs its own Lua state, unless
+every hook call from every session runs one at a time on one Lua thread.
+
+### Provider model catalog
+
+OpenRouter's public model list (`https://openrouter.ai/api/v1/models`,
+fetched 2026-09-23, 457 models, 749,714 bytes) parsed into one
+`serde_json::Value` costs 6,256 KB of footprint above the idle process, about
+8.5 times its size on disk.
+
+For comparison, the models.dev catalog that opencode caches
+(`~/.cache/opencode/models.json`, 4,796,203 bytes) costs 52,208 KB
+(51.0 MiB) parsed the same way, about 11 times its size. Parsing into typed
+structs, or holding only the providers in use, would cost less; that was not
+measured. The totals below use OpenRouter.
+
+### Anything else
+
+The rustls config (28 KB, round 1) is the only other shared state found. No
+provider tokenizer is on disk: the only `tokenizer.json` files are for the
+all-MiniLM-L6-v2 embedding model, which no provider uses, so none was
+measured.
+
+### Totals for 8 and 110 delegates (macOS arm64, footprint)
+
+Each total is the root session plus N delegate sessions. Every session has a
+200 KB conversation, an SQLite connection, the extension set loaded from
+bytecode with debug info kept, and round 1's other parts.
+
+Per-session parts, in KB:
+
+- round 1 session in a thread, shared TLS config: 577
+- round 1 session as its own process: 2,005
+- round 1's 5 KB Lua script, replaced by the extension set: minus 89
+- extension set, per state: 1,536
+- shared bytecode, once per process that keeps it: 703
+- OpenRouter catalog, once per process: 6,256
+- MCP set, once per set: 104,448
+
+A delegate as threads adds 577 − 89 + 1,536 = 2,024 KB. The root process
+costs 2,005 − 89 + 1,536 + 6,256 = 9,708 KB, and a delegate process costs the
+same. With threads, the root also keeps the 703 KB of bytecode to load new
+states.
+
+| Design | Formula, KB | N=8 | N=110 |
+|---|---|---|---|
+| Threads, no MCP | 9,708 + 703 + N × 2,024 | 26.0 MiB | 227.6 MiB |
+| Threads, MCP | 9,708 + 703 + 104,448 + N × 2,024 | 128.0 MiB | 329.6 MiB |
+| Processes, no MCP | (N + 1) × 9,708 | 85.3 MiB | 1,052.3 MiB |
+| Processes, MCP in every process | (N + 1) × (9,708 + 104,448) | 1,003.3 MiB | 12,374.3 MiB |
+| Processes, MCP owned by the root | 9,708 + 104,448 + N × 9,708 | 187.3 MiB | 1,154.3 MiB |
+
+Per delegate, that is 2.0 MiB as threads, 9.5 MiB as a process, and 111.5 MiB
+as a process with its own MCP servers.
+
+The threads-with-MCP row assumes one MCP set serves every delegate. That
+holds for quotabar. It holds for cursor-delegate only if every call names its
+worktree, and it would not hold for a server that reads roots. A delegate in
+another worktree then needs its own instance of that server in every design.
+
+With 2 MiB conversations, add 3,523 KB per session to every row. With the
+models.dev catalog instead of OpenRouter, add 45,952 KB per process: once for
+threads, N + 1 times for processes.
+
+### Conclusion of round 2
+
+Shared state widens the gap that round 1 found. Without MCP, a delegate costs
+about 2 MiB as threads and about 9.5 MiB as a process, because each process
+parses its own model catalog (6.1 MiB) and pays its own process overhead
+(1.4 MiB). At 110 delegates that is 228 MiB against 1,052 MiB.
+
+MCP servers dominate if each delegate process starts its own. The owner's two
+daily servers use 102 MiB together, so 110 delegate processes would use about
+12 GiB. If the root owns the MCP servers and delegates reach them through the
+root, most of that goes away: 1,154 MiB at 110 delegates.
+
+Extensions do not favour either design. Lua 5.4 cannot share compiled code
+between states, so each session pays about 1.5 MiB for the extension set
+either way.
+
+The catalog is the part to watch. Parsed as generic JSON it takes 8 to 11
+times its size on disk. Holding it once in the root, or in a smaller typed
+form, stops it multiplying with the number of processes.
+
+Linux has not been measured.
