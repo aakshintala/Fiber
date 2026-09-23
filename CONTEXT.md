@@ -63,6 +63,11 @@ a command. It carries a request, a result, and a record of whether it actually
 ran.
 _Avoid_: tool use, function call
 
+**Artifact**:
+The full bytes behind something too large to put in the session log, such as a
+cut tool result or an image, kept beside the log and referenced from it by path.
+_Avoid_: attachment, blob, spill file, result store
+
 **Watcher**:
 Something that reads the event stream and cannot reply. The terminal's
 rendering, a non-interactive run's stdout, a second client. A watcher can be

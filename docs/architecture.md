@@ -236,7 +236,8 @@ client — measured at 211 µs on macOS arm64.
 One press of the cancel key ends the **turn**:
 
 - the model stream stops,
-- any in-flight tool call completes as `cancelled`,
+- any in-flight tool call is stopped and then completes as `cancelled` (how
+  Fiber stops each kind of tool is `docs/tools.md`),
 - the turn ends with `turn_completed { outcome: interrupted }`,
 - background jobs keep running, because a job outlives the turn that started
   it.
@@ -272,7 +273,8 @@ that the other does not.
 
 - The extension runtime: [Extension runtime: Lua or something else?](https://github.com/aakshintala/fiber/issues/11)
 - Confinement: [Does Fiber confine what tools can touch?](https://github.com/aakshintala/fiber/issues/30)
-- The tool set: [The tool contract: what every tool shares](https://github.com/aakshintala/fiber/issues/14)
+- The tool contract is `docs/tools.md`; the tool set is indexed in
+  [Epic: tools](https://github.com/aakshintala/fiber/issues/59)
 - Background jobs: [Background jobs: one killable object](https://github.com/aakshintala/fiber/issues/20)
 - Subagents: [Subagents and delegates: children on one stream](https://github.com/aakshintala/fiber/issues/21)
 - MCP: [Does v0.0.1 speak MCP, and as what?](https://github.com/aakshintala/fiber/issues/22)
