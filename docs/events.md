@@ -103,7 +103,8 @@ answers with `reply` (`docs/mcp.md`, "Elicitation, sampling and roots").
 A process is not a named unit in the glossary; these two lines record its
 boundary without inventing one. They are durable for one reason: a
 `fiber_started` with no matching `fiber_exited` is the only record that a process
-died rather than finished. That is the same trick tool calls use below.
+died rather than finished. A session that was rewound ends with `rewound`
+instead, which closes the boundary the same way ("Rewind"). That is the same trick tool calls use below.
 
 `fiber_exited` copies the final message's text as well as pointing at it, so a
 one-shot caller reads the last line and is done:
@@ -128,7 +129,8 @@ as soon as a delegate relays its own messages onto the same stdout.
 
 | Kind | Durable | Payload |
 |---|---|---|
-| `session_started` | yes | creation time, workspace root; optional `parent { session_id, delegate_id }` for a delegate and `forked_from { session_id, seq }` for a fork (`docs/delegates.md`) |
+| `session_started` | yes | creation time, workspace root; optional `parent { session_id, delegate_id }` for a delegate and `forked_from { session_id, seq }` for a fork or a rewind (`docs/delegates.md`, "Forks"; "Rewind" below); for a rewind, `rewind { summary?, note, jobs }` |
+| `rewound` | yes | the new session's `session_id`, the `seq` of the point, and the `job_id`s handed to the new session (`jobs`); the last line of a session that was rewound ("Rewind" below) |
 | `turn_started` | yes | the input that started it; for a turn started by jobs, a source naming those `job_id`s |
 | `turn_completed` | yes | `outcome` (`completed`, `interrupted`, `failed`), `error` on failure |
 | `steering_applied` | yes | the text a running turn received at a step boundary, and where it came from |
@@ -158,7 +160,9 @@ durable.
 - `tool_call_requested` — the model finished emitting the call: name, full
   arguments, provider id.
 - `tool_call_started` — execution began, wherever it runs, including a
-  provider-hosted tool the provider reports as in progress.
+  provider-hosted tool the provider reports as in progress. Carries the call's
+  declared effects, whether it is reversible, and its paths, where the tool
+  declared them (`docs/permissions.md`, "Effects").
 - `tool_call_delta` — streamed output and progress. Ephemeral.
 - `tool_call_completed` — outcome.
 
@@ -285,9 +289,10 @@ What the reader can tell about work that was in flight, from the log alone:
 | `tool_call_requested`, no `tool_call_started` | provably never ran; safe to run or discard |
 | `tool_call_started`, no `tool_call_completed` | uncertain; never blindly re-run |
 | `tool_call_completed` | ran, with its outcome |
-| `job_started`, no `job_completed` | the process that ran it died; on open Fiber writes `job_completed` with `status: failed` and `error.code: orphaned` |
+| `job_started`, no `job_completed` | the process that ran it died; on open Fiber writes `job_completed` with `status: failed` and `error.code: orphaned`, unless a `rewound` lists the job |
 | `turn_started`, no `turn_completed` | the turn was cut short; render what was logged and say so |
-| `fiber_started`, no `fiber_exited` | that process died rather than exited |
+| `fiber_started`, no `fiber_exited` or `rewound` after it | that process died rather than exited |
+| `rewound` last | the session continued elsewhere; the jobs it lists were handed over, so they are not orphaned |
 
 On open, Fiber writes that `job_completed` and does not touch any process. A
 crash does not kill a child in its own process group, so Fiber cannot know
@@ -298,6 +303,68 @@ ephemeral. The log does not pay to store text a completion would supersede.
 
 An attempt count is derived by counting `assistant_message_started` lines, never
 from a stored counter, so it cannot drift from the record.
+
+## Rewind
+
+A session is a line. `seq` is its only position: there is no tree, no leaf and
+no event that moves a position. The evidence is
+[research/rewind](../research/rewind/README.md).
+
+A **rewind** starts a new session that continues an existing one from an
+earlier point. A person starts one from the terminal, a driver with the
+`rewind` command (`docs/invocation.md`).
+
+- **It is a pointer.** The new session's `session_started` carries
+  `forked_from { session_id, seq }`, the pointer a fork uses
+  (`docs/delegates.md`, "Forks"), and no `parent`. No `parent` is what tells a
+  rewind from a delegate's fork. Nothing is copied, and the old session keeps
+  its history. The pointer is the record: listing sessions finds "A continued
+  as B" on B's first line, which listing already reads.
+- **The point is a step boundary:** the start of a turn, just after the
+  person's input, or just after a batch of tool results. Every tool call before
+  it has its result.
+- **It rewinds the conversation only.** It never restores or touches files.
+  Fiber lists, for the person and in a note to the model, the files its own
+  tools wrote after the point and the shell calls after it that may have
+  changed files. Both come from the effects on each `tool_call_started` after
+  the point: the paths of calls that declared `writes`, and the calls that
+  declared `executes` (`docs/permissions.md`, "Effects").
+- **A summary is optional.** A rewind may ask the old session's model to
+  summarise the path after the point.
+- **What the model receives, in order:** the old session's history up to the
+  point, then the summary if there is one, then Fiber's note: the files written
+  and shell calls since the point, and the jobs adopted or stopped. The first
+  request matches the old session's up to the point, so it hits the prompt
+  cache while the cache is warm. Everything after the history rides on the new
+  session's `session_started`, as `rewind { summary?, note, jobs }`, where
+  `jobs` is the adopted `job_id`s.
+- **Compaction is inherited by position.** A compaction in the old session at
+  or before the point applies to the new session. One after it does not.
+- **Jobs.** A job started before the point and still running is adopted by the
+  new session: its history shows the job starting, so it must own it. Each job
+  started after the point and still running is listed, and the person chooses
+  to stop it or adopt it. Stop is the default. A driver answers with `reply`.
+  Stopping is the normal job stop. An adopted job's later `job_line` and
+  `job_completed` go to the new session's log.
+- **The old session is closed first.** While the process still holds the old
+  session's lock, it writes a `job_completed` with `status: cancelled` for each
+  job the person chose to stop. The summary's model call, when there is one,
+  is made on the old session, and its `usage_recorded` goes in the old
+  session's log. Then it writes `rewound`, naming the new session, the
+  point and the jobs handed over. `rewound` is the last line the process writes
+  to that log, and it closes the process boundary there as `fiber_exited`
+  does. Only then does the new session start.
+- **Only the holder rewinds.** The process that rewinds a session must hold
+  it, or open it and take its lock when no process holds it, so it can close
+  the session properly. Rewinding a session another process holds is refused,
+  naming the holder: its jobs live in that process, and a session has one
+  writer. A delegate cannot be rewound; its parent forks again instead.
+
+The model does not rewind. For planned speculative work it uses
+`delegate_fork`, with `isolation: worktree` where files matter. For an
+unplanned dead end it hands off: it restarts its own context from a note it
+writes. How a handoff works is settled in
+[Compaction: when a session outgrows its context](https://github.com/aakshintala/fiber/issues/24).
 
 ## Writing
 
