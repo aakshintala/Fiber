@@ -72,6 +72,9 @@ Sent while a turn is running, it applies at the next step boundary, as a
 steering message does. Sent between turns, it is a turn of its own whose input
 is the command.
 
+Several `/handoff` or `handoff` commands that arrive before one step boundary
+make one handoff. Their instructions are joined in the order they arrived.
+
 Fiber asks for the note exactly as for an automatic handoff, with the
 instructions added. The request after the handoff misses the prompt cache.
 
@@ -93,7 +96,9 @@ during a session. It declares no effects, so it is never reviewed. Its
 description tells the model that the next request misses the prompt cache.
 
 A tool-started handoff makes no request for a note: the tool's argument is the
-note.
+note. The `handoff` tool's result has empty `content` and carries only
+`control.handoff`. The model never reads that result, because its context
+restarts from the note.
 
 ## What the model sees after a handoff
 
