@@ -89,9 +89,9 @@ an ephemeral event where it is display-only.
 
 ## Kinds
 
-v0.0.1's loop emits the kinds below. MCP elicitation is in v0.0.1's scope but
-its kinds are defined by its own ticket, which inherits every rule on this page
-and cannot violate one.
+Fiber's loop emits the kinds below. MCP elicitation adds no kind of its own: it
+raises the confirm, select and text input interactions every driver already
+answers with `reply` (`docs/mcp.md`, "Elicitation, sampling and roots").
 
 ### Process boundary
 
@@ -217,6 +217,18 @@ One `usage_recorded` per model call, whatever started it. A cost that settles
 late is a second `usage_recorded` with the same generation id, replacing the
 first. Consumers sum; resume rebuilds the ledger by folding. No pending queue,
 no watermarks, no reconciliation file.
+
+### MCP servers
+
+Behaviour is `docs/mcp.md`.
+
+| Kind | Durable | Payload |
+|---|---|---|
+| `mcp_server_failed` | yes | the server's name, why it failed (did not start, missed its startup deadline, not logged in, died), and whether Fiber will restart it |
+| `reloaded` | yes | the servers kept, restarted, started and stopped, the extensions reloaded, and any server that failed, with why |
+
+`reloaded` is written once the new tool set is declared. The next model request
+misses the prompt cache.
 
 ### Jobs
 

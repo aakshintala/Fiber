@@ -155,6 +155,10 @@ that one VM. A shared VM with per-extension environments is leaner at large
 extension counts and is the documented fallback if that ever matters; it is not
 what v0.0.1 does.
 
+The `reload` driver command (`docs/invocation.md`) reloads extensions. It is how
+a running session picks up an installed or updated extension. Each reloaded
+extension's VM is created again the next time it is invoked.
+
 ## When an extension misbehaves
 
 - **It errors.** A Lua error is caught at the call boundary. The extension's call
@@ -284,3 +288,6 @@ declares an extension that is not installed, the run fails with
 `extension_unapproved`, listing each one. `fiber approve`, run in the
 repository from a terminal, shows the same summary for each and records the
 approvals, so a later headless run can load them.
+
+An MCP server a repository declares runs a program, so it needs the same
+approval (`docs/mcp.md`, "A repository's servers").

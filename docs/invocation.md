@@ -86,6 +86,7 @@ acknowledgements carry no `seq`, so they never reach the log.
 | `reply` | Answers an interaction the loop raised: approval, confirm, select, text input or status. Takes an optional `session_id` naming a delegate. |
 | `job_stop` | Stops a running job by `job_id`. Rejected `stale_request` if the job is not running. |
 | `background` | Moves every shell call running in the current turn to the background (`docs/tools.md`, "Shell"). Rejected `stale_request` if none is running. |
+| `reload` | Re-reads configuration, restarts changed MCP servers and extensions, and declares the tool set again (`docs/mcp.md`, "Reload"). Rejected `busy` if a turn is running. |
 | `close` | Accept no more prompts; finish the turn in flight, then any running jobs (`docs/tools.md`, "Background jobs"), and exit. |
 
 Rejection codes: `malformed`, `unknown_command`, `busy`, `stale_request`.
@@ -190,12 +191,11 @@ the binary.
 
 ## Fiber serves no MCP
 
-v0.0.1 ships no MCP server, and the supervisor that manages several
+Fiber ships no MCP server, and the supervisor that manages several
 outstanding delegations to Fiber lives outside Fiber. A session's own
 delegates are `docs/delegates.md`. The rationale is
-[ADR 0005](adr/0005-no-mcp-server-the-supervisor-is-external.md). Whether Fiber
-is an MCP *client* — consuming tool servers — is a separate question and stays
-[#22](https://github.com/aakshintala/fiber/issues/22)'s.
+[ADR 0005](adr/0005-no-mcp-server-the-supervisor-is-external.md). Fiber is an
+MCP client, consuming MCP servers, and that is `docs/mcp.md`.
 
 What Fiber owes the delegation slot instead is being cleanly wrappable, and
 that is the whole of it:
@@ -218,5 +218,3 @@ supervisor that knows only about Fiber is worth less than one that does not.
   [TUI: scrollback or full screen?](https://github.com/aakshintala/fiber/issues/15)
 - What SIGTERM guarantees:
   [Shutdown: what SIGTERM has to guarantee](https://github.com/aakshintala/fiber/issues/34)
-- Whether Fiber consumes MCP servers:
-  [Does v0.0.1 speak MCP, and as what?](https://github.com/aakshintala/fiber/issues/22)

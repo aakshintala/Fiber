@@ -132,6 +132,11 @@ what it registers and carries. It covers exact content: a changed extension
 needs a new approval.
 _Avoid_: review (the reviewer is the permission model), trust
 
+**MCP server**:
+A program Fiber starts or connects to that offers tools, prompts and resources
+over MCP. See `docs/mcp.md`.
+_Avoid_: MCP tool server, plugin
+
 **Provider**:
 An endpoint Fiber sends model requests to: a name, a credential and a list of
 models. Every provider is an extension. See `docs/model-routing.md`.

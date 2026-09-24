@@ -277,5 +277,5 @@ that the other does not.
   [Epic: tools](https://github.com/aakshintala/fiber/issues/59)
 - Background jobs are `docs/tools.md` ("Background jobs")
 - Delegates are `docs/delegates.md`
-- MCP: [Does v0.0.1 speak MCP, and as what?](https://github.com/aakshintala/fiber/issues/22)
+- MCP is `docs/mcp.md`
 - Compaction: [Compaction: when a session outgrows its context](https://github.com/aakshintala/fiber/issues/24)

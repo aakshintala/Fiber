@@ -378,6 +378,11 @@ fails with `extension_missing` for one of them.
 Built-ins register through the tool seam exactly as an extension does and can be
 replaced by name (`docs/architecture.md`, "Tool seam").
 
+The MCP client is compiled in too. Each tool an MCP server offers registers
+through the tool seam as `mcp__<server>__<tool>` and can be replaced by name
+like any built-in. How MCP tools are named, declare effects and fail is
+`docs/mcp.md`.
+
 Four kinds ship as extensions:
 
 - Provider quota: each provider reports it differently, and providers are
